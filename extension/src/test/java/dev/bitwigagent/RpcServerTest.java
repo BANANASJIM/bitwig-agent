@@ -45,8 +45,29 @@ public final class RpcServerTest {
     }
 
     public static void main(String[] args) throws Exception {
-        validation(); deadlines(); queuedDeadline(); responseLimit(); overloadAndClose();
+        validation(); nullableObservations(); deadlines(); queuedDeadline(); responseLimit(); overloadAndClose();
         System.out.println("PASS: " + checks + " transport assertions over real IPv4 loopback; no host tests.");
+    }
+
+    private static void nullableObservations() throws Exception {
+        try (RpcServer server = new RpcServer(0, (method, params, until) -> {
+            JsonObject item = new JsonObject();
+            item.add("name", JsonNull.INSTANCE);
+            item.add("normalizedValue", JsonNull.INSTANCE);
+            JsonArray items = new JsonArray(); items.add(item);
+            JsonObject result = ok(); result.add("items", items);
+            return CompletableFuture.completedFuture(result);
+        })) {
+            server.start();
+            JsonObject item = call(server, request("nullable", "{}", null)).getAsJsonObject("result")
+                    .getAsJsonArray("items").get(0).getAsJsonObject();
+            check(item.has("name") && item.get("name").isJsonNull()
+                    && item.has("normalizedValue") && item.get("normalizedValue").isJsonNull(),
+                    "Unavailable observations remain explicit nulls across the real wire boundary");
+            JsonObject invalid = call(server, "{}\n");
+            check(invalid.has("id") && invalid.get("id").isJsonNull(),
+                    "An uncorrelated rejection retains its explicit null id");
+        }
     }
 
     private static void validation() throws Exception {

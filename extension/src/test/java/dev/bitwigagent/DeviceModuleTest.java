@@ -33,6 +33,7 @@ public final class DeviceModuleTest {
         pageRoundtripRecoversUnchangedValues();
         sameProcessReopenRecoversUnchangedHistory();
         recoveredPageBaselineInvalidatesLaterTransition();
+        rawDeviceTypeCallbacksReconcileCanonicalGetters();
         pendingRemoteWritesCannotSurviveRebinding();
         flushCannotInventUnobservedOrFiniteValues();
         recoveredSameValueWritesRetainSafetyAndFreshness();
@@ -483,6 +484,21 @@ public final class DeviceModuleTest {
             check(pending.join().get("verification").getAsString().equals("observer_after_write"),
                     transition + ": fresh same-source callback still verifies the write");
         }
+    }
+
+    private static void rawDeviceTypeCallbacksReconcileCanonicalGetters() {
+        Fake f = new Fake();
+        f.call("devices.remote.get", target(1));
+        f.devices[1].value("exists").emit(false);
+        Val type = f.devices[1].value("deviceType");
+        type.current = "audio-effect";
+        for (Object observer : type.observers)
+            ((EnumValueChangedCallback) observer).valueChanged("audio_to_audio");
+        f.devices[1].value("exists").emit(true);
+        f.flush();
+        JsonObject recovered = f.call("devices.remote.get", target(1));
+        check(recovered.get("complete").getAsBoolean() && recovered.get("type").getAsString().equals("audio-effect"),
+                "raw native type callback and canonical public getter cannot strand remote recovery");
     }
 
     private static void recoveredPageBaselineInvalidatesLaterTransition() {

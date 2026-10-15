@@ -21,7 +21,7 @@ public final class RpcServer implements AutoCloseable {
     private static final Set<String> METHODS = HostBridge.supportedMethods();
     private static final Set<String> FIELDS = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(
         "id", "method", "params", "timeoutMs")));
-    private static final Gson GSON = new Gson();
+    private static final Gson GSON = new GsonBuilder().serializeNulls().create();
     private final int port;
     private final Handler handler;
     private final ThreadPoolExecutor workers = new ThreadPoolExecutor(4, 4, 0, TimeUnit.SECONDS,

@@ -16,8 +16,21 @@ final class GridSnapshotReader {
         INPUTS, OUTPUTS, CHILDREN, MODULE_GRAPH, OWNER_MODULE, INPUT_SOURCE, INPUT_KEY, OUTPUT_KEY,
         PATH, FLOAT_VALUE, FLOAT_DEFINITION, FLOAT_MIN, FLOAT_MAX, BOOLEAN_VALUE,
         INTEGER_VALUE, INTEGER_DEFINITION, INTEGER_MIN, INTEGER_MAX, ENUM_VALUE, ENUM_DEFINITION,
-        OPTIONS, OPTION_VALUE, OPTION_LABEL, DISPLAY, CATALOG, ENTRY_ID, ENTRY_NAME, ENTRY_KIND
+        OPTIONS, OPTION_VALUE, OPTION_LABEL, DISPLAY, CATALOG, ENTRY_ID, ENTRY_NAME, ENTRY_KIND,
+        MODULE_NAME, CUSTOM_NAME, TYPE_ENTRY, TYPE_NAME, PARAMETER_ID, PARAMETER_NAME, SHORT_NAME,
+        INPUT_NAME, OUTPUT_NAME, FLOAT_UNIT, UNIT_TOKEN, INTEGER_PREFIX, INTEGER_SUFFIX
     }
+    enum Metadata {
+        MODULE_NAMES("moduleNames", "native_effective_name_and_raw_custom_override"),
+        TYPE_NAMES("typeNames", "catalog_uuid_lookup"),
+        PARAMETER_NAMES("parameterNames", "native_identifier_name_and_short_name"),
+        PORT_NAMES("portNames", "native_stored_names_not_visibility"),
+        FLOAT_UNITS("numericUnits", "stored_definition_unit_kind_not_raw_value_unit"),
+        INTEGER_AFFIXES("integerDisplayAffixes", "native_definition_prefix_and_suffix");
+        final String key, coverage;
+        Metadata(String key, String coverage) { this.key = key; this.coverage = coverage; }
+    }
+    static final Metadata[] METADATA = Metadata.values();
     interface Access {
         Object read(Field field, Object object);
         boolean is(Kind kind, Object object);
@@ -25,6 +38,7 @@ final class GridSnapshotReader {
         void owned(Object object);
         boolean parametersAvailable();
         boolean displayAvailable();
+        boolean metadataAvailable(Metadata metadata);
     }
     private final Access a;
     GridSnapshotReader(Access access) { a = access; }
@@ -89,12 +103,17 @@ final class GridSnapshotReader {
             JsonObject item = new JsonObject();
             item.addProperty("instanceId", ids.get(module));
             item.addProperty("localKey", text(a.read(Field.LOCAL_KEY, module)));
+            metadataText(item, "name", Field.MODULE_NAME, module, Metadata.MODULE_NAMES, state, "module_name");
+            metadataText(item, "customName", Field.CUSTOM_NAME, module, Metadata.MODULE_NAMES, state, "module_custom_name");
             item.addProperty("x", integer(a.read(Field.X, module)));
             item.addProperty("y", integer(a.read(Field.Y, module)));
             Object descriptor = a.read(Field.DESCRIPTOR, module);
+            Object typeId = descriptor == null ? null : a.read(Field.TYPE_ID, descriptor);
             if (descriptor == null) {
                 item.add("typeId", JsonNull.INSTANCE); state.unsupported("module_type_id_unavailable");
-            } else item.addProperty("typeId", uuid(a.read(Field.TYPE_ID, descriptor)));
+            } else item.addProperty("typeId", uuid(typeId));
+            Object entry = metadataValue(Field.TYPE_ENTRY, typeId, Metadata.TYPE_NAMES, state, "module_type_name");
+            metadataText(item, "typeName", Field.TYPE_NAME, entry, Metadata.TYPE_NAMES, state, "module_type_name");
             Set<Object> enumeratedPorts = Collections.newSetFromMap(new IdentityHashMap<>());
             item.add("inputs", ports(module, graph, ids, true, connections, enumeratedPorts, state));
             item.add("outputs", ports(module, graph, ids, false, connections, enumeratedPorts, state));
@@ -127,13 +146,14 @@ final class GridSnapshotReader {
         coverage.addProperty("connections", "incoming_to_returned_modules_same_graph_only");
         coverage.addProperty("parameters", !parameters ? "not_requested" : a.parametersAvailable() ? "known_typed_children_only" : "unavailable");
         coverage.addProperty("display", a.displayAvailable() ? "native_reader_unverified_semantics" : "unsupported");
-        coverage.addProperty("moduleNames", "unsupported");
+        for (Metadata metadata : METADATA)
+            coverage.addProperty(metadata.key, a.metadataAvailable(metadata) ? metadata.coverage : "unsupported");
         coverage.addProperty("positionUnits", "native_grid_coordinates_unverified");
         coverage.addProperty("nestedChildren", "not_traversed");
         result.add("coverage", coverage);
         JsonArray unsupported = new JsonArray(); state.unsupported.forEach(unsupported::add); result.add("unsupported", unsupported);
         result.addProperty("nativeRevisionAvailable", false);
-        result.addProperty("identityCaveat", "instanceId is a native UUID, not typeId or localKey; persistence across reopen is unverified. localKey and paths may change after edits. Public bank observations can lag native rebinding; same-name replacement before the document read is not corroborated by native track UUID. No native revision or cross-request atomicity.");
+        result.addProperty("identityCaveat", "instanceId is a current native UUID, not typeId or localKey; observed UUIDs changed across project reopen and must be reacquired. localKey and paths may change after edits. Public bank observations can lag native rebinding; same-name replacement before the document read is not corroborated by native track UUID. No native revision or cross-request atomicity.");
         result.addProperty("nativeMutation", false); result.addProperty("nativeUndo", false);
         return result;
     }
@@ -151,6 +171,8 @@ final class GridSnapshotReader {
             enumeratedPorts.add(port);
             JsonObject item = new JsonObject(); item.addProperty("key", key);
             item.addProperty("path", text(a.read(Field.PATH, port)));
+            metadataText(item, "name", input ? Field.INPUT_NAME : Field.OUTPUT_NAME, port,
+                    Metadata.PORT_NAMES, state, input ? "input_name" : "output_name");
             ports.add(item);
             if (!input) continue;
             Object source = a.read(Field.INPUT_SOURCE, port);
@@ -186,11 +208,16 @@ final class GridSnapshotReader {
         if (a.read(Field.OWNER_MODULE, child) != module) throw failure("stale_context", "Parameter belongs to a different module.");
         result.addProperty("supported", true); result.addProperty("kind", kind.name().toLowerCase(Locale.ROOT));
         result.addProperty("path", text(a.read(Field.PATH, child)));
+        metadataText(result, "parameterId", Field.PARAMETER_ID, child, Metadata.PARAMETER_NAMES, state, "parameter_id");
+        metadataText(result, "name", Field.PARAMETER_NAME, child, Metadata.PARAMETER_NAMES, state, "parameter_name");
+        metadataText(result, "shortName", Field.SHORT_NAME, child, Metadata.PARAMETER_NAMES, state, "parameter_short_name");
         switch (kind) {
             case FLOAT: {
                 double value = finite(a.read(Field.FLOAT_VALUE, child));
                 Object definition = a.read(Field.FLOAT_DEFINITION, child);
                 double min = finite(a.read(Field.FLOAT_MIN, definition)), max = finite(a.read(Field.FLOAT_MAX, definition));
+                Object unit = metadataValue(Field.FLOAT_UNIT, definition, Metadata.FLOAT_UNITS, state, "numeric_unit");
+                metadataText(result, "numericUnit", Field.UNIT_TOKEN, unit, Metadata.FLOAT_UNITS, state, "numeric_unit");
                 range(min, max); result.addProperty("value", value); result.addProperty("minimum", min); result.addProperty("maximum", max); break;
             }
             case BOOLEAN: {
@@ -202,6 +229,8 @@ final class GridSnapshotReader {
                 int value = integer(a.read(Field.INTEGER_VALUE, child));
                 Object definition = a.read(Field.INTEGER_DEFINITION, child);
                 int min = integer(a.read(Field.INTEGER_MIN, definition)), max = integer(a.read(Field.INTEGER_MAX, definition));
+                metadataText(result, "displayPrefix", Field.INTEGER_PREFIX, definition, Metadata.INTEGER_AFFIXES, state, "integer_display_prefix");
+                metadataText(result, "displaySuffix", Field.INTEGER_SUFFIX, definition, Metadata.INTEGER_AFFIXES, state, "integer_display_suffix");
                 range(min, max); result.addProperty("value", value); result.addProperty("minimum", min); result.addProperty("maximum", max); break;
             }
             case ENUM: {
@@ -229,6 +258,30 @@ final class GridSnapshotReader {
         if (a.displayAvailable()) result.addProperty("display", text(a.read(Field.DISPLAY, child)));
         else { result.add("display", JsonNull.INSTANCE); state.unsupported("parameter_display_unavailable"); }
         return result;
+    }
+
+    private Object metadataValue(Field field, Object owner, Metadata metadata, State state, String reason) {
+        if (!a.metadataAvailable(metadata) || owner == null) {
+            state.unsupported(reason + "_unavailable"); return null;
+        }
+        try {
+            Object value = a.read(field, owner);
+            if (value == null) state.unsupported(reason + "_unavailable");
+            return value;
+        } catch (RpcException error) {
+            // Optional descriptive reads never suppress identity, ownership, cancellation or size failures.
+            if (!"grid_unavailable".equals(error.code)) throw error;
+            state.unsupported(reason + "_read_failed"); return null;
+        }
+    }
+    private void metadataText(JsonObject result, String key, Field field, Object owner,
+            Metadata metadata, State state, String reason) {
+        Object value = metadataValue(field, owner, metadata, state, reason);
+        if (value instanceof String) result.addProperty(key, text(value));
+        else {
+            result.add(key, JsonNull.INSTANCE);
+            if (value != null) state.unsupported(reason + "_invalid");
+        }
     }
 
     private List<Object> collect(Field field, Object owner, int maximum, State state) {

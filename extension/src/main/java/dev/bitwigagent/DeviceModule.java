@@ -61,8 +61,10 @@ final class DeviceModule implements HostModule {
                     establishIdentity(slot, source);
                 });
                 source.device.deviceType().addValueObserver((EnumValueChangedCallback) value -> {
-                    if (source.identityEstablished && !java.util.Objects.equals(source.lastType, value)) invalidateRemotes(source);
-                    source.lastType = (String) value;
+                    // Native enum callbacks can use audio_to_audio while the public getter returns audio-effect.
+                    String type = (String) source.device.deviceType().get();
+                    if (source.identityEstablished && !java.util.Objects.equals(source.lastType, type)) invalidateRemotes(source);
+                    source.lastType = type;
                     source.typeObserved = true;
                     source.generation++;
                     establishIdentity(slot, source);
