@@ -74,8 +74,8 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
             JsonObject copy = params.deepCopy();
             HostModule module = modules.get(method);
             services.schedule(operation, () -> module.dispatch(operation, method, copy), 0);
-        } catch (RuntimeException error) {
-            operation.result.completeExceptionally(error);
+        } catch (RuntimeException | Error error) {
+            operation.fail(error);
         }
         return operation.result;
     }

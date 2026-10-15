@@ -16,7 +16,8 @@ final class HostServices implements AutoCloseable {
     final DeviceBank[] devices = new DeviceBank[TRACKS];
     boolean tracksObserved;
     private volatile boolean closed;
-    private Boolean arrangerRecordEnabled, arrangerAutomationWriteEnabled, clipLauncherAutomationWriteEnabled;
+    private Boolean playing, arrangerRecordEnabled, arrangerAutomationWriteEnabled, clipLauncherAutomationWriteEnabled;
+    private volatile SafetyObservation safety = new SafetyObservation(0, null, null, null, null);
 
     HostServices(ControllerHost host) {
         this.host = host;
@@ -24,10 +25,10 @@ final class HostServices implements AutoCloseable {
         transport = host.createTransport();
         application.projectName().markInterested();
         application.hasActiveEngine().markInterested();
-        transport.isPlaying().markInterested();
-        transport.isArrangerRecordEnabled().addValueObserver((BooleanValueChangedCallback) value -> arrangerRecordEnabled = value);
-        transport.isArrangerAutomationWriteEnabled().addValueObserver((BooleanValueChangedCallback) value -> arrangerAutomationWriteEnabled = value);
-        transport.isClipLauncherAutomationWriteEnabled().addValueObserver((BooleanValueChangedCallback) value -> clipLauncherAutomationWriteEnabled = value);
+        transport.isPlaying().addValueObserver((BooleanValueChangedCallback) value -> { playing = value; publishSafety(); });
+        transport.isArrangerRecordEnabled().addValueObserver((BooleanValueChangedCallback) value -> { arrangerRecordEnabled = value; publishSafety(); });
+        transport.isArrangerAutomationWriteEnabled().addValueObserver((BooleanValueChangedCallback) value -> { arrangerAutomationWriteEnabled = value; publishSafety(); });
+        transport.isClipLauncherAutomationWriteEnabled().addValueObserver((BooleanValueChangedCallback) value -> { clipLauncherAutomationWriteEnabled = value; publishSafety(); });
         tracks = host.createTrackBank(TRACKS, SENDS, SCENES, true);
         tracks.scrollPosition().markInterested();
         tracks.itemCount().addValueObserver((IntegerValueChangedCallback) count -> tracksObserved = true);
@@ -52,18 +53,14 @@ final class HostServices implements AutoCloseable {
 
     void schedule(HostOperation operation, Runnable task, long delayMs) {
         if (operation.result.isDone()) return;
+        if (operation.safetyAtEnqueue == null) operation.safetyAtEnqueue = safety;
         host.scheduleTask(() -> {
             if (operation.result.isDone()) return;
             try {
                 check(operation);
                 task.run();
-            } catch (RuntimeException error) {
-                // A guard or host error after any mutation must never report not_applied.
-                if (operation.dispatched && error instanceof RpcException
-                        && "not_applied".equals(((RpcException) error).outcome)) {
-                    RpcException rpc = (RpcException) error;
-                    operation.result.completeExceptionally(new RpcException(rpc.code, rpc.getMessage(), "unknown"));
-                } else operation.result.completeExceptionally(error);
+            } catch (RuntimeException | Error error) {
+                operation.fail(error);
             }
         }, delayMs);
     }
@@ -91,6 +88,41 @@ final class HostServices implements AutoCloseable {
         result.addProperty("arrangerAutomationWriteEnabled", arrangerAutomationWriteEnabled);
         result.addProperty("clipLauncherAutomationWriteEnabled", clipLauncherAutomationWriteEnabled);
         return result;
+    }
+
+    private void publishSafety() {
+        safety = new SafetyObservation(safety.epoch + 1, playing, arrangerRecordEnabled,
+                arrangerAutomationWriteEnabled, clipLauncherAutomationWriteEnabled);
+    }
+
+    SafetyObservation stoppedSafety(HostOperation operation) {
+        SafetyObservation observed = operation.safetyAtEnqueue == null ? safety : operation.safetyAtEnqueue;
+        observed.requireStopped();
+        guardStoppedSafety(observed);
+        return observed;
+    }
+
+    void guardStoppedSafety(SafetyObservation before) {
+        SafetyObservation current = safety;
+        if (current.epoch != before.epoch)
+            throw failure("stale_context", "Observed transport safety changed while the Grid write was queued or running.");
+        current.requireStopped();
+    }
+
+    /** Immutable controller observations; document callbacks never call Controller API safety getters. */
+    static final class SafetyObservation {
+        final long epoch;
+        final Boolean playing, recording, arrangerAutomation, launcherAutomation;
+        SafetyObservation(long epoch, Boolean playing, Boolean recording, Boolean arrangerAutomation, Boolean launcherAutomation) {
+            this.epoch = epoch; this.playing = playing; this.recording = recording;
+            this.arrangerAutomation = arrangerAutomation; this.launcherAutomation = launcherAutomation;
+        }
+        void requireStopped() {
+            if (playing == null || recording == null || arrangerAutomation == null || launcherAutomation == null)
+                throw failure("not_ready", "Stopped transport, recording and automation safety have not all been observed.");
+            if (playing || recording || arrangerAutomation || launcherAutomation)
+                throw failure("unsafe_state", "Grid raw writes require observed stopped transport with recording and automation write disabled.");
+        }
     }
 
     Track track(String trackId) { return (Track) tracks.getItemAt(trackSlot(trackId)); }

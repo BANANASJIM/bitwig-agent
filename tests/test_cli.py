@@ -78,15 +78,23 @@ async def test_invalid_cli_inputs_return_json_error_without_tcp(host, monkeypatc
     assert host.connections == 0
 
 
-async def test_cli_preserves_unknown_outcome_without_retry(host, monkeypatch):
+async def test_cli_preserves_grid_unknown_outcome_and_raw_expected_value_without_retry(host, monkeypatch):
     monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
-    error = {"code": "deadline_exceeded", "message": "Inspect actual clip before editing again",
-             "outcome": "unknown", "details": {"dispatched": True, "appliedEdits": [0]}}
+    error = {"code": "deadline_exceeded", "message": "Inspect actual parameter before editing again",
+             "outcome": "unknown", "details": {"dispatched": True}}
     host.reply = lambda request: {"id": request["id"], "error": error}
-    payload, code = await execute(["transport.set", "playing=false"])
+    payload, code = await execute([
+        "grid.parameters.set", f"trackId={TRACK}", "deviceIndex=0", "expectedDeviceName=Poly Grid",
+        f"moduleId={TRACK}", "parameterId=", "expectedKind=float",
+        "expectedValue=9007199254740993", "value=9007199254740994",
+    ])
     assert code == 1
     assert payload == {"error": error}
     assert host.connections == 1
+    assert len(host.requests) == 1
+    assert host.requests[0]["params"]["expectedValue"] == 9007199254740993
+    assert type(host.requests[0]["params"]["expectedValue"]) is int
+    assert host.requests[0]["params"]["parameterId"] == ""
 
 
 async def test_cli_lost_response_is_unknown_not_replayed(host, monkeypatch):
@@ -112,6 +120,21 @@ async def test_empty_grid_parameter_id_is_not_omitted_or_retargeted(host, monkey
     assert host.requests[0]["params"] == args
     assert host.requests[0]["timeoutMs"] == 250
     assert host.connections == 1
+
+
+@pytest.mark.parametrize("value", ["1.0", "1" + "0" * 400])
+async def test_grid_cli_numeric_tokens_fail_cleanly_before_tcp(host, monkeypatch, value):
+    monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
+    payload, code = await execute([
+        "grid.parameters.set", "--params",
+        f'{{"trackId":"{TRACK}","deviceIndex":0,"expectedDeviceName":"Poly Grid",'
+        f'"moduleId":"{TRACK}","parameterId":"","expectedKind":"integer",'
+        f'"expectedValue":0,"value":{value}}}',
+    ])
+    assert code == 2
+    assert payload["error"]["code"] == "invalid_params"
+    assert payload["error"]["outcome"] == "not_dispatched"
+    assert host.connections == 0
 
 
 def test_main_prints_one_exact_json_envelope(capsys, monkeypatch):

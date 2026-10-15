@@ -45,8 +45,26 @@ public final class RpcServerTest {
     }
 
     public static void main(String[] args) throws Exception {
-        validation(); nullableObservations(); deadlines(); queuedDeadline(); responseLimit(); overloadAndClose();
+        validation(); gridIntegerTokenValidation(); nullableObservations(); deadlines(); queuedDeadline(); responseLimit(); overloadAndClose();
         System.out.println("PASS: " + checks + " transport assertions over real IPv4 loopback; no host tests.");
+    }
+
+    private static void gridIntegerTokenValidation() throws Exception {
+        try (RpcServer server = new RpcServer(0, (method, params, until) -> {
+            GridParameterWriter.Request.parse(params);
+            return CompletableFuture.completedFuture(ok());
+        })) {
+            server.start();
+            for (String values : List.of(
+                    "\"expectedKind\":\"integer\",\"expectedValue\":0,\"value\":1e0",
+                    "\"expectedKind\":\"enum\",\"expectedValue\":1e0,\"value\":0")) {
+                String request = "{\"id\":\"raw-token\",\"method\":\"grid.parameters.set\",\"params\":{"
+                        + "\"trackId\":\"00000000-0000-0000-0000-000000000001\",\"deviceIndex\":0,"
+                        + "\"expectedDeviceName\":\"Poly Grid\",\"moduleId\":\"00000000-0000-0000-0000-000000000002\","
+                        + "\"parameterId\":\"MODE\"," + values + "}}\n";
+                error(call(server, request), "invalid_params", "not_applied");
+            }
+        }
     }
 
     private static void nullableObservations() throws Exception {

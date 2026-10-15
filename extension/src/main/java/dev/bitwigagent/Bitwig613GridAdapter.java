@@ -1,0 +1,333 @@
+package dev.bitwigagent;
+
+import com.google.gson.JsonObject;
+import java.io.InputStream;
+import java.lang.reflect.*;
+import java.nio.file.*;
+import java.security.MessageDigest;
+import java.util.*;
+import java.util.stream.Stream;
+import static dev.bitwigagent.GridSnapshotReader.Field.*;
+import static dev.bitwigagent.HostServices.failure;
+
+/** Exact symbol map for one inspected binary; read and write capabilities fail independently. */
+final class Bitwig613GridAdapter implements GridAdapter, GridSnapshotReader.Access {
+    static final String VERSION = "6.1.3";
+    static final String SHA256 = "4245a38ccddaa800421935216351e6dda8384b34a128cbc85c21e2e6760cfefc";
+    private static final String D = "com.bitwig.flt.document.core.master.device.";
+    private static final String R = "com.bitwig.ramona.core.";
+    private static final String P = "com.bitwig.flt.packaging.core.";
+    private static final String I = "com.bitwig.flt.document.core.iface.";
+    private final EnumMap<GridSnapshotReader.Field, Method> readers = new EnumMap<>(GridSnapshotReader.Field.class);
+    private final EnumMap<GridSnapshotReader.Kind, Class<?>> kinds = new EnumMap<>(GridSnapshotReader.Kind.class);
+    private final EnumMap<GridSnapshotReader.Metadata, String> metadataErrors = new EnumMap<>(GridSnapshotReader.Metadata.class);
+    private final GridSnapshotReader snapshots = new GridSnapshotReader(this);
+    private final ClassLoader loader;
+    private final String hostVersion;
+    private Path hostJar;
+    private String actualHash, gateError, catalogError, identityError, structureError, parameterError, displayError;
+    private Method singleton, async, isDocumentThread, modelThread;
+    private GridParameterContext parameterContexts;
+    private String inspectionError, writeError;
+    private GridParameterWriter parameterWriter;
+
+    Bitwig613GridAdapter(Object host, String version, Runnable check) {
+        hostVersion = version; loader = host.getClass().getClassLoader();
+        try {
+            check.run();
+            if (!VERSION.equals(version)) throw failure("grid_unavailable", "Grid reads require exactly Bitwig 6.1.3; running " + version + ".");
+            // The source of the actual loaded host implementation is authoritative, not /opt or a filename match.
+            hostJar = source(host.getClass());
+            if (!Files.isRegularFile(hostJar)) throw failure("grid_unavailable", "Loaded host CodeSource is not a regular JAR file.");
+            actualHash = hash(hostJar, check);
+            if (!SHA256.equals(actualHash)) throw failure("grid_unavailable", "Loaded host JAR SHA-256 is not the inspected 6.1.3 binary; obtain a matching adapter, do not bypass this gate.");
+            Class<?> app = type("com.bitwig.flt.app.tcc");
+            singleton = method(app, "Kvg", app, true);
+            async = method(app, "asyncExec", void.class, false, Runnable.class);
+            isDocumentThread = method(app, "isEventDispatchThread", boolean.class, false);
+            modelThread = method(type("j3E"), "isEventDispatchThread", boolean.class, false);
+        } catch (RuntimeException | ReflectiveOperationException | java.io.IOException error) {
+            if (error instanceof RpcException && !"grid_unavailable".equals(((RpcException) error).code)) throw (RpcException) error;
+            gateError = diagnostic(error); return;
+        } catch (LinkageError error) { gateError = diagnostic(error); return; }
+        try { bindCatalog(); } catch (ReflectiveOperationException | RuntimeException | LinkageError error) { catalogError = diagnostic(error); }
+        try { bindIdentity(); } catch (ReflectiveOperationException | RuntimeException | LinkageError error) { identityError = diagnostic(error); }
+        if (identityError != null) structureError = "Required native owning-track identity binding unavailable: " + identityError;
+        else try { bindStructure(); } catch (ReflectiveOperationException | RuntimeException | LinkageError error) { structureError = diagnostic(error); }
+        if (structureError == null) {
+            try { bindParameters(); } catch (ReflectiveOperationException | RuntimeException | LinkageError error) { parameterError = diagnostic(error); }
+            try { bind(DISPLAY, type("iTc"), "Fho", String.class); }
+            catch (ReflectiveOperationException | RuntimeException | LinkageError error) { displayError = diagnostic(error); }
+        } else { parameterError = "Structure binding unavailable."; displayError = parameterError; }
+        for (GridSnapshotReader.Metadata metadata : GridSnapshotReader.METADATA) {
+            if (structureError != null) { metadataErrors.put(metadata, "Structure binding unavailable."); continue; }
+            try { bindMetadata(metadata); }
+            catch (ReflectiveOperationException | RuntimeException | LinkageError error) { metadataErrors.put(metadata, diagnostic(error)); }
+        }
+        if (structureError != null || parameterError != null)
+            inspectionError = "Required structure or typed parameter binding unavailable.";
+        else try {
+            Class<?> parameter = kind(GridSnapshotReader.Kind.PARAMETER, "Tty");
+            bind(PARAMETER_ID, parameter, "aA_", String.class);
+            parameterContexts = new GridParameterContext(new Bitwig613GridParameterContext(this));
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError error) { inspectionError = diagnostic(error); }
+        if (inspectionError != null) writeError = "Required parameter inspection bindings unavailable.";
+        else try {
+            parameterWriter = new GridParameterWriter(snapshots, parameterContexts, new Bitwig613GridParameterWriter(this));
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError error) { writeError = diagnostic(error); }
+        check.run();
+    }
+
+    private void bindCatalog() throws ReflectiveOperationException {
+        Class<?> entry = kind(GridSnapshotReader.Kind.ENTRY, P + "kG");
+        bindStatic(CATALOG, type(P + "Iac"), "vhT", List.class);
+        bind(ENTRY_ID, entry, "vhT", UUID.class); bind(ENTRY_NAME, entry, "E3I", String.class);
+        bind(ENTRY_KIND, entry, "HEY", type(P + "biA"));
+    }
+    private void bindIdentity() throws ReflectiveOperationException {
+        kind(GridSnapshotReader.Kind.TRACK, I + "HBW");
+        Class<?> aliased = kind(GridSnapshotReader.Kind.ALIASED_TRACK, I + "SCA");
+        Class<?> alias = kind(GridSnapshotReader.Kind.CHANNEL_ALIAS, "jkg");
+        bindIdentityReader(OWNER_TRACK, type(R + "fJC"), "k31", Object.class, Class.class);
+        bindIdentityReader(TRACK_ALIAS, aliased, "xZH", alias);
+        bindIdentityReader(TRACK_UUID, type(I + "sIL"), "FJH", UUID.class);
+        bindIdentityReader(ALIAS_UUID, alias, "FJH", UUID.class);
+    }
+    private void bindIdentityReader(GridSnapshotReader.Field field, Class<?> owner, String name,
+            Class<?> returns, Class<?>... args) throws ReflectiveOperationException {
+        Method reader = method(owner, name, returns, false, args);
+        // Inherited interface declarations must come from the same hashed binary too.
+        type(reader.getDeclaringClass().getName());
+        readers.put(field, reader);
+    }
+    private void bindStructure() throws ReflectiveOperationException {
+        Class<?> device = kind(GridSnapshotReader.Kind.DEVICE, D + "Y2N");
+        Class<?> module = kind(GridSnapshotReader.Kind.MODULE, D + "gxR");
+        Class<?> input = kind(GridSnapshotReader.Kind.INPUT, D + "az");
+        Class<?> output = kind(GridSnapshotReader.Kind.OUTPUT, D + "xb1");
+        Class<?> graph = type(D + "zXc"), descriptor = type("com.bitwig.flt.device.BJf");
+        bind(TARGET, type("com.bitwig.flt.control_surface.proxy.ControlSurfaceProxy"), "getDeepestTarget", Object.class);
+        bind(GRAPH, device, "tw1", graph);
+        bind(EXECUTOR, type(R + "fJC"), "Q_", type("j3E"));
+        bind(MODULES, graph, "cj_", Stream.class);
+        bind(INSTANCE_ID, module, "FJH", UUID.class); bind(LOCAL_KEY, module, "aA_", String.class);
+        bind(X, module, "kpO", int.class); bind(Y, module, "JQk", int.class);
+        bind(DESCRIPTOR, module, "PfC", descriptor); bind(TYPE_ID, descriptor, "HEY", UUID.class);
+        bind(INPUTS, module, "BXY", Stream.class); bind(OUTPUTS, module, "pS", Stream.class);
+        bind(CHILDREN, module, "PZJ", Stream.class); bind(MODULE_GRAPH, module, "Ptj", graph);
+        readers.put(OWNER_MODULE, method(type(R + "fJC"), "k31", Object.class, false, Class.class));
+        bind(INPUT_SOURCE, input, "lXL", output); bind(INPUT_KEY, input, "aA_", String.class);
+        bind(OUTPUT_KEY, output, "aA_", String.class); bind(PATH, type(R + "xKS"), "XAf", String.class);
+    }
+    private void bindParameters() throws ReflectiveOperationException {
+        Class<?> floating = kind(GridSnapshotReader.Kind.FLOAT, "BFZ");
+        Class<?> bool = kind(GridSnapshotReader.Kind.BOOLEAN, "EjC");
+        Class<?> integer = kind(GridSnapshotReader.Kind.INTEGER, "bEX");
+        Class<?> indexed = kind(GridSnapshotReader.Kind.ENUM, "ndv");
+        Class<?> option = kind(GridSnapshotReader.Kind.OPTION, "aD");
+        Class<?> floatDefinition = type("aw"), integerDefinition = type("aN"), enumDefinition = type("aH");
+        bind(FLOAT_VALUE, floating, "Dvd", double.class); bind(FLOAT_DEFINITION, floating, "IRG", floatDefinition);
+        bind(FLOAT_MIN, floatDefinition, "kpO", double.class); bind(FLOAT_MAX, floatDefinition, "JQk", double.class);
+        bind(BOOLEAN_VALUE, bool, "Dvd", boolean.class);
+        bind(INTEGER_VALUE, integer, "loH", int.class); bind(INTEGER_DEFINITION, integer, "IRG", integerDefinition);
+        bind(INTEGER_MIN, integerDefinition, "JQk", int.class); bind(INTEGER_MAX, integerDefinition, "THY", int.class);
+        bind(ENUM_VALUE, indexed, "JQk", int.class); bind(ENUM_DEFINITION, indexed, "dgS", enumDefinition);
+        bind(OPTIONS, enumDefinition, "THY", List.class); bind(OPTION_VALUE, option, "vhT", int.class);
+        bind(OPTION_LABEL, option, "k31", String.class);
+    }
+
+    private void bindMetadata(GridSnapshotReader.Metadata metadata) throws ReflectiveOperationException {
+        switch (metadata) {
+            case MODULE_NAMES: {
+                Class<?> module = type(D + "QKj");
+                bind(MODULE_NAME, module, "Ynu", String.class);
+                bind(CUSTOM_NAME, module, "JtS", String.class); break;
+            }
+            case TYPE_NAMES: {
+                Class<?> entry = type(P + "kG");
+                readers.put(TYPE_ENTRY, method(type(P + "Iac"), "E3I", entry, true, UUID.class));
+                bind(TYPE_NAME, entry, "E3I", String.class); break;
+            }
+            case PARAMETER_NAMES: {
+                Class<?> parameter = type("Tty");
+                bind(PARAMETER_ID, parameter, "aA_", String.class);
+                bind(PARAMETER_NAME, parameter, "HNG", String.class);
+                bind(SHORT_NAME, parameter, "GDy", String.class); break;
+            }
+            case PORT_NAMES:
+                bind(INPUT_NAME, type(D + "Suo"), "vhT", String.class);
+                bind(OUTPUT_NAME, type(D + "n32"), "qQD", String.class); break;
+            case FLOAT_UNITS: {
+                Class<?> unit = type("fD");
+                bind(FLOAT_UNIT, type("aA"), "QJx", unit);
+                bind(UNIT_TOKEN, unit, "E3I", String.class); break;
+            }
+            case INTEGER_AFFIXES: {
+                Class<?> definition = type("aP");
+                bind(INTEGER_PREFIX, definition, "xwW", String.class);
+                bind(INTEGER_SUFFIX, definition, "A1", String.class); break;
+            }
+            default: throw new AssertionError(metadata);
+        }
+    }
+
+    @Override public JsonObject capabilities() {
+        JsonObject result = HostServices.observed();
+        result.addProperty("hostVersion", hostVersion); result.addProperty("requiredHostVersion", VERSION);
+        result.addProperty("loadedHostJarSha256", actualHash); result.addProperty("requiredHostJarSha256", SHA256);
+        result.addProperty("gatePassed", gateError == null);
+        result.addProperty("available", gateError == null && (catalogError == null || structureError == null));
+        result.addProperty("binding", gateError == null ? "exact_descriptors_resolved" : "unavailable");
+        result.addProperty("runtimeVerification", "not_established_by_binding");
+        result.add("catalog", capability(gateError == null ? catalogError : gateError, "native_MODULE_entries"));
+        result.add("structure", capability(gateError == null ? structureError : gateError, "modules_ports_incoming_same_graph_connections"));
+        result.add("nativeOwningTrack", capability(gateError == null ? identityError : gateError,
+                "required_device_track_ancestor_channel_uuid_with_SCA_alias_before_and_after_capture"));
+        result.add("typedParameters", capability(gateError == null ? parameterError : gateError, "float_boolean_integer_enum_known_children_only"));
+        result.add("display", capability(gateError == null ? displayError : gateError, "native_reader_semantics_unverified"));
+        result.add("parameterInspection", capability(gateError == null ? inspectionError : gateError,
+                "single_exact_parameter_and_same_callback_native_context_observations_only"));
+        JsonObject write = capability(gateError == null ? writeError : gateError,
+                "guarded_raw_controller_APs_aJV_LtR_y1l_ZPH_observed_stopped_only");
+        write.addProperty("operation", "iTc.JQk(double):void/set_raw_from_controller");
+        write.addProperty("nativeUndoAwareOperation", true);
+        write.addProperty("undoGroupingVerified", false);
+        write.addProperty("undoCommandAvailable", false);
+        write.addProperty("engineAcknowledgement", false);
+        result.add("parameterWrite", write);
+        for (GridSnapshotReader.Metadata metadata : GridSnapshotReader.METADATA)
+            result.add(metadata.key, capability(gateError == null ? metadataErrors.get(metadata) : gateError, metadata.coverage));
+        result.addProperty("graphWrites", false); result.addProperty("nativeMutation", false); result.addProperty("nativeUndo", false);
+        result.addProperty("nativeRevisionAvailable", false);
+        return result;
+    }
+    private static JsonObject capability(String error, String coverage) {
+        JsonObject result = new JsonObject(); result.addProperty("available", error == null);
+        result.addProperty("coverage", error == null ? coverage : "unavailable"); result.addProperty("reason", error);
+        return result;
+    }
+    @Override public void execute(Runnable read) {
+        require(gateError, "dispatcher");
+        Object app = invoke(singleton, null);
+        if (app == null) throw failure("grid_unavailable", "Native application singleton is not ready; wait for host startup.");
+        invoke(async, app, read);
+    }
+    @Override public JsonObject catalog(String query, int offset, int limit, Runnable check) {
+        require(gateError, "gate"); require(catalogError, "catalog");
+        return snapshots.catalog(query, offset, limit, check);
+    }
+    @Override public JsonObject snapshot(Object proxy, UUID expectedTrackId, int offset, int limit, boolean parameters, Runnable check) {
+        require(gateError, "gate"); require(identityError, "native owning-track identity"); require(structureError, "structure");
+        return snapshots.snapshot(proxy, expectedTrackId, offset, limit, parameters, check);
+    }
+    @Override public JsonObject parameter(Object proxy, UUID expectedTrackId, UUID moduleId, String parameterId, Runnable check) {
+        require(gateError, "gate"); require(identityError, "native owning-track identity"); require(structureError, "structure");
+        require(parameterError, "typed parameters"); require(inspectionError, "parameter inspection context");
+        return snapshots.parameter(proxy, expectedTrackId, moduleId, parameterId, parameterContexts, check);
+    }
+    @Override public JsonObject setParameter(Object proxy, UUID expectedTrackId, UUID moduleId, String parameterId,
+            GridParameterWriter.Request request, Runnable check, Runnable dispatch) {
+        require(gateError, "gate"); require(writeError, "parameter write");
+        return parameterWriter.set(proxy, expectedTrackId, moduleId, parameterId, request, check, dispatch);
+    }
+    @Override public boolean parametersAvailable() { return gateError == null && parameterError == null; }
+    @Override public boolean displayAvailable() { return gateError == null && displayError == null; }
+    @Override public boolean metadataAvailable(GridSnapshotReader.Metadata metadata) {
+        return gateError == null && !metadataErrors.containsKey(metadata);
+    }
+    @Override public boolean is(GridSnapshotReader.Kind kind, Object object) {
+        Class<?> type = kinds.get(kind); return type != null && type.isInstance(object);
+    }
+    @Override public Object read(GridSnapshotReader.Field field, Object object) {
+        Method method = readers.get(field);
+        if (method == null) throw failure("grid_unavailable", "Unbound native reader: " + field);
+        Object value;
+        if (field == OWNER_MODULE) value = invoke(method, object, kinds.get(GridSnapshotReader.Kind.MODULE));
+        else if (field == OWNER_TRACK) value = invoke(method, object, kinds.get(GridSnapshotReader.Kind.TRACK));
+        else if (field == TYPE_ENTRY) value = invoke(method, null, object);
+        else value = invoke(method, object);
+        if (field == ENTRY_KIND) {
+            if (!(value instanceof Enum<?>)) throw failure("grid_unavailable", "Native catalog kind is not the mapped enum.");
+            return ((Enum<?>) value).name();
+        }
+        return value;
+    }
+    @Override public void documentThread() {
+        Object app = invoke(singleton, null);
+        if (app == null || !Boolean.TRUE.equals(invoke(isDocumentThread, app)))
+            throw failure("grid_unavailable", "Grid read was not dispatched on the native document thread.");
+    }
+    @Override public void requireModelThread(Object object) {
+        Object executor = read(EXECUTOR, object);
+        // fJC.Q_ reads the current scoped executor; this checks thread context, not model ancestry.
+        if (executor == null || !Boolean.TRUE.equals(invoke(modelThread, executor)))
+            throw failure("grid_unavailable", "Native model thread predicate failed: "
+                    + (executor == null ? "null" : executor.getClass().getName()));
+    }
+
+    private Class<?> kind(GridSnapshotReader.Kind kind, String name) throws ClassNotFoundException {
+        Class<?> type = type(name); kinds.put(kind, type); return type;
+    }
+    Class<?> type(String name) throws ClassNotFoundException {
+        Class<?> type = Class.forName(name, false, loader);
+        try {
+            if (!source(type).equals(hostJar)) throw failure("grid_unavailable", "Native binding class is not from the hashed loaded host JAR: " + name);
+        } catch (java.io.IOException error) { throw failure("grid_unavailable", "Cannot establish native class CodeSource: " + name); }
+        return type;
+    }
+    private void bind(GridSnapshotReader.Field field, Class<?> owner, String name, Class<?> returns) throws NoSuchMethodException {
+        readers.put(field, method(owner, name, returns, false));
+    }
+    private void bindStatic(GridSnapshotReader.Field field, Class<?> owner, String name, Class<?> returns) throws NoSuchMethodException {
+        readers.put(field, method(owner, name, returns, true));
+    }
+    Method exactMethod(Class<?> owner, String name, Class<?> returns, boolean isStatic, Class<?>... args)
+            throws ReflectiveOperationException {
+        Method reader = method(owner, name, returns, isStatic, args);
+        type(reader.getDeclaringClass().getName());
+        return reader;
+    }
+    private static Method method(Class<?> owner, String name, Class<?> returns, boolean isStatic, Class<?>... args) throws NoSuchMethodException {
+        Method method = owner.getMethod(name, args);
+        if (method.getReturnType() != returns || Modifier.isStatic(method.getModifiers()) != isStatic || method.isBridge()
+                || !Modifier.isPublic(method.getDeclaringClass().getModifiers()))
+            throw new NoSuchMethodException("Exact public descriptor mismatch: " + owner.getName() + "." + name);
+        return method;
+    }
+    static Object invoke(Method method, Object object, Object... args) {
+        try { return method.invoke(object, args); }
+        catch (ReflectiveOperationException | IllegalArgumentException error) {
+            Throwable cause = error instanceof InvocationTargetException ? ((InvocationTargetException) error).getCause() : error;
+            throw failure("grid_unavailable", "Native call failed at " + method.getDeclaringClass().getName() + "." + method.getName() + ": " + diagnostic(cause));
+        }
+    }
+    static Path source(Class<?> type) throws java.io.IOException {
+        try {
+            if (type.getProtectionDomain() == null || type.getProtectionDomain().getCodeSource() == null)
+                throw new java.io.IOException("Loaded class has no CodeSource.");
+            java.net.URI uri = type.getProtectionDomain().getCodeSource().getLocation().toURI();
+            if (!"file".equals(uri.getScheme())) throw new java.io.IOException("Loaded class CodeSource is not a file URI.");
+            return Path.of(uri).toRealPath();
+        } catch (java.net.URISyntaxException | SecurityException error) { throw new java.io.IOException("Cannot resolve loaded host CodeSource.", error); }
+    }
+    static String hash(Path file, Runnable check) throws java.io.IOException {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256"); byte[] buffer = new byte[65536];
+            try (InputStream stream = Files.newInputStream(file)) {
+                int size;
+                while ((size = stream.read(buffer)) != -1) { check.run(); digest.update(buffer, 0, size); }
+            }
+            StringBuilder result = new StringBuilder(64);
+            for (byte value : digest.digest()) { result.append(Character.forDigit((value >>> 4) & 15, 16)); result.append(Character.forDigit(value & 15, 16)); }
+            return result.toString();
+        } catch (java.security.NoSuchAlgorithmException error) { throw new IllegalStateException(error); }
+    }
+    private static String diagnostic(Throwable error) {
+        String message = error.getMessage();
+        if (message != null && message.length() > 512) message = message.substring(0, 512);
+        return error.getClass().getSimpleName() + (message == null ? "" : ": " + message);
+    }
+    private static void require(String error, String domain) {
+        if (error != null) throw failure("grid_unavailable", "Grid " + domain + " unavailable: " + error + " Inspect grid.capabilities; use the exact supported host binary and adapter.");
+    }
+}

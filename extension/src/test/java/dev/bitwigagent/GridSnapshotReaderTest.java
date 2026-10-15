@@ -37,6 +37,11 @@ public final class GridSnapshotReaderTest {
         parameterInspectionRejectsAmbiguityAndStaleMembership();
         parameterContextObservationsDoNotInventPermission();
         parameterContextChangesAndUnavailableBindingsFailClosed();
+        rawParameterTypesAndRepresentability();
+        rawParameterCasRangesAndActualEnumValues();
+        rawParameterNoopAndNativeReadback();
+        rawParameterLiveGuardChanges();
+        rawParameterMutationFailuresRemainUnknown();
         System.out.println("GridSnapshotReaderTest: " + assertions + " assertions passed (semantic fake models only)");
     }
     private static void typedValuesAndIdentityAreNotConflated() {
@@ -508,6 +513,174 @@ public final class GridSnapshotReaderTest {
     }
     private static JsonObject inspect(Fixture f, ContextFixture context, String id) {
         return f.reader.parameter(f.proxy, TRACK_ID, new UUID(1, 1), id, context.reader, () -> {});
+    }
+
+    private static GridParameterWriter.Request request(String kind, String expected, String value) {
+        return GridParameterWriter.Request.parse(TransportMixFixture.json(
+                "{\"expectedKind\":\"" + kind + "\",\"expectedValue\":" + expected + ",\"value\":" + value + "}"));
+    }
+
+    private static void rawParameterTypesAndRepresentability() {
+        for (String value : List.of("null", "\"1\"", "true", "1.0", "1e0", "2147483648", "-2147483649"))
+            expect("invalid_params", () -> request("integer", "0", value));
+        for (String value : List.of("0", "1", "\"false\"", "null"))
+            expect("invalid_params", () -> request("boolean", "false", value));
+        for (String value : List.of("1e309", "-1e309", "true", "\"0.5\"", "null", "9007199254740993"))
+            expect("invalid_params", () -> request("float", "0", value));
+        expect("invalid_params", () -> request("float", "9007199254740993", "0"));
+        expect("invalid_params", () -> request("enum", "1.0", "2"));
+        expect("invalid_params", () -> request("number", "0", "1"));
+        check(request("integer", "-2147483648", "2147483647").rawValue == Integer.MAX_VALUE, "signed integer boundaries remain exact");
+        check(request("boolean", "true", "false").rawValue == 0.0, "boolean converted only for native raw call");
+        check(request("float", "0", "9007199254740992").rawValue == 9007199254740992.0, "exact large binary64 integer remains usable");
+    }
+
+    private static void rawParameterCasRangesAndActualEnumValues() {
+        WriterFixture f = new WriterFixture();
+        expect("stale_context", () -> f.set(request("boolean", "false", "true")));
+        expect("stale_context", () -> f.set(request("float", "1", "1")));
+        check(f.calls == 0, "CAS and kind precede same-value no-op");
+        f.scalar(FLOAT, 0.5, -1.0, 1.0);
+        expect("invalid_params", () -> f.set(request("float", "0.5", "1.0001")));
+        expect("stale_context", () -> f.set(request("float", "0.5000000000000001", "0.5")));
+        expect("stale_context", () -> f.set(request("float", "0.4", "2")));
+        f.scalar(INTEGER, -7, -10, 12);
+        expect("invalid_params", () -> f.set(request("integer", "-7", "13")));
+        f.set(request("integer", "-7", "12"));
+        check((Integer) f.child.values.get(INTEGER_VALUE) == 12, "signed raw integer edit reaches exact bounded model value");
+        f.scalar(ENUM, 42, 0, 0);
+        expect("invalid_params", () -> f.set(request("enum", "42", "1")));
+        f.set(request("enum", "42", "10"));
+        check((Integer) f.child.values.get(ENUM_VALUE) == 10, "enum uses listed nonordinal option value");
+        f.child.put(ENUM_VALUE, 99);
+        expect("grid_unavailable", () -> f.set(request("enum", "99", "10")));
+    }
+
+    private static void rawParameterNoopAndNativeReadback() {
+        WriterFixture f = new WriterFixture();
+        JsonObject noop = f.set(request("boolean", "true", "true"));
+        check(f.calls == 0 && !f.op.dispatched && !noop.get("nativeMutation").getAsBoolean()
+                && !noop.get("nativeUndo").getAsBoolean(), "same-value CAS performs no native operation");
+        f.scalar(FLOAT, -0.0, -1.0, 1.0);
+        f.set(request("float", "0.0", "0.0"));
+        check(f.calls == 0, "signed zero equality does not manufacture a native write");
+        JsonObject result = f.set(request("float", "0", "0.75"));
+        check(f.calls == 1 && f.op.dispatched && result.get("mutationDispatched").getAsBoolean(), "distinct raw value invokes exactly once");
+        check(result.get("previousValue").getAsDouble() == 0.0
+                && result.get("requestedValue").getAsDouble() == 0.75
+                && result.getAsJsonObject("parameter").get("value").getAsDouble() == 0.75,
+                "result distinguishes prior/requested/current raw observations");
+        WriterFixture mismatched = new WriterFixture(); mismatched.apply = false;
+        RpcException error = mismatched.failure(request("boolean", "true", "false"));
+        check(error.code.equals("grid_verification_failed") && error.outcome.equals("unknown")
+                && mismatched.calls == 1, "void setter with mismatched readback remains unknown without retry");
+    }
+
+    private static void rawParameterLiveGuardChanges() {
+        for (GridParameterContext.Field field : List.of(GridParameterContext.Field.LICENSED, GridParameterContext.Field.SETTABLE,
+                GridParameterContext.Field.INITIALIZED)) {
+            WriterFixture f = new WriterFixture(); f.context.values.put(field, false);
+            expect("unsafe_state", () -> f.set(request("boolean", "true", "true")));
+            check(f.calls == 0, "false native prerequisite blocks even a no-op");
+            f.context.values.put(field, null);
+            expect("grid_unavailable", () -> f.set(request("boolean", "true", "false")));
+        }
+        for (GridParameterContext.Field field : List.of(GridParameterContext.Field.CIU, GridParameterContext.Field.TOUCHED,
+                GridParameterContext.Field.UNDO_EXECUTING, GridParameterContext.Field.UNDO_ACTIVE, GridParameterContext.Field.UNDO_ICL)) {
+            WriterFixture f = new WriterFixture(); int[] reads = {0};
+            f.model.afterValue = () -> { if (++reads[0] == 2) f.context.values.put(field, true); };
+            expect("unsafe_state", () -> f.set(request("boolean", "true", "false")));
+            check(f.calls == 0 && !f.op.dispatched, "live predicate transition before invocation prevents dispatch");
+        }
+        for (GridParameterContext.Field field : List.of(GridParameterContext.Field.UNDO, GridParameterContext.Field.LOCK,
+                GridParameterContext.Field.LOCK_OWNER, GridParameterContext.Field.CURRENT_DT, GridParameterContext.Field.DEFAULT_DT)) {
+            WriterFixture f = new WriterFixture(); f.context.values.put(field, null);
+            expect("grid_unavailable", () -> f.set(request("boolean", "true", "false")));
+            check(f.calls == 0, "missing native context object is unavailable, never false permission");
+        }
+        WriterFixture owner = new WriterFixture(); owner.context.values.put(GridParameterContext.Field.LOCK_OWNER, new Object());
+        expect("unsafe_state", () -> owner.set(request("boolean", "true", "false")));
+        WriterFixture root = new WriterFixture(); root.context.values.put(GridParameterContext.Field.ROOT, new Object());
+        expect("stale_context", () -> root.set(request("boolean", "true", "false")));
+        WriterFixture moved = new WriterFixture(); moved.model.afterValue = () -> moved.model.first.put(CHILDREN, List.of());
+        expect("stale_context", () -> moved.set(request("boolean", "true", "false")));
+        WriterFixture changedValue = new WriterFixture();
+        changedValue.model.afterValue = () -> changedValue.child.put(BOOLEAN_VALUE, false);
+        expect("stale_context", () -> changedValue.set(request("boolean", "true", "false")));
+        WriterFixture unknown = new WriterFixture(); unknown.supported = false;
+        expect("grid_unavailable", () -> unknown.set(request("boolean", "true", "false")));
+        check(inspect(unknown.model, unknown.context, "LOCAL_ID").getAsJsonObject("parameter").get("value").getAsBoolean(),
+                "missing write eligibility leaves independent typed inspection usable");
+    }
+
+    private static void rawParameterMutationFailuresRemainUnknown() {
+        WriterFixture partial = new WriterFixture();
+        partial.afterMutation = () -> { throw HostServices.failure("grid_unavailable", "native failure after partial assignment"); };
+        RpcException error = partial.failure(request("boolean", "true", "false"));
+        check(error.outcome.equals("unknown") && partial.calls == 1 && !(Boolean) partial.child.values.get(BOOLEAN_VALUE),
+                "partial mutation exception never fabricates rollback or not-applied");
+        WriterFixture target = new WriterFixture();
+        target.afterMutation = () -> target.model.proxy.put(TARGET, new Node(DEVICE));
+        error = target.failure(request("boolean", "true", "false"));
+        check(error.code.equals("stale_context") && error.outcome.equals("unknown") && target.calls == 1,
+                "post-dispatch target failure remains unknown without retry");
+        WriterFixture closed = new WriterFixture();
+        closed.afterMutation = () -> closed.cancelled = true;
+        error = closed.failure(request("boolean", "true", "false"));
+        check(error.code.equals("cancelled") && error.outcome.equals("unknown"), "late cancellation does not imply native cancellation");
+        WriterFixture early = new WriterFixture(); early.cancelled = true;
+        error = early.failure(request("boolean", "true", "false"));
+        check(error.outcome.equals("not_applied") && early.calls == 0, "before-dispatch cancellation prevents mutation");
+    }
+
+    /** Real shared binding/context/writer logic over a semantic model, also used by queue-boundary tests. */
+    static final class WriterFixture implements GridParameterWriter.Access {
+        final Fixture model = inspectionFixture();
+        final ContextFixture context = new ContextFixture();
+        final HostOperation op = new HostOperation(Long.MAX_VALUE);
+        final GridParameterWriter writer = new GridParameterWriter(model.reader, context.reader, this);
+        Node child = (Node) ((List<?>) model.first.values.get(CHILDREN)).get(0);
+        GridSnapshotReader.Kind kind = BOOLEAN;
+        GridSnapshotReader.Field field = BOOLEAN_VALUE;
+        int calls;
+        boolean apply = true, supported = true, cancelled;
+        Runnable afterMutation = () -> {};
+        WriterFixture() { context.values.put(GridParameterContext.Field.LOCK_OWNER, context.dt); }
+        void scalar(GridSnapshotReader.Kind kind, Object value, Number min, Number max) {
+            this.kind = kind;
+            field = kind == FLOAT ? FLOAT_VALUE : kind == INTEGER ? INTEGER_VALUE : kind == ENUM ? ENUM_VALUE : BOOLEAN_VALUE;
+            child = model.parameter(kind, model.first).put(field, value);
+            if (kind == FLOAT) child.put(FLOAT_DEFINITION, new Node().put(FLOAT_MIN, min.doubleValue()).put(FLOAT_MAX, max.doubleValue()));
+            if (kind == INTEGER) child.put(INTEGER_DEFINITION, new Node().put(INTEGER_MIN, min.intValue()).put(INTEGER_MAX, max.intValue()));
+            if (kind == ENUM) child.put(ENUM_DEFINITION, new Node().put(OPTIONS, List.of(option(10, "Ten"), option(42, "Answer"))));
+            model.first.put(CHILDREN, List.of(child));
+        }
+        JsonObject set(GridParameterWriter.Request request) {
+            return set(request, () -> {
+                if (cancelled) throw HostServices.failure("cancelled", "cancelled");
+            }, () -> op.dispatched = true);
+        }
+        JsonObject set(GridParameterWriter.Request request, Runnable check, Runnable dispatch) {
+            return writer.set(model.proxy, TRACK_ID, new UUID(1, 1), "LOCAL_ID", request, check, dispatch);
+        }
+        RpcException failure(GridParameterWriter.Request request) {
+            try { set(request); throw new AssertionError("Expected failed write"); }
+            catch (RpcException error) { op.fail(error); return TransportMixFixture.error(op, error.code); }
+        }
+        @Override public void requireSupported(Object parameter, GridSnapshotReader.Kind kind) {
+            if (!supported) throw HostServices.failure("grid_unavailable", "unmapped model");
+        }
+        @Override public void setRaw(Object parameter, double value) {
+            calls++;
+            if (apply) {
+                Object raw;
+                if (kind == BOOLEAN) raw = value > 0.5;
+                else if (kind == FLOAT) raw = value;
+                else raw = (int) value;
+                ((Node) parameter).put(field, raw);
+            }
+            afterMutation.run();
+        }
     }
     private static final class ContextFixture implements GridParameterContext.Access {
         final GridParameterContext reader = new GridParameterContext(this);

@@ -4,7 +4,6 @@ import com.google.gson.*;
 import com.google.gson.stream.JsonReader;
 import com.google.gson.stream.JsonToken;
 import java.io.*;
-import java.math.BigDecimal;
 import java.net.*;
 import java.nio.ByteBuffer;
 import java.nio.charset.*;
@@ -196,7 +195,7 @@ public final class RpcServer implements AutoCloseable {
                 while (reader.hasNext()) array.add(readJson(reader, depth + 1));
                 reader.endArray(); return array;
             case STRING: return new JsonPrimitive(reader.nextString());
-            case NUMBER: return new JsonPrimitive(new BigDecimal(reader.nextString()));
+            case NUMBER: return new JsonPrimitive(ToNumberPolicy.LAZILY_PARSED_NUMBER.readNumber(reader));
             case BOOLEAN: return new JsonPrimitive(reader.nextBoolean());
             case NULL: reader.nextNull(); return JsonNull.INSTANCE;
             default: throw invalid("Invalid JSON token");

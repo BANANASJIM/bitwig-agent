@@ -9,18 +9,18 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 import static dev.bitwigagent.HostServices.failure;
 
-/** Strict RPC boundary and observed public-device targeting; native reads live in a separate adapter. */
+/** Strict RPC boundary and observed public-device targeting; native operations use a separate adapter. */
 final class GridModule implements HostModule {
-    static final Set<String> METHODS = Set.of("grid.capabilities", "grid.catalog", "grid.get", "grid.parameters.get");
+    static final Set<String> METHODS = Set.of("grid.capabilities", "grid.catalog", "grid.get", "grid.parameters.get", "grid.parameters.set");
     static final int MAX_RESPONSE_CHARS = 240000;
     private static final Gson JSON = new GsonBuilder().serializeNulls().create();
     private final HostServices s;
     private final Source[][] sources = new Source[HostServices.TRACKS][HostServices.DEVICES];
     private final AtomicLong[] tracks = new AtomicLong[HostServices.TRACKS];
-    private GridReadAdapter adapter;
+    private GridAdapter adapter;
 
     GridModule(HostServices services) { this(services, null); }
-    GridModule(HostServices services, GridReadAdapter adapter) {
+    GridModule(HostServices services, GridAdapter adapter) {
         s = services; this.adapter = adapter;
         for (int t = 0; t < HostServices.TRACKS; t++) {
             AtomicLong epoch = tracks[t] = new AtomicLong();
@@ -60,14 +60,19 @@ final class GridModule implements HostModule {
                 if (p.has("offset")) Params.integer(p, "offset", 0, 100000);
                 if (p.has("limit")) Params.integer(p, "limit", 1, 256);
                 return;
+            case "grid.parameters.set":
             case "grid.parameters.get":
-                Params.fields(p, Set.of("trackId", "deviceIndex", "expectedDeviceName", "moduleId", "parameterId"), Set.of());
+                boolean writing = method.equals("grid.parameters.set");
+                Params.fields(p, writing
+                        ? Set.of("trackId", "deviceIndex", "expectedDeviceName", "moduleId", "parameterId", "expectedKind", "expectedValue", "value")
+                        : Set.of("trackId", "deviceIndex", "expectedDeviceName", "moduleId", "parameterId"), Set.of());
                 canonicalUuid(p, "trackId"); canonicalUuid(p, "moduleId");
                 Params.integer(p, "deviceIndex", 0, HostServices.DEVICES - 1);
                 Params.string(p, "expectedDeviceName");
                 if (!p.get("parameterId").isJsonPrimitive() || !p.get("parameterId").getAsJsonPrimitive().isString()
                         || p.get("parameterId").getAsString().length() > GridSnapshotReader.MAX_TEXT)
                     throw failure("invalid_params", "parameterId must be a string of at most 1024 UTF-16 units.");
+                if (writing) GridParameterWriter.Request.parse(p);
                 return;
             case "grid.get":
                 Params.fields(p, Set.of("trackId", "deviceIndex", "expectedDeviceName"), Set.of("moduleOffset", "moduleLimit", "includeParameters"));
@@ -84,9 +89,12 @@ final class GridModule implements HostModule {
     }
     @Override public void dispatch(HostOperation op, String method, JsonObject p) {
         s.check(op);
-        if (adapter == null) adapter = new Bitwig613GridReadAdapter(s.host, s.host.getHostVersion(), () -> s.check(op));
+        if (adapter == null) adapter = new Bitwig613GridAdapter(s.host, s.host.getHostVersion(), () -> s.check(op));
         if (method.equals("grid.capabilities")) { s.check(op); op.result.complete(adapter.capabilities()); return; }
-        final boolean inspection = method.equals("grid.parameters.get");
+        final boolean writing = method.equals("grid.parameters.set");
+        final boolean inspection = method.equals("grid.parameters.get") || writing;
+        final GridParameterWriter.Request request = writing ? GridParameterWriter.Request.parse(p) : null;
+        final HostServices.SafetyObservation safety = writing ? s.stoppedSafety(op) : null;
         final Target target = method.equals("grid.get") || inspection ? target(p) : null;
         final UUID moduleId = inspection ? UUID.fromString(p.get("moduleId").getAsString()) : null;
         final String parameterId = inspection ? p.get("parameterId").getAsString() : null;
@@ -101,9 +109,12 @@ final class GridModule implements HostModule {
                     s.check(op);
                     if (target != null && (tracks[target.slot].get() != target.trackEpoch || target.source.epoch.get() != target.deviceEpoch))
                         throw failure("stale_context", "Observed bank target changed while the Grid read was queued or running.");
+                    if (writing) s.guardStoppedSafety(safety);
                 };
                 check.run();
                 JsonObject value = target == null ? adapter.catalog(query, offset, limit, check)
+                        : writing ? adapter.setParameter(target.source.device, target.uuid, moduleId, parameterId, request, check,
+                                () -> { check.run(); op.dispatched = true; })
                         : inspection ? adapter.parameter(target.source.device, target.uuid, moduleId, parameterId, check)
                         : adapter.snapshot(target.source.device, target.uuid, offset, limit, parameters, check);
                 check.run();
@@ -112,6 +123,7 @@ final class GridModule implements HostModule {
                 check.run();
                 s.schedule(op, () -> {
                     guard(op, target);
+                    if (writing) s.guardStoppedSafety(safety);
                     JsonObject result = JsonParser.parseString(serialized).getAsJsonObject();
                     if (target != null) {
                         JsonObject identity = new JsonObject(); identity.addProperty("trackId", target.id);
@@ -124,10 +136,11 @@ final class GridModule implements HostModule {
                     op.result.complete(result);
                 }, 0);
             } catch (RuntimeException error) {
-                op.result.completeExceptionally(error instanceof RpcException ? error
-                        : failure("grid_unavailable", "Grid read failed: " + error.getClass().getSimpleName() + "; inspect the exact host binding."));
+                op.fail(error instanceof RpcException ? error
+                        : failure("grid_unavailable", "Grid operation failed: " + error.getClass().getSimpleName() + "; inspect the exact host binding."));
+            } catch (Error error) {
+                op.fail(failure("grid_unavailable", "Native Grid operation failed; inspect the loaded host binding and current state."));
             }
-            catch (LinkageError error) { op.result.completeExceptionally(failure("grid_unavailable", "Native Grid linkage failed; inspect grid.capabilities and loaded host binary.")); }
         });
     }
     private Target target(JsonObject p) {

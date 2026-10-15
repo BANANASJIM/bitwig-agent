@@ -155,32 +155,72 @@ final class GridSnapshotReader {
 
     JsonObject parameter(Object proxy, UUID expectedTrackId, UUID moduleId, String parameterId,
             GridParameterContext contexts, Runnable check) {
+        if (contexts == null) throw failure("grid_unavailable", "Required parameter inspection bindings are unavailable.");
+        ParameterBinding binding = bindParameter(proxy, expectedTrackId, moduleId, parameterId, check);
+        GridParameterContext.Capture context = contexts.capture(binding.device, binding.graph, binding.module,
+                binding.parameter, binding.kind, check);
+        JsonObject value = parameterValue(binding);
+        guardParameter(binding);
+        contexts.guard(context, binding.device, binding.graph, binding.module, binding.parameter, binding.kind, check);
+        guardParameter(binding);
+        JsonObject result = parameterResult(binding, value);
+        result.add("editContext", context.json);
+        result.addProperty("nativeMutation", false); result.addProperty("nativeUndo", false);
+        return result;
+    }
+
+    ParameterBinding bindParameter(Object proxy, UUID expectedTrackId, UUID moduleId, String parameterId, Runnable check) {
         a.documentThread(); check.run();
-        if (!a.parametersAvailable() || contexts == null)
-            throw failure("grid_unavailable", "Required parameter inspection bindings are unavailable.");
-        NativeTarget binding = target(proxy, expectedTrackId);
+        if (!a.parametersAvailable()) throw failure("grid_unavailable", "Required typed parameter bindings are unavailable.");
+        NativeTarget target = target(proxy, expectedTrackId);
         State state = new State(check);
-        Object module = findModule(binding.graph, moduleId, state);
+        Object module = findModule(target.graph, moduleId, state);
         Object child = findParameter(module, parameterId, state);
         Kind kind = parameterKind(child);
         if (kind == null) throw failure("grid_unavailable", "Requested parameter family is unsupported.");
-        GridParameterContext.Capture context = contexts.capture(binding.target, binding.graph, module, child, kind, check);
-        JsonObject value = parameter(child, module, state);
-        check.run();
-        guardTarget(binding, proxy, expectedTrackId);
-        if (findModule(binding.graph, moduleId, state) != module || findParameter(module, parameterId, state) != child)
-            throw failure("stale_context", "Selected native module or parameter changed during inspection.");
-        contexts.guard(context, binding.target, binding.graph, module, child, kind, check);
-        check.run();
-        guardTarget(binding, proxy, expectedTrackId);
+        return new ParameterBinding(proxy, expectedTrackId, moduleId, parameterId, target, module, child, kind, state);
+    }
+
+    void guardParameter(ParameterBinding binding) {
+        binding.state.guard.run();
+        guardTarget(binding.target, binding.proxy, binding.trackId);
+        if (findModule(binding.graph, binding.moduleId, binding.state) != binding.module
+                || findParameter(binding.module, binding.parameterId, binding.state) != binding.parameter
+                || parameterKind(binding.parameter) != binding.kind)
+            throw failure("stale_context", "Selected native module or parameter changed during the operation.");
+        a.requireModelThread(binding.parameter);
+        binding.state.guard.run();
+    }
+
+    JsonObject parameterValue(ParameterBinding binding) {
+        return parameter(binding.parameter, binding.module, binding.state);
+    }
+
+    JsonObject parameterResult(ParameterBinding binding, JsonObject value) {
         JsonObject result = HostServices.observed();
-        result.addProperty("moduleId", moduleId.toString());
-        result.add("parameter", value); result.add("editContext", context.json);
-        result.addProperty("complete", state.unsupported.isEmpty());
-        JsonArray unsupported = new JsonArray(); state.unsupported.forEach(unsupported::add);
+        result.addProperty("moduleId", binding.moduleId.toString());
+        result.add("parameter", value);
+        result.addProperty("complete", binding.state.unsupported.isEmpty());
+        JsonArray unsupported = new JsonArray(); binding.state.unsupported.forEach(unsupported::add);
         result.add("unsupported", unsupported);
-        result.addProperty("nativeMutation", false); result.addProperty("nativeUndo", false);
         return result;
+    }
+
+    /** Strictly callback-local native binding, shared by inspection and mutation orchestration. */
+    static final class ParameterBinding {
+        final Object device, graph, module, parameter;
+        final Kind kind;
+        private final Object proxy;
+        private final UUID trackId, moduleId;
+        private final String parameterId;
+        private final NativeTarget target;
+        private final State state;
+        ParameterBinding(Object proxy, UUID trackId, UUID moduleId, String parameterId, NativeTarget target,
+                Object module, Object parameter, Kind kind, State state) {
+            this.proxy = proxy; this.trackId = trackId; this.moduleId = moduleId; this.parameterId = parameterId;
+            this.target = target; this.device = target.target; this.graph = target.graph;
+            this.module = module; this.parameter = parameter; this.kind = kind; this.state = state;
+        }
     }
 
     private Object findModule(Object graph, UUID id, State state) {

@@ -4,7 +4,7 @@ import com.google.gson.*;
 import java.util.Locale;
 import static dev.bitwigagent.HostServices.failure;
 
-/** Read-only prerequisite observations. Native identities remain local to one document callback. */
+/** Live native prerequisite observations and guards; identities stay in one document callback. */
 final class GridParameterContext {
     private static final String[] LIFECYCLE_LABELS = {
         "deviceDeleted", "graphDeleted", "moduleDeleted", "parameterDeleted", "projectDeleted"
@@ -23,11 +23,11 @@ final class GridParameterContext {
 
     Capture capture(Object device, Object graph, Object module, Object parameter,
             GridSnapshotReader.Kind kind, Runnable check) {
-        return capture(device, graph, module, parameter, kind, check, true);
+        return capture(device, graph, module, parameter, kind, check, true, false);
     }
 
     private Capture capture(Object device, Object graph, Object module, Object parameter,
-            GridSnapshotReader.Kind kind, Runnable check, boolean serialize) {
+            GridSnapshotReader.Kind kind, Runnable check, boolean serialize, boolean writing) {
         check.run();
         Object project = required(a.read(Field.PARAMETER_PROJECT, parameter), "Owning project");
         Object context = attached(parameter);
@@ -64,7 +64,7 @@ final class GridParameterContext {
             default: throw failure("grid_unavailable", "Parameter context family is unsupported.");
         }
         // These getters construct fresh wrappers; wrapper identity is not native model identity.
-        Object wrapper = serialize ? required(a.read(wrapperField, parameter), "Native GUI property") : null;
+        Object wrapper = serialize || writing ? required(a.read(wrapperField, parameter), "Native GUI property") : null;
         Object undo = a.read(Field.UNDO, parameter);
         Object lock = a.read(Field.LOCK, device);
         Object lockOwner = lock == null ? null : a.read(Field.LOCK_OWNER, lock);
@@ -72,6 +72,27 @@ final class GridParameterContext {
         check.run();
         Object[] identities = {project, context, root, current, currentContext, defaultDt,
                 defaultDtContext, undo, lock, lockOwner, lockContext};
+        if (writing) {
+            if (!initialized) throw failure("unsafe_state", "Native document context is not initialized.");
+            if (root != project) throw failure("stale_context", "Attached context root is not the owning project.");
+            if (!hasDefault || current == null || defaultDt == null)
+                throw failure("grid_unavailable", "Native current/default transaction context is unavailable.");
+            if (current != defaultDt || defaultDtContext != context)
+                throw failure("unsafe_state", "Native transaction is outside the bounded default document context.");
+            if (!bool(Field.LICENSED, parameter))
+                throw failure("unsafe_state", "Native parameter effective licensing is false.");
+            if (!bool(Field.SETTABLE, wrapper))
+                throw failure("unsafe_state", "Native GUI property is not settable.");
+            if (bool(Field.CIU, parameter) || bool(Field.TOUCHED, parameter))
+                throw failure("unsafe_state", "Native parameter skip or active touch state blocks the write.");
+            required(undo, "Ancestor undo manager");
+            if (bool(Field.UNDO_EXECUTING, undo) || bool(Field.UNDO_ACTIVE, undo) || bool(Field.UNDO_ICL, undo))
+                throw failure("unsafe_state", "Native undo manager is outside the bounded idle state.");
+            required(lock, "Device lock"); required(lockOwner, "Device lock owner");
+            if (lockOwner != current || lockOwner != defaultDt || lockContext != context)
+                throw failure("unsafe_state", "Native device lock owner differs from the current/default context.");
+            check.run();
+        }
         if (!serialize) return new Capture(null, identities);
         JsonObject result = new JsonObject();
         result.addProperty("scope", "same_document_callback_native_prerequisite_observations_not_write_permission_or_readiness");
@@ -119,7 +140,16 @@ final class GridParameterContext {
     }
     void guard(Capture before, Object device, Object graph, Object module, Object parameter,
             GridSnapshotReader.Kind kind, Runnable check) {
-        Capture after = capture(device, graph, module, parameter, kind, check, false);
+        Capture after = capture(device, graph, module, parameter, kind, check, false, false);
+        sameIdentities(before, after);
+    }
+    Capture requireWritable(GridSnapshotReader.ParameterBinding binding, Capture before, Runnable check) {
+        Capture current = capture(binding.device, binding.graph, binding.module, binding.parameter,
+                binding.kind, check, false, true);
+        if (before != null) sameIdentities(before, current);
+        return current;
+    }
+    private static void sameIdentities(Capture before, Capture after) {
         for (int i = 0; i < before.identities.length; i++)
             if (before.identities[i] != after.identities[i])
                 throw failure("stale_context", "Native parameter inspection context identity changed during capture.");

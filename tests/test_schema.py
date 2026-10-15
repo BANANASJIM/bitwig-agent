@@ -246,3 +246,50 @@ def test_grid_parameter_get_requires_every_identity_field(field):
 def test_grid_parameter_get_rejects_selection_aliases_writes_and_unknown_keys(extra):
     with pytest.raises(ValidationError):
         validate_call("grid.parameters.get", {**TARGET, "moduleId": TRACK, "parameterId": "", **extra})
+
+
+GRID_SET = {**TARGET, "moduleId": TRACK, "parameterId": "",
+            "expectedKind": "float", "expectedValue": 0.25, "value": 0.5}
+
+
+@pytest.mark.parametrize("kind,expected,value", [
+    ("boolean", False, True),
+    ("integer", -(2**31), 2**31 - 1),
+    ("enum", 17, -3),
+    ("float", 2**53 + 1, 2**53 + 2),
+    ("float", -0.0, 0),
+    ("float", 1.7976931348623157e308, 5e-324),
+])
+def test_grid_parameter_set_preserves_raw_types_without_normalizing(kind, expected, value):
+    args = {**GRID_SET, "expectedKind": kind, "expectedValue": expected, "value": value}
+    params, timeout = validate_call("grid.parameters.set", args)
+    assert params == args
+    assert type(params["expectedValue"]) is type(expected)
+    assert type(params["value"]) is type(value)
+
+
+@pytest.mark.parametrize("changes", [
+    {"expectedKind": "boolean", "expectedValue": False, "value": 1},
+    {"expectedKind": "boolean", "expectedValue": 0, "value": True},
+    {"expectedKind": "integer", "expectedValue": 0, "value": 1.0},
+    {"expectedKind": "integer", "expectedValue": False, "value": 1},
+    {"expectedKind": "integer", "expectedValue": 0, "value": 2**31},
+    {"expectedKind": "enum", "expectedValue": -(2**31) - 1, "value": 0},
+    {"expectedKind": "enum", "expectedValue": 0.0, "value": 1},
+    {"expectedValue": True}, {"value": False},
+    {"expectedValue": "0.25"}, {"value": None},
+    {"expectedValue": float("nan")}, {"value": float("inf")},
+    {"expectedValue": 10**400}, {"value": -(10**400)},
+    {"expectedKind": "Float"}, {"expectedKind": None},
+    {"contextToken": "not-a-grid-token"}, {"normalizedValue": 0.5},
+])
+def test_grid_parameter_set_rejects_kind_mismatch_nonfinite_and_coercion(changes):
+    with pytest.raises(ValidationError):
+        validate_call("grid.parameters.set", {**GRID_SET, **changes})
+
+
+def test_grid_parameter_set_requires_explicit_compare_and_set_value():
+    with pytest.raises(ValidationError):
+        validate_call("grid.parameters.set", {
+            key: value for key, value in GRID_SET.items() if key != "expectedValue"
+        })

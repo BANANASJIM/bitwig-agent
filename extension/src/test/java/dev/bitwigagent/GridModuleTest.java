@@ -20,6 +20,10 @@ public final class GridModuleTest {
         boundsTransportAndPreservesNulls();
         loadedSourceGateFailsClosed();
         parameterInspectionRejectsInvalidTargetsAndQueuedRaces();
+        writesRequireStrictObservedStoppedInputs();
+        queuedWritesRejectSafetyAndTargetTransitions();
+        nativeCallbacksNeverReadControllerSafetyGetters();
+        everyPostDispatchBoundaryKeepsUnknownOutcome();
         System.out.println("GridModuleTest: " + assertions + " assertions passed (simulated controller/document queues only)");
     }
     private static void validatesBeforeScheduling() {
@@ -112,9 +116,9 @@ public final class GridModuleTest {
         catch (RpcException error) { check(error.code.equals("grid_bounds_exceeded"), "oversize asks caller to reduce page instead of truncating"); }
     }
     private static void loadedSourceGateFailsClosed() throws Exception {
-        GridReadAdapter wrongVersion = new Bitwig613GridReadAdapter(new Object(), "6.1.4", () -> {});
+        GridAdapter wrongVersion = new Bitwig613GridAdapter(new Object(), "6.1.4", () -> {});
         check(!wrongVersion.capabilities().get("gatePassed").getAsBoolean(), "unsupported version fails before any native binding");
-        GridReadAdapter noSource = new Bitwig613GridReadAdapter(new Object(), "6.1.3", () -> {});
+        GridAdapter noSource = new Bitwig613GridAdapter(new Object(), "6.1.3", () -> {});
         check(!noSource.capabilities().get("gatePassed").getAsBoolean(), "missing loaded CodeSource cannot fall back to arbitrary installed JAR");
         check(!noSource.capabilities().getAsJsonObject("nativeOwningTrack").get("available").getAsBoolean()
                 && !noSource.capabilities().getAsJsonObject("structure").get("available").getAsBoolean(),
@@ -128,8 +132,8 @@ public final class GridModuleTest {
         Path file = Files.createTempFile("grid-hash-test-", ".bin");
         try {
             Files.writeString(file, "abc", StandardCharsets.UTF_8);
-            check(Bitwig613GridReadAdapter.hash(file, () -> {}).equals("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"), "hash reads bytes not filename or version text");
-            try { Bitwig613GridReadAdapter.hash(file, () -> { throw HostServices.failure("cancelled", "cancel hashing"); }); throw new AssertionError("hash ignored cancellation"); }
+            check(Bitwig613GridAdapter.hash(file, () -> {}).equals("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"), "hash reads bytes not filename or version text");
+            try { Bitwig613GridAdapter.hash(file, () -> { throw HostServices.failure("cancelled", "cancel hashing"); }); throw new AssertionError("hash ignored cancellation"); }
             catch (RpcException error) { check(error.code.equals("cancelled"), "gate hashing observes request cancellation"); }
         } finally { Files.deleteIfExists(file); }
     }
@@ -173,6 +177,114 @@ public final class GridModuleTest {
         f.host.tracks[0].child("channelId").emit(TransportMixFixture.B); f.host.next();
         TransportMixFixture.error(late, "stale_context");
     }
+
+    private static JsonObject writeTarget() {
+        JsonObject result = inspectionTarget();
+        result.addProperty("expectedKind", "boolean"); result.addProperty("expectedValue", true); result.addProperty("value", false);
+        return result;
+    }
+
+    private static void writesRequireStrictObservedStoppedInputs() {
+        Fixture f = new Fixture();
+        for (String field : List.of("expectedKind", "expectedValue", "value")) {
+            JsonObject p = writeTarget(); p.remove(field);
+            TransportMixFixture.error(f.host.submit(f.module, "grid.parameters.set", p), "invalid_params");
+        }
+        JsonObject invalid = writeTarget(); invalid.addProperty("value", 0);
+        TransportMixFixture.error(f.host.submit(f.module, "grid.parameters.set", invalid), "invalid_params");
+        check(f.host.tasks.isEmpty() && f.adapter.tasks.isEmpty(), "bad raw values are rejected before scheduling");
+        Fixture missing = new Fixture(true, false);
+        for (String key : List.of("isArrangerRecordEnabled", "isArrangerAutomationWriteEnabled", "isClipLauncherAutomationWriteEnabled"))
+            missing.host.transport.child(key).emit(false);
+        TransportMixFixture.error(missing.startWrite(), "not_ready");
+        check(missing.adapter.tasks.isEmpty(), "default false getter is not an observed stopped state");
+        for (String key : List.of("isPlaying", "isArrangerRecordEnabled", "isArrangerAutomationWriteEnabled", "isClipLauncherAutomationWriteEnabled")) {
+            Fixture unsafe = new Fixture(); unsafe.host.transport.child(key).emit(true);
+            TransportMixFixture.error(unsafe.startWrite(), "unsafe_state");
+            check(unsafe.adapter.writer.calls == 0 && unsafe.adapter.tasks.isEmpty(), "active observed transport mode blocks native scheduling");
+        }
+    }
+
+    private static void queuedWritesRejectSafetyAndTargetTransitions() {
+        Fixture controller = new Fixture();
+        HostOperation op = controller.host.submit(controller.module, "grid.parameters.set", writeTarget());
+        controller.host.transport.child("isPlaying").emit(true); controller.host.transport.child("isPlaying").emit(false);
+        controller.host.next();
+        check(TransportMixFixture.error(op, "stale_context").outcome.equals("not_applied")
+                && controller.adapter.tasks.isEmpty(), "safety ABA in initial controller queue is rejected");
+        for (String key : List.of("isPlaying", "isArrangerRecordEnabled", "isArrangerAutomationWriteEnabled", "isClipLauncherAutomationWriteEnabled")) {
+            Fixture queued = new Fixture(); op = queued.startWrite();
+            queued.host.transport.child(key).emit(true); queued.host.transport.child(key).emit(false);
+            queued.adapter.next();
+            check(TransportMixFixture.error(op, "stale_context").outcome.equals("not_applied")
+                    && queued.adapter.writer.calls == 0 && !op.dispatched, "safety ABA in document queue prevents invocation");
+        }
+        Fixture changed = new Fixture(); op = changed.startWrite();
+        changed.device.child("name").emit("Other"); changed.device.child("name").emit("Poly Grid"); changed.adapter.next();
+        check(TransportMixFixture.error(op, "stale_context").outcome.equals("not_applied")
+                && changed.adapter.writer.calls == 0, "target ABA before mutation is not-applied");
+        Fixture immediate = new Fixture(); op = immediate.startWrite();
+        immediate.adapter.beforeWrite = () -> immediate.host.transport.child("isPlaying").emit(true);
+        immediate.adapter.next();
+        check(TransportMixFixture.error(op, "stale_context").outcome.equals("not_applied")
+                && immediate.adapter.writer.calls == 0, "changed safety at writer entry is rechecked, not cached permission");
+        Fixture cancelled = new Fixture(); op = cancelled.startWrite(); op.result.cancel(false); cancelled.adapter.next();
+        check(cancelled.adapter.writer.calls == 0 && !op.dispatched, "cancelled native queue entry does not invoke setter");
+    }
+
+    private static void nativeCallbacksNeverReadControllerSafetyGetters() throws Exception {
+        Fixture f = new Fixture(); HostOperation op = f.startWrite();
+        for (String key : List.of("isPlaying", "isArrangerRecordEnabled", "isArrangerAutomationWriteEnabled", "isClipLauncherAutomationWriteEnabled"))
+            f.host.transport.child(key).custom = (name, args) -> {
+                if (name.equals("get") && !f.host.onHost) throw new AssertionError("Controller getter on document thread");
+                return null;
+            };
+        Thread document = new Thread(f.adapter::next); document.start(); document.join();
+        check(op.dispatched && !op.result.isDone() && f.adapter.writer.calls == 1, "native callback mutates but awaits controller delivery");
+        f.host.next();
+        check(op.result.join().getAsJsonObject("parameter").get("value").getAsBoolean() == false,
+                "published safety observations support document-thread mutation without Controller API getters");
+    }
+
+    private static void everyPostDispatchBoundaryKeepsUnknownOutcome() {
+        Fixture nativeFailure = new Fixture();
+        nativeFailure.adapter.writer.afterMutation = () -> { throw HostServices.failure("grid_unavailable", "native partial failure"); };
+        HostOperation op = nativeFailure.startWrite(); nativeFailure.adapter.next();
+        check(TransportMixFixture.error(op, "grid_unavailable").outcome.equals("unknown")
+                && nativeFailure.adapter.writer.calls == 1, "document callback normalizes partial native failures without retry");
+        Fixture linkage = new Fixture();
+        linkage.adapter.writer.afterMutation = () -> { throw new LinkageError("late native linkage failure"); };
+        op = linkage.startWrite(); linkage.adapter.next();
+        check(TransportMixFixture.error(op, "grid_unavailable").outcome.equals("unknown")
+                && linkage.adapter.writer.calls == 1, "native Error completes uncertain result instead of escaping the callback");
+        Fixture serialization = new Fixture();
+        serialization.adapter.afterWrite = () -> serialization.adapter.last.addProperty("oversized", "x".repeat(GridModule.MAX_RESPONSE_CHARS));
+        op = serialization.startWrite(); serialization.adapter.next();
+        check(TransportMixFixture.error(op, "grid_bounds_exceeded").outcome.equals("unknown"),
+                "serialization failure after mutation cannot become not-applied");
+        Fixture target = new Fixture(); op = target.startWrite(); target.adapter.next();
+        target.device.child("position").emit(1); target.host.next();
+        check(TransportMixFixture.error(op, "stale_context").outcome.equals("unknown"), "late public target failure remains unknown");
+        Fixture safety = new Fixture(); op = safety.startWrite(); safety.adapter.next();
+        safety.host.transport.child("isPlaying").emit(true); safety.host.transport.child("isPlaying").emit(false); safety.host.next();
+        check(TransportMixFixture.error(op, "stale_context").outcome.equals("unknown"), "post-mutation safety ABA cannot erase dispatched state");
+        Fixture closed = new Fixture(); op = closed.startWrite();
+        closed.adapter.writer.afterMutation = closed.host.services::close;
+        closed.adapter.next();
+        check(TransportMixFixture.error(op, "unavailable").outcome.equals("unknown"), "extension close during invocation preserves unknown");
+        Fixture late = new Fixture(); op = late.startWrite(); late.adapter.next();
+        op.result.cancel(false); late.host.next();
+        check(op.result.isCancelled() && op.dispatched && late.adapter.writer.calls == 1, "late cancellation does not claim native rollback");
+        Fixture noop = new Fixture(); JsonObject p = writeTarget(); p.addProperty("value", true);
+        op = noop.host.submit(noop.module, "grid.parameters.set", p); noop.host.next(); noop.adapter.next();
+        noop.device.child("position").emit(1); noop.host.next();
+        check(TransportMixFixture.error(op, "stale_context").outcome.equals("not_applied")
+                && !op.dispatched && noop.adapter.writer.calls == 0, "late error after no-op does not invent a dispatched mutation");
+        HostOperation expired = new HostOperation(0); expired.dispatched = true;
+        try { noop.host.services.check(expired); throw new AssertionError("expected deadline failure"); }
+        catch (RpcException error) { expired.fail(error); }
+        check(TransportMixFixture.error(expired, "deadline_exceeded").outcome.equals("unknown"), "deadline after dispatch preserves uncertainty");
+    }
     private static JsonObject inspectionTarget() {
         JsonObject result = target(); result.addProperty("moduleId", "00000000-0000-0001-0000-000000000001");
         result.addProperty("parameterId", "EXACT_ID"); return result;
@@ -183,18 +295,24 @@ public final class GridModuleTest {
     }
     private static void check(boolean condition, String label) { assertions++; if (!condition) throw new AssertionError(label); }
     private static final class Fixture {
-        final TransportMixFixture host = new TransportMixFixture();
-        final TransportMixFixture.Node device = host.tracks[0].child("createDeviceBank").item(0);
+        final TransportMixFixture host;
+        final TransportMixFixture.Node device;
         final FakeAdapter adapter = new FakeAdapter(); final GridModule module;
-        Fixture() { this(true); }
-        Fixture(boolean observed) {
+        Fixture() { this(true, true); }
+        Fixture(boolean observed) { this(observed, true); }
+        Fixture(boolean observed, boolean safety) {
+            host = new TransportMixFixture(safety);
+            device = host.tracks[0].child("createDeviceBank").item(0);
             device.child("exists").data = true; device.child("name").data = "Poly Grid"; device.child("position").data = 0;
             device.child("name").initial = observed; module = new GridModule(host.services, adapter);
         }
         HostOperation start(JsonObject p) { HostOperation op = host.submit(module, "grid.get", p); host.next(); return op; }
+        HostOperation startWrite() { HostOperation op = host.submit(module, "grid.parameters.set", writeTarget()); host.next(); return op; }
     }
-    private static final class FakeAdapter implements GridReadAdapter {
+    private static final class FakeAdapter implements GridAdapter {
         final Deque<Runnable> tasks = new ArrayDeque<>(); int reads; boolean fail; JsonObject last;
+        final GridSnapshotReaderTest.WriterFixture writer = new GridSnapshotReaderTest.WriterFixture();
+        Runnable beforeWrite = () -> {}, afterWrite = () -> {};
         void next() { tasks.removeFirst().run(); }
         @Override public void execute(Runnable task) { tasks.add(task); }
         @Override public JsonObject capabilities() { JsonObject result = new JsonObject(); result.addProperty("available", true); return result; }
@@ -208,6 +326,13 @@ public final class GridModuleTest {
         }
         @Override public JsonObject parameter(Object proxy, UUID expectedTrackId, UUID moduleId, String parameterId, Runnable check) {
             check.run(); reads++; return HostServices.observed();
+        }
+        @Override public JsonObject setParameter(Object proxy, UUID track, UUID module, String parameter,
+                GridParameterWriter.Request request, Runnable check, Runnable dispatch) {
+            beforeWrite.run();
+            last = writer.set(request, check, dispatch);
+            afterWrite.run();
+            return last;
         }
         private JsonObject result(int offset, int limit, boolean parameters) {
             last = new JsonObject(); last.addProperty("offset", offset); last.addProperty("limit", limit); last.addProperty("parameters", parameters); return last;

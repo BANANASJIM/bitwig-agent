@@ -3,17 +3,17 @@ package dev.bitwigagent;
 import java.lang.reflect.Method;
 import java.util.EnumMap;
 import static dev.bitwigagent.GridParameterContext.Field.*;
-import static dev.bitwigagent.Bitwig613GridReadAdapter.invoke;
+import static dev.bitwigagent.Bitwig613GridAdapter.invoke;
 import static dev.bitwigagent.HostServices.failure;
 
 /** Additional read-only 6.1.3 descriptors, gated separately from ordinary graph serialization. */
 final class Bitwig613GridParameterContext implements GridParameterContext.Access {
     private static final String R = "com.bitwig.ramona.core.";
     private final EnumMap<GridParameterContext.Field, Method> readers = new EnumMap<>(GridParameterContext.Field.class);
-    private final Bitwig613GridReadAdapter bindings;
+    private final Bitwig613GridAdapter bindings;
     private final Class<?> project, defaultContext;
 
-    Bitwig613GridParameterContext(Bitwig613GridReadAdapter bindings) throws ReflectiveOperationException {
+    Bitwig613GridParameterContext(Bitwig613GridAdapter bindings) throws ReflectiveOperationException {
         this.bindings = bindings;
         Class<?> model = bindings.type(R + "fJC"), context = bindings.type(R + "HLm");
         Class<?> dt = bindings.type(R + "Dt"), undo = bindings.type("dfW"), lock = bindings.type(R + "IoW");

@@ -57,7 +57,7 @@ final class TransportMixFixture {
         bank.custom = (name, args) -> name.equals("getItemAt") ? tracks[(Integer) args[0]].proxy(Track.class) : null;
         for (String key : List.of("isPlaying", "isMetronomeEnabled", "isArrangerLoopEnabled", "isArrangerRecordEnabled",
                 "isArrangerAutomationWriteEnabled", "isClipLauncherAutomationWriteEnabled")) transport.child(key).data = false;
-        for (String key : List.of("isArrangerRecordEnabled", "isArrangerAutomationWriteEnabled", "isClipLauncherAutomationWriteEnabled"))
+        for (String key : List.of("isPlaying", "isArrangerRecordEnabled", "isArrangerAutomationWriteEnabled", "isClipLauncherAutomationWriteEnabled"))
             transport.child(key).initial = observeSafetyInitially;
         transport.child("tempo").child("value").data = 120.0;
         transport.child("playPosition").data = 0.0;

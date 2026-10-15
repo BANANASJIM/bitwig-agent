@@ -8,7 +8,7 @@ import re
 from pathlib import PurePosixPath
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 Nonempty = Annotated[str, Field(min_length=1, max_length=4096)]
 TrackId = Annotated[str, Field(pattern=r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")]
@@ -75,6 +75,58 @@ class GridGetArgs(ParameterArgs):
 class GridParameterGetArgs(ParameterArgs):
     moduleId: TrackId = Field(description="Current module instanceId from grid.get; reacquire after reopening the project.")
     parameterId: str = Field(max_length=1024, description="Exact native parameter ID from grid.get, not a name; empty is valid, at most 1024 UTF-16 code units.")
+
+
+class GridParameterSetArgs(GridParameterGetArgs):
+    model_config = ConfigDict(json_schema_extra={
+        "oneOf": [
+            {"properties": {
+                "expectedKind": {"enum": kinds},
+                "expectedValue": value_schema,
+                "value": value_schema,
+            }}
+            for kinds, value_schema in (
+                (["boolean"], {"type": "boolean"}),
+                (["integer", "enum"], {"type": "integer", "minimum": -(2**31), "maximum": 2**31 - 1}),
+                (["float"], {"type": "number"}),
+            )
+        ],
+    })
+
+    expectedKind: Literal["float", "integer", "enum", "boolean"] = Field(
+        description="Fresh typed kind from grid.parameters.get; checked before any already-matching no-op.")
+    expectedValue: bool | int | float = Field(
+        description="Exact current native raw value from a fresh grid.parameters.get, not normalized or display units. Must match expectedKind; no tolerance or coercion.")
+    value: bool | int | float = Field(
+        description="Requested native raw value: boolean JSON bool; integer/enum signed int32 JSON integer token; float finite JSON number. Enum uses an actual listed option value, never an ordinal. Native range/representability are checked before dispatch.")
+
+    @field_validator("expectedValue", "value", mode="before")
+    @classmethod
+    def validate_raw_number(cls, value):
+        if type(value) not in (bool, int, float):
+            raise ValueError("raw value must be a JSON boolean or number, never null or a string")
+        if type(value) is not bool:
+            try:
+                finite = math.isfinite(value)
+            except OverflowError:
+                finite = False
+            if not finite:
+                raise ValueError("raw numeric value must be finite and representable as a native double")
+        return value
+
+    @model_validator(mode="after")
+    def validate_raw_kind(self):
+        for field in ("expectedValue", "value"):
+            value = getattr(self, field)
+            if self.expectedKind == "boolean":
+                if type(value) is not bool:
+                    raise ValueError(f"{field} must be a JSON boolean for boolean kind")
+            elif self.expectedKind in ("integer", "enum"):
+                if type(value) is not int or not -(2**31) <= value < 2**31:
+                    raise ValueError(f"{field} must be a signed int32 JSON integer for {self.expectedKind} kind")
+            elif type(value) not in (int, float):
+                raise ValueError(f"{field} must be a finite JSON number for float kind")
+        return self
 
 
 class SetArgs(ParameterArgs):

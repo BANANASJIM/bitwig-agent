@@ -24,14 +24,19 @@ async def test_real_stdio_preserves_partial_domain_results(mcp_session, host):
     assert host.connections == len(TOOLS)
 
 
-async def test_host_unknown_error_survives_mcp(mcp_session, host):
+async def test_grid_host_unknown_error_survives_mcp_without_retry(mcp_session, host):
     error = {"code": "deadline_exceeded", "message": "Observe before another write", "outcome": "unknown", "details": {"dispatched": True}}
     host.reply = lambda request: {"id": request["id"], "error": error}
-    response = await mcp_session.call_tool("parameters.set", {**SET, "timeoutMs": 100})
+    response = await mcp_session.call_tool("grid.parameters.set", {
+        **TARGET, "moduleId": TRACK, "parameterId": "", "expectedKind": "boolean",
+        "expectedValue": False, "value": True, "timeoutMs": 100})
     assert response.isError is True
     assert response.structuredContent == {"error": error}
     assert host.requests[0]["timeoutMs"] == 100
     assert host.connections == 1
+    assert len(host.requests) == 1
+    assert host.requests[0]["params"]["expectedValue"] is False
+    assert host.requests[0]["params"]["value"] is True
 
 
 @pytest.mark.parametrize("reply", [
@@ -129,6 +134,16 @@ async def test_invalid_domain_edits_are_not_dispatched(mcp_session, host, method
 async def test_grid_parameter_utf16_limit_is_checked_beyond_json_schema(mcp_session, host):
     response = await mcp_session.call_tool("grid.parameters.get", {
         **TARGET, "moduleId": TRACK, "parameterId": "𝄞" * 513})
+    assert response.isError
+    assert response.structuredContent["error"]["code"] == "invalid_params"
+    assert response.structuredContent["error"]["outcome"] == "not_dispatched"
+    assert host.connections == 0
+
+
+async def test_grid_mcp_rejects_integer_float_token_despite_json_schema_integer_semantics(mcp_session, host):
+    response = await mcp_session.call_tool("grid.parameters.set", {
+        **TARGET, "moduleId": TRACK, "parameterId": "", "expectedKind": "integer",
+        "expectedValue": 0, "value": 1.0})
     assert response.isError
     assert response.structuredContent["error"]["code"] == "invalid_params"
     assert response.structuredContent["error"]["outcome"] == "not_dispatched"
