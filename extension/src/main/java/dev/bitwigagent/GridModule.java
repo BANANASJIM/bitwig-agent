@@ -5,12 +5,13 @@ import com.bitwig.extension.controller.api.*;
 import com.google.gson.*;
 import java.io.*;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 import static dev.bitwigagent.HostServices.failure;
 
 /** Strict RPC boundary and observed public-device targeting; native reads live in a separate adapter. */
 final class GridModule implements HostModule {
-    static final Set<String> METHODS = Set.of("grid.capabilities", "grid.catalog", "grid.get");
+    static final Set<String> METHODS = Set.of("grid.capabilities", "grid.catalog", "grid.get", "grid.parameters.get");
     static final int MAX_RESPONSE_CHARS = 240000;
     private static final Gson JSON = new GsonBuilder().serializeNulls().create();
     private final HostServices s;
@@ -59,6 +60,15 @@ final class GridModule implements HostModule {
                 if (p.has("offset")) Params.integer(p, "offset", 0, 100000);
                 if (p.has("limit")) Params.integer(p, "limit", 1, 256);
                 return;
+            case "grid.parameters.get":
+                Params.fields(p, Set.of("trackId", "deviceIndex", "expectedDeviceName", "moduleId", "parameterId"), Set.of());
+                canonicalUuid(p, "trackId"); canonicalUuid(p, "moduleId");
+                Params.integer(p, "deviceIndex", 0, HostServices.DEVICES - 1);
+                Params.string(p, "expectedDeviceName");
+                if (!p.get("parameterId").isJsonPrimitive() || !p.get("parameterId").getAsJsonPrimitive().isString()
+                        || p.get("parameterId").getAsString().length() > GridSnapshotReader.MAX_TEXT)
+                    throw failure("invalid_params", "parameterId must be a string of at most 1024 UTF-16 units.");
+                return;
             case "grid.get":
                 Params.fields(p, Set.of("trackId", "deviceIndex", "expectedDeviceName"), Set.of("moduleOffset", "moduleLimit", "includeParameters"));
                 String id = Params.string(p, "trackId");
@@ -76,7 +86,10 @@ final class GridModule implements HostModule {
         s.check(op);
         if (adapter == null) adapter = new Bitwig613GridReadAdapter(s.host, s.host.getHostVersion(), () -> s.check(op));
         if (method.equals("grid.capabilities")) { s.check(op); op.result.complete(adapter.capabilities()); return; }
-        final Target target = method.equals("grid.get") ? target(p) : null;
+        final boolean inspection = method.equals("grid.parameters.get");
+        final Target target = method.equals("grid.get") || inspection ? target(p) : null;
+        final UUID moduleId = inspection ? UUID.fromString(p.get("moduleId").getAsString()) : null;
+        final String parameterId = inspection ? p.get("parameterId").getAsString() : null;
         final int offset = integer(p, target == null ? "offset" : "moduleOffset", 0);
         final int limit = integer(p, target == null ? "limit" : "moduleLimit", 64);
         final boolean parameters = !p.has("includeParameters") || p.get("includeParameters").getAsBoolean();
@@ -91,7 +104,8 @@ final class GridModule implements HostModule {
                 };
                 check.run();
                 JsonObject value = target == null ? adapter.catalog(query, offset, limit, check)
-                        : adapter.snapshot(target.source.device, offset, limit, parameters, check);
+                        : inspection ? adapter.parameter(target.source.device, target.uuid, moduleId, parameterId, check)
+                        : adapter.snapshot(target.source.device, target.uuid, offset, limit, parameters, check);
                 check.run();
                 // No native model, stream, or mutable JSON crosses the document-to-controller boundary.
                 final String serialized = serialize(value);
@@ -103,6 +117,8 @@ final class GridModule implements HostModule {
                         JsonObject identity = new JsonObject(); identity.addProperty("trackId", target.id);
                         identity.addProperty("deviceIndex", target.index); identity.addProperty("expectedDeviceName", target.name);
                         identity.addProperty("identityScope", "observed_bank_proxy_not_persistent_device_identity");
+                        identity.addProperty("nativeOwningTrack", "corroborated_before_and_after_capture");
+                        identity.addProperty("devicePosition", "public_observed_only");
                         result.add("target", identity); result.addProperty("scope", "top_level_device_bank");
                     }
                     op.result.complete(result);
@@ -149,6 +165,10 @@ final class GridModule implements HostModule {
         try { JSON.toJson(value, bounded); return buffer.toString(); }
         catch (JsonIOException error) { throw failure("grid_bounds_exceeded", "Grid response exceeds bounded transport size; reduce moduleLimit or exclude parameters."); }
     }
+    private static void canonicalUuid(JsonObject p, String key) {
+        if (!Params.string(p, key).matches("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"))
+            throw failure("invalid_params", key + " must be a canonical UUID.");
+    }
     private static int integer(JsonObject p, String key, int fallback) { return p.has(key) ? p.get(key).getAsInt() : fallback; }
     private static final class Source {
         final Device device; final AtomicLong epoch = new AtomicLong();
@@ -157,8 +177,10 @@ final class GridModule implements HostModule {
     }
     private static final class Target {
         final String id, name; final int slot, index; final Source source; final long trackEpoch, deviceEpoch;
+        final UUID uuid;
         Target(String id, int slot, int index, String name, Source source, long trackEpoch, long deviceEpoch) {
             this.id = id; this.slot = slot; this.index = index; this.name = name; this.source = source;
+            this.uuid = UUID.fromString(id);
             this.trackEpoch = trackEpoch; this.deviceEpoch = deviceEpoch;
         }
     }

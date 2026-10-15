@@ -204,3 +204,45 @@ def test_grid_accepts_explicit_false_and_unicode_window_boundaries():
         params, timeout = validate_call("grid.get", args)
         assert params == {key: value for key, value in args.items() if key != "timeoutMs"}
         assert timeout == 10000
+
+
+@pytest.mark.parametrize("parameter_id,module_id", [
+    ("", TRACK.upper()), ("x" * 1024, TRACK), ("𝄞" * 512, TRACK), (" 01=音楽 ", TRACK),
+])
+def test_grid_parameter_get_preserves_exact_ids_and_utf16_boundary(parameter_id, module_id):
+    args = {**TARGET, "moduleId": module_id, "parameterId": parameter_id, "timeoutMs": 10000}
+    params, timeout = validate_call("grid.parameters.get", args)
+    assert params == {key: value for key, value in args.items() if key != "timeoutMs"}
+    assert timeout == 10000
+
+
+@pytest.mark.parametrize("field,values", [
+    ("moduleId", ["", "Union", "1-1-1-1-1", TRACK.replace("-", ""), "{" + TRACK + "}",
+                  TRACK + "\n", None, True, 1, [], {}]),
+    ("parameterId", [None, True, 1, 1.0, [], {}, "x" * 1025, "𝄞" * 513, "x" * 1023 + "𝄞"]),
+    ("trackId", ["selected", "", None, True, 1]),
+    ("deviceIndex", [-1, 16, 0.0, "0", True, None]),
+    ("expectedDeviceName", ["", None, 1, "x" * 4097]),
+    ("timeoutMs", [99, 10001, True, None, "5000"]),
+])
+def test_grid_parameter_get_rejects_invalid_identity_and_types(field, values):
+    args = {**TARGET, "moduleId": TRACK, "parameterId": ""}
+    for value in values:
+        with pytest.raises(ValidationError):
+            validate_call("grid.parameters.get", {**args, field: value})
+
+
+@pytest.mark.parametrize("field", ["trackId", "deviceIndex", "expectedDeviceName", "moduleId", "parameterId"])
+def test_grid_parameter_get_requires_every_identity_field(field):
+    args = {**TARGET, "moduleId": TRACK, "parameterId": ""}
+    del args[field]
+    with pytest.raises(ValidationError):
+        validate_call("grid.parameters.get", args)
+
+
+@pytest.mark.parametrize("extra", [
+    {"selected": True}, {"value": 0.5},
+])
+def test_grid_parameter_get_rejects_selection_aliases_writes_and_unknown_keys(extra):
+    with pytest.raises(ValidationError):
+        validate_call("grid.parameters.get", {**TARGET, "moduleId": TRACK, "parameterId": "", **extra})

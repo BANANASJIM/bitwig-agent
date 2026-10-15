@@ -124,3 +124,12 @@ async def test_invalid_domain_edits_are_not_dispatched(mcp_session, host, method
     assert response.structuredContent["error"]["code"] == "invalid_params"
     assert response.structuredContent["error"]["outcome"] == "not_dispatched"
     assert host.connections == 0
+
+
+async def test_grid_parameter_utf16_limit_is_checked_beyond_json_schema(mcp_session, host):
+    response = await mcp_session.call_tool("grid.parameters.get", {
+        **TARGET, "moduleId": TRACK, "parameterId": "𝄞" * 513})
+    assert response.isError
+    assert response.structuredContent["error"]["code"] == "invalid_params"
+    assert response.structuredContent["error"]["outcome"] == "not_dispatched"
+    assert host.connections == 0

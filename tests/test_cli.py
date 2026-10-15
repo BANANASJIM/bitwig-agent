@@ -99,6 +99,21 @@ async def test_cli_lost_response_is_unknown_not_replayed(host, monkeypatch):
     assert host.connections == 1
 
 
+async def test_empty_grid_parameter_id_is_not_omitted_or_retargeted(host, monkeypatch):
+    monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
+    args = {"trackId": TRACK, "deviceIndex": 15, "expectedDeviceName": "Poly Grid",
+            "moduleId": TRACK, "parameterId": ""}
+    arguments = [f"{key}={value}" for key, value in args.items()]
+    error = {"code": "stale_context", "message": "Module is no longer present", "outcome": "not_applied"}
+    host.reply = lambda request: {"id": request["id"], "error": error}
+    payload, code = await execute(["grid.parameters.get", *arguments, "--timeout-ms", "250"])
+    assert code == 1
+    assert payload == {"error": error}
+    assert host.requests[0]["params"] == args
+    assert host.requests[0]["timeoutMs"] == 250
+    assert host.connections == 1
+
+
 def test_main_prints_one_exact_json_envelope(capsys, monkeypatch):
     monkeypatch.setenv("BITWIG_AGENT_PORT", "bad")
     assert main(["status"]) == 2

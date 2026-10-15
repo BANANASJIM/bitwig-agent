@@ -19,6 +19,7 @@ public final class GridModuleTest {
         noMutableResultsCrossThreadBoundary();
         boundsTransportAndPreservesNulls();
         loadedSourceGateFailsClosed();
+        parameterInspectionRejectsInvalidTargetsAndQueuedRaces();
         System.out.println("GridModuleTest: " + assertions + " assertions passed (simulated controller/document queues only)");
     }
     private static void validatesBeforeScheduling() {
@@ -59,9 +60,7 @@ public final class GridModuleTest {
         Fixture f = new Fixture(); HostOperation op = f.start(target());
         check(!op.result.isDone() && f.adapter.reads == 0, "controller scheduling is not native read completion");
         f.adapter.next(); check(!op.result.isDone() && f.adapter.reads == 1, "document read waits for controller target recheck");
-        f.host.next(); JsonObject result = op.result.join();
-        check(result.getAsJsonObject("target").get("trackId").getAsString().equals(TransportMixFixture.A), "explicit target metadata returned");
-        check(result.getAsJsonObject("target").get("identityScope").getAsString().equals("observed_bank_proxy_not_persistent_device_identity"), "cached target identity caveat explicit");
+        f.host.next(); op.result.join();
         check(!op.dispatched, "native read never marks a host mutation dispatched");
     }
     private static void detectsRebindEvenWhenNameReturns() {
@@ -117,6 +116,13 @@ public final class GridModuleTest {
         check(!wrongVersion.capabilities().get("gatePassed").getAsBoolean(), "unsupported version fails before any native binding");
         GridReadAdapter noSource = new Bitwig613GridReadAdapter(new Object(), "6.1.3", () -> {});
         check(!noSource.capabilities().get("gatePassed").getAsBoolean(), "missing loaded CodeSource cannot fall back to arbitrary installed JAR");
+        check(!noSource.capabilities().getAsJsonObject("nativeOwningTrack").get("available").getAsBoolean()
+                && !noSource.capabilities().getAsJsonObject("structure").get("available").getAsBoolean(),
+                "unverified identity bindings cannot advertise usable native ownership or structure");
+        try {
+            noSource.snapshot(new Object(), UUID.fromString(TransportMixFixture.A), 0, 64, true, () -> {});
+            throw new AssertionError("snapshot escaped identity gate");
+        } catch (RpcException error) { check(error.code.equals("grid_unavailable"), "snapshot requires exact verified identity gate"); }
         try { noSource.execute(() -> { throw new AssertionError("read escaped gate"); }); throw new AssertionError("expected gate failure"); }
         catch (RpcException error) { check(error.code.equals("grid_unavailable"), "failed gate returns actionable unavailable"); }
         Path file = Files.createTempFile("grid-hash-test-", ".bin");
@@ -126,6 +132,50 @@ public final class GridModuleTest {
             try { Bitwig613GridReadAdapter.hash(file, () -> { throw HostServices.failure("cancelled", "cancel hashing"); }); throw new AssertionError("hash ignored cancellation"); }
             catch (RpcException error) { check(error.code.equals("cancelled"), "gate hashing observes request cancellation"); }
         } finally { Files.deleteIfExists(file); }
+    }
+    private static void parameterInspectionRejectsInvalidTargetsAndQueuedRaces() {
+        Fixture f = new Fixture();
+        for (String field : List.of("trackId", "deviceIndex", "expectedDeviceName", "moduleId", "parameterId")) {
+            JsonObject p = inspectionTarget(); p.remove(field);
+            TransportMixFixture.error(f.host.submit(f.module, "grid.parameters.get", p), "invalid_params");
+            p = inspectionTarget(); p.add(field, JsonNull.INSTANCE);
+            TransportMixFixture.error(f.host.submit(f.module, "grid.parameters.get", p), "invalid_params");
+        }
+        for (JsonElement invalid : List.of(new JsonPrimitive(3), new JsonPrimitive(true),
+                new JsonPrimitive("x".repeat(1025)), new JsonArray())) {
+            JsonObject p = inspectionTarget(); p.add("parameterId", invalid);
+            TransportMixFixture.error(f.host.submit(f.module, "grid.parameters.get", p), "invalid_params");
+        }
+        for (String id : List.of("1-1-1-1-1", "00000000-0000-0000-0000-00000000000g", "")) {
+            JsonObject p = inspectionTarget(); p.addProperty("moduleId", id);
+            TransportMixFixture.error(f.host.submit(f.module, "grid.parameters.get", p), "invalid_params");
+        }
+        JsonObject p = inspectionTarget(); p.addProperty("includeParameters", false);
+        TransportMixFixture.error(f.host.submit(f.module, "grid.parameters.get", p), "invalid_params");
+        p = inspectionTarget(); p.addProperty("deviceIndex", true);
+        TransportMixFixture.error(f.host.submit(f.module, "grid.parameters.get", p), "invalid_params");
+        String supplementary = new String(Character.toChars(0x1D11E));
+        p = inspectionTarget(); p.addProperty("parameterId", supplementary.repeat(513));
+        TransportMixFixture.error(f.host.submit(f.module, "grid.parameters.get", p), "invalid_params");
+        p.addProperty("parameterId", supplementary.repeat(512));
+        GridModule.validateParams("grid.parameters.get", p);
+        p.addProperty("parameterId", ""); p.addProperty("moduleId", "ABCDEFAB-ABCD-ABCD-ABCD-ABCDEFABCDEF");
+        GridModule.validateParams("grid.parameters.get", p);
+        check(f.host.tasks.isEmpty() && f.adapter.tasks.isEmpty(), "invalid inspection requests never enter either queue");
+        HostOperation cancelled = f.host.submit(f.module, "grid.parameters.get", inspectionTarget()); f.host.next();
+        cancelled.result.cancel(false); f.adapter.next();
+        check(f.adapter.reads == 0, "cancelled inspection does not read native context");
+        HostOperation changed = f.host.submit(f.module, "grid.parameters.get", inspectionTarget()); f.host.next();
+        f.device.child("name").emit("Other"); f.device.child("name").emit("Poly Grid"); f.adapter.next();
+        TransportMixFixture.error(changed, "stale_context");
+        check(f.adapter.reads == 0, "inspection rejects public target epoch changes before context capture");
+        HostOperation late = f.host.submit(f.module, "grid.parameters.get", inspectionTarget()); f.host.next(); f.adapter.next();
+        f.host.tracks[0].child("channelId").emit(TransportMixFixture.B); f.host.next();
+        TransportMixFixture.error(late, "stale_context");
+    }
+    private static JsonObject inspectionTarget() {
+        JsonObject result = target(); result.addProperty("moduleId", "00000000-0000-0001-0000-000000000001");
+        result.addProperty("parameterId", "EXACT_ID"); return result;
     }
     private static JsonObject target() {
         JsonObject result = TransportMixFixture.target(TransportMixFixture.A);
@@ -148,10 +198,18 @@ public final class GridModuleTest {
         void next() { tasks.removeFirst().run(); }
         @Override public void execute(Runnable task) { tasks.add(task); }
         @Override public JsonObject capabilities() { JsonObject result = new JsonObject(); result.addProperty("available", true); return result; }
-        @Override public JsonObject catalog(String query, int offset, int limit, Runnable check) { return snapshot(null, offset, limit, false, check); }
-        @Override public JsonObject snapshot(Object proxy, int offset, int limit, boolean parameters, Runnable check) {
+        @Override public JsonObject catalog(String query, int offset, int limit, Runnable check) {
+            check.run(); reads++; return result(offset, limit, false);
+        }
+        @Override public JsonObject snapshot(Object proxy, UUID expectedTrackId, int offset, int limit, boolean parameters, Runnable check) {
             check.run(); reads++;
             if (fail) throw HostServices.failure("not_grid", "not a Grid device");
+            return result(offset, limit, parameters);
+        }
+        @Override public JsonObject parameter(Object proxy, UUID expectedTrackId, UUID moduleId, String parameterId, Runnable check) {
+            check.run(); reads++; return HostServices.observed();
+        }
+        private JsonObject result(int offset, int limit, boolean parameters) {
             last = new JsonObject(); last.addProperty("offset", offset); last.addProperty("limit", limit); last.addProperty("parameters", parameters); return last;
         }
     }

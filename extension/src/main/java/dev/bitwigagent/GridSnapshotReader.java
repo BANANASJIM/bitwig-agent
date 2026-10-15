@@ -9,10 +9,11 @@ import static dev.bitwigagent.HostServices.failure;
 final class GridSnapshotReader {
     static final int MAX_MODULES = 4096, MAX_CHILDREN = 256, MAX_OPTIONS = 256, MAX_CATALOG = 16384;
     static final int MAX_ITEMS = 16384, MAX_TEXT = 1024;
-    enum Kind { DEVICE, MODULE, INPUT, OUTPUT, FLOAT, BOOLEAN, INTEGER, ENUM, ENTRY, OPTION }
+    enum Kind { DEVICE, TRACK, ALIASED_TRACK, CHANNEL_ALIAS, MODULE, INPUT, OUTPUT, PARAMETER, FLOAT, BOOLEAN, INTEGER, ENUM, ENTRY, OPTION }
     private static final Kind[] PARAMETER_KINDS = {Kind.FLOAT, Kind.BOOLEAN, Kind.INTEGER, Kind.ENUM};
     enum Field {
         TARGET, GRAPH, EXECUTOR, MODULES, INSTANCE_ID, LOCAL_KEY, X, Y, DESCRIPTOR, TYPE_ID,
+        OWNER_TRACK, TRACK_ALIAS, TRACK_UUID, ALIAS_UUID,
         INPUTS, OUTPUTS, CHILDREN, MODULE_GRAPH, OWNER_MODULE, INPUT_SOURCE, INPUT_KEY, OUTPUT_KEY,
         PATH, FLOAT_VALUE, FLOAT_DEFINITION, FLOAT_MIN, FLOAT_MAX, BOOLEAN_VALUE,
         INTEGER_VALUE, INTEGER_DEFINITION, INTEGER_MIN, INTEGER_MAX, ENUM_VALUE, ENUM_DEFINITION,
@@ -35,7 +36,7 @@ final class GridSnapshotReader {
         Object read(Field field, Object object);
         boolean is(Kind kind, Object object);
         void documentThread();
-        void owned(Object object);
+        void requireModelThread(Object object);
         boolean parametersAvailable();
         boolean displayAvailable();
         boolean metadataAvailable(Metadata metadata);
@@ -73,15 +74,10 @@ final class GridSnapshotReader {
         check.run(); return result;
     }
 
-    JsonObject snapshot(Object proxy, int offset, int limit, boolean parameters, Runnable check) {
+    JsonObject snapshot(Object proxy, UUID expectedTrackId, int offset, int limit, boolean parameters, Runnable check) {
         a.documentThread(); check.run();
-        Object target = a.read(Field.TARGET, proxy);
-        if (target == null) throw failure("missing_target", "Explicit device proxy has no native target; refresh devices.get.");
-        if (!a.is(Kind.DEVICE, target)) throw failure("not_grid", "Explicit native device has no mapped Grid graph accessor.");
-        a.owned(target);
-        Object graph = a.read(Field.GRAPH, target);
-        if (graph == null) throw failure("not_grid", "Explicit device does not contain a Grid graph.");
-        a.owned(graph);
+        NativeTarget binding = target(proxy, expectedTrackId);
+        Object graph = binding.graph;
         State state = new State(check);
         List<Object> all = collect(Field.MODULES, graph, MAX_MODULES, state);
         IdentityHashMap<Object, String> ids = new IdentityHashMap<>();
@@ -89,7 +85,7 @@ final class GridSnapshotReader {
         for (Object module : all) {
             state.check();
             if (!a.is(Kind.MODULE, module)) { state.unsupported("unknown_graph_child"); continue; }
-            a.owned(module);
+            a.requireModelThread(module);
             if (a.read(Field.MODULE_GRAPH, module) != graph) throw failure("stale_context", "Grid module belongs to a different graph.");
             String id = uuid(a.read(Field.INSTANCE_ID, module));
             if (!seenIds.add(id)) throw failure("grid_unavailable", "Duplicate native module UUID; cannot identify cable endpoints safely.");
@@ -134,15 +130,14 @@ final class GridSnapshotReader {
         if (parameters && !a.parametersAvailable()) state.unsupported("typed_parameter_binding_unavailable");
         if (!parameters) state.unsupported("parameters_not_requested");
         check.run();
-        if (a.read(Field.TARGET, proxy) != target || a.read(Field.GRAPH, target) != graph)
-            throw failure("stale_context", "Explicit native device or graph changed during the read.");
-        a.owned(target); a.owned(graph);
+        guardTarget(binding, proxy, expectedTrackId);
         JsonObject result = HostServices.observed();
         result.add("modules", modules); result.add("connections", connections);
         result.add("window", window(offset, limit, all.size()));
         result.addProperty("complete", state.unsupported.isEmpty());
         JsonObject coverage = new JsonObject();
         coverage.addProperty("structure", "mapped_modules_and_ports");
+        coverage.addProperty("nativeOwningTrack", "device_ancestor_channel_uuid_checked_before_and_after_capture");
         coverage.addProperty("connections", "incoming_to_returned_modules_same_graph_only");
         coverage.addProperty("parameters", !parameters ? "not_requested" : a.parametersAvailable() ? "known_typed_children_only" : "unavailable");
         coverage.addProperty("display", a.displayAvailable() ? "native_reader_unverified_semantics" : "unsupported");
@@ -153,9 +148,134 @@ final class GridSnapshotReader {
         result.add("coverage", coverage);
         JsonArray unsupported = new JsonArray(); state.unsupported.forEach(unsupported::add); result.add("unsupported", unsupported);
         result.addProperty("nativeRevisionAvailable", false);
-        result.addProperty("identityCaveat", "instanceId is a current native UUID, not typeId or localKey; observed UUIDs changed across project reopen and must be reacquired. localKey and paths may change after edits. Public bank observations can lag native rebinding; same-name replacement before the document read is not corroborated by native track UUID. No native revision or cross-request atomicity.");
+        result.addProperty("identityCaveat", "instanceId is a current native UUID, not typeId or localKey; observed UUIDs changed across project reopen and must be reacquired. localKey and paths may change after edits. Native owning-track channel UUID is corroborated before and after capture, including the SCA alias mapping. Device index and name remain public observations that can lag native rebinding; same-track same-name replacement is not distinguished. No persistent device identity, native device-position corroboration, native ABA detection, native revision or cross-request atomicity.");
         result.addProperty("nativeMutation", false); result.addProperty("nativeUndo", false);
         return result;
+    }
+
+    JsonObject parameter(Object proxy, UUID expectedTrackId, UUID moduleId, String parameterId,
+            GridParameterContext contexts, Runnable check) {
+        a.documentThread(); check.run();
+        if (!a.parametersAvailable() || contexts == null)
+            throw failure("grid_unavailable", "Required parameter inspection bindings are unavailable.");
+        NativeTarget binding = target(proxy, expectedTrackId);
+        State state = new State(check);
+        Object module = findModule(binding.graph, moduleId, state);
+        Object child = findParameter(module, parameterId, state);
+        Kind kind = parameterKind(child);
+        if (kind == null) throw failure("grid_unavailable", "Requested parameter family is unsupported.");
+        GridParameterContext.Capture context = contexts.capture(binding.target, binding.graph, module, child, kind, check);
+        JsonObject value = parameter(child, module, state);
+        check.run();
+        guardTarget(binding, proxy, expectedTrackId);
+        if (findModule(binding.graph, moduleId, state) != module || findParameter(module, parameterId, state) != child)
+            throw failure("stale_context", "Selected native module or parameter changed during inspection.");
+        contexts.guard(context, binding.target, binding.graph, module, child, kind, check);
+        check.run();
+        guardTarget(binding, proxy, expectedTrackId);
+        JsonObject result = HostServices.observed();
+        result.addProperty("moduleId", moduleId.toString());
+        result.add("parameter", value); result.add("editContext", context.json);
+        result.addProperty("complete", state.unsupported.isEmpty());
+        JsonArray unsupported = new JsonArray(); state.unsupported.forEach(unsupported::add);
+        result.add("unsupported", unsupported);
+        result.addProperty("nativeMutation", false); result.addProperty("nativeUndo", false);
+        return result;
+    }
+
+    private Object findModule(Object graph, UUID id, State state) {
+        Object found = null;
+        for (Object module : collect(Field.MODULES, graph, MAX_MODULES, state)) {
+            state.check();
+            if (!a.is(Kind.MODULE, module)) continue;
+            a.requireModelThread(module);
+            if (!id.toString().equals(uuid(a.read(Field.INSTANCE_ID, module)))) continue;
+            if (found != null) throw failure("stale_context", "Requested module UUID is ambiguous.");
+            if (a.read(Field.MODULE_GRAPH, module) != graph)
+                throw failure("stale_context", "Requested module moved outside the target graph.");
+            found = module;
+        }
+        if (found == null) throw failure("stale_context", "Requested module UUID is no longer in the target graph; reacquire grid.get.");
+        return found;
+    }
+
+    private Object findParameter(Object module, String id, State state) {
+        Object found = null;
+        for (Object child : collect(Field.CHILDREN, module, MAX_CHILDREN, state)) {
+            state.check();
+            if (!a.is(Kind.PARAMETER, child)) continue;
+            a.requireModelThread(child);
+            if (!id.equals(text(a.read(Field.PARAMETER_ID, child)))) continue;
+            if (found != null) throw failure("stale_context", "Requested parameter ID is ambiguous.");
+            if (a.read(Field.OWNER_MODULE, child) != module)
+                throw failure("stale_context", "Requested parameter moved outside the selected module.");
+            found = child;
+        }
+        if (found == null) throw failure("stale_context", "Requested exact parameter ID is no longer in the selected module.");
+        return found;
+    }
+
+    private NativeTarget target(Object proxy, UUID expectedTrackId) {
+        if (expectedTrackId == null) throw failure("grid_unavailable", "Expected owning-track UUID is required.");
+        Object target = a.read(Field.TARGET, proxy);
+        if (target == null) throw failure("missing_target", "Explicit device proxy has no native target; refresh devices.get.");
+        if (!a.is(Kind.DEVICE, target)) throw failure("not_grid", "Explicit native device has no mapped Grid graph accessor.");
+        a.requireModelThread(target);
+        Object owner = owningTrack(target), identity = trackIdentity(owner);
+        requireTrackUuid(owner, identity, expectedTrackId);
+        Object graph = a.read(Field.GRAPH, target);
+        if (graph == null) throw failure("not_grid", "Explicit device does not contain a Grid graph.");
+        a.requireModelThread(graph);
+        return new NativeTarget(target, owner, identity, graph);
+    }
+
+    private void guardTarget(NativeTarget binding, Object proxy, UUID expectedTrackId) {
+        a.documentThread();
+        if (a.read(Field.TARGET, proxy) != binding.target)
+            throw failure("stale_context", "Explicit native device changed during the read.");
+        a.requireModelThread(binding.target);
+        Object owner = owningTrack(binding.target), identity = trackIdentity(owner);
+        requireTrackUuid(owner, identity, expectedTrackId);
+        if (owner != binding.owner || identity != binding.identity || a.read(Field.GRAPH, binding.target) != binding.graph)
+            throw failure("stale_context", "Explicit native owning track, channel alias or graph changed during the read.");
+        a.requireModelThread(binding.graph);
+    }
+
+    private static final class NativeTarget {
+        final Object target, owner, identity, graph;
+        NativeTarget(Object target, Object owner, Object identity, Object graph) {
+            this.target = target; this.owner = owner; this.identity = identity; this.graph = graph;
+        }
+    }
+
+    private Kind parameterKind(Object child) {
+        for (Kind candidate : PARAMETER_KINDS) if (a.is(candidate, child)) return candidate;
+        return null;
+    }
+
+    private Object owningTrack(Object target) {
+        Object owner = a.read(Field.OWNER_TRACK, target);
+        if (!a.is(Kind.TRACK, owner))
+            throw failure("grid_unavailable", "Native device has no mapped owning-track ancestor.");
+        a.requireModelThread(owner);
+        return owner;
+    }
+
+    private Object trackIdentity(Object owner) {
+        if (!a.is(Kind.ALIASED_TRACK, owner)) return owner;
+        Object alias = a.read(Field.TRACK_ALIAS, owner);
+        if (!a.is(Kind.CHANNEL_ALIAS, alias))
+            throw failure("grid_unavailable", "Native owning-track channel alias is missing or unsupported.");
+        a.requireModelThread(alias);
+        return alias;
+    }
+
+    private void requireTrackUuid(Object owner, Object identity, UUID expectedTrackId) {
+        Object value = a.read(a.is(Kind.ALIASED_TRACK, owner) ? Field.ALIAS_UUID : Field.TRACK_UUID, identity);
+        if (!(value instanceof UUID))
+            throw failure("grid_unavailable", "Native owning-track channel UUID is missing or unsupported.");
+        if (!expectedTrackId.equals(value))
+            throw failure("stale_context", "Native device owning-track channel UUID differs from requested trackId.");
     }
 
     private JsonArray ports(Object module, Object graph, IdentityHashMap<Object, String> ids,
@@ -164,7 +284,7 @@ final class GridSnapshotReader {
         for (Object port : collect(input ? Field.INPUTS : Field.OUTPUTS, module, MAX_CHILDREN, state)) {
             state.check();
             if (!a.is(input ? Kind.INPUT : Kind.OUTPUT, port)) { state.unsupported("unknown_port_type"); continue; }
-            a.owned(port);
+            a.requireModelThread(port);
             if (a.read(Field.OWNER_MODULE, port) != module) throw failure("stale_context", "Port owner differs from its enumerated module.");
             String key = text(a.read(input ? Field.INPUT_KEY : Field.OUTPUT_KEY, port));
             if (!keys.add(key)) throw failure("grid_unavailable", "Duplicate native port key; endpoint identity is ambiguous.");
@@ -179,12 +299,12 @@ final class GridSnapshotReader {
             item.addProperty("connected", source != null);
             if (source == null) continue;
             if (!a.is(Kind.OUTPUT, source)) { state.unsupported("unknown_connection_source_type"); continue; }
-            a.owned(source);
+            a.requireModelThread(source);
             Object owner = a.read(Field.OWNER_MODULE, source);
             if (!a.is(Kind.MODULE, owner) || a.read(Field.MODULE_GRAPH, owner) != graph || !ids.containsKey(owner)) {
                 state.unsupported("connection_source_outside_graph"); continue;
             }
-            a.owned(owner);
+            a.requireModelThread(owner);
             JsonObject connection = new JsonObject();
             connection.addProperty("sourceModuleId", ids.get(owner));
             connection.addProperty("sourcePortKey", text(a.read(Field.OUTPUT_KEY, source)));
@@ -196,15 +316,13 @@ final class GridSnapshotReader {
 
     private JsonObject parameter(Object child, Object module, State state) {
         JsonObject result = new JsonObject();
-        Kind kind = null;
-        for (Kind candidate : PARAMETER_KINDS)
-            if (a.is(candidate, child)) { kind = candidate; break; }
+        Kind kind = parameterKind(child);
         if (kind == null) {
             result.addProperty("supported", false); result.addProperty("reason", "unknown_child_model");
             result.addProperty("modelClass", child == null ? "null" : child.getClass().getName());
             state.unsupported("unknown_child_model"); return result;
         }
-        a.owned(child);
+        a.requireModelThread(child);
         if (a.read(Field.OWNER_MODULE, child) != module) throw failure("stale_context", "Parameter belongs to a different module.");
         result.addProperty("supported", true); result.addProperty("kind", kind.name().toLowerCase(Locale.ROOT));
         result.addProperty("path", text(a.read(Field.PATH, child)));

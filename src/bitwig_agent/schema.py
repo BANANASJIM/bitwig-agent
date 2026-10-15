@@ -72,6 +72,11 @@ class GridGetArgs(ParameterArgs):
     includeParameters: bool = True
 
 
+class GridParameterGetArgs(ParameterArgs):
+    moduleId: TrackId = Field(description="Current module instanceId from grid.get; reacquire after reopening the project.")
+    parameterId: str = Field(max_length=1024, description="Exact native parameter ID from grid.get, not a name; empty is valid, at most 1024 UTF-16 code units.")
+
+
 class SetArgs(ParameterArgs):
     contextToken: Nonempty
     parameterId: Nonempty

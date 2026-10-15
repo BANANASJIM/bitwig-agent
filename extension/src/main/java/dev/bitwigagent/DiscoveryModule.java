@@ -85,7 +85,7 @@ final class DiscoveryModule implements HostModule {
         grid.addProperty("capabilitiesMethod", "grid.capabilities");
         grid.addProperty("reason", "Query grid.capabilities for actual loaded-host compatibility and separate read coverage.");
         JsonArray reads = new JsonArray();
-        for (String method : List.of("grid.catalog", "grid.get")) reads.add(method);
+        for (String method : List.of("grid.catalog", "grid.get", "grid.parameters.get")) reads.add(method);
         grid.add("readMethods", reads);
         grid.addProperty("writesAvailable", false);
         grid.addProperty("nativeUndoAvailable", false);
