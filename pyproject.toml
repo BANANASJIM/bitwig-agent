@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "bitwig-agent"
+version = "0.1.0"
+description = "Thin stdio MCP adapter for the local Bitwig Controller Extension"
+requires-python = ">=3.11"
+dependencies = ["mcp==1.30.0", "pydantic>=2.11,<3"]
+
+[project.scripts]
+bitwig-agent = "bitwig_agent.server:main"
+bitwig-agent-rpc = "bitwig_agent.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8.3,<9"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+

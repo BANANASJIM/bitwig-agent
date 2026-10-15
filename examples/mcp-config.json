@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "bitwig-agent": {
+      "command": "uv",
+      "args": ["run", "--frozen", "--directory", "/absolute/path/to/bitwig-agent", "bitwig-agent"],
+      "env": {"BITWIG_AGENT_PORT": "61172"}
+    }
+  }
+}
