@@ -24,6 +24,9 @@ public final class GridModuleTest {
         queuedWritesRejectSafetyAndTargetTransitions();
         nativeCallbacksNeverReadControllerSafetyGetters();
         everyPostDispatchBoundaryKeepsUnknownOutcome();
+        topologyArgumentsRejectBeforeScheduling();
+        topologyOperationsRequireLaterDocumentObservation();
+        topologySafetyAndTargetsGuardEveryQueueBoundary();
         System.out.println("GridModuleTest: " + assertions + " assertions passed (simulated controller/document queues only)");
     }
     private static void validatesBeforeScheduling() {
@@ -123,6 +126,9 @@ public final class GridModuleTest {
         check(!noSource.capabilities().getAsJsonObject("nativeOwningTrack").get("available").getAsBoolean()
                 && !noSource.capabilities().getAsJsonObject("structure").get("available").getAsBoolean(),
                 "unverified identity bindings cannot advertise usable native ownership or structure");
+        check(!noSource.capabilities().getAsJsonObject("moduleMove").get("available").getAsBoolean()
+                && !noSource.capabilities().getAsJsonObject("moduleDelete").get("available").getAsBoolean(),
+                "unverified source cannot advertise either native topology capability");
         try {
             noSource.snapshot(new Object(), UUID.fromString(TransportMixFixture.A), 0, 64, true, () -> {});
             throw new AssertionError("snapshot escaped identity gate");
@@ -285,6 +291,82 @@ public final class GridModuleTest {
         catch (RpcException error) { expired.fail(error); }
         check(TransportMixFixture.error(expired, "deadline_exceeded").outcome.equals("unknown"), "deadline after dispatch preserves uncertainty");
     }
+    private static JsonObject moduleTarget(boolean move) {
+        JsonObject p = inspectionTarget(); p.remove("parameterId");
+        if (move) {
+            p.addProperty("expectedX", 7); p.addProperty("expectedY", 3);
+            p.addProperty("x", 10); p.addProperty("y", 3);
+        }
+        return p;
+    }
+    private static void topologyArgumentsRejectBeforeScheduling() {
+        Fixture f = new Fixture();
+        for (String method : List.of("grid.modules.move", "grid.modules.delete")) {
+            boolean move = method.endsWith("move");
+            for (String key : moduleTarget(move).keySet()) {
+                JsonObject p = moduleTarget(move); p.remove(key);
+                TransportMixFixture.error(f.host.submit(f.module, method, p), "invalid_params");
+            }
+            JsonObject extra = moduleTarget(move); extra.addProperty("copy", false);
+            TransportMixFixture.error(f.host.submit(f.module, method, extra), "invalid_params");
+            JsonObject stale = moduleTarget(move); stale.addProperty("moduleId", "1-1-1-1-1");
+            TransportMixFixture.error(f.host.submit(f.module, method, stale), "invalid_params");
+        }
+        for (String key : List.of("expectedX", "expectedY", "x", "y")) {
+            for (String token : List.of("true", "\"1\"", "null", "1.0", "1e0", "2147483648", "-2147483649")) {
+                JsonObject p = moduleTarget(true); p.add(key, JsonParser.parseString(token));
+                TransportMixFixture.error(f.host.submit(f.module, "grid.modules.move", p), "invalid_params");
+            }
+        }
+        check(f.host.tasks.isEmpty() && f.adapter.tasks.isEmpty() && f.adapter.topology.calls == 0,
+                "invalid topology arguments never reach controller or native document queue");
+    }
+    private static void topologyOperationsRequireLaterDocumentObservation() {
+        for (boolean move : List.of(true, false)) {
+            Fixture f = new Fixture();
+            HostOperation op = f.host.submit(f.module, move ? "grid.modules.move" : "grid.modules.delete", moduleTarget(move));
+            f.host.next();
+            check(!op.dispatched && !op.result.isDone(), "queued topology request has not invoked native operation");
+            f.adapter.next();
+            check(op.dispatched && !op.result.isDone() && f.host.tasks.isEmpty() && f.adapter.topology.calls == 1,
+                    "native return does not deliver topology result before later document event");
+            f.adapter.next();
+            check(!op.result.isDone(), "later document observation still requires controller handoff");
+            f.host.next();
+            JsonObject result = op.result.join();
+            check(result.get("mutationDispatched").getAsBoolean() && result.has("target") && result.has("graph"),
+                    "observed topology result includes guarded target and bounded graph");
+        }
+    }
+    private static void topologySafetyAndTargetsGuardEveryQueueBoundary() {
+        for (boolean move : List.of(true, false)) {
+            String method = move ? "grid.modules.move" : "grid.modules.delete";
+            Fixture notStopped = new Fixture();
+            notStopped.host.transport.child("isPlaying").emit(true);
+            HostOperation early = notStopped.host.submit(notStopped.module, method, moduleTarget(move));
+            notStopped.host.next(); TransportMixFixture.error(early, "unsafe_state");
+            check(notStopped.adapter.topology.calls == 0 && !early.dispatched, "topology requires observed stopped safety before native queue");
+            for (int boundary = 0; boundary < 3; boundary++) {
+                Fixture f = new Fixture();
+                HostOperation op = f.host.submit(f.module, method, moduleTarget(move)); f.host.next();
+                if (boundary > 0) f.adapter.next();
+                if (boundary > 1) f.adapter.next();
+                f.host.transport.child("isPlaying").emit(true);
+                f.host.transport.child("isPlaying").emit(false);
+                if (boundary < 2) f.adapter.next(); else f.host.next();
+                check(TransportMixFixture.error(op, "stale_context").outcome.equals(boundary == 0 ? "not_applied" : "unknown")
+                        && f.adapter.topology.calls == (boundary == 0 ? 0 : 1),
+                        "safety epoch change across native queue, later observation or controller delivery never retries");
+            }
+            Fixture target = new Fixture();
+            HostOperation op = target.host.submit(target.module, method, moduleTarget(move)); target.host.next();
+            target.device.child("name").emit("Other"); target.device.child("name").emit("Poly Grid");
+            target.adapter.next();
+            check(TransportMixFixture.error(op, "stale_context").outcome.equals("not_applied")
+                    && target.adapter.topology.calls == 0, "observed target ABA blocks topology before native dispatch");
+        }
+    }
+
     private static JsonObject inspectionTarget() {
         JsonObject result = target(); result.addProperty("moduleId", "00000000-0000-0001-0000-000000000001");
         result.addProperty("parameterId", "EXACT_ID"); return result;
@@ -312,6 +394,7 @@ public final class GridModuleTest {
     private static final class FakeAdapter implements GridAdapter {
         final Deque<Runnable> tasks = new ArrayDeque<>(); int reads; boolean fail; JsonObject last;
         final GridSnapshotReaderTest.WriterFixture writer = new GridSnapshotReaderTest.WriterFixture();
+        final GridSnapshotReaderTest.ModuleWriterFixture topology = new GridSnapshotReaderTest.ModuleWriterFixture(tasks::add);
         Runnable beforeWrite = () -> {}, afterWrite = () -> {};
         void next() { tasks.removeFirst().run(); }
         @Override public void execute(Runnable task) { tasks.add(task); }
@@ -333,6 +416,18 @@ public final class GridModuleTest {
             last = writer.set(request, check, dispatch);
             afterWrite.run();
             return last;
+        }
+        @Override public void moveModule(Object proxy, UUID track, UUID module, GridModuleWriter.Move request,
+                Runnable check, Runnable dispatch, java.util.function.Consumer<JsonObject> complete,
+                java.util.function.Consumer<Throwable> failure) {
+            topology.moduleId = module;
+            topology.edit(request, check, dispatch, complete, failure);
+        }
+        @Override public void deleteModule(Object proxy, UUID track, UUID module,
+                Runnable check, Runnable dispatch, java.util.function.Consumer<JsonObject> complete,
+                java.util.function.Consumer<Throwable> failure) {
+            topology.moduleId = module;
+            topology.edit(null, check, dispatch, complete, failure);
         }
         private JsonObject result(int offset, int limit, boolean parameters) {
             last = new JsonObject(); last.addProperty("offset", offset); last.addProperty("limit", limit); last.addProperty("parameters", parameters); return last;

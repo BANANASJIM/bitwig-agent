@@ -2,8 +2,9 @@ package dev.bitwigagent;
 
 import com.google.gson.JsonObject;
 import java.util.UUID;
+import java.util.function.Consumer;
 
-/** Version-specific document operations. Native objects never leave their document callback. */
+/** Version-specific document operations. Native objects remain document-thread-only, including deferred observation. */
 interface GridAdapter {
     JsonObject capabilities();
     void execute(Runnable operation);
@@ -12,4 +13,8 @@ interface GridAdapter {
     JsonObject parameter(Object deviceProxy, UUID expectedTrackId, UUID moduleId, String parameterId, Runnable check);
     JsonObject setParameter(Object deviceProxy, UUID expectedTrackId, UUID moduleId, String parameterId,
             GridParameterWriter.Request request, Runnable check, Runnable dispatch);
+    void moveModule(Object deviceProxy, UUID expectedTrackId, UUID moduleId, GridModuleWriter.Move request,
+            Runnable check, Runnable dispatch, Consumer<JsonObject> complete, Consumer<Throwable> fail);
+    void deleteModule(Object deviceProxy, UUID expectedTrackId, UUID moduleId,
+            Runnable check, Runnable dispatch, Consumer<JsonObject> complete, Consumer<Throwable> fail);
 }

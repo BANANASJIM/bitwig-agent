@@ -7,6 +7,7 @@ import java.nio.file.*;
 import java.security.MessageDigest;
 import java.util.*;
 import java.util.stream.Stream;
+import java.util.function.Consumer;
 import static dev.bitwigagent.GridSnapshotReader.Field.*;
 import static dev.bitwigagent.HostServices.failure;
 
@@ -18,6 +19,8 @@ final class Bitwig613GridAdapter implements GridAdapter, GridSnapshotReader.Acce
     private static final String R = "com.bitwig.ramona.core.";
     private static final String P = "com.bitwig.flt.packaging.core.";
     private static final String I = "com.bitwig.flt.document.core.iface.";
+    // Controller/adapter recreation must not clear a potentially stranded native iqa ThreadLocal.
+    private static final GridModuleWriter.Quarantine TOPOLOGY_QUARANTINE = new GridModuleWriter.Quarantine();
     private final EnumMap<GridSnapshotReader.Field, Method> readers = new EnumMap<>(GridSnapshotReader.Field.class);
     private final EnumMap<GridSnapshotReader.Kind, Class<?>> kinds = new EnumMap<>(GridSnapshotReader.Kind.class);
     private final EnumMap<GridSnapshotReader.Metadata, String> metadataErrors = new EnumMap<>(GridSnapshotReader.Metadata.class);
@@ -30,6 +33,8 @@ final class Bitwig613GridAdapter implements GridAdapter, GridSnapshotReader.Acce
     private GridParameterContext parameterContexts;
     private String inspectionError, writeError;
     private GridParameterWriter parameterWriter;
+    private String moduleMoveError, moduleDeleteError;
+    private GridModuleWriter moduleWriter;
 
     Bitwig613GridAdapter(Object host, String version, Runnable check) {
         hostVersion = version; loader = host.getClass().getClassLoader();
@@ -75,6 +80,15 @@ final class Bitwig613GridAdapter implements GridAdapter, GridSnapshotReader.Acce
         else try {
             parameterWriter = new GridParameterWriter(snapshots, parameterContexts, new Bitwig613GridParameterWriter(this));
         } catch (ReflectiveOperationException | RuntimeException | LinkageError error) { writeError = diagnostic(error); }
+        if (structureError != null || metadataErrors.containsKey(GridSnapshotReader.Metadata.FOOTPRINT)) {
+            moduleMoveError = moduleDeleteError = "Required structure or native footprint binding unavailable.";
+        } else try {
+            Bitwig613GridModuleAccess topology = new Bitwig613GridModuleAccess(this);
+            moduleMoveError = topology.moveError; moduleDeleteError = topology.deleteError;
+            moduleWriter = new GridModuleWriter(snapshots, this, new GridModuleContext(topology), topology, TOPOLOGY_QUARANTINE);
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError error) {
+            moduleMoveError = moduleDeleteError = diagnostic(error);
+        }
         check.run();
     }
 
@@ -138,6 +152,9 @@ final class Bitwig613GridAdapter implements GridAdapter, GridSnapshotReader.Acce
 
     private void bindMetadata(GridSnapshotReader.Metadata metadata) throws ReflectiveOperationException {
         switch (metadata) {
+            case FOOTPRINT:
+                bind(WIDTH, type(D + "qMK"), "znu", int.class);
+                bind(HEIGHT, type(D + "qMK"), "Kxv", int.class); break;
             case MODULE_NAMES: {
                 Class<?> module = type(D + "QKj");
                 bind(MODULE_NAME, module, "Ynu", String.class);
@@ -197,13 +214,31 @@ final class Bitwig613GridAdapter implements GridAdapter, GridSnapshotReader.Acce
         result.add("parameterWrite", write);
         for (GridSnapshotReader.Metadata metadata : GridSnapshotReader.METADATA)
             result.add(metadata.key, capability(gateError == null ? metadataErrors.get(metadata) : gateError, metadata.coverage));
-        result.addProperty("graphWrites", false); result.addProperty("nativeMutation", false); result.addProperty("nativeUndo", false);
+        String quarantine = TOPOLOGY_QUARANTINE.active
+                ? "Topology writes quarantined after native operation/callback failure; fully restart Bitwig, inspect state and do not retry." : null;
+        result.add("moduleMove", topologyCapability(gateError != null ? gateError : quarantine != null ? quarantine : moduleMoveError,
+                "public_same_graph_absolute_anchor_singleton_no_copy_native_reflow_later_event_observation"));
+        result.add("moduleDelete", topologyCapability(gateError != null ? gateError : quarantine != null ? quarantine : moduleDeleteError,
+                "public_selective_singleton_delete_native_bypass_reconnection_later_event_observation"));
+        result.addProperty("graphWrites", gateError == null && quarantine == null && (moduleMoveError == null || moduleDeleteError == null));
+        result.addProperty("graphWriteScope", "module_move_and_delete_only_no_insertion_or_connection_writes");
+        result.addProperty("topologyQuarantined", TOPOLOGY_QUARANTINE.active);
+        result.addProperty("topologyQuarantineScope", "sticky_extension_classloader_lifetime_no_guarantee_across_classloader_replacement_full_Bitwig_restart_required");
         result.addProperty("nativeRevisionAvailable", false);
         return result;
     }
     private static JsonObject capability(String error, String coverage) {
         JsonObject result = new JsonObject(); result.addProperty("available", error == null);
         result.addProperty("coverage", error == null ? coverage : "unavailable"); result.addProperty("reason", error);
+        return result;
+    }
+    private static JsonObject topologyCapability(String error, String coverage) {
+        JsonObject result = capability(error, coverage);
+        result.addProperty("maximumModules", GridModuleWriter.MAX_MODULES);
+        result.addProperty("maximumOccupiedYSpan", GridModuleWriter.MAX_Y_SPAN);
+        result.addProperty("nativeUndoAwareOperation", true);
+        result.addProperty("undoGroupingVerified", false);
+        result.addProperty("engineAcknowledgement", false);
         return result;
     }
     @Override public void execute(Runnable read) {
@@ -229,6 +264,16 @@ final class Bitwig613GridAdapter implements GridAdapter, GridSnapshotReader.Acce
             GridParameterWriter.Request request, Runnable check, Runnable dispatch) {
         require(gateError, "gate"); require(writeError, "parameter write");
         return parameterWriter.set(proxy, expectedTrackId, moduleId, parameterId, request, check, dispatch);
+    }
+    @Override public void moveModule(Object proxy, UUID trackId, UUID moduleId, GridModuleWriter.Move request,
+            Runnable check, Runnable dispatch, Consumer<JsonObject> complete, Consumer<Throwable> fail) {
+        require(gateError, "gate"); require(moduleMoveError, "module move");
+        moduleWriter.move(proxy, trackId, moduleId, request, check, dispatch, complete, fail);
+    }
+    @Override public void deleteModule(Object proxy, UUID trackId, UUID moduleId,
+            Runnable check, Runnable dispatch, Consumer<JsonObject> complete, Consumer<Throwable> fail) {
+        require(gateError, "gate"); require(moduleDeleteError, "module delete");
+        moduleWriter.delete(proxy, trackId, moduleId, check, dispatch, complete, fail);
     }
     @Override public boolean parametersAvailable() { return gateError == null && parameterError == null; }
     @Override public boolean displayAvailable() { return gateError == null && displayError == null; }

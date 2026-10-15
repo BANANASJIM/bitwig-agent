@@ -51,7 +51,8 @@ public final class RpcServerTest {
 
     private static void gridIntegerTokenValidation() throws Exception {
         try (RpcServer server = new RpcServer(0, (method, params, until) -> {
-            GridParameterWriter.Request.parse(params);
+            if (method.equals("grid.modules.move")) GridModule.validateParams(method, params);
+            else GridParameterWriter.Request.parse(params);
             return CompletableFuture.completedFuture(ok());
         })) {
             server.start();
@@ -62,6 +63,16 @@ public final class RpcServerTest {
                         + "\"trackId\":\"00000000-0000-0000-0000-000000000001\",\"deviceIndex\":0,"
                         + "\"expectedDeviceName\":\"Poly Grid\",\"moduleId\":\"00000000-0000-0000-0000-000000000002\","
                         + "\"parameterId\":\"MODE\"," + values + "}}\n";
+                error(call(server, request), "invalid_params", "not_applied");
+            }
+            for (String key : List.of("expectedX", "expectedY", "x", "y")) {
+                String coordinates = "\"expectedX\":0,\"expectedY\":0,\"x\":1,\"y\":1";
+                coordinates = coordinates.replace("\"" + key + "\":" + (key.startsWith("expected") ? "0" : "1"),
+                        "\"" + key + "\":1e0");
+                String request = "{\"id\":\"move-token\",\"method\":\"grid.modules.move\",\"params\":{"
+                        + "\"trackId\":\"00000000-0000-0000-0000-000000000001\",\"deviceIndex\":0,"
+                        + "\"expectedDeviceName\":\"Poly Grid\",\"moduleId\":\"00000000-0000-0000-0000-000000000002\","
+                        + coordinates + "}}\n";
                 error(call(server, request), "invalid_params", "not_applied");
             }
         }

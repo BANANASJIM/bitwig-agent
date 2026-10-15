@@ -148,3 +148,14 @@ async def test_grid_mcp_rejects_integer_float_token_despite_json_schema_integer_
     assert response.structuredContent["error"]["code"] == "invalid_params"
     assert response.structuredContent["error"]["outcome"] == "not_dispatched"
     assert host.connections == 0
+
+
+@pytest.mark.parametrize("field", ["expectedX", "expectedY", "x", "y"])
+async def test_grid_move_mcp_rejects_float_despite_json_schema_integer_semantics(mcp_session, host, field):
+    response = await mcp_session.call_tool("grid.modules.move", {
+        **TARGET, "moduleId": TRACK, "expectedX": 0, "expectedY": 0, "x": 4, "y": 2,
+        field: 1.0})
+    assert response.isError
+    assert response.structuredContent["error"]["code"] == "invalid_params"
+    assert response.structuredContent["error"]["outcome"] == "not_dispatched"
+    assert host.connections == 0

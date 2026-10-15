@@ -137,6 +137,26 @@ async def test_grid_cli_numeric_tokens_fail_cleanly_before_tcp(host, monkeypatch
     assert host.connections == 0
 
 
+@pytest.mark.parametrize("raw", [False, True])
+@pytest.mark.parametrize("field", ["expectedX", "expectedY", "x", "y"])
+@pytest.mark.parametrize("token", [
+    "null", "true", "false", "1.0", "1e0", "-0.0", "0e0", '"1"',
+    "-2147483649", "2147483648", "1e9999",
+])
+async def test_grid_move_cli_rejects_non_integer_tokens_before_tcp(host, monkeypatch, raw, field, token):
+    monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
+    tokens = {"trackId": json.dumps(TRACK), "deviceIndex": "0",
+              "expectedDeviceName": '"Poly Grid"', "moduleId": json.dumps(TRACK),
+              "expectedX": "0", "expectedY": "0", "x": "4", "y": "2", field: token}
+    arguments = (["--params", "{" + ",".join(f'"{key}":{value}' for key, value in tokens.items()) + "}"]
+                 if raw else [f"{key}={value}" for key, value in tokens.items()])
+    payload, code = await execute(["grid.modules.move", *arguments])
+    assert code == 2
+    assert payload["error"]["code"] == "invalid_params"
+    assert payload["error"]["outcome"] == "not_dispatched"
+    assert host.connections == 0
+
+
 def test_main_prints_one_exact_json_envelope(capsys, monkeypatch):
     monkeypatch.setenv("BITWIG_AGENT_PORT", "bad")
     assert main(["status"]) == 2

@@ -72,8 +72,18 @@ class GridGetArgs(ParameterArgs):
     includeParameters: bool = True
 
 
-class GridParameterGetArgs(ParameterArgs):
+class GridModuleArgs(ParameterArgs):
     moduleId: TrackId = Field(description="Current module instanceId from grid.get; reacquire after reopening the project.")
+
+
+class GridModuleMoveArgs(GridModuleArgs):
+    expectedX: int = Field(ge=-(2**31), le=2**31 - 1, description="Fresh native anchor X; exact stale-state check precedes even a no-op. Signed int32 JSON integer token.")
+    expectedY: int = Field(ge=-(2**31), le=2**31 - 1, description="Fresh native anchor Y; exact stale-state check precedes even a no-op. Signed int32 JSON integer token.")
+    x: int = Field(ge=-(2**31), le=2**31 - 1, description="Requested absolute native anchor X, not a relative delta or pixels. Signed int32 JSON integer token; native layout bounds checked by host.")
+    y: int = Field(ge=-(2**31), le=2**31 - 1, description="Requested absolute native anchor Y, not a relative delta or pixels. Signed int32 JSON integer token; native layout bounds checked by host.")
+
+
+class GridParameterGetArgs(GridModuleArgs):
     parameterId: str = Field(max_length=1024, description="Exact native parameter ID from grid.get, not a name; empty is valid, at most 1024 UTF-16 code units.")
 
 

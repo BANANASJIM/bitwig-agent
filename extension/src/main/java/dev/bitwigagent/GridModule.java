@@ -11,7 +11,8 @@ import static dev.bitwigagent.HostServices.failure;
 
 /** Strict RPC boundary and observed public-device targeting; native operations use a separate adapter. */
 final class GridModule implements HostModule {
-    static final Set<String> METHODS = Set.of("grid.capabilities", "grid.catalog", "grid.get", "grid.parameters.get", "grid.parameters.set");
+    static final Set<String> METHODS = Set.of("grid.capabilities", "grid.catalog", "grid.get", "grid.parameters.get", "grid.parameters.set",
+            "grid.modules.move", "grid.modules.delete");
     static final int MAX_RESPONSE_CHARS = 240000;
     private static final Gson JSON = new GsonBuilder().serializeNulls().create();
     private final HostServices s;
@@ -60,6 +61,17 @@ final class GridModule implements HostModule {
                 if (p.has("offset")) Params.integer(p, "offset", 0, 100000);
                 if (p.has("limit")) Params.integer(p, "limit", 1, 256);
                 return;
+            case "grid.modules.move":
+            case "grid.modules.delete":
+                boolean moving = method.equals("grid.modules.move");
+                Params.fields(p, moving
+                        ? Set.of("trackId", "deviceIndex", "expectedDeviceName", "moduleId", "expectedX", "expectedY", "x", "y")
+                        : Set.of("trackId", "deviceIndex", "expectedDeviceName", "moduleId"), Set.of());
+                canonicalUuid(p, "trackId"); canonicalUuid(p, "moduleId");
+                Params.integer(p, "deviceIndex", 0, HostServices.DEVICES - 1);
+                Params.string(p, "expectedDeviceName");
+                if (moving) GridModuleWriter.Move.parse(p);
+                return;
             case "grid.parameters.set":
             case "grid.parameters.get":
                 boolean writing = method.equals("grid.parameters.set");
@@ -91,12 +103,16 @@ final class GridModule implements HostModule {
         s.check(op);
         if (adapter == null) adapter = new Bitwig613GridAdapter(s.host, s.host.getHostVersion(), () -> s.check(op));
         if (method.equals("grid.capabilities")) { s.check(op); op.result.complete(adapter.capabilities()); return; }
-        final boolean writing = method.equals("grid.parameters.set");
-        final boolean inspection = method.equals("grid.parameters.get") || writing;
-        final GridParameterWriter.Request request = writing ? GridParameterWriter.Request.parse(p) : null;
+        final boolean moving = method.equals("grid.modules.move");
+        final boolean topology = moving || method.equals("grid.modules.delete");
+        final boolean scalarWriting = method.equals("grid.parameters.set");
+        final boolean writing = scalarWriting || topology;
+        final boolean inspection = method.equals("grid.parameters.get") || scalarWriting;
+        final GridParameterWriter.Request request = scalarWriting ? GridParameterWriter.Request.parse(p) : null;
+        final GridModuleWriter.Move move = moving ? GridModuleWriter.Move.parse(p) : null;
         final HostServices.SafetyObservation safety = writing ? s.stoppedSafety(op) : null;
-        final Target target = method.equals("grid.get") || inspection ? target(p) : null;
-        final UUID moduleId = inspection ? UUID.fromString(p.get("moduleId").getAsString()) : null;
+        final Target target = method.equals("grid.get") || inspection || topology ? target(p) : null;
+        final UUID moduleId = inspection || topology ? UUID.fromString(p.get("moduleId").getAsString()) : null;
         final String parameterId = inspection ? p.get("parameterId").getAsString() : null;
         final int offset = integer(p, target == null ? "offset" : "moduleOffset", 0);
         final int limit = integer(p, target == null ? "limit" : "moduleLimit", 64);
@@ -112,29 +128,19 @@ final class GridModule implements HostModule {
                     if (writing) s.guardStoppedSafety(safety);
                 };
                 check.run();
+                if (topology) {
+                    java.util.function.Consumer<JsonObject> complete = value -> deliver(op, target, safety, true, check, value);
+                    Runnable dispatch = () -> { check.run(); op.dispatched = true; };
+                    if (moving) adapter.moveModule(target.source.device, target.uuid, moduleId, move, check, dispatch, complete, op::fail);
+                    else adapter.deleteModule(target.source.device, target.uuid, moduleId, check, dispatch, complete, op::fail);
+                    return;
+                }
                 JsonObject value = target == null ? adapter.catalog(query, offset, limit, check)
                         : writing ? adapter.setParameter(target.source.device, target.uuid, moduleId, parameterId, request, check,
                                 () -> { check.run(); op.dispatched = true; })
                         : inspection ? adapter.parameter(target.source.device, target.uuid, moduleId, parameterId, check)
                         : adapter.snapshot(target.source.device, target.uuid, offset, limit, parameters, check);
-                check.run();
-                // No native model, stream, or mutable JSON crosses the document-to-controller boundary.
-                final String serialized = serialize(value);
-                check.run();
-                s.schedule(op, () -> {
-                    guard(op, target);
-                    if (writing) s.guardStoppedSafety(safety);
-                    JsonObject result = JsonParser.parseString(serialized).getAsJsonObject();
-                    if (target != null) {
-                        JsonObject identity = new JsonObject(); identity.addProperty("trackId", target.id);
-                        identity.addProperty("deviceIndex", target.index); identity.addProperty("expectedDeviceName", target.name);
-                        identity.addProperty("identityScope", "observed_bank_proxy_not_persistent_device_identity");
-                        identity.addProperty("nativeOwningTrack", "corroborated_before_and_after_capture");
-                        identity.addProperty("devicePosition", "public_observed_only");
-                        result.add("target", identity); result.addProperty("scope", "top_level_device_bank");
-                    }
-                    op.result.complete(result);
-                }, 0);
+                deliver(op, target, safety, writing, check, value);
             } catch (RuntimeException error) {
                 op.fail(error instanceof RpcException ? error
                         : failure("grid_unavailable", "Grid operation failed: " + error.getClass().getSimpleName() + "; inspect the exact host binding."));
@@ -142,6 +148,27 @@ final class GridModule implements HostModule {
                 op.fail(failure("grid_unavailable", "Native Grid operation failed; inspect the loaded host binding and current state."));
             }
         });
+    }
+    private void deliver(HostOperation op, Target target, HostServices.SafetyObservation safety,
+            boolean writing, Runnable check, JsonObject value) {
+        check.run();
+        // No native model, stream, or mutable JSON crosses the document-to-controller boundary.
+        final String serialized = serialize(value);
+        check.run();
+        s.schedule(op, () -> {
+            guard(op, target);
+            if (writing) s.guardStoppedSafety(safety);
+            JsonObject result = JsonParser.parseString(serialized).getAsJsonObject();
+            if (target != null) {
+                JsonObject identity = new JsonObject(); identity.addProperty("trackId", target.id);
+                identity.addProperty("deviceIndex", target.index); identity.addProperty("expectedDeviceName", target.name);
+                identity.addProperty("identityScope", "observed_bank_proxy_not_persistent_device_identity");
+                identity.addProperty("nativeOwningTrack", "corroborated_before_and_after_capture");
+                identity.addProperty("devicePosition", "public_observed_only");
+                result.add("target", identity); result.addProperty("scope", "top_level_device_bank");
+            }
+            op.result.complete(result);
+        }, 0);
     }
     private Target target(JsonObject p) {
         String id = p.get("trackId").getAsString(); int slot = s.trackSlot(id), index = p.get("deviceIndex").getAsInt();

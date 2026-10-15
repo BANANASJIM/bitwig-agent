@@ -121,7 +121,7 @@ final class HostServices implements AutoCloseable {
             if (playing == null || recording == null || arrangerAutomation == null || launcherAutomation == null)
                 throw failure("not_ready", "Stopped transport, recording and automation safety have not all been observed.");
             if (playing || recording || arrangerAutomation || launcherAutomation)
-                throw failure("unsafe_state", "Grid raw writes require observed stopped transport with recording and automation write disabled.");
+                throw failure("unsafe_state", "Grid writes require observed stopped transport with recording and automation write disabled.");
         }
     }
 

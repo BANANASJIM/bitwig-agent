@@ -293,3 +293,58 @@ def test_grid_parameter_set_requires_explicit_compare_and_set_value():
         validate_call("grid.parameters.set", {
             key: value for key, value in GRID_SET.items() if key != "expectedValue"
         })
+
+
+GRID_MODULE = {**TARGET, "moduleId": TRACK}
+GRID_MOVE = {**GRID_MODULE, "expectedX": 0, "expectedY": 0, "x": 4, "y": 2}
+
+
+@pytest.mark.parametrize("field", ["expectedX", "expectedY", "x", "y"])
+@pytest.mark.parametrize("value", [
+    None, True, False, 1.0, "1", [], {}, -(2**31) - 1, 2**31,
+])
+def test_grid_module_move_rejects_non_int32_coordinates(field, value):
+    with pytest.raises(ValidationError):
+        validate_call("grid.modules.move", {**GRID_MOVE, field: value})
+
+
+@pytest.mark.parametrize("value", [-(2**31), -65537, 65537, 2**31 - 1])
+def test_grid_module_move_leaves_dynamic_geometry_bounds_to_host(value):
+    fields = ("expectedX", "expectedY", "x", "y")
+    params, _ = validate_call("grid.modules.move", {**GRID_MODULE, **dict.fromkeys(fields, value)})
+    assert tuple(params[field] for field in fields) == (value,) * 4
+
+
+@pytest.mark.parametrize("method,args", [
+    ("grid.modules.move", GRID_MOVE), ("grid.modules.delete", GRID_MODULE),
+])
+def test_grid_module_edits_require_each_explicit_field(method, args):
+    for field in args:
+        with pytest.raises(ValidationError):
+            validate_call(method, {key: value for key, value in args.items() if key != field})
+
+
+@pytest.mark.parametrize("method,args", [
+    ("grid.modules.move", GRID_MOVE), ("grid.modules.delete", GRID_MODULE),
+])
+@pytest.mark.parametrize("changes", [
+    {"moduleId": "selected"}, {"moduleId": "1-1-1-1-1"}, {"moduleId": None},
+    {"moduleId": True}, {"moduleId": 1.0}, {"moduleId": TRACK.replace("-", "")},
+    {"trackId": "selected"}, {"trackId": None}, {"deviceIndex": True},
+    {"deviceIndex": 0.0}, {"deviceIndex": "0"}, {"deviceIndex": None},
+    {"deviceIndex": -1}, {"deviceIndex": 16}, {"expectedDeviceName": None},
+    {"expectedDeviceName": ""}, {"expectedDeviceName": False},
+    {"selected": True}, {"moduleIndex": 0}, {"typeId": TRACK},
+    {"relative": True}, {"copy": False}, {"parameterId": ""},
+    {"force": True}, {"timeoutMs": None}, {"timeoutMs": 99}, {"timeoutMs": 10001},
+])
+def test_grid_module_edits_reject_invalid_targets_and_implicit_options(method, args, changes):
+    with pytest.raises(ValidationError):
+        validate_call(method, {**args, **changes})
+
+
+@pytest.mark.parametrize("field", ["expectedX", "expectedY", "x", "y"])
+def test_grid_module_delete_accepts_no_coordinate_options(field):
+    with pytest.raises(ValidationError):
+        validate_call("grid.modules.delete", {**GRID_MODULE, field: 0})
+

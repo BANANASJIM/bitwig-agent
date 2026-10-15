@@ -42,6 +42,14 @@ public final class GridSnapshotReaderTest {
         rawParameterNoopAndNativeReadback();
         rawParameterLiveGuardChanges();
         rawParameterMutationFailuresRemainUnknown();
+        moduleFootprintsAreOptionalReadMetadata();
+        moduleMovesUseCasAndLaterWholeGraphObservation();
+        moduleDeletesObserveSelectiveBypassChanges();
+        modulePreflightRejectsUnsafeContextsAndGeometry();
+        moduleFailuresQuarantineOnlyNativeInvocation();
+        modulePostEventChangesRemainUnknown();
+        nativeMoveCallbackCaptureNeverThrows();
+        moduleTopologyReviewRegressions();
         System.out.println("GridSnapshotReaderTest: " + assertions + " assertions passed (semantic fake models only)");
     }
     private static void typedValuesAndIdentityAreNotConflated() {
@@ -633,6 +641,392 @@ public final class GridSnapshotReaderTest {
         check(error.outcome.equals("not_applied") && early.calls == 0, "before-dispatch cancellation prevents mutation");
     }
 
+    private static void moduleFootprintsAreOptionalReadMetadata() {
+        Fixture f = new Fixture();
+        JsonObject module = f.read(0, 64, false).getAsJsonArray("modules").get(0).getAsJsonObject();
+        check(module.get("width").getAsInt() == 2 && module.get("height").getAsInt() == 1,
+                "native primitive footprint is discoverable alongside asymmetric anchor coordinates");
+        f.unavailable.add(FOOTPRINT);
+        JsonObject partial = f.read(0, 64, false);
+        module = partial.getAsJsonArray("modules").get(0).getAsJsonObject();
+        check(module.get("width").isJsonNull() && module.get("height").isJsonNull()
+                && !partial.get("nativeMutation").getAsBoolean(), "missing footprint keeps independent graph read available and explicitly partial");
+        f.unavailable.clear(); f.first.put(WIDTH, 0);
+        check(f.read(0, 64, false).getAsJsonArray("modules").get(0).getAsJsonObject().get("width").isJsonNull(),
+                "invalid native footprint is never fabricated as a valid dimension");
+    }
+
+    private static void moduleMovesUseCasAndLaterWholeGraphObservation() {
+        ModuleWriterFixture stale = new ModuleWriterFixture();
+        HostOperation op = stale.start(new GridModuleWriter.Move(6, 3, 7, 3));
+        check(TransportMixFixture.error(op, "stale_context").outcome.equals("not_applied")
+                && stale.calls == 0 && !stale.writer.quarantined(), "CAS precedes no-op and never quarantines");
+        ModuleWriterFixture noop = new ModuleWriterFixture();
+        op = noop.start(new GridModuleWriter.Move(7, 3, 7, 3));
+        check(!op.result.isDone() && !op.dispatched && noop.calls == 0, "validated no-op skips native operation");
+        noop.next();
+        check(!op.result.join().get("mutationDispatched").getAsBoolean(), "no-op result retains not-dispatched semantics");
+        ModuleWriterFixture moved = new ModuleWriterFixture();
+        moved.afterMutation = () -> {
+            check(!moved.current.result.isDone() && moved.events.isEmpty(), "native body/callback cannot complete or schedule before native return");
+            moved.model.first.put(X, 12); moved.model.second.put(X, 14);
+        };
+        op = moved.start(new GridModuleWriter.Move(7, 3, 11, 3));
+        check(op.dispatched && moved.calls == 1 && !op.result.isDone(), "native return only queues later document observation");
+        moved.next(); JsonObject result = op.result.join();
+        check(result.getAsJsonObject("previousPosition").get("x").getAsInt() == 7
+                && result.getAsJsonObject("requestedPosition").get("x").getAsInt() == 11
+                && result.getAsJsonObject("actualPosition").get("x").getAsInt() == 12
+                && !result.get("matchesRequested").getAsBoolean(), "native reflow is honestly distinct from requested placement");
+        JsonArray modules = result.getAsJsonObject("graph").getAsJsonArray("modules");
+        check(modules.size() == 2 && modules.get(1).getAsJsonObject().get("x").getAsInt() == 14,
+                "later graph includes reflowed unselected modules");
+        check(!result.get("engineAcknowledgement").getAsBoolean() && !result.get("undoGroupingVerified").getAsBoolean(),
+                "native observation never promises DSP acknowledgement or undo grouping");
+    }
+
+    private static void moduleDeletesObserveSelectiveBypassChanges() {
+        ModuleWriterFixture f = new ModuleWriterFixture();
+        Node third = f.model.module(2, f.model.graph);
+        Node secondOutput = f.model.port(OUTPUT, f.model.second, "middle");
+        Node thirdInput = f.model.port(INPUT, third, "sink").put(INPUT_SOURCE, secondOutput);
+        f.model.second.put(OUTPUTS, List.of(secondOutput));
+        third.put(INPUTS, List.of(thirdInput));
+        f.model.graph.put(MODULES, List.of(f.model.first, f.model.second, third));
+        f.moduleId = new UUID(1, 2);
+        f.afterMutation = () -> thirdInput.put(INPUT_SOURCE, f.model.output);
+        HostOperation op = f.start(null);
+        check(!op.result.isDone() && f.calls == 1 && op.dispatched, "selective delete waits for later graph rather than void return");
+        f.next(); JsonObject result = op.result.join(), graph = result.getAsJsonObject("graph");
+        check(result.get("removed").getAsBoolean() && result.get("removedModuleId").getAsString().equals(f.moduleId.toString())
+                && graph.getAsJsonArray("modules").size() == 2, "delete removes exact UUID without clearing survivors");
+        check(graph.getAsJsonArray("connections").size() == 1
+                && graph.getAsJsonArray("connections").get(0).getAsJsonObject()
+                        .get("sourceModuleId").getAsString().equals(new UUID(1, 1).toString()),
+                "post-delete graph exposes native bypass reconnection, not just incident edges");
+        HostOperation absent = f.start(null);
+        check(TransportMixFixture.error(absent, "stale_context").outcome.equals("not_applied")
+                && f.calls == 1, "missing UUID is not idempotent deletion success or a retry");
+    }
+
+    private static void modulePreflightRejectsUnsafeContextsAndGeometry() {
+        for (GridModuleContext.Field field : List.of(GridModuleContext.Field.CIU, GridModuleContext.Field.PROJECT_ADM,
+                GridModuleContext.Field.PROJECT_OOK, GridModuleContext.Field.UNDO_EXECUTING,
+                GridModuleContext.Field.UNDO_ACTIVE, GridModuleContext.Field.UNDO_ICL)) {
+            ModuleWriterFixture f = new ModuleWriterFixture(); f.context.values.put(field, true);
+            HostOperation op = f.start(null);
+            check(TransportMixFixture.error(op, "unsafe_state").outcome.equals("not_applied")
+                    && f.calls == 0 && !f.writer.quarantined(), "native topology predicate rejects before dispatch: " + field);
+        }
+        for (GridModuleContext.Field field : List.of(GridModuleContext.Field.INITIALIZED, GridModuleContext.Field.CONTEXT_THREAD)) {
+            ModuleWriterFixture f = new ModuleWriterFixture(); f.context.values.put(field, false);
+            TransportMixFixture.error(f.start(null), "unsafe_state");
+            check(f.calls == 0, "uninitialized or wrong context thread prevents mutation");
+        }
+        for (GridModuleContext.Field field : List.of(GridModuleContext.Field.CURRENT_DT, GridModuleContext.Field.DEFAULT_DT,
+                GridModuleContext.Field.UNDO, GridModuleContext.Field.LOCK, GridModuleContext.Field.LOCK_OWNER)) {
+            ModuleWriterFixture f = new ModuleWriterFixture(); f.context.values.put(field, null);
+            TransportMixFixture.error(f.start(null), "grid_unavailable");
+            check(f.calls == 0, "unavailable required native context is not permission: " + field);
+        }
+        for (GridModuleContext.Field field : List.of(GridModuleContext.Field.DELETED, GridModuleContext.Field.DISPOSED)) {
+            ModuleWriterFixture f = new ModuleWriterFixture(); f.context.values.put(field, true);
+            TransportMixFixture.error(f.start(null), "stale_context");
+        }
+        ModuleWriterFixture root = new ModuleWriterFixture(); root.context.values.put(GridModuleContext.Field.ROOT, new Object());
+        TransportMixFixture.error(root.start(null), "stale_context");
+        ModuleWriterFixture lock = new ModuleWriterFixture(); lock.context.values.put(GridModuleContext.Field.LOCK_OWNER, new Object());
+        TransportMixFixture.error(lock.start(null), "unsafe_state");
+        ModuleWriterFixture project = new ModuleWriterFixture(); project.context.values.put(GridModuleContext.Field.PROJECT, new Object());
+        TransportMixFixture.error(project.start(null), "stale_context");
+        ModuleWriterFixture wrongTrack = new ModuleWriterFixture(); wrongTrack.trackId = new UUID(99, 99);
+        TransportMixFixture.error(wrongTrack.start(null), "stale_context");
+        ModuleWriterFixture moved = new ModuleWriterFixture(); moved.model.first.put(MODULE_GRAPH, new Node());
+        TransportMixFixture.error(moved.start(null), "stale_context");
+        ModuleWriterFixture unknown = new ModuleWriterFixture(); unknown.model.graph.put(MODULES, List.of(unknown.model.first, new Node()));
+        TransportMixFixture.error(unknown.start(null), "grid_unavailable");
+        ModuleWriterFixture many = new ModuleWriterFixture(); List<Node> modules = new ArrayList<>();
+        for (int i = 0; i <= GridModuleWriter.MAX_MODULES; i++) modules.add(many.model.module(i, many.model.graph));
+        many.model.graph.put(MODULES, modules); TransportMixFixture.error(many.start(null), "grid_bounds_exceeded");
+        for (GridSnapshotReader.Field field : List.of(WIDTH, HEIGHT)) {
+            for (int invalid : List.of(0, -1)) {
+                ModuleWriterFixture f = new ModuleWriterFixture(); f.model.second.put(field, invalid);
+                TransportMixFixture.error(f.start(null), "grid_bounds_exceeded");
+                check(f.calls == 0 && !f.writer.quarantined(), "invalid unselected footprint blocks topology without quarantine");
+            }
+        }
+        for (GridModuleWriter.Move move : List.of(new GridModuleWriter.Move(7, 3, Integer.MAX_VALUE, 3),
+                new GridModuleWriter.Move(7, 3, 9, Integer.MAX_VALUE),
+                new GridModuleWriter.Move(7, 3, Integer.MIN_VALUE, 3),
+                new GridModuleWriter.Move(7, 3, 9, 65539))) {
+            ModuleWriterFixture f = new ModuleWriterFixture();
+            TransportMixFixture.error(f.start(move), "grid_bounds_exceeded");
+            check(f.calls == 0 && !f.writer.quarantined(), "prospective endpoint, translation and full graph y-span checked before native allocation");
+        }
+        ModuleWriterFixture cumulative = new ModuleWriterFixture();
+        cumulative.model.second.put(X, Integer.MAX_VALUE - 2);
+        TransportMixFixture.error(cumulative.start(null), "grid_bounds_exceeded");
+        ModuleWriterFixture occupied = new ModuleWriterFixture();
+        TransportMixFixture.error(occupied.start(new GridModuleWriter.Move(7, 3, 8, 3)), "invalid_params");
+        check(occupied.calls == 0 && !occupied.writer.quarantined(), "native exact-origin conflict rejected without invoking/quarantining");
+        ModuleWriterFixture overlap = new ModuleWriterFixture();
+        overlap.model.second.put(X, 10);
+        HostOperation overlapOp = overlap.start(new GridModuleWriter.Move(7, 3, 9, 3));
+        overlap.next(); check(overlapOp.result.join().get("mutationDispatched").getAsBoolean(), "ordinary rectangle overlap remains native reflow's decision");
+    }
+
+    private static void moduleFailuresQuarantineOnlyNativeInvocation() {
+        ModuleWriterFixture unsupported = new ModuleWriterFixture(); unsupported.moveSupported = false;
+        HostOperation unsupportedMove = unsupported.start(new GridModuleWriter.Move(7, 3, 10, 3));
+        check(TransportMixFixture.error(unsupportedMove, "grid_unavailable").outcome.equals("not_applied")
+                && !unsupported.writer.quarantined() && unsupported.calls == 0, "move binding/preparation failure is preflight, not quarantine");
+        HostOperation independentDelete = unsupported.start(null); unsupported.next();
+        check(independentDelete.result.join().get("removed").getAsBoolean(), "unavailable move binding does not disable selective deletion");
+        ModuleWriterFixture deleteFailure = new ModuleWriterFixture();
+        deleteFailure.afterMutation = () -> { throw HostServices.failure("grid_unavailable", "native delete failure"); };
+        HostOperation failedDelete = deleteFailure.start(null);
+        check(TransportMixFixture.error(failedDelete, "grid_unavailable").outcome.equals("unknown")
+                && deleteFailure.writer.quarantined(), "native selective-delete exception also quarantines topology");
+        HostOperation blockedMove = deleteFailure.start(new GridModuleWriter.Move(7, 3, 10, 3));
+        check(TransportMixFixture.error(blockedMove, "grid_unavailable").outcome.equals("not_applied")
+                && deleteFailure.calls == 1, "delete failure prevents future move without retry");
+        GridModuleWriter recreated = new GridModuleWriter(deleteFailure.model.reader, deleteFailure.model,
+                deleteFailure.context.reader, deleteFailure, deleteFailure.quarantine);
+        expect("grid_unavailable", () -> recreated.delete(deleteFailure.model.proxy, TRACK_ID, new UUID(1, 2),
+                () -> {}, () -> { throw new AssertionError("quarantine cleared on writer recreation"); },
+                result -> { throw new AssertionError("quarantine completed"); }, error -> { throw new AssertionError(error); }));
+        check(recreated.quarantined() && !new ModuleWriterFixture().writer.quarantined(),
+                "shared native-lifetime quarantine survives writer recreation while independent fake lifetimes remain isolated");
+        ModuleWriterFixture f = new ModuleWriterFixture();
+        f.afterMutation = () -> { throw new AssertionError("native close failure"); };
+        HostOperation op = f.start(new GridModuleWriter.Move(7, 3, 10, 3));
+        check(TransportMixFixture.error(op, "grid_unavailable").outcome.equals("unknown")
+                && f.writer.quarantined() && f.calls == 1 && f.events.isEmpty(),
+                "unexpected native failure quarantines both topology routes without retry or observation-as-success");
+        HostOperation blocked = f.start(null);
+        check(TransportMixFixture.error(blocked, "grid_unavailable").outcome.equals("not_applied") && f.calls == 1,
+                "quarantine prevents subsequent selective deletion before dispatch");
+        check(f.model.read(0, 64, false).getAsJsonArray("modules").size() == 2,
+                "native topology failure does not disable independent read traversal");
+        ModuleWriterFixture rejected = new ModuleWriterFixture(); rejected.apply = false;
+        op = rejected.start(null); rejected.next();
+        check(TransportMixFixture.error(op, "grid_verification_failed").outcome.equals("unknown")
+                && !rejected.writer.quarantined() && rejected.calls == 1,
+                "normal native delete return without removal is unknown, not fabricated success or automatic retry");
+    }
+
+    private static void modulePostEventChangesRemainUnknown() {
+        for (int change = 0; change < 6; change++) {
+            ModuleWriterFixture f = new ModuleWriterFixture();
+            HostOperation op = f.start(new GridModuleWriter.Move(7, 3, 10, 3));
+            if (change == 0) f.model.proxy.put(TARGET, new Node(DEVICE));
+            if (change == 1) f.context.values.put(GridModuleContext.Field.PROJECT_OOK, true);
+            if (change == 2) f.model.graph.put(MODULES, List.of(f.model.first));
+            if (change == 3) f.model.second.put(WIDTH, 3);
+            if (change == 4) f.model.second.put(Y, 100000);
+            if (change == 5) f.cancelled = true;
+            f.next();
+            check(op.result.isCompletedExceptionally() && !f.writer.quarantined() && f.calls == 1,
+                    "later target/context/layout/bounds/cancellation failure is observed once without native retry");
+            try { op.result.join(); throw new AssertionError("expected unknown"); }
+            catch (java.util.concurrent.CompletionException error) {
+                check(((RpcException) error.getCause()).outcome.equals("unknown"), "every post-native failure retains unknown outcome");
+            }
+        }
+    }
+
+    /** Collect independent review regressions so one unfixed guard cannot hide the other violations. */
+    private static void moduleTopologyReviewRegressions() {
+        List<String> failures = new ArrayList<>();
+        for (int[] destination : List.of(new int[]{11, 4}, new int[]{10, 5}, new int[]{13, 6})) {
+            topologyRegression(failures, "occupied footprint anchor " + Arrays.toString(destination), () -> {
+                ModuleWriterFixture f = new ModuleWriterFixture();
+                f.model.second.put(X, 10).put(Y, 4).put(WIDTH, 4).put(HEIGHT, 3);
+                HostOperation op = f.start(new GridModuleWriter.Move(7, 3, destination[0], destination[1]));
+                check(op.result.isCompletedExceptionally() && !op.dispatched && f.calls == 0
+                                && !f.writer.quarantined() && f.events.isEmpty(),
+                        "anchor anywhere inside another half-open footprint must reject before dispatch without quarantine");
+                check(TransportMixFixture.error(op, "invalid_params").outcome.equals("not_applied"),
+                        "deterministic native occupancy rejection is not an unknown mutation");
+            });
+        }
+        for (int[] destination : List.of(new int[]{14, 4}, new int[]{10, 7}, new int[]{9, 4})) {
+            topologyRegression(failures, "outside footprint anchor " + Arrays.toString(destination), () -> {
+                ModuleWriterFixture f = new ModuleWriterFixture();
+                f.model.second.put(X, 10).put(Y, 4).put(WIDTH, 4).put(HEIGHT, 3);
+                HostOperation op = f.start(new GridModuleWriter.Move(7, 3, destination[0], destination[1]));
+                check(op.dispatched && f.calls == 1 && !op.result.isDone(),
+                        "half-open right/bottom boundaries and rectangle overlap with an outside anchor remain allowed");
+                f.next();
+                check(op.result.join().get("mutationDispatched").getAsBoolean() && !f.writer.quarantined(),
+                        "allowed overlap still uses native placement and later observation");
+            });
+        }
+        for (GridModuleContext.Field field : List.of(GridModuleContext.Field.DELETED,
+                GridModuleContext.Field.CONTEXT, GridModuleContext.Field.PROJECT)) {
+            for (boolean deleting : List.of(false, true)) {
+                topologyRegression(failures, "unselected preflight " + field + " delete=" + deleting, () -> {
+                    ModuleWriterFixture f = new ModuleWriterFixture();
+                    f.context.override(f.model.second, field,
+                            field == GridModuleContext.Field.DELETED ? true : field == GridModuleContext.Field.CONTEXT ? null : new Object());
+                    HostOperation op = f.start(deleting ? null : new GridModuleWriter.Move(7, 3, 11, 5));
+                    check(op.result.isCompletedExceptionally() && !op.dispatched && f.calls == 0
+                                    && !f.writer.quarantined() && f.events.isEmpty(),
+                            "every participating module must be live, attached and in the exact project before native dispatch");
+                    check(TransportMixFixture.error(op, "stale_context").outcome.equals("not_applied"),
+                            "unselected module lifecycle rejection is a preflight stale context");
+                });
+                topologyRegression(failures, "surviving post-event " + field + " delete=" + deleting, () -> {
+                    ModuleWriterFixture f = new ModuleWriterFixture();
+                    HostOperation op = f.start(deleting ? null : new GridModuleWriter.Move(7, 3, 11, 5));
+                    check(op.dispatched && f.calls == 1 && !op.result.isDone(), "native operation precedes later survivor checks");
+                    f.context.override(f.model.second, field,
+                            field == GridModuleContext.Field.DELETED ? true : field == GridModuleContext.Field.CONTEXT ? null : new Object());
+                    f.next();
+                    check(op.result.isCompletedExceptionally() && !f.writer.quarantined() && f.calls == 1,
+                            "a later deleted/detached/wrong-project survivor must not become an observed success");
+                    check(TransportMixFixture.error(op, "stale_context").outcome.equals("unknown"),
+                            "post-native survivor failure remains unknown without quarantine or retry");
+                });
+            }
+        }
+        for (String change : List.of("selected_y", "unselected_y", "selected_left", "unselected_left")) {
+            topologyRegression(failures, "invalid native reflow " + change, () -> {
+                ModuleWriterFixture f = new ModuleWriterFixture();
+                HostOperation op = f.start(new GridModuleWriter.Move(7, 3, 11, 5));
+                check(op.dispatched && !op.result.isDone(), "move has returned before independent layout change");
+                switch (change) {
+                    case "selected_y": f.model.first.put(Y, 6); break;
+                    case "unselected_y": f.model.second.put(Y, 4); break;
+                    case "selected_left": f.model.first.put(X, 10); break;
+                    case "unselected_left": f.model.second.put(X, 7); break;
+                    default: throw new AssertionError(change);
+                }
+                f.next();
+                check(op.result.isCompletedExceptionally() && !f.writer.quarantined() && f.calls == 1,
+                        "wrong rows and leftward displacement violate native move/reflow postconditions, not merely matchesRequested");
+                check(TransportMixFixture.error(op, "grid_verification_failed").outcome.equals("unknown"),
+                        "inconsistent later move coordinates are unknown without retry");
+            });
+        }
+        topologyRegression(failures, "legitimate rightward native reflow", () -> {
+            ModuleWriterFixture f = new ModuleWriterFixture();
+            HostOperation op = f.start(new GridModuleWriter.Move(7, 3, 11, 5));
+            f.model.first.put(X, 12); f.model.second.put(X, 14);
+            f.next();
+            JsonObject result = op.result.join();
+            check(!result.get("matchesRequested").getAsBoolean()
+                            && result.getAsJsonObject("actualPosition").get("y").getAsInt() == 5
+                            && result.getAsJsonObject("graph").getAsJsonArray("modules").get(1).getAsJsonObject().get("y").getAsInt() == 3,
+                    "native rightward reflow remains valid while selected and unselected rows retain their respective baselines");
+        });
+        if (!failures.isEmpty()) throw new AssertionError("Topology safety regressions: " + String.join("; ", failures));
+    }
+    private static void topologyRegression(List<String> failures, String label, Runnable scenario) {
+        try { scenario.run(); }
+        catch (AssertionError | java.util.concurrent.CompletionException error) {
+            failures.add(label + ": " + error.getMessage());
+        }
+    }
+
+    public interface TestMoveCallback {
+        void success(Object value);
+        void error(Exception value);
+        void error(String value);
+    }
+    private static void nativeMoveCallbackCaptureNeverThrows() {
+        try {
+            java.lang.reflect.Method success = TestMoveCallback.class.getMethod("success", Object.class);
+            java.lang.reflect.Method exception = TestMoveCallback.class.getMethod("error", Exception.class);
+            java.lang.reflect.Method message = TestMoveCallback.class.getMethod("error", String.class);
+            for (int mode = 0; mode < 6; mode++) {
+                Bitwig613GridModuleAccess.MoveCallback capture = new Bitwig613GridModuleAccess.MoveCallback(success, exception, message);
+                if (mode == 0) capture.invoke(null, success, new Object[]{new Object()});
+                if (mode == 1) capture.invoke(null, exception, new Object[]{new Exception("native")});
+                if (mode == 2) capture.invoke(null, message, new Object[]{"rejected"});
+                if (mode == 3) capture.invoke(null, success, new Object[]{null});
+                if (mode == 4) {
+                    capture.invoke(null, success, new Object[]{new Object()});
+                    capture.invoke(null, success, new Object[]{new Object()});
+                }
+                if (mode == 0) { capture.requireSuccess(); check(true, "nonthrowing success capture is checked only by caller after native return"); }
+                else expect("grid_unavailable", capture::requireSuccess);
+            }
+        } catch (ReflectiveOperationException error) { throw new AssertionError(error); }
+    }
+
+    static final class ModuleWriterFixture implements GridModuleWriter.Access {
+        final Fixture model = new Fixture();
+        final ModuleContextFixture context = new ModuleContextFixture();
+        final Deque<Runnable> events = new ArrayDeque<>();
+        final java.util.function.Consumer<Runnable> queue;
+        final GridModuleWriter.Quarantine quarantine = new GridModuleWriter.Quarantine();
+        final GridModuleWriter writer = new GridModuleWriter(model.reader, model, context.reader, this, quarantine);
+        UUID trackId = TRACK_ID, moduleId = new UUID(1, 1);
+        int calls; boolean apply = true, cancelled, moveSupported = true;
+        HostOperation current;
+        Runnable afterMutation = () -> {};
+        ModuleWriterFixture() { queue = events::add; }
+        ModuleWriterFixture(java.util.function.Consumer<Runnable> queue) { this.queue = queue; }
+        HostOperation start(GridModuleWriter.Move move) {
+            HostOperation op = current = new HostOperation(Long.MAX_VALUE);
+            try {
+                edit(move, () -> { if (cancelled) throw HostServices.failure("cancelled", "cancelled"); },
+                        () -> op.dispatched = true, value -> op.result.complete(value), op::fail);
+            } catch (Throwable error) { op.fail(error); }
+            return op;
+        }
+        void edit(GridModuleWriter.Move move, Runnable check, Runnable dispatch,
+                java.util.function.Consumer<JsonObject> complete, java.util.function.Consumer<Throwable> fail) {
+            if (move == null) writer.delete(model.proxy, trackId, moduleId, check, dispatch, complete, fail);
+            else writer.move(model.proxy, trackId, moduleId, move, check, dispatch, complete, fail);
+        }
+        void next() { events.removeFirst().run(); }
+        @Override public Runnable prepareMove(Object graph, Object module, int x, int y) {
+            if (!moveSupported) throw HostServices.failure("grid_unavailable", "move descriptor unavailable");
+            return () -> {
+                calls++;
+                if (apply) ((Node) module).put(X, x).put(Y, y);
+                afterMutation.run();
+            };
+        }
+        @Override public Runnable prepareDelete(Object graph, Object module) {
+            return () -> {
+                calls++;
+                if (apply) {
+                    List<Object> remaining = new ArrayList<>((List<?>) ((Node) graph).values.get(MODULES));
+                    remaining.remove(module); ((Node) graph).put(MODULES, remaining);
+                }
+                afterMutation.run();
+            };
+        }
+        @Override public void execute(Runnable observation) { queue.accept(observation); }
+    }
+    private static final class ModuleContextFixture implements GridModuleContext.Access {
+        final GridModuleContext reader = new GridModuleContext(this);
+        final EnumMap<GridModuleContext.Field, Object> values = new EnumMap<>(GridModuleContext.Field.class);
+        final IdentityHashMap<Object, EnumMap<GridModuleContext.Field, Object>> perObject = new IdentityHashMap<>();
+        final Object context = new Object(), project = new Object(), dt = new Object();
+        ModuleContextFixture() {
+            for (GridModuleContext.Field field : GridModuleContext.Field.values()) values.put(field, false);
+            values.put(GridModuleContext.Field.CONTEXT, context); values.put(GridModuleContext.Field.PROJECT, project);
+            values.put(GridModuleContext.Field.GRAPH_PROJECT, project); values.put(GridModuleContext.Field.ROOT, project);
+            values.put(GridModuleContext.Field.INITIALIZED, true); values.put(GridModuleContext.Field.CONTEXT_THREAD, true);
+            values.put(GridModuleContext.Field.CURRENT_DT, dt); values.put(GridModuleContext.Field.DEFAULT_DT, dt);
+            values.put(GridModuleContext.Field.DT_CONTEXT, context);
+            values.put(GridModuleContext.Field.UNDO, new Object()); values.put(GridModuleContext.Field.LOCK, new Object());
+            values.put(GridModuleContext.Field.LOCK_OWNER, dt);
+        }
+        void override(Object object, GridModuleContext.Field field, Object value) {
+            perObject.computeIfAbsent(object, ignored -> new EnumMap<>(GridModuleContext.Field.class)).put(field, value);
+        }
+        @Override public Object read(GridModuleContext.Field field, Object object) {
+            EnumMap<GridModuleContext.Field, Object> specific = perObject.get(object);
+            return specific != null && specific.containsKey(field) ? specific.get(field) : values.get(field);
+        }
+        @Override public boolean defaultContext(Object context) { return true; }
+    }
+
     /** Real shared binding/context/writer logic over a semantic model, also used by queue-boundary tests. */
     static final class WriterFixture implements GridParameterWriter.Access {
         final Fixture model = inspectionFixture();
@@ -751,6 +1145,7 @@ public final class GridSnapshotReaderTest {
         Node module(int index, Node owner) {
             return new Node(MODULE).put(INSTANCE_ID, new UUID(1, index + 1)).put(LOCAL_KEY, Integer.toString(index))
                     .put(X, 7 + index).put(Y, 3).put(MODULE_GRAPH, owner)
+                    .put(WIDTH, 2).put(HEIGHT, 1)
                     .put(MODULE_NAME, "Effective module").put(CUSTOM_NAME, "")
                     .put(DESCRIPTOR, new Node().put(TYPE_ID, new UUID(2, 1)))
                     .put(INPUTS, List.of()).put(OUTPUTS, List.of()).put(CHILDREN, List.of());

@@ -12,7 +12,7 @@ final class GridSnapshotReader {
     enum Kind { DEVICE, TRACK, ALIASED_TRACK, CHANNEL_ALIAS, MODULE, INPUT, OUTPUT, PARAMETER, FLOAT, BOOLEAN, INTEGER, ENUM, ENTRY, OPTION }
     private static final Kind[] PARAMETER_KINDS = {Kind.FLOAT, Kind.BOOLEAN, Kind.INTEGER, Kind.ENUM};
     enum Field {
-        TARGET, GRAPH, EXECUTOR, MODULES, INSTANCE_ID, LOCAL_KEY, X, Y, DESCRIPTOR, TYPE_ID,
+        TARGET, GRAPH, EXECUTOR, MODULES, INSTANCE_ID, LOCAL_KEY, X, Y, WIDTH, HEIGHT, DESCRIPTOR, TYPE_ID,
         OWNER_TRACK, TRACK_ALIAS, TRACK_UUID, ALIAS_UUID,
         INPUTS, OUTPUTS, CHILDREN, MODULE_GRAPH, OWNER_MODULE, INPUT_SOURCE, INPUT_KEY, OUTPUT_KEY,
         PATH, FLOAT_VALUE, FLOAT_DEFINITION, FLOAT_MIN, FLOAT_MAX, BOOLEAN_VALUE,
@@ -22,6 +22,7 @@ final class GridSnapshotReader {
         INPUT_NAME, OUTPUT_NAME, FLOAT_UNIT, UNIT_TOKEN, INTEGER_PREFIX, INTEGER_SUFFIX
     }
     enum Metadata {
+        FOOTPRINT("moduleFootprint", "native_primitive_width_height_grid_coordinates_not_pixels"),
         MODULE_NAMES("moduleNames", "native_effective_name_and_raw_custom_override"),
         TYPE_NAMES("typeNames", "catalog_uuid_lookup"),
         PARAMETER_NAMES("parameterNames", "native_identifier_name_and_short_name"),
@@ -103,6 +104,8 @@ final class GridSnapshotReader {
             metadataText(item, "customName", Field.CUSTOM_NAME, module, Metadata.MODULE_NAMES, state, "module_custom_name");
             item.addProperty("x", integer(a.read(Field.X, module)));
             item.addProperty("y", integer(a.read(Field.Y, module)));
+            metadataDimension(item, "width", Field.WIDTH, module, state);
+            metadataDimension(item, "height", Field.HEIGHT, module, state);
             Object descriptor = a.read(Field.DESCRIPTOR, module);
             Object typeId = descriptor == null ? null : a.read(Field.TYPE_ID, descriptor);
             if (descriptor == null) {
@@ -255,7 +258,25 @@ final class GridSnapshotReader {
         return found;
     }
 
-    private NativeTarget target(Object proxy, UUID expectedTrackId) {
+    /** Full bounded module membership for topology writers; opaque graph children cannot be skipped. */
+    List<Object> topologyModules(Object graph, Runnable check) {
+        List<Object> modules = collect(Field.MODULES, graph, GridModuleWriter.MAX_MODULES, new State(check));
+        Set<UUID> ids = new HashSet<>();
+        for (Object module : modules) {
+            check.run();
+            if (!a.is(Kind.MODULE, module))
+                throw failure("grid_unavailable", "Topology editing requires every graph child to be a mapped module.");
+            a.requireModelThread(module);
+            if (a.read(Field.MODULE_GRAPH, module) != graph)
+                throw failure("stale_context", "Native module belongs to a different graph.");
+            Object id = a.read(Field.INSTANCE_ID, module);
+            if (!(id instanceof UUID) || !ids.add((UUID) id))
+                throw failure("grid_unavailable", "Topology editing requires unique native module UUIDs.");
+        }
+        return modules;
+    }
+
+    NativeTarget target(Object proxy, UUID expectedTrackId) {
         if (expectedTrackId == null) throw failure("grid_unavailable", "Expected owning-track UUID is required.");
         Object target = a.read(Field.TARGET, proxy);
         if (target == null) throw failure("missing_target", "Explicit device proxy has no native target; refresh devices.get.");
@@ -269,7 +290,7 @@ final class GridSnapshotReader {
         return new NativeTarget(target, owner, identity, graph);
     }
 
-    private void guardTarget(NativeTarget binding, Object proxy, UUID expectedTrackId) {
+    void guardTarget(NativeTarget binding, Object proxy, UUID expectedTrackId) {
         a.documentThread();
         if (a.read(Field.TARGET, proxy) != binding.target)
             throw failure("stale_context", "Explicit native device changed during the read.");
@@ -281,7 +302,7 @@ final class GridSnapshotReader {
         a.requireModelThread(binding.graph);
     }
 
-    private static final class NativeTarget {
+    static final class NativeTarget {
         final Object target, owner, identity, graph;
         NativeTarget(Object target, Object owner, Object identity, Object graph) {
             this.target = target; this.owner = owner; this.identity = identity; this.graph = graph;
@@ -439,6 +460,15 @@ final class GridSnapshotReader {
         else {
             result.add(key, JsonNull.INSTANCE);
             if (value != null) state.unsupported(reason + "_invalid");
+        }
+    }
+
+    private void metadataDimension(JsonObject result, String key, Field field, Object owner, State state) {
+        Object value = metadataValue(field, owner, Metadata.FOOTPRINT, state, "module_" + key);
+        if (value instanceof Integer && (Integer) value > 0) result.addProperty(key, (Integer) value);
+        else {
+            result.add(key, JsonNull.INSTANCE);
+            if (value != null) state.unsupported("module_" + key + "_invalid");
         }
     }
 
