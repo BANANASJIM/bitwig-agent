@@ -7,7 +7,7 @@ import static dev.bitwigagent.HostServices.*;
 
 /** Runtime discovery of implemented surfaces, bounded host windows and explicit exclusions. */
 final class DiscoveryModule implements HostModule {
-    static final Set<String> METHODS = Set.of("status", "tracks.list", "devices.list", "capabilities");
+    static final Set<String> METHODS = Set.of("status", "tracks.list", "devices.list", "devices.layers.list", "capabilities");
     private final HostServices s;
     private final ParameterModule parameters;
     DiscoveryModule(HostServices s, ParameterModule parameters) { this.s = s; this.parameters = parameters; }
@@ -15,6 +15,7 @@ final class DiscoveryModule implements HostModule {
     @Override public void validate(String method, JsonObject params) { validateParams(method, params); }
     static void validateParams(String method, JsonObject params) {
         if (!METHODS.contains(method)) throw failure("unknown_method", "Unknown discovery method.");
+        if (method.equals("devices.layers.list")) { DeviceSources.validateLayer(params, false, true); return; }
         Params.fields(params, method.equals("devices.list") ? Set.of("trackId") : Set.of(), Set.of());
         if (method.equals("devices.list")) Params.string(params, "trackId");
     }
@@ -23,6 +24,7 @@ final class DiscoveryModule implements HostModule {
             case "status": operation.result.complete(status()); return;
             case "tracks.list": operation.result.complete(listTracks()); return;
             case "devices.list": operation.result.complete(listDevices(params.get("trackId").getAsString())); return;
+            case "devices.layers.list": operation.result.complete(s.sources.listLayers(params)); return;
             case "capabilities": operation.result.complete(capabilities()); return;
             default: throw failure("unknown_method", "Unsupported discovery method: " + method);
         }
@@ -63,6 +65,10 @@ final class DiscoveryModule implements HostModule {
         windows.addProperty("sendsPerTrack", SENDS);
         windows.addProperty("trackScope", "flat_track_bank");
         windows.addProperty("deviceScope", "top_level");
+        windows.addProperty("layersPerRootDevice", DeviceSources.LAYERS);
+        windows.addProperty("devicesPerLayer", DeviceSources.CHILDREN);
+        windows.addProperty("layerScope", "one_layer_hop_fixed_zero_offset_no_pads_slots_deeper_or_grid_private_targeting");
+        windows.addProperty("layerPhysicalRebindPolicy", "direct_access_fail_closed_until_extension_reload_no_callback_provenance_boundary");
         windows.addProperty("indexBase", 0);
         result.add("windows", windows);
         JsonObject units = new JsonObject();

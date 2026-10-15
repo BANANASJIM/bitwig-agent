@@ -14,6 +14,7 @@ final class HostServices implements AutoCloseable {
     final Transport transport;
     final TrackBank tracks;
     final DeviceBank[] devices = new DeviceBank[TRACKS];
+    final DeviceSources sources;
     boolean tracksObserved;
     private volatile boolean closed;
     private Boolean playing, arrangerRecordEnabled, arrangerAutomationWriteEnabled, clipLauncherAutomationWriteEnabled;
@@ -49,6 +50,7 @@ final class HostServices implements AutoCloseable {
                 device.deviceType().markInterested();
             }
         }
+        sources = new DeviceSources(this);
     }
 
     void schedule(HostOperation operation, Runnable task, long delayMs) {

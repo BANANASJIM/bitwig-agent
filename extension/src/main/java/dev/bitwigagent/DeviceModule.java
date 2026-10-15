@@ -20,9 +20,6 @@ final class DeviceModule implements HostModule {
     private final InsertionPoint[] ends = new InsertionPoint[HostServices.TRACKS];
     private final boolean[] countObserved = new boolean[HostServices.TRACKS];
     private final long[] countSequence = new long[HostServices.TRACKS];
-    private final String[] observedTrackIds = new String[HostServices.TRACKS];
-    private final boolean[] trackExistsObserved = new boolean[HostServices.TRACKS];
-    private final boolean[] observedTrackExists = new boolean[HostServices.TRACKS];
     private HostOperation mutation;
     private final String sessionToken = UUID.randomUUID().toString();
     private final JsonObject deviceCatalog = catalog();
@@ -38,36 +35,11 @@ final class DeviceModule implements HostModule {
                 countSequence[slot]++;
             });
             for (int d = 0; d < HostServices.DEVICES; d++) {
-                Source source = new Source(track, (Device) s.devices[t].getItemAt(d), d);
+                Source source = new Source(s.sources.roots[t][d], d);
                 sources[t][d] = source;
-                source.device.exists().addValueObserver((BooleanValueChangedCallback) value -> {
-                    if (source.identityEstablished && source.lastExists != value) invalidateRemotes(source);
-                    source.lastExists = value;
-                    source.existsObserved = true;
-                    source.generation++;
-                    establishIdentity(slot, source);
-                });
-                source.device.name().addValueObserver((StringValueChangedCallback) value -> {
-                    source.nameObserved = true;
-                    source.nameSequence++;
-                    source.generation++;
-                    establishIdentity(slot, source);
-                });
-                source.device.position().addValueObserver((IntegerValueChangedCallback) value -> {
-                    if (source.identityEstablished && source.lastPosition != value) invalidateRemotes(source);
-                    source.lastPosition = value;
-                    source.positionObserved = true;
-                    source.generation++;
-                    establishIdentity(slot, source);
-                });
-                source.device.deviceType().addValueObserver((EnumValueChangedCallback) value -> {
-                    // Native enum callbacks can use audio_to_audio while the public getter returns audio-effect.
-                    String type = (String) source.device.deviceType().get();
-                    if (source.identityEstablished && !java.util.Objects.equals(source.lastType, type)) invalidateRemotes(source);
-                    source.lastType = type;
-                    source.typeObserved = true;
-                    source.generation++;
-                    establishIdentity(slot, source);
+                source.identity.listeners.add((structural, name) -> {
+                    if (structural) invalidateRemotes(source);
+                    if (source.remoteFlushPending) requestRemoteFlush(source);
                 });
                 source.device.isEnabled().addValueObserver((BooleanValueChangedCallback) value -> {
                     source.enabledObserved = true;
@@ -75,17 +47,6 @@ final class DeviceModule implements HostModule {
                 });
                 initRemotes(source, t, d);
             }
-            track.channelId().addValueObserver((StringValueChangedCallback) value -> {
-                if (observedTrackIds[slot] != null && !observedTrackIds[slot].equals(value)) invalidate(slot);
-                observedTrackIds[slot] = (String) value;
-                for (Source source : sources[slot]) establishIdentity(slot, source);
-            });
-            track.exists().addValueObserver((BooleanValueChangedCallback) value -> {
-                if (trackExistsObserved[slot] && observedTrackExists[slot] != value) invalidate(slot);
-                trackExistsObserved[slot] = true;
-                observedTrackExists[slot] = value;
-                for (Source source : sources[slot]) establishIdentity(slot, source);
-            });
         }
     }
 
@@ -101,7 +62,7 @@ final class DeviceModule implements HostModule {
         });
         source.page.selectedPageIndex().addValueObserver((IntegerValueChangedCallback) value -> {
             if (!remoteSourcePresent(source)) return;
-            if (source.identityEstablished && source.pageIndexObserved && source.lastPageIndex != value)
+            if (source.identity.established && source.pageIndexObserved && source.lastPageIndex != value)
                 invalidateControls(source);
             source.lastPageIndex = value;
             source.pageIndexObserved = true; source.pageIndexFresh = true;
@@ -126,7 +87,7 @@ final class DeviceModule implements HostModule {
             });
             control.name().addValueObserver((StringValueChangedCallback) value -> {
                 if (!remoteControlPresent(source, index)) return;
-                if (source.identityEstablished && source.controlNamesObserved[index]) invalidateControl(source, index);
+                if (source.identity.established && source.controlNamesObserved[index]) invalidateControl(source, index);
                 source.controlNamesObserved[index] = true; source.remoteGeneration++;
             });
             control.isBeingMapped().addValueObserver((BooleanValueChangedCallback) value -> {
@@ -146,7 +107,7 @@ final class DeviceModule implements HostModule {
 
     private String remoteToken(Target target) {
         return sessionToken + ":" + target.trackSlot + ":" + target.index + ":"
-                + target.source.generation + ":" + target.source.remoteGeneration;
+                + target.source.identity.revision + ":" + target.source.remoteGeneration;
     }
 
     private JsonObject remoteMetadata(Target target) {
@@ -276,28 +237,11 @@ final class DeviceModule implements HostModule {
         } else s.schedule(op, () -> observeRemote(op, target, index, value, token, sequence, end), 25);
     }
 
-    private void invalidate(int trackSlot) {
-        for (Source source : sources[trackSlot]) {
-            source.generation++;
-            if (source.identityEstablished) invalidateRemotes(source);
-        }
-    }
-
-    private void establishIdentity(int trackSlot, Source source) {
-        // Default empty/absent initialization is not a replacement. Callback order across proxies is unspecified.
-        if (!source.identityEstablished && trackExistsObserved[trackSlot] && observedTrackExists[trackSlot]
-                && observedTrackIds[trackSlot] != null && !observedTrackIds[trackSlot].isEmpty()
-                && source.existsObserved && source.lastExists && source.positionObserved && source.lastPosition == source.deviceIndex
-                && source.typeObserved && source.lastType != null && !source.lastType.isEmpty()
-                && source.nameObserved && !source.device.name().get().isEmpty())
-            source.identityEstablished = true;
-        if (source.remoteFlushPending) requestRemoteFlush(source);
-    }
 
     private static boolean remoteSourcePresent(Source source) {
         // Retain first-population observations even if existence/UUID callbacks have not arrived yet.
         // Later absent callbacks cannot establish freshness; history is reconciled only at flush.
-        return !source.identityEstablished || (source.track.exists().get() && source.device.exists().get());
+        return !source.identity.established || (source.track.exists().get() && source.device.exists().get());
     }
 
     private static boolean remoteControlPresent(Source source, int index) {
@@ -336,12 +280,11 @@ final class DeviceModule implements HostModule {
         for (int t = 0; t < sources.length; t++) {
             for (Source source : sources[t]) {
                 if (!source.remoteFlushPending) continue;
-                if (!source.identityEstablished || !trackExistsObserved[t] || !observedTrackExists[t]
-                        || observedTrackIds[t] == null || observedTrackIds[t].isEmpty()
-                        || !s.trackMatches(observedTrackIds[t], source.track)
-                        || !source.lastExists || !source.device.exists().get()
-                        || source.lastPosition != source.deviceIndex || source.device.position().get() != source.deviceIndex
-                        || !java.util.Objects.equals(source.lastType, source.device.deviceType().get())
+                if (!source.identity.established || !source.identity.present()
+                        || !s.trackMatches(source.identity.track.id, source.track)
+                        || !source.device.exists().get()
+                        || source.device.position().get() != source.deviceIndex
+                        || !java.util.Objects.equals(source.identity.type, source.device.deviceType().get())
                         || source.device.name().get().isEmpty()) continue;
                 // Host flush is the interested-value update boundary, not a timer or replayed callback.
                 // Reads use current getters only for previously observed sources. Do not advance any
@@ -477,14 +420,14 @@ final class DeviceModule implements HostModule {
         String name = p.get("expectedDeviceName").getAsString();
         if (!name.equals(source.device.name().get()))
             throw HostServices.failure("stale_context", "Device name differs from expectedDeviceName.");
-        return new Target(id, t, index, name, source, source.generation);
+        return new Target(id, t, index, name, source, source.identity.revision);
     }
 
     private boolean matches(Target target) {
         Device device = target.source.device;
         return s.trackMatches(target.trackId, (Track) s.tracks.getItemAt(target.trackSlot))
                 && s.devices[target.trackSlot].scrollPosition().get() == 0
-                && target.source.generation == target.generation && device.exists().get()
+                && target.source.identity.revision == target.generation && device.exists().get()
                 && device.position().get() == target.index && target.name.equals(device.name().get());
     }
 
@@ -539,15 +482,15 @@ final class DeviceModule implements HostModule {
         JsonArray before = new JsonArray();
         for (int d = 0; d < HostServices.DEVICES; d++) {
             Source source = sources[t][d];
-            if (!source.existsObserved || (d < count && !source.ready()))
+            if (source.identity.exists == null || (d < count && !source.ready()))
                 throw HostServices.failure("not_ready", "Device bank has not reported the complete insertion window.");
             if (source.device.exists().get() != (d < count)
                     || (d < count && source.device.position().get() != d))
                 throw HostServices.failure("stale_context", "Device count and bank contents disagree.");
-            if (d < count) { prefix[d] = source.generation; before.add(summary(source, d)); }
+            if (d < count) { prefix[d] = source.identity.revision; before.add(summary(source, d)); }
         }
         long sequence = countSequence[t];
-        long newNameSequence = sources[t][count].nameSequence;
+        long newNameSequence = sources[t][count].identity.nameSequence;
         s.check(op);
         if (!s.trackMatches(id, (Track) s.tracks.getItemAt(t)) || !prefixMatches(t, prefix)
                 || s.devices[t].itemCount().get() != count || s.devices[t].scrollPosition().get() != 0)
@@ -569,7 +512,7 @@ final class DeviceModule implements HostModule {
     private boolean prefixMatches(int t, long[] prefix) {
         for (int d = 0; d < prefix.length; d++) {
             Source source = sources[t][d];
-            if (source.generation != prefix[d] || !source.device.exists().get() || source.device.position().get() != d)
+            if (source.identity.revision != prefix[d] || !source.device.exists().get() || source.device.position().get() != d)
                 return false;
         }
         return true;
@@ -588,7 +531,7 @@ final class DeviceModule implements HostModule {
         else if (count == prefix.length + 1 && countSequence[t] > sequence) {
             Source added = sources[t][prefix.length];
             boolean complete = added.ready() && added.device.exists().get()
-                    && added.device.position().get() == prefix.length && added.nameSequence > newNameSequence
+                    && added.device.position().get() == prefix.length && added.identity.nameSequence > newNameSequence
                     && !added.device.name().get().isEmpty();
             for (int d = count; d < HostServices.DEVICES; d++) complete &= !sources[t][d].device.exists().get();
             if (complete) { identified = true; verification = "observed_count_increment_and_unchanged_prefix"; }
@@ -670,6 +613,7 @@ final class DeviceModule implements HostModule {
     }
 
     private static final class Source {
+        final DeviceSources.Source identity;
         final Track track;
         final Device device;
         final int deviceIndex;
@@ -684,16 +628,13 @@ final class DeviceModule implements HostModule {
         boolean remoteRebindPending, remoteFlushPending, pageIndexFresh;
         long remoteGeneration, pageSequence;
         int lastPageIndex;
-        long generation, enabledSequence, nameSequence;
-        boolean existsObserved, nameObserved, positionObserved, typeObserved, enabledObserved;
-        boolean lastExists;
-        boolean identityEstablished;
-        int lastPosition;
-        String lastType;
-        Source(Track track, Device device, int deviceIndex) {
-            this.track = track; this.device = device; this.deviceIndex = deviceIndex;
+        long enabledSequence;
+        boolean enabledObserved;
+        Source(DeviceSources.Source identity, int deviceIndex) {
+            this.identity = identity; this.track = identity.track.proxy;
+            this.device = identity.device; this.deviceIndex = deviceIndex;
         }
-        boolean ready() { return existsObserved && nameObserved && positionObserved && typeObserved && enabledObserved; }
+        boolean ready() { return identity.metadataReady() && enabledObserved; }
     }
 
     private static final class Target {

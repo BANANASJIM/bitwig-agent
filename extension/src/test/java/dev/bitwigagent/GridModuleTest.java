@@ -30,7 +30,7 @@ public final class GridModuleTest {
         connectionArgumentsPreserveRequiredNullSemantics();
         connectionResultsWaitForBothQueues();
         connectionSafetyTargetsAndCancellationGuardQueues();
-        insertionArgumentsAndMethodRegistration();
+        insertionArguments();
         insertionWaitsForNativeSettlementAndControllerDelivery();
         insertionSafetyCancellationAndCloseKeepNativeLifetimeIndependent();
         System.out.println("GridModuleTest: " + assertions + " assertions passed (simulated controller/document queues only)");
@@ -492,9 +492,7 @@ public final class GridModuleTest {
         JsonObject p = target(); p.addProperty("typeId", GridInsertionWriterTest.TYPE.toString());
         p.addProperty("x", 8); p.addProperty("y", 3); return p;
     }
-    private static void insertionArgumentsAndMethodRegistration() {
-        check(HostBridge.supportedMethods().size() == 38 && HostBridge.supportedMethods().contains("grid.modules.insert"),
-                "shared admission/dispatch/discovery registry exposes 38 methods including insertion");
+    private static void insertionArguments() {
         Fixture f = new Fixture();
         for (String key : List.of("trackId", "deviceIndex", "expectedDeviceName", "typeId", "x", "y")) {
             JsonObject p = insertionTarget(); p.remove(key);

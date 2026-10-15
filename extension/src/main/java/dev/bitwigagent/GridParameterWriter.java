@@ -17,14 +17,20 @@ final class GridParameterWriter {
     private final GridSnapshotReader values;
     private final GridParameterContext contexts;
     private final Access nativeWriter;
+    private final GridBooleanPanelWriter panels;
 
-    GridParameterWriter(GridSnapshotReader values, GridParameterContext contexts, Access nativeWriter) {
-        this.values = values; this.contexts = contexts; this.nativeWriter = nativeWriter;
+    GridParameterWriter(GridSnapshotReader values, GridParameterContext contexts, Access nativeWriter,
+            GridBooleanPanelWriter panels) {
+        this.values = values; this.contexts = contexts; this.nativeWriter = nativeWriter; this.panels = panels;
     }
 
     JsonObject set(Object proxy, UUID trackId, UUID moduleId, String parameterId,
             Request request, Runnable check, Runnable dispatch) {
         GridSnapshotReader.ParameterBinding binding = values.bindParameter(proxy, trackId, moduleId, parameterId, check);
+        if (binding.kind == GridSnapshotReader.Kind.PANEL_BOOLEAN) {
+            if (panels == null) throw failure("grid_unavailable", "Boolean panel write bindings are unavailable.");
+            return panels.set(binding, request, check, dispatch);
+        }
         nativeWriter.requireSupported(binding.parameter, binding.kind);
         JsonObject before = values.parameterValue(binding);
         request.validateCurrent(before);

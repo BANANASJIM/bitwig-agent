@@ -779,6 +779,7 @@ public final class DeviceModuleTest {
                 Node deviceBank = t == 0 ? bank : new Node();
                 Device[] objects = new Device[16];
                 deviceBank.put("scrollPosition", 0); deviceBank.put("itemCount", t == 0 ? 2 : 0);
+                deviceBank.put("exists", true);
                 deviceBank.custom = (name, args) -> name.equals("getItemAt") ? objects[(Integer) args[0]] : null;
                 for (int d = 0; d < 16; d++) {
                     final int deviceIndex = d;
@@ -786,6 +787,8 @@ public final class DeviceModuleTest {
                     device.put("name", lateIdentity ? "" : "Twin");
                     device.put("position", lateIdentity ? -1 : d);
                     device.put("deviceType", lateIdentity ? "" : "audio-effect"); device.put("isEnabled", true);
+                    device.put("hasLayers", false);
+                    device.objects.put("createLayerBank", emptyLayers().proxy(DeviceLayerBank.class));
                     device.value("isEnabled").beforeWrite = this::assertHostTask;
                     Node page = new Node(); page.put("pageNames", new String[]{"Main", "Tone"});
                     page.put("pageCount", 2); page.put("selectedPageIndex", 0); page.put("getName", "Main");
@@ -876,6 +879,42 @@ public final class DeviceModuleTest {
             Runnable task = tasks.remove(); running = true;
             try { task.run(); } finally { running = false; }
         }
+    }
+
+    private static Node emptyLayers() {
+        Node bank = emptyBank();
+        DeviceLayer[] layers = new DeviceLayer[2];
+        bank.custom = (name, args) -> name.equals("getItemAt") ? layers[(Integer) args[0]] : null;
+        for (int l = 0; l < layers.length; l++) {
+            Node layer = new Node();
+            layer.put("exists", false); layer.put("channelId", "");
+            layer.put("channelIndex", l); layer.put("name", "");
+            Node children = emptyBank();
+            Device[] devices = new Device[2];
+            children.custom = (name, args) -> name.equals("getItemAt") ? devices[(Integer) args[0]] : null;
+            for (int c = 0; c < devices.length; c++) {
+                Node child = new Node();
+                child.put("exists", false); child.put("name", "");
+                child.put("position", c); child.put("deviceType", "");
+                child.custom = (name, args) -> {
+                    if (name.equals("addDirectParameterIdObserver"))
+                        ((StringArrayValueChangedCallback) args[0]).valueChanged(new String[0]);
+                    if (name.equals("createCursorRemoteControlsPage"))
+                        throw new AssertionError("Child remote controls are outside the fixed layer graph");
+                    return null;
+                };
+                devices[c] = child.proxy(Device.class);
+            }
+            layer.objects.put("createDeviceBank", children.proxy(DeviceBank.class));
+            layers[l] = layer.proxy(DeviceLayer.class);
+        }
+        return bank;
+    }
+
+    private static Node emptyBank() {
+        Node bank = new Node();
+        bank.put("exists", false); bank.put("itemCount", 0); bank.put("scrollPosition", 0);
+        return bank;
     }
 
     private interface Custom { Object invoke(String name, Object[] args); }

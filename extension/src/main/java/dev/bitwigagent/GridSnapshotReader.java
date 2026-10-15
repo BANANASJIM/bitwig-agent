@@ -9,13 +9,13 @@ import static dev.bitwigagent.HostServices.failure;
 final class GridSnapshotReader {
     static final int MAX_MODULES = 4096, MAX_CHILDREN = 256, MAX_OPTIONS = 256, MAX_CATALOG = 16384;
     static final int MAX_ITEMS = 16384, MAX_TEXT = 1024;
-    enum Kind { DEVICE, TRACK, ALIASED_TRACK, CHANNEL_ALIAS, MODULE, INPUT, OUTPUT, PARAMETER, FLOAT, BOOLEAN, INTEGER, ENUM, ENTRY, OPTION }
-    private static final Kind[] PARAMETER_KINDS = {Kind.FLOAT, Kind.BOOLEAN, Kind.INTEGER, Kind.ENUM};
+    enum Kind { DEVICE, TRACK, ALIASED_TRACK, CHANNEL_ALIAS, MODULE, INPUT, OUTPUT, PARAMETER, FLOAT, BOOLEAN, INTEGER, ENUM, PANEL_BOOLEAN, BIPOLAR_FLOAT, ENTRY, OPTION }
+    private static final Kind[] PARAMETER_KINDS = {Kind.FLOAT, Kind.BOOLEAN, Kind.INTEGER, Kind.ENUM, Kind.PANEL_BOOLEAN};
     enum Field {
         TARGET, GRAPH, EXECUTOR, MODULES, INSTANCE_ID, LOCAL_KEY, X, Y, WIDTH, HEIGHT, DESCRIPTOR, TYPE_ID,
         OWNER_TRACK, TRACK_ALIAS, TRACK_UUID, ALIAS_UUID,
         INPUTS, OUTPUTS, CHILDREN, MODULE_GRAPH, OWNER_MODULE, INPUT_SOURCE, INPUT_KEY, OUTPUT_KEY,
-        PATH, FLOAT_VALUE, FLOAT_DEFINITION, FLOAT_MIN, FLOAT_MAX, BOOLEAN_VALUE,
+        PATH, FLOAT_VALUE, FLOAT_DEFINITION, FLOAT_MIN, FLOAT_MAX, BOOLEAN_VALUE, BIPOLAR_PANEL,
         INTEGER_VALUE, INTEGER_DEFINITION, INTEGER_MIN, INTEGER_MAX, ENUM_VALUE, ENUM_DEFINITION,
         OPTIONS, OPTION_VALUE, OPTION_LABEL, DISPLAY, CATALOG, ENTRY_ID, ENTRY_NAME, ENTRY_KIND,
         MODULE_NAME, CUSTOM_NAME, TYPE_ENTRY, TYPE_NAME, PARAMETER_ID, PARAMETER_NAME, SHORT_NAME,
@@ -167,12 +167,25 @@ final class GridSnapshotReader {
         ParameterBinding binding = bindParameter(proxy, expectedTrackId, moduleId, parameterId, check);
         GridParameterContext.Capture context = contexts.capture(binding.device, binding.graph, binding.module,
                 binding.parameter, binding.kind, check);
+        ParameterBinding coupled = binding.kind == Kind.PANEL_BOOLEAN ? bindBipolarParameter(binding) : null;
+        GridParameterContext.Capture coupledContext = coupled == null ? null
+                : contexts.capture(coupled.device, coupled.graph, coupled.module, coupled.parameter, coupled.kind, check);
         JsonObject value = parameterValue(binding);
+        JsonObject coupledValue = coupled == null ? null : parameterValue(coupled);
         guardParameter(binding);
         contexts.guard(context, binding.device, binding.graph, binding.module, binding.parameter, binding.kind, check);
         guardParameter(binding);
+        if (coupled != null) {
+            guardBipolarParameter(binding, coupled);
+            contexts.guard(coupledContext, coupled.device, coupled.graph, coupled.module, coupled.parameter, coupled.kind, check);
+            guardBipolarParameter(binding, coupled);
+        }
         JsonObject result = parameterResult(binding, value);
         result.add("editContext", context.json);
+        if (coupled != null) {
+            result.add("coupledParameter", coupledValue);
+            result.add("coupledEditContext", coupledContext.json);
+        }
         result.addProperty("nativeMutation", false); result.addProperty("nativeUndo", false);
         return result;
     }
@@ -198,6 +211,41 @@ final class GridSnapshotReader {
             throw failure("stale_context", "Selected native module or parameter changed during the operation.");
         a.requireModelThread(binding.parameter);
         binding.state.guard.run();
+    }
+
+    ParameterBinding bindBipolarParameter(ParameterBinding panel) {
+        Object child = findBipolarParameter(panel);
+        String id = text(a.read(Field.PARAMETER_ID, child));
+        ParameterBinding result = new ParameterBinding(panel.proxy, panel.trackId, panel.moduleId, id,
+                panel.target, panel.module, child, Kind.FLOAT, panel.state);
+        guardParameter(result);
+        return result;
+    }
+
+    void guardBipolarParameter(ParameterBinding panel, ParameterBinding coupled) {
+        guardParameter(panel); guardParameter(coupled);
+        if (findBipolarParameter(panel) != coupled.parameter)
+            throw failure("stale_context", "Boolean panel's unique native bipolar reference changed.");
+    }
+
+    private Object findBipolarParameter(ParameterBinding panel) {
+        if (panel.kind != Kind.PANEL_BOOLEAN)
+            throw failure("grid_unavailable", "Bipolar dependency requires a mapped boolean panel.");
+        Object found = null;
+        for (Object child : collect(Field.CHILDREN, panel.module, MAX_CHILDREN, panel.state)) {
+            panel.state.check();
+            if (!a.is(Kind.BIPOLAR_FLOAT, child)) continue;
+            a.requireModelThread(child);
+            if (a.read(Field.BIPOLAR_PANEL, child) != panel.parameter) continue;
+            if (a.read(Field.OWNER_MODULE, child) != panel.module || parameterKind(child) != Kind.FLOAT)
+                throw failure("stale_context", "Linked bipolar parameter belongs to another module or family.");
+            if (found != null)
+                throw failure("grid_unavailable", "Boolean panel has multiple linked bipolar parameters; coupled editing is unsupported.");
+            found = child;
+        }
+        if (found == null)
+            throw failure("grid_unavailable", "Boolean panel requires one same-module exact TZj reference for inspection or editing.");
+        return found;
     }
 
     JsonObject parameterValue(ParameterBinding binding) {
@@ -251,7 +299,7 @@ final class GridSnapshotReader {
         Object found = null;
         for (Object child : collect(Field.CHILDREN, module, MAX_CHILDREN, state)) {
             state.check();
-            if (!a.is(Kind.PARAMETER, child)) continue;
+            if (!a.is(Kind.PARAMETER, child) && !a.is(Kind.PANEL_BOOLEAN, child)) continue;
             a.requireModelThread(child);
             if (!id.equals(text(a.read(Field.PARAMETER_ID, child)))) continue;
             if (found != null) throw failure("stale_context", "Requested parameter ID is ambiguous.");
@@ -394,11 +442,20 @@ final class GridSnapshotReader {
         }
         a.requireModelThread(child);
         if (a.read(Field.OWNER_MODULE, child) != module) throw failure("stale_context", "Parameter belongs to a different module.");
-        result.addProperty("supported", true); result.addProperty("kind", kind.name().toLowerCase(Locale.ROOT));
+        boolean panel = kind == Kind.PANEL_BOOLEAN;
+        result.addProperty("supported", true);
+        result.addProperty("kind", panel ? "boolean" : kind.name().toLowerCase(Locale.ROOT));
         result.addProperty("path", text(a.read(Field.PATH, child)));
-        metadataText(result, "parameterId", Field.PARAMETER_ID, child, Metadata.PARAMETER_NAMES, state, "parameter_id");
-        metadataText(result, "name", Field.PARAMETER_NAME, child, Metadata.PARAMETER_NAMES, state, "parameter_name");
-        metadataText(result, "shortName", Field.SHORT_NAME, child, Metadata.PARAMETER_NAMES, state, "parameter_short_name");
+        if (panel) {
+            result.addProperty("controlFamily", "boolean_panel");
+            result.addProperty("parameterId", text(a.read(Field.PARAMETER_ID, child)));
+            result.add("name", JsonNull.INSTANCE); result.add("shortName", JsonNull.INSTANCE);
+            state.unsupported("boolean_panel_labels_unmapped");
+        } else {
+            metadataText(result, "parameterId", Field.PARAMETER_ID, child, Metadata.PARAMETER_NAMES, state, "parameter_id");
+            metadataText(result, "name", Field.PARAMETER_NAME, child, Metadata.PARAMETER_NAMES, state, "parameter_name");
+            metadataText(result, "shortName", Field.SHORT_NAME, child, Metadata.PARAMETER_NAMES, state, "parameter_short_name");
+        }
         switch (kind) {
             case FLOAT: {
                 double value = finite(a.read(Field.FLOAT_VALUE, child));
@@ -408,6 +465,7 @@ final class GridSnapshotReader {
                 metadataText(result, "numericUnit", Field.UNIT_TOKEN, unit, Metadata.FLOAT_UNITS, state, "numeric_unit");
                 range(min, max); result.addProperty("value", value); result.addProperty("minimum", min); result.addProperty("maximum", max); break;
             }
+            case PANEL_BOOLEAN:
             case BOOLEAN: {
                 Object value = a.read(Field.BOOLEAN_VALUE, child);
                 if (!(value instanceof Boolean)) throw failure("grid_unavailable", "Invalid boolean parameter value.");
@@ -443,7 +501,8 @@ final class GridSnapshotReader {
             }
             default: throw new AssertionError(kind);
         }
-        if (a.displayAvailable()) result.addProperty("display", text(a.read(Field.DISPLAY, child)));
+        if (panel) { result.add("display", JsonNull.INSTANCE); state.unsupported("boolean_panel_display_unmapped"); }
+        else if (a.displayAvailable()) result.addProperty("display", text(a.read(Field.DISPLAY, child)));
         else { result.add("display", JsonNull.INSTANCE); state.unsupported("parameter_display_unavailable"); }
         return result;
     }

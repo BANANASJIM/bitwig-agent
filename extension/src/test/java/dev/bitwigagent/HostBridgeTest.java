@@ -29,6 +29,17 @@ public final class HostBridgeTest {
         invalidAndExpiredActionsNeverInvoke();
         capabilitiesDescribeBoundedImplementedSurfaces();
         strictValidationPrecedesAllDomainScheduling();
+        rootEarlyDirectCallbacksKeepLegacyAdmission();
+        initialRootAndParentWindowOrderingKeepsUsableData();
+        initialTrackPositionDoesNotRetireNestedSources();
+        layerBindingRoundTripsKeepContinuousSources();
+        layerWritesRequireExactSourceAndFreshCallbacks();
+        layerRenamesRetainDataButRetireTokens();
+        layerStructuralChangesFailClosedAcrossAba();
+        layerDiscoveryReportsObservedWindowsAndReadiness();
+        layerValidationPrecedesScheduling();
+        layerMissingIdsAndUnreadableValuesStayExplicit();
+        layerRebindDuringWriteHasUnknownOutcome();
         System.out.println("HostBridgeTest: " + assertions + " assertions passed (simulated host only)");
     }
 
@@ -351,6 +362,388 @@ public final class HostBridgeTest {
         check(host.tasks.isEmpty(), "strict validation rejects every invalid domain request before scheduling");
     }
 
+    private static void initialRootAndParentWindowOrderingKeepsUsableData() {
+        List<String> failures = new ArrayList<>();
+        Fake early = new Fake(); early.deviceNodes[1].value("position").set(0);
+        HostBridge earlyBridge = early.bridge();
+        early.deviceNodes[1].value("position").value = 1;
+        early.emitIds(1); early.emitValue(1, .66);
+        int emissions = early.idEmissions;
+        early.deviceNodes[1].value("position").set(1);
+        JsonObject root = target(); root.addProperty("deviceIndex", 1);
+        CompletableFuture<JsonObject> listed = earlyBridge.handle("parameters.list", root, deadline()); early.next();
+        if (!listed.isDone() || listed.isCompletedExceptionally() || parameterValue(listed.join()) != .66
+                || early.idEmissions != emissions)
+            failures.add("late agreeing root position discarded current callback data");
+        for (int initialCount : List.of(0, 1)) {
+            Fake pending = new Fake();
+            Node bank = (Node) Proxy.getInvocationHandler(pending.trackNodes[0].objects.get("createDeviceBank"));
+            bank.value("itemCount").set(initialCount); bank.value("scrollPosition").set(initialCount);
+            pending.deviceNodes[0].value("position").set(initialCount);
+            HostBridge bridge = pending.bridge();
+            JsonObject parent = target(); parent.addProperty("deviceIndex", initialCount);
+            JsonObject request = new JsonObject(); request.add("parent", parent);
+            CompletableFuture<JsonObject> unavailable = bridge.handle("devices.layers.list", request, deadline()); pending.next();
+            if (!unavailable.isCompletedExceptionally()) failures.add("root count " + initialCount + " admitted an out-of-count parent");
+            bank.value("itemCount").set(initialCount + 1);
+            pending.emitChildIds(0, 0, new String[]{"gain"}); pending.emitChildValue(0, 0, .42);
+            JsonObject discovery = call(pending, bridge, "devices.layers.list", request);
+            JsonObject child = discovery.getAsJsonArray("layers").get(0).getAsJsonObject()
+                    .getAsJsonArray("devices").get(0).getAsJsonObject();
+            if (!child.has("discoveryToken")) failures.add("initial count population retired parent " + initialCount);
+            else if (parameterValue(call(pending, bridge, "parameters.layer.list", layerTarget(discovery, 0, 0))) != .42)
+                failures.add("initial count population lost current child observation " + initialCount);
+        }
+        check(failures.isEmpty(), "initial observation ordering must not invent a rebind or callback replay: " + failures);
+    }
+
+    private static void initialTrackPositionDoesNotRetireNestedSources() {
+        Fake f = new Fake(); f.trackNodes[0].value("position").set(-1);
+        HostBridge bridge = f.bridge();
+        int rootEmissions = f.idEmissions, childEmissions = f.childIdEmissions;
+        List<String> failures = new ArrayList<>();
+        CompletableFuture<JsonObject> initial = bridge.handle("devices.layers.list", layerDiscovery(), deadline());
+        f.next();
+        if (initial.isCompletedExceptionally()) expectError(initial, "not_ready");
+        else failures.add("unassigned track position admitted nested discovery");
+        f.trackNodes[0].value("position").set(0);
+        JsonObject discovery = call(f, bridge, "devices.layers.list", layerDiscovery());
+        for (int l = 0; l < 2; l++) for (int c = 0; c < 2; c++) {
+            JsonObject child = discovery.getAsJsonArray("layers").get(l).getAsJsonObject()
+                    .getAsJsonArray("devices").get(c).getAsJsonObject();
+            if (!child.has("discoveryToken")) failures.add("first assigned track position retired child " + l + "/" + c);
+        }
+        check(failures.isEmpty(), "initial track position must establish ancestry, not replace it: " + failures);
+        check(parameterValue(call(f, bridge, "parameters.list", target())) == .25 && f.idEmissions == rootEmissions,
+                "first assigned track position preserves the independently accepted root getter tuple");
+        check(f.childIdEmissions == childEmissions, "metadata completion does not synthesize child ID callbacks");
+        for (int l = 0; l < 2; l++) for (int c = 0; c < 2; c++) {
+            CompletableFuture<JsonObject> pending = bridge.handle("parameters.layer.list", layerTarget(discovery, l, c), deadline());
+            f.next();
+            check(!pending.isDone(), "child observations rejected before track assignment are not resurrected");
+            double value = .21 + l * .1 + c * .01;
+            f.emitChildIds(l, c, new String[]{"gain"}); f.emitChildValue(l, c, value); f.next();
+            check(parameterValue(pending.join()) == value, "actual fresh child callback is admitted after first track assignment");
+        }
+    }
+
+    private static void rootEarlyDirectCallbacksKeepLegacyAdmission() {
+        Fake f = new Fake();
+        for (String field : List.of("exists", "position", "name", "deviceType")) f.deviceNodes[0].value(field).publishInitial = false;
+        HostBridge bridge = f.bridge();
+        int rootEmissions = f.idEmissions, childEmissions = f.childIdEmissions;
+        for (String field : List.of("exists", "position", "name", "deviceType")) {
+            Val value = f.deviceNodes[0].value(field); value.set(value.current());
+        }
+        JsonObject listing = call(f, bridge, "parameters.list", target());
+        check(parameterValue(listing) == .25 && f.idEmissions == rootEmissions,
+                "root's actual initial direct callback is retained before agreeing metadata notifications, without replay");
+        JsonObject address = layerTarget(f, bridge, 0, 0);
+        CompletableFuture<JsonObject> pending = bridge.handle("parameters.layer.list", address, deadline()); f.next();
+        check(!pending.isDone() && f.childIdEmissions == childEmissions,
+                "nested callbacks rejected before observed ancestry are not resurrected by later metadata");
+        f.emitChildIds(0, 0, new String[]{"gain"}); f.emitChildValue(0, 0, .18); f.next();
+        check(parameterValue(pending.join()) == .18, "newly ready nested cache requires actual accepted callbacks");
+    }
+
+    private static void layerBindingRoundTripsKeepContinuousSources() {
+        Fake f = new Fake(); HostBridge bridge = f.bridge();
+        JsonObject flat = call(f, bridge, "parameters.list", target());
+        JsonObject a = layerTarget(f, bridge, 0, 0), b = layerTarget(f, bridge, 1, 1);
+        JsonObject first = call(f, bridge, "parameters.layer.list", a);
+        int emissions = f.childIdEmissions;
+        check(parameterValue(first) == .15, "layer A reads its own continuously observed value");
+        JsonObject second = call(f, bridge, "parameters.layer.list", b);
+        check(parameterValue(second) == .75, "same-name layer and child B resolve by observed UUID and index");
+        JsonObject again = call(f, bridge, "parameters.layer.list", a);
+        check(parameterValue(again) == .15 && f.childIdEmissions == emissions, "A to B to A needs no callback replay");
+        check(!first.getAsJsonObject("target").get("contextToken").equals(again.getAsJsonObject("target").get("contextToken")),
+                "returning to A issues a new active binding token");
+        CompletableFuture<JsonObject> stale = bridge.handle("parameters.layer.set", layerWrite(first, .8), deadline());
+        f.next(); expectError(stale, "stale_context");
+        stale = bridge.handle("parameters.set", write(flat, .8), deadline()); f.next(); expectError(stale, "stale_context");
+        JsonObject restored = call(f, bridge, "parameters.list", target());
+        check(parameterValue(restored) == .25, "flat to layer to flat keeps the root source cache");
+        stale = bridge.handle("parameters.layer.set", layerWrite(again, .8), deadline()); f.next(); expectError(stale, "stale_context");
+        JsonObject stable = call(f, bridge, "parameters.list", target());
+        check(stable.getAsJsonObject("target").get("contextToken").equals(restored.getAsJsonObject("target").get("contextToken")),
+                "repeated current binding preserves its token");
+    }
+
+    private static void layerWritesRequireExactSourceAndFreshCallbacks() {
+        Fake f = new Fake(); HostBridge bridge = f.bridge();
+        JsonObject listing = call(f, bridge, "parameters.layer.list", layerTarget(f, bridge, 0, 1));
+        JsonObject noOp = call(f, bridge, "parameters.layer.set", layerWrite(listing, .35));
+        check(noOp.get("verification").getAsString().equals("already_at_value") && f.childWrites[0][1] == 0,
+                "nested no-op is distinct from post-dispatch observation");
+        f.writeMode = "none";
+        CompletableFuture<JsonObject> write = bridge.handle("parameters.layer.set", layerWrite(listing, .8), deadline());
+        f.next(); check(!write.isDone(), "nested setter dispatch cannot acknowledge a write");
+        double applied = Math.round(.8 * (HostServices.RESOLUTION - 1)) / (double) (HostServices.RESOLUTION - 1);
+        f.emitChildValue(1, 1, applied); f.emitValue(0, applied); f.next();
+        check(!write.isDone(), "same-ID root and sibling callbacks cannot verify the child write");
+        CompletableFuture<JsonObject> busy = bridge.handle("parameters.list", target(), deadline());
+        f.next(); f.next(); expectError(busy, "busy");
+        f.emitChildValue(0, 1, applied); f.next();
+        check(write.join().get("verification").getAsString().equals("observer_after_write"), "exact child fresh callback verifies");
+        check(f.childWrites[0][1] == 1 && f.childWrites[0][0] == 0 && f.childWrites[1][0] == 0
+                        && f.childWrites[1][1] == 0 && f.writes == 0,
+                "only addressed child setter dispatches, with no root or sibling mutation");
+        check(f.childParameterValues[0][0] == .15 && f.childParameterValues[1][0] == .55,
+                "untouched child values stay unchanged");
+    }
+
+    private static void layerRenamesRetainDataButRetireTokens() {
+        for (String renamed : List.of("parent", "layer", "child")) {
+            Fake f = new Fake(); HostBridge bridge = f.bridge();
+            JsonObject oldAddress = layerTarget(f, bridge, 0, 0);
+            JsonObject oldListing = call(f, bridge, "parameters.layer.list", oldAddress);
+            int emissions = f.childIdEmissions;
+            Node node = renamed.equals("parent") ? f.deviceNodes[0] : renamed.equals("layer") ? f.layerNodes[0] : f.childNodes[0][0];
+            node.value("name").set("Renamed");
+            JsonObject parent = target(); if (renamed.equals("parent")) parent.addProperty("expectedDeviceName", "Renamed");
+            JsonObject discovery = new JsonObject(); discovery.add("parent", parent);
+            JsonObject address = layerTarget(call(f, bridge, "devices.layers.list", discovery), 0, 0);
+            JsonObject staleAddress = address.deepCopy(); staleAddress.add("discoveryToken", oldAddress.get("discoveryToken"));
+            CompletableFuture<JsonObject> stale = bridge.handle("parameters.layer.list", staleAddress, deadline());
+            f.next(); expectError(stale, "stale_context");
+            JsonObject fresh = call(f, bridge, "parameters.layer.list", address);
+            check(parameterValue(fresh) == .15 && f.childIdEmissions == emissions,
+                    renamed + " rename preserves continuous direct observations without replay");
+            JsonObject staleWrite = layerWrite(fresh, .8); staleWrite.add("contextToken", oldListing.getAsJsonObject("target").get("contextToken"));
+            stale = bridge.handle("parameters.layer.set", staleWrite, deadline()); f.next(); expectError(stale, "stale_context");
+            check(call(f, bridge, "parameters.layer.set", layerWrite(fresh, .8)).get("verification").getAsString().equals("observer_after_write"),
+                    renamed + " fresh rename context still writes its exact child");
+        }
+    }
+
+    private static void layerStructuralChangesFailClosedAcrossAba() {
+        for (String changed : List.of("parent", "track", "layer", "layer_window", "child", "child_type", "child_window")) {
+            Fake f = new Fake(); HostBridge bridge = f.bridge();
+            JsonObject address = layerTarget(f, bridge, 0, 0);
+            call(f, bridge, "parameters.layer.list", address);
+            Val value; Object replacement;
+            switch (changed) {
+                case "parent": value = f.deviceNodes[0].value("exists"); replacement = false; break;
+                case "track": value = f.trackNodes[0].value("channelId"); replacement = layerId(1); break;
+                case "layer": value = f.layerNodes[0].value("channelId"); replacement = layerId(1); break;
+                case "layer_window": value = f.layerBank.value("scrollPosition"); replacement = 1; break;
+                case "child": value = f.childNodes[0][0].value("exists"); replacement = false; break;
+                case "child_type": value = f.childNodes[0][0].value("deviceType"); replacement = "instrument"; break;
+                default: value = f.childBanks[0].value("scrollPosition"); replacement = 1;
+            }
+            Object original = value.current(); value.set(replacement);
+            f.emitChildIds(0, 0, new String[]{"gain"}); f.emitChildValue(0, 0, .91);
+            value.set(original);
+            f.emitChildIds(0, 0, new String[]{"gain"}); f.emitChildValue(0, 0, .92);
+            CompletableFuture<JsonObject> stale = bridge.handle("parameters.layer.list", address, deadline());
+            f.next(); expectError(stale, "not_ready");
+            JsonObject discovery = call(f, bridge, "devices.layers.list", layerDiscovery());
+            JsonObject child = discovery.getAsJsonArray("layers").get(0).getAsJsonObject().getAsJsonArray("devices").get(0).getAsJsonObject();
+            check(child.get("readiness").getAsString().equals("not_ready") && !child.has("discoveryToken")
+                            && child.get("reason").getAsString().contains("provenance"),
+                    changed + " ABA cannot use delayed same-proxy callbacks as a provenance boundary");
+            if (changed.equals("track")) { f.emitIds(1); f.emitValue(1, .6); }
+            JsonObject other = target(); other.addProperty("deviceIndex", 1);
+            check(call(f, bridge, "parameters.list", other).getAsJsonArray("parameters").size() == 1,
+                    "root direct behavior remains separate; track rebind recovery uses actual root callbacks");
+        }
+        Fake early = new Fake(); early.childNodes[0][0].value("position").publishInitial = false;
+        HostBridge earlyBridge = early.bridge();
+        early.layerNodes[0].value("channelId").set(layerId(1));
+        early.layerNodes[0].value("channelId").set(layerId(0));
+        early.childNodes[0][0].value("position").set(0);
+        early.emitChildIds(0, 0, new String[]{"gain"}); early.emitChildValue(0, 0, .9);
+        JsonObject discovery = call(early, earlyBridge, "devices.layers.list", layerDiscovery());
+        JsonObject child = discovery.getAsJsonArray("layers").get(0).getAsJsonObject().getAsJsonArray("devices").get(0).getAsJsonObject();
+        check(!child.has("discoveryToken") && child.get("reason").getAsString().contains("provenance"),
+                "known layer UUID replacement retires even a child whose initial metadata was incomplete");
+        List<String> unsafe = new ArrayList<>();
+        for (String event : List.of("child_remove", "child_position", "child_type",
+                "layer_support", "layer_bank_exists", "layer_bank_count", "layer_bank_offset",
+                "child_bank_exists", "child_bank_count", "child_bank_offset",
+                "root_remove", "root_position", "root_type", "track_remove", "track_uuid",
+                "track_position", "track_window", "root_window", "root_count")) {
+            Fake pending = new Fake();
+            boolean ancestor = event.startsWith("root_") || event.startsWith("track_");
+            Node incomplete = ancestor ? pending.deviceNodes[0] : pending.childNodes[0][0];
+            String missing = event.endsWith("_position") ? "deviceType" : "position";
+            Object initial = incomplete.value(missing).current();
+            incomplete.value(missing).publishInitial = false;
+            if (ancestor) incomplete.value("exists").set(false);
+            HostBridge pendingBridge = pending.bridge();
+            if (ancestor) incomplete.value("exists").set(true);
+            Node rootBank = (Node) Proxy.getInvocationHandler(pending.trackNodes[0].objects.get("createDeviceBank"));
+            Val changed; Object replacement;
+            switch (event) {
+                case "child_remove": changed = incomplete.value("exists"); replacement = false; break;
+                case "child_position": changed = incomplete.value("position"); replacement = 1; break;
+                case "child_type": changed = incomplete.value("deviceType"); replacement = "instrument"; break;
+                case "layer_support": changed = pending.deviceNodes[0].value("hasLayers"); replacement = false; break;
+                case "layer_bank_exists": changed = pending.layerBank.value("exists"); replacement = false; break;
+                case "layer_bank_count": changed = pending.layerBank.value("itemCount"); replacement = 1; break;
+                case "layer_bank_offset": changed = pending.layerBank.value("scrollPosition"); replacement = 1; break;
+                case "child_bank_exists": changed = pending.childBanks[0].value("exists"); replacement = false; break;
+                case "child_bank_count": changed = pending.childBanks[0].value("itemCount"); replacement = 1; break;
+                case "child_bank_offset": changed = pending.childBanks[0].value("scrollPosition"); replacement = 1; break;
+                case "root_remove": changed = incomplete.value("exists"); replacement = false; break;
+                case "root_position": changed = incomplete.value("position"); replacement = 1; break;
+                case "root_type": changed = incomplete.value("deviceType"); replacement = "instrument"; break;
+                case "track_remove": changed = pending.trackNodes[0].value("exists"); replacement = false; break;
+                case "track_uuid": changed = pending.trackNodes[0].value("channelId"); replacement = layerId(1); break;
+                case "track_position": changed = pending.trackNodes[0].value("position"); replacement = 1; break;
+                case "track_window": changed = pending.trackBank.value("scrollPosition"); replacement = 1; break;
+                case "root_window": changed = rootBank.value("scrollPosition"); replacement = 1; break;
+                default: changed = rootBank.value("itemCount"); replacement = 1;
+            }
+            Object original = changed.current(); changed.set(replacement); changed.set(original);
+            incomplete.value(missing).set(initial);
+            pending.emitChildIds(0, 0, new String[]{"gain"}); pending.emitChildValue(0, 0, .91);
+            JsonObject after = call(pending, pendingBridge, "devices.layers.list", layerDiscovery());
+            JsonObject candidate = after.getAsJsonArray("layers").get(0).getAsJsonObject()
+                    .getAsJsonArray("devices").get(0).getAsJsonObject();
+            if (candidate.has("discoveryToken") || !candidate.get("readiness").getAsString().equals("not_ready"))
+                unsafe.add(event);
+        }
+        check(unsafe.isEmpty(), "known discontinuities before complete metadata must reject delayed predecessor data: " + unsafe);
+        Fake initial = new Fake(); initial.deviceNodes[0].value("exists").set(false);
+        initial.deviceNodes[0].value("position").publishInitial = false;
+        HostBridge initialBridge = initial.bridge();
+        initial.deviceNodes[0].value("exists").set(true); initial.deviceNodes[0].value("position").set(0);
+        initial.emitChildIds(0, 0, new String[]{"gain"}); initial.emitChildValue(0, 0, .44);
+        check(parameterValue(call(initial, initialBridge, "parameters.layer.list", layerTarget(initial, initialBridge, 0, 0))) == .44,
+                "first presence and first metadata with actual callbacks are not mistaken for physical replacement");
+    }
+
+    private static void layerDiscoveryReportsObservedWindowsAndReadiness() {
+        Fake f = new Fake(); f.deviceNodes[0].value("hasLayers").publishInitial = false;
+        HostBridge bridge = f.bridge();
+        CompletableFuture<JsonObject> pending = bridge.handle("devices.layers.list", layerDiscovery(), deadline());
+        f.next(); expectError(pending, "not_ready");
+        f.deviceNodes[0].value("hasLayers").set(true);
+        JsonObject discovery = call(f, bridge, "devices.layers.list", layerDiscovery());
+        check(discovery.getAsJsonObject("window").get("capacity").getAsInt() == 2
+                        && discovery.getAsJsonObject("window").get("complete").getAsBoolean(),
+                "fixed observed layer window reports actual total and completeness");
+        check(discovery.getAsJsonArray("layers").get(0).getAsJsonObject().get("channelIndex").getAsInt() == 10,
+                "observed channelIndex is not fabricated from the bank-local slot");
+        f.layerBank.value("itemCount").set(3);
+        discovery = call(f, bridge, "devices.layers.list", layerDiscovery());
+        check(!discovery.getAsJsonObject("window").get("complete").getAsBoolean()
+                        && discovery.getAsJsonObject("window").get("total").getAsInt() == 3,
+                "larger actual layer counts do not pretend the bounded window is complete");
+        f.deviceNodes[0].value("hasLayers").set(false);
+        pending = bridge.handle("devices.layers.list", layerDiscovery(), deadline()); f.next(); expectError(pending, "unsupported_scope");
+
+        Fake empty = new Fake(); empty.layerBank.value("itemCount").value = 0;
+        for (int l = 0; l < 2; l++) {
+            empty.layerNodes[l].value("exists").value = false;
+            empty.childBanks[l].value("itemCount").value = 0;
+            for (int c = 0; c < 2; c++) empty.childNodes[l][c].value("exists").value = false;
+        }
+        HostBridge emptyBridge = empty.bridge();
+        discovery = call(empty, emptyBridge, "devices.layers.list", layerDiscovery());
+        check(discovery.getAsJsonObject("window").get("total").getAsInt() == 0
+                        && discovery.getAsJsonArray("layers").isEmpty(),
+                "observed zero-count supported bank is distinguished from unknown and unsupported");
+
+        Fake unknown = new Fake(); unknown.layerBank.value("scrollPosition").publishInitial = false;
+        HostBridge unknownBridge = unknown.bridge();
+        pending = unknownBridge.handle("devices.layers.list", layerDiscovery(), deadline()); unknown.next(); expectError(pending, "not_ready");
+        unknown.layerBank.value("scrollPosition").set(0);
+        check(call(unknown, unknownBridge, "devices.layers.list", layerDiscovery()).getAsJsonObject("window").get("readiness").getAsString().equals("ready"),
+                "actual first offset observation, not getter default, opens discovery");
+
+        Fake ambiguous = new Fake(); HostBridge ambiguousBridge = ambiguous.bridge();
+        JsonObject address = layerTarget(ambiguous, ambiguousBridge, 0, 0);
+        ambiguous.layerNodes[1].value("channelId").set(layerId(0));
+        discovery = call(ambiguous, ambiguousBridge, "devices.layers.list", layerDiscovery());
+        check(!discovery.getAsJsonArray("layers").get(0).getAsJsonObject().getAsJsonArray("devices")
+                        .get(0).getAsJsonObject().has("discoveryToken"), "duplicate visible UUIDs cannot issue usable child tokens");
+        pending = ambiguousBridge.handle("parameters.layer.list", address, deadline()); ambiguous.next(); expectError(pending, "stale_context");
+
+        Fake missingIdentity = new Fake(); missingIdentity.layerNodes[1].value("channelId").publishInitial = false;
+        HostBridge missingBridge = missingIdentity.bridge();
+        discovery = call(missingIdentity, missingBridge, "devices.layers.list", layerDiscovery());
+        check(!discovery.getAsJsonArray("layers").get(0).getAsJsonObject().getAsJsonArray("devices")
+                        .get(0).getAsJsonObject().has("discoveryToken"), "unobserved sibling UUID cannot prove unique layer correspondence");
+    }
+
+    private static void layerValidationPrecedesScheduling() {
+        Fake f = new Fake(); HostBridge bridge = f.bridge();
+        JsonObject valid = new JsonObject(); valid.add("parent", target()); valid.addProperty("layerId", layerId(0));
+        valid.addProperty("childDeviceIndex", 0); valid.addProperty("expectedChildDeviceName", "Twin"); valid.addProperty("discoveryToken", "observed");
+        for (String field : List.of("parent", "layerId", "childDeviceIndex", "expectedChildDeviceName", "discoveryToken")) {
+            JsonObject bad = valid.deepCopy(); bad.add(field, JsonNull.INSTANCE);
+            expectError(bridge.handle("parameters.layer.list", bad, deadline()), "invalid_params");
+        }
+        for (String field : List.of("path", "padId", "slot", "layer")) {
+            JsonObject bad = valid.deepCopy(); bad.addProperty(field, 0);
+            expectError(bridge.handle("parameters.layer.list", bad, deadline()), "invalid_params");
+        }
+        JsonObject bad = valid.deepCopy(); bad.addProperty("childDeviceIndex", 2);
+        expectError(bridge.handle("parameters.layer.list", bad, deadline()), "invalid_params");
+        bad = valid.deepCopy(); bad.addProperty("childDeviceIndex", .5);
+        expectError(bridge.handle("parameters.layer.list", bad, deadline()), "invalid_params");
+        bad = valid.deepCopy(); bad.addProperty("layerId", "1-2-3-4-5");
+        expectError(bridge.handle("parameters.layer.list", bad, deadline()), "invalid_params");
+        bad = valid.deepCopy(); bad.getAsJsonObject("parent").addProperty("layerId", layerId(0));
+        expectError(bridge.handle("parameters.layer.list", bad, deadline()), "invalid_params");
+        bad = valid.deepCopy(); bad.addProperty("contextToken", "bound"); bad.addProperty("parameterId", "gain"); bad.addProperty("value", Double.NaN);
+        expectError(bridge.handle("parameters.layer.set", bad, deadline()), "invalid_params");
+        expectError(bridge.handle("parameters.list", valid, deadline()), "invalid_params");
+        check(f.tasks.isEmpty(), "strict nested validation and narrow flat targeting precede host scheduling");
+    }
+
+    private static void layerMissingIdsAndUnreadableValuesStayExplicit() {
+        Fake f = new Fake(); f.initialChildIds[0][0] = false; HostBridge bridge = f.bridge();
+        JsonObject address = layerTarget(f, bridge, 0, 0);
+        CompletableFuture<JsonObject> pending = bridge.handle("parameters.layer.list", address, deadline());
+        f.next(); check(!pending.isDone(), "discovery readiness does not invent a direct ID observation");
+        f.emitChildIds(1, 0, new String[]{"gain"}); f.next();
+        check(!pending.isDone(), "another layer's same-ID callback cannot establish this source");
+        f.emitChildIds(0, 0, new String[0]); f.next();
+        check(pending.join().getAsJsonArray("parameters").isEmpty(), "actual empty ID callback is a ready empty direct surface");
+        f.emitChildIds(0, 0, new String[]{"gain"}); f.emitChildValue(0, 0, Double.NaN);
+        JsonObject listing = call(f, bridge, "parameters.layer.list", address);
+        check(!listing.getAsJsonArray("parameters").get(0).getAsJsonObject().get("readable").getAsBoolean(),
+                "nonfinite direct values remain unreadable");
+        pending = bridge.handle("parameters.layer.set", layerWrite(listing, .8), deadline()); f.next(); expectError(pending, "not_ready");
+        check(f.childWrites[0][0] == 0, "unreadable parameters never dispatch");
+    }
+
+    private static void layerRebindDuringWriteHasUnknownOutcome() {
+        Fake f = new Fake(); HostBridge bridge = f.bridge();
+        JsonObject listing = call(f, bridge, "parameters.layer.list", layerTarget(f, bridge, 0, 0));
+        f.writeMode = "none";
+        CompletableFuture<JsonObject> pending = bridge.handle("parameters.layer.set", layerWrite(listing, .8), deadline());
+        f.next(); check(!pending.isDone() && f.childWrites[0][0] == 1, "write is dispatched before structural change");
+        f.layerNodes[0].value("exists").set(false); f.layerNodes[0].value("exists").set(true);
+        f.emitChildValue(0, 0, .8); f.next(); expectError(pending, "stale_context");
+        try { pending.join(); } catch (CompletionException error) {
+            check(((RpcException) error.getCause()).outcome.equals("unknown"), "replacement callback cannot acknowledge a pending write");
+        }
+    }
+
+    private static double parameterValue(JsonObject listing) {
+        return listing.getAsJsonArray("parameters").get(0).getAsJsonObject().get("normalizedValue").getAsDouble();
+    }
+    private static String layerId(int index) { return index == 0 ? "11111111-2222-4333-8444-555555555555" : "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"; }
+    private static JsonObject layerDiscovery() { JsonObject p = new JsonObject(); p.add("parent", target()); return p; }
+    private static JsonObject layerTarget(Fake f, HostBridge bridge, int layer, int child) {
+        return layerTarget(call(f, bridge, "devices.layers.list", layerDiscovery()), layer, child);
+    }
+    private static JsonObject layerTarget(JsonObject discovery, int layer, int child) {
+        JsonObject l = discovery.getAsJsonArray("layers").get(layer).getAsJsonObject();
+        JsonObject c = l.getAsJsonArray("devices").get(child).getAsJsonObject();
+        JsonObject p = new JsonObject(); p.add("parent", discovery.getAsJsonObject("parent").deepCopy());
+        p.add("layerId", l.get("layerId")); p.add("childDeviceIndex", c.get("childDeviceIndex"));
+        p.add("expectedChildDeviceName", c.get("name")); p.add("discoveryToken", c.get("discoveryToken")); return p;
+    }
+    private static JsonObject layerWrite(JsonObject listing, double value) {
+        JsonObject p = listing.getAsJsonObject("target").deepCopy(); p.addProperty("parameterId", "gain"); p.addProperty("value", value); return p;
+    }
+
 
     private static JsonObject target() {
         JsonObject value = new JsonObject(); value.addProperty("trackId", Fake.TRACK_ID);
@@ -395,6 +788,15 @@ public final class HostBridgeTest {
         final double[] parameterValues = new double[16];
         final int[] deviceWrites = new int[16];
         int writes, idEmissions;
+        final Node[] layerNodes = new Node[2], childBanks = new Node[2];
+        final Node[][] childNodes = new Node[2][2];
+        final StringArrayValueChangedCallback[][] childIds = new StringArrayValueChangedCallback[2][2];
+        final DirectParameterNormalizedValueChangedCallback[][] childValues = new DirectParameterNormalizedValueChangedCallback[2][2];
+        final boolean[][] initialChildIds = {{true, true}, {true, true}};
+        final double[][] childParameterValues = {{.15, .35}, {.55, .75}};
+        final int[][] childWrites = new int[2][2];
+        Node layerBank;
+        int childIdEmissions;
         int actionReads, actionLookups, actionInvocations;
         boolean runningHostTask, slowActionLookup, initializing;
         String writeMode = "match";
@@ -407,6 +809,7 @@ public final class HostBridgeTest {
                 for (int d = 0; d < 16; d++) {
                     Node node = new Node(); node.put("exists", t == 0 && d < 2); node.put("name", "Twin");
                     node.put("position", d); node.put("deviceType", "audio-effect");
+                    attachLayers(node, t == 0 && d == 0);
                     bankDevices[d] = node.proxy(Device.class);
                     if (t == 0) {
                         deviceNodes[d] = node;
@@ -447,6 +850,71 @@ public final class HostBridgeTest {
             }
             trackBank.put("scrollPosition", 0); trackBank.put("itemCount", 20);
             trackBank.custom = (method, args) -> method.equals("getItemAt") ? trackObjects[(Integer) args[0]] : null;
+        }
+        void attachLayers(Node root, boolean populated) {
+            root.put("hasLayers", populated);
+            Node bank = new Node(); bank.put("exists", populated); bank.put("itemCount", populated ? 2 : 0); bank.put("scrollPosition", 0);
+            DeviceLayer[] layers = new DeviceLayer[2];
+            if (populated) layerBank = bank;
+            for (int l = 0; l < 2; l++) {
+                final int layer = l;
+                Node node = new Node(); node.put("exists", populated); node.put("channelId", populated ? layerId(l) : "");
+                node.put("channelIndex", 10 + l); node.put("name", "Same Layer");
+                Node children = new Node(); children.put("exists", populated);
+                children.put("itemCount", populated ? 2 : 0); children.put("scrollPosition", 0);
+                Device[] devices = new Device[2];
+                if (populated) { layerNodes[l] = node; childBanks[l] = children; }
+                DeviceLayer owner = node.proxy(DeviceLayer.class);
+                layers[l] = owner;
+                for (int c = 0; c < 2; c++) {
+                    final int child = c;
+                    Node leaf = new Node(); leaf.put("exists", populated); leaf.put("name", "Twin");
+                    leaf.put("position", c); leaf.put("deviceType", "audio-effect");
+                    Node chain = new Node();
+                    chain.custom = (method, args) -> {
+                        if (method.equals("createEqualsValue") && args[0] == owner)
+                            throw new IllegalArgumentException("These proxies always refer to the same target");
+                        return null;
+                    };
+                    leaf.objects.put("deviceChain", chain.proxy(DeviceChain.class));
+                    if (populated) childNodes[l][c] = leaf;
+                    leaf.custom = (method, args) -> {
+                        if (method.startsWith("addDirectParameter") && !initializing)
+                            throw new AssertionError("child direct observers must be init-created");
+                        if (method.equals("createCursorRemoteControlsPage")) throw new AssertionError("No child remotes");
+                        if (populated && method.equals("addDirectParameterIdObserver")) {
+                            childIds[layer][child] = (StringArrayValueChangedCallback) args[0];
+                            if (initialChildIds[layer][child]) emitChildIds(layer, child, new String[]{"gain"});
+                        }
+                        if (populated && method.equals("addDirectParameterNameObserver"))
+                            ((DirectParameterNameChangedCallback) args[1]).directParameterNameChanged("gain", "Child gain");
+                        if (populated && method.equals("addDirectParameterNormalizedValueObserver")) {
+                            childValues[layer][child] = (DirectParameterNormalizedValueChangedCallback) args[0];
+                            emitChildValue(layer, child, childParameterValues[layer][child]);
+                        }
+                        if (populated && method.equals("setDirectParameterValueNormalized")) {
+                            if (!runningHostTask) throw new AssertionError("child write outside host callback");
+                            childWrites[layer][child]++;
+                            if (writeMode.equals("match")) emitChildValue(layer, child,
+                                    ((Number) args[1]).doubleValue() / (((Number) args[2]).doubleValue() - 1));
+                            if (writeMode.equals("mismatch")) emitChildValue(layer, child, .4);
+                        }
+                        return null;
+                    };
+                    devices[c] = leaf.proxy(Device.class);
+                }
+                children.custom = (method, args) -> method.equals("getItemAt") ? devices[(Integer) args[0]] : null;
+                node.objects.put("createDeviceBank", children.proxy(DeviceBank.class));
+            }
+            bank.custom = (method, args) -> method.equals("getItemAt") ? layers[(Integer) args[0]] : null;
+            root.objects.put("createLayerBank", bank.proxy(DeviceLayerBank.class));
+        }
+        void emitChildIds(int layer, int child, String[] ids) {
+            if (childIds[layer][child] != null) { childIdEmissions++; childIds[layer][child].valueChanged(ids); }
+        }
+        void emitChildValue(int layer, int child, double value) {
+            childParameterValues[layer][child] = value;
+            if (childValues[layer][child] != null) childValues[layer][child].directParameterNormalizedValueChanged("gain", value);
         }
         HostBridge bridge() {
             Node app = new Node(); app.put("projectName", "Fixture"); app.put("hasActiveEngine", true);
@@ -543,6 +1011,7 @@ public final class HostBridgeTest {
     }
     private static final class Val implements InvocationHandler {
         Object value;
+        boolean publishInitial = true;
         final List<Object> observers = new ArrayList<>();
         Val(Object value) { this.value = value; }
         Object current() { return value; }
@@ -555,7 +1024,7 @@ public final class HostBridgeTest {
         }
         public Object invoke(Object proxy, Method method, Object[] args) {
             if (method.getName().equals("get")) return current();
-            if (method.getName().equals("addValueObserver")) { observers.add(args[0]); notifyObserver(args[0]); }
+            if (method.getName().equals("addValueObserver")) { observers.add(args[0]); if (publishInitial) notifyObserver(args[0]); }
             return null;
         }
     }

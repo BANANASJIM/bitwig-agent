@@ -11,7 +11,7 @@ final class GridParameterContext {
     };
     enum Field {
         DELETED, CONTEXT, PROJECT, PARAMETER_PROJECT, ROOT, INITIALIZED, DISPOSED, CONTEXT_THREAD,
-        CURRENT_DT, DEFAULT_DT, DT_CONTEXT, LICENSED, GUI_FLOAT, GUI_INTEGER, GUI_ENUM, GUI_BOOLEAN,
+        CURRENT_DT, DEFAULT_DT, DT_CONTEXT, LICENSED, GUI_FLOAT, GUI_INTEGER, GUI_ENUM, GUI_BOOLEAN, GUI_PANEL_BOOLEAN,
         SETTABLE, CIU, TOUCHED, UNDO, UNDO_EXECUTING, UNDO_ACTIVE, UNDO_ICL, LOCK, LOCK_OWNER
     }
     interface Access {
@@ -29,6 +29,7 @@ final class GridParameterContext {
     private Capture capture(Object device, Object graph, Object module, Object parameter,
             GridSnapshotReader.Kind kind, Runnable check, boolean serialize, boolean writing) {
         check.run();
+        boolean panel = kind == GridSnapshotReader.Kind.PANEL_BOOLEAN;
         Object project = required(a.read(Field.PARAMETER_PROJECT, parameter), "Owning project");
         Object context = attached(parameter);
         JsonObject lifecycle = serialize ? new JsonObject() : null;
@@ -61,6 +62,7 @@ final class GridParameterContext {
             case INTEGER: wrapperField = Field.GUI_INTEGER; break;
             case ENUM: wrapperField = Field.GUI_ENUM; break;
             case BOOLEAN: wrapperField = Field.GUI_BOOLEAN; break;
+            case PANEL_BOOLEAN: wrapperField = Field.GUI_PANEL_BOOLEAN; break;
             default: throw failure("grid_unavailable", "Parameter context family is unsupported.");
         }
         // These getters construct fresh wrappers; wrapper identity is not native model identity.
@@ -79,11 +81,11 @@ final class GridParameterContext {
                 throw failure("grid_unavailable", "Native current/default transaction context is unavailable.");
             if (current != defaultDt || defaultDtContext != context)
                 throw failure("unsafe_state", "Native transaction is outside the bounded default document context.");
-            if (!bool(Field.LICENSED, parameter))
+            if (!panel && !bool(Field.LICENSED, parameter))
                 throw failure("unsafe_state", "Native parameter effective licensing is false.");
             if (!bool(Field.SETTABLE, wrapper))
                 throw failure("unsafe_state", "Native GUI property is not settable.");
-            if (bool(Field.CIU, parameter) || bool(Field.TOUCHED, parameter))
+            if (bool(Field.CIU, parameter) || (!panel && bool(Field.TOUCHED, parameter)))
                 throw failure("unsafe_state", "Native parameter skip or active touch state blocks the write.");
             required(undo, "Ancestor undo manager");
             if (bool(Field.UNDO_EXECUTING, undo) || bool(Field.UNDO_ACTIVE, undo) || bool(Field.UNDO_ICL, undo))
@@ -115,14 +117,15 @@ final class GridParameterContext {
         nullable(attached, "currentDtIsDefault", current == null || defaultDt == null ? null : current == defaultDt);
         nullable(attached, "defaultDtContextMatches", defaultDt == null ? null : defaultDtContext == context);
         result.add("attachedContext", attached);
-        result.addProperty("effectivelyLicensed", bool(Field.LICENSED, parameter));
+        nullable(result, "effectivelyLicensed", panel ? null : bool(Field.LICENSED, parameter));
+        if (panel) result.addProperty("scalarLicenseTouchApplicable", false);
         JsonObject property = new JsonObject();
         property.addProperty("modelClass", wrapper.getClass().getName());
         property.addProperty("isSettable", bool(Field.SETTABLE, wrapper));
         property.addProperty("scope", "gui_property_descriptor_flag_only");
         result.add("guiProperty", property);
         result.addProperty("nativeCIu", bool(Field.CIU, parameter));
-        result.addProperty("parameterTouched", bool(Field.TOUCHED, parameter));
+        nullable(result, "parameterTouched", panel ? null : bool(Field.TOUCHED, parameter));
         JsonObject undoState = new JsonObject(); undoState.addProperty("present", undo != null);
         undoState.addProperty("modelClass", undo == null ? null : GridSnapshotReader.text(undo.getClass().getName()));
         nullable(undoState, "executingUndoRedo", undo == null ? null : bool(Field.UNDO_EXECUTING, undo));

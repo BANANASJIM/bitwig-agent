@@ -170,6 +170,7 @@ final class MixModule implements HostModule {
         if (!s.tracksObserved) throw HostServices.failure("not_ready", "Track bank has not reported its size yet.");
         Creation before = capture();
         if (!before.complete) throw HostServices.failure("not_ready", "Creation requires a complete observed UUID/type/position baseline inside the track window.");
+        if (before.groups) throw HostServices.failure("unsupported_scope", "Track creation in an observed grouped project is unsupported: insertion position cannot be attributed safely; no factory was dispatched.");
         creation = op;
         s.check(op); op.dispatched = true; creationUnresolved = true;
         int position = p.get("position").getAsInt();

@@ -42,6 +42,9 @@ public final class GridSnapshotReaderTest {
         rawParameterNoopAndNativeReadback();
         rawParameterLiveGuardChanges();
         rawParameterMutationFailuresRemainUnknown();
+        booleanPanelInspectionKeepsScalarApplicabilityDistinct();
+        booleanPanelWritesReportNativeCoupledChanges();
+        booleanPanelGuardsCouplingAndLateFailures();
         moduleFootprintsAreOptionalReadMetadata();
         moduleMovesUseCasAndLaterWholeGraphObservation();
         moduleDeletesObserveSelectiveBypassChanges();
@@ -654,6 +657,89 @@ public final class GridSnapshotReaderTest {
         check(error.outcome.equals("not_applied") && early.calls == 0, "before-dispatch cancellation prevents mutation");
     }
 
+    private static void booleanPanelInspectionKeepsScalarApplicabilityDistinct() {
+        PanelFixture f = new PanelFixture();
+        JsonObject result = f.model.reader.parameter(f.model.proxy, TRACK_ID, new UUID(1, 1),
+                "PANEL_ID", f.context.reader, () -> {});
+        JsonObject panel = result.getAsJsonObject("parameter"), context = result.getAsJsonObject("editContext");
+        check(panel.get("kind").getAsString().equals("boolean") && panel.get("parameterId").getAsString().equals("PANEL_ID"),
+                "non-Tty panel has its own identifier and public boolean value kind");
+        check(panel.get("name").isJsonNull() && panel.get("display").isJsonNull() && !result.get("complete").getAsBoolean(),
+                "unmapped panel labels/display remain explicit rather than scalar-method calls or invented text");
+        check(context.get("effectivelyLicensed").isJsonNull() && context.get("parameterTouched").isJsonNull()
+                && !context.get("scalarLicenseTouchApplicable").getAsBoolean(),
+                "panel never fabricates scalar permission or touch observations");
+        check(result.getAsJsonObject("coupledParameter").get("parameterId").getAsString().equals("VALUE_ID")
+                && result.getAsJsonObject("coupledEditContext").get("effectivelyLicensed").getAsBoolean(),
+                "inspection identifies actual same-module reference and separate scalar authorization observations");
+        Node collision = f.model.parameter(BOOLEAN, f.model.first).put(PARAMETER_ID, "PANEL_ID").put(BOOLEAN_VALUE, false);
+        f.model.first.put(CHILDREN, List.of(f.panel, f.coupled, collision));
+        expect("stale_context", () -> f.set(request("boolean", "true", "false")));
+        check(f.calls == 0, "panel/scalar identifier collision cannot choose the first matching child");
+    }
+
+    private static void booleanPanelWritesReportNativeCoupledChanges() {
+        PanelFixture f = new PanelFixture();
+        JsonObject result = f.set(request("boolean", "true", "false"));
+        check(f.calls == 1 && !result.getAsJsonObject("parameter").get("value").getAsBoolean(),
+                "panel setter performs one boolean native operation");
+        check(result.getAsJsonObject("previousCoupledParameter").get("value").getAsDouble() == -0.5
+                && result.getAsJsonObject("coupledParameter").get("value").getAsDouble() == 0.0
+                && result.getAsJsonObject("previousCoupledParameter").get("minimum").getAsDouble() == -1.0
+                && result.getAsJsonObject("coupledParameter").get("minimum").getAsDouble() == 0.0,
+                "response reads native coupled coercion/range instead of copying the pre-write scalar");
+        check(!result.get("undoGroupingVerified").getAsBoolean() && !result.get("engineAcknowledgement").getAsBoolean(),
+                "model changes do not become native Undo grouping or DSP acknowledgement");
+        PanelFixture noop = new PanelFixture();
+        noop.panel.put(BOOLEAN_VALUE, false); noop.coupled.put(FLOAT_VALUE, 0.25); noop.definition.put(FLOAT_MIN, 0.0);
+        result = noop.set(request("boolean", "false", "false"));
+        check(noop.calls == 0 && !noop.op.dispatched && !result.get("mutationDispatched").getAsBoolean()
+                && result.getAsJsonObject("coupledParameter").get("value").getAsDouble() == 0.25,
+                "guarded matching panel preserves its dependent value without invoking the setter");
+    }
+
+    private static void booleanPanelGuardsCouplingAndLateFailures() {
+        PanelFixture unlicensed = new PanelFixture();
+        unlicensed.context.override(unlicensed.coupled, GridParameterContext.Field.LICENSED, false);
+        RpcException error = unlicensed.failure();
+        check(error.code.equals("unsafe_state") && error.outcome.equals("not_applied") && unlicensed.calls == 0,
+                "linked scalar effective licensing gates panel writes");
+        PanelFixture touched = new PanelFixture();
+        touched.context.override(touched.coupled, GridParameterContext.Field.TOUCHED, true);
+        error = touched.failure();
+        check(error.code.equals("unsafe_state") && touched.calls == 0, "linked scalar active touch blocks mode changes");
+        PanelFixture skipped = new PanelFixture();
+        skipped.context.override(skipped.panel, GridParameterContext.Field.CIU, true);
+        error = skipped.failure();
+        check(error.code.equals("unsafe_state") && skipped.calls == 0, "panel's own native skip predicate is retained");
+        PanelFixture wrongProject = new PanelFixture();
+        wrongProject.context.override(wrongProject.coupled, GridParameterContext.Field.PROJECT, new Object());
+        error = wrongProject.failure();
+        check(error.code.equals("stale_context") && wrongProject.calls == 0, "coupled parameter cannot cross owning projects");
+        PanelFixture unknown = new PanelFixture(); unknown.coupled.kinds.remove(BIPOLAR_FLOAT);
+        error = unknown.failure();
+        check(error.code.equals("grid_unavailable") && unknown.calls == 0, "generic float is not an inspected bipolar dependency");
+        PanelFixture ambiguous = new PanelFixture();
+        Node second = ambiguous.model.parameter(FLOAT, ambiguous.model.first).put(PARAMETER_ID, "SECOND_VALUE")
+                .put(BIPOLAR_PANEL, ambiguous.panel); second.kinds.add(BIPOLAR_FLOAT);
+        ambiguous.model.first.put(CHILDREN, List.of(ambiguous.panel, ambiguous.coupled, second));
+        error = ambiguous.failure();
+        check(error.code.equals("grid_unavailable") && ambiguous.calls == 0, "multiple coupled native parameters fail before dispatch");
+        PanelFixture stale = new PanelFixture();
+        stale.afterMutation = () -> stale.coupled.put(BIPOLAR_PANEL, new Object());
+        error = stale.failure();
+        check(error.outcome.equals("unknown") && stale.calls == 1, "lost post-dispatch reference remains unknown with no retry");
+        PanelFixture unread = new PanelFixture(); unread.apply = false;
+        error = unread.failure();
+        check(error.code.equals("grid_verification_failed") && error.outcome.equals("unknown") && unread.calls == 1,
+                "unobserved requested boolean is not successful panel dispatch");
+        PanelFixture partial = new PanelFixture();
+        partial.afterMutation = () -> { throw HostServices.failure("grid_unavailable", "native panel failure"); };
+        error = partial.failure();
+        check(error.outcome.equals("unknown") && partial.calls == 1 && !(Boolean) partial.panel.values.get(BOOLEAN_VALUE),
+                "native exception after panel/coercion changes cannot fabricate rollback");
+    }
+
     private static void moduleFootprintsAreOptionalReadMetadata() {
         Fixture f = new Fixture();
         JsonObject module = f.read(0, 64, false).getAsJsonArray("modules").get(0).getAsJsonObject();
@@ -1262,7 +1348,7 @@ public final class GridSnapshotReaderTest {
         final Fixture model = inspectionFixture();
         final ContextFixture context = new ContextFixture();
         final HostOperation op = new HostOperation(Long.MAX_VALUE);
-        final GridParameterWriter writer = new GridParameterWriter(model.reader, context.reader, this);
+        final GridParameterWriter writer = new GridParameterWriter(model.reader, context.reader, this, null);
         Node child = (Node) ((List<?>) model.first.values.get(CHILDREN)).get(0);
         GridSnapshotReader.Kind kind = BOOLEAN;
         GridSnapshotReader.Field field = BOOLEAN_VALUE;
@@ -1306,9 +1392,59 @@ public final class GridSnapshotReaderTest {
             afterMutation.run();
         }
     }
+    private static final class PanelFixture implements GridBooleanPanelWriter.Access {
+        final Fixture model = new Fixture();
+        final ContextFixture context = new ContextFixture();
+        final HostOperation op = new HostOperation(Long.MAX_VALUE);
+        final Node panel = new Node(PANEL_BOOLEAN).put(OWNER_MODULE, model.first).put(PATH, "panel/local")
+                .put(PARAMETER_ID, "PANEL_ID").put(BOOLEAN_VALUE, true);
+        final Node definition = new Node().put(FLOAT_MIN, -1.0).put(FLOAT_MAX, 1.0);
+        final Node coupled = model.parameter(FLOAT, model.first).put(PARAMETER_ID, "VALUE_ID")
+                .put(FLOAT_VALUE, -0.5).put(FLOAT_DEFINITION, definition).put(BIPOLAR_PANEL, panel);
+        final GridBooleanPanelWriter panelWriter = new GridBooleanPanelWriter(model.reader, context.reader, this);
+        final GridParameterWriter writer = new GridParameterWriter(model.reader, context.reader, new GridParameterWriter.Access() {
+            @Override public void requireSupported(Object parameter, GridSnapshotReader.Kind kind) {
+                throw new AssertionError("Panel must not enter scalar authorization");
+            }
+            @Override public void setRaw(Object parameter, double value) {
+                throw new AssertionError("Panel must not invoke a numeric controller operation");
+            }
+        }, panelWriter);
+        int calls;
+        boolean apply = true;
+        Runnable afterMutation = () -> {};
+        PanelFixture() {
+            coupled.kinds.add(BIPOLAR_FLOAT); model.first.put(CHILDREN, List.of(panel, coupled));
+            context.values.put(GridParameterContext.Field.LOCK_OWNER, context.dt);
+            context.values.put(GridParameterContext.Field.GUI_PANEL_BOOLEAN, (Supplier<Object>) Object::new);
+            context.override(panel, GridParameterContext.Field.LICENSED, null);
+            context.override(panel, GridParameterContext.Field.TOUCHED, null);
+            context.override(panel, GridParameterContext.Field.GUI_BOOLEAN, null);
+        }
+        JsonObject set(GridParameterWriter.Request request) {
+            return writer.set(model.proxy, TRACK_ID, new UUID(1, 1), "PANEL_ID", request, () -> {}, () -> op.dispatched = true);
+        }
+        RpcException failure() {
+            try { set(request("boolean", "true", "false")); throw new AssertionError("Expected failed panel write"); }
+            catch (RpcException error) { op.fail(error); return TransportMixFixture.error(op, error.code); }
+        }
+        @Override public void requireSupported(Object parameter) {
+            if (parameter != panel) throw HostServices.failure("grid_unavailable", "unmapped panel");
+        }
+        @Override public void set(Object parameter, boolean value) {
+            calls++;
+            if (apply) {
+                panel.put(BOOLEAN_VALUE, value); definition.put(FLOAT_MIN, value ? -1.0 : 0.0);
+                if (!value && (Double) coupled.values.get(FLOAT_VALUE) < 0.0) coupled.put(FLOAT_VALUE, 0.0);
+            }
+            afterMutation.run();
+        }
+    }
+
     private static final class ContextFixture implements GridParameterContext.Access {
         final GridParameterContext reader = new GridParameterContext(this);
         final EnumMap<GridParameterContext.Field, Object> values = new EnumMap<>(GridParameterContext.Field.class);
+        final IdentityHashMap<Object, EnumMap<GridParameterContext.Field, Object>> perObject = new IdentityHashMap<>();
         final Object context = new Object(), project = new Object(), dt = new Object();
         boolean defaultSupported = true;
         ContextFixture() {
@@ -1328,8 +1464,13 @@ public final class GridSnapshotReaderTest {
                     GridParameterContext.Field.GUI_ENUM, GridParameterContext.Field.GUI_BOOLEAN))
                 values.put(field, (Supplier<Object>) Object::new);
         }
+        void override(Object object, GridParameterContext.Field field, Object value) {
+            perObject.computeIfAbsent(object, ignored -> new EnumMap<>(GridParameterContext.Field.class)).put(field, value);
+        }
         @Override public Object read(GridParameterContext.Field field, Object object) {
-            Object value = values.get(field); return value instanceof Supplier<?> ? ((Supplier<?>) value).get() : value;
+            EnumMap<GridParameterContext.Field, Object> specific = perObject.get(object);
+            Object value = specific != null && specific.containsKey(field) ? specific.get(field) : values.get(field);
+            return value instanceof Supplier<?> ? ((Supplier<?>) value).get() : value;
         }
         @Override public boolean defaultContext(Object value) { return defaultSupported; }
     }

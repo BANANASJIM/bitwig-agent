@@ -169,7 +169,7 @@ async def test_grid_move_mcp_rejects_float_despite_json_schema_integer_semantics
 async def test_mcp_discovery_publishes_required_nullable_connection_contract(mcp_session):
     response = await mcp_session.list_tools()
     tools = {tool.name: tool for tool in response.tools}
-    assert len(response.tools) == len(tools) == 38
+    assert len(response.tools) == len(tools) == 41
     assert set(tools) == set(TOOLS)
     tool = tools["grid.connections.set"]
     assert tool.annotations.readOnlyHint is False
@@ -258,3 +258,64 @@ async def test_connection_mcp_never_infers_missing_cas_null(mcp_session, host, f
     assert response.structuredContent["error"]["code"] == "invalid_params"
     assert response.structuredContent["error"]["outcome"] == "not_dispatched"
     assert host.connections == 0
+
+
+async def test_mcp_discovery_publishes_strict_layer_contracts(mcp_session):
+    response = await mcp_session.list_tools()
+    tools = {tool.name: tool for tool in response.tools}
+    for method in ("devices.layers.list", "parameters.layer.list", "parameters.layer.set"):
+        tool = tools[method]
+        assert tool.annotations.readOnlyHint is (method != "parameters.layer.set")
+        schema = tool.inputSchema
+        assert schema["additionalProperties"] is False
+        assert set(schema["required"]) == set(TOOLS[method].examples[0])
+        reference = schema["properties"]["parent"]["$ref"]
+        parent = schema["$defs"][reference.rsplit("/", 1)[1]]
+        assert parent["additionalProperties"] is False
+        assert set(parent["properties"]) == set(parent["required"]) == {
+            "trackId", "deviceIndex", "expectedDeviceName"}
+        assert parent["properties"]["deviceIndex"]["maximum"] == 15
+        if method != "devices.layers.list":
+            assert schema["properties"]["childDeviceIndex"]["maximum"] == 1
+
+
+@pytest.mark.parametrize("method", ["devices.layers.list", "parameters.layer.list", "parameters.layer.set"])
+@pytest.mark.parametrize("parent", [
+    None, {}, {**TARGET, "deviceIndex": 1.0}, {**TARGET, "deviceIndex": True},
+    {**TARGET, "layerId": TRACK}, {**TARGET, "timeoutMs": 250},
+    {**TARGET, "padIndex": 0}, {**TARGET, "slotIndex": 0},
+])
+async def test_invalid_layer_parent_never_reaches_tcp(mcp_session, host, method, parent):
+    response = await mcp_session.call_tool(method, {**TOOLS[method].examples[0], "parent": parent})
+    assert response.isError
+    assert response.structuredContent["error"]["code"] == "invalid_params"
+    assert response.structuredContent["error"]["outcome"] == "not_dispatched"
+    assert host.connections == 0
+
+
+@pytest.mark.parametrize("changes", [
+    {"childDeviceIndex": 2}, {"childDeviceIndex": 1.0}, {"childDeviceIndex": True},
+    {"layerId": "1-1-1-1-1"}, {"discoveryToken": None}, {"expectedChildDeviceName": ""},
+    {"contextToken": ""}, {"parameterId": ""}, {"value": True},
+    {"value": 1.01}, {"layerIndex": 0}, {"path": []},
+])
+async def test_invalid_layer_write_never_reaches_tcp(mcp_session, host, changes):
+    response = await mcp_session.call_tool("parameters.layer.set", {
+        **TOOLS["parameters.layer.set"].examples[0], **changes})
+    assert response.isError
+    assert response.structuredContent["error"]["code"] == "invalid_params"
+    assert response.structuredContent["error"]["outcome"] == "not_dispatched"
+    assert host.connections == 0
+
+
+async def test_layer_mcp_preserves_unknown_without_retry(mcp_session, host):
+    error = {"code": "deadline_exceeded", "message": "Inspect child before another write",
+             "outcome": "unknown", "details": {"dispatched": True}}
+    host.reply = lambda request: {"id": request["id"], "error": error}
+    params = TOOLS["parameters.layer.set"].examples[0]
+    response = await mcp_session.call_tool("parameters.layer.set", {**params, "timeoutMs": 250})
+    assert response.isError
+    assert response.structuredContent == {"error": error}
+    assert host.requests[0]["params"] == params
+    assert host.requests[0]["timeoutMs"] == 250
+    assert len(host.requests) == host.connections == 1

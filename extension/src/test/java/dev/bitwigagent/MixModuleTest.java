@@ -16,6 +16,8 @@ public final class MixModuleTest {
         expiredAndCancelledWritesAreNotApplied();
         creationNamesOnlyUniqueObservedAddition();
         ambiguousCreationStaysUnknownAndIncompleteBaselineDoesNotDispatch();
+        groupedBaselineRejectsWithoutMutationOrQuarantine();
+        concurrentGroupAppearanceRemainsUnknownAndQuarantined();
         wrongTypeOrPositionCannotBeNamed();
         creationNeverNamesAfterCancellation();
         replacementDoesNotReuseReadiness();
@@ -143,6 +145,59 @@ public final class MixModuleTest {
         HostOperation rejected = outside.submit(other, "tracks.create", create("effect", -1)); outside.next();
         check(TransportMixFixture.error(rejected, "not_ready").outcome.equals("not_applied"), "incomplete16-track baseline rejects before mutation");
         check(outside.application.actions == 0 && !rejected.dispatched, "known unobservable baseline must never invoke a factory");
+    }
+    private static void groupedBaselineRejectsWithoutMutationOrQuarantine() {
+        for (String type : List.of("audio", "instrument", "effect")) {
+            TransportMixFixture f = new TransportMixFixture(); MixModule module = new MixModule(f.services);
+            f.tracks[0].child("trackType").emit("Group");
+            JsonObject beforeA = f.call(module, "tracks.get", TransportMixFixture.target(TransportMixFixture.A));
+            JsonObject beforeB = f.call(module, "tracks.get", TransportMixFixture.target(TransportMixFixture.B));
+            Object count = f.bank.child("itemCount").data;
+            String hostType = Character.toUpperCase(type.charAt(0)) + type.substring(1);
+            f.create = factory -> f.addTrack(2, TransportMixFixture.C, hostType);
+            for (int position : new int[]{-1, 0}) {
+                HostOperation rejected = f.submit(module, "tracks.create", create(type, position)); f.next();
+                check(TransportMixFixture.error(rejected, "unsupported_scope").outcome.equals("not_applied"),
+                        "known grouped baseline explicitly rejects as not applied");
+                check(!rejected.dispatched && f.application.actions == 0,
+                        "known grouped baseline never dispatches any native track factory");
+                check(count.equals(f.bank.child("itemCount").data) && Boolean.FALSE.equals(f.tracks[2].child("exists").data),
+                        "rejected grouped creation leaves project track count and empty slot unchanged");
+                check(beforeA.equals(f.call(module, "tracks.get", TransportMixFixture.target(TransportMixFixture.A)))
+                                && beforeB.equals(f.call(module, "tracks.get", TransportMixFixture.target(TransportMixFixture.B))),
+                        "rejected grouped creation preserves existing track snapshots");
+                for (TransportMixFixture.Node track : f.tracks)
+                    check(track.child("name").writes == 0, "rejected grouped creation never renames any track");
+                check(f.tasks.isEmpty(), "rejection leaves no creation observation task pending");
+            }
+            f.tracks[0].child("trackType").emit("Instrument");
+            HostOperation admitted = f.submit(module, "tracks.create", create(type, -1)); f.next(); f.next();
+            check(admitted.result.join().get("matchesRequested").getAsBoolean() && f.application.actions == 1,
+                    "grouped pre-dispatch rejection does not quarantine later supported creation");
+            check(f.tracks[2].child("name").writes == 1, "later ungrouped creation names only the observed addition");
+        }
+    }
+    private static void concurrentGroupAppearanceRemainsUnknownAndQuarantined() {
+        TransportMixFixture f = new TransportMixFixture(); MixModule module = new MixModule(f.services);
+        f.create = factory -> {
+            f.tracks[0].child("trackType").emit("Group");
+            f.addTrack(2, TransportMixFixture.C, "Audio");
+        };
+        HostOperation op = f.submit(module, "tracks.create", create("audio", -1)); f.next();
+        JsonObject result = op.result.join();
+        check(op.dispatched && f.application.actions == 1, "concurrent grouping occurs after one factory dispatch");
+        check(result.get("status").getAsString().equals("dispatched")
+                        && result.get("completion").getAsString().equals("unknown")
+                        && result.get("reason").getAsString().equals("grouped_insertion_position_not_observable"),
+                "group appearing after dispatch retains structural unknown attribution");
+        check(!result.get("nameApplied").getAsBoolean() && result.get("trackId").isJsonNull()
+                        && f.tracks[2].child("name").writes == 0,
+                "concurrent grouped insertion is never attributed or renamed");
+        f.tracks[0].child("trackType").emit("Instrument");
+        HostOperation later = f.submit(module, "tracks.create", create("audio", -1)); f.next();
+        check(TransportMixFixture.error(later, "unresolved_creation").outcome.equals("not_applied")
+                        && !later.dispatched && f.application.actions == 1,
+                "concurrent structural unknown retains quarantine even when the group disappears");
     }
     private static void wrongTypeOrPositionCannotBeNamed() {
         for (boolean wrongType : new boolean[]{true, false}) {

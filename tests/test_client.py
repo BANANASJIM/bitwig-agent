@@ -5,6 +5,7 @@ import pytest
 from pydantic import ValidationError
 
 from bitwig_agent.client import BridgeClient, BridgeError, MAX_BYTES, configured_port
+from bitwig_agent.catalog import TOOLS, validate_call
 from bitwig_agent.schema import SetArgs
 
 pytestmark = pytest.mark.anyio
@@ -88,3 +89,30 @@ def test_port_environment(monkeypatch):
         monkeypatch.setenv("BITWIG_AGENT_PORT", value)
         with pytest.raises(ValueError):
             configured_port()
+
+
+@pytest.mark.parametrize("lost_response", [False, True])
+async def test_layer_client_unknown_write_is_not_retried(host, lost_response):
+    error = {"code": "deadline_exceeded", "message": "Inspect child before another write",
+             "outcome": "unknown", "details": {"dispatched": True}}
+    host.reply = lambda request: None if lost_response else {"id": request["id"], "error": error}
+    params = TOOLS["parameters.layer.set"].examples[0]
+    with pytest.raises(BridgeError) as caught:
+        await BridgeClient(host.port).call("parameters.layer.set", params)
+    assert caught.value.error["outcome"] == "unknown"
+    if not lost_response:
+        assert caught.value.error == error
+    assert host.requests[0]["params"] == params
+    assert len(host.requests) == host.connections == 1
+
+
+@pytest.mark.parametrize("changes", [
+    {"parent": None}, {"childDeviceIndex": 2}, {"childDeviceIndex": 1.0},
+    {"layerId": "1-1-1-1-1"}, {"discoveryToken": ""}, {"value": float("nan")},
+    {"value": float("inf")}, {"value": True}, {"padIndex": 0}, {"slotIndex": 0},
+])
+async def test_invalid_layer_client_arguments_do_not_connect(host, changes):
+    with pytest.raises(ValidationError):
+        await BridgeClient(host.port).call("parameters.layer.set", {
+            **TOOLS["parameters.layer.set"].examples[0], **changes})
+    assert host.connections == 0

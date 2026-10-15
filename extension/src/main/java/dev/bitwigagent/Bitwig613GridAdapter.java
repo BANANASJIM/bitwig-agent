@@ -33,6 +33,8 @@ final class Bitwig613GridAdapter implements GridAdapter, GridSnapshotReader.Acce
     private GridParameterContext parameterContexts;
     private String inspectionError, writeError;
     private GridParameterWriter parameterWriter;
+    private Bitwig613GridBooleanPanelAccess booleanPanels;
+    private String booleanPanelError;
     private String moduleMoveError, moduleDeleteError;
     private GridModuleWriter moduleWriter;
     private String connectionError;
@@ -66,9 +68,11 @@ final class Bitwig613GridAdapter implements GridAdapter, GridSnapshotReader.Acce
         else try { bindStructure(); } catch (ReflectiveOperationException | RuntimeException | LinkageError error) { structureError = diagnostic(error); }
         if (structureError == null) {
             try { bindParameters(); } catch (ReflectiveOperationException | RuntimeException | LinkageError error) { parameterError = diagnostic(error); }
+            try { booleanPanels = new Bitwig613GridBooleanPanelAccess(this); }
+            catch (ReflectiveOperationException | RuntimeException | LinkageError error) { booleanPanelError = diagnostic(error); }
             try { bind(DISPLAY, type("iTc"), "Fho", String.class); }
             catch (ReflectiveOperationException | RuntimeException | LinkageError error) { displayError = diagnostic(error); }
-        } else { parameterError = "Structure binding unavailable."; displayError = parameterError; }
+        } else { parameterError = "Structure binding unavailable."; displayError = parameterError; booleanPanelError = parameterError; }
         for (GridSnapshotReader.Metadata metadata : GridSnapshotReader.METADATA) {
             if (structureError != null) { metadataErrors.put(metadata, "Structure binding unavailable."); continue; }
             try { bindMetadata(metadata); }
@@ -79,11 +83,13 @@ final class Bitwig613GridAdapter implements GridAdapter, GridSnapshotReader.Acce
         else try {
             Class<?> parameter = kind(GridSnapshotReader.Kind.PARAMETER, "Tty");
             bind(PARAMETER_ID, parameter, "aA_", String.class);
-            parameterContexts = new GridParameterContext(new Bitwig613GridParameterContext(this));
+            parameterContexts = new GridParameterContext(new Bitwig613GridParameterContext(this, booleanPanels));
         } catch (ReflectiveOperationException | RuntimeException | LinkageError error) { inspectionError = diagnostic(error); }
         if (inspectionError != null) writeError = "Required parameter inspection bindings unavailable.";
         else try {
-            parameterWriter = new GridParameterWriter(snapshots, parameterContexts, new Bitwig613GridParameterWriter(this));
+            GridBooleanPanelWriter panels = booleanPanels == null ? null
+                    : new GridBooleanPanelWriter(snapshots, parameterContexts, booleanPanels);
+            parameterWriter = new GridParameterWriter(snapshots, parameterContexts, new Bitwig613GridParameterWriter(this), panels);
         } catch (ReflectiveOperationException | RuntimeException | LinkageError error) { writeError = diagnostic(error); }
         GridTopologyContext topologyContexts = null;
         String topologyContextError = structureError == null ? null : "Required structure binding unavailable.";
@@ -234,6 +240,16 @@ final class Bitwig613GridAdapter implements GridAdapter, GridSnapshotReader.Acce
         write.addProperty("undoCommandAvailable", false);
         write.addProperty("engineAcknowledgement", false);
         result.add("parameterWrite", write);
+        JsonObject panels = capability(gateError == null ? booleanPanelError : gateError,
+                "exact_Fln_boolean_panel_no_scalar_label_display_or_touch_license_flags");
+        panels.addProperty("inspectionAvailable", gateError == null && booleanPanelError == null && inspectionError == null);
+        panels.addProperty("writeAvailable", gateError == null && booleanPanelError == null && writeError == null);
+        panels.addProperty("operation", "ihn.E3I(boolean):void/native_boolean_panel_change");
+        panels.addProperty("coupling", "one_same_module_exact_TZj_reference_required_for_inspection_and_write");
+        panels.addProperty("guardPolicy", "panel_common_context_plus_linked_scalar_license_touch_context_not_claimed_GUI_policy");
+        panels.addProperty("nativeUndoAwareOperation", true); panels.addProperty("undoGroupingVerified", false);
+        panels.addProperty("engineAcknowledgement", false);
+        result.add("booleanPanels", panels);
         for (GridSnapshotReader.Metadata metadata : GridSnapshotReader.METADATA)
             result.add(metadata.key, capability(gateError == null ? metadataErrors.get(metadata) : gateError, metadata.coverage));
         String quarantine = TOPOLOGY_QUARANTINE.blockedReason();
@@ -331,9 +347,19 @@ final class Bitwig613GridAdapter implements GridAdapter, GridSnapshotReader.Acce
         return gateError == null && !metadataErrors.containsKey(metadata);
     }
     @Override public boolean is(GridSnapshotReader.Kind kind, Object object) {
+        if (kind == GridSnapshotReader.Kind.PANEL_BOOLEAN) return booleanPanels != null && booleanPanels.isPanel(object);
+        if (kind == GridSnapshotReader.Kind.BIPOLAR_FLOAT) return booleanPanels != null && booleanPanels.isBipolar(object);
         Class<?> type = kinds.get(kind); return type != null && type.isInstance(object);
     }
     @Override public Object read(GridSnapshotReader.Field field, Object object) {
+        if (field == BIPOLAR_PANEL) {
+            if (booleanPanels == null) throw failure("grid_unavailable", "Boolean panel reference binding unavailable.");
+            return booleanPanels.linkedPanel(object);
+        }
+        if (booleanPanels != null && booleanPanels.isPanel(object)) {
+            if (field == PARAMETER_ID) return booleanPanels.identifier(object);
+            if (field == BOOLEAN_VALUE) return booleanPanels.value(object);
+        }
         Method method = readers.get(field);
         if (method == null) throw failure("grid_unavailable", "Unbound native reader: " + field);
         Object value;

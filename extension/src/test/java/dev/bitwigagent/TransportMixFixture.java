@@ -45,6 +45,31 @@ final class TransportMixFixture {
                 return null;
             };
             Node devices = track.child("createDeviceBank");
+            devices.child("exists").data = true;
+            devices.child("itemCount").data = 0;
+            devices.child("scrollPosition").data = 0;
+            for (int d = 0; d < HostServices.DEVICES; d++) {
+                Node device = devices.item(d);
+                emptyDevice(device, d);
+                device.child("hasLayers").data = false;
+                Node layers = device.child("createLayerBank");
+                emptyBank(layers);
+                layers.custom = (name, args) -> name.equals("getItemAt") ? layers.item((Integer) args[0]).proxy(DeviceLayer.class) : null;
+                for (int l = 0; l < 2; l++) {
+                    Node layer = layers.item(l);
+                    layer.child("exists").data = false;
+                    layer.child("channelId").data = "";
+                    layer.child("channelIndex").data = l;
+                    layer.child("name").data = "";
+                    Node children = layer.child("createDeviceBank");
+                    emptyBank(children);
+                    children.custom = (name, args) -> name.equals("getItemAt") ? children.item((Integer) args[0]).proxy(Device.class) : null;
+                    for (int c = 0; c < 2; c++) {
+                        Node child = children.item(c);
+                        emptyDevice(child, c);
+                    }
+                }
+            }
             devices.custom = (name, args) -> name.equals("getItemAt") ? devices.item((Integer) args[0]).proxy(Device.class) : null;
             Node sends = track.child("sendBank"); sends.child("itemCount").data = i == 0 ? 1 : 0;
             sends.custom = (name, args) -> name.equals("getItemAt") ? sends.item((Integer) args[0]).proxy(Send.class) : null;
@@ -86,6 +111,24 @@ final class TransportMixFixture {
             return null;
         };
         services = new HostServices(host.proxy(ControllerHost.class));
+    }
+
+    private void emptyBank(Node bank) {
+        bank.child("exists").data = false;
+        bank.child("itemCount").data = 0;
+        bank.child("scrollPosition").data = 0;
+    }
+
+    private void emptyDevice(Node device, int position) {
+        device.child("exists").data = false;
+        device.child("name").data = "";
+        device.child("position").data = position;
+        device.child("deviceType").data = "";
+        device.custom = (name, args) -> {
+            if (name.equals("addDirectParameterIdObserver"))
+                ((StringArrayValueChangedCallback) args[0]).valueChanged(new String[0]);
+            return null;
+        };
     }
 
     HostOperation submit(HostModule module, String method, JsonObject params) { return submit(module, method, params, Long.MAX_VALUE); }
@@ -149,6 +192,7 @@ final class TransportMixFixture {
             else if (observer instanceof IntegerValueChangedCallback) ((IntegerValueChangedCallback) observer).valueChanged(data instanceof Number ? ((Number) data).intValue() : 0);
             else if (observer instanceof DoubleValueChangedCallback) ((DoubleValueChangedCallback) observer).valueChanged(data instanceof Number ? ((Number) data).doubleValue() : 0.0);
             else if (observer instanceof StringValueChangedCallback) ((StringValueChangedCallback) observer).valueChanged(data instanceof String ? (String) data : "");
+            else if (observer instanceof EnumValueChangedCallback) ((EnumValueChangedCallback) observer).valueChanged(data instanceof String ? (String) data : "");
             else throw new AssertionError("Unexpected observer " + observer.getClass());
         }
         @Override public Object invoke(Object proxy, Method method, Object[] supplied) {

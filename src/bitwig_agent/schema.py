@@ -60,6 +60,29 @@ class ParameterArgs(DeviceArgs):
     expectedDeviceName: Nonempty
 
 
+class LayerParent(StrictModel):
+    trackId: TrackId
+    deviceIndex: int = Field(ge=0, le=15)
+    expectedDeviceName: Nonempty
+
+
+class LayerListArgs(StatusArgs):
+    parent: LayerParent
+
+
+class LayerParameterArgs(LayerListArgs):
+    layerId: TrackId
+    childDeviceIndex: int = Field(ge=0, le=1)
+    expectedChildDeviceName: Nonempty
+    discoveryToken: Nonempty
+
+
+class LayerSetArgs(LayerParameterArgs):
+    contextToken: Nonempty
+    parameterId: Nonempty
+    value: UnitValue
+
+
 class GridCatalogArgs(StatusArgs):
     query: str = Field(default="", max_length=128)
     offset: int = Field(default=0, ge=0, le=100000)

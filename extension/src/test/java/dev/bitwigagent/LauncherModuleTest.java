@@ -616,8 +616,11 @@ public final class LauncherModuleTest {
         int imports, importedSlot = -1, bankOffset;
         String importedPath;
         Runnable beforeInsertion = () -> {};
-        BooleanValueChangedCallback recordObserver;
-        StringValueChangedCallback trackIdObserver;
+        final List<BooleanValueChangedCallback> recordObservers = new ArrayList<>();
+        final BooleanValueChangedCallback recordObserver = value -> {
+            for (BooleanValueChangedCallback callback : recordObservers) callback.valueChanged(value);
+        };
+        final List<StringValueChangedCallback> trackIdObservers = new ArrayList<>();
         Fake() { this(true, false, false, false); }
         Fake(boolean safetyObserved, boolean record, boolean arrangerAutomation, boolean launcherAutomation) {
             for (int i = 0; i < 16; i++) slots[i] = new SlotData();
@@ -629,7 +632,7 @@ public final class LauncherModuleTest {
                 identity.action("get", a -> trackIndex == 0 ? trackId : "");
                 identity.action("addValueObserver", a -> {
                     StringValueChangedCallback callback = (StringValueChangedCallback) a[a.length - 1];
-                    if (trackIndex == 0) trackIdObserver = callback;
+                    if (trackIndex == 0) trackIdObservers.add(callback);
                     callback.valueChanged(trackIndex == 0 ? trackId : "");
                     return null;
                 });
@@ -644,7 +647,7 @@ public final class LauncherModuleTest {
                     content.action("get", a -> trackIndex == 0 && data.content);
                     content.action("addValueObserver", a -> {
                         BooleanValueChangedCallback callback = (BooleanValueChangedCallback) a[a.length - 1];
-                        if (trackIndex == 0) data.contentObserver = callback;
+                        if (trackIndex == 0) data.contentObservers.add(callback);
                         callback.valueChanged(trackIndex == 0 && data.content);
                         return null;
                     });
@@ -674,9 +677,12 @@ public final class LauncherModuleTest {
                 bank.action("getItemAt", a -> slotApis[(Integer) a[0]]);
                 bank.action("stop", a -> { stopped = true; for (SlotData data : slots) { data.playing = false; data.queued = false; } return null; });
                 track.action("clipLauncherSlotBank", a -> bank.proxy);
-                Node devices = new Node(DeviceBank.class); devices.value("scrollPosition", () -> 0); devices.value("itemCount", () -> 0);
-                Node device = new Node(Device.class); device.value("exists", () -> false); device.value("name", () -> ""); device.value("position", () -> 0); device.value("deviceType", () -> "");
-                devices.action("getItemAt", a -> device.proxy); track.action("createDeviceBank", a -> devices.proxy);
+                Node devices = new Node(DeviceBank.class); devices.value("exists", () -> true);
+                devices.value("scrollPosition", () -> 0); devices.value("itemCount", () -> 0);
+                Node[] roots = new Node[16];
+                for (int d = 0; d < roots.length; d++) roots[d] = emptyDevice(d, true);
+                devices.action("getItemAt", a -> roots[(Integer) a[0]].proxy);
+                track.action("createDeviceBank", a -> devices.proxy);
                 tracks[t] = (Track) track.proxy;
             }
             Node clip = new Node(Clip.class); clip.action("getTrack", a -> tracks[0]);
@@ -714,8 +720,9 @@ public final class LauncherModuleTest {
             Node recordValue = new Node(SettableBooleanValue.class);
             recordValue.action("get", a -> record);
             recordValue.action("addValueObserver", a -> {
-                recordObserver = (BooleanValueChangedCallback) a[a.length - 1];
-                if (safetyObserved) recordObserver.valueChanged(record);
+                BooleanValueChangedCallback callback = (BooleanValueChangedCallback) a[a.length - 1];
+                recordObservers.add(callback);
+                if (safetyObserved) callback.valueChanged(record);
                 return null;
             });
             transport.action("isArrangerRecordEnabled", a -> recordValue.proxy);
@@ -736,11 +743,11 @@ public final class LauncherModuleTest {
         }
         void observeTrackId(String id) {
             trackId = id;
-            trackIdObserver.valueChanged(id);
+            for (StringValueChangedCallback callback : trackIdObservers) callback.valueChanged(id);
         }
         void observeContent(int slot, boolean content) {
             slots[slot].content = content;
-            slots[slot].contentObserver.valueChanged(content);
+            for (BooleanValueChangedCallback callback : slots[slot].contentObservers) callback.valueChanged(content);
         }
         void applyPendingGrid() {
             if (pendingSize != null) { size = pendingSize; pendingSize = null; }
@@ -783,12 +790,47 @@ public final class LauncherModuleTest {
         boolean content, playing, queued;
         String name = "";
         double length = 4;
-        BooleanValueChangedCallback contentObserver;
+        final List<BooleanValueChangedCallback> contentObservers = new ArrayList<>();
     }
     private static final class Note {
         final int velocity;
         final double duration;
         Note(int velocity, double duration) { this.velocity = velocity; this.duration = duration; }
+    }
+
+    private static Node emptyDevice(int position, boolean root) {
+        Node device = new Node(Device.class);
+        device.value("exists", () -> false); device.value("name", () -> "");
+        device.value("position", () -> position); device.value("deviceType", () -> "");
+        device.action("addDirectParameterIdObserver", a -> {
+            ((StringArrayValueChangedCallback) a[0]).valueChanged(new String[0]); return null;
+        });
+        if (root) {
+            device.value("hasLayers", () -> false);
+            Node layers = new Node(DeviceLayerBank.class);
+            layers.value("exists", () -> false); layers.value("itemCount", () -> 0);
+            layers.value("scrollPosition", () -> 0);
+            Node[] layerNodes = new Node[2];
+            for (int l = 0; l < layerNodes.length; l++) {
+                final int index = l;
+                Node layer = layerNodes[l] = new Node(DeviceLayer.class);
+                layer.value("exists", () -> false); layer.value("channelId", () -> "");
+                layer.value("channelIndex", () -> index); layer.value("name", () -> "");
+                Node children = new Node(DeviceBank.class);
+                children.value("exists", () -> false); children.value("itemCount", () -> 0);
+                children.value("scrollPosition", () -> 0);
+                Node[] childNodes = {emptyDevice(0, false), emptyDevice(1, false)};
+                children.action("getItemAt", a -> childNodes[(Integer) a[0]].proxy);
+                layer.action("createDeviceBank", a -> children.proxy);
+            }
+            layers.action("getItemAt", a -> layerNodes[(Integer) a[0]].proxy);
+            device.action("createLayerBank", a -> layers.proxy);
+        } else {
+            device.action("createCursorRemoteControlsPage", a -> {
+                throw new AssertionError("Child remote controls are outside the fixed layer graph");
+            });
+        }
+        return device;
     }
 
     private static final class Node implements InvocationHandler {
@@ -828,6 +870,7 @@ public final class LauncherModuleTest {
                 if (callback instanceof BooleanValueChangedCallback) ((BooleanValueChangedCallback) callback).valueChanged((Boolean) actual);
                 else if (callback instanceof IntegerValueChangedCallback) ((IntegerValueChangedCallback) callback).valueChanged((Integer) actual);
                 else if (callback instanceof StringValueChangedCallback) ((StringValueChangedCallback) callback).valueChanged((String) actual);
+                else if (callback instanceof EnumValueChangedCallback) ((EnumValueChangedCallback) callback).valueChanged((String) actual);
                 else if (callback instanceof DoubleValueChangedCallback) ((DoubleValueChangedCallback) callback).valueChanged(((Number) actual).doubleValue());
                 return null;
             }

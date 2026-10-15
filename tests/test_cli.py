@@ -208,7 +208,7 @@ async def test_offline_discovery_exposes_connection_examples_and_complete_regist
     payload, code = await execute(["list"])
     assert code == 0
     assert set(payload["result"]["methods"]) == set(TOOLS)
-    assert len(payload["result"]["methods"]) == 38
+    assert len(payload["result"]["methods"]) == 41
     payload, code = await execute(["describe", "grid.connections.set"])
     assert code == 0
     description = payload["result"]
@@ -286,3 +286,35 @@ async def test_offline_entrypoint_and_client_do_not_import_mcp():
     stdout, stderr = await process.communicate()
     assert process.returncode == 0, stderr.decode()
     assert json.loads(stdout)["result"]["method"] == "notes.edit"
+
+
+@pytest.mark.parametrize("changes", [
+    {"parent": None}, {"parent": {**TARGET, "timeoutMs": 250}},
+    {"parent": {**TARGET, "deviceIndex": 1.0}}, {"parent": {**TARGET, "padIndex": 0}},
+    {"parent": {**TARGET, "slotIndex": 0}}, {"parent": {**TARGET, "parent": TARGET}},
+    {"layerId": "1-1-1-1-1"}, {"childDeviceIndex": 2}, {"childDeviceIndex": True},
+    {"childDeviceIndex": 1.0}, {"discoveryToken": ""}, {"contextToken": None},
+    {"expectedChildDeviceName": ""}, {"value": "0.5"}, {"value": True},
+    {"value": -0.01}, {"path": []}, {"trackId": TRACK},
+])
+async def test_layer_cli_rejects_invalid_nested_params_before_tcp(host, monkeypatch, changes):
+    monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
+    params = {**TOOLS["parameters.layer.set"].examples[0], **changes}
+    payload, code = await execute(["parameters.layer.set", "--params", json.dumps(params)])
+    assert code == 2
+    assert payload["error"]["code"] == "invalid_params"
+    assert payload["error"]["outcome"] == "not_dispatched"
+    assert host.connections == 0
+
+
+async def test_layer_cli_preserves_unknown_without_retry(host, monkeypatch):
+    monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
+    error = {"code": "deadline_exceeded", "message": "Inspect child before another write",
+             "outcome": "unknown", "details": {"dispatched": True}}
+    host.reply = lambda request: {"id": request["id"], "error": error}
+    params = TOOLS["parameters.layer.set"].examples[0]
+    payload, code = await execute(["parameters.layer.set", "--params", json.dumps(params)])
+    assert code == 1
+    assert payload == {"error": error}
+    assert host.requests[0]["params"] == params
+    assert len(host.requests) == host.connections == 1
