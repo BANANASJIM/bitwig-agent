@@ -76,6 +76,18 @@ class GridModuleArgs(ParameterArgs):
     moduleId: TrackId = Field(description="Current module instanceId from grid.get; reacquire after reopening the project.")
 
 
+class GridConnectionSource(StrictModel):
+    moduleId: TrackId = Field(description="Current source module instanceId from grid.get, not a type UUID.")
+    portKey: str = Field(max_length=1024, description="Exact output port key from grid.get; empty is valid, at most 1024 UTF-16 code units.")
+
+
+class GridConnectionSetArgs(ParameterArgs):
+    targetModuleId: TrackId = Field(description="Current destination module instanceId from grid.get; reacquire after reopening the project.")
+    targetPortKey: str = Field(max_length=1024, description="Exact input port key from grid.get; empty is valid, at most 1024 UTF-16 code units.")
+    expectedSource: GridConnectionSource | None = Field(description="Required exact prior source from fresh grid.get, or explicit null for an unconnected input. Checked before even an already-matching no-op; never defaults to null.")
+    source: GridConnectionSource | None = Field(description="Required requested output endpoint, or explicit null to disconnect. Must belong to the same current graph; native repair can change the observed result.")
+
+
 class GridModuleMoveArgs(GridModuleArgs):
     expectedX: int = Field(ge=-(2**31), le=2**31 - 1, description="Fresh native anchor X; exact stale-state check precedes even a no-op. Signed int32 JSON integer token.")
     expectedY: int = Field(ge=-(2**31), le=2**31 - 1, description="Fresh native anchor Y; exact stale-state check precedes even a no-op. Signed int32 JSON integer token.")

@@ -124,6 +124,7 @@ final class GridParameterContext {
         result.addProperty("nativeCIu", bool(Field.CIU, parameter));
         result.addProperty("parameterTouched", bool(Field.TOUCHED, parameter));
         JsonObject undoState = new JsonObject(); undoState.addProperty("present", undo != null);
+        undoState.addProperty("modelClass", undo == null ? null : GridSnapshotReader.text(undo.getClass().getName()));
         nullable(undoState, "executingUndoRedo", undo == null ? null : bool(Field.UNDO_EXECUTING, undo));
         nullable(undoState, "activeChange", undo == null ? null : bool(Field.UNDO_ACTIVE, undo));
         nullable(undoState, "nativeICL", undo == null ? null : bool(Field.UNDO_ICL, undo));

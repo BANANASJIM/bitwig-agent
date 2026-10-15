@@ -5,8 +5,8 @@ import sys
 
 import pytest
 
-from bitwig_agent.cli import execute, main
-from bitwig_agent.catalog import NOTE_WINDOW, TRACK
+from bitwig_agent.cli import execute, main, parse_arguments, parser
+from bitwig_agent.catalog import NOTE_WINDOW, TARGET, TOOLS, TRACK
 
 pytestmark = pytest.mark.anyio
 
@@ -155,6 +155,66 @@ async def test_grid_move_cli_rejects_non_integer_tokens_before_tcp(host, monkeyp
     assert payload["error"]["code"] == "invalid_params"
     assert payload["error"]["outcome"] == "not_dispatched"
     assert host.connections == 0
+
+
+@pytest.mark.parametrize("raw", [False, True])
+@pytest.mark.parametrize("expected,source", [
+    (None, {"moduleId": TRACK, "portKey": ""}),
+    ({"moduleId": TRACK, "portKey": "out=α"}, None),
+    (None, None),
+])
+def test_connection_cli_parses_required_null_and_endpoint_without_defaults(raw, expected, source):
+    values = {**TARGET, "targetModuleId": TRACK, "targetPortKey": "",
+              "expectedSource": expected, "source": source}
+    arguments = (["--params", json.dumps(values)] if raw else [
+        f"{key}={value if isinstance(value, str) else json.dumps(value)}"
+        for key, value in values.items()
+    ])
+    parsed = parser().parse_intermixed_args(["grid.connections.set", *arguments, "--timeout-ms", "250"])
+    params, timeout = parse_arguments(parsed.command, parsed.arguments, parsed.params, parsed.timeout_ms)
+    assert params == values
+    assert timeout == 250
+
+
+@pytest.mark.parametrize("raw", [False, True])
+@pytest.mark.parametrize("field", ["expectedSource", "source"])
+@pytest.mark.parametrize("token", [
+    None, '"null"', "[]", "false", "{}",
+    '{"moduleId":"1-1-1-1-1","portKey":""}',
+    '{"moduleId":"' + TRACK + '","portKey":null}',
+    '{"moduleId":"' + TRACK + '","portKey":"","extra":1}',
+    '{"moduleId":"' + TRACK + '","portKey":"","portKey":"other"}',
+])
+async def test_connection_cli_rejects_missing_or_invalid_cas_endpoint_before_tcp(host, monkeypatch, raw, field, token):
+    monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
+    tokens = {key: json.dumps(value) for key, value in {
+        **TARGET, "targetModuleId": TRACK, "targetPortKey": "",
+        "expectedSource": None, "source": None,
+    }.items()}
+    if token is None:
+        del tokens[field]
+    else:
+        tokens[field] = token
+    arguments = (["--params", "{" + ",".join(f'"{key}":{value}' for key, value in tokens.items()) + "}"]
+                 if raw else [f"{key}={value}" for key, value in tokens.items()])
+    payload, code = await execute(["grid.connections.set", *arguments])
+    assert code == 2
+    assert payload["error"]["code"] == "invalid_params"
+    assert payload["error"]["outcome"] == "not_dispatched"
+    assert host.connections == 0
+
+
+async def test_offline_discovery_exposes_connection_examples_and_complete_registry():
+    payload, code = await execute(["list"])
+    assert code == 0
+    assert set(payload["result"]["methods"]) == set(TOOLS)
+    assert len(payload["result"]["methods"]) == 37
+    payload, code = await execute(["describe", "grid.connections.set"])
+    assert code == 0
+    description = payload["result"]
+    assert description["readOnly"] is False
+    assert description["examples"][0]["expectedSource"] is None
+    assert description["examples"][1]["source"] is None
 
 
 def test_main_prints_one_exact_json_envelope(capsys, monkeypatch):

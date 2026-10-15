@@ -27,6 +27,9 @@ public final class GridModuleTest {
         topologyArgumentsRejectBeforeScheduling();
         topologyOperationsRequireLaterDocumentObservation();
         topologySafetyAndTargetsGuardEveryQueueBoundary();
+        connectionArgumentsPreserveRequiredNullSemantics();
+        connectionResultsWaitForBothQueues();
+        connectionSafetyTargetsAndCancellationGuardQueues();
         System.out.println("GridModuleTest: " + assertions + " assertions passed (simulated controller/document queues only)");
     }
     private static void validatesBeforeScheduling() {
@@ -127,8 +130,9 @@ public final class GridModuleTest {
                 && !noSource.capabilities().getAsJsonObject("structure").get("available").getAsBoolean(),
                 "unverified identity bindings cannot advertise usable native ownership or structure");
         check(!noSource.capabilities().getAsJsonObject("moduleMove").get("available").getAsBoolean()
-                && !noSource.capabilities().getAsJsonObject("moduleDelete").get("available").getAsBoolean(),
-                "unverified source cannot advertise either native topology capability");
+                && !noSource.capabilities().getAsJsonObject("moduleDelete").get("available").getAsBoolean()
+                && !noSource.capabilities().getAsJsonObject("connectionWrite").get("available").getAsBoolean(),
+                "unverified source cannot advertise any native topology capability");
         try {
             noSource.snapshot(new Object(), UUID.fromString(TransportMixFixture.A), 0, 64, true, () -> {});
             throw new AssertionError("snapshot escaped identity gate");
@@ -367,6 +371,118 @@ public final class GridModuleTest {
         }
     }
 
+    private static JsonObject connectionTarget() {
+        JsonObject p = target(); p.addProperty("targetModuleId", new UUID(1, 1).toString());
+        p.addProperty("targetPortKey", "in"); p.add("expectedSource", JsonNull.INSTANCE);
+        JsonObject source = new JsonObject(); source.addProperty("moduleId", new UUID(1, 1).toString());
+        source.addProperty("portKey", "out"); p.add("source", source); return p;
+    }
+    private static void connectionArgumentsPreserveRequiredNullSemantics() {
+        Fixture f = new Fixture();
+        for (String key : connectionTarget().keySet()) {
+            JsonObject p = connectionTarget(); p.remove(key);
+            TransportMixFixture.error(f.host.submit(f.module, "grid.connections.set", p), "invalid_params");
+        }
+        for (String field : List.of("expectedSource", "source")) {
+            for (String invalid : List.of("false", "1", "\"out\"", "[]", "{}", "{\"moduleId\":\"1-1-1-1-1\",\"portKey\":\"out\"}",
+                    "{\"moduleId\":null,\"portKey\":\"out\"}", "{\"moduleId\":1,\"portKey\":\"out\"}",
+                    "{\"moduleId\":\"00000000-0000-0001-0000-000000000001\"}",
+                    "{\"portKey\":\"out\"}", "{\"moduleId\":\"00000000-0000-0001-0000-000000000001\",\"portKey\":false}",
+                    "{\"moduleId\":\"00000000-0000-0001-0000-000000000001\",\"portKey\":null}",
+                    "{\"moduleId\":\"00000000-0000-0001-0000-000000000001\",\"portKey\":\"out\",\"extra\":true}")) {
+                JsonObject p = connectionTarget(); p.add(field, JsonParser.parseString(invalid));
+                TransportMixFixture.error(f.host.submit(f.module, "grid.connections.set", p), "invalid_params");
+            }
+            JsonObject p = connectionTarget(); JsonObject endpoint = p.getAsJsonObject("source").deepCopy();
+            endpoint.addProperty("portKey", "x".repeat(1025)); p.add(field, endpoint);
+            TransportMixFixture.error(f.host.submit(f.module, "grid.connections.set", p), "invalid_params");
+            endpoint.addProperty("portKey", ""); GridModule.validateParams("grid.connections.set", p);
+            endpoint.addProperty("portKey", new String(Character.toChars(0x1D11E)).repeat(512));
+            GridModule.validateParams("grid.connections.set", p);
+            endpoint.addProperty("portKey", new String(Character.toChars(0x1D11E)).repeat(513));
+            TransportMixFixture.error(f.host.submit(f.module, "grid.connections.set", p), "invalid_params");
+        }
+        for (String field : List.of("targetModuleId", "targetPortKey", "trackId", "deviceIndex", "expectedDeviceName")) {
+            JsonObject p = connectionTarget(); p.add(field, JsonNull.INSTANCE);
+            TransportMixFixture.error(f.host.submit(f.module, "grid.connections.set", p), "invalid_params");
+        }
+        JsonObject extra = connectionTarget(); extra.addProperty("retry", true);
+        TransportMixFixture.error(f.host.submit(f.module, "grid.connections.set", extra), "invalid_params");
+        JsonObject abbreviated = connectionTarget(); abbreviated.addProperty("targetModuleId", "1-1-1-1-1");
+        TransportMixFixture.error(f.host.submit(f.module, "grid.connections.set", abbreviated), "invalid_params");
+        for (JsonElement key : List.of(new JsonPrimitive(false), new JsonPrimitive(1), new JsonPrimitive("x".repeat(1025)), new JsonArray())) {
+            JsonObject p = connectionTarget(); p.add("targetPortKey", key);
+            TransportMixFixture.error(f.host.submit(f.module, "grid.connections.set", p), "invalid_params");
+        }
+        JsonObject valid = connectionTarget(); valid.addProperty("targetPortKey", "");
+        valid.add("source", JsonNull.INSTANCE); GridModule.validateParams("grid.connections.set", valid);
+        check(f.host.tasks.isEmpty() && f.adapter.tasks.isEmpty() && f.adapter.connections.calls == 0,
+                "strict nested validation rejects before scheduling; explicit required null and empty local keys remain valid");
+    }
+    private static void connectionResultsWaitForBothQueues() {
+        Fixture f = new Fixture();
+        HostOperation op = f.host.submit(f.module, "grid.connections.set", connectionTarget()); f.host.next();
+        check(!op.dispatched && !op.result.isDone(), "cable controller dispatch is not native invocation");
+        f.adapter.next();
+        check(op.dispatched && !op.result.isDone() && f.host.tasks.isEmpty() && f.adapter.connections.calls == 1,
+                "setter return queues later document observation, never immediate completion");
+        f.adapter.next(); check(!op.result.isDone(), "later observation still waits for controller target recheck");
+        f.host.next(); JsonObject result = op.result.join();
+        check(result.get("matchesRequested").getAsBoolean() && result.has("target")
+                && result.get("previousSource").isJsonNull() && result.getAsJsonObject("graph").has("connections"),
+                "serialized result preserves nullable previous source and full bounded graph");
+        Fixture noop = new Fixture(); JsonObject p = connectionTarget(); p.add("source", JsonNull.INSTANCE);
+        op = noop.host.submit(noop.module, "grid.connections.set", p); noop.host.next(); noop.adapter.next();
+        noop.adapter.next(); noop.host.next(); result = op.result.join();
+        check(!op.dispatched && noop.adapter.connections.calls == 0 && result.get("actualSource").isJsonNull()
+                && result.get("requestedSource").isJsonNull() && result.get("previousSource").isJsonNull(),
+                "explicit null no-op crosses serialized handoff without omission or mutation");
+    }
+    private static void connectionSafetyTargetsAndCancellationGuardQueues() {
+        for (String flag : List.of("isPlaying", "isArrangerRecordEnabled", "isArrangerAutomationWriteEnabled", "isClipLauncherAutomationWriteEnabled")) {
+            Fixture f = new Fixture(); f.host.transport.child(flag).emit(true);
+            HostOperation op = f.host.submit(f.module, "grid.connections.set", connectionTarget()); f.host.next();
+            check(TransportMixFixture.error(op, "unsafe_state").outcome.equals("not_applied") && f.adapter.connections.calls == 0,
+                    "every stopped/recording/automation prerequisite blocks cable dispatch");
+        }
+        Fixture unobserved = new Fixture(true, false);
+        HostOperation pending = unobserved.host.submit(unobserved.module, "grid.connections.set", connectionTarget()); unobserved.host.next();
+        TransportMixFixture.error(pending, "not_ready");
+        for (int boundary = 0; boundary < 3; boundary++) {
+            for (boolean safety : List.of(false, true)) {
+                Fixture f = new Fixture();
+                HostOperation op = f.host.submit(f.module, "grid.connections.set", connectionTarget()); f.host.next();
+                if (boundary > 0) f.adapter.next();
+                if (boundary > 1) f.adapter.next();
+                if (safety) {
+                    f.host.transport.child("isPlaying").emit(true); f.host.transport.child("isPlaying").emit(false);
+                } else {
+                    f.device.child("name").emit("Other"); f.device.child("name").emit("Poly Grid");
+                }
+                if (boundary < 2) f.adapter.next(); else f.host.next();
+                check(TransportMixFixture.error(op, "stale_context").outcome.equals(boundary == 0 ? "not_applied" : "unknown")
+                        && f.adapter.connections.calls == (boundary == 0 ? 0 : 1), "cable safety/target ABA guards all three queue boundaries");
+            }
+            Fixture cancelled = new Fixture();
+            HostOperation op = cancelled.host.submit(cancelled.module, "grid.connections.set", connectionTarget()); cancelled.host.next();
+            if (boundary > 0) cancelled.adapter.next();
+            if (boundary > 1) cancelled.adapter.next();
+            op.result.cancel(false);
+            if (boundary < 2) cancelled.adapter.next(); else cancelled.host.next();
+            check(op.result.isCancelled() && cancelled.adapter.connections.calls == (boundary == 0 ? 0 : 1),
+                    "cancelled cable work cannot dispatch late, overwrite cancellation or compensate");
+        }
+        Fixture expired = new Fixture();
+        HostOperation op = expired.host.submit(expired.module, "grid.connections.set", connectionTarget(), 0); expired.host.next();
+        check(TransportMixFixture.error(op, "deadline_exceeded").outcome.equals("not_applied") && expired.adapter.tasks.isEmpty(),
+                "expired cable request never enters native queue");
+        Fixture closed = new Fixture();
+        op = closed.host.submit(closed.module, "grid.connections.set", connectionTarget()); closed.host.next(); closed.adapter.next();
+        closed.host.services.close(); closed.adapter.next();
+        check(TransportMixFixture.error(op, "unavailable").outcome.equals("unknown") && closed.adapter.connections.calls == 1,
+                "close after setter return cannot convert abandoned observation into success or rollback");
+    }
+
     private static JsonObject inspectionTarget() {
         JsonObject result = target(); result.addProperty("moduleId", "00000000-0000-0001-0000-000000000001");
         result.addProperty("parameterId", "EXACT_ID"); return result;
@@ -395,6 +511,7 @@ public final class GridModuleTest {
         final Deque<Runnable> tasks = new ArrayDeque<>(); int reads; boolean fail; JsonObject last;
         final GridSnapshotReaderTest.WriterFixture writer = new GridSnapshotReaderTest.WriterFixture();
         final GridSnapshotReaderTest.ModuleWriterFixture topology = new GridSnapshotReaderTest.ModuleWriterFixture(tasks::add);
+        final GridSnapshotReaderTest.ConnectionFixture connections = new GridSnapshotReaderTest.ConnectionFixture(tasks::add);
         Runnable beforeWrite = () -> {}, afterWrite = () -> {};
         void next() { tasks.removeFirst().run(); }
         @Override public void execute(Runnable task) { tasks.add(task); }
@@ -428,6 +545,11 @@ public final class GridModuleTest {
                 java.util.function.Consumer<Throwable> failure) {
             topology.moduleId = module;
             topology.edit(null, check, dispatch, complete, failure);
+        }
+        @Override public void setConnection(Object proxy, UUID track, GridConnectionWriter.Request request,
+                Runnable check, Runnable dispatch, java.util.function.Consumer<JsonObject> complete,
+                java.util.function.Consumer<Throwable> failure) {
+            connections.edit(request, check, dispatch, complete, failure);
         }
         private JsonObject result(int offset, int limit, boolean parameters) {
             last = new JsonObject(); last.addProperty("offset", offset); last.addProperty("limit", limit); last.addProperty("parameters", parameters); return last;

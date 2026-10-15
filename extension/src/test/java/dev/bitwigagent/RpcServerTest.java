@@ -45,7 +45,7 @@ public final class RpcServerTest {
     }
 
     public static void main(String[] args) throws Exception {
-        validation(); gridIntegerTokenValidation(); nullableObservations(); deadlines(); queuedDeadline(); responseLimit(); overloadAndClose();
+        validation(); gridIntegerTokenValidation(); gridConnectionNullContract(); nullableObservations(); deadlines(); queuedDeadline(); responseLimit(); overloadAndClose();
         System.out.println("PASS: " + checks + " transport assertions over real IPv4 loopback; no host tests.");
     }
 
@@ -75,6 +75,33 @@ public final class RpcServerTest {
                         + coordinates + "}}\n";
                 error(call(server, request), "invalid_params", "not_applied");
             }
+        }
+    }
+
+    private static void gridConnectionNullContract() throws Exception {
+        GridSnapshotReaderTest.ConnectionFixture fixture = new GridSnapshotReaderTest.ConnectionFixture();
+        try (RpcServer server = new RpcServer(0, (method, params, until) -> {
+            GridModule.validateParams(method, params);
+            HostOperation op = fixture.start(GridConnectionWriter.Request.parse(params));
+            if (!op.result.isDone()) fixture.next();
+            return op.result;
+        })) {
+            server.start();
+            String prefix = "{\"id\":\"cable\",\"method\":\"grid.connections.set\",\"params\":{"
+                    + "\"trackId\":\"00000000-0000-0000-0000-000000000001\",\"deviceIndex\":0,"
+                    + "\"expectedDeviceName\":\"Poly Grid\",\"targetModuleId\":\"00000000-0000-0001-0000-000000000001\","
+                    + "\"targetPortKey\":\"in\",";
+            JsonObject result = call(server, prefix + "\"expectedSource\":null,\"source\":null}}\n").getAsJsonObject("result");
+            check(result.get("previousSource").isJsonNull() && result.get("requestedSource").isJsonNull()
+                    && result.get("actualSource").isJsonNull() && !result.get("mutationDispatched").getAsBoolean(),
+                    "explicit nullable CAS reaches real writer semantics and survives JSON response serialization");
+            error(call(server, prefix + "\"source\":null}}\n"), "invalid_params", "not_applied");
+            error(call(server, prefix + "\"expectedSource\":null}}\n"), "invalid_params", "not_applied");
+            error(call(server, prefix + "\"expectedSource\":null,\"source\":[]}}\n"), "invalid_params", "not_applied");
+            error(call(server, prefix + "\"expectedSource\":null,\"source\":{\"moduleId\":\"1-1-1-1-1\",\"portKey\":\"out\"}}}\n"),
+                    "invalid_params", "not_applied");
+            error(call(server, prefix + "\"expectedSource\":null,\"source\":{1:\"out\"}}}\n"), "invalid_request", "not_dispatched");
+            check(fixture.calls == 0, "malformed endpoints and valid no-op never invoke native setter");
         }
     }
 

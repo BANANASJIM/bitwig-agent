@@ -12,7 +12,7 @@ import static dev.bitwigagent.HostServices.failure;
 /** Strict RPC boundary and observed public-device targeting; native operations use a separate adapter. */
 final class GridModule implements HostModule {
     static final Set<String> METHODS = Set.of("grid.capabilities", "grid.catalog", "grid.get", "grid.parameters.get", "grid.parameters.set",
-            "grid.modules.move", "grid.modules.delete");
+            "grid.modules.move", "grid.modules.delete", "grid.connections.set");
     static final int MAX_RESPONSE_CHARS = 240000;
     private static final Gson JSON = new GsonBuilder().serializeNulls().create();
     private final HostServices s;
@@ -61,6 +61,15 @@ final class GridModule implements HostModule {
                 if (p.has("offset")) Params.integer(p, "offset", 0, 100000);
                 if (p.has("limit")) Params.integer(p, "limit", 1, 256);
                 return;
+            case "grid.connections.set":
+                if (p == null || !p.keySet().equals(Set.of("trackId", "deviceIndex", "expectedDeviceName",
+                        "targetModuleId", "targetPortKey", "expectedSource", "source")))
+                    throw failure("invalid_params", "Connection edits require exactly trackId, deviceIndex, expectedDeviceName, targetModuleId, targetPortKey, expectedSource and source; source fields must be explicitly nullable.");
+                canonicalUuid(p, "trackId");
+                Params.integer(p, "deviceIndex", 0, HostServices.DEVICES - 1);
+                Params.string(p, "expectedDeviceName");
+                GridConnectionWriter.Request.parse(p);
+                return;
             case "grid.modules.move":
             case "grid.modules.delete":
                 boolean moving = method.equals("grid.modules.move");
@@ -104,15 +113,18 @@ final class GridModule implements HostModule {
         if (adapter == null) adapter = new Bitwig613GridAdapter(s.host, s.host.getHostVersion(), () -> s.check(op));
         if (method.equals("grid.capabilities")) { s.check(op); op.result.complete(adapter.capabilities()); return; }
         final boolean moving = method.equals("grid.modules.move");
-        final boolean topology = moving || method.equals("grid.modules.delete");
+        final boolean connection = method.equals("grid.connections.set");
+        final boolean moduleEditing = moving || method.equals("grid.modules.delete");
+        final boolean topology = moduleEditing || connection;
         final boolean scalarWriting = method.equals("grid.parameters.set");
         final boolean writing = scalarWriting || topology;
         final boolean inspection = method.equals("grid.parameters.get") || scalarWriting;
         final GridParameterWriter.Request request = scalarWriting ? GridParameterWriter.Request.parse(p) : null;
         final GridModuleWriter.Move move = moving ? GridModuleWriter.Move.parse(p) : null;
+        final GridConnectionWriter.Request cable = connection ? GridConnectionWriter.Request.parse(p) : null;
         final HostServices.SafetyObservation safety = writing ? s.stoppedSafety(op) : null;
         final Target target = method.equals("grid.get") || inspection || topology ? target(p) : null;
-        final UUID moduleId = inspection || topology ? UUID.fromString(p.get("moduleId").getAsString()) : null;
+        final UUID moduleId = inspection || moduleEditing ? UUID.fromString(p.get("moduleId").getAsString()) : null;
         final String parameterId = inspection ? p.get("parameterId").getAsString() : null;
         final int offset = integer(p, target == null ? "offset" : "moduleOffset", 0);
         final int limit = integer(p, target == null ? "limit" : "moduleLimit", 64);
@@ -131,7 +143,8 @@ final class GridModule implements HostModule {
                 if (topology) {
                     java.util.function.Consumer<JsonObject> complete = value -> deliver(op, target, safety, true, check, value);
                     Runnable dispatch = () -> { check.run(); op.dispatched = true; };
-                    if (moving) adapter.moveModule(target.source.device, target.uuid, moduleId, move, check, dispatch, complete, op::fail);
+                    if (connection) adapter.setConnection(target.source.device, target.uuid, cable, check, dispatch, complete, op::fail);
+                    else if (moving) adapter.moveModule(target.source.device, target.uuid, moduleId, move, check, dispatch, complete, op::fail);
                     else adapter.deleteModule(target.source.device, target.uuid, moduleId, check, dispatch, complete, op::fail);
                     return;
                 }
@@ -205,7 +218,7 @@ final class GridModule implements HostModule {
         try { JSON.toJson(value, bounded); return buffer.toString(); }
         catch (JsonIOException error) { throw failure("grid_bounds_exceeded", "Grid response exceeds bounded transport size; reduce moduleLimit or exclude parameters."); }
     }
-    private static void canonicalUuid(JsonObject p, String key) {
+    static void canonicalUuid(JsonObject p, String key) {
         if (!Params.string(p, key).matches("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"))
             throw failure("invalid_params", key + " must be a canonical UUID.");
     }

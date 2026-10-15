@@ -9,9 +9,8 @@ import static dev.bitwigagent.HostServices.failure;
 
 /** Two bounded native operations; native references are retained only by document-event callbacks. */
 final class GridModuleWriter {
-    static final int MAX_MODULES = 128, MAX_Y_SPAN = 65536;
+    static final int MAX_MODULES = GridTopologyContext.MAX_MODULES, MAX_Y_SPAN = 65536;
     private static final Pattern INTEGER_TOKEN = Pattern.compile("-?(0|[1-9][0-9]*)");
-    static final class Quarantine { volatile boolean active; }
     interface Access {
         Runnable prepareMove(Object graph, Object module, int x, int y);
         Runnable prepareDelete(Object graph, Object module);
@@ -19,19 +18,17 @@ final class GridModuleWriter {
     }
     private final GridSnapshotReader snapshots;
     private final GridSnapshotReader.Access values;
-    private final GridModuleContext contexts;
+    private final GridTopologyContext contexts;
     private final Access nativeWriter;
-    private final Quarantine quarantine;
+    private final GridTopologyQuarantine quarantine;
 
     GridModuleWriter(GridSnapshotReader snapshots, GridSnapshotReader.Access values,
-            GridModuleContext contexts, Access nativeWriter, Quarantine quarantine) {
+            GridTopologyContext contexts, Access nativeWriter, GridTopologyQuarantine quarantine) {
         this.snapshots = snapshots; this.values = values; this.contexts = contexts; this.nativeWriter = nativeWriter;
         this.quarantine = quarantine;
     }
     boolean quarantined() { return quarantine.active; }
-    private void available() {
-        if (quarantined()) throw failure("grid_unavailable", "Grid topology writes are quarantined after a native operation/callback failure. Fully restart Bitwig before further topology writes; do not retry or assume rollback. Quarantine is sticky in this extension classloader, not guaranteed across classloader replacement. Scalar operations remain independently gated.");
-    }
+    private void available() { quarantine.requireAvailable(); }
     void move(Object proxy, UUID trackId, UUID moduleId, Move request, Runnable check, Runnable dispatch,
             Consumer<JsonObject> complete, Consumer<Throwable> fail) {
         edit(proxy, trackId, moduleId, request, check, dispatch, complete, fail);
@@ -47,7 +44,7 @@ final class GridModuleWriter {
         Layout before = layout(target.graph, check);
         Row selected = before.require(moduleId);
         if (request != null) request.preflight(before, selected);
-        GridModuleContext.Capture context = contexts.capture(target.target, target.graph, before.modules, null, check);
+        GridTopologyContext.Capture context = contexts.capture(target.target, target.graph, before.modules, null, check);
         boolean changed = request == null || request.x != selected.x || request.y != selected.y;
         Runnable mutation = !changed ? null : request == null ? nativeWriter.prepareDelete(target.graph, selected.module)
                 : nativeWriter.prepareMove(target.graph, selected.module, request.x, request.y);
@@ -60,13 +57,7 @@ final class GridModuleWriter {
         check.run(); available();
         if (changed) {
             dispatch.run();
-            // Only native invocation/callback failures poison topology writes, never preflight or observation.
-            try {
-                mutation.run();
-            } catch (Throwable error) {
-                quarantine.active = true;
-                throw failure("grid_unavailable", "Native Grid topology operation/callback failed; outcome unknown. Topology writes are quarantined in this extension classloader. Fully restart Bitwig; inspect state, do not retry or assume rollback. Quarantine is not guaranteed across classloader replacement.");
-            }
+            quarantine.invoke(mutation);
         }
         // The native move callback precedes close. Only native return may enqueue this later document event.
         nativeWriter.execute(() -> {

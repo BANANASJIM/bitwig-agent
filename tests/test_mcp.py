@@ -96,7 +96,7 @@ async def test_unknown_action_id_preserves_host_rejection(mcp_session, host):
     assert host.connections == 1
 
 
-async def test_optional_fields_remain_absent_over_mcp(mcp_session, host):
+async def test_absent_fields_and_explicit_nullable_fields_remain_distinct_over_mcp(mcp_session, host):
     response = await mcp_session.call_tool("tracks.set", {"trackId": TRACK, "mute": True})
     assert not response.isError
     assert host.requests[-1]["params"] == {"trackId": TRACK, "mute": True}
@@ -104,6 +104,11 @@ async def test_optional_fields_remain_absent_over_mcp(mcp_session, host):
         **NOTE_WINDOW, "edits": [{"op": "clear", "beat": 0, "pitch": 60}]})
     assert not response.isError
     assert host.requests[-1]["params"]["edits"] == [{"op": "clear", "beat": 0, "pitch": 60}]
+    params = {**TARGET, "targetModuleId": TRACK, "targetPortKey": "",
+              "expectedSource": {"moduleId": TRACK, "portKey": ""}, "source": None}
+    response = await mcp_session.call_tool("grid.connections.set", params)
+    assert not response.isError
+    assert host.requests[-1]["params"] == params
 
 
 @pytest.mark.parametrize("method,params", [
@@ -155,6 +160,63 @@ async def test_grid_move_mcp_rejects_float_despite_json_schema_integer_semantics
     response = await mcp_session.call_tool("grid.modules.move", {
         **TARGET, "moduleId": TRACK, "expectedX": 0, "expectedY": 0, "x": 4, "y": 2,
         field: 1.0})
+    assert response.isError
+    assert response.structuredContent["error"]["code"] == "invalid_params"
+    assert response.structuredContent["error"]["outcome"] == "not_dispatched"
+    assert host.connections == 0
+
+
+async def test_mcp_discovery_publishes_required_nullable_connection_contract(mcp_session):
+    response = await mcp_session.list_tools()
+    tools = {tool.name: tool for tool in response.tools}
+    assert len(response.tools) == len(tools) == 37
+    assert set(tools) == set(TOOLS)
+    tool = tools["grid.connections.set"]
+    assert tool.annotations.readOnlyHint is False
+    schema = tool.inputSchema
+    assert schema["additionalProperties"] is False
+    assert set(schema["required"]) == {
+        "trackId", "deviceIndex", "expectedDeviceName",
+        "targetModuleId", "targetPortKey", "expectedSource", "source",
+    }
+    for field in ("expectedSource", "source"):
+        endpoint = schema["properties"][field]
+        assert "default" not in endpoint
+        alternatives = endpoint["anyOf"]
+        assert {"type": "null"} in alternatives
+        reference = next(branch["$ref"] for branch in alternatives if "$ref" in branch)
+        nested = schema["$defs"][reference.rsplit("/", 1)[1]]
+        assert nested["additionalProperties"] is False
+        assert set(nested["required"]) == {"moduleId", "portKey"}
+        assert nested["properties"]["portKey"]["type"] == "string"
+        assert nested["properties"]["portKey"]["maxLength"] == 1024
+
+
+@pytest.mark.parametrize("field", ["expectedSource", "source"])
+@pytest.mark.parametrize("value", [
+    "null", False, [], {}, {"moduleId": TRACK},
+    {"moduleId": "1-1-1-1-1", "portKey": ""},
+    {"moduleId": TRACK, "portKey": None},
+    {"moduleId": TRACK, "portKey": "", "extra": True},
+    {"moduleId": TRACK, "portKey": "𝄞" * 513},
+])
+async def test_connection_mcp_rejects_nested_endpoint_errors_before_tcp(mcp_session, host, field, value):
+    response = await mcp_session.call_tool("grid.connections.set", {
+        **TARGET, "targetModuleId": TRACK, "targetPortKey": "",
+        "expectedSource": None, "source": None, field: value,
+    })
+    assert response.isError
+    assert response.structuredContent["error"]["code"] == "invalid_params"
+    assert response.structuredContent["error"]["outcome"] == "not_dispatched"
+    assert host.connections == 0
+
+
+@pytest.mark.parametrize("field", ["expectedSource", "source"])
+async def test_connection_mcp_never_infers_missing_cas_null(mcp_session, host, field):
+    params = {**TARGET, "targetModuleId": TRACK, "targetPortKey": "",
+              "expectedSource": None, "source": None}
+    del params[field]
+    response = await mcp_session.call_tool("grid.connections.set", params)
     assert response.isError
     assert response.structuredContent["error"]["code"] == "invalid_params"
     assert response.structuredContent["error"]["outcome"] == "not_dispatched"

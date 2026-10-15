@@ -33,7 +33,7 @@ def help_payload() -> dict[str, Any]:
                   "bitwig-agent-rpc help [method]", "bitwig-agent-rpc <method> key=value ... [--timeout-ms 5000]",
                   "bitwig-agent-rpc <method> --params '{\"key\":\"value\"}'"],
         "discovery": "list, help and describe are offline. capabilities queries the running host.",
-        "arguments": "Strings are unquoted values (shell-quote spaces); numbers/booleans/arrays/objects use strict JSON. Booleans are true/false. Duplicate/extra/null fields are rejected. Raw --params is equally strict.",
+        "arguments": "Strings are unquoted values (shell-quote spaces); numbers/booleans/arrays/objects use strict JSON. Booleans are true/false. Explicit null is accepted only where the method schema allows it; required nullable fields must still be supplied. Duplicate/extra fields are rejected. Raw --params is equally strict.",
         "targets": "Discover track UUIDs with tracks.list and exact device names/zero-based indices with devices.list. Clip slots and MIDI channels are zero-based. Example UUIDs are placeholders.",
         "safety": "One request, no retries. A timeout is not cancellation; inspect actual host state before another write after an unknown outcome. Output preserves host results/errors without upgrading dispatched to observed.",
         "exitCodes": {"0": "success or offline discovery", "1": "host/transport error", "2": "invalid arguments/configuration; not dispatched"},

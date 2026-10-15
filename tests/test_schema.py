@@ -348,3 +348,70 @@ def test_grid_module_delete_accepts_no_coordinate_options(field):
     with pytest.raises(ValidationError):
         validate_call("grid.modules.delete", {**GRID_MODULE, field: 0})
 
+
+GRID_CONNECTION = {**TARGET, "targetModuleId": TRACK, "targetPortKey": "",
+                   "expectedSource": None, "source": None}
+GRID_SOURCE = {"moduleId": TRACK, "portKey": ""}
+
+
+@pytest.mark.parametrize("expected", [None, GRID_SOURCE])
+@pytest.mark.parametrize("source", [None, GRID_SOURCE])
+def test_grid_connection_preserves_required_nulls_and_endpoint_objects(expected, source):
+    args = {**GRID_CONNECTION, "expectedSource": expected, "source": source}
+    params, _ = validate_call("grid.connections.set", args)
+    assert params == args
+
+
+@pytest.mark.parametrize("field", list(GRID_CONNECTION))
+def test_grid_connection_requires_every_target_and_cas_field(field):
+    with pytest.raises(ValidationError):
+        validate_call("grid.connections.set", {
+            key: value for key, value in GRID_CONNECTION.items() if key != field
+        })
+
+
+@pytest.mark.parametrize("field", ["expectedSource", "source"])
+@pytest.mark.parametrize("value", [
+    "", "null", True, 0, 1.0, [], [GRID_SOURCE], {},
+    {"moduleId": TRACK}, {"portKey": ""},
+    {**GRID_SOURCE, "moduleId": "1-1-1-1-1"},
+    {**GRID_SOURCE, "moduleId": TRACK.replace("-", "")},
+    {**GRID_SOURCE, "moduleId": None}, {**GRID_SOURCE, "moduleId": 1},
+    {**GRID_SOURCE, "portKey": None}, {**GRID_SOURCE, "portKey": 0},
+    {**GRID_SOURCE, "portKey": False}, {**GRID_SOURCE, "portKey": []},
+    {**GRID_SOURCE, "extra": True}, {**GRID_SOURCE, 1: "not-a-string-key"},
+])
+def test_grid_connection_rejects_malformed_nested_endpoints(field, value):
+    with pytest.raises(ValidationError):
+        validate_call("grid.connections.set", {**GRID_CONNECTION, field: value})
+
+
+@pytest.mark.parametrize("changes", [
+    {"targetModuleId": "1-1-1-1-1"}, {"targetModuleId": TRACK.replace("-", "")},
+    {"targetModuleId": None}, {"targetModuleId": True},
+    {"targetPortKey": None}, {"targetPortKey": 0}, {"targetPortKey": False},
+    {"trackId": "selected"}, {"deviceIndex": 0.0}, {"deviceIndex": True},
+    {"deviceIndex": -1}, {"deviceIndex": 16}, {"expectedDeviceName": ""},
+    {"expectedDeviceName": None}, {"force": True}, {"moduleId": TRACK},
+    {1: "not-a-string-key"},
+])
+def test_grid_connection_rejects_invalid_targets_and_extra_fields(changes):
+    with pytest.raises(ValidationError):
+        validate_call("grid.connections.set", {**GRID_CONNECTION, **changes})
+
+
+@pytest.mark.parametrize("field", ["targetPortKey", "expectedSource", "source"])
+@pytest.mark.parametrize("key", ["", "a" * 1024, "𝄞" * 512])
+def test_grid_connection_accepts_exact_utf16_key_boundary(field, key):
+    value = key if field == "targetPortKey" else {**GRID_SOURCE, "portKey": key}
+    params, _ = validate_call("grid.connections.set", {**GRID_CONNECTION, field: value})
+    assert params[field] == value
+
+
+@pytest.mark.parametrize("field", ["targetPortKey", "expectedSource", "source"])
+@pytest.mark.parametrize("key", ["a" * 1025, "𝄞" * 513, "a" + "𝄞" * 512])
+def test_grid_connection_rejects_keys_exceeding_utf16_boundary(field, key):
+    value = key if field == "targetPortKey" else {**GRID_SOURCE, "portKey": key}
+    with pytest.raises(ValidationError):
+        validate_call("grid.connections.set", {**GRID_CONNECTION, field: value})
+

@@ -98,6 +98,7 @@ final class GridSnapshotReader {
             Object module = all.get(i); state.check();
             if (!ids.containsKey(module)) continue;
             JsonObject item = new JsonObject();
+            item.addProperty("modelClass", text(module.getClass().getName()));
             item.addProperty("instanceId", ids.get(module));
             item.addProperty("localKey", text(a.read(Field.LOCAL_KEY, module)));
             metadataText(item, "name", Field.MODULE_NAME, module, Metadata.MODULE_NAMES, state, "module_name");
@@ -135,6 +136,10 @@ final class GridSnapshotReader {
         check.run();
         guardTarget(binding, proxy, expectedTrackId);
         JsonObject result = HostServices.observed();
+        JsonObject deviceMetadata = new JsonObject(), graphMetadata = new JsonObject();
+        deviceMetadata.addProperty("modelClass", text(binding.target.getClass().getName()));
+        graphMetadata.addProperty("modelClass", text(graph.getClass().getName()));
+        result.add("device", deviceMetadata); result.add("graph", graphMetadata);
         result.add("modules", modules); result.add("connections", connections);
         result.add("window", window(offset, limit, all.size()));
         result.addProperty("complete", state.unsupported.isEmpty());
@@ -260,10 +265,13 @@ final class GridSnapshotReader {
 
     /** Full bounded module membership for topology writers; opaque graph children cannot be skipped. */
     List<Object> topologyModules(Object graph, Runnable check) {
-        List<Object> modules = collect(Field.MODULES, graph, GridModuleWriter.MAX_MODULES, new State(check));
+        return topologyModules(graph, new State(check));
+    }
+    List<Object> topologyModules(Object graph, State state) {
+        List<Object> modules = collect(Field.MODULES, graph, GridTopologyContext.MAX_MODULES, state);
         Set<UUID> ids = new HashSet<>();
         for (Object module : modules) {
-            check.run();
+            state.check();
             if (!a.is(Kind.MODULE, module))
                 throw failure("grid_unavailable", "Topology editing requires every graph child to be a mapped module.");
             a.requireModelThread(module);
@@ -351,6 +359,7 @@ final class GridSnapshotReader {
             if (!keys.add(key)) throw failure("grid_unavailable", "Duplicate native port key; endpoint identity is ambiguous.");
             enumeratedPorts.add(port);
             JsonObject item = new JsonObject(); item.addProperty("key", key);
+            item.addProperty("modelClass", text(port.getClass().getName()));
             item.addProperty("path", text(a.read(Field.PATH, port)));
             metadataText(item, "name", input ? Field.INPUT_NAME : Field.OUTPUT_NAME, port,
                     Metadata.PORT_NAMES, state, input ? "input_name" : "output_name");
@@ -472,7 +481,7 @@ final class GridSnapshotReader {
         }
     }
 
-    private List<Object> collect(Field field, Object owner, int maximum, State state) {
+    List<Object> collect(Field field, Object owner, int maximum, State state) {
         Object value = a.read(field, owner);
         if (!(value instanceof Stream<?>)) throw failure("grid_unavailable", "Native " + field + " reader did not return a stream.");
         List<Object> result = new ArrayList<>();
@@ -493,7 +502,7 @@ final class GridSnapshotReader {
         if (!(value instanceof UUID)) throw failure("grid_unavailable", "Native UUID identity is unavailable.");
         return value.toString();
     }
-    private static String text(Object value) {
+    static String text(Object value) {
         if (!(value instanceof String)) throw failure("grid_unavailable", "Native text field is unavailable.");
         String text = (String) value;
         if (text.length() > MAX_TEXT) throw failure("grid_bounds_exceeded", "Native text field exceeds 1024 characters.");
@@ -514,7 +523,7 @@ final class GridSnapshotReader {
         final String id, name;
         CatalogEntry(String id, String name) { this.id = id; this.name = name; }
     }
-    private static final class State {
+    static final class State {
         final Runnable guard; final Set<String> unsupported = new LinkedHashSet<>(); int work;
         State(Runnable guard) { this.guard = guard; }
         void check() {

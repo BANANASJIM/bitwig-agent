@@ -19,8 +19,8 @@ final class Bitwig613GridAdapter implements GridAdapter, GridSnapshotReader.Acce
     private static final String R = "com.bitwig.ramona.core.";
     private static final String P = "com.bitwig.flt.packaging.core.";
     private static final String I = "com.bitwig.flt.document.core.iface.";
-    // Controller/adapter recreation must not clear a potentially stranded native iqa ThreadLocal.
-    private static final GridModuleWriter.Quarantine TOPOLOGY_QUARANTINE = new GridModuleWriter.Quarantine();
+    // Adapter recreation must not clear native undo/context contamination after any topology setter fails.
+    private static final GridTopologyQuarantine TOPOLOGY_QUARANTINE = new GridTopologyQuarantine();
     private final EnumMap<GridSnapshotReader.Field, Method> readers = new EnumMap<>(GridSnapshotReader.Field.class);
     private final EnumMap<GridSnapshotReader.Kind, Class<?>> kinds = new EnumMap<>(GridSnapshotReader.Kind.class);
     private final EnumMap<GridSnapshotReader.Metadata, String> metadataErrors = new EnumMap<>(GridSnapshotReader.Metadata.class);
@@ -35,6 +35,8 @@ final class Bitwig613GridAdapter implements GridAdapter, GridSnapshotReader.Acce
     private GridParameterWriter parameterWriter;
     private String moduleMoveError, moduleDeleteError;
     private GridModuleWriter moduleWriter;
+    private String connectionError;
+    private GridConnectionWriter connectionWriter;
 
     Bitwig613GridAdapter(Object host, String version, Runnable check) {
         hostVersion = version; loader = host.getClass().getClassLoader();
@@ -80,15 +82,26 @@ final class Bitwig613GridAdapter implements GridAdapter, GridSnapshotReader.Acce
         else try {
             parameterWriter = new GridParameterWriter(snapshots, parameterContexts, new Bitwig613GridParameterWriter(this));
         } catch (ReflectiveOperationException | RuntimeException | LinkageError error) { writeError = diagnostic(error); }
-        if (structureError != null || metadataErrors.containsKey(GridSnapshotReader.Metadata.FOOTPRINT)) {
-            moduleMoveError = moduleDeleteError = "Required structure or native footprint binding unavailable.";
+        GridTopologyContext topologyContexts = null;
+        String topologyContextError = structureError == null ? null : "Required structure binding unavailable.";
+        if (topologyContextError == null) {
+            try { topologyContexts = new GridTopologyContext(new Bitwig613GridTopologyContext(this)); }
+            catch (ReflectiveOperationException | RuntimeException | LinkageError error) { topologyContextError = diagnostic(error); }
+        }
+        if (topologyContextError != null || metadataErrors.containsKey(GridSnapshotReader.Metadata.FOOTPRINT)) {
+            moduleMoveError = moduleDeleteError = topologyContextError != null ? topologyContextError : "Required native footprint binding unavailable.";
         } else try {
             Bitwig613GridModuleAccess topology = new Bitwig613GridModuleAccess(this);
             moduleMoveError = topology.moveError; moduleDeleteError = topology.deleteError;
-            moduleWriter = new GridModuleWriter(snapshots, this, new GridModuleContext(topology), topology, TOPOLOGY_QUARANTINE);
+            moduleWriter = new GridModuleWriter(snapshots, this, topologyContexts, topology, TOPOLOGY_QUARANTINE);
         } catch (ReflectiveOperationException | RuntimeException | LinkageError error) {
             moduleMoveError = moduleDeleteError = diagnostic(error);
         }
+        if (topologyContextError != null) connectionError = topologyContextError;
+        else try {
+            connectionWriter = new GridConnectionWriter(snapshots, this, topologyContexts,
+                    new Bitwig613GridConnectionAccess(this), TOPOLOGY_QUARANTINE);
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError error) { connectionError = diagnostic(error); }
         check.run();
     }
 
@@ -220,8 +233,17 @@ final class Bitwig613GridAdapter implements GridAdapter, GridSnapshotReader.Acce
                 "public_same_graph_absolute_anchor_singleton_no_copy_native_reflow_later_event_observation"));
         result.add("moduleDelete", topologyCapability(gateError != null ? gateError : quarantine != null ? quarantine : moduleDeleteError,
                 "public_selective_singleton_delete_native_bypass_reconnection_later_event_observation"));
-        result.addProperty("graphWrites", gateError == null && quarantine == null && (moduleMoveError == null || moduleDeleteError == null));
-        result.addProperty("graphWriteScope", "module_move_and_delete_only_no_insertion_or_connection_writes");
+        JsonObject connection = topologyCapability(gateError != null ? gateError : quarantine != null ? quarantine : connectionError,
+                "single_input_nullable_source_CAS_public_undo_wrapper_later_actual_graph_observation");
+        connection.remove("maximumOccupiedYSpan");
+        connection.addProperty("operation", "Suo.vhT(hUF):void");
+        connection.addProperty("destinationRuntimeGate", "exact_com.bitwig.flt.document.core.master.device.Iac_only_no_subclasses");
+        connection.addProperty("undoRuntimeGate", "exact_com.bitwig.flt.document.core.master.j3O_only_no_subclasses_native_validation_not_atomic_permission");
+        connection.addProperty("projectScope", "native_repair_can_change_other_inputs_and_project_routing_not_certified_by_Grid_snapshot");
+        result.add("connectionWrite", connection);
+        result.addProperty("graphWrites", gateError == null && quarantine == null
+                && (moduleMoveError == null || moduleDeleteError == null || connectionError == null));
+        result.addProperty("graphWriteScope", "module_move_delete_and_single_input_connection_set_no_insertion");
         result.addProperty("topologyQuarantined", TOPOLOGY_QUARANTINE.active);
         result.addProperty("topologyQuarantineScope", "sticky_extension_classloader_lifetime_no_guarantee_across_classloader_replacement_full_Bitwig_restart_required");
         result.addProperty("nativeRevisionAvailable", false);
@@ -274,6 +296,11 @@ final class Bitwig613GridAdapter implements GridAdapter, GridSnapshotReader.Acce
             Runnable check, Runnable dispatch, Consumer<JsonObject> complete, Consumer<Throwable> fail) {
         require(gateError, "gate"); require(moduleDeleteError, "module delete");
         moduleWriter.delete(proxy, trackId, moduleId, check, dispatch, complete, fail);
+    }
+    @Override public void setConnection(Object proxy, UUID trackId, GridConnectionWriter.Request request,
+            Runnable check, Runnable dispatch, Consumer<JsonObject> complete, Consumer<Throwable> fail) {
+        require(gateError, "gate"); require(connectionError, "connection write");
+        connectionWriter.set(proxy, trackId, request, check, dispatch, complete, fail);
     }
     @Override public boolean parametersAvailable() { return gateError == null && parameterError == null; }
     @Override public boolean displayAvailable() { return gateError == null && displayError == null; }

@@ -50,6 +50,11 @@ public final class GridSnapshotReaderTest {
         modulePostEventChangesRemainUnknown();
         nativeMoveCallbackCaptureNeverThrows();
         moduleTopologyReviewRegressions();
+        connectionCasNoopAndLaterRepairedGraph();
+        connectionMembershipContextAndIdentityGuards();
+        connectionBoundsAndIndependentGeometry();
+        connectionFailuresShareStickyQuarantine();
+        connectionExactRuntimeGatesRejectOverrides();
         System.out.println("GridSnapshotReaderTest: " + assertions + " assertions passed (semantic fake models only)");
     }
     private static void typedValuesAndIdentityAreNotConflated() {
@@ -710,34 +715,34 @@ public final class GridSnapshotReaderTest {
     }
 
     private static void modulePreflightRejectsUnsafeContextsAndGeometry() {
-        for (GridModuleContext.Field field : List.of(GridModuleContext.Field.CIU, GridModuleContext.Field.PROJECT_ADM,
-                GridModuleContext.Field.PROJECT_OOK, GridModuleContext.Field.UNDO_EXECUTING,
-                GridModuleContext.Field.UNDO_ACTIVE, GridModuleContext.Field.UNDO_ICL)) {
+        for (GridTopologyContext.Field field : List.of(GridTopologyContext.Field.CIU, GridTopologyContext.Field.PROJECT_ADM,
+                GridTopologyContext.Field.PROJECT_OOK, GridTopologyContext.Field.UNDO_EXECUTING,
+                GridTopologyContext.Field.UNDO_ACTIVE, GridTopologyContext.Field.UNDO_ICL)) {
             ModuleWriterFixture f = new ModuleWriterFixture(); f.context.values.put(field, true);
             HostOperation op = f.start(null);
             check(TransportMixFixture.error(op, "unsafe_state").outcome.equals("not_applied")
                     && f.calls == 0 && !f.writer.quarantined(), "native topology predicate rejects before dispatch: " + field);
         }
-        for (GridModuleContext.Field field : List.of(GridModuleContext.Field.INITIALIZED, GridModuleContext.Field.CONTEXT_THREAD)) {
+        for (GridTopologyContext.Field field : List.of(GridTopologyContext.Field.INITIALIZED, GridTopologyContext.Field.CONTEXT_THREAD)) {
             ModuleWriterFixture f = new ModuleWriterFixture(); f.context.values.put(field, false);
             TransportMixFixture.error(f.start(null), "unsafe_state");
             check(f.calls == 0, "uninitialized or wrong context thread prevents mutation");
         }
-        for (GridModuleContext.Field field : List.of(GridModuleContext.Field.CURRENT_DT, GridModuleContext.Field.DEFAULT_DT,
-                GridModuleContext.Field.UNDO, GridModuleContext.Field.LOCK, GridModuleContext.Field.LOCK_OWNER)) {
+        for (GridTopologyContext.Field field : List.of(GridTopologyContext.Field.CURRENT_DT, GridTopologyContext.Field.DEFAULT_DT,
+                GridTopologyContext.Field.UNDO, GridTopologyContext.Field.LOCK, GridTopologyContext.Field.LOCK_OWNER)) {
             ModuleWriterFixture f = new ModuleWriterFixture(); f.context.values.put(field, null);
             TransportMixFixture.error(f.start(null), "grid_unavailable");
             check(f.calls == 0, "unavailable required native context is not permission: " + field);
         }
-        for (GridModuleContext.Field field : List.of(GridModuleContext.Field.DELETED, GridModuleContext.Field.DISPOSED)) {
+        for (GridTopologyContext.Field field : List.of(GridTopologyContext.Field.DELETED, GridTopologyContext.Field.DISPOSED)) {
             ModuleWriterFixture f = new ModuleWriterFixture(); f.context.values.put(field, true);
             TransportMixFixture.error(f.start(null), "stale_context");
         }
-        ModuleWriterFixture root = new ModuleWriterFixture(); root.context.values.put(GridModuleContext.Field.ROOT, new Object());
+        ModuleWriterFixture root = new ModuleWriterFixture(); root.context.values.put(GridTopologyContext.Field.ROOT, new Object());
         TransportMixFixture.error(root.start(null), "stale_context");
-        ModuleWriterFixture lock = new ModuleWriterFixture(); lock.context.values.put(GridModuleContext.Field.LOCK_OWNER, new Object());
+        ModuleWriterFixture lock = new ModuleWriterFixture(); lock.context.values.put(GridTopologyContext.Field.LOCK_OWNER, new Object());
         TransportMixFixture.error(lock.start(null), "unsafe_state");
-        ModuleWriterFixture project = new ModuleWriterFixture(); project.context.values.put(GridModuleContext.Field.PROJECT, new Object());
+        ModuleWriterFixture project = new ModuleWriterFixture(); project.context.values.put(GridTopologyContext.Field.PROJECT, new Object());
         TransportMixFixture.error(project.start(null), "stale_context");
         ModuleWriterFixture wrongTrack = new ModuleWriterFixture(); wrongTrack.trackId = new UUID(99, 99);
         TransportMixFixture.error(wrongTrack.start(null), "stale_context");
@@ -820,7 +825,7 @@ public final class GridSnapshotReaderTest {
             ModuleWriterFixture f = new ModuleWriterFixture();
             HostOperation op = f.start(new GridModuleWriter.Move(7, 3, 10, 3));
             if (change == 0) f.model.proxy.put(TARGET, new Node(DEVICE));
-            if (change == 1) f.context.values.put(GridModuleContext.Field.PROJECT_OOK, true);
+            if (change == 1) f.context.values.put(GridTopologyContext.Field.PROJECT_OOK, true);
             if (change == 2) f.model.graph.put(MODULES, List.of(f.model.first));
             if (change == 3) f.model.second.put(WIDTH, 3);
             if (change == 4) f.model.second.put(Y, 100000);
@@ -862,13 +867,13 @@ public final class GridSnapshotReaderTest {
                         "allowed overlap still uses native placement and later observation");
             });
         }
-        for (GridModuleContext.Field field : List.of(GridModuleContext.Field.DELETED,
-                GridModuleContext.Field.CONTEXT, GridModuleContext.Field.PROJECT)) {
+        for (GridTopologyContext.Field field : List.of(GridTopologyContext.Field.DELETED,
+                GridTopologyContext.Field.CONTEXT, GridTopologyContext.Field.PROJECT)) {
             for (boolean deleting : List.of(false, true)) {
                 topologyRegression(failures, "unselected preflight " + field + " delete=" + deleting, () -> {
                     ModuleWriterFixture f = new ModuleWriterFixture();
                     f.context.override(f.model.second, field,
-                            field == GridModuleContext.Field.DELETED ? true : field == GridModuleContext.Field.CONTEXT ? null : new Object());
+                            field == GridTopologyContext.Field.DELETED ? true : field == GridTopologyContext.Field.CONTEXT ? null : new Object());
                     HostOperation op = f.start(deleting ? null : new GridModuleWriter.Move(7, 3, 11, 5));
                     check(op.result.isCompletedExceptionally() && !op.dispatched && f.calls == 0
                                     && !f.writer.quarantined() && f.events.isEmpty(),
@@ -881,7 +886,7 @@ public final class GridSnapshotReaderTest {
                     HostOperation op = f.start(deleting ? null : new GridModuleWriter.Move(7, 3, 11, 5));
                     check(op.dispatched && f.calls == 1 && !op.result.isDone(), "native operation precedes later survivor checks");
                     f.context.override(f.model.second, field,
-                            field == GridModuleContext.Field.DELETED ? true : field == GridModuleContext.Field.CONTEXT ? null : new Object());
+                            field == GridTopologyContext.Field.DELETED ? true : field == GridTopologyContext.Field.CONTEXT ? null : new Object());
                     f.next();
                     check(op.result.isCompletedExceptionally() && !f.writer.quarantined() && f.calls == 1,
                             "a later deleted/detached/wrong-project survivor must not become an observed success");
@@ -955,12 +960,229 @@ public final class GridSnapshotReaderTest {
         } catch (ReflectiveOperationException error) { throw new AssertionError(error); }
     }
 
+    private static void connectionCasNoopAndLaterRepairedGraph() {
+        ConnectionFixture stale = new ConnectionFixture();
+        HostOperation op = stale.start(stale.request(stale.output(), null));
+        check(TransportMixFixture.error(op, "stale_context").outcome.equals("not_applied") && stale.calls == 0,
+                "stale expectedSource fails before already-matched null and dispatch");
+        ConnectionFixture noop = new ConnectionFixture();
+        op = noop.start(noop.request(null, null)); noop.next();
+        JsonObject result = op.result.join();
+        check(noop.calls == 0 && !op.dispatched && !result.get("nativeUndo").getAsBoolean()
+                && result.get("actualSource").isJsonNull(), "explicit null no-op skips setter and native undo entirely");
+        ConnectionFixture connected = new ConnectionFixture();
+        op = connected.start(connected.request(null, connected.output()));
+        check(op.dispatched && !op.result.isDone() && connected.calls == 1, "same-module cable uses native setter without invented cycle ban");
+        connected.next(); result = op.result.join();
+        check(result.get("matchesRequested").getAsBoolean() && result.get("previousSource").isJsonNull()
+                && result.getAsJsonObject("actualSource").get("portKey").getAsString().equals("out"),
+                "later observed endpoint is exact and previous disconnected state preserved");
+        op = connected.start(connected.request(connected.output(), connected.output())); connected.next();
+        check(connected.calls == 1 && !op.dispatched && op.result.join().get("matchesRequested").getAsBoolean(),
+                "matching connected source does not begin a native undo record");
+        op = connected.start(connected.request(connected.output(), null)); connected.next();
+        check(connected.calls == 2 && op.result.join().get("actualSource").isJsonNull(), "disconnect passes explicit native null once");
+        ConnectionFixture repaired = new ConnectionFixture();
+        Node old = repaired.model.port(OUTPUT, repaired.model.second, "old");
+        Node sentinel = repaired.model.port(INPUT, repaired.model.second, "sentinel").put(INPUT_SOURCE, old);
+        repaired.model.second.put(OUTPUTS, List.of(old)).put(INPUTS, List.of(sentinel));
+        repaired.model.input.put(INPUT_SOURCE, old);
+        GridConnectionWriter.Endpoint prior = new GridConnectionWriter.Endpoint(new UUID(1, 2), "old");
+        op = repaired.start(repaired.request(prior, repaired.output()));
+        // Simulate native very-end-of-event repair after normal setter return, including collateral links.
+        repaired.model.input.put(INPUT_SOURCE, null); sentinel.put(INPUT_SOURCE, null);
+        repaired.next(); result = op.result.join();
+        check(!result.get("matchesRequested").getAsBoolean() && result.get("actualSource").isJsonNull()
+                && result.get("previousSource").equals(GridConnectionWriter.Endpoint.json(prior))
+                && result.getAsJsonObject("graph").getAsJsonArray("connections").size() == 0 && repaired.calls == 1,
+                "rejected replacement can lose old source and other links; observed graph never reconnects or rolls back");
+    }
+
+    private static void connectionMembershipContextAndIdentityGuards() {
+        for (int change = 0; change < 7; change++) {
+            ConnectionFixture f = new ConnectionFixture();
+            if (change == 0) f.model.first.put(OUTPUTS, List.of());
+            if (change == 1) f.model.input.put(INPUT_SOURCE, f.model.port(OUTPUT, f.model.first, "out"));
+            if (change == 2) f.model.first.put(OUTPUTS, List.of(f.model.output, f.model.port(OUTPUT, f.model.first, "out")));
+            if (change == 3) f.model.first.put(INPUTS, List.of(f.model.input, f.model.port(INPUT, f.model.first, "in")));
+            if (change == 4) f.model.output.put(OWNER_MODULE, f.model.second);
+            if (change == 5) f.model.second.put(INSTANCE_ID, new UUID(1, 1));
+            if (change == 6) f.model.output.threadAllowed = false;
+            HostOperation op = f.start(f.request(null, f.output()));
+            check(op.result.isCompletedExceptionally() && !op.dispatched && f.calls == 0 && !f.quarantine.active,
+                    "missing/excluded output, ambiguous keys/UUID, owner or thread errors fail before dispatch");
+        }
+        for (GridTopologyContext.Field field : List.of(GridTopologyContext.Field.DELETED,
+                GridTopologyContext.Field.CONTEXT, GridTopologyContext.Field.PROJECT)) {
+            for (int member = 0; member < 3; member++) {
+                ConnectionFixture f = new ConnectionFixture();
+                Node checked = member == 0 ? f.model.input : member == 1 ? f.model.output : f.model.second;
+                f.context.override(checked, field, field == GridTopologyContext.Field.DELETED ? true : null);
+                HostOperation op = f.start(f.request(null, f.output()));
+                check(TransportMixFixture.error(op, "stale_context").outcome.equals("not_applied") && f.calls == 0,
+                        "every input/output/module requires live attached exact project context");
+            }
+        }
+        for (GridTopologyContext.Field field : List.of(GridTopologyContext.Field.CIU,
+                GridTopologyContext.Field.PROJECT_ADM, GridTopologyContext.Field.PROJECT_OOK,
+                GridTopologyContext.Field.UNDO_ACTIVE, GridTopologyContext.Field.UNDO_EXECUTING, GridTopologyContext.Field.UNDO_ICL)) {
+            ConnectionFixture f = new ConnectionFixture(); f.context.values.put(field, true);
+            HostOperation op = f.start(f.request(null, f.output()));
+            check(TransportMixFixture.error(op, "unsafe_state").outcome.equals("not_applied") && f.calls == 0,
+                    "conservative shared native context blocks cable before dispatch");
+        }
+        for (int change = 0; change < 4; change++) {
+            ConnectionFixture f = new ConnectionFixture();
+            final int selected = change;
+            f.beforePrepare = () -> {
+                if (selected == 0) f.model.input.put(INPUT_SOURCE, f.model.output);
+                if (selected == 1) f.model.first.put(OUTPUTS, List.of(f.model.port(OUTPUT, f.model.first, "out")));
+                if (selected == 2) f.model.first.put(INPUTS, List.of(f.model.port(INPUT, f.model.first, "in")));
+                if (selected == 3) f.model.graph.put(MODULES, List.of(f.model.module(0, f.model.graph), f.model.second));
+            };
+            HostOperation op = f.start(f.request(null, f.output()));
+            check(TransportMixFixture.error(op, "stale_context").outcome.equals("not_applied") && f.calls == 0,
+                    "captured source and module/port identities rechecked after native preparation");
+        }
+        for (int change = 0; change < 5; change++) {
+            ConnectionFixture f = new ConnectionFixture(); HostOperation op = f.start(f.request(null, f.output()));
+            if (change == 0) f.model.first.put(OUTPUTS, List.of(f.model.port(OUTPUT, f.model.first, "out")));
+            if (change == 1) f.context.override(f.model.output, GridTopologyContext.Field.CONTEXT, null);
+            if (change == 2) f.context.values.put(GridTopologyContext.Field.UNDO, new Object());
+            if (change == 3) f.model.proxy.put(TARGET, new Node(DEVICE));
+            if (change == 4) f.cancelled = true;
+            f.next();
+            check(op.result.isCompletedExceptionally() && f.calls == 1 && !f.quarantine.active,
+                    "later source membership/context/target/cancellation failure never retries or masquerades as synchronous native failure");
+            check(TransportMixFixture.error(op, change == 4 ? "cancelled" : "stale_context").outcome.equals("unknown"),
+                    "failed later observation retains post-dispatch uncertainty");
+        }
+    }
+
+    private static void connectionBoundsAndIndependentGeometry() {
+        ConnectionFixture independent = new ConnectionFixture();
+        independent.model.unavailable.add(FOOTPRINT); independent.model.second.put(Y, Integer.MAX_VALUE);
+        HostOperation op = independent.start(independent.request(null, independent.output())); independent.next();
+        check(op.result.join().get("matchesRequested").getAsBoolean() && independent.calls == 1,
+                "cable capability does not depend on native footprints or move-specific occupied y-span");
+        for (int bound = 0; bound < 3; bound++) {
+            ConnectionFixture f = new ConnectionFixture();
+            if (bound == 0) {
+                List<Node> modules = new ArrayList<>();
+                for (int i = 0; i <= GridTopologyContext.MAX_MODULES; i++) modules.add(f.model.module(i, f.model.graph));
+                f.model.graph.put(MODULES, modules);
+            } else if (bound == 1) {
+                List<Node> ports = new ArrayList<>();
+                for (int i = 0; i <= GridSnapshotReader.MAX_CHILDREN; i++) ports.add(f.model.port(OUTPUT, f.model.first, "o" + i));
+                f.model.first.put(OUTPUTS, ports);
+            } else {
+                List<Node> modules = new ArrayList<>();
+                for (int i = 0; i < 100; i++) {
+                    Node module = f.model.module(i, f.model.graph); List<Node> ports = new ArrayList<>();
+                    for (int j = 0; j < 200; j++) ports.add(f.model.port(OUTPUT, module, "o" + j));
+                    module.put(OUTPUTS, ports); modules.add(module);
+                }
+                f.model.graph.put(MODULES, modules);
+            }
+            op = f.start(f.request(null, f.output()));
+            check(TransportMixFixture.error(op, "grid_bounds_exceeded").outcome.equals("not_applied")
+                    && f.calls == 0 && f.model.closed > 0, "module/port/total budgets close streams before native dispatch");
+        }
+    }
+
+    private static void connectionFailuresShareStickyQuarantine() {
+        ConnectionFixture cable = new ConnectionFixture();
+        cable.afterMutation = () -> { throw new AssertionError("native listener/close failure"); };
+        HostOperation op = cable.start(cable.request(null, cable.output()));
+        check(TransportMixFixture.error(op, "grid_unavailable").outcome.equals("unknown") && cable.quarantine.active
+                && cable.calls == 1 && cable.events.isEmpty(), "synchronous native failure is sticky unknown, not observation or rollback");
+        ModuleWriterFixture modules = new ModuleWriterFixture();
+        GridModuleWriter blocked = new GridModuleWriter(modules.model.reader, modules.model, modules.context.reader, modules, cable.quarantine);
+        expect("grid_unavailable", () -> blocked.delete(modules.model.proxy, TRACK_ID, modules.moduleId, () -> {},
+                () -> { throw new AssertionError("shared quarantine dispatched module delete"); }, value -> {}, error -> {}));
+        ConnectionFixture recreated = new ConnectionFixture(cable.quarantine);
+        check(TransportMixFixture.error(recreated.start(recreated.request(null, recreated.output())), "grid_unavailable")
+                .outcome.equals("not_applied") && recreated.calls == 0, "recreation cannot reset connection quarantine");
+        modules.afterMutation = () -> { throw new AssertionError("native module failure"); };
+        TransportMixFixture.error(modules.start(null), "grid_unavailable");
+        ConnectionFixture reverse = new ConnectionFixture(modules.quarantine);
+        check(TransportMixFixture.error(reverse.start(reverse.request(null, reverse.output())), "grid_unavailable")
+                .outcome.equals("not_applied") && reverse.calls == 0, "module failure also blocks cable setter");
+        check(cable.model.read(0, 64, false).has("modules"), "read-only graph remains independently available");
+        ConnectionFixture unsupported = new ConnectionFixture(); unsupported.supported = false;
+        check(TransportMixFixture.error(unsupported.start(unsupported.request(null, unsupported.output())), "grid_unavailable")
+                .outcome.equals("not_applied") && !unsupported.quarantine.active, "runtime class rejection is predispatch and does not poison lifetime");
+        for (boolean noop : List.of(false, true)) {
+            ConnectionFixture timeout = new ConnectionFixture();
+            HostOperation late = new HostOperation(Long.MAX_VALUE);
+            boolean[] expired = {false};
+            timeout.edit(timeout.request(null, noop ? null : timeout.output()),
+                    () -> { if (expired[0]) throw HostServices.failure("deadline_exceeded", "later observation expired"); },
+                    () -> late.dispatched = true, value -> late.result.complete(value), late::fail);
+            expired[0] = true; timeout.next();
+            check(TransportMixFixture.error(late, "deadline_exceeded").outcome.equals(noop ? "not_applied" : "unknown")
+                    && timeout.calls == (noop ? 0 : 1) && !timeout.quarantine.active,
+                    "later-event timeout never retries, invents dispatch for no-op, or disguises unknown mutation as rejection");
+        }
+    }
+
+    private static void connectionExactRuntimeGatesRejectOverrides() {
+        class Base {}
+        class Derived extends Base {}
+        Bitwig613GridConnectionAccess.requireExact(new Base(), Base.class, "test input");
+        expect("grid_unavailable", () -> Bitwig613GridConnectionAccess.requireExact(new Derived(), Base.class, "test input"));
+        expect("grid_unavailable", () -> Bitwig613GridConnectionAccess.requireExact(new Derived(), Base.class, "test undo"));
+        expect("grid_unavailable", () -> Bitwig613GridConnectionAccess.requireExact(null, Base.class, "test undo"));
+    }
+
+    static final class ConnectionFixture implements GridConnectionWriter.Access {
+        final Fixture model = new Fixture();
+        final ModuleContextFixture context = new ModuleContextFixture();
+        final Deque<Runnable> events = new ArrayDeque<>();
+        final java.util.function.Consumer<Runnable> queue;
+        final GridTopologyQuarantine quarantine;
+        final GridConnectionWriter writer;
+        int calls; boolean cancelled, supported = true;
+        Runnable beforePrepare = () -> {}, afterMutation = () -> {};
+        ConnectionFixture() { this(new GridTopologyQuarantine()); }
+        ConnectionFixture(GridTopologyQuarantine quarantine) { this(quarantine, null); }
+        ConnectionFixture(java.util.function.Consumer<Runnable> queue) { this(new GridTopologyQuarantine(), queue); }
+        ConnectionFixture(GridTopologyQuarantine quarantine, java.util.function.Consumer<Runnable> queue) {
+            this.quarantine = quarantine; this.queue = queue == null ? events::add : queue;
+            writer = new GridConnectionWriter(model.reader, model, context.reader, this, quarantine);
+        }
+        GridConnectionWriter.Endpoint output() { return new GridConnectionWriter.Endpoint(new UUID(1, 1), "out"); }
+        GridConnectionWriter.Request request(GridConnectionWriter.Endpoint expected, GridConnectionWriter.Endpoint source) {
+            return new GridConnectionWriter.Request(new GridConnectionWriter.Endpoint(new UUID(1, 1), "in"), expected, source);
+        }
+        HostOperation start(GridConnectionWriter.Request request) {
+            HostOperation op = new HostOperation(Long.MAX_VALUE);
+            try { edit(request, () -> { if (cancelled) throw HostServices.failure("cancelled", "cancelled"); },
+                    () -> op.dispatched = true, value -> op.result.complete(value), op::fail); }
+            catch (Throwable error) { op.fail(error); }
+            return op;
+        }
+        void edit(GridConnectionWriter.Request request, Runnable check, Runnable dispatch,
+                java.util.function.Consumer<JsonObject> complete, java.util.function.Consumer<Throwable> fail) {
+            writer.set(model.proxy, TRACK_ID, request, check, dispatch, complete, fail);
+        }
+        void next() { events.removeFirst().run(); }
+        @Override public void requireSupported(Object input, Object undo) {
+            if (!supported) throw HostServices.failure("grid_unavailable", "unsupported runtime class");
+        }
+        @Override public Runnable prepareSet(Object input, Object source) {
+            beforePrepare.run();
+            return () -> { calls++; ((Node) input).put(INPUT_SOURCE, source); afterMutation.run(); };
+        }
+        @Override public void execute(Runnable observation) { queue.accept(observation); }
+    }
+
     static final class ModuleWriterFixture implements GridModuleWriter.Access {
         final Fixture model = new Fixture();
         final ModuleContextFixture context = new ModuleContextFixture();
         final Deque<Runnable> events = new ArrayDeque<>();
         final java.util.function.Consumer<Runnable> queue;
-        final GridModuleWriter.Quarantine quarantine = new GridModuleWriter.Quarantine();
+        final GridTopologyQuarantine quarantine = new GridTopologyQuarantine();
         final GridModuleWriter writer = new GridModuleWriter(model.reader, model, context.reader, this, quarantine);
         UUID trackId = TRACK_ID, moduleId = new UUID(1, 1);
         int calls; boolean apply = true, cancelled, moveSupported = true;
@@ -1002,26 +1224,26 @@ public final class GridSnapshotReaderTest {
         }
         @Override public void execute(Runnable observation) { queue.accept(observation); }
     }
-    private static final class ModuleContextFixture implements GridModuleContext.Access {
-        final GridModuleContext reader = new GridModuleContext(this);
-        final EnumMap<GridModuleContext.Field, Object> values = new EnumMap<>(GridModuleContext.Field.class);
-        final IdentityHashMap<Object, EnumMap<GridModuleContext.Field, Object>> perObject = new IdentityHashMap<>();
+    private static final class ModuleContextFixture implements GridTopologyContext.Access {
+        final GridTopologyContext reader = new GridTopologyContext(this);
+        final EnumMap<GridTopologyContext.Field, Object> values = new EnumMap<>(GridTopologyContext.Field.class);
+        final IdentityHashMap<Object, EnumMap<GridTopologyContext.Field, Object>> perObject = new IdentityHashMap<>();
         final Object context = new Object(), project = new Object(), dt = new Object();
         ModuleContextFixture() {
-            for (GridModuleContext.Field field : GridModuleContext.Field.values()) values.put(field, false);
-            values.put(GridModuleContext.Field.CONTEXT, context); values.put(GridModuleContext.Field.PROJECT, project);
-            values.put(GridModuleContext.Field.GRAPH_PROJECT, project); values.put(GridModuleContext.Field.ROOT, project);
-            values.put(GridModuleContext.Field.INITIALIZED, true); values.put(GridModuleContext.Field.CONTEXT_THREAD, true);
-            values.put(GridModuleContext.Field.CURRENT_DT, dt); values.put(GridModuleContext.Field.DEFAULT_DT, dt);
-            values.put(GridModuleContext.Field.DT_CONTEXT, context);
-            values.put(GridModuleContext.Field.UNDO, new Object()); values.put(GridModuleContext.Field.LOCK, new Object());
-            values.put(GridModuleContext.Field.LOCK_OWNER, dt);
+            for (GridTopologyContext.Field field : GridTopologyContext.Field.values()) values.put(field, false);
+            values.put(GridTopologyContext.Field.CONTEXT, context); values.put(GridTopologyContext.Field.PROJECT, project);
+            values.put(GridTopologyContext.Field.GRAPH_PROJECT, project); values.put(GridTopologyContext.Field.ROOT, project);
+            values.put(GridTopologyContext.Field.INITIALIZED, true); values.put(GridTopologyContext.Field.CONTEXT_THREAD, true);
+            values.put(GridTopologyContext.Field.CURRENT_DT, dt); values.put(GridTopologyContext.Field.DEFAULT_DT, dt);
+            values.put(GridTopologyContext.Field.DT_CONTEXT, context);
+            values.put(GridTopologyContext.Field.UNDO, new Object()); values.put(GridTopologyContext.Field.LOCK, new Object());
+            values.put(GridTopologyContext.Field.LOCK_OWNER, dt);
         }
-        void override(Object object, GridModuleContext.Field field, Object value) {
-            perObject.computeIfAbsent(object, ignored -> new EnumMap<>(GridModuleContext.Field.class)).put(field, value);
+        void override(Object object, GridTopologyContext.Field field, Object value) {
+            perObject.computeIfAbsent(object, ignored -> new EnumMap<>(GridTopologyContext.Field.class)).put(field, value);
         }
-        @Override public Object read(GridModuleContext.Field field, Object object) {
-            EnumMap<GridModuleContext.Field, Object> specific = perObject.get(object);
+        @Override public Object read(GridTopologyContext.Field field, Object object) {
+            EnumMap<GridTopologyContext.Field, Object> specific = perObject.get(object);
             return specific != null && specific.containsKey(field) ? specific.get(field) : values.get(field);
         }
         @Override public boolean defaultContext(Object context) { return true; }
