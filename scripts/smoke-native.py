@@ -14,6 +14,7 @@ file identity and actual reopen/music/UI behavior require independent evidence.
 """
 import argparse
 import asyncio
+from contextlib import contextmanager
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -27,6 +28,68 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 from bitwig_agent.catalog import TOOLS
+
+
+class NativeRunStopped(RuntimeError):
+    """The native run needs coordinator inspection, not another operation."""
+
+
+class NativeOutcomeGuard:
+    """Outcome latch for native evidence helpers; no host calls or reset.
+
+    Wrap every RPC or GUI operation and its evidence handling in attempt().
+    Persist the full raw response before observe; exceptions latch admission.
+    A caught exception does not reopen admission. This is a test-run guard, not
+    native cancellation, a security boundary or an automatic recovery mechanism.
+    """
+
+    def __init__(self):
+        self._reason = None
+
+    @property
+    def stopped(self):
+        return self._reason is not None
+
+    def before_call(self):
+        if self.stopped:
+            raise NativeRunStopped(self._reason)
+
+    def stop(self, reason):
+        if not self.stopped:
+            self._reason = reason
+        raise NativeRunStopped(self._reason)
+
+    @contextmanager
+    def attempt(self):
+        self.before_call()
+        try:
+            yield
+        except BaseException as error:
+            if not self.stopped:
+                self._reason = f"Native operation or evidence failed ({type(error).__name__}); coordinator inspection required."
+            raise
+
+    def observe(self, envelope, *, allow_dispatch_only=False):
+        self.before_call()
+        if not isinstance(envelope, dict) or (("error" in envelope) == ("result" in envelope)):
+            self.stop("Malformed native response; inspect raw evidence before continuing.")
+        if "error" in envelope:
+            error = envelope["error"]
+            if not isinstance(error, dict) or error.get("outcome") not in ("not_applied", "not_dispatched"):
+                self.stop("Native error has unknown outcome; inspect raw evidence before continuing.")
+            return envelope
+        result = envelope["result"]
+        if not isinstance(result, dict):
+            self.stop("Malformed native result; inspect raw evidence before continuing.")
+        if result.get("completion") == "unknown":
+            self.stop("Native result has unknown completion; observed field values do not acknowledge the write.")
+        if result.get("topologyQuarantined") is True or result.get("topologyAdmissionBlocked") is True:
+            self.stop("Native topology admission is blocked; coordinator inspection is required.")
+        dispatch_only = (allow_dispatch_only and result.get("status") == "dispatched"
+                         and result.get("completion") == "not_observed")
+        if result.get("status") != "observed" and not dispatch_only:
+            self.stop("Native result is not observed or an explicitly expected dispatch-only operation.")
+        return envelope
 
 def has_owned_loopback_listener(table, port, owned_sockets, *, byteorder=sys.byteorder):
     """Read Linux /proc/net/tcp{,6}: each address word is native-endian u32."""
@@ -134,28 +197,31 @@ async def probe(target, report):
     server = StdioServerParameters(command=sys.executable,
                                   args=["-c", "from bitwig_agent.server import main; main()"], env=env)
     calls_path = target.artifacts / "calls.jsonl"
+    outcome_guard = NativeOutcomeGuard()
     async with stdio_client(server) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
             advertised = {tool.name for tool in (await session.list_tools()).tools}
 
             async def call(method, params=None):
-                if method not in TOOLS or not TOOLS[method].read_only:
-                    raise RuntimeError(f"Refusing non-read-only method: {method}")
-                target.guard()
-                arguments = params or {}
-                response = await session.call_tool(method, arguments)
-                body = response.structuredContent or json.loads(response.content[0].text)
-                record = {"time": datetime.now(timezone.utc).isoformat(), "method": method,
-                          "params": arguments, "isError": response.isError, "response": body}
-                with calls_path.open("a", encoding="utf-8") as output:
-                    output.write(json.dumps(record, ensure_ascii=False, allow_nan=False) + "\n")
-                if response.isError:
-                    raise RuntimeError(f"Native {method} failed; inspect calls.jsonl (no retry)")
-                result = body["result"]
-                if result.get("status") != "observed":
-                    raise RuntimeError(f"Native {method} did not return an observed read")
-                return result
+                with outcome_guard.attempt():
+                    if method not in TOOLS or not TOOLS[method].read_only:
+                        raise RuntimeError(f"Refusing non-read-only method: {method}")
+                    target.guard()
+                    arguments = params or {}
+                    response = await session.call_tool(method, arguments)
+                    body = response.structuredContent or json.loads(response.content[0].text)
+                    record = {"time": datetime.now(timezone.utc).isoformat(), "method": method,
+                              "params": arguments, "isError": response.isError, "response": body}
+                    with calls_path.open("a", encoding="utf-8") as output:
+                        output.write(json.dumps(record, ensure_ascii=False, allow_nan=False) + "\n")
+                    outcome_guard.observe(body)
+                    if response.isError:
+                        raise RuntimeError(f"Native {method} failed; inspect calls.jsonl (no retry)")
+                    result = body["result"]
+                    if result.get("status") != "observed":
+                        raise RuntimeError(f"Native {method} did not return an observed read")
+                    return result
 
             before = await call("status")
             report["beforeStatus"] = before

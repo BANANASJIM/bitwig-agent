@@ -19,7 +19,7 @@ final class Bitwig613GridAdapter implements GridAdapter, GridSnapshotReader.Acce
     private static final String R = "com.bitwig.ramona.core.";
     private static final String P = "com.bitwig.flt.packaging.core.";
     private static final String I = "com.bitwig.flt.document.core.iface.";
-    // Adapter recreation must not clear native undo/context contamination after any topology setter fails.
+    // Process String marker survives extension classloader replacement; no native objects enter Properties.
     private static final GridTopologyQuarantine TOPOLOGY_QUARANTINE = new GridTopologyQuarantine();
     private final EnumMap<GridSnapshotReader.Field, Method> readers = new EnumMap<>(GridSnapshotReader.Field.class);
     private final EnumMap<GridSnapshotReader.Kind, Class<?>> kinds = new EnumMap<>(GridSnapshotReader.Kind.class);
@@ -37,6 +37,9 @@ final class Bitwig613GridAdapter implements GridAdapter, GridSnapshotReader.Acce
     private GridModuleWriter moduleWriter;
     private String connectionError;
     private GridConnectionWriter connectionWriter;
+    private String moduleInsertError;
+    private GridInsertionWriter insertionWriter;
+    private Bitwig613GridInsertionAccess insertionAccess;
 
     Bitwig613GridAdapter(Object host, String version, Runnable check) {
         hostVersion = version; loader = host.getClass().getClassLoader();
@@ -102,6 +105,12 @@ final class Bitwig613GridAdapter implements GridAdapter, GridSnapshotReader.Acce
             connectionWriter = new GridConnectionWriter(snapshots, this, topologyContexts,
                     new Bitwig613GridConnectionAccess(this), TOPOLOGY_QUARANTINE);
         } catch (ReflectiveOperationException | RuntimeException | LinkageError error) { connectionError = diagnostic(error); }
+        if (topologyContextError != null || catalogError != null || metadataErrors.containsKey(GridSnapshotReader.Metadata.FOOTPRINT))
+            moduleInsertError = "Required insertion structure/catalog/context/footprint bindings unavailable.";
+        else try {
+            insertionAccess = new Bitwig613GridInsertionAccess(this);
+            insertionWriter = new GridInsertionWriter(snapshots, this, topologyContexts, insertionAccess, TOPOLOGY_QUARANTINE);
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError error) { moduleInsertError = diagnostic(error); }
         check.run();
     }
 
@@ -218,7 +227,7 @@ final class Bitwig613GridAdapter implements GridAdapter, GridSnapshotReader.Acce
         result.add("parameterInspection", capability(gateError == null ? inspectionError : gateError,
                 "single_exact_parameter_and_same_callback_native_context_observations_only"));
         JsonObject write = capability(gateError == null ? writeError : gateError,
-                "guarded_raw_controller_APs_aJV_LtR_y1l_ZPH_observed_stopped_only");
+                "guarded_raw_controller_APs_TZj_aJV_LtR_y1l_ZPH_observed_stopped_only");
         write.addProperty("operation", "iTc.JQk(double):void/set_raw_from_controller");
         write.addProperty("nativeUndoAwareOperation", true);
         write.addProperty("undoGroupingVerified", false);
@@ -227,8 +236,7 @@ final class Bitwig613GridAdapter implements GridAdapter, GridSnapshotReader.Acce
         result.add("parameterWrite", write);
         for (GridSnapshotReader.Metadata metadata : GridSnapshotReader.METADATA)
             result.add(metadata.key, capability(gateError == null ? metadataErrors.get(metadata) : gateError, metadata.coverage));
-        String quarantine = TOPOLOGY_QUARANTINE.active
-                ? "Topology writes quarantined after native operation/callback failure; fully restart Bitwig, inspect state and do not retry." : null;
+        String quarantine = TOPOLOGY_QUARANTINE.blockedReason();
         result.add("moduleMove", topologyCapability(gateError != null ? gateError : quarantine != null ? quarantine : moduleMoveError,
                 "public_same_graph_absolute_anchor_singleton_no_copy_native_reflow_later_event_observation"));
         result.add("moduleDelete", topologyCapability(gateError != null ? gateError : quarantine != null ? quarantine : moduleDeleteError,
@@ -241,11 +249,21 @@ final class Bitwig613GridAdapter implements GridAdapter, GridSnapshotReader.Acce
         connection.addProperty("undoRuntimeGate", "exact_com.bitwig.flt.document.core.master.j3O_only_no_subclasses_native_validation_not_atomic_permission");
         connection.addProperty("projectScope", "native_repair_can_change_other_inputs_and_project_routing_not_certified_by_Grid_snapshot");
         result.add("connectionWrite", connection);
+        JsonObject insertion = topologyCapability(gateError != null ? gateError : quarantine != null ? quarantine : moduleInsertError,
+                "known_MODULE_resource_normal_loader_detached_singleton_absolute_anchor_later_native_settlement_and_actual_graph");
+        insertion.addProperty("operation", "WN2.vhT(String[],JTS)_then_zXc.vhT(Collection,int,int,false,null)");
+        insertion.addProperty("loaderDispatchedScope", "native_parsing_conversion_not_pure_read_timeout_is_not_cancellation");
+        insertion.addProperty("placementDispatchedScope", "collection_placement_invocation_not_atomic_commit");
+        insertion.addProperty("runtimeVerification", "not_established_by_read_only_binding_inspection");
+        insertion.addProperty("bindingAvailable", gateError == null && moduleInsertError == null);
+        if (insertionAccess != null) insertion.add("bindingIdentity", insertionAccess.evidence());
+        result.add("moduleInsert", insertion);
         result.addProperty("graphWrites", gateError == null && quarantine == null
-                && (moduleMoveError == null || moduleDeleteError == null || connectionError == null));
-        result.addProperty("graphWriteScope", "module_move_delete_and_single_input_connection_set_no_insertion");
-        result.addProperty("topologyQuarantined", TOPOLOGY_QUARANTINE.active);
-        result.addProperty("topologyQuarantineScope", "sticky_extension_classloader_lifetime_no_guarantee_across_classloader_replacement_full_Bitwig_restart_required");
+                && (moduleMoveError == null || moduleDeleteError == null || connectionError == null || moduleInsertError == null));
+        result.addProperty("graphWriteScope", "module_insert_move_delete_and_single_input_connection_set");
+        result.addProperty("topologyQuarantined", TOPOLOGY_QUARANTINE.quarantined());
+        result.addProperty("topologyAdmissionBlocked", quarantine != null);
+        result.addProperty("topologyQuarantineScope", "versioned_String_only_process_marker_shared_across_extension_classloaders_full_JVM_restart_required_for_unsettled_or_poisoned_lifetimes");
         result.addProperty("nativeRevisionAvailable", false);
         return result;
     }
@@ -301,6 +319,11 @@ final class Bitwig613GridAdapter implements GridAdapter, GridSnapshotReader.Acce
             Runnable check, Runnable dispatch, Consumer<JsonObject> complete, Consumer<Throwable> fail) {
         require(gateError, "gate"); require(connectionError, "connection write");
         connectionWriter.set(proxy, trackId, request, check, dispatch, complete, fail);
+    }
+    @Override public void insertModule(Object proxy, UUID trackId, GridInsertionWriter.Request request,
+            Runnable check, Runnable dispatch, Consumer<JsonObject> complete, Consumer<Throwable> fail) {
+        require(gateError, "gate"); require(moduleInsertError, "module insertion");
+        insertionWriter.insert(proxy, trackId, request, check, dispatch, complete, fail);
     }
     @Override public boolean parametersAvailable() { return gateError == null && parameterError == null; }
     @Override public boolean displayAvailable() { return gateError == null && displayError == null; }
@@ -370,15 +393,23 @@ final class Bitwig613GridAdapter implements GridAdapter, GridSnapshotReader.Acce
         try { return method.invoke(object, args); }
         catch (ReflectiveOperationException | IllegalArgumentException error) {
             Throwable cause = error instanceof InvocationTargetException ? ((InvocationTargetException) error).getCause() : error;
-            throw failure("grid_unavailable", "Native call failed at " + method.getDeclaringClass().getName() + "." + method.getName() + ": " + diagnostic(cause));
+            RpcException translated = failure("grid_unavailable", "Native call failed at " + method.getDeclaringClass().getName() + "." + method.getName() + ": " + diagnostic(cause));
+            // Preserve the invocation boundary, not just its message or the wrapped native error's type.
+            translated.initCause(error);
+            throw translated;
         }
+    }
+    static boolean isInvocationFailure(Throwable error) {
+        if (!(error instanceof RpcException)) return false;
+        Throwable boundary = error.getCause();
+        return boundary instanceof ReflectiveOperationException || boundary instanceof IllegalArgumentException;
     }
     static Path source(Class<?> type) throws java.io.IOException {
         try {
             if (type.getProtectionDomain() == null || type.getProtectionDomain().getCodeSource() == null)
                 throw new java.io.IOException("Loaded class has no CodeSource.");
             java.net.URI uri = type.getProtectionDomain().getCodeSource().getLocation().toURI();
-            if (!"file".equals(uri.getScheme())) throw new java.io.IOException("Loaded class CodeSource is not a file URI.");
+            if (!"file".equals(uri.getScheme())) throw new java.io.IOException("Loaded class CodeSource is not a file URI: " + uri);
             return Path.of(uri).toRealPath();
         } catch (java.net.URISyntaxException | SecurityException error) { throw new java.io.IOException("Cannot resolve loaded host CodeSource.", error); }
     }

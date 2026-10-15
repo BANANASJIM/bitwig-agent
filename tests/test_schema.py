@@ -297,6 +297,38 @@ def test_grid_parameter_set_requires_explicit_compare_and_set_value():
 
 GRID_MODULE = {**TARGET, "moduleId": TRACK}
 GRID_MOVE = {**GRID_MODULE, "expectedX": 0, "expectedY": 0, "x": 4, "y": 2}
+GRID_INSERT = {**TARGET, "typeId": TRACK, "x": 4, "y": 2}
+
+
+@pytest.mark.parametrize("field", ["x", "y"])
+@pytest.mark.parametrize("value", [
+    None, True, False, 1.0, "1", [], {}, -(2**31) - 1, 2**31,
+])
+def test_grid_insert_rejects_non_int32_coordinates(field, value):
+    with pytest.raises(ValidationError):
+        validate_call("grid.modules.insert", {**GRID_INSERT, field: value})
+
+
+@pytest.mark.parametrize("value", [-(2**31), 2**31 - 1])
+def test_grid_insert_accepts_int32_endpoints_for_host_geometry_validation(value):
+    params, timeout = validate_call("grid.modules.insert", {**GRID_INSERT, "x": value, "y": value})
+    assert params == {**GRID_INSERT, "x": value, "y": value}
+    assert timeout == 5000
+
+
+@pytest.mark.parametrize("changes", [
+    {"typeId": "1-1-1-1-1"}, {"typeId": TRACK.replace("-", "")},
+    {"typeId": "oscillator"}, {"typeId": None}, {"typeId": True},
+    {"trackId": "selected"}, {"trackId": None}, {"deviceIndex": True},
+    {"deviceIndex": 0.0}, {"deviceIndex": -1}, {"deviceIndex": 16},
+    {"expectedDeviceName": ""}, {"expectedDeviceName": None},
+    {"moduleId": TRACK}, {"path": "/tmp/module.bwmodule"},
+    {"expectedX": 0}, {"relative": True}, {"selected": True},
+    {"timeoutMs": None}, {"timeoutMs": True}, {"timeoutMs": 99}, {"timeoutMs": 10001},
+])
+def test_grid_insert_rejects_invalid_targets_and_implicit_options(changes):
+    with pytest.raises(ValidationError):
+        validate_call("grid.modules.insert", {**GRID_INSERT, **changes})
 
 
 @pytest.mark.parametrize("field", ["expectedX", "expectedY", "x", "y"])
@@ -317,6 +349,7 @@ def test_grid_module_move_leaves_dynamic_geometry_bounds_to_host(value):
 
 @pytest.mark.parametrize("method,args", [
     ("grid.modules.move", GRID_MOVE), ("grid.modules.delete", GRID_MODULE),
+    ("grid.modules.insert", GRID_INSERT),
 ])
 def test_grid_module_edits_require_each_explicit_field(method, args):
     for field in args:

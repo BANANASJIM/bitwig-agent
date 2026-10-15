@@ -74,5 +74,6 @@ final class GridTopologyContext {
         private final Object[] identities;
         Capture(Object[] identities) { this.identities = identities; }
         Object undo() { return identities[5]; }
+        Object project() { return identities[0]; }
     }
 }

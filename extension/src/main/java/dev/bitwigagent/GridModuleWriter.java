@@ -27,7 +27,7 @@ final class GridModuleWriter {
         this.snapshots = snapshots; this.values = values; this.contexts = contexts; this.nativeWriter = nativeWriter;
         this.quarantine = quarantine;
     }
-    boolean quarantined() { return quarantine.active; }
+    boolean quarantined() { return quarantine.quarantined(); }
     private void available() { quarantine.requireAvailable(); }
     void move(Object proxy, UUID trackId, UUID moduleId, Move request, Runnable check, Runnable dispatch,
             Consumer<JsonObject> complete, Consumer<Throwable> fail) {

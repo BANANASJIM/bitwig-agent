@@ -19,7 +19,10 @@ final class Bitwig613GridParameterWriter implements GridParameterWriter.Access {
         Class<?> bool = bindings.type("y1l"), derived = bindings.type("ZPH"), parent = bindings.type("jC2");
         if (derived.getSuperclass() != parent || parent.getSuperclass() != bool)
             throw new NoSuchMethodException("Inspected ZPH/jC2/y1l boolean inheritance differs.");
-        models = Map.of(bindings.type("APs"), FLOAT, bindings.type("aJV"), INTEGER,
+        Class<?> floating = bindings.type("APs"), bipolar = bindings.type("TZj"), bipolarParent = bindings.type("Jcb");
+        if (bipolar.getSuperclass() != bipolarParent || bipolarParent.getSuperclass() != floating)
+            throw new NoSuchMethodException("Inspected TZj/Jcb/APs floating inheritance differs.");
+        models = Map.of(floating, FLOAT, bipolar, FLOAT, bindings.type("aJV"), INTEGER,
                 bindings.type("LtR"), ENUM, bool, BOOLEAN, derived, BOOLEAN);
         for (Class<?> model : models.keySet()) {
             if (!controller.isAssignableFrom(model)

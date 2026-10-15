@@ -208,13 +208,60 @@ async def test_offline_discovery_exposes_connection_examples_and_complete_regist
     payload, code = await execute(["list"])
     assert code == 0
     assert set(payload["result"]["methods"]) == set(TOOLS)
-    assert len(payload["result"]["methods"]) == 37
+    assert len(payload["result"]["methods"]) == 38
     payload, code = await execute(["describe", "grid.connections.set"])
     assert code == 0
     description = payload["result"]
     assert description["readOnly"] is False
     assert description["examples"][0]["expectedSource"] is None
     assert description["examples"][1]["source"] is None
+
+
+@pytest.mark.parametrize("raw", [False, True])
+async def test_grid_insert_cli_preserves_loader_unknown_without_retry(host, monkeypatch, raw):
+    monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
+    params = {**TARGET, "typeId": TRACK, "x": -(2**31), "y": 2**31 - 1}
+    arguments = (["--params", json.dumps(params)] if raw else [
+        f"{key}={value}" for key, value in params.items()
+    ])
+    error = {"code": "deadline_exceeded", "message": "Inspect actual graph",
+             "outcome": "unknown",
+             "details": {"loaderDispatched": True, "placementDispatched": False}}
+    host.reply = lambda request: {"id": request["id"], "error": error}
+    payload, code = await execute(["grid.modules.insert", *arguments, "--timeout-ms", "250"])
+    assert code == 1
+    assert payload == {"error": error}
+    assert len(host.requests) == host.connections == 1
+
+
+@pytest.mark.parametrize("raw", [False, True])
+@pytest.mark.parametrize("field", ["x", "y"])
+@pytest.mark.parametrize("token", ["null", "true", "1.0", "1e0", '"1"', "-2147483649", "2147483648"])
+async def test_grid_insert_cli_rejects_non_int32_tokens_before_tcp(host, monkeypatch, raw, field, token):
+    monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
+    tokens = {key: json.dumps(value) for key, value in {
+        **TARGET, "typeId": TRACK, "x": 0, "y": 0,
+    }.items()}
+    tokens[field] = token
+    arguments = (["--params", "{" + ",".join(f'"{key}":{value}' for key, value in tokens.items()) + "}"]
+                 if raw else [f"{key}={value}" for key, value in tokens.items()])
+    payload, code = await execute(["grid.modules.insert", *arguments])
+    assert code == 2
+    assert payload["error"]["code"] == "invalid_params"
+    assert payload["error"]["outcome"] == "not_dispatched"
+    assert host.connections == 0
+
+
+async def test_grid_insert_offline_help_exposes_complete_contract(monkeypatch):
+    monkeypatch.setenv("BITWIG_AGENT_PORT", "not-a-port")
+    payload, code = await execute(["grid.modules.insert", "--help"])
+    assert code == 0
+    description = payload["result"]
+    assert description["readOnly"] is False
+    assert set(description["inputSchema"]["required"]) == {
+        "trackId", "deviceIndex", "expectedDeviceName", "typeId", "x", "y",
+    }
+    assert description["inputSchema"]["additionalProperties"] is False
 
 
 def test_main_prints_one_exact_json_envelope(capsys, monkeypatch):

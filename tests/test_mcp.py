@@ -169,7 +169,7 @@ async def test_grid_move_mcp_rejects_float_despite_json_schema_integer_semantics
 async def test_mcp_discovery_publishes_required_nullable_connection_contract(mcp_session):
     response = await mcp_session.list_tools()
     tools = {tool.name: tool for tool in response.tools}
-    assert len(response.tools) == len(tools) == 37
+    assert len(response.tools) == len(tools) == 38
     assert set(tools) == set(TOOLS)
     tool = tools["grid.connections.set"]
     assert tool.annotations.readOnlyHint is False
@@ -190,6 +190,43 @@ async def test_mcp_discovery_publishes_required_nullable_connection_contract(mcp
         assert set(nested["required"]) == {"moduleId", "portKey"}
         assert nested["properties"]["portKey"]["type"] == "string"
         assert nested["properties"]["portKey"]["maxLength"] == 1024
+    insertion = tools["grid.modules.insert"]
+    assert insertion.annotations.readOnlyHint is False
+    schema = insertion.inputSchema
+    assert schema["additionalProperties"] is False
+    assert set(schema["required"]) == {
+        "trackId", "deviceIndex", "expectedDeviceName", "typeId", "x", "y",
+    }
+    for field in ("x", "y"):
+        coordinate = schema["properties"][field]
+        assert coordinate["type"] == "integer"
+        assert coordinate["minimum"] == -(2**31)
+        assert coordinate["maximum"] == 2**31 - 1
+        assert "default" not in coordinate
+
+
+@pytest.mark.parametrize("field", ["x", "y"])
+@pytest.mark.parametrize("value", [None, True, 1.0, "1", -(2**31) - 1, 2**31])
+async def test_grid_insert_mcp_rejects_non_int32_before_tcp(mcp_session, host, field, value):
+    response = await mcp_session.call_tool("grid.modules.insert", {
+        **TARGET, "typeId": TRACK, "x": 0, "y": 0, field: value,
+    })
+    assert response.isError
+    assert response.structuredContent["error"]["code"] == "invalid_params"
+    assert response.structuredContent["error"]["outcome"] == "not_dispatched"
+    assert host.connections == 0
+
+
+async def test_grid_insert_mcp_preserves_loader_unknown_without_retry(mcp_session, host):
+    error = {"code": "deadline_exceeded", "message": "Inspect actual graph",
+             "outcome": "unknown",
+             "details": {"loaderDispatched": True, "placementDispatched": False}}
+    host.reply = lambda request: {"id": request["id"], "error": error}
+    params = {**TARGET, "typeId": TRACK, "x": -(2**31), "y": 2**31 - 1}
+    response = await mcp_session.call_tool("grid.modules.insert", {**params, "timeoutMs": 250})
+    assert response.isError
+    assert response.structuredContent == {"error": error}
+    assert len(host.requests) == host.connections == 1
 
 
 @pytest.mark.parametrize("field", ["expectedSource", "source"])

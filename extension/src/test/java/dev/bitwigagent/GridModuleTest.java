@@ -30,6 +30,9 @@ public final class GridModuleTest {
         connectionArgumentsPreserveRequiredNullSemantics();
         connectionResultsWaitForBothQueues();
         connectionSafetyTargetsAndCancellationGuardQueues();
+        insertionArgumentsAndMethodRegistration();
+        insertionWaitsForNativeSettlementAndControllerDelivery();
+        insertionSafetyCancellationAndCloseKeepNativeLifetimeIndependent();
         System.out.println("GridModuleTest: " + assertions + " assertions passed (simulated controller/document queues only)");
     }
     private static void validatesBeforeScheduling() {
@@ -131,7 +134,9 @@ public final class GridModuleTest {
                 "unverified identity bindings cannot advertise usable native ownership or structure");
         check(!noSource.capabilities().getAsJsonObject("moduleMove").get("available").getAsBoolean()
                 && !noSource.capabilities().getAsJsonObject("moduleDelete").get("available").getAsBoolean()
-                && !noSource.capabilities().getAsJsonObject("connectionWrite").get("available").getAsBoolean(),
+                && !noSource.capabilities().getAsJsonObject("connectionWrite").get("available").getAsBoolean()
+                && !noSource.capabilities().getAsJsonObject("moduleInsert").get("available").getAsBoolean()
+                && !noSource.capabilities().getAsJsonObject("moduleInsert").has("bindingIdentity"),
                 "unverified source cannot advertise any native topology capability");
         try {
             noSource.snapshot(new Object(), UUID.fromString(TransportMixFixture.A), 0, 64, true, () -> {});
@@ -483,6 +488,84 @@ public final class GridModuleTest {
                 "close after setter return cannot convert abandoned observation into success or rollback");
     }
 
+    private static JsonObject insertionTarget() {
+        JsonObject p = target(); p.addProperty("typeId", GridInsertionWriterTest.TYPE.toString());
+        p.addProperty("x", 8); p.addProperty("y", 3); return p;
+    }
+    private static void insertionArgumentsAndMethodRegistration() {
+        check(HostBridge.supportedMethods().size() == 38 && HostBridge.supportedMethods().contains("grid.modules.insert"),
+                "shared admission/dispatch/discovery registry exposes 38 methods including insertion");
+        Fixture f = new Fixture();
+        for (String key : List.of("trackId", "deviceIndex", "expectedDeviceName", "typeId", "x", "y")) {
+            JsonObject p = insertionTarget(); p.remove(key);
+            TransportMixFixture.error(f.host.submit(f.module, "grid.modules.insert", p), "invalid_params");
+        }
+        for (String key : List.of("x", "y"))
+            for (String token : List.of("true", "\"1\"", "null", "1.0", "1e0", "2147483648", "-2147483649")) {
+                JsonObject p = insertionTarget(); p.add(key, JsonParser.parseString(token));
+                TransportMixFixture.error(f.host.submit(f.module, "grid.modules.insert", p), "invalid_params");
+            }
+        for (String extra : List.of("moduleId", "path", "expectedX", "copy", "retry")) {
+            JsonObject p = insertionTarget(); p.addProperty(extra, "forbidden");
+            TransportMixFixture.error(f.host.submit(f.module, "grid.modules.insert", p), "invalid_params");
+        }
+        for (String bad : List.of("1-1-1-1-1", "", "native/resource.bwmodule")) {
+            JsonObject p = insertionTarget(); p.addProperty("typeId", bad);
+            TransportMixFixture.error(f.host.submit(f.module, "grid.modules.insert", p), "invalid_params");
+        }
+        JsonObject valid = insertionTarget(); valid.addProperty("x", Integer.MIN_VALUE); valid.addProperty("y", Integer.MAX_VALUE);
+        HostBridge.validate("grid.modules.insert", valid);
+        check(f.host.tasks.isEmpty() && f.adapter.tasks.isEmpty() && f.adapter.insertion.loads == 0,
+                "strict insertion shape rejects before any queue/native load");
+    }
+    private static void insertionWaitsForNativeSettlementAndControllerDelivery() {
+        Fixture f = new Fixture();
+        HostOperation op = f.host.submit(f.module, "grid.modules.insert", insertionTarget()); f.host.next();
+        f.adapter.next();
+        check(op.dispatched && f.adapter.insertion.loads == 1 && !op.result.isDone() && f.host.tasks.isEmpty(),
+                "loader dispatch has its own native lifetime, not controller completion");
+        for (String key : List.of("isPlaying", "isArrangerRecordEnabled", "isArrangerAutomationWriteEnabled", "isClipLauncherAutomationWriteEnabled"))
+            f.host.transport.child(key).custom = (name, args) -> {
+                if (name.equals("get") && !f.host.onHost) throw new AssertionError("Controller getter in native callback");
+                return null;
+            };
+        f.adapter.insertion.deliver();
+        check(f.adapter.insertion.placements == 1 && !op.result.isDone(), "preplacement callback uses published safety only");
+        f.adapter.next(); f.adapter.insertion.guard.requireAvailable();
+        check(!op.result.isDone() && f.host.tasks.size() == 1, "healthy native settlement releases independently before controller delivery");
+        f.host.next();
+        JsonObject result = op.result.join();
+        check(result.getAsJsonObject("target").get("trackId").getAsString().equals(TransportMixFixture.A)
+                && result.get("loaderDispatched").getAsBoolean() && result.get("placementDispatched").getAsBoolean(),
+                "actual insertion result receives existing explicit target envelope");
+    }
+    private static void insertionSafetyCancellationAndCloseKeepNativeLifetimeIndependent() {
+        for (String key : List.of("isPlaying", "isArrangerRecordEnabled", "isArrangerAutomationWriteEnabled", "isClipLauncherAutomationWriteEnabled")) {
+            Fixture f = new Fixture(); f.host.transport.child(key).emit(true);
+            HostOperation op = f.host.submit(f.module, "grid.modules.insert", insertionTarget()); f.host.next();
+            check(TransportMixFixture.error(op, "unsafe_state").outcome.equals("not_applied") && f.adapter.insertion.loads == 0,
+                    "observed unsafe transport blocks insertion before native loading");
+        }
+        for (int change = 0; change < 4; change++) {
+            Fixture f = new Fixture(); HostOperation op = f.host.submit(f.module, "grid.modules.insert", insertionTarget());
+            f.host.next(); f.adapter.next();
+            if (change == 0) { f.host.transport.child("isPlaying").emit(true); f.host.transport.child("isPlaying").emit(false); }
+            if (change == 1) { f.device.child("name").emit("Other"); f.device.child("name").emit("Poly Grid"); }
+            if (change == 2) op.result.cancel(false);
+            if (change == 3) f.host.services.close();
+            f.adapter.insertion.deliver();
+            check(f.adapter.insertion.cleanups == 1 && f.adapter.insertion.placements == 0, "late public epoch/cancel/close rejects via delivered cleanup");
+            f.adapter.next(); f.adapter.insertion.guard.requireAvailable();
+            check(op.result.isCompletedExceptionally() && f.host.tasks.isEmpty(), "native settlement is not skipped by controller schedule/future/extension close");
+            if (change < 2) check(TransportMixFixture.error(op, "stale_context").outcome.equals("unknown"), "loader dispatch preserves uncertainty after public ABA");
+        }
+        Fixture late = new Fixture(); HostOperation op = late.host.submit(late.module, "grid.modules.insert", insertionTarget());
+        late.host.next(); late.adapter.next(); late.adapter.insertion.deliver(); late.adapter.next();
+        late.device.child("position").emit(1); late.host.next(); late.adapter.insertion.guard.requireAvailable();
+        check(TransportMixFixture.error(op, "stale_context").outcome.equals("unknown") && late.adapter.insertion.placements == 1,
+                "post-settlement controller rejection never resurrects native pending lifetime");
+    }
+
     private static JsonObject inspectionTarget() {
         JsonObject result = target(); result.addProperty("moduleId", "00000000-0000-0001-0000-000000000001");
         result.addProperty("parameterId", "EXACT_ID"); return result;
@@ -512,6 +595,7 @@ public final class GridModuleTest {
         final GridSnapshotReaderTest.WriterFixture writer = new GridSnapshotReaderTest.WriterFixture();
         final GridSnapshotReaderTest.ModuleWriterFixture topology = new GridSnapshotReaderTest.ModuleWriterFixture(tasks::add);
         final GridSnapshotReaderTest.ConnectionFixture connections = new GridSnapshotReaderTest.ConnectionFixture(tasks::add);
+        final GridInsertionWriterTest.Fixture insertion = new GridInsertionWriterTest.Fixture(tasks::add);
         Runnable beforeWrite = () -> {}, afterWrite = () -> {};
         void next() { tasks.removeFirst().run(); }
         @Override public void execute(Runnable task) { tasks.add(task); }
@@ -550,6 +634,11 @@ public final class GridModuleTest {
                 Runnable check, Runnable dispatch, java.util.function.Consumer<JsonObject> complete,
                 java.util.function.Consumer<Throwable> failure) {
             connections.edit(request, check, dispatch, complete, failure);
+        }
+        @Override public void insertModule(Object proxy, UUID track, GridInsertionWriter.Request request,
+                Runnable check, Runnable dispatch, java.util.function.Consumer<JsonObject> complete,
+                java.util.function.Consumer<Throwable> failure) {
+            insertion.edit(request, check, dispatch, complete, failure);
         }
         private JsonObject result(int offset, int limit, boolean parameters) {
             last = new JsonObject(); last.addProperty("offset", offset); last.addProperty("limit", limit); last.addProperty("parameters", parameters); return last;

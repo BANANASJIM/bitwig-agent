@@ -620,6 +620,14 @@ public final class GridSnapshotReaderTest {
         WriterFixture changedValue = new WriterFixture();
         changedValue.model.afterValue = () -> changedValue.child.put(BOOLEAN_VALUE, false);
         expect("stale_context", () -> changedValue.set(request("boolean", "true", "false")));
+        WriterFixture rangeChanged = new WriterFixture();
+        rangeChanged.scalar(FLOAT, 0.5, -1.0, 1.0);
+        Node definition = (Node) rangeChanged.child.values.get(FLOAT_DEFINITION);
+        int[] reads = {0};
+        rangeChanged.model.afterValue = () -> { if (++reads[0] == 2) definition.put(FLOAT_MIN, 0.0); };
+        expect("invalid_params", () -> rangeChanged.set(request("float", "0.5", "-0.5")));
+        check(rangeChanged.calls == 0 && !rangeChanged.op.dispatched,
+                "in-place live range contraction rejects a formerly valid negative value before dispatch");
         WriterFixture unknown = new WriterFixture(); unknown.supported = false;
         expect("grid_unavailable", () -> unknown.set(request("boolean", "true", "false")));
         check(inspect(unknown.model, unknown.context, "LOCAL_ID").getAsJsonObject("parameter").get("value").getAsBoolean(),
@@ -1009,7 +1017,7 @@ public final class GridSnapshotReaderTest {
             if (change == 5) f.model.second.put(INSTANCE_ID, new UUID(1, 1));
             if (change == 6) f.model.output.threadAllowed = false;
             HostOperation op = f.start(f.request(null, f.output()));
-            check(op.result.isCompletedExceptionally() && !op.dispatched && f.calls == 0 && !f.quarantine.active,
+            check(op.result.isCompletedExceptionally() && !op.dispatched && f.calls == 0 && !f.quarantine.quarantined(),
                     "missing/excluded output, ambiguous keys/UUID, owner or thread errors fail before dispatch");
         }
         for (GridTopologyContext.Field field : List.of(GridTopologyContext.Field.DELETED,
@@ -1052,7 +1060,7 @@ public final class GridSnapshotReaderTest {
             if (change == 3) f.model.proxy.put(TARGET, new Node(DEVICE));
             if (change == 4) f.cancelled = true;
             f.next();
-            check(op.result.isCompletedExceptionally() && f.calls == 1 && !f.quarantine.active,
+            check(op.result.isCompletedExceptionally() && f.calls == 1 && !f.quarantine.quarantined(),
                     "later source membership/context/target/cancellation failure never retries or masquerades as synchronous native failure");
             check(TransportMixFixture.error(op, change == 4 ? "cancelled" : "stale_context").outcome.equals("unknown"),
                     "failed later observation retains post-dispatch uncertainty");
@@ -1094,7 +1102,7 @@ public final class GridSnapshotReaderTest {
         ConnectionFixture cable = new ConnectionFixture();
         cable.afterMutation = () -> { throw new AssertionError("native listener/close failure"); };
         HostOperation op = cable.start(cable.request(null, cable.output()));
-        check(TransportMixFixture.error(op, "grid_unavailable").outcome.equals("unknown") && cable.quarantine.active
+        check(TransportMixFixture.error(op, "grid_unavailable").outcome.equals("unknown") && cable.quarantine.quarantined()
                 && cable.calls == 1 && cable.events.isEmpty(), "synchronous native failure is sticky unknown, not observation or rollback");
         ModuleWriterFixture modules = new ModuleWriterFixture();
         GridModuleWriter blocked = new GridModuleWriter(modules.model.reader, modules.model, modules.context.reader, modules, cable.quarantine);
@@ -1111,7 +1119,7 @@ public final class GridSnapshotReaderTest {
         check(cable.model.read(0, 64, false).has("modules"), "read-only graph remains independently available");
         ConnectionFixture unsupported = new ConnectionFixture(); unsupported.supported = false;
         check(TransportMixFixture.error(unsupported.start(unsupported.request(null, unsupported.output())), "grid_unavailable")
-                .outcome.equals("not_applied") && !unsupported.quarantine.active, "runtime class rejection is predispatch and does not poison lifetime");
+                .outcome.equals("not_applied") && !unsupported.quarantine.quarantined(), "runtime class rejection is predispatch and does not poison lifetime");
         for (boolean noop : List.of(false, true)) {
             ConnectionFixture timeout = new ConnectionFixture();
             HostOperation late = new HostOperation(Long.MAX_VALUE);
@@ -1121,7 +1129,7 @@ public final class GridSnapshotReaderTest {
                     () -> late.dispatched = true, value -> late.result.complete(value), late::fail);
             expired[0] = true; timeout.next();
             check(TransportMixFixture.error(late, "deadline_exceeded").outcome.equals(noop ? "not_applied" : "unknown")
-                    && timeout.calls == (noop ? 0 : 1) && !timeout.quarantine.active,
+                    && timeout.calls == (noop ? 0 : 1) && !timeout.quarantine.quarantined(),
                     "later-event timeout never retries, invents dispatch for no-op, or disguises unknown mutation as rejection");
         }
     }
@@ -1144,9 +1152,9 @@ public final class GridSnapshotReaderTest {
         final GridConnectionWriter writer;
         int calls; boolean cancelled, supported = true;
         Runnable beforePrepare = () -> {}, afterMutation = () -> {};
-        ConnectionFixture() { this(new GridTopologyQuarantine()); }
+        ConnectionFixture() { this(new GridTopologyQuarantine(new Properties())); }
         ConnectionFixture(GridTopologyQuarantine quarantine) { this(quarantine, null); }
-        ConnectionFixture(java.util.function.Consumer<Runnable> queue) { this(new GridTopologyQuarantine(), queue); }
+        ConnectionFixture(java.util.function.Consumer<Runnable> queue) { this(new GridTopologyQuarantine(new Properties()), queue); }
         ConnectionFixture(GridTopologyQuarantine quarantine, java.util.function.Consumer<Runnable> queue) {
             this.quarantine = quarantine; this.queue = queue == null ? events::add : queue;
             writer = new GridConnectionWriter(model.reader, model, context.reader, this, quarantine);
@@ -1182,7 +1190,7 @@ public final class GridSnapshotReaderTest {
         final ModuleContextFixture context = new ModuleContextFixture();
         final Deque<Runnable> events = new ArrayDeque<>();
         final java.util.function.Consumer<Runnable> queue;
-        final GridTopologyQuarantine quarantine = new GridTopologyQuarantine();
+        final GridTopologyQuarantine quarantine = new GridTopologyQuarantine(new Properties());
         final GridModuleWriter writer = new GridModuleWriter(model.reader, model, context.reader, this, quarantine);
         UUID trackId = TRACK_ID, moduleId = new UUID(1, 1);
         int calls; boolean apply = true, cancelled, moveSupported = true;
@@ -1224,7 +1232,7 @@ public final class GridSnapshotReaderTest {
         }
         @Override public void execute(Runnable observation) { queue.accept(observation); }
     }
-    private static final class ModuleContextFixture implements GridTopologyContext.Access {
+    static final class ModuleContextFixture implements GridTopologyContext.Access {
         final GridTopologyContext reader = new GridTopologyContext(this);
         final EnumMap<GridTopologyContext.Field, Object> values = new EnumMap<>(GridTopologyContext.Field.class);
         final IdentityHashMap<Object, EnumMap<GridTopologyContext.Field, Object>> perObject = new IdentityHashMap<>();
@@ -1333,14 +1341,14 @@ public final class GridSnapshotReaderTest {
         catch (RpcException error) { check(error.code.equals(code) && error.outcome.equals("not_applied"), "expected read-only " + code + ", got " + error.code); }
     }
     private static void check(boolean condition, String label) { assertions++; if (!condition) throw new AssertionError(label); }
-    private static final class Node {
+    static final class Node {
         final Set<GridSnapshotReader.Kind> kinds = new HashSet<>();
         final Map<GridSnapshotReader.Field, Object> values = new EnumMap<>(GridSnapshotReader.Field.class);
         boolean threadAllowed = true;
         Node(GridSnapshotReader.Kind... types) { kinds.addAll(Arrays.asList(types)); }
         Node put(GridSnapshotReader.Field field, Object value) { values.put(field, value); return this; }
     }
-    private static final class Fixture implements GridSnapshotReader.Access {
+    static final class Fixture implements GridSnapshotReader.Access {
         final GridSnapshotReader reader = new GridSnapshotReader(this);
         final Node proxy = new Node(), device = new Node(DEVICE), graph = new Node();
         final Node owner = new Node(TRACK).put(TRACK_UUID, TRACK_ID);

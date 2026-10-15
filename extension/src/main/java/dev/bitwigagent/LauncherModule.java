@@ -13,6 +13,9 @@ import java.util.concurrent.TimeUnit;
 final class LauncherModule implements HostModule {
     static final Set<String> METHODS = Set.of("launcher.list", "launcher.create", "launcher.import", "launcher.launch", "launcher.stop", "notes.read", "notes.edit");
     private static final Set<String> WINDOW_FIELDS = Set.of("trackId", "slotIndex", "channel", "stepSizeBeats", "startStep", "steps", "pitchStart", "pitchCount");
+    // Bitwig 6.1.3 debounces step-size grid regeneration by 100ms before queuing controller delivery.
+    // This margin avoids consuming that known old cache; it is not a configuration acknowledgement.
+    private static final int NOTE_GRID_SETTLE_MS = 150;
     private final HostServices s;
     private final Clip clip;
     private final Track clipTrack;
@@ -299,12 +302,6 @@ final class LauncherModule implements HostModule {
         gridObservation = null;
         bindingGeneration++;
         slot.api.select();
-        if (method.startsWith("notes.")) {
-            Window w = new Window(p);
-            clip.setStepSize(w.size);
-            clip.scrollToKey(0); // Full MIDI pitch grid: no ambiguous pitch-page offset.
-            clip.scrollToStep(w.start);
-        }
         s.schedule(op, () -> awaitBinding(op, id, track, slot, index, p, method, end, false), 40);
     }
 
@@ -316,7 +313,14 @@ final class LauncherModule implements HostModule {
             return;
         }
         if (!settled) {
-            s.schedule(op, () -> awaitBinding(op, id, track, slot, index, p, method, end, true), 20);
+            if (method.startsWith("notes.")) {
+                Window w = new Window(p);
+                clip.setStepSize(w.size);
+                clip.scrollToKey(0);
+                clip.scrollToStep(w.start);
+            }
+            s.schedule(op, () -> awaitBinding(op, id, track, slot, index, p, method, end, true),
+                    method.startsWith("notes.") ? NOTE_GRID_SETTLE_MS : 20);
             return;
         }
         // API exposes no grid-configuration acknowledgement. This is settling, not a proven data barrier.
@@ -430,7 +434,8 @@ final class LauncherModule implements HostModule {
         out.addProperty("onsetPrecision", "grid_cell; API does not expose sub-step onset or multiple onsets in one cell");
         out.addProperty("gridGeneration", bindingGeneration);
         out.addProperty("gridReadiness", "scheduled_settling_not_acknowledged");
-        out.addProperty("gridReadinessLimitation", "Public API has no current grid offset/step-size acknowledgement; 40ms plus 20ms settling is not a host-data barrier. Delayed same-cell callbacks carry no source-window identity.");
+        out.addProperty("gridSettleMs", NOTE_GRID_SETTLE_MS);
+        out.addProperty("gridReadinessLimitation", "Grid configuration follows observed cursor identity, then scheduled settling covers the known 6.1.3 100ms refresh debounce plus delivery margin. Public API has no current grid offset/step-size acknowledgement; this is not a host-data barrier. Delayed same-cell callbacks carry no source-window identity.");
         JsonArray notes = new JsonArray();
         JsonArray sustains = new JsonArray();
         int total = 0;

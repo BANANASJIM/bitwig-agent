@@ -72,6 +72,12 @@ class GridGetArgs(ParameterArgs):
     includeParameters: bool = True
 
 
+class GridModuleInsertArgs(ParameterArgs):
+    typeId: TrackId = Field(description="Canonical MODULE type UUID discovered through grid.catalog, not a module instanceId or file path; the host verifies catalog membership.")
+    x: int = Field(ge=-(2**31), le=2**31 - 1, description="Requested absolute native anchor X, not a relative delta or pixels. Signed int32 JSON integer token; native layout bounds checked by host.")
+    y: int = Field(ge=-(2**31), le=2**31 - 1, description="Requested absolute native anchor Y, not a relative delta or pixels. Signed int32 JSON integer token; native layout bounds checked by host.")
+
+
 class GridModuleArgs(ParameterArgs):
     moduleId: TrackId = Field(description="Current module instanceId from grid.get; reacquire after reopening the project.")
 

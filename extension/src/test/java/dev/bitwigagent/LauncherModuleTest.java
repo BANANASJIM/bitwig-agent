@@ -27,6 +27,7 @@ public final class LauncherModuleTest {
         matchingEditsPreserveExistingNotes();
         loopStartAndPlaybackSafetyFailClosed();
         delayedGridPropagationKeepsReadinessExplicit();
+        firstGridReadWaitsForNativeDebounce();
         fileImportValidationAndOccupancy();
         fileImportObservesOnlyContentTransition();
         fileImportSharesCursorLease();
@@ -232,6 +233,19 @@ public final class LauncherModuleTest {
         f.applyPendingGrid(); f.drain(changed);
         check(!changed.result.join().getAsJsonArray("edits").get(0).getAsJsonObject().get("verified").getAsBoolean(),
                 "callback from prior or unsettled window cannot verify a later changed write");
+    }
+
+    private static void firstGridReadWaitsForNativeDebounce() throws Exception {
+        Fake f = new Fake(); f.slots[0].content = true;
+        f.noteStorageStepSize = .25;
+        f.gridRefreshDelayMillis = 100;
+        f.put(0, 0, 0, 60, 96, 1); f.put(0, 0, 8, 64, 96, 1);
+        JsonObject p = window(); p.addProperty("stepSizeBeats", .125); p.addProperty("steps", 32);
+        JsonObject out = f.call("notes.read", p);
+        check(out.getAsJsonArray("notes").size() == 2, "first grid read preserves both stored notes");
+        check(find(out, 64, 16).get("beat").getAsDouble() == 2,
+                "first eighth-beat read must not relabel the old quarter-beat cache as beat one");
+        check(f.writes == 0, "grid refresh does not change note content");
     }
 
     private static void fileImportValidationAndOccupancy() throws Exception {
@@ -597,6 +611,8 @@ public final class LauncherModuleTest {
         boolean deferCreate, failCreate, failImport, emitCreateContent = true, applyName = true;
         Double pendingSize;
         Integer pendingStart;
+        Double noteStorageStepSize;
+        long gridRefreshDelayMillis, clockMillis, gridReadyAt;
         int imports, importedSlot = -1, bankOffset;
         String importedPath;
         Runnable beforeInsertion = () -> {};
@@ -673,8 +689,13 @@ public final class LauncherModuleTest {
             });
             clip.action("clipLauncherSlot", a -> cursorSlot.proxy);
             clip.action("setName", a -> { nameWrites++; if (applyName) slots[selected].name = (String) a[0]; return null; });
-            clip.action("setStepSize", a -> { if (deferGridChanges) pendingSize = (Double) a[0]; else size = (Double) a[0]; return null; });
-            clip.action("scrollToStep", a -> { if (deferGridChanges) pendingStart = (Integer) a[0]; else start = (Integer) a[0]; return null; });
+            clip.action("setStepSize", a -> {
+                if (deferGridChanges || gridRefreshDelayMillis > 0) {
+                    pendingSize = (Double) a[0]; gridReadyAt = clockMillis + gridRefreshDelayMillis;
+                } else size = (Double) a[0];
+                return null;
+            });
+            clip.action("scrollToStep", a -> { if (deferGridChanges || gridRefreshDelayMillis > 0) pendingStart = (Integer) a[0]; else start = (Integer) a[0]; return null; });
             clip.action("addNoteStepObserver", a -> { observer = (NoteStepChangedCallback) a[0]; return null; });
             clip.action("getStep", a -> note((Integer) a[0], (Integer) a[1], (Integer) a[2]));
             clip.action("setStep", a -> {
@@ -702,7 +723,15 @@ public final class LauncherModuleTest {
             transport.action("isClipLauncherAutomationWriteEnabled", a -> value(SettableBooleanValue.class, () -> launcherAutomation, safetyObserved));
             Node host = new Node(ControllerHost.class); host.action("createApplication", a -> application.proxy); host.action("createTransport", a -> transport.proxy);
             host.action("createTrackBank", a -> trackBank.proxy); host.action("createLauncherCursorClip", a -> clip.proxy);
-            host.action("scheduleTask", a -> { tasks.add((Runnable) a[0]); return null; });
+            host.action("scheduleTask", a -> {
+                Runnable action = (Runnable) a[0]; long delay = ((Number) a[1]).longValue();
+                tasks.add(() -> {
+                    clockMillis += delay;
+                    if (gridRefreshDelayMillis > 0 && clockMillis >= gridReadyAt) applyPendingGrid();
+                    action.run();
+                });
+                return null;
+            });
             services = new HostServices((ControllerHost) host.proxy); module = new LauncherModule(services);
         }
         void observeTrackId(String id) {
@@ -719,11 +748,14 @@ public final class LauncherModuleTest {
         }
         void put(int slot, int channel, int step, int pitch, int velocity, double duration) { notes.put(key(slot, channel, step, pitch), new Note(velocity, duration)); }
         NoteStep note(int channel, int x, int pitch) {
-            Note on = notes.get(key(selected, channel, start + x, pitch));
+            double storageSize = noteStorageStepSize == null ? size : noteStorageStepSize;
+            double storagePosition = (start + x) * size / storageSize;
+            int storedStep = (int) storagePosition;
+            Note on = storagePosition == storedStep ? notes.get(key(selected, channel, storedStep, pitch)) : null;
             NoteStep$State state = on == null ? NoteStep$State.Empty : NoteStep$State.NoteOn;
-            if (on == null) for (int step = 0; step < start + x; step++) {
+            if (on == null) for (int step = 0; step < storagePosition; step++) {
                 Note earlier = notes.get(key(selected, channel, step, pitch));
-                if (earlier != null && step * size + earlier.duration > (start + x) * size) { on = earlier; state = NoteStep$State.NoteSustain; break; }
+                if (earlier != null && step * storageSize + earlier.duration > (start + x) * size) { on = earlier; state = NoteStep$State.NoteSustain; break; }
             }
             final Note found = on; final NoteStep$State actual = state;
             Node n = new Node(NoteStep.class); n.action("channel", a -> channel); n.action("x", a -> x); n.action("y", a -> pitch); n.action("state", a -> actual);

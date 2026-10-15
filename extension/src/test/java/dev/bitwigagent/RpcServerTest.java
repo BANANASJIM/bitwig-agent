@@ -51,7 +51,7 @@ public final class RpcServerTest {
 
     private static void gridIntegerTokenValidation() throws Exception {
         try (RpcServer server = new RpcServer(0, (method, params, until) -> {
-            if (method.equals("grid.modules.move")) GridModule.validateParams(method, params);
+            if (method.equals("grid.modules.move") || method.equals("grid.modules.insert")) GridModule.validateParams(method, params);
             else GridParameterWriter.Request.parse(params);
             return CompletableFuture.completedFuture(ok());
         })) {
@@ -73,6 +73,13 @@ public final class RpcServerTest {
                         + "\"trackId\":\"00000000-0000-0000-0000-000000000001\",\"deviceIndex\":0,"
                         + "\"expectedDeviceName\":\"Poly Grid\",\"moduleId\":\"00000000-0000-0000-0000-000000000002\","
                         + coordinates + "}}\n";
+                error(call(server, request), "invalid_params", "not_applied");
+            }
+            for (String token : List.of("1e0", "1.0", "\"1\"", "true", "2147483648")) {
+                String request = "{\"id\":\"insert-token\",\"method\":\"grid.modules.insert\",\"params\":{"
+                        + "\"trackId\":\"00000000-0000-0000-0000-000000000001\",\"deviceIndex\":0,"
+                        + "\"expectedDeviceName\":\"Poly Grid\",\"typeId\":\"00000000-0000-0000-0000-000000000002\","
+                        + "\"x\":" + token + ",\"y\":0}}\n";
                 error(call(server, request), "invalid_params", "not_applied");
             }
         }

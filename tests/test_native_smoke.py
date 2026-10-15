@@ -1,6 +1,9 @@
 """Native preflight safety parsing only; no host, /proc or desktop access."""
 import importlib.util
 from pathlib import Path
+import asyncio
+from contextlib import asynccontextmanager
+from types import SimpleNamespace
 
 import pytest
 
@@ -74,3 +77,128 @@ def test_nested_task_group_failures_retain_actionable_leaf_causes():
     assert "devices.remote.get" in detail
     assert "tracks.get" in detail
     assert "RuntimeError" in detail and "TimeoutError" in detail
+
+
+@pytest.mark.parametrize("envelope", [
+    {"error": {"code": "grid_bounds_exceeded", "outcome": "unknown"}},
+    # Real native tracks.set can show the requested values without a fresh
+    # write observation. Checking only error.outcome misses this uncertainty.
+    {"result": {"status": "dispatched", "completion": "unknown",
+                "fields": {"mute": {"observed": True, "verification": "not_observed"}}}},
+    {"result": {"status": "observed", "topologyQuarantined": True}},
+    {"result": {"status": "observed", "topologyAdmissionBlocked": True}},
+    {"error": {"code": "unavailable"}},
+    {"error": None},
+    {"result": None},
+    {"result": {"status": "observed"}, "error": None},
+    {},
+])
+def test_native_uncertainty_latches_before_another_operation(envelope):
+    guard = native_smoke.NativeOutcomeGuard()
+    with pytest.raises(native_smoke.NativeRunStopped):
+        guard.observe(envelope, allow_dispatch_only=True)
+    assert guard.stopped
+    # Catching the first exception, or seeing a later healthy-looking result,
+    # cannot authorize the next RPC/GUI operation.
+    with pytest.raises(native_smoke.NativeRunStopped):
+        guard.before_call()
+    with pytest.raises(native_smoke.NativeRunStopped):
+        guard.observe({"result": {"status": "observed"}})
+
+
+@pytest.mark.parametrize("outcome", ["not_applied", "not_dispatched"])
+def test_known_negative_cases_do_not_poison_native_run(outcome):
+    guard = native_smoke.NativeOutcomeGuard()
+    guard.observe({"error": {"code": "invalid_params", "outcome": outcome}})
+    guard.before_call()
+    guard.observe({"result": {"status": "observed"}})
+    assert not guard.stopped
+
+
+def test_dispatch_only_requires_explicit_case_expectation():
+    response = {"result": {"status": "dispatched", "completion": "not_observed"}}
+    strict = native_smoke.NativeOutcomeGuard()
+    with pytest.raises(native_smoke.NativeRunStopped):
+        strict.observe(response)
+    assert strict.stopped
+    expected_action = native_smoke.NativeOutcomeGuard()
+    expected_action.observe(response, allow_dispatch_only=True)
+    assert not expected_action.stopped
+
+
+def test_transport_or_evidence_failure_latches_original_reason():
+    guard = native_smoke.NativeOutcomeGuard()
+    with pytest.raises(native_smoke.NativeRunStopped, match="lost response"):
+        guard.stop("lost response")
+    with pytest.raises(native_smoke.NativeRunStopped, match="lost response"):
+        guard.stop("later cleanup failure")
+    with pytest.raises(native_smoke.NativeRunStopped, match="lost response"):
+        guard.before_call()
+
+
+@pytest.mark.parametrize("failure_stage", ["target", "transport", "decode", "persist"])
+def test_probe_failure_latches_before_a_caught_failure_can_continue(monkeypatch, tmp_path, failure_stage):
+    guard = native_smoke.NativeOutcomeGuard()
+    monkeypatch.setattr(native_smoke, "NativeOutcomeGuard", lambda: guard)
+    dispatched = []
+
+    @asynccontextmanager
+    async def fake_stdio(_):
+        yield None, None
+
+    class Session:
+        def __init__(self, *_):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            pass
+
+        async def initialize(self):
+            pass
+
+        async def list_tools(self):
+            return SimpleNamespace(tools=[SimpleNamespace(name=name) for name in native_smoke.TOOLS])
+
+        async def call_tool(self, method, _):
+            dispatched.append(method)
+            if failure_stage == "transport":
+                raise ConnectionError("native response lost")
+            return SimpleNamespace(
+                structuredContent=None if failure_stage == "decode" else {"result": {"status": "observed"}},
+                content=[SimpleNamespace(text="{")],
+                isError=False,
+            )
+
+    def target_guard():
+        if failure_stage == "target":
+            raise OSError("host identity unavailable")
+
+    target = SimpleNamespace(
+        config={"port": 61172},
+        artifacts=tmp_path / "missing" if failure_stage == "persist" else tmp_path,
+        guard=target_guard,
+    )
+    monkeypatch.setattr(native_smoke, "stdio_client", fake_stdio)
+    monkeypatch.setattr(native_smoke, "ClientSession", Session)
+    with pytest.raises((OSError, ValueError)):
+        asyncio.run(native_smoke.probe(target, {}))
+    assert dispatched == ([] if failure_stage == "target" else ["status"])
+    assert guard.stopped
+    with pytest.raises(native_smoke.NativeRunStopped):
+        guard.before_call()
+
+
+def test_cancelled_native_attempt_keeps_uncertainty_latched():
+    guard = native_smoke.NativeOutcomeGuard()
+    cancellation = asyncio.CancelledError()
+    with pytest.raises(asyncio.CancelledError) as caught:
+        with guard.attempt():
+            raise cancellation
+    assert caught.value is cancellation
+    assert guard.stopped
+    with pytest.raises(native_smoke.NativeRunStopped):
+        with guard.attempt():
+            pytest.fail("A caught cancellation must not reopen native admission")
