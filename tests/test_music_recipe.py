@@ -7,7 +7,7 @@ import pytest
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("transition", ["recording_started", "project_changed", "safety_unobserved", "creation_unknown"])
+@pytest.mark.parametrize("transition", ["recording_started", "project_changed", "project_unobserved", "safety_unobserved", "creation_unknown"])
 async def test_recipe_stops_after_session_changes_during_creation(tmp_path, monkeypatch, transition):
     spec = importlib.util.spec_from_file_location("grid_music_recipe", Path(__file__).resolve().parents[1] / "examples/grid_music.py")
     recipe = importlib.util.module_from_spec(spec)
@@ -23,9 +23,14 @@ async def test_recipe_stops_after_session_changes_during_creation(tmp_path, monk
         async def call(self, method, params):
             nonlocal created
             if method == "status":
-                return {"status": "observed", "projectName": "Other" if created and transition == "project_changed" else "Disposable"}
+                return {"status": "observed", "projectName": "Disposable"}
             if method == "transport.get":
-                return {"status": "observed", "playing": False,
+                project_name = "Disposable"
+                if created and transition == "project_changed":
+                    project_name = "Other"
+                elif created and transition == "project_unobserved":
+                    project_name = None
+                return {"status": "observed", "projectName": project_name, "playing": False,
                         "arrangerRecordEnabled": None if created and transition == "safety_unobserved" else created and transition == "recording_started",
                         "arrangerAutomationWriteEnabled": False, "clipLauncherAutomationWriteEnabled": False}
             if method == "tracks.list":

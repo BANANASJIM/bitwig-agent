@@ -74,11 +74,10 @@ async def create(args: argparse.Namespace) -> int:
         return result
 
     async def safety_guard() -> None:
-        state = await call("status")
-        if state.get("projectName") != args.project:
+        transport = await call("transport.get")
+        if transport.get("projectName") != args.project:
             raise RuntimeError("Active project name changed; refusing further writes")
 
-        transport = await call("transport.get")
         if any(transport.get(key) is not False for key in ("arrangerRecordEnabled",
                                                          "arrangerAutomationWriteEnabled",
                                                          "clipLauncherAutomationWriteEnabled")):

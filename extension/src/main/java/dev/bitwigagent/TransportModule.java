@@ -135,6 +135,7 @@ final class TransportModule implements HostModule {
 
     private JsonObject snapshot() {
         JsonObject result = HostServices.observed();
+        result.addProperty("projectName", s.application.projectName().get());
         result.addProperty("scope", "project_transport_observed_values");
         for (Map.Entry<String, Sample> entry : values.entrySet()) {
             require(entry.getKey());

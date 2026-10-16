@@ -20,7 +20,7 @@ from bitwig_agent.client import BridgeClient, BridgeError, configured_port
 
 def create_server(client: BridgeClient | None = None) -> Server:
     bridge = client if client is not None else BridgeClient(configured_port())
-    server = Server("Bitwig Agent", version="0.1.0", instructions="Discover capabilities and tracks.list first. Our indices are zero-based. Use exact discovered targets and inspect bounded windows and verification. Timeouts are not cancellation; reconcile unknown outcomes before another write. No automatic retries or GUI fallback.")
+    server = Server("Bitwig Agent", version="0.1.0", instructions="Discover capabilities and tracks.list first. Our indices are zero-based. Use exact discovered targets and inspect bounded windows and verification. Timeouts are not cancellation; reconcile unknown outcomes before another write. No automatic retries. The agent may use Computer Use for API gaps; never blindly repeat an uncertain write through the GUI.")
 
     @server.list_tools()
     async def list_tools() -> list[Tool]:
@@ -45,7 +45,7 @@ def create_server(client: BridgeClient | None = None) -> Server:
         except (ValueError, TypeError) as exc:
             payload = {"error": {"code": "invalid_params", "message": str(exc), "outcome": "not_dispatched"}}
             failed = True
-        return CallToolResult(content=[TextContent(type="text", text=json.dumps(payload, allow_nan=False))], structuredContent=payload, isError=failed)
+        return CallToolResult(content=[TextContent(type="text", text=json.dumps(payload, allow_nan=False, separators=(",", ":")))], structuredContent=payload, isError=failed)
 
     return server
 
