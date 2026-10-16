@@ -10,8 +10,7 @@ import sys
 import pytest
 
 
-POLICY = (Path(__file__).resolve().parents[1] / "runs/2026-10-15-toolkit/"
-          "panel-layer-native/semantic-mix-v2.py")
+POLICY = Path(__file__).resolve().parents[1] / "scripts/evidence_mix.py"
 spec = importlib.util.spec_from_file_location("native_mix_policy", POLICY)
 mix_policy = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mix_policy)
@@ -75,15 +74,10 @@ def test_audio_evidence_binds_hashes_to_consumed_pcm(tmp_path, monkeypatch, repl
     np = pytest.importorskip("numpy", reason="Requires the native-music dependency group")
     sf = pytest.importorskip("soundfile", reason="Requires the native-music dependency group")
     pytest.importorskip("scipy.signal", reason="Requires the native-music dependency group")
-    repo = Path(__file__).resolve().parents[1]
-    folder = repo / "runs/2026-10-15-toolkit/e2e/layer-direct-native"
-    def load(name, path):
-        spec = importlib.util.spec_from_file_location(name, path)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        return module
-    audio = load("layer_audio_integrity", folder / "audio_evidence.py")
-    helper = load("layer_audio_integrity_scope", folder / "helper-position-fixed.py")
+    path = Path(__file__).resolve().parents[1] / "scripts/evidence_audio.py"
+    spec = importlib.util.spec_from_file_location("audio_evidence", path)
+    audio = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(audio)
     time = np.arange(16384) / 48000
     signal = np.column_stack((0.08 * np.sin(2 * np.pi * 261.625565 * time),
                               0.07 * np.sin(2 * np.pi * 196 * time)))
@@ -113,14 +107,11 @@ def test_audio_evidence_binds_hashes_to_consumed_pcm(tmp_path, monkeypatch, repl
             (source if replacement == "input" else render).write_bytes(alternate_bytes)
         return decoded
     monkeypatch.setattr(sf, "read", replace_after_decode)
-    scope = helper.Scope()
-    scope.out = tmp_path
     if replacement == "input":
         with pytest.raises(ValueError):
-            audio.analyze(scope)
-        assert scope.guard.stopped is True
+            audio.analyze(tmp_path)
     else:
-        result = audio.analyze(scope)
+        result = audio.analyze(tmp_path)
         assert result["passed"] is True
         assert result["cases"]["control"]["sha256"] == original_hash
         assert hashlib.sha256(render.read_bytes()).hexdigest() != original_hash
