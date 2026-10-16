@@ -1,5 +1,6 @@
 """Pure evidence-policy regressions; no native host, desktop or project access."""
 import copy
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -67,3 +68,60 @@ def test_unknown_send_values_and_readiness_remain_protected():
     assert result["musicalEqual"] is True
     assert result["selectionAndAggregateEqual"] is False
     assert result["beforeSelectionAndAggregate"][0]["observationsComplete"] is False
+
+@pytest.mark.parametrize("replacement", ["input", "render"])
+def test_audio_evidence_binds_hashes_to_consumed_pcm(tmp_path, monkeypatch, replacement):
+    """Synthetic PCM only; path replacement must not forge accepted evidence."""
+    np = pytest.importorskip("numpy", reason="Requires the native-music dependency group")
+    sf = pytest.importorskip("soundfile", reason="Requires the native-music dependency group")
+    pytest.importorskip("scipy.signal", reason="Requires the native-music dependency group")
+    repo = Path(__file__).resolve().parents[1]
+    folder = repo / "runs/2026-10-15-toolkit/e2e/layer-direct-native"
+    def load(name, path):
+        spec = importlib.util.spec_from_file_location(name, path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    audio = load("layer_audio_integrity", folder / "audio_evidence.py")
+    helper = load("layer_audio_integrity_scope", folder / "helper-position-fixed.py")
+    time = np.arange(16384) / 48000
+    signal = np.column_stack((0.08 * np.sin(2 * np.pi * 261.625565 * time),
+                              0.07 * np.sin(2 * np.pi * 196 * time)))
+    source, render, alternate = (tmp_path / name for name in ("source.wav", "render.wav", "alternate.wav"))
+    sf.write(source, signal, 48000, subtype="PCM_24")
+    sf.write(render, signal, 48000, subtype="PCM_24")
+    sf.write(alternate, signal * 0.5, 48000, subtype="PCM_24")
+    original_hash = hashlib.sha256(render.read_bytes()).hexdigest()
+    alternate_bytes = alternate.read_bytes()
+    declaration = {
+        "inputPath": str(source),
+        "inputSha256": hashlib.sha256(alternate_bytes if replacement == "input" else source.read_bytes()).hexdigest(),
+        "renderPaths": {"control": str(render)}, "gains": {"control": 1.0}, "sealedTimeNs": 0,
+        "limits": {"gainAbsoluteError": 0.001, "correlationMinimum": 0.99999,
+                   "residualRelativeMaximum": 0.0001, "clippingAbsolute": 0.9,
+                   "minOverlapFrames": 8193, "inputRmsMinimum": 0.01},
+    }
+    declaration_bytes = json.dumps(declaration).encode()
+    (tmp_path / "music-predeclaration.json").write_bytes(declaration_bytes)
+    real_read = sf.read
+    reads = 0
+    def replace_after_decode(file, *args, **kwargs):
+        nonlocal reads
+        decoded = real_read(file, *args, **kwargs)
+        reads += 1
+        if reads == (1 if replacement == "input" else 2):
+            (source if replacement == "input" else render).write_bytes(alternate_bytes)
+        return decoded
+    monkeypatch.setattr(sf, "read", replace_after_decode)
+    scope = helper.Scope()
+    scope.out = tmp_path
+    if replacement == "input":
+        with pytest.raises(ValueError):
+            audio.analyze(scope)
+        assert scope.guard.stopped is True
+    else:
+        result = audio.analyze(scope)
+        assert result["passed"] is True
+        assert result["cases"]["control"]["sha256"] == original_hash
+        assert hashlib.sha256(render.read_bytes()).hexdigest() != original_hash
+        assert result["declarationSha256"] == hashlib.sha256(declaration_bytes).hexdigest()
