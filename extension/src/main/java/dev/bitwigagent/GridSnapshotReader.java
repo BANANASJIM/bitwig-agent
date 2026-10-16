@@ -9,13 +9,13 @@ import static dev.bitwigagent.HostServices.failure;
 final class GridSnapshotReader {
     static final int MAX_MODULES = 4096, MAX_CHILDREN = 256, MAX_OPTIONS = 256, MAX_CATALOG = 16384;
     static final int MAX_ITEMS = 16384, MAX_TEXT = 1024;
-    enum Kind { DEVICE, TRACK, ALIASED_TRACK, CHANNEL_ALIAS, MODULE, INPUT, OUTPUT, PARAMETER, FLOAT, BOOLEAN, INTEGER, ENUM, PANEL_BOOLEAN, BIPOLAR_FLOAT, ENTRY, OPTION }
-    private static final Kind[] PARAMETER_KINDS = {Kind.FLOAT, Kind.BOOLEAN, Kind.INTEGER, Kind.ENUM, Kind.PANEL_BOOLEAN};
+    enum Kind { DEVICE, TRACK, ALIASED_TRACK, CHANNEL_ALIAS, MODULE, INPUT, OUTPUT, PARAMETER, FLOAT, BOOLEAN, INTEGER, ENUM, PANEL_BOOLEAN, PANEL_STRING, BIPOLAR_FLOAT, ENTRY, OPTION }
+    private static final Kind[] PARAMETER_KINDS = {Kind.FLOAT, Kind.BOOLEAN, Kind.INTEGER, Kind.ENUM, Kind.PANEL_BOOLEAN, Kind.PANEL_STRING};
     enum Field {
         TARGET, GRAPH, EXECUTOR, MODULES, INSTANCE_ID, LOCAL_KEY, X, Y, WIDTH, HEIGHT, DESCRIPTOR, TYPE_ID,
         OWNER_TRACK, TRACK_ALIAS, TRACK_UUID, ALIAS_UUID,
         INPUTS, OUTPUTS, CHILDREN, MODULE_GRAPH, OWNER_MODULE, INPUT_SOURCE, INPUT_KEY, OUTPUT_KEY,
-        PATH, FLOAT_VALUE, FLOAT_DEFINITION, FLOAT_MIN, FLOAT_MAX, BOOLEAN_VALUE, BIPOLAR_PANEL,
+        PATH, FLOAT_VALUE, FLOAT_DEFINITION, FLOAT_MIN, FLOAT_MAX, BOOLEAN_VALUE, STRING_VALUE, BIPOLAR_PANEL,
         INTEGER_VALUE, INTEGER_DEFINITION, INTEGER_MIN, INTEGER_MAX, ENUM_VALUE, ENUM_DEFINITION,
         OPTIONS, OPTION_VALUE, OPTION_LABEL, DISPLAY, CATALOG, ENTRY_ID, ENTRY_NAME, ENTRY_KIND,
         MODULE_NAME, CUSTOM_NAME, TYPE_ENTRY, TYPE_NAME, PARAMETER_ID, PARAMETER_NAME, SHORT_NAME,
@@ -299,7 +299,7 @@ final class GridSnapshotReader {
         Object found = null;
         for (Object child : collect(Field.CHILDREN, module, MAX_CHILDREN, state)) {
             state.check();
-            if (!a.is(Kind.PARAMETER, child) && !a.is(Kind.PANEL_BOOLEAN, child)) continue;
+            if (!a.is(Kind.PARAMETER, child) && !a.is(Kind.PANEL_BOOLEAN, child) && !a.is(Kind.PANEL_STRING, child)) continue;
             a.requireModelThread(child);
             if (!id.equals(text(a.read(Field.PARAMETER_ID, child)))) continue;
             if (found != null) throw failure("stale_context", "Requested parameter ID is ambiguous.");
@@ -442,21 +442,24 @@ final class GridSnapshotReader {
         }
         a.requireModelThread(child);
         if (a.read(Field.OWNER_MODULE, child) != module) throw failure("stale_context", "Parameter belongs to a different module.");
-        boolean panel = kind == Kind.PANEL_BOOLEAN;
+        boolean panel = kind == Kind.PANEL_BOOLEAN || kind == Kind.PANEL_STRING;
+        String panelFamily = kind == Kind.PANEL_STRING ? "string_panel" : "boolean_panel";
         result.addProperty("supported", true);
-        result.addProperty("kind", panel ? "boolean" : kind.name().toLowerCase(Locale.ROOT));
+        result.addProperty("kind", panel ? (kind == Kind.PANEL_STRING ? "string" : "boolean") : kind.name().toLowerCase(Locale.ROOT));
         result.addProperty("path", text(a.read(Field.PATH, child)));
         if (panel) {
-            result.addProperty("controlFamily", "boolean_panel");
+            result.addProperty("controlFamily", panelFamily);
             result.addProperty("parameterId", text(a.read(Field.PARAMETER_ID, child)));
             result.add("name", JsonNull.INSTANCE); result.add("shortName", JsonNull.INSTANCE);
-            state.unsupported("boolean_panel_labels_unmapped");
+            state.unsupported(panelFamily + "_labels_unmapped");
         } else {
             metadataText(result, "parameterId", Field.PARAMETER_ID, child, Metadata.PARAMETER_NAMES, state, "parameter_id");
             metadataText(result, "name", Field.PARAMETER_NAME, child, Metadata.PARAMETER_NAMES, state, "parameter_name");
             metadataText(result, "shortName", Field.SHORT_NAME, child, Metadata.PARAMETER_NAMES, state, "parameter_short_name");
         }
         switch (kind) {
+            case PANEL_STRING:
+                result.addProperty("value", text(a.read(Field.STRING_VALUE, child))); break;
             case FLOAT: {
                 double value = finite(a.read(Field.FLOAT_VALUE, child));
                 Object definition = a.read(Field.FLOAT_DEFINITION, child);
@@ -501,7 +504,7 @@ final class GridSnapshotReader {
             }
             default: throw new AssertionError(kind);
         }
-        if (panel) { result.add("display", JsonNull.INSTANCE); state.unsupported("boolean_panel_display_unmapped"); }
+        if (panel) { result.add("display", JsonNull.INSTANCE); state.unsupported(panelFamily + "_display_unmapped"); }
         else if (a.displayAvailable()) result.addProperty("display", text(a.read(Field.DISPLAY, child)));
         else { result.add("display", JsonNull.INSTANCE); state.unsupported("parameter_display_unavailable"); }
         return result;

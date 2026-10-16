@@ -11,7 +11,7 @@ final class GridParameterContext {
     };
     enum Field {
         DELETED, CONTEXT, PROJECT, PARAMETER_PROJECT, ROOT, INITIALIZED, DISPOSED, CONTEXT_THREAD,
-        CURRENT_DT, DEFAULT_DT, DT_CONTEXT, LICENSED, GUI_FLOAT, GUI_INTEGER, GUI_ENUM, GUI_BOOLEAN, GUI_PANEL_BOOLEAN,
+        CURRENT_DT, DEFAULT_DT, DT_CONTEXT, LICENSED, GUI_FLOAT, GUI_INTEGER, GUI_ENUM, GUI_BOOLEAN, GUI_PANEL_BOOLEAN, GUI_PANEL_STRING,
         SETTABLE, CIU, TOUCHED, UNDO, UNDO_EXECUTING, UNDO_ACTIVE, UNDO_ICL, LOCK, LOCK_OWNER
     }
     interface Access {
@@ -29,7 +29,7 @@ final class GridParameterContext {
     private Capture capture(Object device, Object graph, Object module, Object parameter,
             GridSnapshotReader.Kind kind, Runnable check, boolean serialize, boolean writing) {
         check.run();
-        boolean panel = kind == GridSnapshotReader.Kind.PANEL_BOOLEAN;
+        boolean panel = kind == GridSnapshotReader.Kind.PANEL_BOOLEAN || kind == GridSnapshotReader.Kind.PANEL_STRING;
         Object project = required(a.read(Field.PARAMETER_PROJECT, parameter), "Owning project");
         Object context = attached(parameter);
         JsonObject lifecycle = serialize ? new JsonObject() : null;
@@ -63,6 +63,7 @@ final class GridParameterContext {
             case ENUM: wrapperField = Field.GUI_ENUM; break;
             case BOOLEAN: wrapperField = Field.GUI_BOOLEAN; break;
             case PANEL_BOOLEAN: wrapperField = Field.GUI_PANEL_BOOLEAN; break;
+            case PANEL_STRING: wrapperField = Field.GUI_PANEL_STRING; break;
             default: throw failure("grid_unavailable", "Parameter context family is unsupported.");
         }
         // These getters construct fresh wrappers; wrapper identity is not native model identity.

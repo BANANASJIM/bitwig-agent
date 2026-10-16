@@ -13,10 +13,12 @@ final class Bitwig613GridParameterContext implements GridParameterContext.Access
     private final Bitwig613GridAdapter bindings;
     private final Class<?> project, defaultContext;
     private final Bitwig613GridBooleanPanelAccess panels;
+    private final Bitwig613GridStringPanelAccess strings;
 
-    Bitwig613GridParameterContext(Bitwig613GridAdapter bindings, Bitwig613GridBooleanPanelAccess panels)
+    Bitwig613GridParameterContext(Bitwig613GridAdapter bindings, Bitwig613GridBooleanPanelAccess panels,
+            Bitwig613GridStringPanelAccess strings)
             throws ReflectiveOperationException {
-        this.bindings = bindings; this.panels = panels;
+        this.bindings = bindings; this.panels = panels; this.strings = strings;
         Class<?> model = bindings.type(R + "fJC"), context = bindings.type(R + "HLm");
         Class<?> dt = bindings.type(R + "Dt"), undo = bindings.type("dfW"), lock = bindings.type(R + "IoW");
         project = bindings.type("com.bitwig.flt.document.core.master.WN2");
@@ -57,6 +59,10 @@ final class Bitwig613GridParameterContext implements GridParameterContext.Access
         if (field == GUI_PANEL_BOOLEAN) {
             if (panels == null) throw failure("grid_unavailable", "Boolean panel property binding unavailable.");
             return panels.property(object);
+        }
+        if (field == GUI_PANEL_STRING) {
+            if (strings == null) throw failure("grid_unavailable", "String panel property binding unavailable.");
+            return strings.property(object);
         }
         Method reader = readers.get(field);
         if (reader == null) throw failure("grid_unavailable", "Unbound parameter context reader: " + field);

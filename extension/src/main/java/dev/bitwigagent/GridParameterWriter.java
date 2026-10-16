@@ -27,6 +27,8 @@ final class GridParameterWriter {
     JsonObject set(Object proxy, UUID trackId, UUID moduleId, String parameterId,
             Request request, Runnable check, Runnable dispatch) {
         GridSnapshotReader.ParameterBinding binding = values.bindParameter(proxy, trackId, moduleId, parameterId, check);
+        if (binding.kind == GridSnapshotReader.Kind.PANEL_STRING)
+            throw failure("grid_unavailable", "String panels are read-only; no string write operation is supported.");
         if (binding.kind == GridSnapshotReader.Kind.PANEL_BOOLEAN) {
             if (panels == null) throw failure("grid_unavailable", "Boolean panel write bindings are unavailable.");
             return panels.set(binding, request, check, dispatch);

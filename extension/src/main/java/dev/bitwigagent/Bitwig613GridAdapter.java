@@ -35,6 +35,8 @@ final class Bitwig613GridAdapter implements GridAdapter, GridSnapshotReader.Acce
     private GridParameterWriter parameterWriter;
     private Bitwig613GridBooleanPanelAccess booleanPanels;
     private String booleanPanelError;
+    private Bitwig613GridStringPanelAccess stringPanels;
+    private String stringPanelError;
     private String moduleMoveError, moduleDeleteError;
     private GridModuleWriter moduleWriter;
     private String connectionError;
@@ -70,9 +72,14 @@ final class Bitwig613GridAdapter implements GridAdapter, GridSnapshotReader.Acce
             try { bindParameters(); } catch (ReflectiveOperationException | RuntimeException | LinkageError error) { parameterError = diagnostic(error); }
             try { booleanPanels = new Bitwig613GridBooleanPanelAccess(this); }
             catch (ReflectiveOperationException | RuntimeException | LinkageError error) { booleanPanelError = diagnostic(error); }
+            try { stringPanels = new Bitwig613GridStringPanelAccess(this); }
+            catch (ReflectiveOperationException | RuntimeException | LinkageError error) { stringPanelError = diagnostic(error); }
             try { bind(DISPLAY, type("iTc"), "Fho", String.class); }
             catch (ReflectiveOperationException | RuntimeException | LinkageError error) { displayError = diagnostic(error); }
-        } else { parameterError = "Structure binding unavailable."; displayError = parameterError; booleanPanelError = parameterError; }
+        } else {
+            parameterError = "Structure binding unavailable."; displayError = parameterError;
+            booleanPanelError = parameterError; stringPanelError = parameterError;
+        }
         for (GridSnapshotReader.Metadata metadata : GridSnapshotReader.METADATA) {
             if (structureError != null) { metadataErrors.put(metadata, "Structure binding unavailable."); continue; }
             try { bindMetadata(metadata); }
@@ -83,7 +90,7 @@ final class Bitwig613GridAdapter implements GridAdapter, GridSnapshotReader.Acce
         else try {
             Class<?> parameter = kind(GridSnapshotReader.Kind.PARAMETER, "Tty");
             bind(PARAMETER_ID, parameter, "aA_", String.class);
-            parameterContexts = new GridParameterContext(new Bitwig613GridParameterContext(this, booleanPanels));
+            parameterContexts = new GridParameterContext(new Bitwig613GridParameterContext(this, booleanPanels, stringPanels));
         } catch (ReflectiveOperationException | RuntimeException | LinkageError error) { inspectionError = diagnostic(error); }
         if (inspectionError != null) writeError = "Required parameter inspection bindings unavailable.";
         else try {
@@ -250,6 +257,11 @@ final class Bitwig613GridAdapter implements GridAdapter, GridSnapshotReader.Acce
         panels.addProperty("nativeUndoAwareOperation", true); panels.addProperty("undoGroupingVerified", false);
         panels.addProperty("engineAcknowledgement", false);
         result.add("booleanPanels", panels);
+        JsonObject strings = capability(gateError == null ? stringPanelError : gateError,
+                "exact_QEE_native_string_read_only_no_scalar_labels_display_or_touch_license_flags");
+        strings.addProperty("inspectionAvailable", gateError == null && stringPanelError == null && inspectionError == null);
+        strings.addProperty("writeAvailable", false);
+        result.add("stringPanels", strings);
         for (GridSnapshotReader.Metadata metadata : GridSnapshotReader.METADATA)
             result.add(metadata.key, capability(gateError == null ? metadataErrors.get(metadata) : gateError, metadata.coverage));
         String quarantine = TOPOLOGY_QUARANTINE.blockedReason();
@@ -348,6 +360,7 @@ final class Bitwig613GridAdapter implements GridAdapter, GridSnapshotReader.Acce
     }
     @Override public boolean is(GridSnapshotReader.Kind kind, Object object) {
         if (kind == GridSnapshotReader.Kind.PANEL_BOOLEAN) return booleanPanels != null && booleanPanels.isPanel(object);
+        if (kind == GridSnapshotReader.Kind.PANEL_STRING) return stringPanels != null && stringPanels.isPanel(object);
         if (kind == GridSnapshotReader.Kind.BIPOLAR_FLOAT) return booleanPanels != null && booleanPanels.isBipolar(object);
         Class<?> type = kinds.get(kind); return type != null && type.isInstance(object);
     }
@@ -359,6 +372,10 @@ final class Bitwig613GridAdapter implements GridAdapter, GridSnapshotReader.Acce
         if (booleanPanels != null && booleanPanels.isPanel(object)) {
             if (field == PARAMETER_ID) return booleanPanels.identifier(object);
             if (field == BOOLEAN_VALUE) return booleanPanels.value(object);
+        }
+        if (stringPanels != null && stringPanels.isPanel(object)) {
+            if (field == PARAMETER_ID) return stringPanels.identifier(object);
+            if (field == STRING_VALUE) return stringPanels.value(object);
         }
         Method method = readers.get(field);
         if (method == null) throw failure("grid_unavailable", "Unbound native reader: " + field);

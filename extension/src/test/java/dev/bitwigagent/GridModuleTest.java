@@ -22,6 +22,7 @@ public final class GridModuleTest {
         parameterInspectionRejectsInvalidTargetsAndQueuedRaces();
         writesRequireStrictObservedStoppedInputs();
         queuedWritesRejectSafetyAndTargetTransitions();
+        stringWriteSchemaRejectsBeforeScheduling();
         nativeCallbacksNeverReadControllerSafetyGetters();
         everyPostDispatchBoundaryKeepsUnknownOutcome();
         topologyArgumentsRejectBeforeScheduling();
@@ -218,6 +219,20 @@ public final class GridModuleTest {
             TransportMixFixture.error(unsafe.startWrite(), "unsafe_state");
             check(unsafe.adapter.writer.calls == 0 && unsafe.adapter.tasks.isEmpty(), "active observed transport mode blocks native scheduling");
         }
+    }
+
+    private static void stringWriteSchemaRejectsBeforeScheduling() {
+        Fixture f = new Fixture();
+        JsonObject stringWrite = writeTarget();
+        stringWrite.addProperty("expectedKind", "string");
+        stringWrite.addProperty("expectedValue", "before"); stringWrite.addProperty("value", "after");
+        TransportMixFixture.error(f.host.submit(f.module, "grid.parameters.set", stringWrite), "invalid_params");
+        for (String field : List.of("expectedValue", "value")) {
+            JsonObject scalarWrite = writeTarget(); scalarWrite.addProperty(field, "true");
+            TransportMixFixture.error(f.host.submit(f.module, "grid.parameters.set", scalarWrite), "invalid_params");
+        }
+        check(f.host.tasks.isEmpty() && f.adapter.tasks.isEmpty() && f.adapter.writer.calls == 0,
+                "readable string family does not widen scalar write kind/value schema or schedule native work");
     }
 
     private static void queuedWritesRejectSafetyAndTargetTransitions() {

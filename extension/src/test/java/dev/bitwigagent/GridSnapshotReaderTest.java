@@ -43,6 +43,10 @@ public final class GridSnapshotReaderTest {
         rawParameterLiveGuardChanges();
         rawParameterMutationFailuresRemainUnknown();
         booleanPanelInspectionKeepsScalarApplicabilityDistinct();
+        stringPanelReadsPreserveTextAndFamilyBoundaries();
+        stringPanelBoundsAndSelectedControlIsolation();
+        stringPanelIdentityAndLateGuards();
+        stringPanelsRejectScalarWritesBeforeAuthorization();
         booleanPanelWritesReportNativeCoupledChanges();
         booleanPanelGuardsCouplingAndLateFailures();
         moduleFootprintsAreOptionalReadMetadata();
@@ -655,6 +659,148 @@ public final class GridSnapshotReaderTest {
         WriterFixture early = new WriterFixture(); early.cancelled = true;
         error = early.failure(request("boolean", "true", "false"));
         check(error.outcome.equals("not_applied") && early.calls == 0, "before-dispatch cancellation prevents mutation");
+    }
+
+    private static Node stringPanel(Fixture f, String id, Object value) {
+        Node panel = new Node(PANEL_STRING).put(OWNER_MODULE, f.first).put(PATH, "panel/text")
+                .put(PARAMETER_ID, id).put(STRING_VALUE, value);
+        panel.forbidden.addAll(List.of(PARAMETER_NAME, SHORT_NAME, DISPLAY, FLOAT_VALUE, FLOAT_DEFINITION,
+                BOOLEAN_VALUE, INTEGER_VALUE, INTEGER_DEFINITION, ENUM_VALUE, ENUM_DEFINITION, BIPOLAR_PANEL));
+        return panel;
+    }
+
+    private static ContextFixture stringContext(Node panel) {
+        ContextFixture context = new ContextFixture();
+        context.values.put(GridParameterContext.Field.GUI_PANEL_STRING, (Supplier<Object>) Object::new);
+        Supplier<Object> forbidden = () -> { throw new AssertionError("String panel used scalar permission or GUI property"); };
+        for (GridParameterContext.Field field : List.of(GridParameterContext.Field.LICENSED,
+                GridParameterContext.Field.TOUCHED, GridParameterContext.Field.GUI_BOOLEAN,
+                GridParameterContext.Field.GUI_FLOAT, GridParameterContext.Field.GUI_INTEGER, GridParameterContext.Field.GUI_ENUM))
+            context.override(panel, field, forbidden);
+        return context;
+    }
+
+    private static void stringPanelReadsPreserveTextAndFamilyBoundaries() {
+        Fixture f = new Fixture();
+        Node panel = stringPanel(f, "TEXT_ID", "");
+        Node scalar = f.parameter(BOOLEAN, f.first).put(BOOLEAN_VALUE, true).put(PARAMETER_ID, "SWITCH_ID");
+        Node booleanPanel = new Node(PANEL_BOOLEAN).put(OWNER_MODULE, f.first).put(PATH, "panel/switch")
+                .put(PARAMETER_ID, "MODE_ID").put(BOOLEAN_VALUE, false);
+        f.first.put(CHILDREN, List.of(scalar, panel, booleanPanel));
+        ContextFixture context = stringContext(panel);
+        context.values.put(GridParameterContext.Field.SETTABLE, false);
+        context.values.put(GridParameterContext.Field.INITIALIZED, false);
+        for (String text : List.of("", " \t\n ", "Café e\u0301 \uD834\uDD1E \u0000 end")) {
+            panel.put(STRING_VALUE, text);
+            JsonObject result = inspect(f, context, "TEXT_ID");
+            JsonObject value = result.getAsJsonObject("parameter");
+            check(value.get("supported").getAsBoolean() && value.get("kind").getAsString().equals("string")
+                    && value.get("controlFamily").getAsString().equals("string_panel"), "non-scalar panel is a readable string family");
+            check(value.get("value").getAsString().equals(text) && value.get("parameterId").getAsString().equals("TEXT_ID")
+                    && value.get("path").getAsString().equals("panel/text"), "string contents and identity survive without trimming or normalization");
+            check(value.get("name").isJsonNull() && value.get("shortName").isJsonNull() && value.get("display").isJsonNull()
+                    && has(result, "string_panel_labels_unmapped") && has(result, "string_panel_display_unmapped"),
+                    "unmapped metadata stays null with explicit reasons");
+            check(!value.has("minimum") && !value.has("maximum") && !value.has("options") && !value.has("numericUnit"),
+                    "string controls do not invent scalar ranges, options or units");
+            JsonObject edit = result.getAsJsonObject("editContext");
+            check(!edit.getAsJsonObject("guiProperty").get("isSettable").getAsBoolean()
+                    && !edit.getAsJsonObject("attachedContext").get("initialized").getAsBoolean(),
+                    "non-writable context and property flags remain read observations, not permission prerequisites");
+            check(!edit.get("scalarLicenseTouchApplicable").getAsBoolean() && edit.get("effectivelyLicensed").isJsonNull()
+                    && edit.get("parameterTouched").isJsonNull(), "scalar licensing and touch do not apply to string panels");
+            check(!result.has("coupledParameter") && !result.has("coupledEditContext"),
+                    "string inspection needs no boolean-panel consumer and fabricates no dependent coverage");
+            JsonArray graph = f.read(0, 64, true).getAsJsonArray("modules").get(0).getAsJsonObject().getAsJsonArray("parameters");
+            check(graph.size() == 3 && graph.get(1).equals(value)
+                    && graph.get(0).getAsJsonObject().get("value").getAsBoolean()
+                    && !graph.get(2).getAsJsonObject().get("value").getAsBoolean(),
+                    "mixed scalar/boolean-panel/string graph retains each independent typed value");
+        }
+        context.values.put(GridParameterContext.Field.GUI_PANEL_STRING, null);
+        expect("grid_unavailable", () -> inspect(f, context, "TEXT_ID"));
+        check(f.read(0, 64, true).getAsJsonArray("modules").size() == 2,
+                "missing string property inspection does not disable graph reads");
+    }
+
+    private static void stringPanelBoundsAndSelectedControlIsolation() {
+        Fixture f = new Fixture();
+        String supplementary = new String(Character.toChars(0x1D11E));
+        Node panel = stringPanel(f, "TEXT_ID", supplementary.repeat(512));
+        Node scalar = f.parameter(BOOLEAN, f.first).put(BOOLEAN_VALUE, true);
+        f.first.put(CHILDREN, List.of(panel, scalar));
+        ContextFixture context = stringContext(panel);
+        check(inspect(f, context, "TEXT_ID").getAsJsonObject("parameter").get("value").getAsString()
+                .equals(supplementary.repeat(512)), "exactly 1024 UTF-16 units remain readable, including supplementary characters");
+        panel.put(STRING_VALUE, supplementary.repeat(512) + "x");
+        expect("grid_bounds_exceeded", () -> inspect(f, context, "TEXT_ID"));
+        expect("grid_bounds_exceeded", () -> f.read(0, 64, true));
+        panel.forbidden.add(STRING_VALUE);
+        check(f.read(0, 64, false).getAsJsonArray("modules").size() == 2,
+                "structure-only snapshots never read oversized string values");
+        check(inspect(f, context, "LOCAL_ID").getAsJsonObject("parameter").get("value").getAsBoolean(),
+                "selected scalar inspection never reads an unrelated oversized string");
+        panel.forbidden.remove(STRING_VALUE);
+        for (Object invalid : Arrays.asList(null, Boolean.TRUE, 42)) {
+            panel.put(STRING_VALUE, invalid);
+            expect("grid_unavailable", () -> inspect(f, context, "TEXT_ID"));
+            expect("grid_unavailable", () -> f.read(0, 64, true));
+        }
+    }
+
+    private static void stringPanelIdentityAndLateGuards() {
+        Fixture f = new Fixture(); Node panel = stringPanel(f, "", "empty identifier");
+        f.first.put(CHILDREN, List.of(panel)); ContextFixture context = stringContext(panel);
+        check(inspect(f, context, "").getAsJsonObject("parameter").get("value").getAsString().equals("empty identifier"),
+                "unique empty native string identifier remains addressable");
+        Node collision = f.parameter(BOOLEAN, f.first).put(PARAMETER_ID, "").put(BOOLEAN_VALUE, false);
+        f.first.put(CHILDREN, List.of(panel, collision));
+        expect("stale_context", () -> inspect(f, context, ""));
+        collision.kinds.clear(); collision.kinds.add(PANEL_BOOLEAN);
+        expect("stale_context", () -> inspect(f, context, ""));
+        f.first.put(CHILDREN, List.of(panel));
+        panel.put(OWNER_MODULE, f.second);
+        expect("stale_context", () -> inspect(f, context, ""));
+        panel.put(OWNER_MODULE, f.first); panel.threadAllowed = false;
+        expect("grid_unavailable", () -> inspect(f, context, ""));
+        for (int change = 0; change < 5; change++) {
+            Fixture moved = new Fixture(); Node text = stringPanel(moved, "TEXT_ID", "before");
+            moved.first.put(CHILDREN, List.of(text)); ContextFixture c = stringContext(text); final int mode = change;
+            moved.afterValue = () -> {
+                if (mode == 0) moved.first.put(CHILDREN, List.of());
+                if (mode == 1) moved.proxy.put(TARGET, new Node(DEVICE));
+                if (mode == 2) moved.device.put(OWNER_TRACK, new Node(TRACK).put(TRACK_UUID, TRACK_ID));
+                if (mode == 3) c.values.put(GridParameterContext.Field.CONTEXT, new Object());
+                if (mode == 4) text.put(OWNER_MODULE, moved.second);
+            };
+            expect("stale_context", () -> inspect(moved, c, "TEXT_ID"));
+        }
+    }
+
+    private static void stringPanelsRejectScalarWritesBeforeAuthorization() {
+        Fixture f = new Fixture(); Node panel = stringPanel(f, "TEXT_ID", "read only");
+        panel.forbidden.add(STRING_VALUE); f.first.put(CHILDREN, List.of(panel));
+        ContextFixture context = stringContext(panel);
+        context.override(panel, GridParameterContext.Field.CONTEXT,
+                (Supplier<Object>) () -> { throw new AssertionError("String write captured edit context"); });
+        GridParameterWriter writer = new GridParameterWriter(f.reader, context.reader, new GridParameterWriter.Access() {
+            @Override public void requireSupported(Object parameter, GridSnapshotReader.Kind kind) {
+                throw new AssertionError("String write reached scalar authorization");
+            }
+            @Override public void setRaw(Object parameter, double value) {
+                throw new AssertionError("String write reached scalar mutation");
+            }
+        }, null);
+        for (GridParameterWriter.Request request : List.of(request("boolean", "true", "false"), request("boolean", "true", "true"))) {
+            try {
+                writer.set(f.proxy, TRACK_ID, new UUID(1, 1), "TEXT_ID", request, () -> {},
+                        () -> { throw new AssertionError("String write dispatched"); });
+                throw new AssertionError("String panel accepted a scalar write");
+            } catch (RpcException error) {
+                check(error.code.equals("grid_unavailable") && error.outcome.equals("not_applied"),
+                        "string panel rejects scalar writes and apparent no-ops before authorization");
+            }
+        }
     }
 
     private static void booleanPanelInspectionKeepsScalarApplicabilityDistinct() {
@@ -1485,6 +1631,7 @@ public final class GridSnapshotReaderTest {
     static final class Node {
         final Set<GridSnapshotReader.Kind> kinds = new HashSet<>();
         final Map<GridSnapshotReader.Field, Object> values = new EnumMap<>(GridSnapshotReader.Field.class);
+        final Set<GridSnapshotReader.Field> forbidden = EnumSet.noneOf(GridSnapshotReader.Field.class);
         boolean threadAllowed = true;
         Node(GridSnapshotReader.Kind... types) { kinds.addAll(Arrays.asList(types)); }
         Node put(GridSnapshotReader.Field field, Object value) { values.put(field, value); return this; }
@@ -1531,6 +1678,8 @@ public final class GridSnapshotReaderTest {
         }
         JsonObject read(int offset, int limit, boolean parameters) { return reader.snapshot(proxy, TRACK_ID, offset, limit, parameters, () -> {}); }
         @Override public Object read(GridSnapshotReader.Field field, Object object) {
+            if (object instanceof Node && ((Node) object).forbidden.contains(field))
+                throw new AssertionError("Forbidden native getter: " + field);
             if (failures.containsKey(field)) throw failures.get(field);
             if (field == CATALOG) { catalogReads++; return catalog; }
             if (field == TYPE_ENTRY) return types.get(object);
@@ -1538,7 +1687,7 @@ public final class GridSnapshotReaderTest {
             if (field == TARGET) targetReads++;
             if (field == TRACK_UUID || field == ALIAS_UUID) uuidReads++;
             Object value = ((Node) object).values.get(field);
-            if (field == FLOAT_VALUE || field == BOOLEAN_VALUE || field == INTEGER_VALUE || field == ENUM_VALUE) afterValue.run();
+            if (field == FLOAT_VALUE || field == BOOLEAN_VALUE || field == INTEGER_VALUE || field == ENUM_VALUE || field == STRING_VALUE) afterValue.run();
             if (field == MODULES || field == INPUTS || field == OUTPUTS || field == CHILDREN) {
                 if (value instanceof Supplier<?>) return ((Supplier<?>) value).get();
                 Stream<?> stream = ((List<?>) value).stream().onClose(() -> closed++);
