@@ -301,6 +301,7 @@ final class LauncherModule implements HostModule {
         guard(op, id, track);
         gridObservation = null;
         bindingGeneration++;
+        op.dispatched = true;
         slot.api.select();
         s.schedule(op, () -> awaitBinding(op, id, track, slot, index, p, method, end, false), 40);
     }

@@ -20,6 +20,7 @@ public final class LauncherModuleTest {
         createAndReadActualMusic();
         collisionsFailBeforeAnyWrite();
         identityAndDeadlineGuards();
+        selectionDispatchPreventsNotAppliedFailure();
         cursorLeaseDoesNotBlockLauncherReads();
         lateOrMissingObservationsRemainDispatched();
         explicitLaunchAndStopStates();
@@ -131,6 +132,22 @@ public final class LauncherModuleTest {
         f = new Fake(); f.slots[0].content = true;
         op = f.start("notes.edit", p); f.trackId = "22222222-2222-2222-2222-222222222222"; f.drain(op);
         expectFuture("stale_context", op); check(f.writes == 0, "track UUID change aborts cursor edit");
+    }
+
+    private static void selectionDispatchPreventsNotAppliedFailure() throws Exception {
+        Fake f = new Fake(); f.slots[1].content = true;
+        JsonObject p = window(); p.addProperty("slotIndex", 1);
+        check(f.selected == 0, "scenario starts with a different selected clip");
+        HostOperation op = f.start("notes.read", p);
+        check(f.selected == 1, "explicit note read already changed the selected clip");
+        f.trackId = "22222222-2222-2222-2222-222222222222";
+        f.drain(op);
+        expectFuture("stale_context", op);
+        check(f.writes == 0, "context failure occurs before any note edit");
+        try { op.result.join(); } catch (CompletionException error) {
+            check(((RpcException) error.getCause()).outcome.equals("unknown"),
+                    "selection already dispatched: subsequent context failure cannot claim not_applied");
+        }
     }
 
     private static void cursorLeaseDoesNotBlockLauncherReads() throws Exception {
