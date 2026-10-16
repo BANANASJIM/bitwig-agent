@@ -2,10 +2,12 @@
 import importlib.util
 from pathlib import Path
 import asyncio
+import json
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 import pytest
+from mcp.types import CallToolResult, TextContent
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts/smoke-native.py"
 spec = importlib.util.spec_from_file_location("native_smoke", SCRIPT)
@@ -166,9 +168,10 @@ def test_probe_failure_latches_before_a_caught_failure_can_continue(monkeypatch,
             dispatched.append(method)
             if failure_stage == "transport":
                 raise ConnectionError("native response lost")
-            return SimpleNamespace(
+            return CallToolResult(
                 structuredContent=None if failure_stage == "decode" else {"result": {"status": "observed"}},
-                content=[SimpleNamespace(text="{")],
+                content=[TextContent(type="text", text="{"),
+                         TextContent(type="text", text="原始尾部 Ω")],
                 isError=False,
             )
 
@@ -187,6 +190,10 @@ def test_probe_failure_latches_before_a_caught_failure_can_continue(monkeypatch,
         asyncio.run(native_smoke.probe(target, {}))
     assert dispatched == ([] if failure_stage == "target" else ["status"])
     assert guard.stopped
+    if failure_stage == "decode":
+        records = [json.loads(line) for line in (tmp_path / "mcp-results.jsonl").read_text().splitlines()]
+        assert records[0]["response"]["structuredContent"] is None
+        assert [part["text"] for part in records[0]["response"]["content"]] == ["{", "原始尾部 Ω"]
     with pytest.raises(native_smoke.NativeRunStopped):
         guard.before_call()
 

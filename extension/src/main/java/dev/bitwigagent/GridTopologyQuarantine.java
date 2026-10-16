@@ -83,7 +83,9 @@ final class GridTopologyQuarantine {
         try { mutation.run(); }
         catch (Throwable error) {
             poison();
-            throw failure("grid_unavailable", "Native Grid topology operation/callback failed; outcome unknown. Process topology guard quarantined; fully restart Bitwig, inspect state and do not assume rollback.");
+            RpcException translated = failure("grid_unavailable", "Native Grid topology operation/callback failed; outcome unknown. Process topology guard quarantined; fully restart Bitwig, inspect state and do not assume rollback.");
+            translated.initCause(error);
+            throw translated;
         }
         if (!release(owner)) throw unavailable();
     }

@@ -197,6 +197,7 @@ async def probe(target, report):
     server = StdioServerParameters(command=sys.executable,
                                   args=["-c", "from bitwig_agent.server import main; main()"], env=env)
     calls_path = target.artifacts / "calls.jsonl"
+    raw_results_path = target.artifacts / "mcp-results.jsonl"
     outcome_guard = NativeOutcomeGuard()
     async with stdio_client(server) as (read, write):
         async with ClientSession(read, write) as session:
@@ -210,6 +211,11 @@ async def probe(target, report):
                     target.guard()
                     arguments = params or {}
                     response = await session.call_tool(method, arguments)
+                    raw_record = {"time": datetime.now(timezone.utc).isoformat(), "method": method,
+                                  "params": arguments,
+                                  "response": response.model_dump(mode="json", by_alias=True)}
+                    with raw_results_path.open("a", encoding="utf-8") as output:
+                        output.write(json.dumps(raw_record, allow_nan=False) + "\n")
                     body = response.structuredContent or json.loads(response.content[0].text)
                     record = {"time": datetime.now(timezone.utc).isoformat(), "method": method,
                               "params": arguments, "isError": response.isError, "response": body}

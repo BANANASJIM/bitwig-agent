@@ -612,3 +612,35 @@ def test_modulator_methods_reject_extra_fields_and_missing_required_arguments(me
     for field in required:
         with pytest.raises(ValidationError):
             validate_call(method, {key: value for key, value in args.items() if key != field})
+
+
+GRID_RENAME = {**TARGET, "moduleId": TRACK, "expectedCustomName": "", "customName": ""}
+
+
+@pytest.mark.parametrize("field", list(GRID_RENAME))
+def test_grid_rename_requires_each_identity_and_raw_cas_field(field):
+    with pytest.raises(ValidationError):
+        validate_call("grid.modules.rename", {key: value for key, value in GRID_RENAME.items() if key != field})
+
+
+@pytest.mark.parametrize("field", ["expectedCustomName", "customName"])
+@pytest.mark.parametrize("value", [
+    None, True, False, 0, 1.0, [], {}, b"name",
+    "x" * 1025, "𝄞" * 513, "x" * 1023 + "𝄞",
+])
+def test_grid_rename_rejects_coercion_null_and_utf16_overflow(field, value):
+    with pytest.raises(ValidationError):
+        validate_call("grid.modules.rename", {**GRID_RENAME, field: value})
+
+
+@pytest.mark.parametrize("changes", [
+    {"trackId": "selected"}, {"moduleId": "Union"}, {"moduleId": "1-1-1-1-1"},
+    {"moduleId": TRACK.replace("-", "")}, {"moduleId": None}, {"moduleId": True},
+    {"deviceIndex": -1}, {"deviceIndex": 16}, {"deviceIndex": True}, {"deviceIndex": "0"},
+    {"deviceIndex": 0.0}, {"expectedDeviceName": ""}, {"expectedDeviceName": None},
+    {"typeId": TRACK}, {"name": "Lead"}, {"parameterId": ""}, {"selected": True},
+    {"includeParameters": False}, {"force": True}, {"timeoutMs": None},
+])
+def test_grid_rename_rejects_aliases_implicit_selection_and_wrong_target_types(changes):
+    with pytest.raises(ValidationError):
+        validate_call("grid.modules.rename", {**GRID_RENAME, **changes})

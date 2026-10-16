@@ -40,6 +40,8 @@ final class Bitwig613GridAdapter implements GridAdapter, GridSnapshotReader.Acce
     private String moduleInsertError;
     private GridInsertionWriter insertionWriter;
     private Bitwig613GridInsertionAccess insertionAccess;
+    private String moduleRenameError;
+    private GridModuleNameWriter moduleNameWriter;
 
     Bitwig613GridAdapter(Bitwig613Runtime.Access bindings) {
         this.bindings = bindings;
@@ -86,6 +88,12 @@ final class Bitwig613GridAdapter implements GridAdapter, GridSnapshotReader.Acce
             try { topologyContexts = new GridTopologyContext(new Bitwig613GridTopologyContext(bindings)); }
             catch (ReflectiveOperationException | RuntimeException | LinkageError error) { topologyContextError = diagnostic(error); }
         }
+        if (topologyContextError != null || metadataErrors.containsKey(GridSnapshotReader.Metadata.MODULE_NAMES))
+            moduleRenameError = topologyContextError != null ? topologyContextError : "Required native module name readers unavailable.";
+        else try {
+            moduleNameWriter = new GridModuleNameWriter(snapshots, this, topologyContexts,
+                    new Bitwig613GridModuleNameAccess(bindings), TOPOLOGY_QUARANTINE);
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError error) { moduleRenameError = diagnostic(error); }
         if (topologyContextError != null || metadataErrors.containsKey(GridSnapshotReader.Metadata.FOOTPRINT)) {
             moduleMoveError = moduleDeleteError = topologyContextError != null ? topologyContextError : "Required native footprint binding unavailable.";
         } else try {
@@ -127,12 +135,13 @@ final class Bitwig613GridAdapter implements GridAdapter, GridSnapshotReader.Acce
         bind(X, module, "kpO", int.class); bind(Y, module, "JQk", int.class);
         bind(DESCRIPTOR, module, "PfC", descriptor); bind(TYPE_ID, descriptor, "HEY", UUID.class);
         bind(INPUTS, module, "BXY", Stream.class); bind(OUTPUTS, module, "pS", Stream.class);
-        bind(CHILDREN, module, "PZJ", Stream.class); bind(MODULE_GRAPH, module, "Ptj", graph);
+        bind(MODULE_GRAPH, module, "Ptj", graph);
         readers.put(OWNER_MODULE, bindings.exactMethod(bindings.type(R + "fJC"), "k31", Object.class, false, Class.class));
         bind(INPUT_SOURCE, input, "lXL", output); bind(INPUT_KEY, input, "aA_", String.class);
         bind(OUTPUT_KEY, output, "aA_", String.class); bind(PATH, bindings.type(R + "xKS"), "XAf", String.class);
     }
     private void bindParameters() throws ReflectiveOperationException {
+        bind(CHILDREN, bindings.type(D + "gxR"), "PZJ", Stream.class);
         Class<?> floating = kind(GridSnapshotReader.Kind.FLOAT, "BFZ");
         Class<?> bool = kind(GridSnapshotReader.Kind.BOOLEAN, "EjC");
         Class<?> integer = kind(GridSnapshotReader.Kind.INTEGER, "bEX");
@@ -233,6 +242,16 @@ final class Bitwig613GridAdapter implements GridAdapter, GridSnapshotReader.Acce
                 "public_same_graph_absolute_anchor_singleton_no_copy_native_reflow_later_event_observation"));
         result.add("moduleDelete", topologyCapability(gateError != null ? gateError : quarantine != null ? quarantine : moduleDeleteError,
                 "public_selective_singleton_delete_native_bypass_reconnection_later_event_observation"));
+        JsonObject rename = topologyCapability(gateError != null ? gateError : quarantine != null ? quarantine : moduleRenameError,
+                "current_UUID_raw_customName_CAS_public_final_property_setter_later_actual_graph_observation");
+        rename.remove("maximumOccupiedYSpan");
+        rename.addProperty("operation", "com.bitwig.flt.document.core.master.device.QKj.HFp(String):void");
+        rename.addProperty("bindingAvailable", gateError == null && moduleRenameError == null);
+        rename.addProperty("nameBound", GridModuleNameWriter.MAX_NAME);
+        rename.addProperty("nameBoundUnits", "UTF16_code_units");
+        rename.addProperty("nativeUndoScope", "native_property_bookkeeping_not_verified_UI_transaction_grouping_or_commit");
+        rename.addProperty("runtimeVerification", "not_established_by_binding");
+        result.add("moduleRename", rename);
         JsonObject connection = topologyCapability(gateError != null ? gateError : quarantine != null ? quarantine : connectionError,
                 "single_input_nullable_source_CAS_public_undo_wrapper_later_actual_graph_observation");
         connection.remove("maximumOccupiedYSpan");
@@ -251,8 +270,8 @@ final class Bitwig613GridAdapter implements GridAdapter, GridSnapshotReader.Acce
         if (insertionAccess != null) insertion.add("bindingIdentity", insertionAccess.evidence());
         result.add("moduleInsert", insertion);
         result.addProperty("graphWrites", gateError == null && quarantine == null
-                && (moduleMoveError == null || moduleDeleteError == null || connectionError == null || moduleInsertError == null));
-        result.addProperty("graphWriteScope", "module_insert_move_delete_and_single_input_connection_set");
+                && (moduleMoveError == null || moduleDeleteError == null || moduleRenameError == null || connectionError == null || moduleInsertError == null));
+        result.addProperty("graphWriteScope", "module_insert_move_delete_rename_and_single_input_connection_set");
         result.addProperty("topologyQuarantined", TOPOLOGY_QUARANTINE.quarantined());
         result.addProperty("topologyAdmissionBlocked", quarantine != null);
         result.addProperty("topologyQuarantineScope", "versioned_String_only_process_marker_shared_across_extension_classloaders_full_JVM_restart_required_for_unsettled_or_poisoned_lifetimes");
@@ -301,6 +320,11 @@ final class Bitwig613GridAdapter implements GridAdapter, GridSnapshotReader.Acce
             Runnable check, Runnable dispatch, Consumer<JsonObject> complete, Consumer<Throwable> fail) {
         require(gateError, "gate"); require(moduleDeleteError, "module delete");
         moduleWriter.delete(proxy, trackId, moduleId, check, dispatch, complete, fail);
+    }
+    @Override public void renameModule(Object proxy, UUID trackId, UUID moduleId, GridModuleNameWriter.Request request,
+            Runnable check, Runnable dispatch, Consumer<JsonObject> complete, Consumer<Throwable> fail) {
+        require(gateError, "gate"); require(moduleRenameError, "module rename");
+        moduleNameWriter.rename(proxy, trackId, moduleId, request, check, dispatch, complete, fail);
     }
     @Override public void setConnection(Object proxy, UUID trackId, GridConnectionWriter.Request request,
             Runnable check, Runnable dispatch, Consumer<JsonObject> complete, Consumer<Throwable> fail) {

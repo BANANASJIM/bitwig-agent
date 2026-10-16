@@ -11,7 +11,7 @@ import static dev.bitwigagent.HostServices.failure;
 /** Strict RPC boundary and observed public-device targeting; native operations use a separate adapter. */
 final class GridModule implements HostModule {
     static final Set<String> METHODS = Set.of("grid.capabilities", "grid.catalog", "grid.get", "grid.parameters.get", "grid.parameters.set",
-            "grid.modules.move", "grid.modules.delete", "grid.modules.insert", "grid.connections.set");
+            "grid.modules.move", "grid.modules.delete", "grid.modules.insert", "grid.modules.rename", "grid.connections.set");
     private final HostServices s;
     private final Source[][] sources = new Source[HostServices.TRACKS][HostServices.DEVICES];
     private final AtomicLong[] tracks = new AtomicLong[HostServices.TRACKS];
@@ -74,6 +74,13 @@ final class GridModule implements HostModule {
                 Params.string(p, "expectedDeviceName");
                 GridInsertionWriter.Request.parse(p);
                 return;
+            case "grid.modules.rename":
+                Params.fields(p, Set.of("trackId", "deviceIndex", "expectedDeviceName", "moduleId", "expectedCustomName", "customName"), Set.of());
+                canonicalUuid(p, "trackId"); canonicalUuid(p, "moduleId");
+                Params.integer(p, "deviceIndex", 0, HostServices.DEVICES - 1);
+                Params.string(p, "expectedDeviceName");
+                GridModuleNameWriter.Request.parse(p);
+                return;
             case "grid.modules.move":
             case "grid.modules.delete":
                 boolean moving = method.equals("grid.modules.move");
@@ -119,8 +126,9 @@ final class GridModule implements HostModule {
         final boolean moving = method.equals("grid.modules.move");
         final boolean connection = method.equals("grid.connections.set");
         final boolean inserting = method.equals("grid.modules.insert");
+        final boolean renaming = method.equals("grid.modules.rename");
         final boolean moduleEditing = moving || method.equals("grid.modules.delete");
-        final boolean topology = moduleEditing || connection || inserting;
+        final boolean topology = moduleEditing || connection || inserting || renaming;
         final boolean scalarWriting = method.equals("grid.parameters.set");
         final boolean writing = scalarWriting || topology;
         final boolean inspection = method.equals("grid.parameters.get") || scalarWriting;
@@ -128,9 +136,10 @@ final class GridModule implements HostModule {
         final GridModuleWriter.Move move = moving ? GridModuleWriter.Move.parse(p) : null;
         final GridConnectionWriter.Request cable = connection ? GridConnectionWriter.Request.parse(p) : null;
         final GridInsertionWriter.Request insertion = inserting ? GridInsertionWriter.Request.parse(p) : null;
+        final GridModuleNameWriter.Request name = renaming ? GridModuleNameWriter.Request.parse(p) : null;
         final HostServices.SafetyObservation safety = writing ? s.stoppedSafety(op) : null;
         final Target target = method.equals("grid.get") || inspection || topology ? target(p) : null;
-        final UUID moduleId = inspection || moduleEditing ? UUID.fromString(p.get("moduleId").getAsString()) : null;
+        final UUID moduleId = inspection || moduleEditing || renaming ? UUID.fromString(p.get("moduleId").getAsString()) : null;
         final String parameterId = inspection ? p.get("parameterId").getAsString() : null;
         final int offset = integer(p, target == null ? "offset" : "moduleOffset", 0);
         final int limit = integer(p, target == null ? "limit" : "moduleLimit", 64);
@@ -150,6 +159,7 @@ final class GridModule implements HostModule {
                     java.util.function.Consumer<JsonObject> complete = value -> deliver(op, target, safety, true, check, value);
                     Runnable dispatch = () -> { check.run(); op.dispatched = true; };
                     if (inserting) adapter.insertModule(target.source.device, target.uuid, insertion, check, dispatch, complete, op::fail);
+                    else if (renaming) adapter.renameModule(target.source.device, target.uuid, moduleId, name, check, dispatch, complete, op::fail);
                     else if (connection) adapter.setConnection(target.source.device, target.uuid, cable, check, dispatch, complete, op::fail);
                     else if (moving) adapter.moveModule(target.source.device, target.uuid, moduleId, move, check, dispatch, complete, op::fail);
                     else adapter.deleteModule(target.source.device, target.uuid, moduleId, check, dispatch, complete, op::fail);

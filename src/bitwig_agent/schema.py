@@ -35,7 +35,7 @@ class StrictModel(BaseModel):
         for key, field in type(self).model_fields.items():
             value = getattr(self, key)
             if isinstance(value, str):
-                length = len(value.encode("utf-16-le")) // 2
+                length = len(value.encode("utf-16-le", errors="surrogatepass")) // 2
                 for constraint in field.metadata:
                     limit = getattr(constraint, "max_length", None)
                     if limit is not None and length > limit:
@@ -127,6 +127,11 @@ class GridConnectionSetArgs(ParameterArgs):
     targetPortKey: str = Field(max_length=1024, description="Exact input port key from grid.get; empty is valid, at most 1024 UTF-16 code units.")
     expectedSource: GridConnectionSource | None = Field(description="Required exact prior source from fresh grid.get, or explicit null for an unconnected input. Checked before even an already-matching no-op; never defaults to null.")
     source: GridConnectionSource | None = Field(description="Required requested output endpoint, or explicit null to disconnect. Must belong to the same current graph; native repair can change the observed result.")
+
+
+class GridModuleRenameArgs(GridModuleArgs):
+    expectedCustomName: str = Field(max_length=1024, description="Exact raw customName from a fresh grid.get, not effective name or typeName. Required even for no-op; empty is valid. At most 1024 UTF-16 code units; no trimming or coercion.")
+    customName: str = Field(max_length=1024, description="Requested raw custom name; empty resets the override through native semantics. Unicode and whitespace are preserved, at most 1024 UTF-16 code units.")
 
 
 class GridModuleMoveArgs(GridModuleArgs):

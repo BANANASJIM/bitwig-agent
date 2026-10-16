@@ -15,6 +15,7 @@ bitwig-agent-rpc = "bitwig_agent.cli:main"
 
 [dependency-groups]
 dev = ["pytest>=8.3,<9"]
+native-music = ["numpy>=2,<3", "scipy>=1.15,<2", "soundfile>=0.13,<1"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

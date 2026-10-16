@@ -203,6 +203,19 @@ async def test_mcp_discovery_publishes_required_nullable_connection_contract(mcp
         assert coordinate["minimum"] == -(2**31)
         assert coordinate["maximum"] == 2**31 - 1
         assert "default" not in coordinate
+    rename = tools["grid.modules.rename"]
+    assert rename.annotations.readOnlyHint is False
+    schema = rename.inputSchema
+    assert schema["additionalProperties"] is False
+    assert set(schema["required"]) == {
+        "trackId", "deviceIndex", "expectedDeviceName", "moduleId", "expectedCustomName", "customName",
+    }
+    for field in ("expectedCustomName", "customName"):
+        name = schema["properties"][field]
+        assert name["type"] == "string"
+        assert name["maxLength"] == 1024
+        assert name.get("minLength", 0) == 0
+        assert "default" not in name
 
 
 @pytest.mark.parametrize("field", ["x", "y"])
@@ -407,3 +420,38 @@ async def test_modulator_mcp_pagination_rejects_coercion_before_tcp(mcp_session,
     assert response.structuredContent["error"]["code"] == "invalid_params"
     assert response.structuredContent["error"]["outcome"] == "not_dispatched"
     assert host.connections == 0
+
+
+@pytest.mark.parametrize("field", ["expectedCustomName", "customName"])
+@pytest.mark.parametrize("value", [None, True, 1, [], {}, "𝄞" * 513, "x" * 1023 + "𝄞"])
+async def test_grid_rename_mcp_rejects_non_string_and_utf16_overflow_before_tcp(mcp_session, host, field, value):
+    response = await mcp_session.call_tool("grid.modules.rename", {
+        **TARGET, "moduleId": TRACK, "expectedCustomName": "", "customName": "", field: value,
+    })
+    assert response.isError
+    assert response.structuredContent["error"]["code"] == "invalid_params"
+    assert response.structuredContent["error"]["outcome"] == "not_dispatched"
+    assert host.connections == 0
+
+
+@pytest.mark.parametrize("field", ["expectedCustomName", "customName"])
+async def test_grid_rename_mcp_missing_name_is_not_defaulted_to_reset(mcp_session, host, field):
+    params = {**TARGET, "moduleId": TRACK, "expectedCustomName": "", "customName": ""}
+    del params[field]
+    response = await mcp_session.call_tool("grid.modules.rename", params)
+    assert response.isError
+    assert response.structuredContent["error"]["code"] == "invalid_params"
+    assert response.structuredContent["error"]["outcome"] == "not_dispatched"
+    assert host.connections == 0
+
+
+async def test_grid_rename_mcp_preserves_unknown_raw_reset_outcome_without_retry(mcp_session, host):
+    params = {**TARGET, "moduleId": TRACK, "expectedCustomName": " \tα𝄞 ", "customName": ""}
+    error = {"code": "stale_context", "message": "Inspect actual raw name", "outcome": "unknown",
+             "details": {"mutationDispatched": True, "rollbackVerified": False}}
+    host.reply = lambda request: {"id": request["id"], "error": error}
+    response = await mcp_session.call_tool("grid.modules.rename", params)
+    assert response.isError
+    assert response.structuredContent == {"error": error}
+    assert host.requests[0]["params"] == params
+    assert len(host.requests) == host.connections == 1

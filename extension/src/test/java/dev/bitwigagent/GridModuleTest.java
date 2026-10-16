@@ -34,6 +34,10 @@ public final class GridModuleTest {
         insertionArguments();
         insertionWaitsForNativeSettlementAndControllerDelivery();
         insertionSafetyCancellationAndCloseKeepNativeLifetimeIndependent();
+        renameArgumentsRejectBeforeQueues();
+        renameUsesRealWriterAndBothDeliveryQueues();
+        renameSafetyAndTargetEpochsGuardEveryBoundary();
+        renameCancellationAndClosePreserveDispatchOutcome();
         System.out.println("GridModuleTest: " + assertions + " assertions passed (simulated controller/document queues only)");
     }
     private static void validatesBeforeScheduling() {
@@ -579,6 +583,146 @@ public final class GridModuleTest {
                 "post-settlement controller rejection never resurrects native pending lifetime");
     }
 
+    private static JsonObject renameTarget(String expected, String name) {
+        JsonObject p = target(); p.addProperty("moduleId", "00000000-0000-0001-0000-000000000001");
+        p.addProperty("expectedCustomName", expected); p.addProperty("customName", name); return p;
+    }
+    private static void renameArgumentsRejectBeforeQueues() {
+        Fixture f = new Fixture();
+        for (String key : List.of("trackId", "deviceIndex", "expectedDeviceName", "moduleId", "expectedCustomName", "customName")) {
+            JsonObject p = renameTarget("", "Lead"); p.remove(key);
+            TransportMixFixture.error(f.host.submit(f.module, "grid.modules.rename", p), "invalid_params");
+            p = renameTarget("", "Lead"); p.add(key, JsonNull.INSTANCE);
+            TransportMixFixture.error(f.host.submit(f.module, "grid.modules.rename", p), "invalid_params");
+        }
+        for (String key : List.of("expectedCustomName", "customName")) {
+            for (String token : List.of("0", "1.0", "true", "[]", "{}")) {
+                JsonObject p = renameTarget("", "Lead"); p.add(key, JsonParser.parseString(token));
+                TransportMixFixture.error(f.host.submit(f.module, "grid.modules.rename", p), "invalid_params");
+            }
+            for (String text : List.of("x".repeat(1025), "𝄞".repeat(513), "x".repeat(1023) + "𝄞")) {
+                JsonObject p = renameTarget("", "Lead"); p.addProperty(key, text);
+                TransportMixFixture.error(f.host.submit(f.module, "grid.modules.rename", p), "invalid_params");
+            }
+            for (String text : List.of("", " \t音楽=α\n", "x".repeat(1024), "𝄞".repeat(512))) {
+                JsonObject p = renameTarget("", "Lead"); p.addProperty(key, text);
+                HostBridge.validate("grid.modules.rename", p);
+            }
+        }
+        for (String key : List.of("trackId", "moduleId"))
+            for (String id : List.of("", "selected", "1-1-1-1-1", "00000000000000010000000000000001")) {
+                JsonObject p = renameTarget("", "Lead"); p.addProperty(key, id);
+                TransportMixFixture.error(f.host.submit(f.module, "grid.modules.rename", p), "invalid_params");
+            }
+        for (String key : List.of("typeId", "name", "parameterId", "selected", "force", "includeParameters")) {
+            JsonObject p = renameTarget("", "Lead"); p.addProperty(key, "forbidden");
+            TransportMixFixture.error(f.host.submit(f.module, "grid.modules.rename", p), "invalid_params");
+        }
+        check(f.host.tasks.isEmpty() && f.adapter.tasks.isEmpty() && f.adapter.naming.calls == 0,
+                "rename validates exact raw string fields and canonical identities before scheduling");
+    }
+    private static void renameUsesRealWriterAndBothDeliveryQueues() {
+        Fixture f = new Fixture(); String raw = " \tLead = 音楽𝄞\n";
+        HostOperation op = f.host.submit(f.module, "grid.modules.rename", renameTarget("", raw)); f.host.next();
+        for (String key : List.of("isPlaying", "isArrangerRecordEnabled", "isArrangerAutomationWriteEnabled", "isClipLauncherAutomationWriteEnabled"))
+            f.host.transport.child(key).custom = (name, args) -> {
+                if (name.equals("get") && !f.host.onHost) throw new AssertionError("Controller getter in name document callback");
+                return null;
+            };
+        f.adapter.next();
+        check(op.dispatched && f.adapter.naming.calls == 1 && !op.result.isDone() && f.host.tasks.isEmpty(),
+                "real native name setter does not complete before later document observation");
+        f.adapter.next();
+        check(!op.result.isDone() && f.host.tasks.size() == 1, "observed name waits for controller target and safety delivery");
+        f.host.next(); JsonObject result = op.result.join();
+        check(result.get("previousCustomName").getAsString().equals("")
+                && result.get("requestedCustomName").getAsString().equals(raw)
+                && result.get("actualCustomName").getAsString().equals(raw)
+                && result.get("previousName").getAsString().equals("Union")
+                && result.getAsJsonObject("target").get("deviceIndex").getAsInt() == 0,
+                "real writer raw/effective observations and explicit target survive immutable delivery");
+        HostOperation reset = f.host.submit(f.module, "grid.modules.rename", renameTarget(raw, ""));
+        f.host.next(); f.adapter.next(); f.adapter.next(); f.host.next();
+        check(reset.result.join().get("actualCustomName").getAsString().isEmpty() && f.adapter.naming.calls == 2,
+                "empty reset passes actual raw CAS and native semantics without type-name substitution");
+        HostOperation stale = f.host.submit(f.module, "grid.modules.rename", renameTarget("Union", ""));
+        f.host.next(); f.adapter.next();
+        check(TransportMixFixture.error(stale, "stale_context").outcome.equals("not_applied") && f.adapter.naming.calls == 2,
+                "effective name cannot authorize even an otherwise matching raw no-op");
+        HostOperation noop = f.host.submit(f.module, "grid.modules.rename", renameTarget("", ""));
+        f.host.next(); f.adapter.next();
+        check(!noop.dispatched && f.adapter.naming.calls == 2, "authorized no-op never calls native name setter");
+        while (!f.adapter.tasks.isEmpty()) f.adapter.next();
+        f.host.next();
+        check(!noop.result.join().get("mutationDispatched").getAsBoolean(), "no-op observation never invents native mutation");
+    }
+    private static void renameSafetyAndTargetEpochsGuardEveryBoundary() {
+        for (String key : List.of("isPlaying", "isArrangerRecordEnabled", "isArrangerAutomationWriteEnabled", "isClipLauncherAutomationWriteEnabled")) {
+            Fixture unsafe = new Fixture(); unsafe.host.transport.child(key).emit(true);
+            HostOperation op = unsafe.host.submit(unsafe.module, "grid.modules.rename", renameTarget("", ""));
+            unsafe.host.next();
+            check(TransportMixFixture.error(op, "unsafe_state").outcome.equals("not_applied")
+                    && unsafe.adapter.naming.calls == 0, "unsafe no-op still requires stopped/nonrecording/nonautomation authorization");
+        }
+        Fixture controller = new Fixture();
+        HostOperation queued = controller.host.submit(controller.module, "grid.modules.rename", renameTarget("", "Lead"));
+        controller.host.transport.child("isPlaying").emit(true); controller.host.transport.child("isPlaying").emit(false);
+        controller.host.next();
+        check(TransportMixFixture.error(queued, "stale_context").outcome.equals("not_applied")
+                && controller.adapter.tasks.isEmpty(), "rename safety ticket rejects transitions before initial controller dispatch");
+        Fixture unobserved = new Fixture(true, false);
+        HostOperation unready = unobserved.host.submit(unobserved.module, "grid.modules.rename", renameTarget("", "Lead"));
+        unobserved.host.next();
+        check(TransportMixFixture.error(unready, "not_ready").outcome.equals("not_applied")
+                && unobserved.adapter.naming.calls == 0, "unobserved safety never authorizes rename");
+        for (int boundary = 0; boundary < 3; boundary++)
+            for (int transition = 0; transition < 3; transition++) {
+                Fixture f = new Fixture(); HostOperation op = f.host.submit(f.module, "grid.modules.rename", renameTarget("", "Lead"));
+                f.host.next(); if (boundary > 0) f.adapter.next(); if (boundary > 1) f.adapter.next();
+                if (transition == 0) {
+                    f.host.transport.child("isPlaying").emit(true); f.host.transport.child("isPlaying").emit(false);
+                } else if (transition == 1) {
+                    f.device.child("name").emit("Other"); f.device.child("name").emit("Poly Grid");
+                } else {
+                    f.host.tracks[0].child("channelId").emit(TransportMixFixture.B);
+                    f.host.tracks[0].child("channelId").emit(TransportMixFixture.A);
+                }
+                if (boundary < 2) f.adapter.next(); else f.host.next();
+                check(TransportMixFixture.error(op, "stale_context").outcome.equals(boundary == 0 ? "not_applied" : "unknown")
+                        && f.adapter.naming.calls == (boundary == 0 ? 0 : 1),
+                        "name safety/target ABA at dispatch, document observation or controller delivery never retries");
+            }
+        Fixture immediate = new Fixture();
+        immediate.adapter.naming.onSet = () -> {
+            immediate.host.transport.child("isPlaying").emit(true);
+            immediate.host.transport.child("isPlaying").emit(false);
+        };
+        HostOperation changed = immediate.host.submit(immediate.module, "grid.modules.rename", renameTarget("", "Lead"));
+        immediate.host.next(); immediate.adapter.next();
+        if (!immediate.adapter.tasks.isEmpty()) immediate.adapter.next();
+        check(TransportMixFixture.error(changed, "stale_context").outcome.equals("unknown")
+                && immediate.adapter.naming.calls == 1, "a safety transition during the native setter cannot be reported not-applied");
+        Fixture noop = new Fixture(); HostOperation op = noop.host.submit(noop.module, "grid.modules.rename", renameTarget("", ""));
+        noop.host.next(); noop.adapter.next(); while (!noop.adapter.tasks.isEmpty()) noop.adapter.next();
+        noop.device.child("position").emit(1); noop.host.next();
+        check(TransportMixFixture.error(op, "stale_context").outcome.equals("not_applied") && !op.dispatched,
+                "late no-op delivery still checks explicit target without claiming a write");
+    }
+    private static void renameCancellationAndClosePreserveDispatchOutcome() {
+        for (int boundary = 0; boundary < 3; boundary++)
+            for (boolean close : List.of(false, true)) {
+                Fixture f = new Fixture(); HostOperation op = f.host.submit(f.module, "grid.modules.rename", renameTarget("", "Lead"));
+                f.host.next(); if (boundary > 0) f.adapter.next(); if (boundary > 1) f.adapter.next();
+                if (close) f.host.services.close(); else op.result.cancel(false);
+                if (boundary < 2) f.adapter.next(); else f.host.next();
+                check(f.adapter.naming.calls == (boundary == 0 ? 0 : 1) && op.dispatched == (boundary > 0),
+                        "cancel/close before native dispatch prevents setter; after dispatch never rolls back or retries");
+                if (close) check(TransportMixFixture.error(op, "unavailable").outcome.equals(boundary == 0 ? "not_applied" : "unknown"),
+                        "close preserves native rename outcome boundary");
+                else check(op.result.isCancelled(), "cancelled rename cannot be completed by late callbacks");
+            }
+    }
+
     private static JsonObject inspectionTarget() {
         JsonObject result = target(); result.addProperty("moduleId", "00000000-0000-0001-0000-000000000001");
         result.addProperty("parameterId", "EXACT_ID"); return result;
@@ -609,6 +753,7 @@ public final class GridModuleTest {
         final GridSnapshotReaderTest.ModuleWriterFixture topology = new GridSnapshotReaderTest.ModuleWriterFixture(tasks::add);
         final GridSnapshotReaderTest.ConnectionFixture connections = new GridSnapshotReaderTest.ConnectionFixture(tasks::add);
         final GridInsertionWriterTest.Fixture insertion = new GridInsertionWriterTest.Fixture(tasks::add);
+        final GridModuleNameWriterTest.Fixture naming = new GridModuleNameWriterTest.Fixture(tasks::add);
         Runnable beforeWrite = () -> {}, afterWrite = () -> {};
         void next() { tasks.removeFirst().run(); }
         @Override public void execute(Runnable task) { tasks.add(task); }
@@ -652,6 +797,11 @@ public final class GridModuleTest {
                 Runnable check, Runnable dispatch, java.util.function.Consumer<JsonObject> complete,
                 java.util.function.Consumer<Throwable> failure) {
             insertion.edit(request, check, dispatch, complete, failure);
+        }
+        @Override public void renameModule(Object proxy, UUID track, UUID module, GridModuleNameWriter.Request request,
+                Runnable check, Runnable dispatch, java.util.function.Consumer<JsonObject> complete,
+                java.util.function.Consumer<Throwable> failure) {
+            naming.edit(module, request, check, dispatch, complete, failure);
         }
         private JsonObject result(int offset, int limit, boolean parameters) {
             last = new JsonObject(); last.addProperty("offset", offset); last.addProperty("limit", limit); last.addProperty("parameters", parameters); return last;

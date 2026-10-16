@@ -391,3 +391,46 @@ async def test_modulator_cli_preserves_host_error_without_retry(host, monkeypatc
     assert code == 1
     assert payload == {"error": error}
     assert len(host.requests) == host.connections == 1
+
+
+@pytest.mark.parametrize("raw", [False, True])
+@pytest.mark.parametrize("expected,requested", [
+    ("", ""), (" \t原音=𝄞\n", "  Lead = α  "), ("null", "false"),
+    ("𝄞" * 512, ""), ("", '"quoted"'),
+])
+def test_grid_rename_cli_preserves_raw_cas_and_reset_without_coercion(raw, expected, requested):
+    params = {**TARGET, "moduleId": TRACK, "expectedCustomName": expected, "customName": requested}
+    arguments = (["--params", json.dumps(params)] if raw else [
+        key + "=" + (json.dumps(value) if isinstance(value, str) and value.startswith('"') else str(value))
+        for key, value in params.items()
+    ])
+    parsed = parser().parse_intermixed_args(["grid.modules.rename", *arguments])
+    actual, _ = parse_arguments(parsed.command, parsed.arguments, parsed.params, parsed.timeout_ms)
+    assert actual == params
+
+
+@pytest.mark.parametrize("field", ["expectedCustomName", "customName"])
+@pytest.mark.parametrize("value", [None, True, 1, [], {}, "𝄞" * 513, "x" * 1023 + "𝄞"])
+async def test_grid_rename_cli_rejects_invalid_raw_json_name_before_tcp(host, monkeypatch, field, value):
+    monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
+    params = {**TARGET, "moduleId": TRACK, "expectedCustomName": "", "customName": "", field: value}
+    payload, code = await execute(["grid.modules.rename", "--params", json.dumps(params)])
+    assert code == 2
+    assert payload["error"]["code"] == "invalid_params"
+    assert payload["error"]["outcome"] == "not_dispatched"
+    assert host.connections == 0
+
+
+@pytest.mark.parametrize("raw", [False, True])
+async def test_grid_rename_cli_unknown_preserves_native_uncertainty_without_retry(host, monkeypatch, raw):
+    monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
+    params = {**TARGET, "moduleId": TRACK, "expectedCustomName": " \tα ", "customName": ""}
+    arguments = (["--params", json.dumps(params)] if raw else [f"{key}={value}" for key, value in params.items()])
+    error = {"code": "stale_context", "message": "Inspect actual raw name",
+             "outcome": "unknown", "details": {"mutationDispatched": True, "rollbackVerified": False}}
+    host.reply = lambda request: {"id": request["id"], "error": error}
+    payload, code = await execute(["grid.modules.rename", *arguments])
+    assert code == 1
+    assert payload == {"error": error}
+    assert host.requests[0]["params"] == params
+    assert len(host.requests) == host.connections == 1
