@@ -294,12 +294,14 @@ final class DeviceSources {
                 boolean change = id != null && !id.equals(value); id = (String) value;
                 if (replaced) retire(); else if (change) changed(true, false);
             });
+            // The ordinary observer's default zero is not an assigned index.
+            // Keep unassignment distinct without weakening observed index-change retirement.
             proxy.channelIndex().addValueObserver((IntegerValueChangedCallback) value -> {
                 boolean change = channelIndex != null && channelIndex != value;
                 boolean moved = change && channelIndex >= 0 && Boolean.TRUE.equals(exists) && canonicalUuid(id);
                 channelIndex = value;
                 if (moved) retire(); else if (change) changed(true, false);
-            });
+            }, -1);
             proxy.name().addValueObserver((StringValueChangedCallback) value -> {
                 boolean change = name != null && !name.equals(value); name = (String) value; if (change) changed(false, true);
             });

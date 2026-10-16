@@ -202,7 +202,10 @@ final class TransportMixFixture {
             if (name.equals("equals")) return proxy == args[0];
             Object customized = custom.invoke(name, args);
             if (customized != null) return customized;
-            if (name.equals("addValueObserver") || name.equals("addRawValueObserver")) { listen(args[args.length - 1]); return null; }
+            if (name.equals("addValueObserver") || name.equals("addRawValueObserver")) {
+                listen(args[0] instanceof IntegerValueChangedCallback ? args[0] : args[args.length - 1]);
+                return null;
+            }
             if (name.equals("set") || name.equals("setRaw") || name.equals("setImmediately")) {
                 mutation(); writes++;
                 if (updateWrites) data = args[0];

@@ -32,6 +32,8 @@ public final class HostBridgeTest {
         rootEarlyDirectCallbacksKeepLegacyAdmission();
         initialRootAndParentWindowOrderingKeepsUsableData();
         initialTrackPositionDoesNotRetireNestedSources();
+        unassignedLayerIndexDoesNotRetireInitialSources();
+        assignedLayerIndexDiscontinuitiesStayClosed();
         layerBindingRoundTripsKeepContinuousSources();
         layerWritesRequireExactSourceAndFreshCallbacks();
         layerRenamesRetainDataButRetireTokens();
@@ -425,6 +427,71 @@ public final class HostBridgeTest {
             f.emitChildIds(l, c, new String[]{"gain"}); f.emitChildValue(l, c, value); f.next();
             check(parameterValue(pending.join()) == value, "actual fresh child callback is admitted after first track assignment");
         }
+    }
+
+    private static void unassignedLayerIndexDoesNotRetireInitialSources() {
+        for (boolean notifyUnassigned : List.of(false, true)) {
+            Fake f = new Fake(); f.trackNodes[0].value("position").set(-1);
+            AssignmentInteger[] indices = {new AssignmentInteger(), new AssignmentInteger()};
+            for (int l = 0; l < 2; l++) {
+                f.layerNodes[l].values.put("channelIndex", indices[l]);
+                f.layerNodes[l].value("exists").set(false);
+                f.layerNodes[l].value("channelId").set("");
+            }
+            HostBridge bridge = f.bridge();
+            int emissions = f.childIdEmissions;
+            for (int l = 0; l < 2; l++) {
+                if (notifyUnassigned) indices[l].unassign();
+                f.layerNodes[l].value("channelId").set(layerId(l));
+                f.layerNodes[l].value("exists").set(true);
+            }
+            f.trackNodes[0].value("position").set(8);
+            for (int l = 0; l < 2; l++) indices[l].set(9 + l);
+            JsonObject discovery = call(f, bridge, "devices.layers.list", layerDiscovery());
+            List<String> retired = new ArrayList<>();
+            for (int l = 0; l < 2; l++) for (int c = 0; c < 2; c++) {
+                JsonObject child = discovery.getAsJsonArray("layers").get(l).getAsJsonObject()
+                        .getAsJsonArray("devices").get(c).getAsJsonObject();
+                if (!child.has("discoveryToken")) retired.add(l + "/" + c);
+            }
+            check(retired.isEmpty(), "first assigned channel indices must not retire initial children: " + retired);
+            check(f.childIdEmissions == emissions, "index assignment cannot replay rejected initial ID callbacks");
+            for (int l = 0; l < 2; l++) for (int c = 0; c < 2; c++) {
+                CompletableFuture<JsonObject> pending = bridge.handle("parameters.layer.list", layerTarget(discovery, l, c), deadline());
+                f.next();
+                check(!pending.isDone(), "metadata completion cannot resurrect rejected child observations");
+                double expected = .21 + l * .1 + c * .01;
+                f.emitChildIds(l, c, new String[]{"gain"}); f.emitChildValue(l, c, expected); f.next();
+                check(parameterValue(pending.join()) == expected, "actual post-assignment callback supplies the correct child value");
+            }
+        }
+    }
+
+    private static void assignedLayerIndexDiscontinuitiesStayClosed() {
+        for (int original : List.of(0, 9)) for (boolean incomplete : List.of(false, true)) {
+            Fake f = new Fake(); AssignmentInteger index = new AssignmentInteger();
+            f.layerNodes[0].values.put("channelIndex", index);
+            if (incomplete) f.childNodes[0][0].value("position").publishInitial = false;
+            HostBridge bridge = f.bridge();
+            // A real native -1 notification followed by 0 makes assigned zero observable;
+            // assigning cached zero directly is suppressed by the native proxy.
+            index.set(-1); index.set(original);
+            index.set(original + 1); index.set(original);
+            if (incomplete) f.childNodes[0][0].value("position").set(0);
+            f.emitChildIds(0, 0, new String[]{"gain"}); f.emitChildValue(0, 0, .91);
+            JsonObject discovery = call(f, bridge, "devices.layers.list", layerDiscovery());
+            JsonObject child = discovery.getAsJsonArray("layers").get(0).getAsJsonObject()
+                    .getAsJsonArray("devices").get(0).getAsJsonObject();
+            check(!child.has("discoveryToken") && child.get("reason").getAsString().contains("provenance"),
+                    "observed assigned index ABA stays retired, including zero and incomplete child metadata");
+        }
+        Fake f = new Fake(); AssignmentInteger index = new AssignmentInteger();
+        f.layerNodes[0].values.put("channelIndex", index);
+        HostBridge bridge = f.bridge(); index.set(0);
+        JsonObject discovery = call(f, bridge, "devices.layers.list", layerDiscovery());
+        JsonObject layer = discovery.getAsJsonArray("layers").get(0).getAsJsonObject();
+        check(layer.get("channelIndex").isJsonNull() && layer.get("readiness").getAsString().equals("not_ready"),
+                "a suppressed assigned-zero callback must remain unobserved, not fabricated from a getter default");
     }
 
     private static void rootEarlyDirectCallbacksKeepLegacyAdmission() {
@@ -1009,7 +1076,7 @@ public final class HostBridgeTest {
             return null;
         }
     }
-    private static final class Val implements InvocationHandler {
+    private static class Val implements InvocationHandler {
         Object value;
         boolean publishInitial = true;
         final List<Object> observers = new ArrayList<>();
@@ -1026,6 +1093,32 @@ public final class HostBridgeTest {
             if (method.getName().equals("get")) return current();
             if (method.getName().equals("addValueObserver")) { observers.add(args[0]); if (publishInitial) notifyObserver(args[0]); }
             return null;
+        }
+    }
+    /** Models the integer proxy's separate unassigned observers and equal-value suppression. */
+    private static final class AssignmentInteger extends Val {
+        final Map<IntegerValueChangedCallback, Integer> unassignedObservers = new IdentityHashMap<>();
+        AssignmentInteger() { super(0); }
+        @Override void set(Object newValue) {
+            boolean changed = !Objects.equals(value, newValue); value = newValue;
+            if (changed) {
+                for (Object observer : observers) notifyObserver(observer);
+                for (IntegerValueChangedCallback observer : unassignedObservers.keySet())
+                    observer.valueChanged((Integer) value);
+            }
+        }
+        void unassign() {
+            boolean changed = !Objects.equals(value, 0); value = 0;
+            if (changed) for (Object observer : observers) notifyObserver(observer);
+            for (Map.Entry<IntegerValueChangedCallback, Integer> observer : unassignedObservers.entrySet())
+                observer.getKey().valueChanged(observer.getValue());
+        }
+        @Override public Object invoke(Object proxy, Method method, Object[] args) {
+            if (method.getName().equals("addValueObserver") && args.length == 2 && (Integer) args[1] != 0) {
+                unassignedObservers.put((IntegerValueChangedCallback) args[0], (Integer) args[1]);
+                return null;
+            }
+            return super.invoke(proxy, method, args);
         }
     }
 }
