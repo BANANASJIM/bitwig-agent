@@ -3,7 +3,6 @@ package dev.bitwigagent;
 import com.bitwig.extension.callback.*;
 import com.bitwig.extension.controller.api.*;
 import com.google.gson.*;
-import java.io.*;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
@@ -13,8 +12,6 @@ import static dev.bitwigagent.HostServices.failure;
 final class GridModule implements HostModule {
     static final Set<String> METHODS = Set.of("grid.capabilities", "grid.catalog", "grid.get", "grid.parameters.get", "grid.parameters.set",
             "grid.modules.move", "grid.modules.delete", "grid.modules.insert", "grid.connections.set");
-    static final int MAX_RESPONSE_CHARS = 240000;
-    private static final Gson JSON = new GsonBuilder().serializeNulls().create();
     private final HostServices s;
     private final Source[][] sources = new Source[HostServices.TRACKS][HostServices.DEVICES];
     private final AtomicLong[] tracks = new AtomicLong[HostServices.TRACKS];
@@ -117,7 +114,7 @@ final class GridModule implements HostModule {
     }
     @Override public void dispatch(HostOperation op, String method, JsonObject p) {
         s.check(op);
-        if (adapter == null) adapter = new Bitwig613GridAdapter(s.host, s.host.getHostVersion(), () -> s.check(op));
+        if (adapter == null) adapter = new Bitwig613GridAdapter(s.nativeRuntime(op).access("grid_unavailable"));
         if (method.equals("grid.capabilities")) { s.check(op); op.result.complete(adapter.capabilities()); return; }
         final boolean moving = method.equals("grid.modules.move");
         final boolean connection = method.equals("grid.connections.set");
@@ -176,7 +173,8 @@ final class GridModule implements HostModule {
             boolean writing, Runnable check, JsonObject value) {
         check.run();
         // No native model, stream, or mutable JSON crosses the document-to-controller boundary.
-        final String serialized = serialize(value);
+        final String serialized = BoundedJson.serialize(value, 240000, "grid_bounds_exceeded",
+                "Grid response exceeds bounded transport size; reduce moduleLimit or exclude parameters.");
         check.run();
         s.schedule(op, () -> {
             guard(op, target);
@@ -213,20 +211,6 @@ final class GridModule implements HostModule {
                 || s.devices[target.slot].scrollPosition().get() != 0 || !device.exists().get()
                 || device.position().get() != target.index || !target.name.equals(device.name().get()))
             throw failure("stale_context", "Explicit bank device changed before the Grid result could be delivered.");
-    }
-    static String serialize(JsonObject value) {
-        StringWriter buffer = new StringWriter();
-        Writer bounded = new Writer() {
-            int count;
-            @Override public void write(char[] chars, int offset, int length) throws IOException {
-                if (length > MAX_RESPONSE_CHARS - count) throw new IOException("Grid response bound exceeded");
-                buffer.write(chars, offset, length); count += length;
-            }
-            @Override public void flush() { }
-            @Override public void close() { }
-        };
-        try { JSON.toJson(value, bounded); return buffer.toString(); }
-        catch (JsonIOException error) { throw failure("grid_bounds_exceeded", "Grid response exceeds bounded transport size; reduce moduleLimit or exclude parameters."); }
     }
     static void canonicalUuid(JsonObject p, String key) {
         if (!Params.string(p, key).matches("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"))

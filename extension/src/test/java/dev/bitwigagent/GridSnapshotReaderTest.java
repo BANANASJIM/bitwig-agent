@@ -7,6 +7,8 @@ import java.util.stream.Stream;
 import static dev.bitwigagent.GridSnapshotReader.Field.*;
 import static dev.bitwigagent.GridSnapshotReader.Kind.*;
 import static dev.bitwigagent.GridSnapshotReader.Metadata.*;
+import static dev.bitwigagent.NativeDeviceTarget.Field.*;
+import static dev.bitwigagent.NativeDeviceTarget.Kind.*;
 
 /** Semantic fake model tests, not obfuscated-name echo tests or evidence of native compatibility. */
 public final class GridSnapshotReaderTest {
@@ -488,7 +490,7 @@ public final class GridSnapshotReaderTest {
                 && result.getAsJsonObject("ancestorUndoManager").get("activeChange").getAsBoolean(), "active undo states remain observable without mutation");
         check(!result.getAsJsonObject("deviceLock").get("ownerIsCurrentDt").getAsBoolean(), "foreign lock owner is not reported as current Dt");
         c.values.put(GridParameterContext.Field.UNDO, null); c.values.put(GridParameterContext.Field.LOCK_OWNER, null);
-        c.values.put(GridParameterContext.Field.CURRENT_DT, null); c.defaultSupported = false;
+        c.values.put(NativeReadContext.Field.CURRENT_DT, null); c.defaultSupported = false;
         result = inspect(f, c, "LOCAL_ID").getAsJsonObject("editContext");
         check(!result.getAsJsonObject("ancestorUndoManager").get("present").getAsBoolean()
                 && result.getAsJsonObject("ancestorUndoManager").get("activeChange").isJsonNull(), "missing undo manager is not an idle manager");
@@ -496,8 +498,8 @@ public final class GridSnapshotReaderTest {
                 && result.getAsJsonObject("attachedContext").get("currentDtIsDefault").isJsonNull(), "missing owner/default context is unknown rather than compatible");
     }
     private static void parameterContextChangesAndUnavailableBindingsFailClosed() {
-        for (GridParameterContext.Field field : List.of(GridParameterContext.Field.ROOT, GridParameterContext.Field.CURRENT_DT,
-                GridParameterContext.Field.DEFAULT_DT,
+        for (Enum<?> field : List.of(NativeReadContext.Field.ROOT, NativeReadContext.Field.CURRENT_DT,
+                NativeReadContext.Field.DEFAULT_DT,
                 GridParameterContext.Field.UNDO, GridParameterContext.Field.LOCK, GridParameterContext.Field.LOCK_OWNER)) {
             Fixture f = inspectionFixture(); ContextFixture c = new ContextFixture();
             f.afterValue = () -> c.values.put(field, new Object());
@@ -506,18 +508,18 @@ public final class GridSnapshotReaderTest {
         Fixture rebound = inspectionFixture(); ContextFixture reboundContext = new ContextFixture();
         rebound.afterValue = () -> {
             Object replacement = new Object();
-            reboundContext.values.put(GridParameterContext.Field.CONTEXT, replacement);
-            reboundContext.values.put(GridParameterContext.Field.DT_CONTEXT, replacement);
+            reboundContext.values.put(NativeReadContext.Field.CONTEXT, replacement);
+            reboundContext.values.put(NativeReadContext.Field.DT_CONTEXT, replacement);
         };
         expect("stale_context", () -> inspect(rebound, reboundContext, "LOCAL_ID"));
         Fixture f = inspectionFixture(); ContextFixture c = new ContextFixture();
-        c.values.put(GridParameterContext.Field.CONTEXT, null);
+        c.values.put(NativeReadContext.Field.CONTEXT, null);
         expect("stale_context", () -> inspect(f, c, "LOCAL_ID"));
-        c.values.put(GridParameterContext.Field.CONTEXT, new Object());
+        c.values.put(NativeReadContext.Field.CONTEXT, new Object());
         expect("stale_context", () -> inspect(f, c, "LOCAL_ID"));
-        ContextFixture deleted = new ContextFixture(); deleted.values.put(GridParameterContext.Field.DELETED, true);
+        ContextFixture deleted = new ContextFixture(); deleted.values.put(NativeReadContext.Field.DELETED, true);
         expect("stale_context", () -> inspect(f, deleted, "LOCAL_ID"));
-        ContextFixture disposed = new ContextFixture(); disposed.values.put(GridParameterContext.Field.DISPOSED, true);
+        ContextFixture disposed = new ContextFixture(); disposed.values.put(NativeReadContext.Field.DISPOSED, true);
         expect("stale_context", () -> inspect(f, disposed, "LOCAL_ID"));
         ContextFixture unavailable = new ContextFixture(); unavailable.values.put(GridParameterContext.Field.SETTABLE, null);
         expect("grid_unavailable", () -> inspect(f, unavailable, "LOCAL_ID"));
@@ -597,8 +599,8 @@ public final class GridSnapshotReaderTest {
     }
 
     private static void rawParameterLiveGuardChanges() {
-        for (GridParameterContext.Field field : List.of(GridParameterContext.Field.LICENSED, GridParameterContext.Field.SETTABLE,
-                GridParameterContext.Field.INITIALIZED)) {
+        for (Enum<?> field : List.of(GridParameterContext.Field.LICENSED, GridParameterContext.Field.SETTABLE,
+                NativeReadContext.Field.INITIALIZED)) {
             WriterFixture f = new WriterFixture(); f.context.values.put(field, false);
             expect("unsafe_state", () -> f.set(request("boolean", "true", "true")));
             check(f.calls == 0, "false native prerequisite blocks even a no-op");
@@ -612,15 +614,15 @@ public final class GridSnapshotReaderTest {
             expect("unsafe_state", () -> f.set(request("boolean", "true", "false")));
             check(f.calls == 0 && !f.op.dispatched, "live predicate transition before invocation prevents dispatch");
         }
-        for (GridParameterContext.Field field : List.of(GridParameterContext.Field.UNDO, GridParameterContext.Field.LOCK,
-                GridParameterContext.Field.LOCK_OWNER, GridParameterContext.Field.CURRENT_DT, GridParameterContext.Field.DEFAULT_DT)) {
+        for (Enum<?> field : List.of(GridParameterContext.Field.UNDO, GridParameterContext.Field.LOCK,
+                GridParameterContext.Field.LOCK_OWNER, NativeReadContext.Field.CURRENT_DT, NativeReadContext.Field.DEFAULT_DT)) {
             WriterFixture f = new WriterFixture(); f.context.values.put(field, null);
             expect("grid_unavailable", () -> f.set(request("boolean", "true", "false")));
             check(f.calls == 0, "missing native context object is unavailable, never false permission");
         }
         WriterFixture owner = new WriterFixture(); owner.context.values.put(GridParameterContext.Field.LOCK_OWNER, new Object());
         expect("unsafe_state", () -> owner.set(request("boolean", "true", "false")));
-        WriterFixture root = new WriterFixture(); root.context.values.put(GridParameterContext.Field.ROOT, new Object());
+        WriterFixture root = new WriterFixture(); root.context.values.put(NativeReadContext.Field.ROOT, new Object());
         expect("stale_context", () -> root.set(request("boolean", "true", "false")));
         WriterFixture moved = new WriterFixture(); moved.model.afterValue = () -> moved.model.first.put(CHILDREN, List.of());
         expect("stale_context", () -> moved.set(request("boolean", "true", "false")));
@@ -689,7 +691,7 @@ public final class GridSnapshotReaderTest {
         f.first.put(CHILDREN, List.of(scalar, panel, booleanPanel));
         ContextFixture context = stringContext(panel);
         context.values.put(GridParameterContext.Field.SETTABLE, false);
-        context.values.put(GridParameterContext.Field.INITIALIZED, false);
+        context.values.put(NativeReadContext.Field.INITIALIZED, false);
         for (String text : List.of("", " \t\n ", "Café e\u0301 \uD834\uDD1E \u0000 end")) {
             panel.put(STRING_VALUE, text);
             JsonObject result = inspect(f, context, "TEXT_ID");
@@ -770,7 +772,7 @@ public final class GridSnapshotReaderTest {
                 if (mode == 0) moved.first.put(CHILDREN, List.of());
                 if (mode == 1) moved.proxy.put(TARGET, new Node(DEVICE));
                 if (mode == 2) moved.device.put(OWNER_TRACK, new Node(TRACK).put(TRACK_UUID, TRACK_ID));
-                if (mode == 3) c.values.put(GridParameterContext.Field.CONTEXT, new Object());
+                if (mode == 3) c.values.put(NativeReadContext.Field.CONTEXT, new Object());
                 if (mode == 4) text.put(OWNER_MODULE, moved.second);
             };
             expect("stale_context", () -> inspect(moved, c, "TEXT_ID"));
@@ -781,7 +783,7 @@ public final class GridSnapshotReaderTest {
         Fixture f = new Fixture(); Node panel = stringPanel(f, "TEXT_ID", "read only");
         panel.forbidden.add(STRING_VALUE); f.first.put(CHILDREN, List.of(panel));
         ContextFixture context = stringContext(panel);
-        context.override(panel, GridParameterContext.Field.CONTEXT,
+        context.override(panel, NativeReadContext.Field.CONTEXT,
                 (Supplier<Object>) () -> { throw new AssertionError("String write captured edit context"); });
         GridParameterWriter writer = new GridParameterWriter(f.reader, context.reader, new GridParameterWriter.Access() {
             @Override public void requireSupported(Object parameter, GridSnapshotReader.Kind kind) {
@@ -859,7 +861,7 @@ public final class GridSnapshotReaderTest {
         error = skipped.failure();
         check(error.code.equals("unsafe_state") && skipped.calls == 0, "panel's own native skip predicate is retained");
         PanelFixture wrongProject = new PanelFixture();
-        wrongProject.context.override(wrongProject.coupled, GridParameterContext.Field.PROJECT, new Object());
+        wrongProject.context.override(wrongProject.coupled, NativeReadContext.Field.PROJECT, new Object());
         error = wrongProject.failure();
         check(error.code.equals("stale_context") && wrongProject.calls == 0, "coupled parameter cannot cross owning projects");
         PanelFixture unknown = new PanelFixture(); unknown.coupled.kinds.remove(BIPOLAR_FLOAT);
@@ -963,26 +965,26 @@ public final class GridSnapshotReaderTest {
             check(TransportMixFixture.error(op, "unsafe_state").outcome.equals("not_applied")
                     && f.calls == 0 && !f.writer.quarantined(), "native topology predicate rejects before dispatch: " + field);
         }
-        for (GridTopologyContext.Field field : List.of(GridTopologyContext.Field.INITIALIZED, GridTopologyContext.Field.CONTEXT_THREAD)) {
+        for (NativeReadContext.Field field : List.of(NativeReadContext.Field.INITIALIZED, NativeReadContext.Field.CONTEXT_THREAD)) {
             ModuleWriterFixture f = new ModuleWriterFixture(); f.context.values.put(field, false);
             TransportMixFixture.error(f.start(null), "unsafe_state");
             check(f.calls == 0, "uninitialized or wrong context thread prevents mutation");
         }
-        for (GridTopologyContext.Field field : List.of(GridTopologyContext.Field.CURRENT_DT, GridTopologyContext.Field.DEFAULT_DT,
+        for (Enum<?> field : List.of(NativeReadContext.Field.CURRENT_DT, NativeReadContext.Field.DEFAULT_DT,
                 GridTopologyContext.Field.UNDO, GridTopologyContext.Field.LOCK, GridTopologyContext.Field.LOCK_OWNER)) {
             ModuleWriterFixture f = new ModuleWriterFixture(); f.context.values.put(field, null);
             TransportMixFixture.error(f.start(null), "grid_unavailable");
             check(f.calls == 0, "unavailable required native context is not permission: " + field);
         }
-        for (GridTopologyContext.Field field : List.of(GridTopologyContext.Field.DELETED, GridTopologyContext.Field.DISPOSED)) {
+        for (NativeReadContext.Field field : List.of(NativeReadContext.Field.DELETED, NativeReadContext.Field.DISPOSED)) {
             ModuleWriterFixture f = new ModuleWriterFixture(); f.context.values.put(field, true);
             TransportMixFixture.error(f.start(null), "stale_context");
         }
-        ModuleWriterFixture root = new ModuleWriterFixture(); root.context.values.put(GridTopologyContext.Field.ROOT, new Object());
+        ModuleWriterFixture root = new ModuleWriterFixture(); root.context.values.put(NativeReadContext.Field.ROOT, new Object());
         TransportMixFixture.error(root.start(null), "stale_context");
         ModuleWriterFixture lock = new ModuleWriterFixture(); lock.context.values.put(GridTopologyContext.Field.LOCK_OWNER, new Object());
         TransportMixFixture.error(lock.start(null), "unsafe_state");
-        ModuleWriterFixture project = new ModuleWriterFixture(); project.context.values.put(GridTopologyContext.Field.PROJECT, new Object());
+        ModuleWriterFixture project = new ModuleWriterFixture(); project.context.values.put(NativeReadContext.Field.PROJECT, new Object());
         TransportMixFixture.error(project.start(null), "stale_context");
         ModuleWriterFixture wrongTrack = new ModuleWriterFixture(); wrongTrack.trackId = new UUID(99, 99);
         TransportMixFixture.error(wrongTrack.start(null), "stale_context");
@@ -1107,13 +1109,13 @@ public final class GridSnapshotReaderTest {
                         "allowed overlap still uses native placement and later observation");
             });
         }
-        for (GridTopologyContext.Field field : List.of(GridTopologyContext.Field.DELETED,
-                GridTopologyContext.Field.CONTEXT, GridTopologyContext.Field.PROJECT)) {
+        for (NativeReadContext.Field field : List.of(NativeReadContext.Field.DELETED,
+                NativeReadContext.Field.CONTEXT, NativeReadContext.Field.PROJECT)) {
             for (boolean deleting : List.of(false, true)) {
                 topologyRegression(failures, "unselected preflight " + field + " delete=" + deleting, () -> {
                     ModuleWriterFixture f = new ModuleWriterFixture();
                     f.context.override(f.model.second, field,
-                            field == GridTopologyContext.Field.DELETED ? true : field == GridTopologyContext.Field.CONTEXT ? null : new Object());
+                            field == NativeReadContext.Field.DELETED ? true : field == NativeReadContext.Field.CONTEXT ? null : new Object());
                     HostOperation op = f.start(deleting ? null : new GridModuleWriter.Move(7, 3, 11, 5));
                     check(op.result.isCompletedExceptionally() && !op.dispatched && f.calls == 0
                                     && !f.writer.quarantined() && f.events.isEmpty(),
@@ -1126,7 +1128,7 @@ public final class GridSnapshotReaderTest {
                     HostOperation op = f.start(deleting ? null : new GridModuleWriter.Move(7, 3, 11, 5));
                     check(op.dispatched && f.calls == 1 && !op.result.isDone(), "native operation precedes later survivor checks");
                     f.context.override(f.model.second, field,
-                            field == GridTopologyContext.Field.DELETED ? true : field == GridTopologyContext.Field.CONTEXT ? null : new Object());
+                            field == NativeReadContext.Field.DELETED ? true : field == NativeReadContext.Field.CONTEXT ? null : new Object());
                     f.next();
                     check(op.result.isCompletedExceptionally() && !f.writer.quarantined() && f.calls == 1,
                             "a later deleted/detached/wrong-project survivor must not become an observed success");
@@ -1252,12 +1254,12 @@ public final class GridSnapshotReaderTest {
             check(op.result.isCompletedExceptionally() && !op.dispatched && f.calls == 0 && !f.quarantine.quarantined(),
                     "missing/excluded output, ambiguous keys/UUID, owner or thread errors fail before dispatch");
         }
-        for (GridTopologyContext.Field field : List.of(GridTopologyContext.Field.DELETED,
-                GridTopologyContext.Field.CONTEXT, GridTopologyContext.Field.PROJECT)) {
+        for (NativeReadContext.Field field : List.of(NativeReadContext.Field.DELETED,
+                NativeReadContext.Field.CONTEXT, NativeReadContext.Field.PROJECT)) {
             for (int member = 0; member < 3; member++) {
                 ConnectionFixture f = new ConnectionFixture();
                 Node checked = member == 0 ? f.model.input : member == 1 ? f.model.output : f.model.second;
-                f.context.override(checked, field, field == GridTopologyContext.Field.DELETED ? true : null);
+                f.context.override(checked, field, field == NativeReadContext.Field.DELETED ? true : null);
                 HostOperation op = f.start(f.request(null, f.output()));
                 check(TransportMixFixture.error(op, "stale_context").outcome.equals("not_applied") && f.calls == 0,
                         "every input/output/module requires live attached exact project context");
@@ -1287,7 +1289,7 @@ public final class GridSnapshotReaderTest {
         for (int change = 0; change < 5; change++) {
             ConnectionFixture f = new ConnectionFixture(); HostOperation op = f.start(f.request(null, f.output()));
             if (change == 0) f.model.first.put(OUTPUTS, List.of(f.model.port(OUTPUT, f.model.first, "out")));
-            if (change == 1) f.context.override(f.model.output, GridTopologyContext.Field.CONTEXT, null);
+            if (change == 1) f.context.override(f.model.output, NativeReadContext.Field.CONTEXT, null);
             if (change == 2) f.context.values.put(GridTopologyContext.Field.UNDO, new Object());
             if (change == 3) f.model.proxy.put(TARGET, new Node(DEVICE));
             if (change == 4) f.cancelled = true;
@@ -1466,24 +1468,28 @@ public final class GridSnapshotReaderTest {
     }
     static final class ModuleContextFixture implements GridTopologyContext.Access {
         final GridTopologyContext reader = new GridTopologyContext(this);
-        final EnumMap<GridTopologyContext.Field, Object> values = new EnumMap<>(GridTopologyContext.Field.class);
-        final IdentityHashMap<Object, EnumMap<GridTopologyContext.Field, Object>> perObject = new IdentityHashMap<>();
+        final Map<Enum<?>, Object> values = new HashMap<>();
+        final IdentityHashMap<Object, Map<Enum<?>, Object>> perObject = new IdentityHashMap<>();
         final Object context = new Object(), project = new Object(), dt = new Object();
         ModuleContextFixture() {
             for (GridTopologyContext.Field field : GridTopologyContext.Field.values()) values.put(field, false);
-            values.put(GridTopologyContext.Field.CONTEXT, context); values.put(GridTopologyContext.Field.PROJECT, project);
-            values.put(GridTopologyContext.Field.GRAPH_PROJECT, project); values.put(GridTopologyContext.Field.ROOT, project);
-            values.put(GridTopologyContext.Field.INITIALIZED, true); values.put(GridTopologyContext.Field.CONTEXT_THREAD, true);
-            values.put(GridTopologyContext.Field.CURRENT_DT, dt); values.put(GridTopologyContext.Field.DEFAULT_DT, dt);
-            values.put(GridTopologyContext.Field.DT_CONTEXT, context);
+            for (NativeReadContext.Field field : NativeReadContext.Field.values()) values.put(field, false);
+            values.put(NativeReadContext.Field.CONTEXT, context); values.put(NativeReadContext.Field.PROJECT, project);
+            values.put(GridTopologyContext.Field.GRAPH_PROJECT, project); values.put(NativeReadContext.Field.ROOT, project);
+            values.put(NativeReadContext.Field.INITIALIZED, true); values.put(NativeReadContext.Field.CONTEXT_THREAD, true);
+            values.put(NativeReadContext.Field.CURRENT_DT, dt); values.put(NativeReadContext.Field.DEFAULT_DT, dt);
+            values.put(NativeReadContext.Field.DT_CONTEXT, context);
             values.put(GridTopologyContext.Field.UNDO, new Object()); values.put(GridTopologyContext.Field.LOCK, new Object());
             values.put(GridTopologyContext.Field.LOCK_OWNER, dt);
         }
-        void override(Object object, GridTopologyContext.Field field, Object value) {
-            perObject.computeIfAbsent(object, ignored -> new EnumMap<>(GridTopologyContext.Field.class)).put(field, value);
+        void override(Object object, Enum<?> field, Object value) {
+            perObject.computeIfAbsent(object, ignored -> new HashMap<>()).put(field, value);
         }
-        @Override public Object read(GridTopologyContext.Field field, Object object) {
-            EnumMap<GridTopologyContext.Field, Object> specific = perObject.get(object);
+        @Override public Object read(GridTopologyContext.Field field, Object object) { return value(field, object); }
+        @Override public Object read(NativeReadContext.Field field, Object object) { return value(field, object); }
+        @Override public String unavailableCode() { return "grid_unavailable"; }
+        private Object value(Enum<?> field, Object object) {
+            Map<Enum<?>, Object> specific = perObject.get(object);
             return specific != null && specific.containsKey(field) ? specific.get(field) : values.get(field);
         }
         @Override public boolean defaultContext(Object context) { return true; }
@@ -1589,17 +1595,18 @@ public final class GridSnapshotReaderTest {
 
     private static final class ContextFixture implements GridParameterContext.Access {
         final GridParameterContext reader = new GridParameterContext(this);
-        final EnumMap<GridParameterContext.Field, Object> values = new EnumMap<>(GridParameterContext.Field.class);
-        final IdentityHashMap<Object, EnumMap<GridParameterContext.Field, Object>> perObject = new IdentityHashMap<>();
+        final Map<Enum<?>, Object> values = new HashMap<>();
+        final IdentityHashMap<Object, Map<Enum<?>, Object>> perObject = new IdentityHashMap<>();
         final Object context = new Object(), project = new Object(), dt = new Object();
         boolean defaultSupported = true;
         ContextFixture() {
             for (GridParameterContext.Field field : GridParameterContext.Field.values()) values.put(field, false);
-            values.put(GridParameterContext.Field.CONTEXT, context); values.put(GridParameterContext.Field.PROJECT, project);
-            values.put(GridParameterContext.Field.PARAMETER_PROJECT, project); values.put(GridParameterContext.Field.ROOT, project);
-            values.put(GridParameterContext.Field.INITIALIZED, true); values.put(GridParameterContext.Field.CONTEXT_THREAD, true);
-            values.put(GridParameterContext.Field.CURRENT_DT, dt); values.put(GridParameterContext.Field.DEFAULT_DT, dt);
-            values.put(GridParameterContext.Field.DT_CONTEXT, context); values.put(GridParameterContext.Field.LICENSED, true);
+            for (NativeReadContext.Field field : NativeReadContext.Field.values()) values.put(field, false);
+            values.put(NativeReadContext.Field.CONTEXT, context); values.put(NativeReadContext.Field.PROJECT, project);
+            values.put(GridParameterContext.Field.PARAMETER_PROJECT, project); values.put(NativeReadContext.Field.ROOT, project);
+            values.put(NativeReadContext.Field.INITIALIZED, true); values.put(NativeReadContext.Field.CONTEXT_THREAD, true);
+            values.put(NativeReadContext.Field.CURRENT_DT, dt); values.put(NativeReadContext.Field.DEFAULT_DT, dt);
+            values.put(NativeReadContext.Field.DT_CONTEXT, context); values.put(GridParameterContext.Field.LICENSED, true);
             values.put(GridParameterContext.Field.SETTABLE, true);
             for (GridParameterContext.Field field : List.of(GridParameterContext.Field.GUI_FLOAT, GridParameterContext.Field.GUI_INTEGER,
                     GridParameterContext.Field.GUI_ENUM, GridParameterContext.Field.GUI_BOOLEAN, GridParameterContext.Field.UNDO, GridParameterContext.Field.LOCK))
@@ -1610,11 +1617,14 @@ public final class GridSnapshotReaderTest {
                     GridParameterContext.Field.GUI_ENUM, GridParameterContext.Field.GUI_BOOLEAN))
                 values.put(field, (Supplier<Object>) Object::new);
         }
-        void override(Object object, GridParameterContext.Field field, Object value) {
-            perObject.computeIfAbsent(object, ignored -> new EnumMap<>(GridParameterContext.Field.class)).put(field, value);
+        void override(Object object, Enum<?> field, Object value) {
+            perObject.computeIfAbsent(object, ignored -> new HashMap<>()).put(field, value);
         }
-        @Override public Object read(GridParameterContext.Field field, Object object) {
-            EnumMap<GridParameterContext.Field, Object> specific = perObject.get(object);
+        @Override public Object read(GridParameterContext.Field field, Object object) { return value(field, object); }
+        @Override public Object read(NativeReadContext.Field field, Object object) { return value(field, object); }
+        @Override public String unavailableCode() { return "grid_unavailable"; }
+        private Object value(Enum<?> field, Object object) {
+            Map<Enum<?>, Object> specific = perObject.get(object);
             Object value = specific != null && specific.containsKey(field) ? specific.get(field) : values.get(field);
             return value instanceof Supplier<?> ? ((Supplier<?>) value).get() : value;
         }
@@ -1629,12 +1639,14 @@ public final class GridSnapshotReaderTest {
     }
     private static void check(boolean condition, String label) { assertions++; if (!condition) throw new AssertionError(label); }
     static final class Node {
-        final Set<GridSnapshotReader.Kind> kinds = new HashSet<>();
-        final Map<GridSnapshotReader.Field, Object> values = new EnumMap<>(GridSnapshotReader.Field.class);
-        final Set<GridSnapshotReader.Field> forbidden = EnumSet.noneOf(GridSnapshotReader.Field.class);
+        final Set<Enum<?>> kinds = new HashSet<>();
+        final Map<Enum<?>, Object> values = new HashMap<>();
+        final Set<Enum<?>> forbidden = new HashSet<>();
         boolean threadAllowed = true;
         Node(GridSnapshotReader.Kind... types) { kinds.addAll(Arrays.asList(types)); }
+        Node(NativeDeviceTarget.Kind type) { kinds.add(type); }
         Node put(GridSnapshotReader.Field field, Object value) { values.put(field, value); return this; }
+        Node put(NativeDeviceTarget.Field field, Object value) { values.put(field, value); return this; }
     }
     static final class Fixture implements GridSnapshotReader.Access {
         final GridSnapshotReader reader = new GridSnapshotReader(this);
@@ -1642,7 +1654,7 @@ public final class GridSnapshotReaderTest {
         final Node owner = new Node(TRACK).put(TRACK_UUID, TRACK_ID);
         final Map<UUID, Node> types = new HashMap<>();
         final Set<GridSnapshotReader.Metadata> unavailable = EnumSet.noneOf(GridSnapshotReader.Metadata.class);
-        final Map<GridSnapshotReader.Field, RpcException> failures = new EnumMap<>(GridSnapshotReader.Field.class);
+        final Map<Enum<?>, RpcException> failures = new HashMap<>();
         final Node first = module(0, graph), second = module(1, graph);
         final Node input = port(INPUT, first, "in"), output = port(OUTPUT, first, "out");
         List<?> catalog = List.of(); boolean parameters = true, display = true, document = true;
@@ -1677,6 +1689,16 @@ public final class GridSnapshotReaderTest {
                     .put(PARAMETER_ID, "LOCAL_ID").put(PARAMETER_NAME, "Native control").put(SHORT_NAME, "");
         }
         JsonObject read(int offset, int limit, boolean parameters) { return reader.snapshot(proxy, TRACK_ID, offset, limit, parameters, () -> {}); }
+        @Override public String unavailableCode() { return "grid_unavailable"; }
+        @Override public boolean is(NativeDeviceTarget.Kind kind, Object value) { return value instanceof Node && ((Node) value).kinds.contains(kind); }
+        @Override public Object read(NativeDeviceTarget.Field field, Object object) {
+            if (object instanceof Node && ((Node) object).forbidden.contains(field))
+                throw new AssertionError("Forbidden native getter: " + field);
+            if (failures.containsKey(field)) throw failures.get(field);
+            if (field == TARGET) targetReads++;
+            if (field == TRACK_UUID || field == ALIAS_UUID) uuidReads++;
+            return ((Node) object).values.get(field);
+        }
         @Override public Object read(GridSnapshotReader.Field field, Object object) {
             if (object instanceof Node && ((Node) object).forbidden.contains(field))
                 throw new AssertionError("Forbidden native getter: " + field);
@@ -1684,8 +1706,6 @@ public final class GridSnapshotReaderTest {
             if (field == CATALOG) { catalogReads++; return catalog; }
             if (field == TYPE_ENTRY) return types.get(object);
             if (field == GRAPH) graphReads++;
-            if (field == TARGET) targetReads++;
-            if (field == TRACK_UUID || field == ALIAS_UUID) uuidReads++;
             Object value = ((Node) object).values.get(field);
             if (field == FLOAT_VALUE || field == BOOLEAN_VALUE || field == INTEGER_VALUE || field == ENUM_VALUE || field == STRING_VALUE) afterValue.run();
             if (field == MODULES || field == INPUTS || field == OUTPUTS || field == CHILDREN) {

@@ -6,6 +6,7 @@ import java.util.function.Consumer;
 import static dev.bitwigagent.GridSnapshotReader.Field.*;
 import static dev.bitwigagent.GridSnapshotReader.Kind.*;
 import static dev.bitwigagent.GridSnapshotReaderTest.Node;
+import static dev.bitwigagent.NativeDeviceTarget.Field.*;
 
 /** Host-free behavioral lifecycle tests, discovered by scripts/test-java.py. */
 public final class GridInsertionWriterTest {
@@ -157,7 +158,7 @@ public final class GridInsertionWriterTest {
             if (changed == 0) f.model.first.put(X, 20);
             if (changed == 1) f.model.graph.put(MODULES, List.of(f.model.second));
             if (changed == 2) f.model.proxy.put(TARGET, f.model.owner);
-            if (changed == 3) f.context.values.put(GridTopologyContext.Field.CURRENT_DT, new Object());
+            if (changed == 3) f.context.values.put(NativeReadContext.Field.CURRENT_DT, new Object());
             if (changed == 4) f.requestError = "unsafe_state";
             if (changed == 5) f.model.first.put(WIDTH, 4);
             if (changed == 6) f.placementReady = false;
@@ -190,7 +191,7 @@ public final class GridInsertionWriterTest {
                 "unexpected callback/linkage Error still cleans first, returns normally and poisons native lifetime");
         for (int changed = 0; changed < 5; changed++) {
             Fixture settled = new Fixture(); HostOperation failed = settled.start(); settled.deliver();
-            if (changed == 0) settled.context.values.put(GridTopologyContext.Field.ROOT, new Object());
+            if (changed == 0) settled.context.values.put(NativeReadContext.Field.ROOT, new Object());
             if (changed == 1) ((Node) settled.incoming.values.get(DESCRIPTOR)).put(TYPE_ID, new UUID(9, 9));
             if (changed == 2) settled.incoming.put(Y, 4);
             if (changed == 3) settled.incoming.put(X, 7);
@@ -222,7 +223,7 @@ public final class GridInsertionWriterTest {
             HostOperation op = f.start(); f.deliver();
             check(f.cleanups == 1 && f.placements == 0 && f.successes == 0 && f.guard.quarantined(),
                     "actual Method.invoke conversion failure is cleaned once and quarantined before settlement");
-            check(f.cleanupError instanceof RpcException && Bitwig613GridAdapter.isInvocationFailure(f.cleanupError)
+            check(f.cleanupError instanceof RpcException && Bitwig613Runtime.isInvocationFailure(f.cleanupError)
                     && f.cleanupError.getCause() instanceof java.lang.reflect.InvocationTargetException
                     && f.cleanupError.getCause().getCause() == cause,
                     "RPC translation retains reflection boundary and original native throwable identity");
@@ -236,7 +237,7 @@ public final class GridInsertionWriterTest {
         for (String rejection : List.of("deadline_exceeded", "stale_context")) {
             Fixture f = new Fixture(); HostOperation op = f.start(); f.requestError = rejection; f.deliver();
             check(f.cleanups == 1 && !f.guard.quarantined() && !op.result.isDone()
-                    && !Bitwig613GridAdapter.isInvocationFailure(f.cleanupError),
+                    && !Bitwig613Runtime.isInvocationFailure(f.cleanupError),
                     "ordinary deadline/context validation remains a cleanup-and-settle rejection");
             f.next(); f.guard.requireAvailable();
             check(TransportMixFixture.error(op, rejection).outcome.equals("unknown"),
@@ -300,8 +301,8 @@ public final class GridInsertionWriterTest {
             this.process = process; guard = new GridTopologyQuarantine(process); this.queue = queue == null ? events::add : queue;
             writer = new GridInsertionWriter(model.reader, model, context.reader, this, guard);
             model.catalog = List.of(new Node(ENTRY).put(ENTRY_ID, TYPE).put(ENTRY_KIND, "MODULE").put(ENTRY_NAME, "Catalog module"));
-            context.override(incoming, GridTopologyContext.Field.CONTEXT, null);
-            context.override(incoming, GridTopologyContext.Field.PROJECT, null);
+            context.override(incoming, NativeReadContext.Field.CONTEXT, null);
+            context.override(incoming, NativeReadContext.Field.PROJECT, null);
         }
         GridInsertionWriter.Request request() { return new GridInsertionWriter.Request(TYPE, 8, 3); }
         HostOperation start() { return start(request()); }
@@ -338,7 +339,7 @@ public final class GridInsertionWriterTest {
         }
         @Override public List<?> converted(Object result) {
             if (reflectedConversion != null)
-                return (List<?>) Bitwig613GridAdapter.invoke(ReflectedConversion.READ, reflectedConversion);
+                return (List<?>) Bitwig613Runtime.invoke("grid_unavailable", ReflectedConversion.READ, reflectedConversion);
             if (failConverted) throw new LinkageError("native callback reader failed");
             return loaded;
         }
@@ -353,8 +354,8 @@ public final class GridInsertionWriterTest {
             List<Object> members = new ArrayList<>((List<?>) model.graph.values.get(MODULES));
             if (reflow) for (Object member : members) { Node node = (Node) member; node.put(X, ((Integer) node.values.get(X)) + 2); }
             incoming.put(X, x + normalization).put(Y, y).put(MODULE_GRAPH, graph); members.add(incoming); model.graph.put(MODULES, members);
-            context.override(incoming, GridTopologyContext.Field.CONTEXT, context.context);
-            context.override(incoming, GridTopologyContext.Field.PROJECT, context.project);
+            context.override(incoming, NativeReadContext.Field.CONTEXT, context.context);
+            context.override(incoming, NativeReadContext.Field.PROJECT, context.project);
         }
         @Override public void reject(Object completion, Exception error) {
             cleanups++; cleanupError = error; order.add("cleanup");

@@ -208,7 +208,6 @@ async def test_offline_discovery_exposes_connection_examples_and_complete_regist
     payload, code = await execute(["list"])
     assert code == 0
     assert set(payload["result"]["methods"]) == set(TOOLS)
-    assert len(payload["result"]["methods"]) == 41
     payload, code = await execute(["describe", "grid.connections.set"])
     assert code == 0
     description = payload["result"]
@@ -317,4 +316,78 @@ async def test_layer_cli_preserves_unknown_without_retry(host, monkeypatch):
     assert code == 1
     assert payload == {"error": error}
     assert host.requests[0]["params"] == params
+    assert len(host.requests) == host.connections == 1
+
+
+@pytest.mark.parametrize("method", ["modulators.capabilities", "modulators.list", "modulators.parameters.get"])
+async def test_modulator_generated_help_and_parse_work_offline(monkeypatch, method):
+    monkeypatch.setenv("BITWIG_AGENT_PORT", "not-a-port")
+    payload, code = await execute([method, "--help"])
+    assert code == 0
+    description = payload["result"]
+    assert description == {"method": method, **TOOLS[method].describe()}
+    assert description["readOnly"] is True
+    args = description["examples"][0]
+    arguments = [f"{key}={value if isinstance(value, str) else json.dumps(value)}"
+                 for key, value in args.items()]
+    assert parse_arguments(method, arguments, None, None) == (args, 5000)
+    if method != "modulators.capabilities":
+        schema = description["inputSchema"]
+        parent = schema["$defs"]["DeviceParent"]
+        assert parent["additionalProperties"] is False
+        assert set(parent["required"]) == {"trackId", "deviceIndex", "expectedDeviceName"}
+    listing, code = await execute(["list", "modulators"])
+    assert code == 0
+    assert set(listing["result"]["methods"]) == {
+        "modulators.capabilities", "modulators.list", "modulators.parameters.get"}
+
+
+@pytest.mark.parametrize("raw", [False, True])
+@pytest.mark.parametrize("value", ["", " \tMacro α𝄞\n "])
+async def test_modulator_cli_preserves_raw_string_and_null_metadata(host, monkeypatch, raw, value):
+    monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
+    params = {**TOOLS["modulators.parameters.get"].examples[0], "parameterId": ""}
+    result = {"completion": "observed", "modulatorId": params["modulatorId"],
+              "parameterId": "", "kind": "string", "controlFamily": "string_panel",
+              "value": value, "labels": None, "shortLabel": None, "display": None,
+              "nativeMutation": False}
+    host.reply = lambda request: {"id": request["id"], "result": result}
+    arguments = (["--params", json.dumps(params)] if raw else [
+        f"{key}={value if isinstance(value, str) else json.dumps(value)}"
+        for key, value in params.items()])
+    payload, code = await execute(["modulators.parameters.get", *arguments])
+    assert code == 0
+    assert json.loads(json.dumps(payload)) == {"result": result}
+    assert host.requests[0]["params"]["parameterId"] == ""
+    assert len(host.requests) == host.connections == 1
+
+
+@pytest.mark.parametrize("changes", [
+    {"parent": {**TARGET, "deviceIndex": True}},
+    {"parent": {**TARGET, "deviceIndex": 1.0}},
+    {"modulatorId": "Macro"}, {"parameterId": None},
+    {"parameterId": "𝄞" * 513}, {"value": "forbidden"},
+])
+async def test_modulator_cli_invalid_inputs_never_connect(host, monkeypatch, changes):
+    monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
+    params = {**TOOLS["modulators.parameters.get"].examples[0], **changes}
+    payload, code = await execute(["modulators.parameters.get", "--params", json.dumps(params)])
+    assert code == 2
+    assert payload["error"]["code"] == "invalid_params"
+    assert payload["error"]["outcome"] == "not_dispatched"
+    assert host.connections == 0
+
+
+@pytest.mark.parametrize("error_code", [
+    "modulator_unavailable", "modulator_bounds_exceeded", "unsupported_scope", "stale_context",
+])
+async def test_modulator_cli_preserves_host_error_without_retry(host, monkeypatch, error_code):
+    monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
+    error = {"code": error_code, "message": "Read rejected", "outcome": "not_dispatched"}
+    host.reply = lambda request: {"id": request["id"], "error": error}
+    payload, code = await execute([
+        "modulators.parameters.get", "--params",
+        json.dumps(TOOLS["modulators.parameters.get"].examples[0])])
+    assert code == 1
+    assert payload == {"error": error}
     assert len(host.requests) == host.connections == 1

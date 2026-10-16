@@ -10,8 +10,10 @@ import static dev.bitwigagent.HostServices.failure;
 final class Bitwig613GridParameterWriter implements GridParameterWriter.Access {
     private final Method raw;
     private final Map<Class<?>, GridSnapshotReader.Kind> models;
+    private final Bitwig613Runtime.Access bindings;
 
-    Bitwig613GridParameterWriter(Bitwig613GridAdapter bindings) throws ReflectiveOperationException {
+    Bitwig613GridParameterWriter(Bitwig613Runtime.Access bindings) throws ReflectiveOperationException {
+        this.bindings = bindings;
         Class<?> controller = bindings.type("iTc");
         raw = bindings.exactMethod(controller, "JQk", void.class, false, double.class);
         if (raw.getDeclaringClass() != controller || !Modifier.isFinal(raw.getModifiers()))
@@ -37,6 +39,6 @@ final class Bitwig613GridParameterWriter implements GridParameterWriter.Access {
     }
 
     @Override public void setRaw(Object parameter, double value) {
-        Bitwig613GridAdapter.invoke(raw, parameter, value);
+        bindings.invoke(raw, parameter, value);
     }
 }

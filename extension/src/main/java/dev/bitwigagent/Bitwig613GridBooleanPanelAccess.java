@@ -2,15 +2,17 @@ package dev.bitwigagent;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
-import static dev.bitwigagent.Bitwig613GridAdapter.invoke;
+
 import static dev.bitwigagent.HostServices.failure;
 
 /** Exact boolean-panel model operations; never an iTc scalar or a GUI widget binding. */
 final class Bitwig613GridBooleanPanelAccess implements GridBooleanPanelWriter.Access {
     private final Class<?> panel, bipolar;
     private final Method identifier, value, property, linkedPanel, setter;
+    private final Bitwig613Runtime.Access bindings;
 
-    Bitwig613GridBooleanPanelAccess(Bitwig613GridAdapter bindings) throws ReflectiveOperationException {
+    Bitwig613GridBooleanPanelAccess(Bitwig613Runtime.Access bindings) throws ReflectiveOperationException {
+        this.bindings = bindings;
         panel = bindings.type("Fln");
         Class<?> parent = bindings.type("ihn"), intermediate = bindings.type("Kx3");
         Class<?> identified = bindings.type("VOa"), component = bindings.type("owt"), base = bindings.type("tD");
@@ -37,15 +39,15 @@ final class Bitwig613GridBooleanPanelAccess implements GridBooleanPanelWriter.Ac
 
     boolean isPanel(Object object) { return object != null && object.getClass() == panel; }
     boolean isBipolar(Object object) { return object != null && object.getClass() == bipolar; }
-    Object identifier(Object object) { requireSupported(object); return invoke(identifier, object); }
-    Object value(Object object) { requireSupported(object); return invoke(value, object); }
-    Object property(Object object) { requireSupported(object); return invoke(property, object); }
+    Object identifier(Object object) { requireSupported(object); return bindings.invoke(identifier, object); }
+    Object value(Object object) { requireSupported(object); return bindings.invoke(value, object); }
+    Object property(Object object) { requireSupported(object); return bindings.invoke(property, object); }
     Object linkedPanel(Object object) {
         if (!isBipolar(object)) throw failure("grid_unavailable", "Bipolar reference requires the exact inspected TZj model.");
-        return invoke(linkedPanel, object);
+        return bindings.invoke(linkedPanel, object);
     }
     @Override public void requireSupported(Object object) {
         if (!isPanel(object)) throw failure("grid_unavailable", "Boolean panel requires the exact inspected Fln model.");
     }
-    @Override public void set(Object object, boolean value) { invoke(setter, object, value); }
+    @Override public void set(Object object, boolean value) { bindings.invoke(setter, object, value); }
 }

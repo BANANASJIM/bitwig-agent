@@ -169,7 +169,7 @@ async def test_grid_move_mcp_rejects_float_despite_json_schema_integer_semantics
 async def test_mcp_discovery_publishes_required_nullable_connection_contract(mcp_session):
     response = await mcp_session.list_tools()
     tools = {tool.name: tool for tool in response.tools}
-    assert len(response.tools) == len(tools) == 41
+    assert len(response.tools) == len(tools)
     assert set(tools) == set(TOOLS)
     tool = tools["grid.connections.set"]
     assert tool.annotations.readOnlyHint is False
@@ -319,3 +319,91 @@ async def test_layer_mcp_preserves_unknown_without_retry(mcp_session, host):
     assert host.requests[0]["params"] == params
     assert host.requests[0]["timeoutMs"] == 250
     assert len(host.requests) == host.connections == 1
+
+
+async def test_modulator_mcp_publishes_generated_read_only_contract(mcp_session):
+    response = await mcp_session.list_tools()
+    tools = {tool.name: tool for tool in response.tools}
+    for method in ("modulators.capabilities", "modulators.list", "modulators.parameters.get"):
+        tool = tools[method]
+        assert tool.annotations.readOnlyHint is True
+        assert tool.annotations.destructiveHint is False
+        schema = tool.inputSchema
+        assert schema["additionalProperties"] is False
+        if method != "modulators.capabilities":
+            parent = schema["$defs"]["DeviceParent"]
+            assert parent["additionalProperties"] is False
+            assert set(parent["required"]) == {"trackId", "deviceIndex", "expectedDeviceName"}
+        if method == "modulators.parameters.get":
+            assert set(schema["required"]) == {"parent", "modulatorId", "parameterId"}
+            assert schema["properties"]["parameterId"]["maxLength"] == 1024
+            assert schema["properties"]["parameterId"].get("minLength", 0) == 0
+
+
+@pytest.mark.parametrize("changes", [
+    {"parent": {**TARGET, "deviceIndex": True}},
+    {"parent": {**TARGET, "deviceIndex": 1.0}},
+    {"parent": {**TARGET, "layerId": TRACK}},
+    {"modulatorId": "1-1-1-1-1"}, {"modulatorId": None},
+    {"parameterId": None}, {"parameterId": "𝄞" * 513}, {"value": ""},
+])
+async def test_modulator_mcp_rejects_invalid_args_before_tcp(mcp_session, host, changes):
+    response = await mcp_session.call_tool("modulators.parameters.get", {
+        **TOOLS["modulators.parameters.get"].examples[0], **changes})
+    assert response.isError
+    assert response.structuredContent["error"]["code"] == "invalid_params"
+    assert response.structuredContent["error"]["outcome"] == "not_dispatched"
+    assert host.connections == 0
+
+
+@pytest.mark.parametrize("value", ["", " \tMacro α𝄞\n "])
+async def test_modulator_mcp_preserves_raw_string_and_unavailable_metadata(mcp_session, host, value):
+    params = {**TOOLS["modulators.parameters.get"].examples[0], "parameterId": ""}
+    result = {"completion": "observed", "modulatorId": params["modulatorId"],
+              "parameterId": "", "kind": "string", "controlFamily": "string_panel",
+              "value": value, "labels": None, "shortLabel": None, "display": None,
+              "nativeMutation": False}
+    host.reply = lambda request: {"id": request["id"], "result": result}
+    response = await mcp_session.call_tool("modulators.parameters.get", params)
+    assert response.isError is False
+    assert response.structuredContent == {"result": result}
+    assert host.requests[0]["params"]["parameterId"] == ""
+    assert len(host.requests) == host.connections == 1
+
+
+async def test_modulator_mcp_preserves_partial_inventory_without_inventing_contents(mcp_session, host):
+    result = {"completion": "observed", "scope": "primary_modulators_on_root_device",
+              "window": {"offset": 0, "limit": 1, "total": 2, "returned": 1},
+              "modulators": [{"index": 0, "modulatorId": TRACK, "name": None,
+                              "customName": None, "contentsAvailable": False,
+                              "typeId": None, "parameters": None}]}
+    host.reply = lambda request: {"id": request["id"], "result": result}
+    response = await mcp_session.call_tool("modulators.list", {"parent": TARGET, "limit": 1})
+    assert response.isError is False
+    assert response.structuredContent == {"result": result}
+    assert len(host.requests) == host.connections == 1
+
+
+@pytest.mark.parametrize("error_code", [
+    "modulator_unavailable", "modulator_bounds_exceeded", "unsupported_scope", "stale_context",
+])
+async def test_modulator_mcp_preserves_read_errors_without_retry(mcp_session, host, error_code):
+    error = {"code": error_code, "message": "Read rejected", "outcome": "not_dispatched"}
+    host.reply = lambda request: {"id": request["id"], "error": error}
+    response = await mcp_session.call_tool("modulators.parameters.get",
+                                         TOOLS["modulators.parameters.get"].examples[0])
+    assert response.isError
+    assert response.structuredContent == {"error": error}
+    assert len(host.requests) == host.connections == 1
+
+
+@pytest.mark.parametrize("field,value", [
+    ("offset", True), ("offset", 1.0), ("offset", None),
+    ("limit", 1.0), ("limit", "1"), ("limit", 129),
+])
+async def test_modulator_mcp_pagination_rejects_coercion_before_tcp(mcp_session, host, field, value):
+    response = await mcp_session.call_tool("modulators.list", {"parent": TARGET, field: value})
+    assert response.isError
+    assert response.structuredContent["error"]["code"] == "invalid_params"
+    assert response.structuredContent["error"]["outcome"] == "not_dispatched"
+    assert host.connections == 0

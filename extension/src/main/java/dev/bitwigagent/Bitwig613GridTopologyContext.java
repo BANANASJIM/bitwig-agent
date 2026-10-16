@@ -3,33 +3,22 @@ package dev.bitwigagent;
 import java.lang.reflect.Method;
 import java.util.EnumMap;
 import static dev.bitwigagent.GridTopologyContext.Field.*;
-import static dev.bitwigagent.Bitwig613GridAdapter.invoke;
+
 import static dev.bitwigagent.HostServices.failure;
 
 /** Shared public context observations, independent of move geometry and connection setter bindings. */
 final class Bitwig613GridTopologyContext implements GridTopologyContext.Access {
     private static final String R = "com.bitwig.ramona.core.", D = "com.bitwig.flt.document.core.master.device.";
-    private final Bitwig613GridAdapter bindings;
+    private final Bitwig613Runtime.Access bindings;
     private final EnumMap<GridTopologyContext.Field, Method> readers = new EnumMap<>(GridTopologyContext.Field.class);
-    private final Class<?> project, defaultContext;
+    private final Bitwig613ReadContextAccess readContext;
 
-    Bitwig613GridTopologyContext(Bitwig613GridAdapter bindings) throws ReflectiveOperationException {
+    Bitwig613GridTopologyContext(Bitwig613Runtime.Access bindings) throws ReflectiveOperationException {
         this.bindings = bindings;
-        Class<?> model = bindings.type(R + "fJC"), context = bindings.type(R + "HLm");
+        readContext = new Bitwig613ReadContextAccess(bindings);
+        Class<?> model = bindings.type(R + "fJC");
         Class<?> dt = bindings.type(R + "Dt"), undo = bindings.type("dfW"), lock = bindings.type(R + "IoW");
-        project = bindings.type("com.bitwig.flt.document.core.master.WN2");
-        defaultContext = bindings.type("dqB");
-        bind(DELETED, bindings.type(R + "xKS"), "N_", boolean.class);
-        bind(CONTEXT, model, "fi2", context);
-        readers.put(PROJECT, bindings.exactMethod(model, "k31", Object.class, false, Class.class));
-        bind(GRAPH_PROJECT, bindings.type("bKp"), "ce_", project);
-        bind(ROOT, context, "kpO", bindings.type(R + "xKS"));
-        bind(INITIALIZED, context, "cLM", boolean.class);
-        bind(DISPOSED, context, "UlY", boolean.class);
-        bind(CONTEXT_THREAD, context, "isEventDispatchThread", boolean.class);
-        bind(CURRENT_DT, context, "Ynu", dt);
-        bind(DEFAULT_DT, defaultContext, "IHn", dt);
-        bind(DT_CONTEXT, dt, "kpO", context);
+        bind(GRAPH_PROJECT, bindings.type("bKp"), "ce_", bindings.type("com.bitwig.flt.document.core.master.WN2"));
         bind(CIU, bindings.type("bKp"), "CIu", boolean.class);
         Class<?> projectFlags = bindings.type("com.bitwig.flt.document.core.master.UcW");
         bind(PROJECT_ADM, projectFlags, "adm", boolean.class); // is_being_closed (4701)
@@ -45,12 +34,13 @@ final class Bitwig613GridTopologyContext implements GridTopologyContext.Access {
             throws ReflectiveOperationException {
         readers.put(field, bindings.exactMethod(owner, name, returns, false));
     }
-    @Override public boolean defaultContext(Object context) { return defaultContext.isInstance(context); }
+    @Override public boolean defaultContext(Object context) { return readContext.defaultContext(context); }
+    @Override public String unavailableCode() { return bindings.unavailableCode(); }
+    @Override public Object read(NativeReadContext.Field field, Object object) { return readContext.read(field, object); }
     @Override public Object read(GridTopologyContext.Field field, Object object) {
         Method reader = readers.get(field);
         if (reader == null) throw failure("grid_unavailable", "Unbound topology context reader: " + field);
-        if (field == PROJECT) return invoke(reader, object, project);
-        if (field == UNDO) return invoke(reader, null, object);
-        return invoke(reader, object);
+        if (field == UNDO) return bindings.invoke(reader, null, object);
+        return bindings.invoke(reader, object);
     }
 }

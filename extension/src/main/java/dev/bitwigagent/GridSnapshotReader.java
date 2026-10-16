@@ -9,11 +9,10 @@ import static dev.bitwigagent.HostServices.failure;
 final class GridSnapshotReader {
     static final int MAX_MODULES = 4096, MAX_CHILDREN = 256, MAX_OPTIONS = 256, MAX_CATALOG = 16384;
     static final int MAX_ITEMS = 16384, MAX_TEXT = 1024;
-    enum Kind { DEVICE, TRACK, ALIASED_TRACK, CHANNEL_ALIAS, MODULE, INPUT, OUTPUT, PARAMETER, FLOAT, BOOLEAN, INTEGER, ENUM, PANEL_BOOLEAN, PANEL_STRING, BIPOLAR_FLOAT, ENTRY, OPTION }
+    enum Kind { MODULE, INPUT, OUTPUT, PARAMETER, FLOAT, BOOLEAN, INTEGER, ENUM, PANEL_BOOLEAN, PANEL_STRING, BIPOLAR_FLOAT, ENTRY, OPTION }
     private static final Kind[] PARAMETER_KINDS = {Kind.FLOAT, Kind.BOOLEAN, Kind.INTEGER, Kind.ENUM, Kind.PANEL_BOOLEAN, Kind.PANEL_STRING};
     enum Field {
-        TARGET, GRAPH, EXECUTOR, MODULES, INSTANCE_ID, LOCAL_KEY, X, Y, WIDTH, HEIGHT, DESCRIPTOR, TYPE_ID,
-        OWNER_TRACK, TRACK_ALIAS, TRACK_UUID, ALIAS_UUID,
+        GRAPH, MODULES, INSTANCE_ID, LOCAL_KEY, X, Y, WIDTH, HEIGHT, DESCRIPTOR, TYPE_ID,
         INPUTS, OUTPUTS, CHILDREN, MODULE_GRAPH, OWNER_MODULE, INPUT_SOURCE, INPUT_KEY, OUTPUT_KEY,
         PATH, FLOAT_VALUE, FLOAT_DEFINITION, FLOAT_MIN, FLOAT_MAX, BOOLEAN_VALUE, STRING_VALUE, BIPOLAR_PANEL,
         INTEGER_VALUE, INTEGER_DEFINITION, INTEGER_MIN, INTEGER_MAX, ENUM_VALUE, ENUM_DEFINITION,
@@ -33,7 +32,7 @@ final class GridSnapshotReader {
         Metadata(String key, String coverage) { this.key = key; this.coverage = coverage; }
     }
     static final Metadata[] METADATA = Metadata.values();
-    interface Access {
+    interface Access extends NativeDeviceTarget.Access {
         Object read(Field field, Object object);
         boolean is(Kind kind, Object object);
         void documentThread();
@@ -43,7 +42,8 @@ final class GridSnapshotReader {
         boolean metadataAvailable(Metadata metadata);
     }
     private final Access a;
-    GridSnapshotReader(Access access) { a = access; }
+    private final NativeDeviceTarget targets;
+    GridSnapshotReader(Access access) { a = access; targets = new NativeDeviceTarget(access); }
 
     JsonObject catalog(String query, int offset, int limit, Runnable check) {
         a.documentThread(); check.run();
@@ -333,35 +333,33 @@ final class GridSnapshotReader {
     }
 
     NativeTarget target(Object proxy, UUID expectedTrackId) {
-        if (expectedTrackId == null) throw failure("grid_unavailable", "Expected owning-track UUID is required.");
-        Object target = a.read(Field.TARGET, proxy);
-        if (target == null) throw failure("missing_target", "Explicit device proxy has no native target; refresh devices.get.");
-        if (!a.is(Kind.DEVICE, target)) throw failure("not_grid", "Explicit native device has no mapped Grid graph accessor.");
-        a.requireModelThread(target);
-        Object owner = owningTrack(target), identity = trackIdentity(owner);
-        requireTrackUuid(owner, identity, expectedTrackId);
-        Object graph = a.read(Field.GRAPH, target);
+        NativeDeviceTarget.Capture capture;
+        try { capture = targets.capture(proxy, expectedTrackId, () -> {}); }
+        catch (RpcException error) {
+            if ("unsupported_scope".equals(error.code))
+                throw failure("not_grid", "Explicit native device has no mapped Grid graph accessor.");
+            throw error;
+        }
+        Object graph = a.read(Field.GRAPH, capture.device);
         if (graph == null) throw failure("not_grid", "Explicit device does not contain a Grid graph.");
         a.requireModelThread(graph);
-        return new NativeTarget(target, owner, identity, graph);
+        return new NativeTarget(capture, graph);
     }
 
     void guardTarget(NativeTarget binding, Object proxy, UUID expectedTrackId) {
-        a.documentThread();
-        if (a.read(Field.TARGET, proxy) != binding.target)
-            throw failure("stale_context", "Explicit native device changed during the read.");
-        a.requireModelThread(binding.target);
-        Object owner = owningTrack(binding.target), identity = trackIdentity(owner);
-        requireTrackUuid(owner, identity, expectedTrackId);
-        if (owner != binding.owner || identity != binding.identity || a.read(Field.GRAPH, binding.target) != binding.graph)
-            throw failure("stale_context", "Explicit native owning track, channel alias or graph changed during the read.");
+        if (!binding.ownership.trackId.equals(expectedTrackId))
+            throw failure("stale_context", "Expected native owning track changed during the read.");
+        targets.guard(binding.ownership, proxy, () -> {});
+        if (a.read(Field.GRAPH, binding.target) != binding.graph)
+            throw failure("stale_context", "Explicit native graph changed during the read.");
         a.requireModelThread(binding.graph);
     }
 
     static final class NativeTarget {
-        final Object target, owner, identity, graph;
-        NativeTarget(Object target, Object owner, Object identity, Object graph) {
-            this.target = target; this.owner = owner; this.identity = identity; this.graph = graph;
+        final Object target, graph;
+        final NativeDeviceTarget.Capture ownership;
+        NativeTarget(NativeDeviceTarget.Capture ownership, Object graph) {
+            this.ownership = ownership; this.target = ownership.device; this.graph = graph;
         }
     }
 
@@ -370,30 +368,6 @@ final class GridSnapshotReader {
         return null;
     }
 
-    private Object owningTrack(Object target) {
-        Object owner = a.read(Field.OWNER_TRACK, target);
-        if (!a.is(Kind.TRACK, owner))
-            throw failure("grid_unavailable", "Native device has no mapped owning-track ancestor.");
-        a.requireModelThread(owner);
-        return owner;
-    }
-
-    private Object trackIdentity(Object owner) {
-        if (!a.is(Kind.ALIASED_TRACK, owner)) return owner;
-        Object alias = a.read(Field.TRACK_ALIAS, owner);
-        if (!a.is(Kind.CHANNEL_ALIAS, alias))
-            throw failure("grid_unavailable", "Native owning-track channel alias is missing or unsupported.");
-        a.requireModelThread(alias);
-        return alias;
-    }
-
-    private void requireTrackUuid(Object owner, Object identity, UUID expectedTrackId) {
-        Object value = a.read(a.is(Kind.ALIASED_TRACK, owner) ? Field.ALIAS_UUID : Field.TRACK_UUID, identity);
-        if (!(value instanceof UUID))
-            throw failure("grid_unavailable", "Native owning-track channel UUID is missing or unsupported.");
-        if (!expectedTrackId.equals(value))
-            throw failure("stale_context", "Native device owning-track channel UUID differs from requested trackId.");
-    }
 
     private JsonArray ports(Object module, Object graph, IdentityHashMap<Object, String> ids,
             boolean input, JsonArray connections, Set<Object> enumeratedPorts, State state) {

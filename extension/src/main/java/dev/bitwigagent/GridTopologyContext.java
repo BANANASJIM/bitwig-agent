@@ -7,11 +7,10 @@ import static dev.bitwigagent.HostServices.failure;
 final class GridTopologyContext {
     static final int MAX_MODULES = 128;
     enum Field {
-        DELETED, CONTEXT, PROJECT, GRAPH_PROJECT, ROOT, INITIALIZED, DISPOSED, CONTEXT_THREAD,
-        CURRENT_DT, DEFAULT_DT, DT_CONTEXT, CIU, PROJECT_ADM, PROJECT_OOK,
+        GRAPH_PROJECT, CIU, PROJECT_ADM, PROJECT_OOK,
         UNDO, UNDO_EXECUTING, UNDO_ACTIVE, UNDO_ICL, LOCK, LOCK_OWNER
     }
-    interface Access {
+    interface Access extends NativeReadContext.Access {
         Object read(Field field, Object object);
         boolean defaultContext(Object context);
     }
@@ -21,20 +20,20 @@ final class GridTopologyContext {
     Capture capture(Object device, Object graph, List<?> members, Capture before, Runnable check) {
         check.run();
         Object project = required(a.read(Field.GRAPH_PROJECT, graph), "Graph owning project");
-        Object context = required(a.read(Field.CONTEXT, graph), "Attached document context");
+        Object context = required(a.read(NativeReadContext.Field.CONTEXT, graph), "Attached document context");
         requireModel(device, project, context, check);
         requireModel(graph, project, context, check);
         requireModel(project, project, context, check);
         for (Object member : members) requireModel(member, project, context, check);
-        Object root = required(a.read(Field.ROOT, context), "Attached context root");
-        if (root != project || bool(Field.DISPOSED, context))
+        Object root = required(a.read(NativeReadContext.Field.ROOT, context), "Attached context root");
+        if (root != project || bool(NativeReadContext.Field.DISPOSED, context))
             throw failure("stale_context", "Native topology context root changed or was disposed.");
-        if (!bool(Field.INITIALIZED, context) || !bool(Field.CONTEXT_THREAD, context))
+        if (!bool(NativeReadContext.Field.INITIALIZED, context) || !bool(NativeReadContext.Field.CONTEXT_THREAD, context))
             throw failure("unsafe_state", "Topology editing requires an initialized document event context.");
         if (!a.defaultContext(context)) throw failure("grid_unavailable", "Native default Dt accessor is unavailable.");
-        Object current = required(a.read(Field.CURRENT_DT, context), "Current Dt");
-        Object defaultDt = required(a.read(Field.DEFAULT_DT, context), "Default Dt");
-        if (current != defaultDt || a.read(Field.DT_CONTEXT, current) != context)
+        Object current = required(a.read(NativeReadContext.Field.CURRENT_DT, context), "Current Dt");
+        Object defaultDt = required(a.read(NativeReadContext.Field.DEFAULT_DT, context), "Default Dt");
+        if (current != defaultDt || a.read(NativeReadContext.Field.DT_CONTEXT, current) != context)
             throw failure("unsafe_state", "Topology editing requires the current/default document Dt.");
         if (bool(Field.CIU, graph) || bool(Field.PROJECT_ADM, project) || bool(Field.PROJECT_OOK, project))
             throw failure("unsafe_state", "Native graph CIu or project closing/saving precondition blocks topology editing.");
@@ -43,7 +42,7 @@ final class GridTopologyContext {
             throw failure("unsafe_state", "Native undo manager is outside the bounded idle state.");
         Object lock = required(a.read(Field.LOCK, device), "Device lock");
         Object owner = required(a.read(Field.LOCK_OWNER, lock), "Device lock owner");
-        if (owner != current || a.read(Field.DT_CONTEXT, owner) != context)
+        if (owner != current || a.read(NativeReadContext.Field.DT_CONTEXT, owner) != context)
             throw failure("unsafe_state", "Native device lock owner differs from the current/default context.");
         Capture captured = new Capture(new Object[]{project, context, root, current, defaultDt, undo, lock, owner});
         if (before != null) {
@@ -56,12 +55,17 @@ final class GridTopologyContext {
     }
     private void requireModel(Object model, Object project, Object context, Runnable check) {
         check.run();
-        if (bool(Field.DELETED, model) || a.read(Field.CONTEXT, model) != context)
+        if (bool(NativeReadContext.Field.DELETED, model) || a.read(NativeReadContext.Field.CONTEXT, model) != context)
             throw failure("stale_context", "Native topology target or member is deleted, detached or in a different context.");
-        if (model != project && a.read(Field.PROJECT, model) != project)
+        if (model != project && a.read(NativeReadContext.Field.PROJECT, model) != project)
             throw failure("stale_context", "Native topology target or member belongs to a different project.");
     }
     private boolean bool(Field field, Object object) {
+        Object value = a.read(field, object);
+        if (!(value instanceof Boolean)) throw failure("grid_unavailable", "Native topology predicate unavailable: " + field);
+        return (Boolean) value;
+    }
+    private boolean bool(NativeReadContext.Field field, Object object) {
         Object value = a.read(field, object);
         if (!(value instanceof Boolean)) throw failure("grid_unavailable", "Native topology predicate unavailable: " + field);
         return (Boolean) value;

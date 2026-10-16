@@ -25,6 +25,7 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
         register(new DeviceModule(services));
         register(new LauncherModule(services));
         register(new GridModule(services));
+        register(new ModulatorModule(services));
         if (!modules.keySet().equals(VALIDATORS.keySet()))
             throw new IllegalStateException("Module dispatch and validation registries differ");
     }
@@ -47,6 +48,7 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
         registerValidator(methods, DeviceModule.METHODS, DeviceModule::validateParams);
         registerValidator(methods, LauncherModule.METHODS, LauncherModule::validateParams);
         registerValidator(methods, GridModule.METHODS, GridModule::validateParams);
+        registerValidator(methods, ModulatorModule.METHODS, ModulatorModule::validateParams);
         return Collections.unmodifiableMap(methods);
     }
 

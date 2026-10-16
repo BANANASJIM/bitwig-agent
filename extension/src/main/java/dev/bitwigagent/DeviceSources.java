@@ -4,6 +4,7 @@ import com.bitwig.extension.callback.*;
 import com.bitwig.extension.controller.api.*;
 import com.google.gson.*;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicLong;
 import static dev.bitwigagent.HostServices.*;
 
 /** Fixed observed device addresses. Tokens describe continuity, never persistent device identity. */
@@ -21,6 +22,10 @@ final class DeviceSources {
             boolean changed = trackOffset != null && trackOffset != value;
             trackOffset = value;
             if (changed) for (TrackState track : tracks) if (track != null) track.retire();
+        });
+        s.tracks.itemCount().addValueObserver((IntegerValueChangedCallback) value -> {
+            for (Source[] row : roots) for (Source source : row)
+                if (source != null) source.rootReadEpoch.incrementAndGet();
         });
         for (int t = 0; t < TRACKS; t++) {
             TrackState track = new TrackState(t, (Track) s.tracks.getItemAt(t));
@@ -98,6 +103,7 @@ final class DeviceSources {
         String name, type;
         Integer position;
         long epoch, revision, nameSequence;
+        final AtomicLong rootReadEpoch;
         boolean established, rebound;
         // Legacy root direct callbacks can precede Value callbacks. This getter snapshot
         // preserves that root-only bank-proxy policy without marking metadata observed.
@@ -106,6 +112,8 @@ final class DeviceSources {
         String discoveryToken;
         Source(TrackState track, int slot, Device device, Layer layer) {
             this.track = track; this.slot = slot; this.device = device; this.layer = layer;
+            rootReadEpoch = layer == null ? new AtomicLong() : null;
+            if (layer == null) listeners.add((structural, renamed) -> rootReadEpoch.incrementAndGet());
             if (layer != null) {
                 rebound = layer.rebound;
                 if (!rebound) discoveryToken = UUID.randomUUID().toString();
@@ -338,6 +346,62 @@ final class DeviceSources {
                 || !source.name.equals(p.get("expectedDeviceName").getAsString()))
             throw failure("stale_target", "Parent address/name no longer matches observed context.");
         return source;
+    }
+
+    /** Capture/final guard are controller-only; native callbacks see only the atomic ticket. */
+    RootReadTicket rootRead(JsonObject parent) {
+        Source source = root(parent);
+        if (source.position >= source.track.count)
+            throw failure("target_not_found", "Parent is outside the observed device count.");
+        RootReadTicket ticket = new RootReadTicket(source, trackOffset, s.tracks.itemCount().get());
+        guardRootRead(ticket);
+        return ticket;
+    }
+
+    void guardRootRead(RootReadTicket ticket) {
+        ticket.check();
+        Source source = ticket.source;
+        TrackState track = source.track;
+        if (!source.present() || !Objects.equals(track.id, ticket.trackId)
+                || !Objects.equals(source.name, ticket.name) || source.position != ticket.index
+                || trackOffset != ticket.trackOffset || track.offset != ticket.deviceOffset
+                || track.count != ticket.deviceCount || track.position != ticket.trackPosition
+                || !track.proxy.exists().get() || !ticket.trackId.equals(track.proxy.channelId().get())
+                || track.proxy.position().get() != ticket.trackPosition
+                || s.tracks.scrollPosition().get() != ticket.trackOffset
+                || s.tracks.itemCount().get() != ticket.trackCount
+                || s.devices[track.slot].scrollPosition().get() != ticket.deviceOffset
+                || s.devices[track.slot].itemCount().get() != ticket.deviceCount
+                || !source.device.exists().get() || source.device.position().get() != ticket.index
+                || !ticket.name.equals(source.device.name().get())
+                || !ticket.type.equals(source.device.deviceType().get()))
+            throw failure("stale_context", "Observed root device changed before read delivery.");
+        ticket.check();
+    }
+
+    static final class RootReadTicket {
+        private final Source source;
+        private final AtomicLong epoch;
+        private final long generation;
+        final Device device;
+        final String trackId, name, type;
+        final int index, trackOffset, trackCount, deviceOffset, deviceCount, trackPosition;
+        RootReadTicket(Source source, int trackOffset, int trackCount) {
+            this.source = source; epoch = source.rootReadEpoch; generation = epoch.get();
+            device = source.device; trackId = source.track.id; name = source.name; type = source.type;
+            index = source.position; this.trackOffset = trackOffset; this.trackCount = trackCount;
+            deviceOffset = source.track.offset; deviceCount = source.track.count; trackPosition = source.track.position;
+        }
+        void check() {
+            if (epoch.get() != generation)
+                throw failure("stale_context", "Observed root device changed while its read was queued or running.");
+        }
+        JsonObject parent() {
+            JsonObject result = new JsonObject();
+            result.addProperty("trackId", trackId); result.addProperty("deviceIndex", index);
+            result.addProperty("expectedDeviceName", name);
+            return result;
+        }
     }
 
     Source child(JsonObject p) {

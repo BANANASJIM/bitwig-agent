@@ -10,16 +10,16 @@ final class GridParameterContext {
         "deviceDeleted", "graphDeleted", "moduleDeleted", "parameterDeleted", "projectDeleted"
     };
     enum Field {
-        DELETED, CONTEXT, PROJECT, PARAMETER_PROJECT, ROOT, INITIALIZED, DISPOSED, CONTEXT_THREAD,
-        CURRENT_DT, DEFAULT_DT, DT_CONTEXT, LICENSED, GUI_FLOAT, GUI_INTEGER, GUI_ENUM, GUI_BOOLEAN, GUI_PANEL_BOOLEAN, GUI_PANEL_STRING,
+        PARAMETER_PROJECT, LICENSED, GUI_FLOAT, GUI_INTEGER, GUI_ENUM, GUI_BOOLEAN, GUI_PANEL_BOOLEAN, GUI_PANEL_STRING,
         SETTABLE, CIU, TOUCHED, UNDO, UNDO_EXECUTING, UNDO_ACTIVE, UNDO_ICL, LOCK, LOCK_OWNER
     }
-    interface Access {
+    interface Access extends NativeReadContext.Access {
         Object read(Field field, Object object);
         boolean defaultContext(Object context);
     }
     private final Access a;
-    GridParameterContext(Access access) { a = access; }
+    private final NativeReadContext readContexts;
+    GridParameterContext(Access access) { a = access; readContexts = new NativeReadContext(access); }
 
     Capture capture(Object device, Object graph, Object module, Object parameter,
             GridSnapshotReader.Kind kind, Runnable check) {
@@ -31,31 +31,11 @@ final class GridParameterContext {
         check.run();
         boolean panel = kind == GridSnapshotReader.Kind.PANEL_BOOLEAN || kind == GridSnapshotReader.Kind.PANEL_STRING;
         Object project = required(a.read(Field.PARAMETER_PROJECT, parameter), "Owning project");
-        Object context = attached(parameter);
-        JsonObject lifecycle = serialize ? new JsonObject() : null;
-        Object[] models = {device, graph, module, parameter, project};
-        for (int i = 0; i < models.length; i++) {
-            check.run();
-            boolean deleted = bool(Field.DELETED, models[i]);
-            if (serialize) lifecycle.addProperty(LIFECYCLE_LABELS[i], deleted);
-            if (deleted) throw failure("stale_context", "Native parameter inspection target was deleted.");
-            if (attached(models[i]) != context)
-                throw failure("stale_context", "Native target no longer shares its owning project's attached context.");
-            if (i < 4 && a.read(Field.PROJECT, models[i]) != project)
-                throw failure("stale_context", "Native target belongs to a different owning project.");
-        }
-        Object root = required(a.read(Field.ROOT, context), "Attached context root");
-        boolean initialized = bool(Field.INITIALIZED, context), disposed = bool(Field.DISPOSED, context);
-        if (disposed) throw failure("stale_context", "Native target context was disposed.");
-        boolean contextThread = bool(Field.CONTEXT_THREAD, context);
-        if (!contextThread) throw failure("grid_unavailable", "Attached context thread predicate failed.");
-        Object current = a.read(Field.CURRENT_DT, context);
-        Object currentContext = current == null ? null : a.read(Field.DT_CONTEXT, current);
-        if (current != null && currentContext != context)
-            throw failure("stale_context", "Current native Dt belongs to a different context.");
-        boolean hasDefault = a.defaultContext(context);
-        Object defaultDt = hasDefault ? a.read(Field.DEFAULT_DT, context) : null;
-        Object defaultDtContext = defaultDt == null ? null : a.read(Field.DT_CONTEXT, defaultDt);
+        NativeReadContext.Capture common = readContexts.capture(project, new Object[]{device, graph, module, parameter},
+                LIFECYCLE_LABELS, check, serialize);
+        Object context = common.context, root = common.root, current = common.current;
+        Object currentContext = common.currentContext, defaultDt = common.defaultDt, defaultDtContext = common.defaultDtContext;
+        boolean initialized = common.initialized, hasDefault = common.hasDefault;
         Field wrapperField;
         switch (kind) {
             case FLOAT: wrapperField = Field.GUI_FLOAT; break;
@@ -71,7 +51,7 @@ final class GridParameterContext {
         Object undo = a.read(Field.UNDO, parameter);
         Object lock = a.read(Field.LOCK, device);
         Object lockOwner = lock == null ? null : a.read(Field.LOCK_OWNER, lock);
-        Object lockContext = lockOwner == null ? null : a.read(Field.DT_CONTEXT, lockOwner);
+        Object lockContext = lockOwner == null ? null : a.read(NativeReadContext.Field.DT_CONTEXT, lockOwner);
         check.run();
         Object[] identities = {project, context, root, current, currentContext, defaultDt,
                 defaultDtContext, undo, lock, lockOwner, lockContext};
@@ -101,23 +81,12 @@ final class GridParameterContext {
         result.addProperty("scope", "same_document_callback_native_prerequisite_observations_not_write_permission_or_readiness");
         result.addProperty("modelClass", parameter.getClass().getName());
         result.addProperty("family", kind.name().toLowerCase(Locale.ROOT));
-        result.add("lifecycle", lifecycle);
+        result.add("lifecycle", common.lifecycle);
         result.addProperty("sameOwningProject", true);
         result.addProperty("sameAttachedContext", true);
         result.addProperty("applicationDocumentThread", true);
         result.addProperty("modelScopedExecutorThread", true);
-        JsonObject attached = new JsonObject();
-        attached.addProperty("modelClass", context.getClass().getName());
-        attached.addProperty("rootPresent", true); attached.addProperty("rootIsOwningProject", root == project);
-        attached.addProperty("initialized", initialized); attached.addProperty("disposed", disposed);
-        attached.addProperty("eventDispatchThread", contextThread);
-        attached.addProperty("currentDtPresent", current != null);
-        nullable(attached, "currentDtContextMatches", current == null ? null : currentContext == context);
-        attached.addProperty("defaultDtAccessorSupported", hasDefault);
-        nullable(attached, "defaultDtPresent", hasDefault ? defaultDt != null : null);
-        nullable(attached, "currentDtIsDefault", current == null || defaultDt == null ? null : current == defaultDt);
-        nullable(attached, "defaultDtContextMatches", defaultDt == null ? null : defaultDtContext == context);
-        result.add("attachedContext", attached);
+        result.add("attachedContext", common.attachedContext);
         nullable(result, "effectivelyLicensed", panel ? null : bool(Field.LICENSED, parameter));
         if (panel) result.addProperty("scalarLicenseTouchApplicable", false);
         JsonObject property = new JsonObject();
@@ -158,11 +127,6 @@ final class GridParameterContext {
         for (int i = 0; i < before.identities.length; i++)
             if (before.identities[i] != after.identities[i])
                 throw failure("stale_context", "Native parameter inspection context identity changed during capture.");
-    }
-    private Object attached(Object model) {
-        Object context = a.read(Field.CONTEXT, model);
-        if (context == null) throw failure("stale_context", "Native target is detached from its document context.");
-        return context;
     }
     private boolean bool(Field field, Object object) {
         Object value = a.read(field, object);

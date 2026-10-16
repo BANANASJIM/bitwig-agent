@@ -7,19 +7,19 @@ import java.net.URL;
 import java.security.CodeSource;
 import java.security.ProtectionDomain;
 import java.util.*;
-import static dev.bitwigagent.Bitwig613GridAdapter.invoke;
+
 import static dev.bitwigagent.HostServices.failure;
 
 /** Only evidenced public native APIs. Binding inspection never constructs an adapter or resolves a file. */
 final class Bitwig613GridInsertionAccess implements GridInsertionWriter.Access {
     private static final String M = "com.bitwig.flt.document.core.master.", D = M + "device.", R = "com.bitwig.ramona.core.";
-    private final Bitwig613GridAdapter bindings;
+    private final Bitwig613Runtime.Access bindings;
     private final Constructor<?> constructor;
     private final Method singleton, resource, modules, parent, deleted, owner, listSize, place, success, rejection;
     private final Class<?> convertedType, completionType;
     private final JsonObject evidence = new JsonObject();
 
-    Bitwig613GridInsertionAccess(Bitwig613GridAdapter bindings) throws ReflectiveOperationException {
+    Bitwig613GridInsertionAccess(Bitwig613Runtime.Access bindings) throws ReflectiveOperationException {
         this.bindings = bindings;
         ClassLoader extension = BitwigAgentExtension.class.getClassLoader();
         if (Bitwig613GridAdapter.class.getClassLoader() != extension || GridInsertionBridge.class.getClassLoader() != extension
@@ -108,9 +108,9 @@ final class Bitwig613GridInsertionAccess implements GridInsertionWriter.Access {
     }
     JsonObject evidence() { return evidence.deepCopy(); }
     @Override public String resolve(UUID typeId) {
-        Object app = invoke(singleton, null);
+        Object app = bindings.invoke(singleton, null);
         if (app == null) throw failure("grid_unavailable", "Native application singleton is unavailable.");
-        Object file = invoke(resource, app, typeId);
+        Object file = bindings.invoke(resource, app, typeId);
         if (!(file instanceof File) || !((File) file).isFile())
             throw failure("grid_unavailable", "Known MODULE catalog resource is unavailable through the native resolver.");
         return ((File) file).getAbsolutePath();
@@ -125,22 +125,22 @@ final class Bitwig613GridInsertionAccess implements GridInsertionWriter.Access {
     }
     @Override public List<?> converted(Object result) {
         if (!convertedType.isInstance(result)) throw failure("grid_unavailable", "Native loader delivered an unexpected result type.");
-        return (List<?>) invoke(modules, result);
+        return (List<?>) bindings.invoke(modules, result);
     }
     @Override public void requireDetached(Object module) {
-        if (Boolean.TRUE.equals(invoke(deleted, module)) || invoke(parent, module) != null || invoke(owner, module) != null)
+        if (Boolean.TRUE.equals(bindings.invoke(deleted, module)) || bindings.invoke(parent, module) != null || bindings.invoke(owner, module) != null)
             throw failure("stale_context", "Loaded module is deleted, parented or owned; refusing placement.");
     }
     @Override public void requirePlacementReady(Object graph) {
-        if (!Integer.valueOf(0).equals(invoke(listSize, graph)))
+        if (!Integer.valueOf(0).equals(bindings.invoke(listSize, graph)))
             throw failure("unsafe_state", "Native graph XEl list is nonempty; collection placement prerequisite failed.");
     }
-    @Override public void place(Object graph, List<?> loaded, int x, int y) { invoke(place, graph, loaded, x, y, false, null); }
+    @Override public void place(Object graph, List<?> loaded, int x, int y) { bindings.invoke(place, graph, loaded, x, y, false, null); }
     @Override public void reject(Object completion, Exception error) {
-        requireCompletion(completion); invoke(rejection, completion, error);
+        requireCompletion(completion); bindings.invoke(rejection, completion, error);
     }
     @Override public void succeed(Object completion, List<?> loaded) {
-        requireCompletion(completion); invoke(success, completion, loaded);
+        requireCompletion(completion); bindings.invoke(success, completion, loaded);
     }
     private void requireCompletion(Object completion) {
         if (!completionType.isInstance(completion)) throw failure("grid_unavailable", "Native loader did not deliver its cleanup completion.");

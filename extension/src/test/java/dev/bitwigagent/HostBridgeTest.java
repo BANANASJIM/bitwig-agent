@@ -346,11 +346,18 @@ public final class HostBridgeTest {
                 "discovery reports the actual host track count, not the window capacity");
         check(!result.getAsJsonObject("windows").getAsJsonObject("tracks").get("complete").getAsBoolean(),
                 "capabilities cannot promise a full project beyond the bounded bank");
+        JsonObject modulators = result.getAsJsonObject("privateModulatorReads");
+        check(!modulators.get("writeAvailable").getAsBoolean()
+                && modulators.get("nativeVerification").getAsString().equals("not_established_by_binding"),
+                "modulator domain is read-only and implementation discovery is not native acceptance");
+        Set<String> reads = new HashSet<>();
+        for (JsonElement method : result.getAsJsonObject("domains").getAsJsonArray("modulators")) reads.add(method.getAsString());
+        check(reads.equals(ModulatorModule.METHODS), "discovery derives the separate modulator domain from registered read methods");
     }
 
     private static void strictValidationPrecedesAllDomainScheduling() {
         Fake host = new Fake(); HostBridge bridge = host.bridge();
-        for (String method : List.of("capabilities", "transport.get", "devices.catalog")) {
+        for (String method : List.of("capabilities", "transport.get", "devices.catalog", "modulators.capabilities")) {
             JsonObject extra = new JsonObject(); extra.addProperty("unexpected", true);
             expectError(bridge.handle(method, extra, deadline()), "invalid_params");
         }
@@ -361,6 +368,12 @@ public final class HostBridgeTest {
         expectError(bridge.handle("parameters.list", nullName, deadline()), "invalid_params");
         expectError(bridge.handle("capabilities", null, deadline()), "invalid_params");
         expectError(bridge.handle("not.a.method", new JsonObject(), deadline()), "unknown_method");
+        JsonObject modulators = new JsonObject(); modulators.add("parent", target());
+        modulators.add("offset", JsonNull.INSTANCE);
+        expectError(bridge.handle("modulators.list", modulators, deadline()), "invalid_params");
+        modulators.remove("offset"); modulators.addProperty("modulatorId", "1-1-1-1-1"); modulators.addProperty("parameterId", "");
+        expectError(bridge.handle("modulators.parameters.get", modulators, deadline()), "invalid_params");
+        expectError(bridge.handle("modulators.parameters.set", modulators, deadline()), "unknown_method");
         check(host.tasks.isEmpty(), "strict validation rejects every invalid domain request before scheduling");
     }
 

@@ -2,18 +2,18 @@ package dev.bitwigagent;
 
 import java.lang.reflect.*;
 import java.util.*;
-import static dev.bitwigagent.Bitwig613GridAdapter.invoke;
+
 import static dev.bitwigagent.HostServices.failure;
 
 /** Public exact 6.1.3 descriptors only; no coordinate setters, clear, locks or outer transaction. */
 final class Bitwig613GridModuleAccess implements GridModuleWriter.Access {
     private static final String D = "com.bitwig.flt.document.core.master.device.";
-    private final Bitwig613GridAdapter bindings;
+    private final Bitwig613Runtime.Access bindings;
     private Class<?> callbackType;
     private Method move, delete, success, exception, message;
     String moveError, deleteError;
 
-    Bitwig613GridModuleAccess(Bitwig613GridAdapter bindings) throws ReflectiveOperationException {
+    Bitwig613GridModuleAccess(Bitwig613Runtime.Access bindings) throws ReflectiveOperationException {
         this.bindings = bindings;
         try {
             callbackType = bindings.type("com.bitwig.base.async.jJa");
@@ -34,14 +34,14 @@ final class Bitwig613GridModuleAccess implements GridModuleWriter.Access {
         MoveCallback capture = new MoveCallback(success, exception, message);
         Object callback = Proxy.newProxyInstance(callbackType.getClassLoader(), new Class<?>[]{callbackType}, capture);
         return () -> {
-            invoke(move, graph, module, selected, x, y, false, callback);
+            bindings.invoke(move, graph, module, selected, x, y, false, callback);
             capture.requireSuccess(); // callback itself never throws into iqa or completes the RPC before close.
         };
     }
     @Override public Runnable prepareDelete(Object graph, Object module) {
         if (deleteError != null) throw failure("grid_unavailable", "Native module delete binding is unavailable.");
         List<Object> selected = Collections.singletonList(module);
-        return () -> invoke(delete, graph, selected);
+        return () -> bindings.invoke(delete, graph, selected);
     }
     @Override public void execute(Runnable observation) { bindings.execute(observation); }
 

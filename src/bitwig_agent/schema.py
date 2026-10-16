@@ -60,14 +60,14 @@ class ParameterArgs(DeviceArgs):
     expectedDeviceName: Nonempty
 
 
-class LayerParent(StrictModel):
+class DeviceParent(StrictModel):
     trackId: TrackId
     deviceIndex: int = Field(ge=0, le=15)
     expectedDeviceName: Nonempty
 
 
 class LayerListArgs(StatusArgs):
-    parent: LayerParent
+    parent: DeviceParent
 
 
 class LayerParameterArgs(LayerListArgs):
@@ -81,6 +81,18 @@ class LayerSetArgs(LayerParameterArgs):
     contextToken: Nonempty
     parameterId: Nonempty
     value: UnitValue
+
+
+class ModulatorListArgs(StatusArgs):
+    parent: DeviceParent
+    offset: int = Field(default=0, ge=0, le=100000)
+    limit: int = Field(default=64, ge=1, le=128)
+
+
+class ModulatorParameterGetArgs(StatusArgs):
+    parent: DeviceParent
+    modulatorId: TrackId = Field(description="Current modulator UUID from modulators.list, not its typeId, name or index; reacquire after reopening or identity changes.")
+    parameterId: str = Field(max_length=1024, description="Exact addressable parameterId from modulators.list, not a display name; empty is valid when unique, at most 1024 UTF-16 code units.")
 
 
 class GridCatalogArgs(StatusArgs):

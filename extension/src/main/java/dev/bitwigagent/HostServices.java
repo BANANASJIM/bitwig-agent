@@ -17,6 +17,7 @@ final class HostServices implements AutoCloseable {
     final DeviceSources sources;
     boolean tracksObserved;
     private volatile boolean closed;
+    private Bitwig613Runtime nativeRuntime;
     private Boolean playing, arrangerRecordEnabled, arrangerAutomationWriteEnabled, clipLauncherAutomationWriteEnabled;
     private volatile SafetyObservation safety = new SafetyObservation(0, null, null, null, null);
 
@@ -51,6 +52,14 @@ final class HostServices implements AutoCloseable {
             }
         }
         sources = new DeviceSources(this);
+    }
+
+    /** Controller-thread composition: domains share the gate, never their native bindings. */
+    Bitwig613Runtime nativeRuntime(HostOperation operation) {
+        check(operation);
+        if (nativeRuntime == null)
+            nativeRuntime = new Bitwig613Runtime(host, host.getHostVersion(), () -> check(operation));
+        return nativeRuntime;
     }
 
     void schedule(HostOperation operation, Runnable task, long delayMs) {

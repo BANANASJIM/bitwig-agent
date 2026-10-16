@@ -2,17 +2,17 @@ package dev.bitwigagent;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
-import static dev.bitwigagent.Bitwig613GridAdapter.invoke;
+
 import static dev.bitwigagent.HostServices.failure;
 
 /** The public hUF overload retains az's undo wrapper; the typed xb1 overload must never be invoked. */
 final class Bitwig613GridConnectionAccess implements GridConnectionWriter.Access {
     private static final String D = "com.bitwig.flt.document.core.master.device.";
-    private final Bitwig613GridAdapter bindings;
+    private final Bitwig613Runtime.Access bindings;
     private final Class<?> destinationClass, undoClass;
     private final Method setter;
 
-    Bitwig613GridConnectionAccess(Bitwig613GridAdapter bindings) throws ReflectiveOperationException {
+    Bitwig613GridConnectionAccess(Bitwig613Runtime.Access bindings) throws ReflectiveOperationException {
         this.bindings = bindings;
         destinationClass = bindings.type(D + "Iac");
         // Observed project manager: HEY delegates to WjI validation; close can reject or schedule history replay.
@@ -32,7 +32,7 @@ final class Bitwig613GridConnectionAccess implements GridConnectionWriter.Access
                     + ". Runtime subclasses require separate dispatch/validator research; read-only modelClass metadata is not permission.");
     }
     @Override public Runnable prepareSet(Object input, Object source) {
-        return () -> invoke(setter, input, source);
+        return () -> bindings.invoke(setter, input, source);
     }
     @Override public void execute(Runnable observation) { bindings.execute(observation); }
 }

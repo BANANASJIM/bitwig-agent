@@ -105,6 +105,15 @@ final class DiscoveryModule implements HostModule {
         grid.addProperty("nativeUndoAvailable", false);
         grid.addProperty("nativeUndoScope", "native_parameter_and_topology_operations_not_an_undo_command_or_grouping_guarantee");
         result.add("privateGridTopology", grid);
+        JsonObject modulators = new JsonObject();
+        modulators.addProperty("scope", "primary_modulators_on_root_device");
+        modulators.addProperty("capabilitiesMethod", "modulators.capabilities");
+        modulators.addProperty("readAvailability", "query_modulators.capabilities_independent_discovery_and_string_panel_bindings");
+        modulators.addProperty("writeAvailable", false);
+        modulators.addProperty("nativeVerification", "not_established_by_binding");
+        modulators.addProperty("coverage", "excludes_secondary_nested_modulators_mappings_destinations_and_materialization");
+        modulators.addProperty("pagination", "independent_observations_not_revision_consistent");
+        result.add("privateModulatorReads", modulators);
         result.addProperty("evidence", "Runtime implementation discovery only; not per-method host verification or full interface coverage.");
         return result;
     }

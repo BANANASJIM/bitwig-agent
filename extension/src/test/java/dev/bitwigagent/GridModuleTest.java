@@ -120,15 +120,15 @@ public final class GridModuleTest {
     }
     private static void boundsTransportAndPreservesNulls() {
         JsonObject value = new JsonObject(); value.add("unavailable", JsonNull.INSTANCE);
-        check(GridModule.serialize(value).contains("null"), "unsupported null fields survive immutable handoff");
-        value.addProperty("large", "x".repeat(GridModule.MAX_RESPONSE_CHARS));
-        try { GridModule.serialize(value); throw new AssertionError("oversized graph escaped bound"); }
+        check(BoundedJson.serialize(value, 240000, "grid_bounds_exceeded", "oversize").contains("null"), "unsupported null fields survive immutable handoff");
+        value.addProperty("large", "x".repeat(240000));
+        try { BoundedJson.serialize(value, 240000, "grid_bounds_exceeded", "oversize"); throw new AssertionError("oversized graph escaped bound"); }
         catch (RpcException error) { check(error.code.equals("grid_bounds_exceeded"), "oversize asks caller to reduce page instead of truncating"); }
     }
     private static void loadedSourceGateFailsClosed() throws Exception {
-        GridAdapter wrongVersion = new Bitwig613GridAdapter(new Object(), "6.1.4", () -> {});
+        GridAdapter wrongVersion = new Bitwig613GridAdapter(new Bitwig613Runtime(new Object(), "6.1.4", () -> {}).access("grid_unavailable"));
         check(!wrongVersion.capabilities().get("gatePassed").getAsBoolean(), "unsupported version fails before any native binding");
-        GridAdapter noSource = new Bitwig613GridAdapter(new Object(), "6.1.3", () -> {});
+        GridAdapter noSource = new Bitwig613GridAdapter(new Bitwig613Runtime(new Object(), "6.1.3", () -> {}).access("grid_unavailable"));
         check(!noSource.capabilities().get("gatePassed").getAsBoolean(), "missing loaded CodeSource cannot fall back to arbitrary installed JAR");
         check(!noSource.capabilities().getAsJsonObject("nativeOwningTrack").get("available").getAsBoolean()
                 && !noSource.capabilities().getAsJsonObject("structure").get("available").getAsBoolean(),
@@ -148,8 +148,8 @@ public final class GridModuleTest {
         Path file = Files.createTempFile("grid-hash-test-", ".bin");
         try {
             Files.writeString(file, "abc", StandardCharsets.UTF_8);
-            check(Bitwig613GridAdapter.hash(file, () -> {}).equals("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"), "hash reads bytes not filename or version text");
-            try { Bitwig613GridAdapter.hash(file, () -> { throw HostServices.failure("cancelled", "cancel hashing"); }); throw new AssertionError("hash ignored cancellation"); }
+            check(Bitwig613Runtime.hash(file, () -> {}).equals("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"), "hash reads bytes not filename or version text");
+            try { Bitwig613Runtime.hash(file, () -> { throw HostServices.failure("cancelled", "cancel hashing"); }); throw new AssertionError("hash ignored cancellation"); }
             catch (RpcException error) { check(error.code.equals("cancelled"), "gate hashing observes request cancellation"); }
         } finally { Files.deleteIfExists(file); }
     }
@@ -288,7 +288,7 @@ public final class GridModuleTest {
         check(TransportMixFixture.error(op, "grid_unavailable").outcome.equals("unknown")
                 && linkage.adapter.writer.calls == 1, "native Error completes uncertain result instead of escaping the callback");
         Fixture serialization = new Fixture();
-        serialization.adapter.afterWrite = () -> serialization.adapter.last.addProperty("oversized", "x".repeat(GridModule.MAX_RESPONSE_CHARS));
+        serialization.adapter.afterWrite = () -> serialization.adapter.last.addProperty("oversized", "x".repeat(240000));
         op = serialization.startWrite(); serialization.adapter.next();
         check(TransportMixFixture.error(op, "grid_bounds_exceeded").outcome.equals("unknown"),
                 "serialization failure after mutation cannot become not-applied");
