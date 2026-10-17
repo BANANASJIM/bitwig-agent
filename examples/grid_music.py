@@ -4,7 +4,8 @@
 Run only in an explicitly named disposable project. Existing tracks/clips are
 never overwritten. This is an ordinary client recipe, not a transaction: failure
 leaves recorded partial changes for inspection, and no request is retried.
-Audio rendering and native GUI verification are separate E2E steps.
+Audio rendering and native GUI verification are separate E2E steps. The scratch
+Pad needs an explicit GUI step: set its Poly Grid VOICES to 8 before rendering.
 """
 from __future__ import annotations
 
@@ -83,7 +84,8 @@ def checked_notes(readback: dict, window: dict, edits: list[dict]) -> None:
     if (readback.get("completeWindow") is not True
             or len(observed) != len(readback["notes"]) or observed.keys() != expected.keys()
             or readback.get("continuingAtWindowStart") != []
-            or readback.get("loopStartBeats") != 0 or readback.get("loopLengthBeats") != 8):
+            or readback.get("loopStartBeats") != 0 or readback.get("loopLengthBeats") != 8
+            or readback.get("loopEnabled") is not True or readback.get("playStartBeats") != 0):
         raise RuntimeError("Observed note onsets or clip bounds differ from the authored phrase")
     for key, wanted in expected.items():
         actual = observed[key]
@@ -158,7 +160,8 @@ async def build_grid(call, target: dict, types: dict[str, str], label: str) -> d
     settings = [("Union", "Key Tracking", "boolean", True),
                 ("Union", "Pitch Offset", "float", 0.0),
                 ("Union", "Saw Level", "float", 0.0),
-                ("Union", "Triangle Level", "float", 1.0),
+                # Eight Pad voices cover four-note chords plus overlapping releases.
+                ("Union", "Triangle Level", "float", 1.0 if label == "Pluck" else 0.125),
                 ("Union", "Pulse Level", "float", 0.0),
                 ("ADSR", "Gate on Notes", "boolean", True),
                 ("ADSR", "Affect Voice Lifetime", "boolean", True)]
@@ -229,6 +232,8 @@ def report_summary(report: dict, artifacts: Path) -> dict:
                                  "slotIndex": item.get("slotIndex"),
                                  "noteCount": item.get("noteCount")}
                                 for item in report["createdTracks"]]}
+    if "next" in report:
+        result["next"] = report["next"]
     if "error" in report:
         result["error"] = report["error"]
         result["recovery"] = report["recovery"]
@@ -375,6 +380,11 @@ async def create(args: argparse.Namespace) -> int:
                 patch["graphReadback"] = graph
         report["status"] = "authored_observed"
         report["next"] = "Only createdTracks and their slot 0 clips/devices are owned outputs. Independently inspect notes/timbres, render these muted tracks pre-fader, and save/reopen the disposable project. No automatic save, play, undo or retry was performed. Stored graph/parameter readback is not DSP or audible-music proof."
+        if scratch:
+            report["next"] = ("GUI follow-up required on the owned Triangle Pad Poly Grid: set VOICES to 8 "
+                              "(four-note chords plus overlapping releases). The observed factory device is Mono; "
+                              "existing direct parameters do not expose this setting. Per-voice triangle level is "
+                              "1/8 for headroom. ") + report["next"]
         return 0
     except BaseException as error:
         report["status"] = "incomplete_inspect_state"

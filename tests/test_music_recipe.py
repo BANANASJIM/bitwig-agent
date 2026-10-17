@@ -95,7 +95,10 @@ async def test_recipe_rejects_mixed_or_incomplete_inputs_before_connecting(tmp_p
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("problem", ["wrong_target", "missing_onsets", "incomplete_window", "malformed_readback"])
+@pytest.mark.parametrize("problem", [
+    "wrong_target", "missing_onsets", "incomplete_window", "malformed_readback",
+    "loop_disabled", "loop_unobserved", "play_start_shifted",
+])
 async def test_recipe_does_not_report_authored_when_clip_readback_is_wrong(tmp_path, monkeypatch, capsys, recipe, problem):
     preset = tmp_path / "test.bwpreset"
     preset.write_bytes(b"Test-only input; no native host is contacted")
@@ -132,7 +135,9 @@ async def test_recipe_does_not_report_authored_when_clip_readback_is_wrong(tmp_p
                              "velocityNormalized": item["velocity"] / 127}
                             for item in recipe.pluck_phrase()],
                         "completeWindow": problem != "incomplete_window",
-                        "continuingAtWindowStart": [], "loopStartBeats": 0, "loopLengthBeats": 8}
+                        "continuingAtWindowStart": [], "loopStartBeats": 0, "loopLengthBeats": 8,
+                        "loopEnabled": None if problem == "loop_unobserved" else problem != "loop_disabled",
+                        "playStartBeats": 4 if problem == "play_start_shifted" else 0}
             elif method not in {"tracks.set", "launcher.create", "notes.edit"}:
                 raise AssertionError(f"Unexpected operation after invalid clip: {method}")
             return {"status": "observed"}
