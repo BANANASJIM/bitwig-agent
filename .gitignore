@@ -1,0 +1,40 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+build/
+.deps/
+*.egg-info/
+.DS_Store
+dist/
+.package-venv/
+
+# Local credentials and runtime configuration.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Private development evidence and continuation records are not publication inputs.
+/runs/
+/research/
+/review/
+/docs/history/
+/AGENTS.md
+/HANDOFF.md
+/scripts/grid-compatibility.py
+/scripts/inventory-api.py
+/tests/grid-cases.json
+
+# Native projects, renders, host binaries and locally built extensions.
+*.bwproject
+*.bwpreset
+*.wav
+*.bwextension
+*.jar
+*.class
+*.so

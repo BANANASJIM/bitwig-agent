@@ -6,6 +6,9 @@ build-backend = "hatchling.build"
 name = "bitwig-agent"
 version = "0.1.0"
 description = "Thin stdio MCP adapter for the local Bitwig Controller Extension"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = ["mcp==1.30.0", "pydantic>=2.11,<3"]
 

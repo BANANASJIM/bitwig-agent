@@ -1,7 +1,6 @@
 """Offline mix comparison; selection is separated only after readiness checks.
 
 All non-selection fields, including unknown sends and readability, remain exact.
-Historical executed policies under runs/ are frozen evidence, not imports.
 """
 from copy import deepcopy
 

@@ -3,7 +3,7 @@
 The supplied directory contains music-predeclaration.json and its declared paths.
 Scientific dependencies are optional and imported only when analysis is called.
 Native render/GUI provenance, guarded execution and result persistence belong to
-its caller; historical executed helpers under runs/ remain frozen evidence.
+its caller.
 """
 import hashlib
 import json

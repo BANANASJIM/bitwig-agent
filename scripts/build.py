@@ -75,6 +75,7 @@ def build():
             for entry in source.infolist():
                 if entry.filename.startswith("com/google/gson/") and not entry.is_dir():
                     archive.writestr(entry.filename, source.read(entry))
+        archive.write(ROOT / "LICENSE", "META-INF/LICENSE")
         archive.write(ROOT / "THIRD_PARTY_NOTICE.md", "META-INF/THIRD_PARTY_NOTICE.md")
         archive.write(ROOT / "third-party/GSON-LICENSE.txt", "META-INF/GSON-LICENSE.txt")
     print(output)
