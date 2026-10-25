@@ -15,13 +15,17 @@ concurrency:
 
 jobs:
   python:
-    name: Python ${{ matrix.python }}
+    name: Python ${{ matrix.python }} / MCP ${{ matrix.mcp }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
         python: ["3.11", "3.14"]
+        mcp: ["locked"]
+        include:
+          - python: "3.11"
+            mcp: "1.29.1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -32,13 +36,24 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Install locked development and audio-analysis dependencies
         run: uv sync --locked --group native-music
+      - name: Install the minimum supported MCP SDK
+        if: matrix.mcp != 'locked'
+        run: uv pip install --python .venv/bin/python "mcp==${{ matrix.mcp }}"
       - name: Run host-free Python checks
-        run: uv run --locked python scripts/check.py --layer offline
+        run: uv run --no-sync python scripts/check.py --layer offline
 
   package:
-    name: Python package consumer
+    name: Package / Python ${{ matrix.python }} / MCP ${{ matrix.mcp }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - python: "3.14"
+            mcp: "current"
+          - python: "3.11"
+            mcp: "1.29.1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -46,44 +61,29 @@ jobs:
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           version: "0.13.5"
-          python-version: "3.14"
+          python-version: ${{ matrix.python }}
       - name: Build source and wheel distributions
         run: uv build --no-sources
-      - name: Exercise the installed wheel's offline CLI
+      - name: Exercise installed wheel and sdist consumers
+        env:
+          MCP_VERSION: ${{ matrix.mcp }}
+          PYTHON_VERSION: ${{ matrix.python }}
         run: |
-          uv venv --python 3.14 .package-venv
-          uv pip install --python .package-venv/bin/python dist/*.whl
-          .package-venv/bin/bitwig-agent-rpc list
-      - name: Connect using the installed tool's generated MCP configuration
-        run: |
-          .package-venv/bin/bitwig-agent-install --version
-          .package-venv/bin/python - <<'PY'
-          import asyncio
-          import json
-          from pathlib import Path
-          import subprocess
-          import sys
-          import tempfile
-          from mcp import ClientSession, StdioServerParameters
-          from mcp.client.stdio import stdio_client
-
-          installer = Path(sys.executable).parent / "bitwig-agent-install"
-          config = json.loads(subprocess.check_output(
-              [str(installer), "--mcp-config"], text=True
-          ))["mcpServers"]["bitwig-agent"]
-
-          async def check():
-              with tempfile.TemporaryDirectory() as cwd:
-                  async with stdio_client(StdioServerParameters(**config, cwd=cwd)) as streams:
-                      async with ClientSession(*streams) as session:
-                          initialized = await session.initialize()
-                          tools = await session.list_tools()
-                          names = {tool.name for tool in tools.tools}
-                          assert {"tracks.list", "notes.edit"} <= names, names
-                          print(f"{initialized.serverInfo.name}: {len(names)} tools via installed configuration")
-
-          asyncio.run(asyncio.wait_for(check(), timeout=30))
-          PY
+          for distribution in dist/*.whl dist/*.tar.gz; do
+            consumer="$(mktemp -d "$RUNNER_TEMP/package-consumer.XXXXXX")"
+            uv venv --python "$PYTHON_VERSION" "$consumer/venv"
+            dependencies=("$PWD/$distribution")
+            if [[ "$MCP_VERSION" != current ]]; then
+              dependencies+=("mcp==$MCP_VERSION")
+            fi
+            uv pip install --no-cache --python "$consumer/venv/bin/python" "${dependencies[@]}"
+            "$consumer/venv/bin/python" -I scripts/smoke-package.py
+          done
+      - name: Validate the Agent Skills folder with the reference CLI
+        run: >-
+          uvx --from
+          'git+https://github.com/agentskills/agentskills.git@69ef37e9424c0a7ea9dd2293b559e43ec8176379#subdirectory=skills-ref'
+          skills-ref validate skills/bitwig-agent
 
   secrets:
     name: Reachable-history secret scan

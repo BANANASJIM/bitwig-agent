@@ -1,0 +1,95 @@
+name: Arch package
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: arch-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    container:
+      image: archlinux:base-devel@sha256:3cbf69d2d5958d6a294f3722c5668e6187c4df8e00fa27f72352f0bf83e495e1
+    steps:
+      - name: Install distro build and check dependencies inside the disposable container
+        run: >-
+          pacman -Syu --noconfirm --needed
+          git python-build python-hatchling python-installer python-mcp python-pydantic
+          python-pytest python-numpy python-scipy python-soundfile namcap
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Require matching release, Python and Arch versions
+        id: version
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          import tomllib
+
+          version = tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"]
+          versions = [
+              line.partition("=")[2].strip()
+              for line in Path("packaging/aur/.SRCINFO").read_text().splitlines()
+              if line.strip().startswith("pkgver =")
+          ]
+          if versions != [version]:
+              raise SystemExit("Arch recipe version does not match Python metadata")
+          tag = os.environ.get("RELEASE_TAG", "")
+          ref = os.environ["GITHUB_REF"]
+          if not tag and ref.startswith("refs/tags/"):
+              tag = ref.removeprefix("refs/tags/")
+          if tag and tag != f"v{version}":
+              raise SystemExit("Selected release tag does not match package versions")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              print(f"version={version}", file=output)
+          print(f"Arch release version: {version}")
+          PY
+      - name: Prepare an unprivileged package builder
+        run: |
+          useradd --create-home builder
+          install -d -o builder -g builder /home/builder/package
+          cp packaging/aur/PKGBUILD packaging/aur/.SRCINFO packaging/aur/LICENSE /home/builder/package/
+          chown -R builder:builder /home/builder/package
+      - name: Build the real release package and run its checks
+        working-directory: /home/builder/package
+        run: |
+          runuser -u builder -- makepkg --printsrcinfo | diff - .SRCINFO
+          runuser -u builder -- makepkg --cleanbuild --noconfirm
+          runuser -u builder -- makepkg --force --noconfirm
+          python - <<'PY'
+          from pathlib import Path
+          import subprocess
+
+          result = subprocess.run(
+              ["namcap", "PKGBUILD", *sorted(Path(".").glob("bitwig-agent-*.pkg.tar.zst"))],
+              text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+          )
+          print(result.stdout, end="")
+          if result.returncode or any(" E: " in line for line in result.stdout.splitlines()):
+              raise SystemExit(1)
+          PY
+      - name: Install only inside the disposable container and exercise the consumer
+        env:
+          EXPECTED_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # The base image's NoExtract omits docs; test the complete owned package.
+          printf '[options]\nArchitecture = auto\nSigLevel = Required DatabaseOptional\nLocalFileSigLevel = Optional\n' \
+            > /tmp/bitwig-pacman.conf
+          pacman --config /tmp/bitwig-pacman.conf -U --noconfirm /home/builder/package/bitwig-agent-*.pkg.tar.zst
+          runuser -u builder -- python -I scripts/smoke-package.py --expected-version "$EXPECTED_VERSION"
+          runuser -u builder -- bitwig-agent-install \
+            --extension /usr/share/bitwig-agent/BitwigAgent.bwextension
+          cmp /usr/share/bitwig-agent/BitwigAgent.bwextension \
+            '/home/builder/Bitwig Studio/Extensions/BitwigAgent.bwextension'
+          pacman -Qkk bitwig-agent

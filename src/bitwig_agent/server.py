@@ -1,6 +1,6 @@
 """MCP stdio adapter over the shared domain catalog and loopback client.
 
-Public SDK APIs: https://github.com/modelcontextprotocol/python-sdk/tree/v1.30.0
+Public SDK APIs: https://github.com/modelcontextprotocol/python-sdk/tree/v1.29.1
 Importing this module does not create a server or configure any global client.
 """
 
@@ -20,7 +20,7 @@ from bitwig_agent.client import BridgeClient, BridgeError, configured_port
 
 def create_server(client: BridgeClient | None = None) -> Server:
     bridge = client if client is not None else BridgeClient(configured_port())
-    server = Server("Bitwig Agent", version="0.1.0", instructions="Discover capabilities and tracks.list first. Our indices are zero-based. Use exact discovered targets and inspect bounded windows and verification. Timeouts are not cancellation; reconcile unknown outcomes before another write. No automatic retries. The agent may use Computer Use for API gaps; never blindly repeat an uncertain write through the GUI.")
+    server = Server("Bitwig Agent", version="0.1.1", instructions="Discover capabilities and tracks.list first. Our indices are zero-based. Use exact discovered targets and inspect bounded windows and verification. Timeouts are not cancellation; reconcile unknown outcomes before another write. No automatic retries. The agent may use Computer Use for API gaps; never blindly repeat an uncertain write through the GUI.")
 
     @server.list_tools()
     async def list_tools() -> list[Tool]:

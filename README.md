@@ -13,11 +13,13 @@ You need your own Bitwig Studio installation, Python 3.11+ and [uv](https://docs
 ### 1. Install
 
 ```sh
-uv tool install "https://github.com/BANANASJIM/bitwig-agent/releases/download/v0.1.0/bitwig_agent-0.1.0-py3-none-any.whl"
+uv tool install "https://github.com/BANANASJIM/bitwig-agent/releases/download/v0.1.1/bitwig_agent-0.1.1-py3-none-any.whl"
 bitwig-agent-install
 ```
 
 The installer downloads the same-version `BitwigAgent.bwextension` and `SHA256SUMS`, verifies the extension checksum, and installs it in your Bitwig Extensions directory. Different existing bytes are backed up outside Bitwig's extension scan; identical bytes are left untouched. [Custom locations, offline installation and troubleshooting](INSTALL.md).
+
+Prefer this persistent install for an MCP client. [Installation alternatives](INSTALL.md#persistent-uv-tools-and-ephemeral-uvx) cover ephemeral `uvx`, offline assets and the local Arch package recipe. PyPI/AUR publication is separate from GitHub releases; the short index-based commands are not the current installation path.
 
 ### 2. Enable in Bitwig
 
@@ -53,11 +55,14 @@ Version, catalog, schema and help commands work **offline**; they do not demonst
 
 ## Documentation
 
-- [Installation](INSTALL.md): release artifacts, offline/custom install, PATH and connection troubleshooting.
+- [Documentation index](docs/README.md): choose an installation, operation, architecture or packaging guide.
+- [Installation](INSTALL.md): persistent uv tools, ephemeral uvx, local Arch package, offline/custom install and troubleshooting.
 - [Usage and safety](USAGE.md): control bounds, targeting, unknown outcomes and the explicit Grid music recipe.
+- [Architecture](docs/architecture.md): Python/Java interfaces, state ownership and why the bridge does not plan.
 - [Protocol](PROTOCOL.md): request/response schemas, limits and side effects.
 - [Verification](VERIFICATION.md): reproducible checks and unresolved native coverage; host-free checks are not native acceptance.
-- [Contributing](CONTRIBUTING.md): source build, repository layout, checks and release procedure.
+- [Contributing](CONTRIBUTING.md) and [packaging](docs/packaging.md): source setup, artifacts and release promotion.
+- [Portable agent skill](https://github.com/BANANASJIM/bitwig-agent/tree/main/skills/bitwig-agent): copyable Agent Skills instructions; not permission to operate your DAW.
 - [Security](SECURITY.md): local trust boundary and private vulnerability reporting.
 
 ## License

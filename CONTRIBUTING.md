@@ -38,7 +38,7 @@ uv run --locked python scripts/build.py
 uv run --locked python scripts/check.py
 ```
 
-The default checks do not launch Bitwig. See [VERIFICATION.md](VERIFICATION.md) for layer boundaries. CI covers host-free Python checks, Python package consumption and a reachable-history secret scan; it does not claim to build against or test a live proprietary host.
+The default checks do not launch Bitwig. See [VERIFICATION.md](VERIFICATION.md) for layer boundaries. CI covers host-free Python checks, minimum supported MCP, Python package consumption, skill format and a reachable-history secret scan; local Arch packaging is a separate downstream check. None claims to build against or test a live proprietary host. Consult actual workflow output rather than treating configured jobs as passing evidence.
 
 ## Changes and bug reports
 
@@ -53,34 +53,41 @@ For security-sensitive issues, use the private route in [SECURITY.md](SECURITY.m
 
 ## Release procedure
 
-Releases are built locally against a maintainer's licensed Bitwig JAR; public CI does not have that dependency. The commands below illustrate **0.1.0**, not evidence that a release has been verified. For a later release, update the package/extension versions and installation links together before building.
+See [packaging and release promotion](docs/packaging.md) for the complete artifact, Arch and PyPI contract. Releases are built locally against a maintainer's licensed Bitwig JAR; public CI does not have that dependency. The commands below use **0.1.1**; they are instructions, not evidence that any check ran.
 
-1. Use a clean release checkout with the source prerequisites above. Run the [layered checks](VERIFICATION.md), retaining the results and distinguishing host-free checks from native evidence. Record any native checks not performed; do not infer acceptance from compilation.
-2. Build the wheel and extension from that same source snapshot:
+1. Start from reviewed source, align Python/MCP/extension versions and installation links, and run the applicable [layered checks](VERIFICATION.md). Keep actual results; list native checks not performed.
+2. Build the Python wheel **and sdist**, plus the matching extension:
 
    ```sh
    uv sync --locked
-   uv build --wheel
+   uv build
    uv run --locked python scripts/build.py
-   sha256sum dist/bitwig_agent-0.1.0-py3-none-any.whl build/BitwigAgent.bwextension
+   sha256sum dist/bitwig_agent-0.1.1-py3-none-any.whl dist/bitwig_agent-0.1.1.tar.gz build/BitwigAgent.bwextension
    ```
 
-3. Create a UTF-8 `SHA256SUMS` file containing the two printed hashes with **bare asset filenames**, not local `dist/` or `build/` prefixes:
+3. Create `SHA256SUMS` from those actual hashes with exactly three unique **bare asset filenames**, removing local `dist/` and `build/` prefixes. Inspect artifact contents and third-party notices. Never upload the proprietary host JAR, factory assets or private machine/evidence data.
+4. Finalize [the Arch recipe](https://github.com/BANANASJIM/bitwig-agent/tree/main/packaging/aur) from those exact candidate artifacts and regenerate `.SRCINFO` **before tagging**. Validate it in an isolated Arch environment; its source cache may be prefilled with the exact candidate sdist and version-aliased extension. `packaging/` is excluded from the sdist, so updating its hashes does not require rebuilding that sdist.
+5. Commit the reviewed source, recipe and metadata, then tag it as `v0.1.1`. Publish the same wheel, sdist, extension and manifest to its GitHub release. Include the actual tested platform/host scope and unresolved limitations. Do not mutate previous release artifacts.
+6. Exercise the real GitHub wheel/download path in an isolated environment outside the checkout, using an isolated extension destination, offline CLI and the generated configuration's MCP handshake. Confirm the release-triggered Arch workflow builds the matching version from published downloads. A live status/editing check is separate and requires permission, one writer and a disposable project; recipe verification is not an AUR upload.
+7. Run `publish-pypi.yml` on the version tag with `publish=false` for promotion validation. Only an explicitly authorized publication with the configured `pypi` environment and Trusted Publisher may use `publish=true`. Promote the same reviewed artifacts, not a separate rebuild. See [external account prerequisites](docs/packaging.md#external-accountenvironment-prerequisites).
 
-   ```text
-   <actual wheel SHA-256>  bitwig_agent-0.1.0-py3-none-any.whl
-   <actual extension SHA-256>  BitwigAgent.bwextension
-   ```
+Neither a pending PyPI publisher nor an AUR recipe establishes public package availability. Keep GitHub wheel installation as the documented path until the relevant registry/version actually exists.
 
-4. Check packaged contents, third-party notices and staged files. **Never upload or bundle `bitwig.jar`, other proprietary host/factory assets, private evidence or machine configuration.** The extension includes Gson with its notices, not the host JAR.
-5. Tag the checked source as `v0.1.0` and create its GitHub release with exactly the versioned wheel, `BitwigAgent.bwextension` and `SHA256SUMS` as assets. Include tested host/platform scope and unresolved limitations in the release notes.
-6. Before announcing the release, exercise the documented wheel URL in a clean tool environment outside the checkout; verify checksum-protected extension download/installation in an isolated destination, offline CLI discovery and the generated configuration's MCP stdio handshake. A live-host status or editing check is separate and requires a designated writer and disposable project. Record actual results, not just these instructions.
+## Agent skill maintenance
 
-The installation layout follows the user/developer separation in [Ruff installation](https://docs.astral.sh/ruff/installation/), persistent environments in [uv tools](https://docs.astral.sh/uv/guides/tools/), explicit stdio configuration in the [MCP Git server](https://github.com/modelcontextprotocol/servers/tree/main/src/git), and prebuilt-extension/compatibility guidance in [DrivenByMoss](https://www.mossgrabers.de/Software/Bitwig/Bitwig.html). These are workflow references, not bundled code or compatibility endorsements.
+The portable skill is [`skills/bitwig-agent`](https://github.com/BANANASJIM/bitwig-agent/tree/main/skills/bitwig-agent). Keep its main `SKILL.md` short; place focused guidance one directory level down in `references/`, with every reference directly reachable from `SKILL.md`. Bundle its MIT `LICENSE` so the folder can be copied alone. Links outside that folder must use public repository URLs, not checkout-relative paths. Do not embed host identities, private paths, credentials, global client configuration changes or a tool permission grant.
+
+Use the [Agent Skills specification](https://agentskills.io/specification) and the demonstration `skills-ref` validator pinned to the reviewed source commit:
+
+```sh
+uvx --from "git+https://github.com/agentskills/agentskills.git@69ef37e9424c0a7ea9dd2293b559e43ec8176379#subdirectory=skills-ref" skills-ref validate skills/bitwig-agent
+```
+
+This command fetches a validation tool; it is not a production DAW dependency. Format/frontmatter validation does **not** establish correct tool use, native behavior, compatibility, permissions or musical acceptance. Separately review the copied folder's local references and safety instructions: fresh schema/target discovery, explicit permission, unknown-stop discipline and no implicit GUI fallback.
 
 ## Repository map and architecture
 
-Python MCP stdio and CLI entrypoints share a strict schema/catalog and loopback client. The Java extension dispatches bounded newline-delimited JSON requests through host scheduling into separate domains. Bitwig owns the project/audio engine; the bridge is not a complete project mirror and never automatically retries requests.
+See [architecture and ownership](docs/architecture.md) for the detailed public-code walkthrough. Python MCP stdio and CLI entrypoints share a strict schema/catalog and loopback client. The Java extension dispatches bounded newline-delimited JSON requests through host scheduling into separate domains. Bitwig owns the project/audio engine; the bridge is not a complete project mirror and never automatically retries requests.
 
 | Path | Responsibility |
 |---|---|
@@ -89,5 +96,8 @@ Python MCP stdio and CLI entrypoints share a strict schema/catalog and loopback 
 | `extension/src/test/`, `tests/` | Simulated-host Java checks and host-free Python regressions |
 | `scripts/` | Source builds/checks and offline evidence helpers |
 | `examples/` | Client configuration and explicit opt-in music recipes |
+| `docs/` | Public architecture, installation navigation and packaging guides |
+| `packaging/aur/` | Local Arch recipe and synchronized `.SRCINFO` |
+| `skills/bitwig-agent/` | Copyable Agent Skills instructions, focused references and MIT license |
 
 The default-package `extension/src/main/java/BitwigAgent613GridInsertion.java` is intentional: its native superclass is also in the unnamed package and it is loaded by that exact class name. Historical evidence is not active test infrastructure; use [VERIFICATION.md](VERIFICATION.md) for current checks.

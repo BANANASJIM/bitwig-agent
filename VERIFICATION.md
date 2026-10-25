@@ -31,6 +31,9 @@ Or select layers with `scripts/check.py --layer offline`, `--layer java`, or `--
 | Python tests | Schemas, catalog, client/CLI/MCP envelopes and regression controls | Actual Bitwig mutations or sound |
 | Java tests | Simulated host/domain semantics and actual loopback transport | Native private-model compatibility or DAW acceptance |
 | MCP/Java fixture | Real Python MCP adapter and Java transport with a fixture handler | A live Bitwig project or native completion |
+| Installed wheel/sdist | Distribution metadata, real offline entrypoints and MCP stdio discovery outside checkout | Extension activation, host connection or actual edits |
+| Local Arch package | System dependency/build layout and installed Python consumer behavior | Availability in AUR, compatibility of the separately installed Bitwig host |
+| Skill format | Agent Skills naming/frontmatter conventions | Safe model behavior, authorization or any DAW outcome |
 
 Offline interface discovery is also available without the extension:
 
@@ -55,11 +58,31 @@ The offline policies in [scripts/evidence_mix.py](scripts/evidence_mix.py) and [
 
 ## Continuous integration
 
-[CI](https://github.com/BANANASJIM/bitwig-agent/actions/workflows/ci.yml) is configured to run host-free Python checks on Python 3.11 and 3.14 with the optional audio-analysis dependencies installed. It builds the Python source/wheel distributions, exercises the installed wheel's offline CLI and generated configuration's MCP stdio handshake outside the checkout, and scans reachable Git history for credentials with checksum-pinned Gitleaks. The handshake tests Python packaging and MCP startup, not a connection to Bitwig; consult actual workflow results rather than treating this configuration as passing evidence.
+[CI](https://github.com/BANANASJIM/bitwig-agent/actions/workflows/ci.yml) is configured to run host-free Python checks on Python 3.11 and 3.14 with the optional audio-analysis dependencies installed, plus Python 3.11 with the minimum supported MCP SDK 1.29.1. The minimum-SDK job uses `--no-sync` after substitution so a test command cannot silently restore the locked SDK. Package jobs build the Python source/wheel distributions and exercise **both** installed consumers' offline CLI and generated configuration's MCP stdio handshake outside the checkout, including the minimum-SDK combination. The package smoke is shared in [scripts/smoke-package.py](scripts/smoke-package.py).
+
+The workflow also validates the portable skill with a pinned reference validator and scans reachable Git history for credentials with checksum-pinned Gitleaks. The handshake tests Python packaging and MCP startup, not a connection to Bitwig; consult actual workflow results rather than treating this configuration as passing evidence.
+
+The separate [Arch workflow](https://github.com/BANANASJIM/bitwig-agent/actions/workflows/aur.yml) runs on `release: published` or manual dispatch, not main-branch pushes, because its release assets must already exist. In a digest-pinned disposable official Arch container it checks `.SRCINFO`, builds/checks the real recipe as an unprivileged user, runs namcap, installs the package, exercises the installed MCP consumer and verifies an explicit extension copy into the container builder's home. This does not touch a native host/user installation or upload to AUR. See [packaging](docs/packaging.md#archaur-recipe) for the build/layout contract and actual workflow output for evidence.
 
 Checkout is pinned to the `v7.0.1` commit, uses Node 24, and does not persist Git credentials. Standard `pull_request` events are used; untrusted fork code is not run under privileged `pull_request_target` or `workflow_run` triggers.
 
 The workflow has read-only repository permissions and does not require repository secrets. GitHub-hosted runners are not supplied with the proprietary Bitwig host JAR: Java compilation, simulated-host tests and the MCP/Java fixture remain separate local checks. CI does not launch Bitwig or establish native, GUI, audio or persistence acceptance. A secret scanner is one check, not a guarantee that all private information has been identified.
+
+### Release promotion checks
+
+The manual [PyPI workflow](https://github.com/BANANASJIM/bitwig-agent/actions/workflows/publish-pypi.yml) defaults to validation-only with `publish=false` and requires a `vX.Y.Z` tag. It verifies the published GitHub wheel, sdist and extension against the release manifest, checks Python package/tag versions and smokes installed wheel/sdist consumers. Only explicitly setting `publish=true` enables the separate `pypi` environment/OIDC publication job. These checks do not install the extension, contact Bitwig, publish to AUR or prove native compatibility. See [promotion and account prerequisites](docs/packaging.md#pypi-trusted-publishing).
+
+To smoke a separately installed Python consumer, invoke the shared script with **that environment's Python**, not the checkout's editable installation:
+
+```sh
+/absolute/path/consumer/bin/python -I scripts/smoke-package.py --expected-version 0.1.1
+```
+
+The script runs its CLI/MCP consumers from a temporary directory outside the checkout. It performs discovery only, with no extension download, controller installation or native-host calls. A clean sdist-consumption check must actually build the sdist rather than reuse a cached wheel; the CI/promotion workflows install with `--no-cache`.
+
+### Skill validation
+
+Use the [pinned skills-ref command](CONTRIBUTING.md#agent-skill-maintenance) to validate `skills/bitwig-agent`, and inspect a standalone copy with its bundled references and license. `skills-ref` is a demonstration format validator, not a production dependency or an execution harness. A pass does not establish that an agent respects user permission, discovers fresh bindings, stops after unknown outcomes or handles actual Bitwig safely. Those require separate behavioral review and, only when authorized, bounded native evidence.
 
 ## Native preflight boundaries
 

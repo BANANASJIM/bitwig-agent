@@ -4,13 +4,38 @@ build-backend = "hatchling.build"
 
 [project]
 name = "bitwig-agent"
-version = "0.1.0"
+version = "0.1.1"
 description = "Thin stdio MCP adapter for the local Bitwig Controller Extension"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.11"
-dependencies = ["mcp==1.30.0", "pydantic>=2.11,<3"]
+dependencies = ["mcp>=1.29.1,<2", "pydantic>=2.11,<3"]
+keywords = ["bitwig", "mcp", "midi", "audio"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Multimedia :: Sound/Audio",
+    "Topic :: Multimedia :: Sound/Audio :: MIDI",
+]
+
+[project.urls]
+Homepage = "https://github.com/BANANASJIM/bitwig-agent"
+Documentation = "https://github.com/BANANASJIM/bitwig-agent/blob/main/INSTALL.md"
+Repository = "https://github.com/BANANASJIM/bitwig-agent"
+Issues = "https://github.com/BANANASJIM/bitwig-agent/issues"
+Releases = "https://github.com/BANANASJIM/bitwig-agent/releases"
+
+[tool.hatch.build.targets.sdist]
+# Downstream recipes contain the released sdist's checksum, not source inputs.
+exclude = ["/packaging"]
 
 [project.scripts]
 bitwig-agent = "bitwig_agent.server:main"

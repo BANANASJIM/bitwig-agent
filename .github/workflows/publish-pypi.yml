@@ -1,0 +1,204 @@
+name: Verify release / publish to PyPI
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the verified release to PyPI (requires configured Trusted Publisher and environment approval)
+        required: true
+        type: boolean
+        default: false
+
+permissions: {}
+
+concurrency:
+  group: pypi-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify published GitHub release artifacts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - name: Require a version tag
+        shell: bash
+        run: |
+          if [[ ! "$GITHUB_REF" =~ ^refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo 'Dispatch this workflow on a vX.Y.Z tag, not a branch.' >&2
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: "0.13.5"
+          python-version: "3.11"
+          enable-cache: false
+      - name: Download and verify the reviewed release (never rebuild for promotion)
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          uv run --no-project --python 3.11 python - <<'PY'
+          from collections import Counter
+          from email.parser import BytesParser
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import shutil
+          import subprocess
+          import tarfile
+          import tomllib
+          import zipfile
+
+          tag = os.environ["GITHUB_REF_NAME"]
+          version = tag.removeprefix("v")
+          project = tomllib.loads(Path("pyproject.toml").read_text())["project"]
+          if project["name"] != "bitwig-agent" or project["version"] != version:
+              raise SystemExit("Tag does not match pyproject.toml package/version")
+          wheel = f"bitwig_agent-{version}-py3-none-any.whl"
+          sdist = f"bitwig_agent-{version}.tar.gz"
+          extension = "BitwigAgent.bwextension"
+          required = {wheel, sdist, extension}
+          repo = os.environ["GITHUB_REPOSITORY"]
+          release = json.loads(subprocess.check_output([
+              "gh", "release", "view", tag, "--repo", repo,
+              "--json", "tagName,isDraft,assets",
+          ], text=True))
+          if release["tagName"] != tag or release["isDraft"]:
+              raise SystemExit("Expected a published GitHub release for this tag")
+          counts = Counter(asset["name"] for asset in release["assets"])
+          if any(counts[name] != 1 for name in required | {"SHA256SUMS"}):
+              raise SystemExit("Release must contain exactly one of each required asset")
+          downloads = Path(os.environ["RUNNER_TEMP"]) / "reviewed-release"
+          downloads.mkdir()
+          command = ["gh", "release", "download", tag, "--repo", repo, "--dir", str(downloads)]
+          for name in sorted(required | {"SHA256SUMS"}):
+              command.extend(["--pattern", name])
+          subprocess.run(command, check=True)
+          checksums = {}
+          for line in (downloads / "SHA256SUMS").read_text().splitlines():
+              match = re.fullmatch(r"([0-9a-fA-F]{64}) [ *]([^/\\\s]+)", line)
+              if match is None:
+                  raise SystemExit(f"Malformed SHA256SUMS entry: {line!r}")
+              digest, name = match.groups()
+              if name in checksums:
+                  raise SystemExit(f"Ambiguous checksum for {name}")
+              checksums[name] = digest.lower()
+          if set(checksums) != required:
+              raise SystemExit("SHA256SUMS must name exactly the wheel, sdist, and extension")
+          for name, expected in checksums.items():
+              with (downloads / name).open("rb") as stream:
+                  actual = hashlib.file_digest(stream, "sha256").hexdigest()
+              if actual != expected:
+                  raise SystemExit(f"SHA256 mismatch: {name}")
+              print(f"Verified SHA256 {actual}  {name}", flush=True)
+
+          def check_metadata(data, source):
+              metadata = BytesParser().parsebytes(data)
+              if metadata.get_all("Name") != ["bitwig-agent"] or metadata.get_all("Version") != [version]:
+                  raise SystemExit(f"Package name/version mismatch in {source}")
+
+          with zipfile.ZipFile(downloads / wheel) as archive:
+              entries = [entry for entry in archive.infolist()
+                         if entry.filename.endswith(".dist-info/METADATA")]
+              if len(entries) != 1:
+                  raise SystemExit("Expected exactly one wheel METADATA")
+              check_metadata(archive.read(entries[0]), wheel)
+          with tarfile.open(downloads / sdist, "r:gz") as archive:
+              entries = [entry for entry in archive.getmembers()
+                         if entry.name == f"bitwig_agent-{version}/PKG-INFO"]
+              if len(entries) != 1 or not entries[0].isfile():
+                  raise SystemExit("Expected exactly one regular sdist PKG-INFO")
+              with archive.extractfile(entries[0]) as stream:
+                  check_metadata(stream.read(), sdist)
+          # Only these original Python distributions can reach the publishing job.
+          destination = Path("dist")
+          destination.mkdir()
+          for name in (wheel, sdist):
+              shutil.copyfile(downloads / name, destination / name)
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write(f"version={version}\n")
+          PY
+      - name: Smoke the actual release wheel and sdist outside the checkout
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          for distribution in dist/*.whl dist/*.tar.gz; do
+            consumer="$(mktemp -d "$RUNNER_TEMP/release-consumer.XXXXXX")"
+            uv venv --python 3.11 "$consumer/venv"
+            # No cache: the sdist must really build, not reuse the release wheel.
+            uv pip install --no-cache --python "$consumer/venv/bin/python" \
+              "$PWD/$distribution" 'mcp==1.29.1'
+            "$consumer/venv/bin/python" -I scripts/smoke-package.py \
+              --expected-version "$RELEASE_VERSION"
+          done
+      - name: Preserve verified Python distributions for promotion
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: verified-python-distributions
+          path: |
+            dist/*.whl
+            dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+      - name: Report verification (not publication)
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          PUBLISH_REQUESTED: ${{ inputs.publish }}
+        run: |
+          {
+            echo "## GitHub release v$RELEASE_VERSION verified"
+            echo 'Verified the wheel, sdist, and extension SHA256 checksums and Python package/tag versions.'
+            echo 'Installed wheel and sdist consumers passed offline CLI and real MCP discovery with Python 3.11 / MCP 1.29.1.'
+            echo 'No native Bitwig test or PyPI upload occurred in this job.'
+            if [[ "$PUBLISH_REQUESTED" == true ]]; then
+              echo 'Publication was requested; only the separate environment-gated publish job can report an upload.'
+            else
+              echo 'Verification-only run: publication was not requested.'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  publish:
+    name: Publish verified artifacts to PyPI
+    needs: verify
+    if: inputs.publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment:
+      name: pypi
+      url: https://pypi.org/project/bitwig-agent/
+    permissions:
+      id-token: write
+    steps:
+      # Deliberately no checkout, builds, installs of this package, or source execution.
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: "0.13.5"
+          enable-cache: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: verified-python-distributions
+          path: dist/
+      - name: Generate PEP 740 publish attestations
+        uses: astral-sh/attest-action@39b6ce43875c196a579e31635b11aa2a2036384a # v0.0.7
+        with:
+          paths: dist/*
+      - name: Publish with mandatory OIDC Trusted Publishing
+        run: uv publish --trusted-publishing always dist/*.whl dist/*.tar.gz
+      - name: Report successful publication
+        env:
+          RELEASE_VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          {
+            echo "## Published bitwig-agent $RELEASE_VERSION to PyPI"
+            echo 'Uploaded the verified GitHub release wheel and sdist with PEP 740 publish attestations via OIDC Trusted Publishing.'
+          } >> "$GITHUB_STEP_SUMMARY"

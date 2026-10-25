@@ -5,8 +5,8 @@ resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
     "python_full_version >= '3.14' and sys_platform != 'win32'",
     "python_full_version >= '3.12' and python_full_version < '3.14' and sys_platform == 'win32'",
-    "python_full_version < '3.12' and sys_platform == 'win32'",
     "python_full_version >= '3.12' and python_full_version < '3.14' and sys_platform != 'win32'",
+    "python_full_version < '3.12' and sys_platform == 'win32'",
     "python_full_version < '3.12' and sys_platform != 'win32'",
 ]
 
@@ -43,7 +43,7 @@ wheels = [
 
 [[package]]
 name = "bitwig-agent"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "." }
 dependencies = [
     { name = "mcp" },
@@ -64,7 +64,7 @@ native-music = [
 
 [package.metadata]
 requires-dist = [
-    { name = "mcp", specifier = "==1.30.0" },
+    { name = "mcp", specifier = ">=1.29.1,<2" },
     { name = "pydantic", specifier = ">=2.11,<3" },
 ]
 
