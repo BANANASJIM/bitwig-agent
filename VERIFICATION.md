@@ -57,6 +57,8 @@ The offline policies in [scripts/evidence_mix.py](scripts/evidence_mix.py) and [
 
 [CI](https://github.com/BANANASJIM/bitwig-agent/actions/workflows/ci.yml) is configured to run host-free Python checks on Python 3.11 and 3.14 with the optional audio-analysis dependencies installed. It builds the Python source/wheel distributions, exercises the installed wheel's offline CLI and generated configuration's MCP stdio handshake outside the checkout, and scans reachable Git history for credentials with checksum-pinned Gitleaks. The handshake tests Python packaging and MCP startup, not a connection to Bitwig; consult actual workflow results rather than treating this configuration as passing evidence.
 
+Checkout is pinned to the `v7.0.1` commit, uses Node 24, and does not persist Git credentials. Standard `pull_request` events are used; untrusted fork code is not run under privileged `pull_request_target` or `workflow_run` triggers.
+
 The workflow has read-only repository permissions and does not require repository secrets. GitHub-hosted runners are not supplied with the proprietary Bitwig host JAR: Java compilation, simulated-host tests and the MCP/Java fixture remain separate local checks. CI does not launch Bitwig or establish native, GUI, audio or persistence acceptance. A secret scanner is one check, not a guarantee that all private information has been identified.
 
 ## Native preflight boundaries
