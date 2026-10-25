@@ -54,6 +54,36 @@ jobs:
           uv venv --python 3.14 .package-venv
           uv pip install --python .package-venv/bin/python dist/*.whl
           .package-venv/bin/bitwig-agent-rpc list
+      - name: Connect using the installed tool's generated MCP configuration
+        run: |
+          .package-venv/bin/bitwig-agent-install --version
+          .package-venv/bin/python - <<'PY'
+          import asyncio
+          import json
+          from pathlib import Path
+          import subprocess
+          import sys
+          import tempfile
+          from mcp import ClientSession, StdioServerParameters
+          from mcp.client.stdio import stdio_client
+
+          installer = Path(sys.executable).parent / "bitwig-agent-install"
+          config = json.loads(subprocess.check_output(
+              [str(installer), "--mcp-config"], text=True
+          ))["mcpServers"]["bitwig-agent"]
+
+          async def check():
+              with tempfile.TemporaryDirectory() as cwd:
+                  async with stdio_client(StdioServerParameters(**config, cwd=cwd)) as streams:
+                      async with ClientSession(*streams) as session:
+                          initialized = await session.initialize()
+                          tools = await session.list_tools()
+                          names = {tool.name for tool in tools.tools}
+                          assert {"tracks.list", "notes.edit"} <= names, names
+                          print(f"{initialized.serverInfo.name}: {len(names)} tools via installed configuration")
+
+          asyncio.run(asyncio.wait_for(check(), timeout=30))
+          PY
 
   secrets:
     name: Reachable-history secret scan

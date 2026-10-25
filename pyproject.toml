@@ -15,6 +15,7 @@ dependencies = ["mcp==1.30.0", "pydantic>=2.11,<3"]
 [project.scripts]
 bitwig-agent = "bitwig_agent.server:main"
 bitwig-agent-rpc = "bitwig_agent.cli:main"
+bitwig-agent-install = "bitwig_agent.install:main"
 
 [dependency-groups]
 dev = ["pytest>=8.3,<9"]
