@@ -24,6 +24,7 @@ public final class LauncherModuleTest {
         cursorLeaseDoesNotBlockLauncherReads();
         lateOrMissingObservationsRemainDispatched();
         explicitLaunchAndStopStates();
+        unobservedPlaybackCompletionRemainsUnknown();
         denseReadReportsItsResponseBoundary();
         matchingEditsPreserveExistingNotes();
         loopStartAndPlaybackSafetyFailClosed();
@@ -181,11 +182,35 @@ public final class LauncherModuleTest {
         JsonObject out = f.call("launcher.launch", target());
         check(out.get("playbackState").getAsString().equals("queued"), "queued launch distinct from playing");
         check(out.get("status").getAsString().equals("dispatched"), "queue does not claim playback completion");
-        f.launchPlaying = true;
-        check(f.call("launcher.launch", target()).get("playbackState").getAsString().equals("playing"), "actual playing state reported");
-        check(f.call("launcher.stop", trackTarget()).get("playbackState").getAsString().equals("stopped"), "explicit track stop observed");
+        check("not_observed".equals(out.has("completion") ? out.get("completion").getAsString() : null),
+                "queued launch declares incomplete dispatch for strict consumers");
+        f = new Fake(); f.slots[0].content = true; f.launchPlaying = true;
+        out = f.call("launcher.launch", target());
+        check(out.get("playbackState").getAsString().equals("playing"), "actual playing state reported");
+        check(out.get("completion").getAsString().equals("observed"), "playing launch declares observed completion");
+        out = f.call("launcher.stop", trackTarget());
+        check(out.get("playbackState").getAsString().equals("stopped"), "explicit track stop observed");
+        check(out.get("completion").getAsString().equals("observed"), "stopped track declares observed completion");
+        f = new Fake(); f.slots[0].content = true; f.slots[0].playing = true; f.stopped = false; f.queueStop = true;
+        out = f.call("launcher.stop", trackTarget());
+        check(out.get("playbackState").getAsString().equals("queued"), "queued stop distinct from stopped");
+        check(out.get("status").getAsString().equals("dispatched"), "queued stop does not claim completion");
+        check(out.get("completion").getAsString().equals("not_observed"), "queued stop declares incomplete dispatch");
+        check(f.slots[0].playing && !f.stopped, "queued stop may leave the clip playing");
         JsonObject bad = target(); bad.addProperty("slotIndex", 15);
         expectFuture("clip_not_found", f.start("launcher.launch", bad));
+    }
+
+    private static void unobservedPlaybackCompletionRemainsUnknown() throws Exception {
+        for (boolean stop : new boolean[]{false, true}) {
+            Fake f = new Fake(); f.slots[0].content = true; f.emitPlaybackState = false;
+            f.slots[0].playing = stop; f.stopped = !stop;
+            JsonObject out = f.call(stop ? "launcher.stop" : "launcher.launch", stop ? trackTarget() : target());
+            check(out.get("status").getAsString().equals("dispatched"), "missing playback observation is not completion");
+            check(out.get("playbackState").getAsString().equals("not_observed"), "neither queue nor desired state observed");
+            check(out.get("completion").getAsString().equals("unknown"), "unobserved launch/stop stops strict consumers");
+            check(f.playbackDispatches == 1, "playback observation never redispatches the operation");
+        }
     }
 
     private static void denseReadReportsItsResponseBoundary() throws Exception {
@@ -620,10 +645,11 @@ public final class LauncherModuleTest {
         final HostServices services;
         final LauncherModule module;
         NoteStepChangedCallback observer;
-        int selected, start, writes, creates, failWriteAt, nameWrites;
+        int selected, start, writes, creates, failWriteAt, nameWrites, playbackDispatches;
         double size = .25, loopStart;
         String trackId = ID;
         boolean emitNotes = true, launchPlaying, stopped = true;
+        boolean emitPlaybackState = true, queueStop, stopQueued;
         boolean deferGridChanges;
         boolean deferCreate, failCreate, failImport, emitCreateContent = true, applyName = true;
         Double pendingSize;
@@ -655,7 +681,7 @@ public final class LauncherModuleTest {
                 });
                 track.action("channelId", a -> identity.proxy);
                 track.value("name", () -> "Track"); track.value("position", () -> trackIndex);
-                track.value("isStopped", () -> stopped); track.value("isQueuedForStop", () -> false);
+                track.value("isStopped", () -> stopped); track.value("isQueuedForStop", () -> stopQueued);
                 Node bank = new Node(ClipLauncherSlotBank.class); bank.value("scrollPosition", () -> bankOffset); bank.value("itemCount", () -> 16);
                 ClipLauncherSlot[] slotApis = new ClipLauncherSlot[16];
                 for (int j = 0; j < 16; j++) {
@@ -681,7 +707,11 @@ public final class LauncherModuleTest {
                         }
                         return null;
                     });
-                    slot.action("launch", a -> { data.playing = launchPlaying; data.queued = !launchPlaying; stopped = false; return null; });
+                    slot.action("launch", a -> {
+                        playbackDispatches++;
+                        if (emitPlaybackState) { data.playing = launchPlaying; data.queued = !launchPlaying; stopped = false; }
+                        return null;
+                    });
                     Node insertion = new Node(InsertionPoint.class);
                     insertion.action("insertFile", a -> {
                         imports++; importedPath = (String) a[0]; importedSlot = index;
@@ -692,7 +722,17 @@ public final class LauncherModuleTest {
                     slotApis[j] = (ClipLauncherSlot) slot.proxy;
                 }
                 bank.action("getItemAt", a -> slotApis[(Integer) a[0]]);
-                bank.action("stop", a -> { stopped = true; for (SlotData data : slots) { data.playing = false; data.queued = false; } return null; });
+                bank.action("stop", a -> {
+                    playbackDispatches++;
+                    if (emitPlaybackState) {
+                        stopQueued = queueStop;
+                        if (!queueStop) {
+                            stopped = true;
+                            for (SlotData data : slots) { data.playing = false; data.queued = false; }
+                        }
+                    }
+                    return null;
+                });
                 track.action("clipLauncherSlotBank", a -> bank.proxy);
                 Node devices = new Node(DeviceBank.class); devices.value("exists", () -> true);
                 devices.value("scrollPosition", () -> 0); devices.value("itemCount", () -> 0);

@@ -477,6 +477,7 @@ final class LauncherModule implements HostModule {
         if (!observed && !queued && System.nanoTime() < end) { s.schedule(op, () -> awaitPlayback(op, id, track, slot, index, end), 20); return; }
         JsonObject out = base(id, index);
         out.addProperty("status", observed ? "observed" : "dispatched");
+        out.addProperty("completion", observed ? "observed" : queued ? "not_observed" : "unknown");
         out.addProperty("playbackState", observed ? slot == null ? "stopped" : "playing" : queued ? "queued" : "not_observed");
         out.addProperty("verification", observed || queued ? "launcher_state" : "not_observed");
         if (slot != null) out.add("slot", slotJson(slot, index));
