@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires configured Bitwig Agent MCP tools or its CLI, a matching enabled controller extension and a trusted local Bitwig host. Native evidence is limited to Linux with Bitwig Studio 6.1.3 / API 25; private Grid and modulator access also requires the exact supported loaded-JAR hash. This skill grants no permissions.
 metadata:
   author: BANANASJIM
-  version: "0.1.1"
+  version: "0.1.2"
   repository: https://github.com/BANANASJIM/bitwig-agent
 ---
 

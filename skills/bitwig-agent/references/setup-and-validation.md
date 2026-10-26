@@ -4,7 +4,7 @@ This skill is portable instructions, not an installer or permission grant. Copy 
 
 ## Missing tools or extension
 
-Use the public [installation guide](https://github.com/BANANASJIM/bitwig-agent/blob/main/INSTALL.md) for current commands and matching release assets. For release 0.1.1, uv installs the versioned GitHub wheel; PyPI publication is still pending. Persistent `uv tool install <versioned-wheel-URL>` is preferred for ongoing MCP use; `uvx --from <versioned-wheel-URL> <entrypoint>` is ephemeral/cached execution. Do not treat an absolute interpreter path in a temporary uv cache as permanent client configuration.
+Use the public [installation guide](https://github.com/BANANASJIM/bitwig-agent/blob/main/INSTALL.md) for current commands and matching release assets. Persistent `uv tool install bitwig-agent` from PyPI is preferred for ongoing MCP use; `uvx --from bitwig-agent==0.1.2 <entrypoint>` is version-pinned ephemeral/cached execution. Do not treat an absolute interpreter path in a temporary uv cache as permanent client configuration.
 
 The installed Python package and enabled Java extension must match. `bitwig-agent-install` installs/downloads the matching extension and can replace user files, so it requires installation permission. `bitwig-agent-install --mcp-config` only prints configuration; it does not edit global settings or install the extension. Review and merge that JSON according to the client's instructions. Offline `list`, `describe` and version commands are not host connectivity evidence; `status` contacts the running extension. Starting `bitwig-agent` by hand starts a stdio server awaiting a client, not a GUI or host test.
 

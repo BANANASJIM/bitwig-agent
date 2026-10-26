@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "bitwig-agent"
-version = "0.1.1"
+version = "0.1.2"
 description = "Thin stdio MCP adapter for the local Bitwig Controller Extension"
 readme = "README.md"
 license = "MIT"

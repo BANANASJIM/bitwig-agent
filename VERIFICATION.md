@@ -75,7 +75,7 @@ The manual [PyPI workflow](https://github.com/BANANASJIM/bitwig-agent/actions/wo
 To smoke a separately installed Python consumer, invoke the shared script with **that environment's Python**, not the checkout's editable installation:
 
 ```sh
-/absolute/path/consumer/bin/python -I scripts/smoke-package.py --expected-version 0.1.1
+/absolute/path/consumer/bin/python -I scripts/smoke-package.py --expected-version 0.1.2
 ```
 
 The script runs its CLI/MCP consumers from a temporary directory outside the checkout. It performs discovery only, with no extension download, controller installation or native-host calls. A clean sdist-consumption check must actually build the sdist rather than reuse a cached wheel; the CI/promotion workflows install with `--no-cache`.
