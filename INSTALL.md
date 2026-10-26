@@ -1,6 +1,6 @@
 # Installation details
 
-Start with the [three-step quickstart](README.md#quickstart). Release installation uses an isolated [uv tool environment](https://docs.astral.sh/uv/guides/tools/), a versioned wheel and a prebuilt controller extension. There is no dependency on a checkout or a Java compiler. Native compatibility is established only for Linux with Bitwig Studio 6.1.3 / API 25; platform-specific installer defaults do not establish macOS or Windows host support.
+Start with the [three-step quickstart](README.md#quickstart). Choose an isolated [uv tool environment](https://docs.astral.sh/uv/guides/tools/) with the GitHub wheel, or the [Arch/AUR package](#arch-linux-aur). Both supply the same-version prebuilt controller extension without a Java compiler. Native compatibility evidence remains limited to Linux with Bitwig Studio 6.1.3 / API 25; platform-specific installer defaults do not establish macOS or Windows host support.
 
 Bitwig documents its platform extension directories and manual controller registration in its [official controller-extension installation guide](https://www.bitwig.com/support/technical_support/how-do-i-add-a-controller-extension-or-script-17/).
 
@@ -24,18 +24,27 @@ uvx --from "https://github.com/BANANASJIM/bitwig-agent/releases/download/v0.1.1/
 
 Here `--from` identifies the distribution; `bitwig-agent-rpc` identifies the entrypoint. Do not assume a generated absolute interpreter path inside an ephemeral uv cache is durable MCP configuration. Prefer the persistent installation above, or deliberately configure your client to invoke `uvx --from <versioned-wheel-URL> bitwig-agent` itself, with uv on that client's `PATH`. That option may need downloads and makes cache availability part of startup.
 
-**Registry status:** these commands deliberately use GitHub assets. PyPI publication is not established for this release preparation. Only after the project and exact version are actually published to PyPI may you substitute `uv tool install bitwig-agent==0.1.1`, or `uvx --from bitwig-agent==0.1.1 bitwig-agent-rpc list`. Do not treat an index lookup or an unrelated similarly named package as this project.
+**PyPI status:** version 0.1.1 is not yet published to PyPI; these uv commands deliberately use GitHub assets. Only after the project and exact version are actually published may you substitute `uv tool install bitwig-agent==0.1.1`, or `uvx --from bitwig-agent==0.1.1 bitwig-agent-rpc list`. Do not treat an unrelated similarly named package as this project.
 
-## Local Arch package
+## Arch Linux (AUR)
 
-The repository contains a recipe at [packaging/aur](https://github.com/BANANASJIM/bitwig-agent/tree/main/packaging/aur), not a claim that `yay -S bitwig-agent` currently works. On Arch, review `PKGBUILD` and `.SRCINFO` before building. With Arch's `base-devel` tools installed, build as a regular user from a source checkout:
+[`bitwig-agent`](https://aur.archlinux.org/packages/bitwig-agent) is published on AUR as **0.1.1-1**, maintained by `bananasjim`. Review its `PKGBUILD` and `.SRCINFO` before building. With an AUR helper:
 
 ```sh
-cd packaging/aur
+yay -S bitwig-agent
+```
+
+Without a helper, install Arch's `base-devel` prerequisites, then build as a regular user:
+
+```sh
+git clone https://aur.archlinux.org/bitwig-agent.git
+cd bitwig-agent
 makepkg -si
 ```
 
 This builds the Python component from release source and packages the matching prebuilt Java extension. Runtime dependencies come from pacman; there is no runtime uv/private-venv requirement. `makepkg` may request privilege for dependency/package installation through pacman; **never run makepkg itself as root**.
+
+Maintainers can also build the mirrored recipe in the source repository's [`packaging/aur`](https://github.com/BANANASJIM/bitwig-agent/tree/main/packaging/aur) directory. The published AUR repository contains only the recipe, generated metadata and license.
 
 Public guides are installed under `/usr/share/doc/bitwig-agent/` and the portable Agent Skills folder under `/usr/share/bitwig-agent/skills/bitwig-agent/`. Copy the whole skill directory to your client's chosen skill location; installing the package does not register a skill or change client settings.
 

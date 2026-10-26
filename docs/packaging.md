@@ -4,7 +4,9 @@ This guide separates **building/installing a package**, **publishing reviewed re
 
 ## Distribution status and version contract
 
-The current release version is **0.1.1**. The project remains experimental/Alpha, and the GitHub release retains its prerelease badge; packaging work does not promote native maturity. GitHub release assets are the documented installation source. The local Arch recipe and PyPI workflow prepare additional distribution paths; their presence does not mean an AUR package or PyPI project has been published. Do not advertise `yay -S bitwig-agent` or an index-only uv install until the corresponding public package/version actually exists under the intended maintainer.
+The current release version is **0.1.1**. The project remains experimental/Alpha, and the GitHub release retains its prerelease badge; packaging work does not promote native maturity.
+
+GitHub release assets and the [AUR package `bitwig-agent` 0.1.1-1](https://aur.archlinux.org/packages/bitwig-agent), maintained by `bananasjim`, are available. **PyPI publication is still pending**: use the versioned GitHub wheel for uv until the intended project/version is actually published there.
 
 Python and Java are a matched release pair. The installer derives the GitHub release tag from its installed Python package version. Keep package metadata, MCP server version, extension definition and release links aligned. Never replace the contents of an existing release with a different build under the same version; make a new version for changed artifacts.
 
@@ -27,7 +29,7 @@ PyPI short commands are conditional on actual publication. For example, **only a
 
 ## Arch/AUR recipe
 
-The downstream recipe lives in [`packaging/aur`](https://github.com/BANANASJIM/bitwig-agent/tree/main/packaging/aur). Review it before executing `makepkg`; build as a normal user. [INSTALL.md](../INSTALL.md#local-arch-package) gives local build/install and user-extension copy instructions. This is a local recipe workflow, not an AUR availability claim.
+The reviewed recipe lives in [`packaging/aur`](https://github.com/BANANASJIM/bitwig-agent/tree/main/packaging/aur) and is published through the separate [AUR package repository](https://aur.archlinux.org/packages/bitwig-agent). Review it before executing `makepkg`; build as a normal user. [INSTALL.md](../INSTALL.md#arch-linux-aur) gives helper/manual installation and the explicit user-extension copy.
 
 ### Package layout and dependencies
 
@@ -52,7 +54,9 @@ cd packaging/aur
 makepkg --printsrcinfo > .SRCINFO
 ```
 
-Keep `PKGBUILD` and `.SRCINFO` synchronized. A maintainer must separately control an AUR account and SSH key, establish the package's availability/ownership, review the AUR submission and explicitly publish it. A repository recipe is not account setup or an AUR upload. Changes to the system package do not update an already-copied user extension; users repeat the opt-in copy and reload the controller while keeping versions matched.
+Keep `PKGBUILD` and `.SRCINFO` synchronized. After the matching GitHub release and Arch checks pass, copy only `PKGBUILD`, `.SRCINFO` and `LICENSE` into a separate checkout of `ssh://aur@aur.archlinux.org/bitwig-agent.git`. Review and commit that update, then push its `master` branch; AUR does not accept another branch. Never push build outputs, the upstream code history or private evidence into the AUR repository. Confirm the public package's version and maintainer after pushing; a local recipe or successful build alone does not establish publication.
+
+Changes to the system package do not update an already-copied user extension. Users repeat the opt-in copy and reload the controller while keeping versions matched. Registry-status documentation may advance on `main`; do not rebuild or replace immutable 0.1.1 release assets just to update availability wording.
 
 The separate [`aur.yml` workflow](https://github.com/BANANASJIM/bitwig-agent/blob/main/.github/workflows/aur.yml) runs on a published GitHub release or explicit manual dispatch, **not** on each main-branch push: its immutable release sources must already exist. It checks tag/Python/recipe version agreement, then builds and rebuilds as an unprivileged user inside a digest-pinned disposable official Arch container. It checks `.SRCINFO`, rejects namcap errors, installs with documentation extraction enabled, verifies owned files and exercises the matching installed Python/MCP consumer plus the explicit user-extension copy. The release run verifies real published downloads; updating main afterward cannot repair a stale recipe in an existing tag. It never uploads to AUR, installs Bitwig or changes a real user's extension directory. Consult actual workflow output; configured checks are not proof of success.
 

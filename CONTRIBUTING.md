@@ -69,9 +69,10 @@ See [packaging and release promotion](docs/packaging.md) for the complete artifa
 4. Finalize [the Arch recipe](https://github.com/BANANASJIM/bitwig-agent/tree/main/packaging/aur) from those exact candidate artifacts and regenerate `.SRCINFO` **before tagging**. Validate it in an isolated Arch environment; its source cache may be prefilled with the exact candidate sdist and version-aliased extension. `packaging/` is excluded from the sdist, so updating its hashes does not require rebuilding that sdist.
 5. Commit the reviewed source, recipe and metadata, then tag it as `v0.1.1`. Publish the same wheel, sdist, extension and manifest to its GitHub release. Include the actual tested platform/host scope and unresolved limitations. Do not mutate previous release artifacts.
 6. Exercise the real GitHub wheel/download path in an isolated environment outside the checkout, using an isolated extension destination, offline CLI and the generated configuration's MCP handshake. Confirm the release-triggered Arch workflow builds the matching version from published downloads. A live status/editing check is separate and requires permission, one writer and a disposable project; recipe verification is not an AUR upload.
-7. Run `publish-pypi.yml` on the version tag with `publish=false` for promotion validation. Only an explicitly authorized publication with the configured `pypi` environment and Trusted Publisher may use `publish=true`. Promote the same reviewed artifacts, not a separate rebuild. See [external account prerequisites](docs/packaging.md#external-accountenvironment-prerequisites).
+7. Publish the matching reviewed recipe, `.SRCINFO` and license through the separate AUR Git repository's `master` branch. Follow [AUR maintenance](docs/packaging.md#maintaining-the-recipe); confirm the public package version and maintainer before announcing helper-based installation.
+8. Run `publish-pypi.yml` on the version tag with `publish=false` for promotion validation. Only an explicitly authorized publication with the configured `pypi` environment and Trusted Publisher may use `publish=true`. Promote the same reviewed artifacts, not a separate rebuild. See [external account prerequisites](docs/packaging.md#external-accountenvironment-prerequisites).
 
-Neither a pending PyPI publisher nor an AUR recipe establishes public package availability. Keep GitHub wheel installation as the documented path until the relevant registry/version actually exists.
+Neither a pending PyPI publisher nor an AUR recipe establishes public package availability. Keep the GitHub wheel as the uv installation source until the intended PyPI project/version exists; an AUR publication is a separate distribution path.
 
 ## Agent skill maintenance
 
@@ -97,7 +98,7 @@ See [architecture and ownership](docs/architecture.md) for the detailed public-c
 | `scripts/` | Source builds/checks and offline evidence helpers |
 | `examples/` | Client configuration and explicit opt-in music recipes |
 | `docs/` | Public architecture, installation navigation and packaging guides |
-| `packaging/aur/` | Local Arch recipe and synchronized `.SRCINFO` |
+| `packaging/aur/` | Reviewed AUR recipe and synchronized `.SRCINFO` |
 | `skills/bitwig-agent/` | Copyable Agent Skills instructions, focused references and MIT license |
 
 The default-package `extension/src/main/java/BitwigAgent613GridInsertion.java` is intentional: its native superclass is also in the unnamed package and it is loaded by that exact class name. Historical evidence is not active test infrastructure; use [VERIFICATION.md](VERIFICATION.md) for current checks.
