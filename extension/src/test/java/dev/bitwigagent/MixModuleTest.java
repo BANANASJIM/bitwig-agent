@@ -10,7 +10,9 @@ public final class MixModuleTest {
         readsExposeNormalizedUnitsAndSends();
         invalidRequestsNeverSchedule();
         writesOnlyExplicitUuidAndFields();
+        selectionWithoutReplayedCallbackIsDispatchOnly();
         selectionUsesUuidNotCurrentUi();
+        selectionRespectsOperationAndIdentityGuards();
         requiresMatchingFreshTargetObservation();
         targetChangePreventsRemainingWrites();
         expiredAndCancelledWritesAreNotApplied();
@@ -75,8 +77,47 @@ public final class MixModuleTest {
         TransportMixFixture f = new TransportMixFixture(); MixModule module = new MixModule(f.services);
         f.tracks[0].child("selected").emit(true);
         JsonObject selected = f.call(module, "tracks.select", TransportMixFixture.target(TransportMixFixture.B));
-        check(selected.get("selected").getAsBoolean() && selected.get("matchesRequested").getAsBoolean(), "explicit B selection observed");
+        check(selected.get("selected").getAsBoolean() && selected.get("completion").getAsString().equals("not_observed"),
+                "a selection callback is snapshot evidence, not UI-navigation completion");
         check(f.tracks[1].actions == 1 && f.tracks[0].actions == 0, "select operates on requested bank proxy, not current UI cursor");
+        JsonObject again = f.call(module, "tracks.select", TransportMixFixture.target(TransportMixFixture.B));
+        check(f.tracks[1].actions == 2 && again.get("completion").getAsString().equals("not_observed"),
+                "an already-selected snapshot does not suppress an explicit editor-navigation command");
+    }
+    private static void selectionWithoutReplayedCallbackIsDispatchOnly() {
+        TransportMixFixture f = new TransportMixFixture(); MixModule module = new MixModule(f.services);
+        f.tracks[0].child("selected").emit(true);
+        f.tracks[0].child("exists").emit(false);
+        f.tracks[0].child("exists").emit(true);
+        module.flush();
+        f.tracks[0].child("selected").emitWrites = false;
+        HostOperation op = f.submit(module, "tracks.select", TransportMixFixture.target(TransportMixFixture.A));
+        f.next();
+        check(op.result.isDone(), "selection navigation must not wait for an optional legacy callback");
+        JsonObject result = op.result.join();
+        check(result.get("completion").getAsString().equals("not_observed") && result.get("status").getAsString().equals("dispatched"),
+                "missing selection callback yields a UI dispatch receipt, never an observed completion");
+        check(result.get("selected").isJsonNull() && !result.getAsJsonObject("readable").get("selected").getAsBoolean(),
+                "reopened track cannot inherit the previous generation's selected value");
+        check(!result.has("fields") && !result.has("matchesRequested"), "UI navigation does not pretend to be a verified mix setter");
+        check(f.tracks[0].actions == 1 && f.tasks.isEmpty(), "selection dispatches once without deferred retries or callback polling");
+    }
+    private static void selectionRespectsOperationAndIdentityGuards() {
+        TransportMixFixture f = new TransportMixFixture(); MixModule module = new MixModule(f.services);
+        JsonObject p = TransportMixFixture.target(TransportMixFixture.A);
+        HostOperation expired = f.submit(module, "tracks.select", p, System.nanoTime() - 1); f.next();
+        check(TransportMixFixture.error(expired, "deadline_exceeded").outcome.equals("not_applied"),
+                "expired selection is rejected before dispatch");
+        HostOperation cancelled = f.submit(module, "tracks.select", p); cancelled.result.cancel(false); f.next();
+        f.tracks[0].child("exists").emit(false); f.tracks[0].child("exists").emit(true);
+        HostOperation unready = f.submit(module, "tracks.select", p); f.next();
+        check(TransportMixFixture.error(unready, "not_ready").outcome.equals("not_applied") && f.tracks[0].actions == 0,
+                "cancelled or rebound-before-flush selection cannot reach the host");
+        module.flush();
+        f.tracks[0].child("selected").afterWrite = () -> f.tracks[0].child("channelId").emit(TransportMixFixture.C);
+        HostOperation shifted = f.submit(module, "tracks.select", p); f.next();
+        check(TransportMixFixture.error(shifted, "stale_target").outcome.equals("unknown") && f.tracks[0].actions == 1,
+                "identity loss after dispatch remains unknown, not an accepted dispatch-only receipt");
     }
     private static void requiresMatchingFreshTargetObservation() {
         TransportMixFixture f = new TransportMixFixture(); MixModule module = new MixModule(f.services);
@@ -243,7 +284,8 @@ public final class MixModuleTest {
             f.tracks[0].child("mute").emit(true); f.next();
             check(op.result.join().get("matchesRequested").getAsBoolean(), "requested field can verify without every unchanged field replaying");
             JsonObject selected = f.call(module, "tracks.select", TransportMixFixture.target(id));
-            check(f.tracks[0].actions == 1 && selected.get("matchesRequested").getAsBoolean(), "unready selection dispatches explicitly even if previous identity was selected");
+            check(f.tracks[0].actions == 1 && selected.get("completion").getAsString().equals("not_observed"),
+                    "rebound selection dispatches explicitly without pretending to verify UI completion");
         }
     }
     private static void firstIdentityObservationPreservesStartupValues() {

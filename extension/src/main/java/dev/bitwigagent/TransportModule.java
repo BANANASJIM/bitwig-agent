@@ -58,16 +58,42 @@ final class TransportModule implements HostModule {
         double duration = p.has("loopDurationBeats") ? p.get("loopDurationBeats").getAsDouble() : values.get("loopDurationBeats").value.getAsDouble();
         if (!Double.isFinite(start + duration)) throw HostServices.failure("invalid_params", "Loop end must be finite.");
         Map<String, Long> writes = new LinkedHashMap<>();
+        long until = Math.min(op.deadline - TimeUnit.MILLISECONDS.toNanos(25),
+                System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(750));
+        boolean stopping = p.has("playing") && !p.get("playing").getAsBoolean();
         try {
-            // An explicit stop precedes other changes. Never implicitly stop or start.
-            if (p.has("playing") && !p.get("playing").getAsBoolean()) write(op, p, "playing", writes);
-            for (String key : ORDER) if (p.has(key) && !(key.equals("playing") && !p.get(key).getAsBoolean())) write(op, p, key, writes);
+            if (stopping) write(op, p, "playing", writes);
         } catch (RpcException error) {
             if (!op.dispatched) throw error;
             finish(op, p, writes, error.code);
             return;
         }
-        await(op, p, writes, Math.min(op.deadline - TimeUnit.MILLISECONDS.toNanos(25), System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(750)));
+        if (stopping && p.size() > 1) awaitStop(op, p, writes, until);
+        else writeRemaining(op, p, writes, until);
+    }
+
+    private void awaitStop(HostOperation op, JsonObject p, Map<String, Long> writes, long until) {
+        // Stop is asynchronous: dispatch order alone cannot protect a following seek.
+        if (System.nanoTime() >= until) {
+            finish(op, p, writes, null);
+        } else if (verified("playing", p.get("playing"), writes.get("playing"))) {
+            writeRemaining(op, p, writes, until);
+        } else {
+            s.schedule(op, () -> awaitStop(op, p, writes, until), 20);
+        }
+    }
+
+    private void writeRemaining(HostOperation op, JsonObject p, Map<String, Long> writes, long until) {
+        try {
+            for (String key : ORDER)
+                if (p.has(key) && !(key.equals("playing") && !p.get(key).getAsBoolean()))
+                    write(op, p, key, writes);
+        } catch (RpcException error) {
+            if (!op.dispatched) throw error;
+            finish(op, p, writes, error.code);
+            return;
+        }
+        await(op, p, writes, until);
     }
 
     private void write(HostOperation op, JsonObject p, String key, Map<String, Long> writes) {

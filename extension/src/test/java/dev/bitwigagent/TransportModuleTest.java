@@ -6,7 +6,7 @@ import java.util.List;
 /** Deterministic consumer tests; these do not establish native host tempo or seek behavior. */
 public final class TransportModuleTest {
     private static int assertions;
-    public static void main(String[] args) {
+    public static void main(String[] args) throws InterruptedException {
         readsExposeActualValuesAndUnits();
         rejectsInvalidAndEmptyRequestsBeforeScheduling();
         optionalFieldsRemainUnchanged();
@@ -14,6 +14,10 @@ public final class TransportModuleTest {
         requiresFreshObservation();
         expiredAndCancelledWorkNeverWrites();
         midOperationGuardStopsRemainingFields();
+        stopIsObservedBeforeSeeking();
+        lateStopDoesNotSeekAfterObservationBudget();
+        cancelledStopDoesNotSeekLater();
+        safetyChangeWhileStoppingPreventsSeek();
         sharedSafetyRequiresObservationsButAllowsStop();
         System.out.println("TransportModuleTest: " + assertions + " assertions passed (simulated host only)");
     }
@@ -90,6 +94,66 @@ public final class TransportModuleTest {
         HostOperation cancelled = f.submit(module, "transport.set", TransportMixFixture.json("{\"playing\":true}"));
         cancelled.result.cancel(false); f.next();
         check(f.transport.actions == 0, "late or cancelled queue callback never plays");
+    }
+    private static void deferStop(TransportMixFixture f) {
+        f.transport.child("isPlaying").emit(true);
+        f.transport.child("playPosition").emit(12.0);
+        TransportMixFixture.Custom original = f.transport.custom;
+        f.transport.custom = (name, args) -> {
+            if (!name.equals("stop")) return original.invoke(name, args);
+            f.mutation(); f.transport.actions++;
+            f.tasks.add(() -> {
+                f.transport.child("isPlaying").emit(false);
+                f.transport.child("playPosition").emit(12.5);
+            });
+            return null;
+        };
+    }
+    private static void stopIsObservedBeforeSeeking() {
+        TransportMixFixture f = new TransportMixFixture(); TransportModule module = new TransportModule(f.services);
+        deferStop(f);
+        HostOperation op = f.submit(module, "transport.set", TransportMixFixture.json("{\"playing\":false,\"positionBeats\":0}"));
+        f.next();
+        check(f.transport.child("playPosition").data.equals(12.0), "seek must wait for the asynchronous stop instead of being overwritten by its final position");
+        check(!op.result.isDone(), "stop dispatch alone does not complete the combined request");
+        f.next(); f.next();
+        JsonObject result = op.result.join();
+        check(result.get("completion").getAsString().equals("observed"), "stop and subsequent seek both observed");
+        check(!result.get("playing").getAsBoolean() && result.get("positionBeats").getAsDouble() == 0, "combined request leaves the transport stopped at the requested position");
+        check(f.transport.actions == 2, "one stop and one seek, without mutation retries");
+    }
+    private static void lateStopDoesNotSeekAfterObservationBudget() throws InterruptedException {
+        TransportMixFixture f = new TransportMixFixture(); TransportModule module = new TransportModule(f.services);
+        deferStop(f);
+        HostOperation op = f.submit(module, "transport.set", TransportMixFixture.json("{\"playing\":false,\"positionBeats\":0}"));
+        f.next();
+        Thread.sleep(800); // Expire the shared 750-ms observation budget; the fixture's hard deadline remains open.
+        f.next(); f.next();
+        JsonObject result = op.result.join();
+        check(result.get("completion").getAsString().equals("unknown"), "a late observed stop cannot turn the incomplete request into success");
+        check(result.getAsJsonObject("fields").getAsJsonObject("positionBeats").get("verification").getAsString().equals("not_dispatched"), "an expired observation budget prevents the dependent seek");
+        check(f.transport.child("playPosition").data.equals(12.5) && f.transport.actions == 1, "late stop leaves its final position without another mutation");
+    }
+    private static void cancelledStopDoesNotSeekLater() {
+        TransportMixFixture f = new TransportMixFixture(); TransportModule module = new TransportModule(f.services);
+        deferStop(f);
+        HostOperation op = f.submit(module, "transport.set", TransportMixFixture.json("{\"playing\":false,\"positionBeats\":0}"));
+        f.next(); op.result.cancel(false);
+        f.next(); f.next();
+        check(f.transport.child("playPosition").data.equals(12.5), "late stop observation cannot trigger a cancelled seek");
+        check(f.transport.actions == 1, "cancellation prevents the remaining mutation");
+    }
+    private static void safetyChangeWhileStoppingPreventsSeek() {
+        TransportMixFixture f = new TransportMixFixture(); TransportModule module = new TransportModule(f.services);
+        deferStop(f);
+        HostOperation op = f.submit(module, "transport.set", TransportMixFixture.json("{\"playing\":false,\"positionBeats\":0}"));
+        f.next(); f.next();
+        f.transport.child("isArrangerAutomationWriteEnabled").emit(true);
+        f.next();
+        JsonObject result = op.result.join();
+        check(result.get("completion").getAsString().equals("unknown") && result.get("reason").getAsString().equals("unsafe_state"), "a changed safety condition preserves the partial outcome");
+        check(result.getAsJsonObject("fields").getAsJsonObject("positionBeats").get("verification").getAsString().equals("not_dispatched"), "seek is not sent after automation becomes active");
+        check(f.transport.child("playPosition").data.equals(12.5) && f.transport.actions == 1, "stopped position is not changed by unsafe follow-up work");
     }
     private static void midOperationGuardStopsRemainingFields() {
         TransportMixFixture f = new TransportMixFixture(); TransportModule module = new TransportModule(f.services);

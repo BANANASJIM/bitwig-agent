@@ -82,9 +82,20 @@ final class MixModule implements HostModule {
         State state = states[s.trackSlot(id)];
         Target target = new Target(id, state);
         if (method.equals("tracks.get")) { op.result.complete(snapshot(target)); return; }
+        if (method.equals("tracks.select")) {
+            guard(op, target);
+            op.dispatched = true;
+            target.state.track.selectInEditor();
+            guard(op, target);
+            JsonObject result = snapshot(target);
+            result.addProperty("status", "dispatched");
+            result.addProperty("completion", "not_observed");
+            result.addProperty("verification", "selection_has_no_reliable_public_observer");
+            op.result.complete(result);
+            return;
+        }
         JsonObject changes = new JsonObject();
-        if (method.equals("tracks.select")) changes.addProperty("selected", true);
-        else for (String key : WRITABLE) if (p.has(key)) changes.add(key, p.get(key));
+        for (String key : WRITABLE) if (p.has(key)) changes.add(key, p.get(key));
         set(op, target, changes, null);
     }
 
@@ -109,7 +120,6 @@ final class MixModule implements HostModule {
                     case 3: track.mute().set(next.getAsBoolean()); break;
                     case 4: track.solo().set(next.getAsBoolean()); break;
                     case 5: track.arm().set(next.getAsBoolean()); break;
-                    case 6: track.selectInEditor(); break;
                     default: throw new IllegalArgumentException(key);
                 }
             }

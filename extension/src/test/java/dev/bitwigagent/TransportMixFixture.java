@@ -40,7 +40,12 @@ final class TransportMixFixture {
                     track.child("selected").listen(args[0]); return null;
                 }
                 if (name.equals("selectInEditor")) {
-                    mutation(); track.actions++; track.child("selected").emit(true); return null;
+                    mutation(); track.actions++;
+                    Node selected = track.child("selected");
+                    selected.data = true;
+                    if (selected.emitWrites) selected.emit(true);
+                    selected.afterWrite.run();
+                    return null;
                 }
                 return null;
             };
