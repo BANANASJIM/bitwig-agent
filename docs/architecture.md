@@ -31,7 +31,7 @@ The extension binds `127.0.0.1:61172`; the Python client connects to IPv4 loopba
 
 The catalog is not a planner. Tool examples are schema examples, not live target IDs. Tool annotations are hints, not authority or a proof that a call has no side effects. For example, `notes.read` selects a clip.
 
-Python rejects invalid arguments before dispatch, including unknown fields and inappropriate value types. Java independently validates the transport and domain request; calling TCP directly does not remove host-side checks. The maintained Python dependency range is Python 3.11+, `mcp>=1.29.1,<2` and `pydantic>=2.11,<3`; the source lockfile selects exact development versions. Package dependency resolution and native host compatibility are different concerns.
+Python rejects invalid arguments before dispatch, including unknown fields and inappropriate value types. Java independently validates the transport and domain request; calling TCP directly does not remove host-side checks. The maintained Python dependency range is Python 3.11+, `mcp>=2.3.0,<3` and `pydantic>=2.12,<3`; the source lockfile selects exact development versions. The adapter uses the SDK 2 low-level constructor handlers and explicit result models. SDK attributes use snake_case; MCP wire fields retain their camelCase aliases, and the shared validator—not SDK convenience wrapping—owns argument validation. Package dependency resolution and native host compatibility are different concerns.
 
 ## Java ownership
 
@@ -76,7 +76,7 @@ Names can change, same-metadata replacement can be ambiguous, and module/modulat
 - A Grid page's `window.complete` is page coverage. Whole-result coverage may still be partial, and stored connections are not proof of the active DSP graph.
 - MIDI reads use explicit channel/grid/window bounds and do not establish lossless arbitrary-clip export; selection/grid settling is not a general acknowledgement barrier.
 - String panels are read-only. Modulator loading/mapping/writes, arranger clip editing, automation curves and dedicated master/cue tools are outside the structured surface.
-- Current source maps private access to **Bitwig 6.1.4 / API 25** and the exact loaded host-JAR hash; published `0.1.2` retains its 6.1.3 boundary. This is a single-version cutover, not a compatibility platform. [Native evidence](../VERIFICATION.md) is bounded to exercised Linux cases; a host package or successful macOS/Windows Python install does not extend it. Do not bypass the gate.
+- Version `0.2.0` maps private access to **Bitwig 6.1.4 / API 25** and the exact loaded host-JAR hash; the older `0.1.2` release retains its 6.1.3 boundary. This is a single-version cutover, not a compatibility platform. [Native evidence](../VERIFICATION.md) is bounded to exercised Linux cases; a host package or successful macOS/Windows Python install does not extend it. Do not bypass the gate.
 
 The agent can explicitly use separately authorized Computer Use for an unsupported operation, but there is no implicit GUI fallback. The scratch music recipe's Pad VOICES 8 step is one such explicit gap, not a hidden voice-count API. See [usage](../USAGE.md#make-grid-instruments-without-preset-files).
 

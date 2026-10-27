@@ -53,7 +53,7 @@ For security-sensitive issues, use the private route in [SECURITY.md](SECURITY.m
 
 ## Release procedure
 
-See [packaging and release promotion](docs/packaging.md) for the complete artifact, Arch and PyPI contract. Releases are built locally against a maintainer's licensed Bitwig JAR; public CI does not have that dependency. The commands below use **0.1.2**; they are instructions, not evidence that any check ran.
+See [packaging and release promotion](docs/packaging.md) for the complete artifact, Arch and PyPI contract. Releases are built locally against a maintainer's licensed Bitwig JAR; public CI does not have that dependency. The commands below use **0.2.0**; they are instructions, not evidence that any check ran.
 
 1. Start from reviewed source, align Python/MCP/extension versions and installation links, and run the applicable [layered checks](VERIFICATION.md). Keep actual results; list native checks not performed.
 2. Build the Python wheel **and sdist**, plus the matching extension:
@@ -62,12 +62,12 @@ See [packaging and release promotion](docs/packaging.md) for the complete artifa
    uv sync --locked
    uv build
    uv run --locked python scripts/build.py
-   sha256sum dist/bitwig_agent-0.1.2-py3-none-any.whl dist/bitwig_agent-0.1.2.tar.gz build/BitwigAgent.bwextension
+   sha256sum dist/bitwig_agent-0.2.0-py3-none-any.whl dist/bitwig_agent-0.2.0.tar.gz build/BitwigAgent.bwextension
    ```
 
 3. Create `SHA256SUMS` from those actual hashes with exactly three unique **bare asset filenames**, removing local `dist/` and `build/` prefixes. Inspect artifact contents and third-party notices. Never upload the proprietary host JAR, factory assets or private machine/evidence data.
 4. Finalize [the Arch recipe](https://github.com/BANANASJIM/bitwig-agent/tree/main/packaging/aur) from those exact candidate artifacts and regenerate `.SRCINFO` **before tagging**. Validate it in an isolated Arch environment; its source cache may be prefilled with the exact candidate sdist and version-aliased extension. `packaging/` is excluded from the sdist, so updating its hashes does not require rebuilding that sdist.
-5. Commit the reviewed source, recipe and metadata, then tag it as `v0.1.2`. Publish the same wheel, sdist, extension and manifest to its GitHub release. Include the actual tested platform/host scope and unresolved limitations. Do not mutate previous release artifacts.
+5. Commit the reviewed source, recipe and metadata, then tag it as `v0.2.0`. Publish the same wheel, sdist, extension and manifest to its GitHub release. Include the actual tested platform/host scope and unresolved limitations. Do not mutate previous release artifacts.
 6. Exercise the real GitHub wheel/download path in an isolated environment outside the checkout, using an isolated extension destination, offline CLI and the generated configuration's MCP handshake. Confirm the release-triggered Arch workflow builds the matching version from published downloads. A live status/editing check is separate and requires permission, one writer and a disposable project; recipe verification is not an AUR upload.
 7. Publish the matching reviewed recipe, `.SRCINFO` and license through the separate AUR Git repository's `master` branch. Follow [AUR maintenance](docs/packaging.md#maintaining-the-recipe); confirm the public package version and maintainer before announcing helper-based installation.
 8. Run `publish-pypi.yml` on the version tag with `publish=false` for promotion validation. Only an explicitly authorized publication with the configured `pypi` environment and Trusted Publisher may use `publish=true`. Promote the same reviewed artifacts, not a separate rebuild. See [external account prerequisites](docs/packaging.md#external-accountenvironment-prerequisites).

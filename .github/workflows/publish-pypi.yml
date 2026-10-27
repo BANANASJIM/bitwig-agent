@@ -137,7 +137,7 @@ jobs:
             uv venv --python 3.11 "$consumer/venv"
             # No cache: the sdist must really build, not reuse the release wheel.
             uv pip install --no-cache --python "$consumer/venv/bin/python" \
-              "$PWD/$distribution" 'mcp==1.29.1'
+              "$PWD/$distribution" 'mcp==2.3.0'
             "$consumer/venv/bin/python" -I scripts/smoke-package.py \
               --expected-version "$RELEASE_VERSION"
           done
@@ -158,7 +158,7 @@ jobs:
           {
             echo "## GitHub release v$RELEASE_VERSION verified"
             echo 'Verified the wheel, sdist, and extension SHA256 checksums and Python package/tag versions.'
-            echo 'Installed wheel and sdist consumers passed offline CLI and real MCP discovery with Python 3.11 / MCP 1.29.1.'
+            echo 'Installed wheel and sdist consumers passed offline CLI and real MCP discovery with Python 3.11 / MCP 2.3.0.'
             echo 'No native Bitwig test or PyPI upload occurred in this job.'
             if [[ "$PUBLISH_REQUESTED" == true ]]; then
               echo 'Publication was requested; only the separate environment-gated publish job can report an upload.'

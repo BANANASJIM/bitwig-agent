@@ -11,7 +11,7 @@ Keep these four versions separate:
 3. **Installed bridge/client/extension:** discover actual tools and capabilities. A newer repository `main` does not mean a released wheel or installed extension contains those changes.
 4. **Native evidence:** a successful operation proves its stated scope, not every feature on that host. Public SDK operations, private native bindings, GUI interaction, audio and saved persistence need separate evidence.
 
-Current **unreleased source** maps private Grid/modulator access to **6.1.4 / API 25 and its exact loaded host-JAR hash**. Published **`0.1.2`** retains its 6.1.3 gate; installing it from uv/AUR does not install the source adapter or newer fixes. Discover the running extension's capabilities and build origin, not just its version label. Respect mismatches and use authorized GUI guidance only for a known unsupported surface, never to replay an uncertain write. See [Grid boundaries](grid-and-recipes.md) and the release-matched public [verification record](https://github.com/BANANASJIM/bitwig-agent/blob/main/VERIFICATION.md).
+Version **`0.2.0`** maps private Grid/modulator access to **6.1.4 / API 25 and its exact loaded host-JAR hash**. The older **`0.1.2`** release retains its 6.1.3 gate and lacks the stop/seek and track-selection fixes. Upgrade Python and the extension as a matched pair; discover the running extension's capabilities and build origin, not just its version label. Respect mismatches and use authorized GUI guidance only for a known unsupported surface, never to replay an uncertain write. See [Grid boundaries](grid-and-recipes.md) and the release-matched public [verification record](https://github.com/BANANASJIM/bitwig-agent/blob/main/VERIFICATION.md).
 
 ## Changes that affect production guidance
 

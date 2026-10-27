@@ -55,7 +55,7 @@ public class McpTransportFixture {
 
 
 def payload(response):
-    return response.structuredContent or json.loads(response.content[0].text)
+    return response.structured_content or json.loads(response.content[0].text)
 
 
 def require(condition, message):
@@ -84,7 +84,7 @@ async def exercise(folder: Path, api: Path) -> None:
                 names = {tool.name for tool in (await session.list_tools()).tools}
                 response = await session.call_tool("status", {})
                 status = payload(response)
-                require(not response.isError, f"Java status fixture failed: {status}")
+                require(not response.is_error, f"Java status fixture failed: {status}")
                 java_names = set(status["result"]["supportedMethods"])
                 require(names == java_names == set(TOOLS),
                         f"Registry mismatch: MCP={sorted(names)}, Java={sorted(java_names)}")
@@ -102,11 +102,11 @@ async def exercise(folder: Path, api: Path) -> None:
                         response = await session.call_tool(method, params)
                         body = payload(response)
                         if method == "parameters.set":
-                            require(response.isError and body.get("error", {}).get("outcome") == "unknown"
+                            require(response.is_error and body.get("error", {}).get("outcome") == "unknown"
                                     and body["error"]["code"] == "fixture_unknown",
                                     f"Lost Java ambiguity for {method}: {body}")
                         else:
-                            require(not response.isError, f"{method} failed Java/schema validation: {body}")
+                            require(not response.is_error, f"{method} failed Java/schema validation: {body}")
                             result = body["result"]
                             require(result.get("fixtureOnly") is True and result.get("method") == method
                                     and result.get("echo") == expected,
@@ -114,7 +114,7 @@ async def exercise(folder: Path, api: Path) -> None:
                         calls += 1
                 # Exercise the actual MCP validation boundary, not model validation alone.
                 invalid = await session.call_tool("status", {"unexpected": True})
-                require(invalid.isError, "MCP accepted an extra argument")
+                require(invalid.is_error, "MCP accepted an extra argument")
         print(f"PASS: {len(names)} matching Java/MCP tools, {calls} example roundtrips, "
               "Unicode, strict MCP arguments, unknown error propagation. FIXTURE ONLY; no native host.")
     finally:

@@ -4,7 +4,7 @@ Use this reference before native Grid edits or the public scratch-music recipe. 
 
 ## Compatibility and discovery
 
-Current **unreleased source** maps private Grid/modulator access to **Bitwig Studio 6.1.4 / API 25** and the exact supported **loaded host-JAR** SHA-256; published `0.1.2` retains its 6.1.3 gate. Linux native evidence remains bounded to exercised cases. Another JAR on disk, successful Python installation or a passing package smoke does not extend this private binding's compatibility. Public SDK operations and separately authorized GUI work have different scopes; verify each independently. Do not bypass a mismatch. See [versions and sources](version-and-sources.md).
+Version **`0.2.0`** maps private Grid/modulator access to **Bitwig Studio 6.1.4 / API 25** and the exact supported **loaded host-JAR** SHA-256; the older `0.1.2` release retains its 6.1.3 gate. Linux native evidence remains bounded to exercised cases. Another JAR on disk, successful Python installation or a passing package smoke does not extend this private binding's compatibility. Public SDK operations and separately authorized GUI work have different scopes; verify each independently. Do not bypass a mismatch. See [versions and sources](version-and-sources.md).
 
 Call `grid.capabilities` and inspect separate read/write availability and topology admission. Availability means a binding is present, not that every module/type has native acceptance. Start a structure/layout/wiring/name inspection with a small `grid.get` page, `includeParameters=false`, and an explicit current device target. Inspect `window.complete` and unsupported coverage; top-level completeness has additional requirements. Stored cables are not proof of the active signal graph.
 

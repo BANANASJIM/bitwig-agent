@@ -4,7 +4,7 @@ This guide separates **building/installing a package**, **publishing reviewed re
 
 ## Distribution status and version contract
 
-The current package version is **0.1.2**. The project remains experimental/Alpha, and the GitHub release retains its prerelease badge; packaging work does not promote native maturity.
+The current package version is **0.2.0**. The project remains experimental/Alpha, and the GitHub release retains its prerelease badge; packaging work does not promote native maturity.
 
 Distribution channels are [PyPI](https://pypi.org/project/bitwig-agent/), [GitHub release assets](https://github.com/BANANASJIM/bitwig-agent/releases) and the [AUR package `bitwig-agent`](https://aur.archlinux.org/packages/bitwig-agent), maintained by `bananasjim`. Registry publication is separate from a GitHub release; confirm the exact version on each registry before announcing its availability.
 
@@ -12,8 +12,8 @@ Python and Java are a matched release pair. The installer derives the GitHub rel
 
 | Asset | Role |
 |---|---|
-| `bitwig_agent-0.1.2-py3-none-any.whl` | Installable Python MCP adapter, CLI and extension installer |
-| `bitwig_agent-0.1.2.tar.gz` | Python source distribution for independent package building/installing |
+| `bitwig_agent-0.2.0-py3-none-any.whl` | Installable Python MCP adapter, CLI and extension installer |
+| `bitwig_agent-0.2.0.tar.gz` | Python source distribution for independent package building/installing |
 | `BitwigAgent.bwextension` | Same-version prebuilt Java extension |
 | `SHA256SUMS` | Exactly three unique SHA-256 entries using the three bare asset filenames above |
 
@@ -21,9 +21,9 @@ The Python wheel is not a bundle of the Java extension, Bitwig, a JDK or all tra
 
 ## Python tools: uv, uvx and the lockfile
 
-`uv tool install bitwig-agent` is the persistent PyPI installation: isolated dependencies, exposed entrypoints and a stable environment from which to generate MCP configuration. `uvx --from bitwig-agent==0.1.2 <entrypoint>` is version-pinned ephemeral/cached execution, not persistent configuration. Both can fetch dependencies and neither installs/enables a Bitwig controller merely by resolving the Python package. See [working commands](../INSTALL.md#persistent-uv-tools-and-ephemeral-uvx).
+`uv tool install bitwig-agent` is the persistent PyPI installation: isolated dependencies, exposed entrypoints and a stable environment from which to generate MCP configuration. `uvx --from bitwig-agent==0.2.0 <entrypoint>` is version-pinned ephemeral/cached execution, not persistent configuration. Both can fetch dependencies and neither installs/enables a Bitwig controller merely by resolving the Python package. See [working commands](../INSTALL.md#persistent-uv-tools-and-ephemeral-uvx).
 
-The package declares Python 3.11+, `mcp>=1.29.1,<2` and `pydantic>=2.11,<3`. [`uv.lock`](https://github.com/BANANASJIM/bitwig-agent/blob/main/uv.lock) pins the source/development environment; it does not force every downstream wheel or Arch installation onto those exact versions. `uv sync --locked` is the reproducible contributor workflow. Minimum-MCP coverage is a separate compatibility check; using `--no-sync` after substituting that dependency prevents uv from silently restoring the lockfile's SDK before the check.
+The package declares Python 3.11+, `mcp>=2.3.0,<3` and `pydantic>=2.12,<3`. Version `0.2.0` uses the [MCP 2 low-level API](https://github.com/modelcontextprotocol/python-sdk/blob/v2.3.0/docs/migration.md#lowlevel-server), matching Arch's current system SDK; it does not retain an SDK 1 compatibility path or bundle a private Python environment. [`uv.lock`](https://github.com/BANANASJIM/bitwig-agent/blob/main/uv.lock) pins the source/development environment, not downstream installations. Use `uv sync --locked` for reproducible contribution; minimum-MCP checks use `--no-sync` after substitution so uv cannot silently restore the locked SDK.
 
 `README.md` is also the PyPI long description. Use absolute public URLs for repository files: relative links resolve beneath the PyPI project page, not GitHub. Changing that embedded description requires a new package version, never replacement files under an existing version.
 
@@ -60,7 +60,7 @@ Changes to the system package do not update an already-copied user extension. Us
 
 The separate [`aur.yml` workflow](https://github.com/BANANASJIM/bitwig-agent/blob/main/.github/workflows/aur.yml) runs on a published GitHub release or explicit manual dispatch, **not** on each main-branch push: its immutable release sources must already exist. It checks tag/Python/recipe version agreement, then builds and rebuilds as an unprivileged user inside a digest-pinned disposable official Arch container. It checks `.SRCINFO`, rejects namcap errors, installs with documentation extraction enabled, verifies owned files and exercises the matching installed Python/MCP consumer plus the explicit user-extension copy. The release run verifies real published downloads; updating main afterward cannot repair a stale recipe in an existing tag. It never uploads to AUR, installs Bitwig or changes a real user's extension directory. Consult actual workflow output; configured checks are not proof of success.
 
-Published `0.1.2` and its pinned AUR recipe retain the 6.1.3 private-access boundary. The source adapter now targets 6.1.4, but that does not change already-published artifacts or authorize republishing different bytes under `0.1.2`. Package the change only through a separately reviewed, matching-version release; never relax the exact loaded-JAR gate to accommodate a host upgrade.
+Version `0.2.0` replaces the private 6.1.3 adapter with the exact 6.1.4 bindings and includes the stop/seek and track-selection fixes. This host-compatibility change uses a new minor version; it is not dual-version support. The older `0.1.2` artifacts and pinned recipe remain unchanged. Never replace their bytes or relax the loaded-JAR gate to accommodate a host upgrade.
 
 ## Build once, promote the same artifacts
 
@@ -70,7 +70,7 @@ The maintainer builds the Python wheel, Python sdist and Java extension from one
 2. Build wheel and sdist with `uv build`, then the extension with `uv run --locked python scripts/build.py`.
 3. Inspect packaged contents and licenses. Do not include the host JAR, proprietary factory assets, credentials, private diagnostics or machine configuration.
 4. Record real SHA-256 values in `SHA256SUMS` using exactly the three bare asset filenames. Finalize and validate the Arch recipe and `.SRCINFO` from those same bytes before committing/tagging; its exclusion from the sdist avoids checksum recursion.
-5. Tag the reviewed source and recipe, then publish all four unchanged assets on the matching `v0.1.2` GitHub release.
+5. Tag the reviewed source and recipe, then publish all four unchanged assets on the matching `v0.2.0` GitHub release.
 6. Consume the real downloaded artifacts in isolated environments outside the checkout and confirm the release-triggered Arch workflow checks that version. Extension download/copy checks must use an isolated destination, not a user's native controller directory. Package/MCP startup checks do not authorize or establish native DAW behavior.
 7. If PyPI publication is authorized and configured, promote the same wheel/sdist through the workflow below. Do not rebuild a different wheel under the same version for a different registry.
 
@@ -83,7 +83,7 @@ A published non-draft GitHub release may retain its prerelease badge. The workfl
 Run validation-only from the release tag:
 
 ```sh
-gh workflow run publish-pypi.yml --ref v0.1.2 -f publish=false
+gh workflow run publish-pypi.yml --ref v0.2.0 -f publish=false
 ```
 
 The separate publish job runs only for explicit `publish=true`, uses GitHub environment **`pypi`**, and receives `id-token: write` there for short-lived OIDC credentials. The validation job has read-only permissions. No long-lived PyPI API token should be introduced. The publication job promotes the validated Python artifacts instead of checking out and rebuilding project source.
@@ -107,7 +107,7 @@ The repository's GitHub `pypi` environment has been configured with required rev
 Only after validation passes, prerequisites are confirmed and publication is explicitly authorized:
 
 ```sh
-gh workflow run publish-pypi.yml --ref v0.1.2 -f publish=true
+gh workflow run publish-pypi.yml --ref v0.2.0 -f publish=true
 ```
 
 Approve the environment deployment deliberately, observe the workflow result, then check the actual PyPI project/version and consume its artifacts before announcing index-based installation. OIDC setup, environment approval and a successful upload are separate evidence. GitHub attestation/provenance does not establish native DAW acceptance.

@@ -39,13 +39,13 @@ def main() -> None:
             async with stdio_client(StdioServerParameters(**config, cwd=cwd)) as streams:
                 async with ClientSession(*streams) as session:
                     initialized = await session.initialize()
-                    if initialized.serverInfo.version != installed_version:
-                        raise RuntimeError(f"MCP version mismatch: {initialized.serverInfo.version}")
+                    if initialized.server_info.version != installed_version:
+                        raise RuntimeError(f"MCP version mismatch: {initialized.server_info.version}")
                     tools = await session.list_tools()
                     names = {tool.name for tool in tools.tools}
                     if not {"tracks.list", "notes.edit"} <= names:
                         raise RuntimeError(f"Missing expected MCP tools: {names}")
-                    print(f"{initialized.serverInfo.name} {installed_version}: "
+                    print(f"{initialized.server_info.name} {installed_version}: "
                           f"{len(names)} tools via installed configuration; "
                           f"MCP SDK {version('mcp')}; no native-host calls")
 

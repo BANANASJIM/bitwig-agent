@@ -4,13 +4,13 @@ build-backend = "hatchling.build"
 
 [project]
 name = "bitwig-agent"
-version = "0.1.2"
+version = "0.2.0"
 description = "Thin stdio MCP adapter for the local Bitwig Controller Extension"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.11"
-dependencies = ["mcp>=1.29.1,<2", "pydantic>=2.11,<3"]
+dependencies = ["mcp>=2.3.0,<3", "pydantic>=2.12,<3"]
 keywords = ["bitwig", "mcp", "midi", "audio"]
 classifiers = [
     "Development Status :: 3 - Alpha",

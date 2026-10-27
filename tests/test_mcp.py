@@ -18,8 +18,8 @@ async def test_real_stdio_preserves_partial_domain_results(mcp_session, host):
                   "window": {"complete": False}, "edits": [{"index": 0, "outcome": "unknown"}]}
         host.reply = lambda request, result=result: {"id": request["id"], "result": result}
         response = await mcp_session.call_tool(method, params)
-        assert response.isError is False
-        assert response.structuredContent == {"result": result}
+        assert response.is_error is False
+        assert response.structured_content == {"result": result}
         assert host.requests[-1]["params"] == params
     assert host.connections == len(TOOLS)
 
@@ -30,8 +30,8 @@ async def test_grid_host_unknown_error_survives_mcp_without_retry(mcp_session, h
     response = await mcp_session.call_tool("grid.parameters.set", {
         **TARGET, "moduleId": TRACK, "parameterId": "", "expectedKind": "boolean",
         "expectedValue": False, "value": True, "timeoutMs": 100})
-    assert response.isError is True
-    assert response.structuredContent == {"error": error}
+    assert response.is_error is True
+    assert response.structured_content == {"error": error}
     assert host.requests[0]["timeoutMs"] == 100
     assert host.connections == 1
     assert len(host.requests) == 1
@@ -46,9 +46,9 @@ async def test_grid_host_unknown_error_survives_mcp_without_retry(mcp_session, h
 async def test_malformed_host_result_is_structured_unknown(mcp_session, host, reply):
     host.reply = reply
     response = await mcp_session.call_tool("parameters.set", SET)
-    assert response.isError is True
-    assert response.structuredContent["error"]["outcome"] == "unknown"
-    assert response.structuredContent["error"]["code"] == "transport_error"
+    assert response.is_error is True
+    assert response.structured_content["error"]["outcome"] == "unknown"
+    assert response.structured_content["error"]["code"] == "transport_error"
     assert host.connections == 1
 
 
@@ -61,15 +61,15 @@ async def test_malformed_host_result_is_structured_unknown(mcp_session, host, re
 ])
 async def test_invalid_arguments_never_reach_tcp(mcp_session, host, override):
     response = await mcp_session.call_tool("parameters.set", {**SET, **override})
-    assert response.isError is True
-    assert response.structuredContent["error"]["code"] == "invalid_params"
-    assert response.structuredContent["error"]["outcome"] == "not_dispatched"
+    assert response.is_error is True
+    assert response.structured_content["error"]["code"] == "invalid_params"
+    assert response.structured_content["error"]["outcome"] == "not_dispatched"
     assert host.connections == 0
 
 
 async def test_unknown_tool_does_not_open_tcp(mcp_session, host):
     response = await mcp_session.call_tool("project.delete", {})
-    assert response.isError is True
+    assert response.is_error is True
     assert host.connections == 0
 
 
@@ -83,7 +83,7 @@ async def test_unknown_tool_does_not_open_tcp(mcp_session, host):
 ])
 async def test_invalid_action_arguments_never_reach_tcp(mcp_session, host, method, params):
     response = await mcp_session.call_tool(method, params)
-    assert response.isError is True
+    assert response.is_error is True
     assert host.connections == 0
 
 
@@ -91,23 +91,23 @@ async def test_unknown_action_id_preserves_host_rejection(mcp_session, host):
     error = {"code": "unknown_action", "message": "Unknown ID", "outcome": "not_applied"}
     host.reply = lambda request: {"id": request["id"], "error": error}
     response = await mcp_session.call_tool("actions.invoke", {"actionId": "missing"})
-    assert response.structuredContent == {"error": error}
-    assert response.isError is True
+    assert response.structured_content == {"error": error}
+    assert response.is_error is True
     assert host.connections == 1
 
 
 async def test_absent_fields_and_explicit_nullable_fields_remain_distinct_over_mcp(mcp_session, host):
     response = await mcp_session.call_tool("tracks.set", {"trackId": TRACK, "mute": True})
-    assert not response.isError
+    assert not response.is_error
     assert host.requests[-1]["params"] == {"trackId": TRACK, "mute": True}
     response = await mcp_session.call_tool("notes.edit", {
         **NOTE_WINDOW, "edits": [{"op": "clear", "beat": 0, "pitch": 60}]})
-    assert not response.isError
+    assert not response.is_error
     assert host.requests[-1]["params"]["edits"] == [{"op": "clear", "beat": 0, "pitch": 60}]
     params = {**TARGET, "targetModuleId": TRACK, "targetPortKey": "",
               "expectedSource": {"moduleId": TRACK, "portKey": ""}, "source": None}
     response = await mcp_session.call_tool("grid.connections.set", params)
-    assert not response.isError
+    assert not response.is_error
     assert host.requests[-1]["params"] == params
 
 
@@ -130,18 +130,18 @@ async def test_absent_fields_and_explicit_nullable_fields_remain_distinct_over_m
 ])
 async def test_invalid_domain_edits_are_not_dispatched(mcp_session, host, method, params):
     response = await mcp_session.call_tool(method, params)
-    assert response.isError
-    assert response.structuredContent["error"]["code"] == "invalid_params"
-    assert response.structuredContent["error"]["outcome"] == "not_dispatched"
+    assert response.is_error
+    assert response.structured_content["error"]["code"] == "invalid_params"
+    assert response.structured_content["error"]["outcome"] == "not_dispatched"
     assert host.connections == 0
 
 
 async def test_grid_parameter_utf16_limit_is_checked_beyond_json_schema(mcp_session, host):
     response = await mcp_session.call_tool("grid.parameters.get", {
         **TARGET, "moduleId": TRACK, "parameterId": "𝄞" * 513})
-    assert response.isError
-    assert response.structuredContent["error"]["code"] == "invalid_params"
-    assert response.structuredContent["error"]["outcome"] == "not_dispatched"
+    assert response.is_error
+    assert response.structured_content["error"]["code"] == "invalid_params"
+    assert response.structured_content["error"]["outcome"] == "not_dispatched"
     assert host.connections == 0
 
 
@@ -149,9 +149,9 @@ async def test_grid_mcp_rejects_integer_float_token_despite_json_schema_integer_
     response = await mcp_session.call_tool("grid.parameters.set", {
         **TARGET, "moduleId": TRACK, "parameterId": "", "expectedKind": "integer",
         "expectedValue": 0, "value": 1.0})
-    assert response.isError
-    assert response.structuredContent["error"]["code"] == "invalid_params"
-    assert response.structuredContent["error"]["outcome"] == "not_dispatched"
+    assert response.is_error
+    assert response.structured_content["error"]["code"] == "invalid_params"
+    assert response.structured_content["error"]["outcome"] == "not_dispatched"
     assert host.connections == 0
 
 
@@ -160,9 +160,9 @@ async def test_grid_move_mcp_rejects_float_despite_json_schema_integer_semantics
     response = await mcp_session.call_tool("grid.modules.move", {
         **TARGET, "moduleId": TRACK, "expectedX": 0, "expectedY": 0, "x": 4, "y": 2,
         field: 1.0})
-    assert response.isError
-    assert response.structuredContent["error"]["code"] == "invalid_params"
-    assert response.structuredContent["error"]["outcome"] == "not_dispatched"
+    assert response.is_error
+    assert response.structured_content["error"]["code"] == "invalid_params"
+    assert response.structured_content["error"]["outcome"] == "not_dispatched"
     assert host.connections == 0
 
 
@@ -172,8 +172,8 @@ async def test_mcp_discovery_publishes_required_nullable_connection_contract(mcp
     assert len(response.tools) == len(tools)
     assert set(tools) == set(TOOLS)
     tool = tools["grid.connections.set"]
-    assert tool.annotations.readOnlyHint is False
-    schema = tool.inputSchema
+    assert tool.annotations.read_only_hint is False
+    schema = tool.input_schema
     assert schema["additionalProperties"] is False
     assert set(schema["required"]) == {
         "trackId", "deviceIndex", "expectedDeviceName",
@@ -191,8 +191,8 @@ async def test_mcp_discovery_publishes_required_nullable_connection_contract(mcp
         assert nested["properties"]["portKey"]["type"] == "string"
         assert nested["properties"]["portKey"]["maxLength"] == 1024
     insertion = tools["grid.modules.insert"]
-    assert insertion.annotations.readOnlyHint is False
-    schema = insertion.inputSchema
+    assert insertion.annotations.read_only_hint is False
+    schema = insertion.input_schema
     assert schema["additionalProperties"] is False
     assert set(schema["required"]) == {
         "trackId", "deviceIndex", "expectedDeviceName", "typeId", "x", "y",
@@ -204,8 +204,8 @@ async def test_mcp_discovery_publishes_required_nullable_connection_contract(mcp
         assert coordinate["maximum"] == 2**31 - 1
         assert "default" not in coordinate
     rename = tools["grid.modules.rename"]
-    assert rename.annotations.readOnlyHint is False
-    schema = rename.inputSchema
+    assert rename.annotations.read_only_hint is False
+    schema = rename.input_schema
     assert schema["additionalProperties"] is False
     assert set(schema["required"]) == {
         "trackId", "deviceIndex", "expectedDeviceName", "moduleId", "expectedCustomName", "customName",
@@ -224,9 +224,9 @@ async def test_grid_insert_mcp_rejects_non_int32_before_tcp(mcp_session, host, f
     response = await mcp_session.call_tool("grid.modules.insert", {
         **TARGET, "typeId": TRACK, "x": 0, "y": 0, field: value,
     })
-    assert response.isError
-    assert response.structuredContent["error"]["code"] == "invalid_params"
-    assert response.structuredContent["error"]["outcome"] == "not_dispatched"
+    assert response.is_error
+    assert response.structured_content["error"]["code"] == "invalid_params"
+    assert response.structured_content["error"]["outcome"] == "not_dispatched"
     assert host.connections == 0
 
 
@@ -237,8 +237,8 @@ async def test_grid_insert_mcp_preserves_loader_unknown_without_retry(mcp_sessio
     host.reply = lambda request: {"id": request["id"], "error": error}
     params = {**TARGET, "typeId": TRACK, "x": -(2**31), "y": 2**31 - 1}
     response = await mcp_session.call_tool("grid.modules.insert", {**params, "timeoutMs": 250})
-    assert response.isError
-    assert response.structuredContent == {"error": error}
+    assert response.is_error
+    assert response.structured_content == {"error": error}
     assert len(host.requests) == host.connections == 1
 
 
@@ -255,9 +255,9 @@ async def test_connection_mcp_rejects_nested_endpoint_errors_before_tcp(mcp_sess
         **TARGET, "targetModuleId": TRACK, "targetPortKey": "",
         "expectedSource": None, "source": None, field: value,
     })
-    assert response.isError
-    assert response.structuredContent["error"]["code"] == "invalid_params"
-    assert response.structuredContent["error"]["outcome"] == "not_dispatched"
+    assert response.is_error
+    assert response.structured_content["error"]["code"] == "invalid_params"
+    assert response.structured_content["error"]["outcome"] == "not_dispatched"
     assert host.connections == 0
 
 
@@ -267,9 +267,9 @@ async def test_connection_mcp_never_infers_missing_cas_null(mcp_session, host, f
               "expectedSource": None, "source": None}
     del params[field]
     response = await mcp_session.call_tool("grid.connections.set", params)
-    assert response.isError
-    assert response.structuredContent["error"]["code"] == "invalid_params"
-    assert response.structuredContent["error"]["outcome"] == "not_dispatched"
+    assert response.is_error
+    assert response.structured_content["error"]["code"] == "invalid_params"
+    assert response.structured_content["error"]["outcome"] == "not_dispatched"
     assert host.connections == 0
 
 
@@ -278,8 +278,8 @@ async def test_mcp_discovery_publishes_strict_layer_contracts(mcp_session):
     tools = {tool.name: tool for tool in response.tools}
     for method in ("devices.layers.list", "parameters.layer.list", "parameters.layer.set"):
         tool = tools[method]
-        assert tool.annotations.readOnlyHint is (method != "parameters.layer.set")
-        schema = tool.inputSchema
+        assert tool.annotations.read_only_hint is (method != "parameters.layer.set")
+        schema = tool.input_schema
         assert schema["additionalProperties"] is False
         assert set(schema["required"]) == set(TOOLS[method].examples[0])
         reference = schema["properties"]["parent"]["$ref"]
@@ -300,9 +300,9 @@ async def test_mcp_discovery_publishes_strict_layer_contracts(mcp_session):
 ])
 async def test_invalid_layer_parent_never_reaches_tcp(mcp_session, host, method, parent):
     response = await mcp_session.call_tool(method, {**TOOLS[method].examples[0], "parent": parent})
-    assert response.isError
-    assert response.structuredContent["error"]["code"] == "invalid_params"
-    assert response.structuredContent["error"]["outcome"] == "not_dispatched"
+    assert response.is_error
+    assert response.structured_content["error"]["code"] == "invalid_params"
+    assert response.structured_content["error"]["outcome"] == "not_dispatched"
     assert host.connections == 0
 
 
@@ -315,9 +315,9 @@ async def test_invalid_layer_parent_never_reaches_tcp(mcp_session, host, method,
 async def test_invalid_layer_write_never_reaches_tcp(mcp_session, host, changes):
     response = await mcp_session.call_tool("parameters.layer.set", {
         **TOOLS["parameters.layer.set"].examples[0], **changes})
-    assert response.isError
-    assert response.structuredContent["error"]["code"] == "invalid_params"
-    assert response.structuredContent["error"]["outcome"] == "not_dispatched"
+    assert response.is_error
+    assert response.structured_content["error"]["code"] == "invalid_params"
+    assert response.structured_content["error"]["outcome"] == "not_dispatched"
     assert host.connections == 0
 
 
@@ -327,8 +327,8 @@ async def test_layer_mcp_preserves_unknown_without_retry(mcp_session, host):
     host.reply = lambda request: {"id": request["id"], "error": error}
     params = TOOLS["parameters.layer.set"].examples[0]
     response = await mcp_session.call_tool("parameters.layer.set", {**params, "timeoutMs": 250})
-    assert response.isError
-    assert response.structuredContent == {"error": error}
+    assert response.is_error
+    assert response.structured_content == {"error": error}
     assert host.requests[0]["params"] == params
     assert host.requests[0]["timeoutMs"] == 250
     assert len(host.requests) == host.connections == 1
@@ -339,9 +339,9 @@ async def test_modulator_mcp_publishes_generated_read_only_contract(mcp_session)
     tools = {tool.name: tool for tool in response.tools}
     for method in ("modulators.capabilities", "modulators.list", "modulators.parameters.get"):
         tool = tools[method]
-        assert tool.annotations.readOnlyHint is True
-        assert tool.annotations.destructiveHint is False
-        schema = tool.inputSchema
+        assert tool.annotations.read_only_hint is True
+        assert tool.annotations.destructive_hint is False
+        schema = tool.input_schema
         assert schema["additionalProperties"] is False
         if method != "modulators.capabilities":
             parent = schema["$defs"]["DeviceParent"]
@@ -363,9 +363,9 @@ async def test_modulator_mcp_publishes_generated_read_only_contract(mcp_session)
 async def test_modulator_mcp_rejects_invalid_args_before_tcp(mcp_session, host, changes):
     response = await mcp_session.call_tool("modulators.parameters.get", {
         **TOOLS["modulators.parameters.get"].examples[0], **changes})
-    assert response.isError
-    assert response.structuredContent["error"]["code"] == "invalid_params"
-    assert response.structuredContent["error"]["outcome"] == "not_dispatched"
+    assert response.is_error
+    assert response.structured_content["error"]["code"] == "invalid_params"
+    assert response.structured_content["error"]["outcome"] == "not_dispatched"
     assert host.connections == 0
 
 
@@ -378,8 +378,8 @@ async def test_modulator_mcp_preserves_raw_string_and_unavailable_metadata(mcp_s
               "nativeMutation": False}
     host.reply = lambda request: {"id": request["id"], "result": result}
     response = await mcp_session.call_tool("modulators.parameters.get", params)
-    assert response.isError is False
-    assert response.structuredContent == {"result": result}
+    assert response.is_error is False
+    assert response.structured_content == {"result": result}
     assert host.requests[0]["params"]["parameterId"] == ""
     assert len(host.requests) == host.connections == 1
 
@@ -392,8 +392,8 @@ async def test_modulator_mcp_preserves_partial_inventory_without_inventing_conte
                               "typeId": None, "parameters": None}]}
     host.reply = lambda request: {"id": request["id"], "result": result}
     response = await mcp_session.call_tool("modulators.list", {"parent": TARGET, "limit": 1})
-    assert response.isError is False
-    assert response.structuredContent == {"result": result}
+    assert response.is_error is False
+    assert response.structured_content == {"result": result}
     assert len(host.requests) == host.connections == 1
 
 
@@ -405,8 +405,8 @@ async def test_modulator_mcp_preserves_read_errors_without_retry(mcp_session, ho
     host.reply = lambda request: {"id": request["id"], "error": error}
     response = await mcp_session.call_tool("modulators.parameters.get",
                                          TOOLS["modulators.parameters.get"].examples[0])
-    assert response.isError
-    assert response.structuredContent == {"error": error}
+    assert response.is_error
+    assert response.structured_content == {"error": error}
     assert len(host.requests) == host.connections == 1
 
 
@@ -416,9 +416,9 @@ async def test_modulator_mcp_preserves_read_errors_without_retry(mcp_session, ho
 ])
 async def test_modulator_mcp_pagination_rejects_coercion_before_tcp(mcp_session, host, field, value):
     response = await mcp_session.call_tool("modulators.list", {"parent": TARGET, field: value})
-    assert response.isError
-    assert response.structuredContent["error"]["code"] == "invalid_params"
-    assert response.structuredContent["error"]["outcome"] == "not_dispatched"
+    assert response.is_error
+    assert response.structured_content["error"]["code"] == "invalid_params"
+    assert response.structured_content["error"]["outcome"] == "not_dispatched"
     assert host.connections == 0
 
 
@@ -428,9 +428,9 @@ async def test_grid_rename_mcp_rejects_non_string_and_utf16_overflow_before_tcp(
     response = await mcp_session.call_tool("grid.modules.rename", {
         **TARGET, "moduleId": TRACK, "expectedCustomName": "", "customName": "", field: value,
     })
-    assert response.isError
-    assert response.structuredContent["error"]["code"] == "invalid_params"
-    assert response.structuredContent["error"]["outcome"] == "not_dispatched"
+    assert response.is_error
+    assert response.structured_content["error"]["code"] == "invalid_params"
+    assert response.structured_content["error"]["outcome"] == "not_dispatched"
     assert host.connections == 0
 
 
@@ -439,9 +439,9 @@ async def test_grid_rename_mcp_missing_name_is_not_defaulted_to_reset(mcp_sessio
     params = {**TARGET, "moduleId": TRACK, "expectedCustomName": "", "customName": ""}
     del params[field]
     response = await mcp_session.call_tool("grid.modules.rename", params)
-    assert response.isError
-    assert response.structuredContent["error"]["code"] == "invalid_params"
-    assert response.structuredContent["error"]["outcome"] == "not_dispatched"
+    assert response.is_error
+    assert response.structured_content["error"]["code"] == "invalid_params"
+    assert response.structured_content["error"]["outcome"] == "not_dispatched"
     assert host.connections == 0
 
 
@@ -451,7 +451,7 @@ async def test_grid_rename_mcp_preserves_unknown_raw_reset_outcome_without_retry
              "details": {"mutationDispatched": True, "rollbackVerified": False}}
     host.reply = lambda request: {"id": request["id"], "error": error}
     response = await mcp_session.call_tool("grid.modules.rename", params)
-    assert response.isError
-    assert response.structuredContent == {"error": error}
+    assert response.is_error
+    assert response.structured_content == {"error": error}
     assert host.requests[0]["params"] == params
     assert len(host.requests) == host.connections == 1

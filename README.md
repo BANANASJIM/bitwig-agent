@@ -11,7 +11,7 @@
 [Quickstart](#quickstart) · [Documentation](https://github.com/BANANASJIM/bitwig-agent/blob/main/docs/README.md) · [Agent skill](https://github.com/BANANASJIM/bitwig-agent/tree/main/skills/bitwig-agent) · [Contributing](https://github.com/BANANASJIM/bitwig-agent/blob/main/CONTRIBUTING.md)
 
 > **Experimental — use a disposable project and keep backups.**
-> Published **`0.1.2`** (the uv/AUR quickstart below) gates private Grid/modulator access to **Bitwig 6.1.3**. Current **unreleased source** targets **6.1.4** and includes the stop/seek and track-selection fixes; use the [source setup](https://github.com/BANANASJIM/bitwig-agent/blob/main/CONTRIBUTING.md#source-setup), not a package upgrade, for those changes. Both private adapters require their exact loaded host JAR. Read the [bounded native evidence](https://github.com/BANANASJIM/bitwig-agent/blob/main/VERIFICATION.md) and [safety boundaries](#safety-and-compatibility).
+> **`0.2.0` requires Bitwig 6.1.4 for private Grid/modulator access**, with an exact loaded host-JAR check. It includes the 6.1.4 adapter and stop/seek and track-selection fixes. This replaces the 6.1.3 private bindings in `0.1.2`; do not upgrade on a 6.1.3 host expecting those controls to remain compatible. Update Python and the extension together. Read the [bounded native evidence](https://github.com/BANANASJIM/bitwig-agent/blob/main/VERIFICATION.md) and [safety boundaries](#safety-and-compatibility).
 
 ## Quickstart
 

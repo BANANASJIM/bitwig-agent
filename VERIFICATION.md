@@ -58,7 +58,7 @@ The offline policies in [scripts/evidence_mix.py](scripts/evidence_mix.py) and [
 
 ## Continuous integration
 
-[CI](https://github.com/BANANASJIM/bitwig-agent/actions/workflows/ci.yml) is configured to run host-free Python checks on Python 3.11 and 3.14 with the optional audio-analysis dependencies installed, plus Python 3.11 with the minimum supported MCP SDK 1.29.1. The minimum-SDK job uses `--no-sync` after substitution so a test command cannot silently restore the locked SDK. Package jobs build the Python source/wheel distributions and exercise **both** installed consumers' offline CLI and generated configuration's MCP stdio handshake outside the checkout, including the minimum-SDK combination. The package smoke is shared in [scripts/smoke-package.py](scripts/smoke-package.py).
+[CI](https://github.com/BANANASJIM/bitwig-agent/actions/workflows/ci.yml) is configured to run host-free Python checks on Python 3.11 and 3.14 with the optional audio-analysis dependencies installed, plus Python 3.11 with the minimum supported MCP SDK 2.3.0. The minimum-SDK job uses `--no-sync` after substitution so a test command cannot silently restore the locked SDK. Package jobs build the Python source/wheel distributions and exercise **both** installed consumers' offline CLI and generated configuration's MCP stdio handshake outside the checkout, including the minimum-SDK combination. The package smoke is shared in [scripts/smoke-package.py](scripts/smoke-package.py).
 
 The workflow also validates the portable skill with a pinned reference validator and scans reachable Git history for credentials with checksum-pinned Gitleaks. The handshake tests Python packaging and MCP startup, not a connection to Bitwig; consult actual workflow results rather than treating this configuration as passing evidence.
 
@@ -75,10 +75,12 @@ The manual [PyPI workflow](https://github.com/BANANASJIM/bitwig-agent/actions/wo
 To smoke a separately installed Python consumer, invoke the shared script with **that environment's Python**, not the checkout's editable installation:
 
 ```sh
-/absolute/path/consumer/bin/python -I scripts/smoke-package.py --expected-version 0.1.2
+/absolute/path/consumer/bin/python -I scripts/smoke-package.py --expected-version 0.2.0
 ```
 
 The script runs its CLI/MCP consumers from a temporary directory outside the checkout. It performs discovery only, with no extension download, controller installation or native-host calls. A clean sdist-consumption check must actually build the sdist rather than reuse a cached wheel; the CI/promotion workflows install with `--no-cache`.
+
+During `0.2.0` preparation, the initial Arch candidate failed dependency resolution after the official system package moved to MCP `2.3.0`: the old `<2` constraint could not be satisfied. The adapter and active smoke clients were then migrated to the documented SDK 2 handlers/fields, rather than merely removing the upper bound. With MCP `2.3.0`, **1,161 Python tests** and the **45-tool / 50-example Java–MCP fixture** passed, including strict no-dispatch validation and unknown-outcome preservation. Raw MCP evidence still uses wire aliases. These are source/transport checks, not a fresh native Bitwig run or proof of registry publication; the rejected candidate's failure remains retained.
 
 ### Skill validation
 
@@ -101,7 +103,7 @@ uv run --locked python scripts/smoke-native.py \
 
 This is a read-only MCP preflight, not music, GUI, write or persistence E2E. It performs no launch, installation, GUI input, screenshot or automatic retry. It excludes `notes.read` because that call selects a clip. It checks loopback socket ownership, including Linux IPv4-mapped TCP6 entries; a matching title or project name is **not** proof of the loaded full project path. Exact file identity and actual reopen behavior need independent evidence. The local endpoint is unauthenticated: keep it on trusted loopback and never forward it to a network.
 
-Before any native operation, designate one exclusive writer and freshly identify the disposable project, process lifetime, actual window, endpoint and extension build. Preserve user projects; display isolation does not imply profile/audio isolation. Current source requires Bitwig **6.1.4** and loaded host JAR SHA-256 `77a50264156a9f79c925fa85e0456720ce157bfa10e2503d6049e2f733af4ba6` for private Grid/modulator access; published `0.1.2` retains its 6.1.3 gate. Inspect each independent read/write gate; do not bypass mismatches or substitute an unrelated installed JAR's hash.
+Before any native operation, designate one exclusive writer and freshly identify the disposable project, process lifetime, actual window, endpoint and extension build. Preserve user projects; display isolation does not imply profile/audio isolation. Version `0.2.0` requires Bitwig **6.1.4** and loaded host JAR SHA-256 `77a50264156a9f79c925fa85e0456720ce157bfa10e2503d6049e2f733af4ba6` for private Grid/modulator access; the older `0.1.2` release retains its 6.1.3 gate. Inspect each independent read/write gate; do not bypass mismatches or substitute an unrelated installed JAR's hash.
 
 Native helpers can use `NativeOutcomeGuard` from [scripts/smoke-native.py](scripts/smoke-native.py): wrap RPC/GUI/parsing/evidence work in `guard.attempt()`, persist complete responses, then call `guard.observe()` before another operation. Both `error.outcome` and `result.completion` can be `unknown`. Dispatch-only Actions/selection and confirmed queued Launcher operations need explicit expectations and separate completion observation; a queue is not actual playback/stop. External image-tool failure must also stop the writer; Python cannot latch an error it never sees. A later healthy read establishes neither reset, cancellation, cleanup nor acknowledgement of an earlier write. **Never blindly retry an unknown outcome**, including through the GUI.
 
@@ -109,7 +111,7 @@ GUI receipts, independent renders, isolated Undo/Redo and save/reopen comparison
 
 Launcher regressions in `LauncherModuleTest` cover queued and immediately observed launch/stop, plus missing observations without re-dispatch. For a native queued case, inspect the slot separately from transport: a saved Launcher clip can remain engaged while transport is stopped. Declare any preparatory stop before writing and separately observe disengagement. Then verify queued launch and actual playing, stop the Launcher while transport still runs, and finally stop transport, retaining full receipts. Static GUI frames alone do not establish queue timing.
 
-### Native 6.1.4 production check — unreleased source
+### Native 6.1.4 production check — pre-release candidates
 
 An isolated Linux / Bitwig **6.1.4 / API 25** session exercised the public clip, note and transport path. Creation and exact eight-note window readback were observed; the saved eight-beat phrase was then reopened and independently verified with the final transport candidate. The temporary installed Python consumer came from commit `8d5137a`; the private candidate extension SHA-256 was `5488139de5fcef455a6f1057ab109d6afc327e881bc8ff6d8e8ca29c7d16f95f`.
 
@@ -117,7 +119,7 @@ The original combined stop/seek case **failed**: stop was observed, position rem
 
 The transport candidate's independent native case observed quantized launch → playing, quantized clip stop → stopped while global transport kept running, then exactly one `transport.set` with `playing:false, positionBeats:0`. Both fields reported `observer_after_write`; independent reads remained stopped at zero, including one 2.57 seconds later. The actual GUI showed `1.1.1.00 / 0:00.000`; all three recording/automation flags remained false and the target mix was unchanged.
 
-This was a muted, bounded production-path observation, **not audio audition, universal timing proof or private Grid acceptance**. That earlier candidate's private gate rejected 6.1.4; the subsequent private-binding cutover is recorded separately below. Raw fixture/project/screenshots remain private rather than being redistributed. The transport fix is unreleased source; the published `0.1.2` extension does not include it merely because a development build retains that version label.
+This was a muted, bounded production-path observation, **not audio audition, universal timing proof or private Grid acceptance**. That earlier candidate's private gate rejected 6.1.4; the subsequent private-binding cutover is recorded separately below. Raw fixture/project/screenshots remain private rather than being redistributed. The transport fix is included in `0.2.0`, not the older `0.1.2` release. These observations belong to the recorded pre-release candidate, not a new native run of the release artifact.
 
 #### GUI-assisted A/B and reopen navigation
 
@@ -138,9 +140,9 @@ Save, actual close/reopen, bounded note readback and inspection preserved the A/
 
 The corrected `tracks.select` explicitly requests navigation once and returns **`dispatched` / `not_observed`**, not a fabricated observer acknowledgement; see [the selection contract](PROTOCOL.md#domain-controls). A new private candidate, SHA-256 `a25af7abda2e4b9a03c23c58cd4135deb65fb33136b8eb9d1539ef8dd6db7938`, independently exercised both intentional reselection and missing callbacks after another actual close/reopen. Actual GUI inspection established navigation; observed auto-arm was cleared, and saved A/B decay values remained 180/360 ms. The expanded Grid canvas could retain A while the lower device panel showed B: the canvas's own title, followed by closing the old editor and opening B's preview, established the correct target before any prospective edit.
 
-That candidate also repeated quantized launch/stop and exactly one combined stop/seek. Both fields reported `observer_after_write`; independent reads more than two seconds apart and the actual GUI remained stopped at zero. All four source/render tracks ended muted, source arms and global record/write flags were false, mix values were preserved, and the saved project file was unchanged. These are bounded native observations, not universal selection/timing/persistence guarantees. **Neither fix is included in published `0.1.2`.**
+That candidate also repeated quantized launch/stop and exactly one combined stop/seek. Both fields reported `observer_after_write`; independent reads more than two seconds apart and the actual GUI remained stopped at zero. All four source/render tracks ended muted, source arms and global record/write flags were false, mix values were preserved, and the saved project file was unchanged. These are bounded native observations, not universal selection/timing/persistence guarantees. **Both fixes are included in `0.2.0`, not the older `0.1.2` release**; the observations above are from the recorded pre-release candidates.
 
-### Native 6.1.4 private bindings — unreleased source
+### Native 6.1.4 private bindings — pre-release candidates
 
 The active adapter was cleanly migrated to the exact 6.1.4 host JAR above, including the shared read-only modulator bindings. No second version bridge, compatibility alias or gate bypass was added. Exact classfile descriptors and selected native dispatch bodies were inspected privately; no proprietary JAR/decompiled source is redistributed. The 210 public Controller API classes were byte-identical between the inspected 6.1.3 and 6.1.4 JARs; this is not evidence that private APIs or native behavior are unchanged.
 
@@ -171,7 +173,7 @@ All six source/render tracks ended muted and disarmed, with transport stopped at
 - Case 04 stopped on a locally rejected note-read request missing `channel`, before host dispatch.
 - Case 05's original failed dirty-marker assessment and latch remain retained. Independent enlargement of its original screenshot showed no asterisk, only the separate close **X**. A separate correction records the dirty-marker claim as an operator reporting mistake, **not a native Save defect**. The final closure case did not repeat Save.
 
-Native calls used the current Python schemas/parser and direct loopback transport, not an installed CLI/MCP E2E consumer. Modulator capability initialization is not real modulator-instance/string-panel coverage. Undo, exhaustive module families, forced rejection/cleanup/races and general DSP/persistence guarantees remain unverified. Raw projects, audio, screenshots and research stay private. Published `0.1.2`, PyPI/AUR assets and global extension/client settings were not changed.
+Native calls used the current Python schemas/parser and direct loopback transport, not an installed CLI/MCP E2E consumer. Modulator capability initialization is not real modulator-instance/string-panel coverage. Undo, exhaustive module families, forced rejection/cleanup/races and general DSP/persistence guarantees remain unverified. Raw projects, audio, screenshots and research stay private. This pre-release verification round did not change published `0.1.2`, PyPI/AUR assets or global extension/client settings. The `0.2.0` release packages this implementation; its package verification is separate from the native candidate evidence above.
 
 ## Coverage limits and unresolved results
 

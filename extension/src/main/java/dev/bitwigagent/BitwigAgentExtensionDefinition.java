@@ -10,7 +10,7 @@ import java.util.UUID;
 public final class BitwigAgentExtensionDefinition extends ControllerExtensionDefinition {
     public String getName() { return "Bitwig Agent"; }
     public String getAuthor() { return "Bitwig Agent contributors"; }
-    public String getVersion() { return "0.1.2"; }
+    public String getVersion() { return "0.2.0"; }
     public UUID getId() { return UUID.fromString("e619a1d7-fc56-4225-8e2f-7cc293b11e54"); }
     public int getRequiredAPIVersion() { return 25; }
     public String getHardwareVendor() { return "Bitwig Agent"; }

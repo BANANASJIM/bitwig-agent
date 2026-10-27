@@ -1,6 +1,6 @@
 # Installation details
 
-Start with the [three-step quickstart](README.md#quickstart). Choose an isolated [uv tool environment](https://docs.astral.sh/uv/guides/tools/) from [PyPI](https://pypi.org/project/bitwig-agent/), or the [Arch/AUR package](#arch-linux-aur). Both supply the same-version prebuilt controller extension without a Java compiler. These routes install published `0.1.2`, whose private Grid/modulator access requires Bitwig 6.1.3 and its exact loaded host JAR. The 6.1.4 adapter and newer fixes are **unreleased source**; follow [source setup](CONTRIBUTING.md#source-setup) for those. Native evidence is bounded to Linux / API 25; platform-specific installer defaults do not establish macOS or Windows host support.
+Start with the [three-step quickstart](README.md#quickstart). Choose an isolated [uv tool environment](https://docs.astral.sh/uv/guides/tools/) from [PyPI](https://pypi.org/project/bitwig-agent/), or the [Arch/AUR package](#arch-linux-aur). Both supply the same-version prebuilt controller extension without a Java compiler. Version **`0.2.0` requires Bitwig 6.1.4 and its exact loaded host JAR for private Grid/modulator access**; it replaces `0.1.2`'s 6.1.3 bindings rather than supporting both hosts. It also includes the stop/seek and track-selection fixes. Native evidence is bounded to Linux / API 25; platform-specific installer defaults do not establish macOS or Windows host support.
 
 Bitwig documents its platform extension directories and manual controller registration in its [official controller-extension installation guide](https://www.bitwig.com/support/technical_support/how-do-i-add-a-controller-extension-or-script-17/).
 
@@ -19,12 +19,12 @@ The first installer command changes your user extension directory; run it only w
 `uvx` (`uv tool run`) instead runs a command in a cached, disposable tool environment without a persistent tool installation. It is useful for a one-off **offline** discovery command:
 
 ```sh
-uvx --from bitwig-agent==0.1.2 bitwig-agent-rpc list
+uvx --from bitwig-agent==0.2.0 bitwig-agent-rpc list
 ```
 
-Here `--from` identifies the distribution; `bitwig-agent-rpc` identifies the entrypoint. Do not assume a generated absolute interpreter path inside an ephemeral uv cache is durable MCP configuration. Prefer the persistent installation above, or deliberately configure your client to invoke `uvx --from bitwig-agent==0.1.2 bitwig-agent` itself, with uv on that client's `PATH`. That option may need downloads and makes cache availability part of startup.
+Here `--from` identifies the distribution; `bitwig-agent-rpc` identifies the entrypoint. Do not assume a generated absolute interpreter path inside an ephemeral uv cache is durable MCP configuration. Prefer the persistent installation above, or deliberately configure your client to invoke `uvx --from bitwig-agent==0.2.0 bitwig-agent` itself, with uv on that client's `PATH`. That option may need downloads and makes cache availability part of startup.
 
-For a reproducible installation, pin a reviewed version with `uv tool install bitwig-agent==0.1.2`. The Python tools come from [this PyPI project](https://pypi.org/project/bitwig-agent/); the matching controller extension is downloaded separately from GitHub by the installer.
+For a reproducible installation, pin a reviewed version with `uv tool install bitwig-agent==0.2.0`. The Python tools come from [this PyPI project](https://pypi.org/project/bitwig-agent/); the matching controller extension is downloaded separately from GitHub by the installer.
 
 ## Arch Linux (AUR)
 
@@ -61,10 +61,10 @@ Bitwig is an optional host dependency, not a forced host upgrade. Installing a n
 
 ## Release artifacts and integrity
 
-The [v0.1.2 release](https://github.com/BANANASJIM/bitwig-agent/releases/tag/v0.1.2) supplies:
+The [v0.2.0 release](https://github.com/BANANASJIM/bitwig-agent/releases/tag/v0.2.0) supplies:
 
-- `bitwig_agent-0.1.2-py3-none-any.whl`: Python MCP server, diagnostic CLI and installer.
-- `bitwig_agent-0.1.2.tar.gz`: Python source distribution.
+- `bitwig_agent-0.2.0-py3-none-any.whl`: Python MCP server, diagnostic CLI and installer.
+- `bitwig_agent-0.2.0.tar.gz`: Python source distribution.
 - `BitwigAgent.bwextension`: prebuilt Bitwig controller extension.
 - `SHA256SUMS`: SHA-256 hashes for all three artifacts.
 
@@ -74,7 +74,7 @@ If you prefer to download the assets manually, verify their hashes against `SHA2
 
 ```sh
 sha256sum --check SHA256SUMS
-uv tool install ./bitwig_agent-0.1.2-py3-none-any.whl
+uv tool install ./bitwig_agent-0.2.0-py3-none-any.whl
 bitwig-agent-install --extension ./BitwigAgent.bwextension
 ```
 
@@ -103,7 +103,7 @@ uv tool upgrade bitwig-agent
 bitwig-agent-install
 ```
 
-`uv tool upgrade` respects an existing version pin; change that constraint with `uv tool install bitwig-agent==0.1.2` when selecting that release. To switch an older GitHub-wheel installation to PyPI, use `uv tool install --force bitwig-agent`, then run `bitwig-agent-install`. For intentional direct-wheel installations, use `uv tool install --force <new-wheel-URL>` instead.
+`uv tool upgrade` respects an existing version pin; change that constraint with `uv tool install bitwig-agent==0.2.0` when selecting that release. To switch an older GitHub-wheel installation to PyPI, use `uv tool install --force bitwig-agent`, then run `bitwig-agent-install`. For intentional direct-wheel installations, use `uv tool install --force <new-wheel-URL>` instead.
 
 Do not upgrade only the Python half. A restore similarly requires both matching versions; an extension backup alone is not a full rollback. Regenerate MCP configuration after replacing or moving the environment, then reload the controller.
 

@@ -169,10 +169,10 @@ def test_probe_failure_latches_before_a_caught_failure_can_continue(monkeypatch,
             if failure_stage == "transport":
                 raise ConnectionError("native response lost")
             return CallToolResult(
-                structuredContent=None if failure_stage == "decode" else {"result": {"status": "observed"}},
+                structured_content=None if failure_stage == "decode" else {"result": {"status": "observed"}},
                 content=[TextContent(type="text", text="{"),
                          TextContent(type="text", text="原始尾部 Ω")],
-                isError=False,
+                is_error=False,
             )
 
     def target_guard():

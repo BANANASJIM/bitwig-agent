@@ -5,7 +5,7 @@ license: MIT
 compatibility: Guidance can use user-provided screenshots. Live API work needs configured Bitwig Agent MCP or CLI, a matching enabled extension and a trusted local host. Live screenshots and GUI input require separate desktop tools and permission; this skill supplies neither. Private Grid/modulator access has exact host-version and loaded-JAR gates. Consult current capabilities and version-matched verification. This skill grants no permissions.
 metadata:
   author: BANANASJIM
-  version: "0.1.2"
+  version: "0.2.0"
   repository: https://github.com/BANANASJIM/bitwig-agent
 ---
 

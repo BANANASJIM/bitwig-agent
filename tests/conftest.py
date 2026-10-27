@@ -68,6 +68,6 @@ async def mcp_session(host):
     async with stdio_client(params) as (read, write):
         async with ClientSession(read, write) as session:
             initialized = await session.initialize()
-            assert initialized.serverInfo.name == "Bitwig Agent"
+            assert initialized.server_info.name == "Bitwig Agent"
             yield session
 

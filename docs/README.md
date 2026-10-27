@@ -23,7 +23,7 @@ These guides describe the public implementation and supported user workflows. Th
 - A tool appearing in discovery means the interface exists, not that every host/version supports it.
 - A successful package install or MCP handshake does not establish a Bitwig connection.
 - A host response may establish dispatch or bounded model readback, not audio, GUI completion or persistence.
-- Current source uses an exact 6.1.4 loaded-JAR gate for private Grid/modulator access; published `0.1.2` retains 6.1.3. Linux native observations, public SDK checks and GUI-assisted production cases have separate [coverage records](../VERIFICATION.md). None establishes all-module or cross-platform acceptance.
+- Version `0.2.0` uses an exact 6.1.4 loaded-JAR gate for private Grid/modulator access; the older `0.1.2` release retains 6.1.3. Linux native observations, public SDK checks and GUI-assisted production cases have separate [coverage records](../VERIFICATION.md). None establishes all-module or cross-platform acceptance.
 - GitHub release availability, AUR publication and PyPI publication are separate facts. Use the explicit installation source documented for the release.
 
 The architecture guide links implementation ownership rather than reproducing every schema. The packaging guide separates end-user installation from maintainer release/account operations. Native voice-count, recipe and bounce caveats remain in [usage](../USAGE.md#make-grid-instruments-without-preset-files) and [verification](../VERIFICATION.md#coverage-limits-and-unresolved-results), where they can be read in context.

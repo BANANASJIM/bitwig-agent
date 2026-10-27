@@ -36,7 +36,7 @@ The skill supports screenshot-only guidance, delegated production and troublesho
 
 The registry implements **45 methods**, not 45 comprehensively native-accepted tools. Track, root-device and launcher windows are 16 each; sends are eight per track. Layers are one hop: two layers per root and two children per layer. Deeper hierarchy, named slots/drum pads, project paging, arranger clip editing, automation curves and dedicated master/cue tools are outside the structured surface. Bounded reads are not lossless whole-project exports.
 
-Current source gates private Grid/modulator access to the mapped **Bitwig 6.1.4 loaded host JAR**; published `0.1.2` still targets 6.1.3. Other versions/hashes fail closed. Read and write availability gates are separate. Real Grid-family string-panel coverage remains unestablished; Macro-modulator evidence does not establish that coverage. See [PROTOCOL.md](PROTOCOL.md) for actual schemas, limits and side effects, and [VERIFICATION.md](VERIFICATION.md) for checks and bounded coverage.
+Version `0.2.0` gates private Grid/modulator access to the mapped **Bitwig 6.1.4 loaded host JAR**; the older `0.1.2` release targets 6.1.3 instead. Other versions/hashes fail closed. Read and write availability gates are separate. Real Grid-family string-panel coverage remains unestablished; Macro-modulator evidence does not establish that coverage. See [PROTOCOL.md](PROTOCOL.md) for actual schemas, limits and side effects, and [VERIFICATION.md](VERIFICATION.md) for checks and bounded coverage.
 
 ## Target safely, then observe completion
 

@@ -216,13 +216,13 @@ async def probe(target, report):
                                   "response": response.model_dump(mode="json", by_alias=True)}
                     with raw_results_path.open("a", encoding="utf-8") as output:
                         output.write(json.dumps(raw_record, allow_nan=False) + "\n")
-                    body = response.structuredContent or json.loads(response.content[0].text)
+                    body = response.structured_content or json.loads(response.content[0].text)
                     record = {"time": datetime.now(timezone.utc).isoformat(), "method": method,
-                              "params": arguments, "isError": response.isError, "response": body}
+                              "params": arguments, "isError": response.is_error, "response": body}
                     with calls_path.open("a", encoding="utf-8") as output:
                         output.write(json.dumps(record, ensure_ascii=False, allow_nan=False) + "\n")
                     outcome_guard.observe(body)
-                    if response.isError:
+                    if response.is_error:
                         raise RuntimeError(f"Native {method} failed; inspect calls.jsonl (no retry)")
                     result = body["result"]
                     if result.get("status") != "observed":
