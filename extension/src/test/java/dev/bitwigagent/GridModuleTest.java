@@ -130,9 +130,9 @@ public final class GridModuleTest {
         catch (RpcException error) { check(error.code.equals("grid_bounds_exceeded"), "oversize asks caller to reduce page instead of truncating"); }
     }
     private static void loadedSourceGateFailsClosed() throws Exception {
-        GridAdapter wrongVersion = new Bitwig613GridAdapter(new Bitwig613Runtime(new Object(), "6.1.4", () -> {}).access("grid_unavailable"));
+        GridAdapter wrongVersion = new Bitwig614GridAdapter(new Bitwig614Runtime(new Object(), "6.1.3", () -> {}).access("grid_unavailable"));
         check(!wrongVersion.capabilities().get("gatePassed").getAsBoolean(), "unsupported version fails before any native binding");
-        GridAdapter noSource = new Bitwig613GridAdapter(new Bitwig613Runtime(new Object(), "6.1.3", () -> {}).access("grid_unavailable"));
+        GridAdapter noSource = new Bitwig614GridAdapter(new Bitwig614Runtime(new Object(), "6.1.4", () -> {}).access("grid_unavailable"));
         check(!noSource.capabilities().get("gatePassed").getAsBoolean(), "missing loaded CodeSource cannot fall back to arbitrary installed JAR");
         check(!noSource.capabilities().getAsJsonObject("nativeOwningTrack").get("available").getAsBoolean()
                 && !noSource.capabilities().getAsJsonObject("structure").get("available").getAsBoolean(),
@@ -152,8 +152,8 @@ public final class GridModuleTest {
         Path file = Files.createTempFile("grid-hash-test-", ".bin");
         try {
             Files.writeString(file, "abc", StandardCharsets.UTF_8);
-            check(Bitwig613Runtime.hash(file, () -> {}).equals("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"), "hash reads bytes not filename or version text");
-            try { Bitwig613Runtime.hash(file, () -> { throw HostServices.failure("cancelled", "cancel hashing"); }); throw new AssertionError("hash ignored cancellation"); }
+            check(Bitwig614Runtime.hash(file, () -> {}).equals("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"), "hash reads bytes not filename or version text");
+            try { Bitwig614Runtime.hash(file, () -> { throw HostServices.failure("cancelled", "cancel hashing"); }); throw new AssertionError("hash ignored cancellation"); }
             catch (RpcException error) { check(error.code.equals("cancelled"), "gate hashing observes request cancellation"); }
         } finally { Files.deleteIfExists(file); }
     }

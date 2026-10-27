@@ -138,7 +138,7 @@ final class GridInsertionWriter {
                 try {
                     nativeWriter.reject(completion, error instanceof Exception ? (Exception) error : new Exception("Insertion preplacement gate failed", error));
                     normalHandling = true; // Record normal delivered cleanup BEFORE any outward notification.
-                    if (!(error instanceof RpcException) || Bitwig613Runtime.isInvocationFailure(error)) adapterFailure(error);
+                    if (!(error instanceof RpcException) || Bitwig614Runtime.isInvocationFailure(error)) adapterFailure(error);
                     return true;
                 } catch (Throwable cleanupError) { adapterFailure(cleanupError); return false; }
             }

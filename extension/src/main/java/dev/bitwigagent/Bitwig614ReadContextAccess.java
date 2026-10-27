@@ -5,26 +5,26 @@ import java.util.EnumMap;
 import static dev.bitwigagent.NativeReadContext.Field.*;
 
 /** Pure lifecycle/context descriptors; no scalar, wrapper, license, undo or lock bindings. */
-final class Bitwig613ReadContextAccess implements NativeReadContext.Access {
-    private final Bitwig613Runtime.Access bindings;
+final class Bitwig614ReadContextAccess implements NativeReadContext.Access {
+    private final Bitwig614Runtime.Access bindings;
     private final EnumMap<NativeReadContext.Field, Method> readers = new EnumMap<>(NativeReadContext.Field.class);
     private final Class<?> project, defaultContext;
-    Bitwig613ReadContextAccess(Bitwig613Runtime.Access bindings) throws ReflectiveOperationException {
+    Bitwig614ReadContextAccess(Bitwig614Runtime.Access bindings) throws ReflectiveOperationException {
         this.bindings = bindings;
         String r = "com.bitwig.ramona.core.";
-        Class<?> model = bindings.type(r + "fJC"), context = bindings.type(r + "HLm"), dt = bindings.type(r + "Dt");
-        project = bindings.type("com.bitwig.flt.document.core.master.WN2");
-        defaultContext = bindings.type("dqB");
-        bind(DELETED, bindings.type(r + "xKS"), "N_", boolean.class);
-        bind(CONTEXT, model, "fi2", context);
-        readers.put(PROJECT, bindings.exactMethod(model, "k31", Object.class, false, Class.class));
-        bind(ROOT, context, "kpO", bindings.type(r + "xKS"));
-        bind(INITIALIZED, context, "cLM", boolean.class);
-        bind(DISPOSED, context, "UlY", boolean.class);
+        Class<?> model = bindings.type(r + "AVL"), context = bindings.type(r + "Rzi"), dt = bindings.type(r + "XKG");
+        project = bindings.type("com.bitwig.flt.document.core.master.g2L");
+        defaultContext = bindings.type("dqr");
+        bind(DELETED, bindings.type(r + "oDc"), "N_", boolean.class);
+        bind(CONTEXT, model, "ULc", context);
+        readers.put(PROJECT, bindings.exactMethod(model, "IwV", Object.class, false, Class.class));
+        bind(ROOT, context, "FzB", bindings.type(r + "oDc"));
+        bind(INITIALIZED, context, "eLY", boolean.class);
+        bind(DISPOSED, context, "ucQ", boolean.class);
         bind(CONTEXT_THREAD, context, "isEventDispatchThread", boolean.class);
-        bind(CURRENT_DT, context, "Ynu", dt);
-        bind(DEFAULT_DT, defaultContext, "IHn", dt);
-        bind(DT_CONTEXT, dt, "kpO", context);
+        bind(CURRENT_DT, context, "vpw", dt);
+        bind(DEFAULT_DT, defaultContext, "rGR", dt);
+        bind(DT_CONTEXT, dt, "FzB", context);
     }
     private void bind(NativeReadContext.Field field, Class<?> owner, String name, Class<?> returns)
             throws ReflectiveOperationException {

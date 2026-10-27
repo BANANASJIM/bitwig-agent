@@ -11,7 +11,7 @@ Keep these four versions separate:
 3. **Installed bridge/client/extension:** discover actual tools and capabilities. A newer repository `main` does not mean a released wheel or installed extension contains those changes.
 4. **Native evidence:** a successful operation proves its stated scope, not every feature on that host. Public SDK operations, private native bindings, GUI interaction, audio and saved persistence need separate evidence.
 
-The current private Grid/modulator adapter requires **6.1.3 / API 25 and its exact loaded host-JAR hash**; it rejects 6.1.4. This does not mean Bitwig 6.1.4 has no Grid, or that all public SDK operations are unavailable. Respect the gate, identify the unsupported API surface, and use authorized GUI guidance/operation only for that known gap. See [Grid boundaries](grid-and-recipes.md) and the release-matched public [verification record](https://github.com/BANANASJIM/bitwig-agent/blob/main/VERIFICATION.md).
+Current **unreleased source** maps private Grid/modulator access to **6.1.4 / API 25 and its exact loaded host-JAR hash**. Published **`0.1.2`** retains its 6.1.3 gate; installing it from uv/AUR does not install the source adapter or newer fixes. Discover the running extension's capabilities and build origin, not just its version label. Respect mismatches and use authorized GUI guidance only for a known unsupported surface, never to replay an uncertain write. See [Grid boundaries](grid-and-recipes.md) and the release-matched public [verification record](https://github.com/BANANASJIM/bitwig-agent/blob/main/VERIFICATION.md).
 
 ## Changes that affect production guidance
 
@@ -20,7 +20,7 @@ The current private Grid/modulator adapter requires **6.1.3 / API 25 and its exa
 | 6.0 | Clip aliases; revised automation editing and automation clips; project key/scale and Snap to Key; changed editor tool shortcuts | Check independent versus shared clip content before A/B. Inspect Follow/Lock and automation ownership. Do not apply old tool-key instructions without checking the actual editor. |
 | 6.1 | Expanded Sampler slicing, granular/spectral modes and related controls; new Tuner; Grid quantizer renames | Discover the selected Sampler mode before giving parameter advice. Recheck migrated modulation mappings. Prefer current visible module/control names rather than old screenshots. |
 | 6.1.1–6.1.3 | Sampler/automation fixes, memory improvements, and a Linux X11 knob/slider jump fix | Establish the exact build when diagnosing these symptoms; release notes identify known fixes, not the cause of every similar failure. |
-| 6.1.4 | Further maintenance fixes and rekordbox integration on Windows/macOS | Do not promise rekordbox integration on Linux. An update does not extend the bridge's private native compatibility gate. |
+| 6.1.4 | Further maintenance fixes and rekordbox integration on Windows/macOS | Do not promise rekordbox integration on Linux. A host-package update alone does not adapt the installed bridge's private bindings. |
 
 For the actual workflow, load [production](production-workflows.md) or [sound design](sound-design.md), not every release note. Keep the official notes available for exact mode names, removed mappings and platform qualifications.
 

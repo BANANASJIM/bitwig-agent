@@ -1187,7 +1187,7 @@ public final class GridSnapshotReaderTest {
             java.lang.reflect.Method exception = TestMoveCallback.class.getMethod("error", Exception.class);
             java.lang.reflect.Method message = TestMoveCallback.class.getMethod("error", String.class);
             for (int mode = 0; mode < 6; mode++) {
-                Bitwig613GridModuleAccess.MoveCallback capture = new Bitwig613GridModuleAccess.MoveCallback(success, exception, message);
+                Bitwig614GridModuleAccess.MoveCallback capture = new Bitwig614GridModuleAccess.MoveCallback(success, exception, message);
                 if (mode == 0) capture.invoke(null, success, new Object[]{new Object()});
                 if (mode == 1) capture.invoke(null, exception, new Object[]{new Exception("native")});
                 if (mode == 2) capture.invoke(null, message, new Object[]{"rejected"});
@@ -1371,10 +1371,10 @@ public final class GridSnapshotReaderTest {
     private static void connectionExactRuntimeGatesRejectOverrides() {
         class Base {}
         class Derived extends Base {}
-        Bitwig613GridConnectionAccess.requireExact(new Base(), Base.class, "test input");
-        expect("grid_unavailable", () -> Bitwig613GridConnectionAccess.requireExact(new Derived(), Base.class, "test input"));
-        expect("grid_unavailable", () -> Bitwig613GridConnectionAccess.requireExact(new Derived(), Base.class, "test undo"));
-        expect("grid_unavailable", () -> Bitwig613GridConnectionAccess.requireExact(null, Base.class, "test undo"));
+        Bitwig614GridConnectionAccess.requireExact(new Base(), Base.class, "test input");
+        expect("grid_unavailable", () -> Bitwig614GridConnectionAccess.requireExact(new Derived(), Base.class, "test input"));
+        expect("grid_unavailable", () -> Bitwig614GridConnectionAccess.requireExact(new Derived(), Base.class, "test undo"));
+        expect("grid_unavailable", () -> Bitwig614GridConnectionAccess.requireExact(null, Base.class, "test undo"));
     }
 
     static final class ConnectionFixture implements GridConnectionWriter.Access {

@@ -32,11 +32,11 @@ The skill supports screenshot-only guidance, delegated production and troublesho
 | Devices and parameters | Bypass, selection, native/plug-in/preset insertion, eight Remote Controls with page/context guards; source-bound normalized direct parameters on roots and fixed layer children |
 | Launcher/MIDI | Empty-slot clip creation, local audio/clip-file import, launch/stop, explicit-channel grid note reads and bounded edits |
 | Grid | Native catalog, bounded graph/metadata/footprint and parameter-context reads; guarded raw scalar and coupled boolean-panel writes; known-catalog insertion, move/delete, raw custom-name CAS and single-input cable CAS |
-| Modulators | Read-only primary inventory on an explicit root device and exact QEE string-panel reads; no loading, mappings or writes |
+| Modulators | Read-only primary inventory on an explicit root device and exact native string-panel reads; no loading, mappings or writes |
 
 The registry implements **45 methods**, not 45 comprehensively native-accepted tools. Track, root-device and launcher windows are 16 each; sends are eight per track. Layers are one hop: two layers per root and two children per layer. Deeper hierarchy, named slots/drum pads, project paging, arranger clip editing, automation curves and dedicated master/cue tools are outside the structured surface. Bounded reads are not lossless whole-project exports.
 
-Private Grid/modulator access is gated to the mapped **Bitwig 6.1.3 loaded host JAR** and fails closed otherwise. Read and write availability gates are separate. Grid-QEE source support lacks a real Grid-family fixture; Macro-modulator evidence does not establish that coverage. See [PROTOCOL.md](PROTOCOL.md) for actual schemas, limits and side effects, and [VERIFICATION.md](VERIFICATION.md) for checks and bounded coverage.
+Current source gates private Grid/modulator access to the mapped **Bitwig 6.1.4 loaded host JAR**; published `0.1.2` still targets 6.1.3. Other versions/hashes fail closed. Read and write availability gates are separate. Real Grid-family string-panel coverage remains unestablished; Macro-modulator evidence does not establish that coverage. See [PROTOCOL.md](PROTOCOL.md) for actual schemas, limits and side effects, and [VERIFICATION.md](VERIFICATION.md) for checks and bounded coverage.
 
 ## Target safely, then observe completion
 

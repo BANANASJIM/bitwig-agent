@@ -219,7 +219,7 @@ public final class GridModuleNameWriterTest {
             failed(op, "grid_unavailable", "unknown");
             check(f.calls == 1 && f.model.first.values.get(CUSTOM_NAME).equals("new") && f.quarantine.quarantined(), "partial setter is not rolled back and poisons future topology writes");
             Throwable nativeError = f.failure.getCause();
-            check(nativeError instanceof RpcException && Bitwig613Runtime.isInvocationFailure(nativeError)
+            check(nativeError instanceof RpcException && Bitwig614Runtime.isInvocationFailure(nativeError)
                     && nativeError.getCause() instanceof InvocationTargetException && nativeError.getCause().getCause() == cause,
                     "shared quarantine preserves translated reflection boundary and original native throwable identity");
             failed(f.start(new GridModuleNameWriter.Request("new", "later")), "grid_unavailable", "not_applied");
@@ -303,7 +303,7 @@ public final class GridModuleNameWriterTest {
             return () -> {
                 calls++;
                 if (reflectedFailure != null) {
-                    Bitwig613Runtime.invoke("grid_unavailable", PartialSetter.SET, new PartialSetter((Node) module, reflectedFailure), customName);
+                    Bitwig614Runtime.invoke("grid_unavailable", PartialSetter.SET, new PartialSetter((Node) module, reflectedFailure), customName);
                     return;
                 }
                 if (apply) ((Node) module).put(CUSTOM_NAME, customName).put(MODULE_NAME, customName.isEmpty() ? "Native reset name" : customName);

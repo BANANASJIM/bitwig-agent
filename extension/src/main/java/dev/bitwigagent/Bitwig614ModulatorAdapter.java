@@ -6,21 +6,21 @@ import java.util.*;
 import static dev.bitwigagent.HostServices.failure;
 import static dev.bitwigagent.ModulatorSnapshotReader.Field.*;
 
-/** Audited 6.1.3 read bindings only; runtime, discovery and QEE availability remain separate. */
-final class Bitwig613ModulatorAdapter implements ModulatorAdapter, ModulatorSnapshotReader.Access {
+/** Audited 6.1.4 read bindings only; runtime, discovery and string-panel availability remain separate. */
+final class Bitwig614ModulatorAdapter implements ModulatorAdapter, ModulatorSnapshotReader.Access {
     private static final String D = "com.bitwig.flt.document.core.master.device.";
     private static final String R = "com.bitwig.ramona.core.";
-    private final Bitwig613Runtime.Access bindings;
+    private final Bitwig614Runtime.Access bindings;
     private final EnumMap<ModulatorSnapshotReader.Field, Method> readers = new EnumMap<>(ModulatorSnapshotReader.Field.class);
     private final EnumMap<ModulatorSnapshotReader.Kind, Class<?>> kinds = new EnumMap<>(ModulatorSnapshotReader.Kind.class);
     private Method index;
     private Class<?> panelClass;
-    private Bitwig613StringPanelAccess strings;
-    private Bitwig613ReadContextAccess contextAccess;
+    private Bitwig614StringPanelAccess strings;
+    private Bitwig614ReadContextAccess contextAccess;
     private ModulatorSnapshotReader reader;
     private String discoveryError, stringError;
 
-    Bitwig613ModulatorAdapter(Bitwig613Runtime.Access bindings) {
+    Bitwig614ModulatorAdapter(Bitwig614Runtime.Access bindings) {
         this.bindings = bindings;
         if (bindings.gateError() != null) {
             discoveryError = stringError = "Exact runtime gate is unavailable.";
@@ -28,40 +28,40 @@ final class Bitwig613ModulatorAdapter implements ModulatorAdapter, ModulatorSnap
         }
         try {
             bindDiscovery();
-            NativeDeviceTarget target = new NativeDeviceTarget(new Bitwig613DeviceTargetAccess(bindings));
-            contextAccess = new Bitwig613ReadContextAccess(bindings);
+            NativeDeviceTarget target = new NativeDeviceTarget(new Bitwig614DeviceTargetAccess(bindings));
+            contextAccess = new Bitwig614ReadContextAccess(bindings);
             reader = new ModulatorSnapshotReader(this, target, new NativeReadContext(contextAccess));
         } catch (ReflectiveOperationException | RuntimeException | LinkageError error) { discoveryError = diagnostic(error); }
         try {
-            panelClass = bindings.type("QEE");
-            strings = new Bitwig613StringPanelAccess(bindings);
+            panelClass = bindings.type("xMn");
+            strings = new Bitwig614StringPanelAccess(bindings);
         } catch (ReflectiveOperationException | RuntimeException | LinkageError error) { stringError = diagnostic(error); }
     }
 
     private void bindDiscovery() throws ReflectiveOperationException {
-        Class<?> collection = kind(ModulatorSnapshotReader.Kind.COLLECTION, D + "TQi");
-        Class<?> modulator = kind(ModulatorSnapshotReader.Kind.MODULATOR, D + "KXw");
-        Class<?> contents = kind(ModulatorSnapshotReader.Kind.CONTENTS, D + "Xo");
+        Class<?> collection = kind(ModulatorSnapshotReader.Kind.COLLECTION, D + "nZA");
+        Class<?> modulator = kind(ModulatorSnapshotReader.Kind.MODULATOR, D + "tad");
+        Class<?> contents = kind(ModulatorSnapshotReader.Kind.CONTENTS, D + "CcL");
         bindings.requireModelThreadAvailable();
-        Class<?> model = kind(ModulatorSnapshotReader.Kind.MODEL, R + "xKS");
-        Class<?> identified = kind(ModulatorSnapshotReader.Kind.IDENTIFIED, "com.bitwig.flt.document.core.iface.hCB");
-        ancestry(collection, D + "uAG", D + "sF", D + "jhe", "bKp", "q3", "DRK", "pbT", R + "xKS", R + "fJC");
-        ancestry(modulator, D + "JY1", D + "urR", D + "PaU", D + "AA", D + "QKj", "bKp", "q3", "DRK", "pbT", R + "xKS", R + "fJC");
-        ancestry(contents, D + "hha", D + "sIL", D + "Fpk", D + "JkF", D + "Ca1", "bKp", "q3", "DRK", "pbT", R + "xKS", R + "fJC");
-        if (!identified.isInterface() || !Arrays.equals(identified.getInterfaces(), new Class<?>[]{bindings.type(R + "J3L")}))
+        Class<?> model = kind(ModulatorSnapshotReader.Kind.MODEL, R + "oDc");
+        Class<?> identified = kind(ModulatorSnapshotReader.Kind.IDENTIFIED, "com.bitwig.flt.document.core.iface.NN");
+        ancestry(collection, D + "vz3", D + "Vzt", D + "BZG", "K2G", "to", "sw3", "erm", R + "oDc", R + "AVL");
+        ancestry(modulator, D + "eaL", D + "JXO", D + "gJi", D + "hgq", D + "Dgc", "K2G", "to", "sw3", "erm", R + "oDc", R + "AVL");
+        ancestry(contents, D + "f3y", D + "RYd", D + "iYN", D + "BVs", D + "i2s", "K2G", "to", "sw3", "erm", R + "oDc", R + "AVL");
+        if (!identified.isInterface() || !Arrays.equals(identified.getInterfaces(), new Class<?>[]{bindings.type(R + "OLR")}))
             throw new NoSuchMethodException("Inspected direct identifier interface differs.");
-        bind(COLLECTION, bindings.type(D + "Y2N"), "nmR", collection, D + "PI");
-        bind(COUNT, collection, "lUH", int.class, D + "jhe");
-        index = exact(collection, "Dvd", modulator, D + "uAG", int.class);
-        bind(PARENT, model, "M_", model, R + "xKS");
-        bind(COLLECTION_OWNER, modulator, "BXY", collection, D + "KXw");
-        bind(CONTENTS_OWNER, contents, "eCM", modulator, D + "Xo");
-        bind(ID, modulator, "FJH", UUID.class, D + "QKj");
-        bind(NAME, modulator, "Ynu", String.class, D + "QKj");
-        bind(CUSTOM_NAME, modulator, "JtS", String.class, D + "QKj");
-        bind(CONTENTS, modulator, "ioq", contents, D + "JY1");
-        bind(TYPE_ID, contents, "JQk", UUID.class, D + "Fpk");
-        bind(CHILDREN, contents, "cHs", List.class, D + "Ca1");
+        bind(COLLECTION, bindings.type(D + "xlG"), "k2s", collection, D + "FDA");
+        bind(COUNT, collection, "lYc", int.class, D + "BZG");
+        index = exact(collection, "hUR", modulator, D + "vz3", int.class);
+        bind(PARENT, model, "M_", model, R + "oDc");
+        bind(COLLECTION_OWNER, modulator, "BBT", collection, D + "tad");
+        bind(CONTENTS_OWNER, contents, "tp2", modulator, D + "CcL");
+        bind(ID, modulator, "kFU", UUID.class, D + "Dgc");
+        bind(NAME, modulator, "vpw", String.class, D + "Dgc");
+        bind(CUSTOM_NAME, modulator, "Ai", String.class, D + "Dgc");
+        bind(CONTENTS, modulator, "QOl", contents, D + "eaL");
+        bind(TYPE_ID, contents, "UNj", UUID.class, D + "iYN");
+        bind(CHILDREN, contents, "SQN", List.class, D + "i2s");
         bind(PARAMETER_ID, identified, "aA_", String.class, identified.getName());
     }
     private Class<?> kind(ModulatorSnapshotReader.Kind kind, String name) throws ClassNotFoundException {
@@ -87,9 +87,9 @@ final class Bitwig613ModulatorAdapter implements ModulatorAdapter, ModulatorSnap
     }
     @Override public JsonObject capabilities() {
         JsonObject result = HostServices.observed();
-        result.addProperty("adapter", "bitwig_6_1_3_primary_modulators_read_only");
-        result.addProperty("hostVersion", bindings.hostVersion()); result.addProperty("expectedVersion", Bitwig613Runtime.VERSION);
-        result.addProperty("expectedSha256", Bitwig613Runtime.SHA256); result.addProperty("actualSha256", bindings.actualHash());
+        result.addProperty("adapter", "bitwig_6_1_4_primary_modulators_read_only");
+        result.addProperty("hostVersion", bindings.hostVersion()); result.addProperty("expectedVersion", Bitwig614Runtime.VERSION);
+        result.addProperty("expectedSha256", Bitwig614Runtime.SHA256); result.addProperty("actualSha256", bindings.actualHash());
         result.add("runtimeGate", capability(bindings.gateError()));
         result.add("discovery", capability(discoveryError)); result.add("stringPanelRead", capability(stringError));
         result.addProperty("available", bindings.gateError() == null && discoveryError == null);

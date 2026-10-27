@@ -11,7 +11,7 @@
 [Quickstart](#quickstart) · [Documentation](https://github.com/BANANASJIM/bitwig-agent/blob/main/docs/README.md) · [Agent skill](https://github.com/BANANASJIM/bitwig-agent/tree/main/skills/bitwig-agent) · [Contributing](https://github.com/BANANASJIM/bitwig-agent/blob/main/CONTRIBUTING.md)
 
 > **Experimental — use a disposable project and keep backups.**
-> Native evidence covers **Linux / Bitwig 6.1.3 / API 25** plus [bounded 6.1.4 production checks on unreleased source](https://github.com/BANANASJIM/bitwig-agent/blob/main/VERIFICATION.md#native-614-production-check--unreleased-source). Private Grid/modulator access still requires **6.1.3** and its exact host JAR. The stop/seek and track-selection fixes are not in published `0.1.2`; read the [safety boundaries](#safety-and-compatibility) before enabling the controller.
+> Published **`0.1.2`** (the uv/AUR quickstart below) gates private Grid/modulator access to **Bitwig 6.1.3**. Current **unreleased source** targets **6.1.4** and includes the stop/seek and track-selection fixes; use the [source setup](https://github.com/BANANASJIM/bitwig-agent/blob/main/CONTRIBUTING.md#source-setup), not a package upgrade, for those changes. Both private adapters require their exact loaded host JAR. Read the [bounded native evidence](https://github.com/BANANASJIM/bitwig-agent/blob/main/VERIFICATION.md) and [safety boundaries](#safety-and-compatibility).
 
 ## Quickstart
 

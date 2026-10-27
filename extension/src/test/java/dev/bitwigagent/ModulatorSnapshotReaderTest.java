@@ -202,7 +202,7 @@ public final class ModulatorSnapshotReaderTest {
         expect("deadline", () -> deadline.reader.parameter(deadline.proxy, TRACK, deadline.id(deadline.first), "TEXT", () -> { if (deadline.expired) throw HostServices.failure("deadline", "expired"); }));
     }
     private static void runtimeGateIsReadOnlyAndDoesNotClaimAcceptance() {
-        Bitwig613ModulatorAdapter adapter = new Bitwig613ModulatorAdapter(new Bitwig613Runtime(new Object(), "6.1.2", () -> {}).access("modulator_unavailable"));
+        Bitwig614ModulatorAdapter adapter = new Bitwig614ModulatorAdapter(new Bitwig614Runtime(new Object(), "6.1.2", () -> {}).access("modulator_unavailable"));
         JsonObject capabilities = adapter.capabilities();
         check(!capabilities.getAsJsonObject("runtimeGate").get("available").getAsBoolean(), "wrong runtime version remains closed");
         check(!capabilities.getAsJsonObject("discovery").get("available").getAsBoolean() && !capabilities.getAsJsonObject("stringPanelRead").get("available").getAsBoolean(), "domain capabilities respect runtime failure");

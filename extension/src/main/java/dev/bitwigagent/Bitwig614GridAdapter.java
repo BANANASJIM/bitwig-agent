@@ -7,12 +7,12 @@ import java.util.stream.Stream;
 import java.util.function.Consumer;
 import static dev.bitwigagent.GridSnapshotReader.Field.*;
 import static dev.bitwigagent.HostServices.failure;
-import static dev.bitwigagent.Bitwig613Runtime.diagnostic;
-import static dev.bitwigagent.Bitwig613Runtime.VERSION;
-import static dev.bitwigagent.Bitwig613Runtime.SHA256;
+import static dev.bitwigagent.Bitwig614Runtime.diagnostic;
+import static dev.bitwigagent.Bitwig614Runtime.VERSION;
+import static dev.bitwigagent.Bitwig614Runtime.SHA256;
 
 /** Exact symbol map for one inspected binary; read and write capabilities fail independently. */
-final class Bitwig613GridAdapter implements GridAdapter, GridSnapshotReader.Access {
+final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Access {
     private static final String D = "com.bitwig.flt.document.core.master.device.";
     private static final String R = "com.bitwig.ramona.core.";
     private static final String P = "com.bitwig.flt.packaging.core.";
@@ -22,16 +22,16 @@ final class Bitwig613GridAdapter implements GridAdapter, GridSnapshotReader.Acce
     private final EnumMap<GridSnapshotReader.Kind, Class<?>> kinds = new EnumMap<>(GridSnapshotReader.Kind.class);
     private final EnumMap<GridSnapshotReader.Metadata, String> metadataErrors = new EnumMap<>(GridSnapshotReader.Metadata.class);
     private final GridSnapshotReader snapshots = new GridSnapshotReader(this);
-    private final Bitwig613Runtime.Access bindings;
+    private final Bitwig614Runtime.Access bindings;
     private final String hostVersion, actualHash, gateError;
     private String catalogError, identityError, structureError, parameterError, displayError;
-    private Bitwig613DeviceTargetAccess deviceTargets;
+    private Bitwig614DeviceTargetAccess deviceTargets;
     private GridParameterContext parameterContexts;
     private String inspectionError, writeError;
     private GridParameterWriter parameterWriter;
-    private Bitwig613GridBooleanPanelAccess booleanPanels;
+    private Bitwig614GridBooleanPanelAccess booleanPanels;
     private String booleanPanelError;
-    private Bitwig613StringPanelAccess stringPanels;
+    private Bitwig614StringPanelAccess stringPanels;
     private String stringPanelError;
     private String moduleMoveError, moduleDeleteError;
     private GridModuleWriter moduleWriter;
@@ -39,26 +39,26 @@ final class Bitwig613GridAdapter implements GridAdapter, GridSnapshotReader.Acce
     private GridConnectionWriter connectionWriter;
     private String moduleInsertError;
     private GridInsertionWriter insertionWriter;
-    private Bitwig613GridInsertionAccess insertionAccess;
+    private Bitwig614GridInsertionAccess insertionAccess;
     private String moduleRenameError;
     private GridModuleNameWriter moduleNameWriter;
 
-    Bitwig613GridAdapter(Bitwig613Runtime.Access bindings) {
+    Bitwig614GridAdapter(Bitwig614Runtime.Access bindings) {
         this.bindings = bindings;
         hostVersion = bindings.hostVersion(); actualHash = bindings.actualHash(); gateError = bindings.gateError();
         if (gateError != null) return;
         try { bindCatalog(); } catch (ReflectiveOperationException | RuntimeException | LinkageError error) { catalogError = diagnostic(error); }
-        try { deviceTargets = new Bitwig613DeviceTargetAccess(bindings); }
+        try { deviceTargets = new Bitwig614DeviceTargetAccess(bindings); }
         catch (ReflectiveOperationException | RuntimeException | LinkageError error) { identityError = diagnostic(error); }
         if (identityError != null) structureError = "Required native owning-track identity binding unavailable: " + identityError;
         else try { bindStructure(); } catch (ReflectiveOperationException | RuntimeException | LinkageError error) { structureError = diagnostic(error); }
         if (structureError == null) {
             try { bindParameters(); } catch (ReflectiveOperationException | RuntimeException | LinkageError error) { parameterError = diagnostic(error); }
-            try { booleanPanels = new Bitwig613GridBooleanPanelAccess(bindings); }
+            try { booleanPanels = new Bitwig614GridBooleanPanelAccess(bindings); }
             catch (ReflectiveOperationException | RuntimeException | LinkageError error) { booleanPanelError = diagnostic(error); }
-            try { stringPanels = new Bitwig613StringPanelAccess(bindings); }
+            try { stringPanels = new Bitwig614StringPanelAccess(bindings); }
             catch (ReflectiveOperationException | RuntimeException | LinkageError error) { stringPanelError = diagnostic(error); }
-            try { bind(DISPLAY, bindings.type("iTc"), "Fho", String.class); }
+            try { bind(DISPLAY, bindings.type("aLw"), "qFI", String.class); }
             catch (ReflectiveOperationException | RuntimeException | LinkageError error) { displayError = diagnostic(error); }
         } else {
             parameterError = "Structure binding unavailable."; displayError = parameterError;
@@ -72,32 +72,32 @@ final class Bitwig613GridAdapter implements GridAdapter, GridSnapshotReader.Acce
         if (structureError != null || parameterError != null)
             inspectionError = "Required structure or typed parameter binding unavailable.";
         else try {
-            Class<?> parameter = kind(GridSnapshotReader.Kind.PARAMETER, "Tty");
+            Class<?> parameter = kind(GridSnapshotReader.Kind.PARAMETER, "rBL");
             bind(PARAMETER_ID, parameter, "aA_", String.class);
-            parameterContexts = new GridParameterContext(new Bitwig613GridParameterContext(bindings, booleanPanels, stringPanels));
+            parameterContexts = new GridParameterContext(new Bitwig614GridParameterContext(bindings, booleanPanels, stringPanels));
         } catch (ReflectiveOperationException | RuntimeException | LinkageError error) { inspectionError = diagnostic(error); }
         if (inspectionError != null) writeError = "Required parameter inspection bindings unavailable.";
         else try {
             GridBooleanPanelWriter panels = booleanPanels == null ? null
                     : new GridBooleanPanelWriter(snapshots, parameterContexts, booleanPanels);
-            parameterWriter = new GridParameterWriter(snapshots, parameterContexts, new Bitwig613GridParameterWriter(bindings), panels);
+            parameterWriter = new GridParameterWriter(snapshots, parameterContexts, new Bitwig614GridParameterWriter(bindings), panels);
         } catch (ReflectiveOperationException | RuntimeException | LinkageError error) { writeError = diagnostic(error); }
         GridTopologyContext topologyContexts = null;
         String topologyContextError = structureError == null ? null : "Required structure binding unavailable.";
         if (topologyContextError == null) {
-            try { topologyContexts = new GridTopologyContext(new Bitwig613GridTopologyContext(bindings)); }
+            try { topologyContexts = new GridTopologyContext(new Bitwig614GridTopologyContext(bindings)); }
             catch (ReflectiveOperationException | RuntimeException | LinkageError error) { topologyContextError = diagnostic(error); }
         }
         if (topologyContextError != null || metadataErrors.containsKey(GridSnapshotReader.Metadata.MODULE_NAMES))
             moduleRenameError = topologyContextError != null ? topologyContextError : "Required native module name readers unavailable.";
         else try {
             moduleNameWriter = new GridModuleNameWriter(snapshots, this, topologyContexts,
-                    new Bitwig613GridModuleNameAccess(bindings), TOPOLOGY_QUARANTINE);
+                    new Bitwig614GridModuleNameAccess(bindings), TOPOLOGY_QUARANTINE);
         } catch (ReflectiveOperationException | RuntimeException | LinkageError error) { moduleRenameError = diagnostic(error); }
         if (topologyContextError != null || metadataErrors.containsKey(GridSnapshotReader.Metadata.FOOTPRINT)) {
             moduleMoveError = moduleDeleteError = topologyContextError != null ? topologyContextError : "Required native footprint binding unavailable.";
         } else try {
-            Bitwig613GridModuleAccess topology = new Bitwig613GridModuleAccess(bindings);
+            Bitwig614GridModuleAccess topology = new Bitwig614GridModuleAccess(bindings);
             moduleMoveError = topology.moveError; moduleDeleteError = topology.deleteError;
             moduleWriter = new GridModuleWriter(snapshots, this, topologyContexts, topology, TOPOLOGY_QUARANTINE);
         } catch (ReflectiveOperationException | RuntimeException | LinkageError error) {
@@ -106,91 +106,91 @@ final class Bitwig613GridAdapter implements GridAdapter, GridSnapshotReader.Acce
         if (topologyContextError != null) connectionError = topologyContextError;
         else try {
             connectionWriter = new GridConnectionWriter(snapshots, this, topologyContexts,
-                    new Bitwig613GridConnectionAccess(bindings), TOPOLOGY_QUARANTINE);
+                    new Bitwig614GridConnectionAccess(bindings), TOPOLOGY_QUARANTINE);
         } catch (ReflectiveOperationException | RuntimeException | LinkageError error) { connectionError = diagnostic(error); }
         if (topologyContextError != null || catalogError != null || metadataErrors.containsKey(GridSnapshotReader.Metadata.FOOTPRINT))
             moduleInsertError = "Required insertion structure/catalog/context/footprint bindings unavailable.";
         else try {
-            insertionAccess = new Bitwig613GridInsertionAccess(bindings);
+            insertionAccess = new Bitwig614GridInsertionAccess(bindings);
             insertionWriter = new GridInsertionWriter(snapshots, this, topologyContexts, insertionAccess, TOPOLOGY_QUARANTINE);
         } catch (ReflectiveOperationException | RuntimeException | LinkageError error) { moduleInsertError = diagnostic(error); }
     }
 
     private void bindCatalog() throws ReflectiveOperationException {
-        Class<?> entry = kind(GridSnapshotReader.Kind.ENTRY, P + "kG");
-        bindStatic(CATALOG, bindings.type(P + "Iac"), "vhT", List.class);
-        bind(ENTRY_ID, entry, "vhT", UUID.class); bind(ENTRY_NAME, entry, "E3I", String.class);
-        bind(ENTRY_KIND, entry, "HEY", bindings.type(P + "biA"));
+        Class<?> entry = kind(GridSnapshotReader.Kind.ENTRY, P + "CuM");
+        bindStatic(CATALOG, bindings.type(P + "Wkj"), "cfM", List.class);
+        bind(ENTRY_ID, entry, "cfM", UUID.class); bind(ENTRY_NAME, entry, "MRY", String.class);
+        bind(ENTRY_KIND, entry, "Hnt", bindings.type(P + "WzZ"));
     }
     private void bindStructure() throws ReflectiveOperationException {
         bindings.requireModelThreadAvailable();
-        Class<?> device = bindings.type(D + "Y2N");
-        Class<?> module = kind(GridSnapshotReader.Kind.MODULE, D + "gxR");
-        Class<?> input = kind(GridSnapshotReader.Kind.INPUT, D + "az");
-        Class<?> output = kind(GridSnapshotReader.Kind.OUTPUT, D + "xb1");
-        Class<?> graph = bindings.type(D + "zXc"), descriptor = bindings.type("com.bitwig.flt.device.BJf");
-        bind(GRAPH, device, "tw1", graph);
+        Class<?> device = bindings.type(D + "xlG");
+        Class<?> module = kind(GridSnapshotReader.Kind.MODULE, D + "rSf");
+        Class<?> input = kind(GridSnapshotReader.Kind.INPUT, D + "PSD");
+        Class<?> output = kind(GridSnapshotReader.Kind.OUTPUT, D + "xOa");
+        Class<?> graph = bindings.type(D + "IcG"), descriptor = bindings.type("com.bitwig.flt.device.Jkg");
+        bind(GRAPH, device, "zmH", graph);
         bind(MODULES, graph, "cj_", Stream.class);
-        bind(INSTANCE_ID, module, "FJH", UUID.class); bind(LOCAL_KEY, module, "aA_", String.class);
-        bind(X, module, "kpO", int.class); bind(Y, module, "JQk", int.class);
-        bind(DESCRIPTOR, module, "PfC", descriptor); bind(TYPE_ID, descriptor, "HEY", UUID.class);
-        bind(INPUTS, module, "BXY", Stream.class); bind(OUTPUTS, module, "pS", Stream.class);
-        bind(MODULE_GRAPH, module, "Ptj", graph);
-        readers.put(OWNER_MODULE, bindings.exactMethod(bindings.type(R + "fJC"), "k31", Object.class, false, Class.class));
-        bind(INPUT_SOURCE, input, "lXL", output); bind(INPUT_KEY, input, "aA_", String.class);
-        bind(OUTPUT_KEY, output, "aA_", String.class); bind(PATH, bindings.type(R + "xKS"), "XAf", String.class);
+        bind(INSTANCE_ID, module, "kFU", UUID.class); bind(LOCAL_KEY, module, "aA_", String.class);
+        bind(X, module, "FzB", int.class); bind(Y, module, "UNj", int.class);
+        bind(DESCRIPTOR, module, "Pgx", descriptor); bind(TYPE_ID, descriptor, "Hnt", UUID.class);
+        bind(INPUTS, module, "BBT", Stream.class); bind(OUTPUTS, module, "Cuu", Stream.class);
+        bind(MODULE_GRAPH, module, "sut", graph);
+        readers.put(OWNER_MODULE, bindings.exactMethod(bindings.type(R + "AVL"), "IwV", Object.class, false, Class.class));
+        bind(INPUT_SOURCE, input, "Scv", output); bind(INPUT_KEY, input, "aA_", String.class);
+        bind(OUTPUT_KEY, output, "aA_", String.class); bind(PATH, bindings.type(R + "oDc"), "veO", String.class);
     }
     private void bindParameters() throws ReflectiveOperationException {
-        bind(CHILDREN, bindings.type(D + "gxR"), "PZJ", Stream.class);
-        Class<?> floating = kind(GridSnapshotReader.Kind.FLOAT, "BFZ");
-        Class<?> bool = kind(GridSnapshotReader.Kind.BOOLEAN, "EjC");
-        Class<?> integer = kind(GridSnapshotReader.Kind.INTEGER, "bEX");
-        Class<?> indexed = kind(GridSnapshotReader.Kind.ENUM, "ndv");
-        Class<?> option = kind(GridSnapshotReader.Kind.OPTION, "aD");
-        Class<?> floatDefinition = bindings.type("aw"), integerDefinition = bindings.type("aN"), enumDefinition = bindings.type("aH");
-        bind(FLOAT_VALUE, floating, "Dvd", double.class); bind(FLOAT_DEFINITION, floating, "IRG", floatDefinition);
-        bind(FLOAT_MIN, floatDefinition, "kpO", double.class); bind(FLOAT_MAX, floatDefinition, "JQk", double.class);
-        bind(BOOLEAN_VALUE, bool, "Dvd", boolean.class);
-        bind(INTEGER_VALUE, integer, "loH", int.class); bind(INTEGER_DEFINITION, integer, "IRG", integerDefinition);
-        bind(INTEGER_MIN, integerDefinition, "JQk", int.class); bind(INTEGER_MAX, integerDefinition, "THY", int.class);
-        bind(ENUM_VALUE, indexed, "JQk", int.class); bind(ENUM_DEFINITION, indexed, "dgS", enumDefinition);
-        bind(OPTIONS, enumDefinition, "THY", List.class); bind(OPTION_VALUE, option, "vhT", int.class);
-        bind(OPTION_LABEL, option, "k31", String.class);
+        bind(CHILDREN, bindings.type(D + "rSf"), "tB1", Stream.class);
+        Class<?> floating = kind(GridSnapshotReader.Kind.FLOAT, "Opy");
+        Class<?> bool = kind(GridSnapshotReader.Kind.BOOLEAN, "Qe");
+        Class<?> integer = kind(GridSnapshotReader.Kind.INTEGER, "Igl");
+        Class<?> indexed = kind(GridSnapshotReader.Kind.ENUM, "RSJ");
+        Class<?> option = kind(GridSnapshotReader.Kind.OPTION, "aQ");
+        Class<?> floatDefinition = bindings.type("aL"), integerDefinition = bindings.type("bd"), enumDefinition = bindings.type("aX");
+        bind(FLOAT_VALUE, floating, "hUR", double.class); bind(FLOAT_DEFINITION, floating, "jHi", floatDefinition);
+        bind(FLOAT_MIN, floatDefinition, "FzB", double.class); bind(FLOAT_MAX, floatDefinition, "UNj", double.class);
+        bind(BOOLEAN_VALUE, bool, "hUR", boolean.class);
+        bind(INTEGER_VALUE, integer, "kIh", int.class); bind(INTEGER_DEFINITION, integer, "jHi", integerDefinition);
+        bind(INTEGER_MIN, integerDefinition, "UNj", int.class); bind(INTEGER_MAX, integerDefinition, "TMF", int.class);
+        bind(ENUM_VALUE, indexed, "UNj", int.class); bind(ENUM_DEFINITION, indexed, "DNo", enumDefinition);
+        bind(OPTIONS, enumDefinition, "TMF", List.class); bind(OPTION_VALUE, option, "cfM", int.class);
+        bind(OPTION_LABEL, option, "IwV", String.class);
     }
 
     private void bindMetadata(GridSnapshotReader.Metadata metadata) throws ReflectiveOperationException {
         switch (metadata) {
             case FOOTPRINT:
-                bind(WIDTH, bindings.type(D + "qMK"), "znu", int.class);
-                bind(HEIGHT, bindings.type(D + "qMK"), "Kxv", int.class); break;
+                bind(WIDTH, bindings.type(D + "CEE"), "HL", int.class);
+                bind(HEIGHT, bindings.type(D + "CEE"), "E1b", int.class); break;
             case MODULE_NAMES: {
-                Class<?> module = bindings.type(D + "QKj");
-                bind(MODULE_NAME, module, "Ynu", String.class);
-                bind(CUSTOM_NAME, module, "JtS", String.class); break;
+                Class<?> module = bindings.type(D + "Dgc");
+                bind(MODULE_NAME, module, "vpw", String.class);
+                bind(CUSTOM_NAME, module, "Ai", String.class); break;
             }
             case TYPE_NAMES: {
-                Class<?> entry = bindings.type(P + "kG");
-                readers.put(TYPE_ENTRY, bindings.exactMethod(bindings.type(P + "Iac"), "E3I", entry, true, UUID.class));
-                bind(TYPE_NAME, entry, "E3I", String.class); break;
+                Class<?> entry = bindings.type(P + "CuM");
+                readers.put(TYPE_ENTRY, bindings.exactMethod(bindings.type(P + "Wkj"), "MRY", entry, true, UUID.class));
+                bind(TYPE_NAME, entry, "MRY", String.class); break;
             }
             case PARAMETER_NAMES: {
-                Class<?> parameter = bindings.type("Tty");
+                Class<?> parameter = bindings.type("rBL");
                 bind(PARAMETER_ID, parameter, "aA_", String.class);
-                bind(PARAMETER_NAME, parameter, "HNG", String.class);
-                bind(SHORT_NAME, parameter, "GDy", String.class); break;
+                bind(PARAMETER_NAME, parameter, "BDm", String.class);
+                bind(SHORT_NAME, parameter, "SL2", String.class); break;
             }
             case PORT_NAMES:
-                bind(INPUT_NAME, bindings.type(D + "Suo"), "vhT", String.class);
-                bind(OUTPUT_NAME, bindings.type(D + "n32"), "qQD", String.class); break;
+                bind(INPUT_NAME, bindings.type(D + "cXR"), "cfM", String.class);
+                bind(OUTPUT_NAME, bindings.type(D + "YSk"), "emh", String.class); break;
             case FLOAT_UNITS: {
-                Class<?> unit = bindings.type("fD");
-                bind(FLOAT_UNIT, bindings.type("aA"), "QJx", unit);
-                bind(UNIT_TOKEN, unit, "E3I", String.class); break;
+                Class<?> unit = bindings.type("fX");
+                bind(FLOAT_UNIT, bindings.type("aN"), "ERO", unit);
+                bind(UNIT_TOKEN, unit, "MRY", String.class); break;
             }
             case INTEGER_AFFIXES: {
-                Class<?> definition = bindings.type("aP");
-                bind(INTEGER_PREFIX, definition, "xwW", String.class);
-                bind(INTEGER_SUFFIX, definition, "A1", String.class); break;
+                Class<?> definition = bindings.type("bh");
+                bind(INTEGER_PREFIX, definition, "E3", String.class);
+                bind(INTEGER_SUFFIX, definition, "wGc", String.class); break;
             }
             default: throw new AssertionError(metadata);
         }
@@ -207,31 +207,31 @@ final class Bitwig613GridAdapter implements GridAdapter, GridSnapshotReader.Acce
         result.add("catalog", capability(gateError == null ? catalogError : gateError, "native_MODULE_entries"));
         result.add("structure", capability(gateError == null ? structureError : gateError, "modules_ports_incoming_same_graph_connections"));
         result.add("nativeOwningTrack", capability(gateError == null ? identityError : gateError,
-                "required_device_track_ancestor_channel_uuid_with_SCA_alias_before_and_after_capture"));
+                "required_device_track_ancestor_channel_uuid_with_kWY_alias_before_and_after_capture"));
         result.add("typedParameters", capability(gateError == null ? parameterError : gateError, "float_boolean_integer_enum_known_children_only"));
         result.add("display", capability(gateError == null ? displayError : gateError, "native_reader_semantics_unverified"));
         result.add("parameterInspection", capability(gateError == null ? inspectionError : gateError,
                 "single_exact_parameter_and_same_callback_native_context_observations_only"));
         JsonObject write = capability(gateError == null ? writeError : gateError,
-                "guarded_raw_controller_APs_TZj_aJV_LtR_y1l_ZPH_observed_stopped_only");
-        write.addProperty("operation", "iTc.JQk(double):void/set_raw_from_controller");
+                "guarded_raw_controller_rce_Hgx_iS3_Lig_RuU_nhW_observed_stopped_only");
+        write.addProperty("operation", "aLw.UNj(double):void/set_raw_from_controller");
         write.addProperty("nativeUndoAwareOperation", true);
         write.addProperty("undoGroupingVerified", false);
         write.addProperty("undoCommandAvailable", false);
         write.addProperty("engineAcknowledgement", false);
         result.add("parameterWrite", write);
         JsonObject panels = capability(gateError == null ? booleanPanelError : gateError,
-                "exact_Fln_boolean_panel_no_scalar_label_display_or_touch_license_flags");
+                "exact_BMo_boolean_panel_no_scalar_label_display_or_touch_license_flags");
         panels.addProperty("inspectionAvailable", gateError == null && booleanPanelError == null && inspectionError == null);
         panels.addProperty("writeAvailable", gateError == null && booleanPanelError == null && writeError == null);
-        panels.addProperty("operation", "ihn.E3I(boolean):void/native_boolean_panel_change");
-        panels.addProperty("coupling", "one_same_module_exact_TZj_reference_required_for_inspection_and_write");
+        panels.addProperty("operation", "xqx.MRY(boolean):void/native_boolean_panel_change");
+        panels.addProperty("coupling", "one_same_module_exact_Hgx_reference_required_for_inspection_and_write");
         panels.addProperty("guardPolicy", "panel_common_context_plus_linked_scalar_license_touch_context_not_claimed_GUI_policy");
         panels.addProperty("nativeUndoAwareOperation", true); panels.addProperty("undoGroupingVerified", false);
         panels.addProperty("engineAcknowledgement", false);
         result.add("booleanPanels", panels);
         JsonObject strings = capability(gateError == null ? stringPanelError : gateError,
-                "exact_QEE_native_string_read_only_no_scalar_labels_display_or_touch_license_flags");
+                "exact_xMn_native_string_read_only_no_scalar_labels_display_or_touch_license_flags");
         strings.addProperty("inspectionAvailable", gateError == null && stringPanelError == null && inspectionError == null);
         strings.addProperty("writeAvailable", false);
         result.add("stringPanels", strings);
@@ -245,7 +245,7 @@ final class Bitwig613GridAdapter implements GridAdapter, GridSnapshotReader.Acce
         JsonObject rename = topologyCapability(gateError != null ? gateError : quarantine != null ? quarantine : moduleRenameError,
                 "current_UUID_raw_customName_CAS_public_final_property_setter_later_actual_graph_observation");
         rename.remove("maximumOccupiedYSpan");
-        rename.addProperty("operation", "com.bitwig.flt.document.core.master.device.QKj.HFp(String):void");
+        rename.addProperty("operation", "com.bitwig.flt.document.core.master.device.Dgc.iHb(String):void");
         rename.addProperty("bindingAvailable", gateError == null && moduleRenameError == null);
         rename.addProperty("nameBound", GridModuleNameWriter.MAX_NAME);
         rename.addProperty("nameBoundUnits", "UTF16_code_units");
@@ -255,14 +255,14 @@ final class Bitwig613GridAdapter implements GridAdapter, GridSnapshotReader.Acce
         JsonObject connection = topologyCapability(gateError != null ? gateError : quarantine != null ? quarantine : connectionError,
                 "single_input_nullable_source_CAS_public_undo_wrapper_later_actual_graph_observation");
         connection.remove("maximumOccupiedYSpan");
-        connection.addProperty("operation", "Suo.vhT(hUF):void");
-        connection.addProperty("destinationRuntimeGate", "exact_com.bitwig.flt.document.core.master.device.Iac_only_no_subclasses");
-        connection.addProperty("undoRuntimeGate", "exact_com.bitwig.flt.document.core.master.j3O_only_no_subclasses_native_validation_not_atomic_permission");
+        connection.addProperty("operation", "cXR.cfM(led):void");
+        connection.addProperty("destinationRuntimeGate", "exact_com.bitwig.flt.document.core.master.device.Wkj_only_no_subclasses");
+        connection.addProperty("undoRuntimeGate", "exact_com.bitwig.flt.document.core.master.tj2_only_no_subclasses_native_validation_not_atomic_permission");
         connection.addProperty("projectScope", "native_repair_can_change_other_inputs_and_project_routing_not_certified_by_Grid_snapshot");
         result.add("connectionWrite", connection);
         JsonObject insertion = topologyCapability(gateError != null ? gateError : quarantine != null ? quarantine : moduleInsertError,
                 "known_MODULE_resource_normal_loader_detached_singleton_absolute_anchor_later_native_settlement_and_actual_graph");
-        insertion.addProperty("operation", "WN2.vhT(String[],JTS)_then_zXc.vhT(Collection,int,int,false,null)");
+        insertion.addProperty("operation", "g2L.cfM(String[],ZuD)_then_IcG.cfM(Collection,int,int,false,null)");
         insertion.addProperty("loaderDispatchedScope", "native_parsing_conversion_not_pure_read_timeout_is_not_cancellation");
         insertion.addProperty("placementDispatchedScope", "collection_placement_invocation_not_atomic_commit");
         insertion.addProperty("runtimeVerification", "not_established_by_read_only_binding_inspection");

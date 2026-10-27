@@ -223,7 +223,7 @@ public final class GridInsertionWriterTest {
             HostOperation op = f.start(); f.deliver();
             check(f.cleanups == 1 && f.placements == 0 && f.successes == 0 && f.guard.quarantined(),
                     "actual Method.invoke conversion failure is cleaned once and quarantined before settlement");
-            check(f.cleanupError instanceof RpcException && Bitwig613Runtime.isInvocationFailure(f.cleanupError)
+            check(f.cleanupError instanceof RpcException && Bitwig614Runtime.isInvocationFailure(f.cleanupError)
                     && f.cleanupError.getCause() instanceof java.lang.reflect.InvocationTargetException
                     && f.cleanupError.getCause().getCause() == cause,
                     "RPC translation retains reflection boundary and original native throwable identity");
@@ -237,7 +237,7 @@ public final class GridInsertionWriterTest {
         for (String rejection : List.of("deadline_exceeded", "stale_context")) {
             Fixture f = new Fixture(); HostOperation op = f.start(); f.requestError = rejection; f.deliver();
             check(f.cleanups == 1 && !f.guard.quarantined() && !op.result.isDone()
-                    && !Bitwig613Runtime.isInvocationFailure(f.cleanupError),
+                    && !Bitwig614Runtime.isInvocationFailure(f.cleanupError),
                     "ordinary deadline/context validation remains a cleanup-and-settle rejection");
             f.next(); f.guard.requireAvailable();
             check(TransportMixFixture.error(op, rejection).outcome.equals("unknown"),
@@ -339,7 +339,7 @@ public final class GridInsertionWriterTest {
         }
         @Override public List<?> converted(Object result) {
             if (reflectedConversion != null)
-                return (List<?>) Bitwig613Runtime.invoke("grid_unavailable", ReflectedConversion.READ, reflectedConversion);
+                return (List<?>) Bitwig614Runtime.invoke("grid_unavailable", ReflectedConversion.READ, reflectedConversion);
             if (failConverted) throw new LinkageError("native callback reader failed");
             return loaded;
         }

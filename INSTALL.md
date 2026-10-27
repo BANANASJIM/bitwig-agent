@@ -1,6 +1,6 @@
 # Installation details
 
-Start with the [three-step quickstart](README.md#quickstart). Choose an isolated [uv tool environment](https://docs.astral.sh/uv/guides/tools/) from [PyPI](https://pypi.org/project/bitwig-agent/), or the [Arch/AUR package](#arch-linux-aur). Both supply the same-version prebuilt controller extension without a Java compiler. Native compatibility evidence remains limited to Linux with Bitwig Studio 6.1.3 / API 25; platform-specific installer defaults do not establish macOS or Windows host support.
+Start with the [three-step quickstart](README.md#quickstart). Choose an isolated [uv tool environment](https://docs.astral.sh/uv/guides/tools/) from [PyPI](https://pypi.org/project/bitwig-agent/), or the [Arch/AUR package](#arch-linux-aur). Both supply the same-version prebuilt controller extension without a Java compiler. These routes install published `0.1.2`, whose private Grid/modulator access requires Bitwig 6.1.3 and its exact loaded host JAR. The 6.1.4 adapter and newer fixes are **unreleased source**; follow [source setup](CONTRIBUTING.md#source-setup) for those. Native evidence is bounded to Linux / API 25; platform-specific installer defaults do not establish macOS or Windows host support.
 
 Bitwig documents its platform extension directories and manual controller registration in its [official controller-extension installation guide](https://www.bitwig.com/support/technical_support/how-do-i-add-a-controller-extension-or-script-17/).
 
@@ -57,7 +57,7 @@ bitwig-agent-install --mcp-config
 
 Do not run this user-extension installation with `sudo`. Repeat the explicit copy after upgrading the system package, then reload/restart the controller; the system asset and already-copied user extension are separate files. Avoid leaving a uv-installed command ahead of the Arch package on `PATH`; choose one Python installation and regenerate MCP configuration from it.
 
-Bitwig is an optional host dependency, not a forced host upgrade. The AUR `bitwig-studio` recipe's 6.1.4 version does **not** establish compatibility: native evidence here remains Linux / 6.1.3 / API 25 and exact-JAR-gated private access. Keep your licensed, compatible host under your control. See [package design and publication boundaries](docs/packaging.md).
+Bitwig is an optional host dependency, not a forced host upgrade. Installing a newer `bitwig-studio` package does not update your copied extension or relax its private version/hash gate. Keep your licensed, compatible host under your control. See [package design and publication boundaries](docs/packaging.md).
 
 ## Release artifacts and integrity
 

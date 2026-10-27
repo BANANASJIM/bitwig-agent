@@ -4,7 +4,7 @@ Checks prove only their exercised layer. The toolkit implements 45 methods; neit
 
 ## Reproducible host-free checks
 
-Run from the repository root. Prerequisites are Python 3.11+, `uv`, **JDK 25+**, and your own installed API 25 Bitwig JAR. The Bitwig 6.1.3 loader superclass requires JDK 25 to read; generated extension classes target Java 11. Neither the host JAR nor the JDK is redistributed. The build downloads and verifies pinned Gson on first use, so that first build requires network access.
+Run from the repository root. Prerequisites are Python 3.11+, `uv`, **JDK 25+**, and your own installed Bitwig 6.1.4 / API 25 JAR for current source. Its loader superclass requires JDK 25 to read; generated extension classes target Java 11. Neither the host JAR nor the JDK is redistributed. The build downloads and verifies pinned Gson on first use, so that first build requires network access.
 
 ```sh
 uv sync --locked
@@ -101,7 +101,7 @@ uv run --locked python scripts/smoke-native.py \
 
 This is a read-only MCP preflight, not music, GUI, write or persistence E2E. It performs no launch, installation, GUI input, screenshot or automatic retry. It excludes `notes.read` because that call selects a clip. It checks loopback socket ownership, including Linux IPv4-mapped TCP6 entries; a matching title or project name is **not** proof of the loaded full project path. Exact file identity and actual reopen behavior need independent evidence. The local endpoint is unauthenticated: keep it on trusted loopback and never forward it to a network.
 
-Before any native operation, designate one exclusive writer and freshly identify the disposable project, process lifetime, actual window, endpoint and extension build. Preserve user projects; display isolation does not imply profile/audio isolation. Private Grid/modulator access requires Bitwig **6.1.3** and loaded host JAR SHA-256 `4245a38ccddaa800421935216351e6dda8384b34a128cbc85c21e2e6760cfefc`. Inspect each independent read/write gate; do not bypass mismatches or substitute an unrelated installed JAR's hash.
+Before any native operation, designate one exclusive writer and freshly identify the disposable project, process lifetime, actual window, endpoint and extension build. Preserve user projects; display isolation does not imply profile/audio isolation. Current source requires Bitwig **6.1.4** and loaded host JAR SHA-256 `77a50264156a9f79c925fa85e0456720ce157bfa10e2503d6049e2f733af4ba6` for private Grid/modulator access; published `0.1.2` retains its 6.1.3 gate. Inspect each independent read/write gate; do not bypass mismatches or substitute an unrelated installed JAR's hash.
 
 Native helpers can use `NativeOutcomeGuard` from [scripts/smoke-native.py](scripts/smoke-native.py): wrap RPC/GUI/parsing/evidence work in `guard.attempt()`, persist complete responses, then call `guard.observe()` before another operation. Both `error.outcome` and `result.completion` can be `unknown`. Dispatch-only Actions/selection and confirmed queued Launcher operations need explicit expectations and separate completion observation; a queue is not actual playback/stop. External image-tool failure must also stop the writer; Python cannot latch an error it never sees. A later healthy read establishes neither reset, cancellation, cleanup nor acknowledgement of an earlier write. **Never blindly retry an unknown outcome**, including through the GUI.
 
@@ -117,7 +117,7 @@ The original combined stop/seek case **failed**: stop was observed, position rem
 
 The transport candidate's independent native case observed quantized launch → playing, quantized clip stop → stopped while global transport kept running, then exactly one `transport.set` with `playing:false, positionBeats:0`. Both fields reported `observer_after_write`; independent reads remained stopped at zero, including one 2.57 seconds later. The actual GUI showed `1.1.1.00 / 0:00.000`; all three recording/automation flags remained false and the target mix was unchanged.
 
-This is a muted, bounded production-path observation, **not audio audition, universal timing proof or 6.1.4 private Grid support**. The private gate still rejects 6.1.4. Raw fixture/project/screenshots remain private rather than being redistributed. The staged transport fix is unreleased source; the published `0.1.2` extension does not include it merely because the development build retains that version label.
+This was a muted, bounded production-path observation, **not audio audition, universal timing proof or private Grid acceptance**. That earlier candidate's private gate rejected 6.1.4; the subsequent private-binding cutover is recorded separately below. Raw fixture/project/screenshots remain private rather than being redistributed. The transport fix is unreleased source; the published `0.1.2` extension does not include it merely because a development build retains that version label.
 
 #### GUI-assisted A/B and reopen navigation
 
@@ -140,14 +140,47 @@ The corrected `tracks.select` explicitly requests navigation once and returns **
 
 That candidate also repeated quantized launch/stop and exactly one combined stop/seek. Both fields reported `observer_after_write`; independent reads more than two seconds apart and the actual GUI remained stopped at zero. All four source/render tracks ended muted, source arms and global record/write flags were false, mix values were preserved, and the saved project file was unchanged. These are bounded native observations, not universal selection/timing/persistence guarantees. **Neither fix is included in published `0.1.2`.**
 
+### Native 6.1.4 private bindings — unreleased source
+
+The active adapter was cleanly migrated to the exact 6.1.4 host JAR above, including the shared read-only modulator bindings. No second version bridge, compatibility alias or gate bypass was added. Exact classfile descriptors and selected native dispatch bodies were inspected privately; no proprietary JAR/decompiled source is redistributed. The 210 public Controller API classes were byte-identical between the inspected 6.1.3 and 6.1.4 JARs; this is not evidence that private APIs or native behavior are unchanged.
+
+The source build, **1,161 Python tests**, **14 Java test mains**, and the **45-tool / 50-example Java–MCP fixture** passed. Independent code review found no actionable migration defect. These checks remain separate from the following independent Linux native run, which used a disposable A/B project, a private profile/library and an isolated X11 display—not the user's main compositor.
+
+The first candidate, SHA-256 `9e930c3df0b510fa20211a086811b09060cc4fb2ea260525a1894ccfbfdf7d6c`, established these bounded observations:
+
+- The real version/hash gate, Grid and modulator binding capabilities, catalog, graph and typed parameter/context reads were available.
+- On independent B, ADSR Decay changed from its previous **360 ms to 512 ms** by raw CAS (`0.7113786608980126` → `0.8`). A's 180 ms patch and source notes were preserved.
+- An owned Attenuate's exact `BIPOLAR` boolean panel changed false → true, with its uniquely coupled VALUE range changing 0..1 → −1..1. This did not test negative-value coercion on the reverse transition.
+- Owned Button/Attenuate insertion, custom naming, move, connect, disconnect and deletion returned observed results. The actual **Pluck B / Poly Grid** canvas showed the cable and then the restored three-module patch. Insertion reported native lifetime settlement, not a general cleanup/rollback guarantee.
+- Fresh non-destructive Pre-Fader, 32-bit-float, offline A/B renders used exactly matching eight-note, eight-beat sources. Both stereo files were 48 kHz and eight seconds; file-only analysis used their same-start mono projections.
+
+| Full-render mono analysis | A | B |
+|---|---:|---:|
+| RMS | 0.104351 | 0.173047 |
+| Sample peak | 0.697707 | 0.699244 |
+| Constant analysis gain | 1 | 0.603024 |
+
+The RMS difference after that analysis gain was **0.141389**. This is RMS scaling over the full render, **not perceptual loudness matching, oscillator-phase alignment, decay-only causality or listening**. No audio audition or preferred candidate was claimed.
+
+After successful save and actual host exit, the final candidate, SHA-256 `90028aec6ded0a2190315a4a3c4f9ac78cbd42b9f1b62c70b6760646d7cd7602`, was installed **only in the private test library**. It differs in an obsolete type-name diagnostic/comment, not native dispatch behavior. Fresh-host verification passed five persistence comparisons: A/B graphs, A/B notes and loop lengths. Graph comparison excluded current module UUIDs/paths and keyed connections by unique module types; names, layout and typed values were retained. On the final candidate, Decay `0.8` → `0.79` → `0.8` dispatched and was observed on both writes.
+
+All six source/render tracks ended muted and disarmed, with transport stopped at zero and recording/automation-write flags false. The owned host and display then exited. Across the retained cases, raw aggregation counted **67 RPC responses: 64 observed, three explicitly expected dispatch-only, zero RPC errors**. This is accumulated operation coverage, **not an all-cases-pass claim**:
+
+- Case 01 stopped on an `xprop` identity-preflight failure. Missing inherited private X authority was inferred; the missing captured exception stderr remains an evidence limitation.
+- Case 02 stopped when an unfocused key dispatch did not open the device panel. Case 03 stopped when double-clicking the draggable preview did not open the expanded Grid; one read-only call also preceded external screenshot assessment. A later separately authorized case used explicit window focus and the observed **Show Expanded Device View** control.
+- Case 04 stopped on a locally rejected note-read request missing `channel`, before host dispatch.
+- Case 05's original failed dirty-marker assessment and latch remain retained. Independent enlargement of its original screenshot showed no asterisk, only the separate close **X**. A separate correction records the dirty-marker claim as an operator reporting mistake, **not a native Save defect**. The final closure case did not repeat Save.
+
+Native calls used the current Python schemas/parser and direct loopback transport, not an installed CLI/MCP E2E consumer. Modulator capability initialization is not real modulator-instance/string-panel coverage. Undo, exhaustive module families, forced rejection/cleanup/races and general DSP/persistence guarantees remain unverified. Raw projects, audio, screenshots and research stay private. Published `0.1.2`, PyPI/AUR assets and global extension/client settings were not changed.
+
 ## Coverage limits and unresolved results
 
 This source snapshot supplies reproducible host-free checks, not a redistributable native acceptance corpus. The limitations below summarize prior bounded native observations; they are not a fresh native rerun or independently reproducible native pass claim from this checkout. Previous failures remain failures even where a separate correction or later case succeeded.
 
-- **Host and scope:** native experience covers Linux / Bitwig 6.1.3 / API 25 plus the narrow 6.1.4 production cases above; other versions/platforms and wider 6.1.4 coverage remain unverified. Track, root-device and launcher windows are 16, sends eight; layers are one hop with two layers and two children per layer. Deeper hierarchy, project paging, named slots/drum pads, arranger clip edits, automation curves and dedicated master/cue controls are not supported. No lossless project export or all-module acceptance is established.
+- **Host and scope:** native experience covers Linux / Bitwig 6.1.3 / API 25 plus the bounded 6.1.4 public/private and GUI-assisted cases above; other versions/platforms and wider coverage remain unverified. Track, root-device and launcher windows are 16, sends eight; layers are one hop with two layers and two children per layer. Deeper hierarchy, project paging, named slots/drum pads, arranger clip edits, automation curves and dedicated master/cue controls are not supported. No lossless project export or all-module acceptance is established.
 - **Identity and safety:** public index/name/context observations are not persistent physical-device identities or locks. Same-metadata replacement, native ABA, general races, atomic transport exclusion and project-wide routing preservation are not guaranteed. Module/modulator UUIDs can change on reopen. Topology quarantine can survive extension reload; full JVM restart does not prove rollback. Follow the exact recovery boundaries in [PROTOCOL.md](PROTOCOL.md).
 - **MIDI:** grid settling is scheduled, not acknowledged. A connection case failed full MIDI preservation when one sentinel was observed at beat 1 initially versus beat 2 finally. A later first-read correction does not retroactively pass that case or prove a general callback barrier. Sub-step/multiple-onset cell data and whole-clip completeness are not established.
-- **Grid reads and modulators:** stored cables need not be active signal paths. Unknown native children remain unsupported. Real Grid-family QEE coverage is absent; materialized Macro QEE observations do not establish Grid ownership or native unmaterialized-content behavior. Nonempty FX numeric Remote Controls, the native track-alias branch and forced conflict/unavailable-context cases lack comprehensive coverage. Selection and sends can remain partial or unreadable after reopen.
+- **Grid reads and modulators:** stored cables need not be active signal paths. Unknown native children remain unsupported. Real Grid-family string-panel coverage is absent; materialized Macro string-panel observations from 6.1.3 do not establish 6.1.4 instance coverage, Grid ownership or native unmaterialized-content behavior. Nonempty FX numeric Remote Controls, the native track-alias branch and forced conflict/unavailable-context cases lack comprehensive coverage. Selection and sends can remain partial or unreadable after reopen.
 - **Insertion:** prior protected-return equality, wrong FX bounce tap, then-unsupported VALUE eligibility and continued writes after unknown outcomes were failed criteria. Subsequent model/audio observations do not excuse the continued writes or retroactively pass them.
 - **Move/delete and audio:** six of 48 near-silent envelope windows failed the original relative criterion. Later absolute-error descriptions are not passage, waveform equivalence or a changed threshold. Disabled Note Grid DSP, rejected-cycle repair, general Undo grouping and injected-failure/race behavior remain unproved.
 - **Boolean panels and layers:** earlier selection-derived aggregate and audio-alignment criteria failed. Earlier layer residual limits also failed; a separate zero-Fade case does not repair the earlier result or uniquely establish causality. Layer cold-start/index failures likewise are not erased by later corrected observations.

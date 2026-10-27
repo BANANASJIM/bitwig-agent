@@ -244,7 +244,7 @@ final class GridSnapshotReader {
             found = child;
         }
         if (found == null)
-            throw failure("grid_unavailable", "Boolean panel requires one same-module exact TZj reference for inspection or editing.");
+            throw failure("grid_unavailable", "Boolean panel requires one same-module exact mapped bipolar scalar reference for inspection or editing.");
         return found;
     }
 

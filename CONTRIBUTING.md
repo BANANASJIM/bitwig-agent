@@ -4,7 +4,7 @@ Keep changes focused on helping agents complete real Bitwig tasks. Domain operat
 
 ## Source setup
 
-End users should use the [released wheel and extension](README.md#quickstart). Development requires a checkout, Python 3.11+, [uv](https://docs.astral.sh/uv/getting-started/installation/), **JDK 25+**, and your own licensed Bitwig installation with its API 25 host JAR. The Bitwig 6.1.3 loader superclass uses class-file version 69, so JDK 25 is needed to compile/run Java checks; generated extension classes still target Java 11.
+End users should use the [released wheel and extension](README.md#quickstart) when its host boundary fits. Current source requires a checkout, Python 3.11+, [uv](https://docs.astral.sh/uv/getting-started/installation/), **JDK 25+**, and your own licensed **Bitwig 6.1.4 / API 25** installation. Its loader superclass uses class-file version 69, so JDK 25 is needed to compile/run Java checks; generated extension classes still target Java 11. This is a clean private-binding cutover, not simultaneous 6.1.3/6.1.4 support; published `0.1.2` remains unchanged.
 
 From the repository root:
 
@@ -101,4 +101,4 @@ See [architecture and ownership](docs/architecture.md) for the detailed public-c
 | `packaging/aur/` | Reviewed AUR recipe and synchronized `.SRCINFO` |
 | `skills/bitwig-agent/` | Copyable Agent Skills instructions, focused references and MIT license |
 
-The default-package `extension/src/main/java/BitwigAgent613GridInsertion.java` is intentional: its native superclass is also in the unnamed package and it is loaded by that exact class name. Historical evidence is not active test infrastructure; use [VERIFICATION.md](VERIFICATION.md) for current checks.
+The default-package `extension/src/main/java/BitwigAgent614GridInsertion.java` is intentional: its native superclass is also in the unnamed package and it is loaded by that exact class name. Historical evidence is not active test infrastructure; use [VERIFICATION.md](VERIFICATION.md) for current checks.

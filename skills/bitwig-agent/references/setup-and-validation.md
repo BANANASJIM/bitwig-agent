@@ -10,7 +10,7 @@ The installed Python package and enabled Java extension must match. `bitwig-agen
 
 The published [Arch/AUR package](https://aur.archlinux.org/packages/bitwig-agent) places the extension under `/usr/share/bitwig-agent/BitwigAgent.bwextension` and the skill under `/usr/share/bitwig-agent/skills/bitwig-agent/`. Each user explicitly installs the extension with `bitwig-agent-install --extension /usr/share/bitwig-agent/BitwigAgent.bwextension`, without sudo, after package installation/upgrades; then reloads/restarts the controller. A system package must not write to user homes. Installing through AUR still requires permission; it does not authorize host operation or establish PyPI availability.
 
-Native support remains bounded to Linux / Bitwig 6.1.3 / API 25 and exact loaded-JAR gates for private access. Do not upgrade the proprietary host or bypass those gates to resolve missing tools. Keep the unauthenticated endpoint local; no port forwarding.
+Native evidence remains bounded to exercised Linux / API 25 cases. Published `0.1.2` gates private access to 6.1.3; current unreleased source targets 6.1.4. Both require the mapped loaded-JAR hash. Check [versions and sources](version-and-sources.md), not package-version equality alone. Do not upgrade the proprietary host or bypass those gates to resolve missing tools. Keep the unauthenticated endpoint local; no port forwarding.
 
 ## Standard format validation
 

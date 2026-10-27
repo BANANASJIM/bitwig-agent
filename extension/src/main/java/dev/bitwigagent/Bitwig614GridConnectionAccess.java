@@ -5,19 +5,19 @@ import java.lang.reflect.Modifier;
 
 import static dev.bitwigagent.HostServices.failure;
 
-/** The public hUF overload retains az's undo wrapper; the typed xb1 overload must never be invoked. */
-final class Bitwig613GridConnectionAccess implements GridConnectionWriter.Access {
+/** The public led overload retains PSD's undo wrapper; the typed xOa overload must never be invoked. */
+final class Bitwig614GridConnectionAccess implements GridConnectionWriter.Access {
     private static final String D = "com.bitwig.flt.document.core.master.device.";
-    private final Bitwig613Runtime.Access bindings;
+    private final Bitwig614Runtime.Access bindings;
     private final Class<?> destinationClass, undoClass;
     private final Method setter;
 
-    Bitwig613GridConnectionAccess(Bitwig613Runtime.Access bindings) throws ReflectiveOperationException {
+    Bitwig614GridConnectionAccess(Bitwig614Runtime.Access bindings) throws ReflectiveOperationException {
         this.bindings = bindings;
-        destinationClass = bindings.type(D + "Iac");
-        // Observed project manager: HEY delegates to WjI validation; close can reject or schedule history replay.
-        undoClass = bindings.type("com.bitwig.flt.document.core.master.j3O");
-        setter = bindings.exactMethod(bindings.type(D + "Suo"), "vhT", void.class, false, bindings.type("hUF"));
+        destinationClass = bindings.type(D + "Wkj");
+        // Inspected project manager: Hnt delegates to Kiy validation; close can reject or schedule history replay.
+        undoClass = bindings.type("com.bitwig.flt.document.core.master.tj2");
+        setter = bindings.exactMethod(bindings.type(D + "cXR"), "cfM", void.class, false, bindings.type("led"));
         if (!Modifier.isFinal(setter.getModifiers()))
             throw failure("grid_unavailable", "Inspected public connection setter is no longer final.");
     }

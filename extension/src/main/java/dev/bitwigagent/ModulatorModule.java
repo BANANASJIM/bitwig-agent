@@ -48,7 +48,7 @@ final class ModulatorModule implements HostModule {
 
     @Override public void dispatch(HostOperation op, String method, JsonObject p) {
         s.check(op);
-        if (adapter == null) adapter = new Bitwig613ModulatorAdapter(s.nativeRuntime(op).access("modulator_unavailable"));
+        if (adapter == null) adapter = new Bitwig614ModulatorAdapter(s.nativeRuntime(op).access("modulator_unavailable"));
         if (method.equals("modulators.capabilities")) {
             String serialized = serialize(adapter.capabilities());
             s.check(op); op.result.complete(JsonParser.parseString(serialized).getAsJsonObject()); return;

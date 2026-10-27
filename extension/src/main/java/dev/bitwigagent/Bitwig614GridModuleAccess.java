@@ -5,27 +5,27 @@ import java.util.*;
 
 import static dev.bitwigagent.HostServices.failure;
 
-/** Public exact 6.1.3 descriptors only; no coordinate setters, clear, locks or outer transaction. */
-final class Bitwig613GridModuleAccess implements GridModuleWriter.Access {
+/** Public exact 6.1.4 descriptors only; no coordinate setters, clear, locks or outer transaction. */
+final class Bitwig614GridModuleAccess implements GridModuleWriter.Access {
     private static final String D = "com.bitwig.flt.document.core.master.device.";
-    private final Bitwig613Runtime.Access bindings;
+    private final Bitwig614Runtime.Access bindings;
     private Class<?> callbackType;
     private Method move, delete, success, exception, message;
     String moveError, deleteError;
 
-    Bitwig613GridModuleAccess(Bitwig613Runtime.Access bindings) throws ReflectiveOperationException {
+    Bitwig614GridModuleAccess(Bitwig614Runtime.Access bindings) throws ReflectiveOperationException {
         this.bindings = bindings;
         try {
-            callbackType = bindings.type("com.bitwig.base.async.jJa");
+            callbackType = bindings.type("com.bitwig.base.async.oRV");
             if (!callbackType.isInterface()) throw failure("grid_unavailable", "Native move callback is not an interface.");
-            success = bindings.exactMethod(callbackType, "vhT", void.class, false, Object.class);
-            exception = bindings.exactMethod(callbackType, "vhT", void.class, false, Exception.class);
-            message = bindings.exactMethod(callbackType, "vhT", void.class, false, String.class);
-            move = bindings.exactMethod(bindings.type(D + "zXc"), "vhT", void.class, false,
-                    bindings.type(D + "gxR"), Collection.class, int.class, int.class, boolean.class, callbackType);
+            success = bindings.exactMethod(callbackType, "cfM", void.class, false, Object.class);
+            exception = bindings.exactMethod(callbackType, "cfM", void.class, false, Exception.class);
+            message = bindings.exactMethod(callbackType, "cfM", void.class, false, String.class);
+            move = bindings.exactMethod(bindings.type(D + "IcG"), "cfM", void.class, false,
+                    bindings.type(D + "rSf"), Collection.class, int.class, int.class, boolean.class, callbackType);
         } catch (ReflectiveOperationException | RuntimeException | LinkageError error) { moveError = error.getClass().getSimpleName(); }
         try {
-            delete = bindings.exactMethod(bindings.type(D + "sF"), "vhT", void.class, false, List.class);
+            delete = bindings.exactMethod(bindings.type(D + "Vzt"), "cfM", void.class, false, List.class);
         } catch (ReflectiveOperationException | RuntimeException | LinkageError error) { deleteError = error.getClass().getSimpleName(); }
     }
     @Override public Runnable prepareMove(Object graph, Object module, int x, int y) {
@@ -35,7 +35,7 @@ final class Bitwig613GridModuleAccess implements GridModuleWriter.Access {
         Object callback = Proxy.newProxyInstance(callbackType.getClassLoader(), new Class<?>[]{callbackType}, capture);
         return () -> {
             bindings.invoke(move, graph, module, selected, x, y, false, callback);
-            capture.requireSuccess(); // callback itself never throws into iqa or completes the RPC before close.
+            capture.requireSuccess(); // callback itself never throws into j2e or completes the RPC before close.
         };
     }
     @Override public Runnable prepareDelete(Object graph, Object module) {

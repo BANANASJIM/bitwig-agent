@@ -121,7 +121,7 @@ final class GridModule implements HostModule {
     }
     @Override public void dispatch(HostOperation op, String method, JsonObject p) {
         s.check(op);
-        if (adapter == null) adapter = new Bitwig613GridAdapter(s.nativeRuntime(op).access("grid_unavailable"));
+        if (adapter == null) adapter = new Bitwig614GridAdapter(s.nativeRuntime(op).access("grid_unavailable"));
         if (method.equals("grid.capabilities")) { s.check(op); op.result.complete(adapter.capabilities()); return; }
         final boolean moving = method.equals("grid.modules.move");
         final boolean connection = method.equals("grid.connections.set");

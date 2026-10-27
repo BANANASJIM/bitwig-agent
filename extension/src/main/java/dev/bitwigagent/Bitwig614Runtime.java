@@ -7,30 +7,30 @@ import java.security.MessageDigest;
 import static dev.bitwigagent.HostServices.failure;
 
 /** One loaded-binary gate and document dispatcher; domain bindings remain independent. */
-final class Bitwig613Runtime {
-    static final String VERSION = "6.1.3";
-    static final String SHA256 = "4245a38ccddaa800421935216351e6dda8384b34a128cbc85c21e2e6760cfefc";
+final class Bitwig614Runtime {
+    static final String VERSION = "6.1.4";
+    static final String SHA256 = "77a50264156a9f79c925fa85e0456720ce157bfa10e2503d6049e2f733af4ba6";
     private final ClassLoader loader;
     private final String hostVersion;
     private Path hostJar;
     private String actualHash, gateError, modelThreadError;
     private Method singleton, async, isDocumentThread, modelThread, executor;
 
-    Bitwig613Runtime(Object host, String version, Runnable check) {
+    Bitwig614Runtime(Object host, String version, Runnable check) {
         hostVersion = version; loader = host.getClass().getClassLoader();
         Access binding = access("native_unavailable");
         try {
             check.run();
-            if (!VERSION.equals(version)) throw failure("native_unavailable", "Native access requires exactly Bitwig 6.1.3; running " + version + ".");
+            if (!VERSION.equals(version)) throw failure("native_unavailable", "Native access requires exactly Bitwig " + VERSION + "; running " + version + ".");
             hostJar = source(host.getClass());
             if (!Files.isRegularFile(hostJar)) throw failure("native_unavailable", "Loaded host CodeSource is not a regular JAR file.");
             actualHash = hash(hostJar, check);
-            if (!SHA256.equals(actualHash)) throw failure("native_unavailable", "Loaded host JAR SHA-256 is not the inspected 6.1.3 binary; obtain a matching adapter, do not bypass this gate.");
-            Class<?> app = binding.type("com.bitwig.flt.app.tcc");
-            singleton = binding.exactMethod(app, "Kvg", app, true);
+            if (!SHA256.equals(actualHash)) throw failure("native_unavailable", "Loaded host JAR SHA-256 is not the inspected " + VERSION + " binary; obtain a matching adapter, do not bypass this gate.");
+            Class<?> app = binding.type("com.bitwig.flt.app.TL");
+            singleton = binding.exactMethod(app, "hIO", app, true);
             async = binding.exactMethod(app, "asyncExec", void.class, false, Runnable.class);
             isDocumentThread = binding.exactMethod(app, "isEventDispatchThread", boolean.class, false);
-            Class<?> scopedExecutor = binding.type("j3E");
+            Class<?> scopedExecutor = binding.type("QYb");
             modelThread = binding.exactMethod(scopedExecutor, "isEventDispatchThread", boolean.class, false);
             check.run();
         } catch (RuntimeException | ReflectiveOperationException | java.io.IOException error) {
@@ -39,7 +39,7 @@ final class Bitwig613Runtime {
         } catch (LinkageError error) { gateError = diagnostic(error); }
         if (gateError != null) return;
         try {
-            executor = binding.exactMethod(binding.type("com.bitwig.ramona.core.fJC"), "Q_", binding.type("j3E"), false);
+            executor = binding.exactMethod(binding.type("com.bitwig.ramona.core.AVL"), "Q_", binding.type("QYb"), false);
         } catch (ReflectiveOperationException | RuntimeException | LinkageError error) {
             modelThreadError = diagnostic(error);
         }
@@ -79,7 +79,7 @@ final class Bitwig613Runtime {
         }
         Object invoke(Method method, Object object, Object... args) {
             requireAvailable();
-            return Bitwig613Runtime.invoke(unavailableCode, method, object, args);
+            return Bitwig614Runtime.invoke(unavailableCode, method, object, args);
         }
         void execute(Runnable work) {
             requireAvailable();
@@ -101,7 +101,7 @@ final class Bitwig613Runtime {
         void requireModelThread(Object object) {
             requireModelThreadAvailable();
             Object current = invoke(executor, object);
-            // fJC.Q_ is a scoped executor predicate, not proof of model ancestry.
+            // AVL.Q_ is a scoped executor predicate, not proof of model ancestry.
             if (current == null || !Boolean.TRUE.equals(invoke(modelThread, current)))
                 throw failure(unavailableCode, "Native model thread predicate failed: "
                         + (current == null ? "null" : current.getClass().getName()));

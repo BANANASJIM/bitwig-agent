@@ -4,16 +4,16 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 
 /** Shared-domain error translation tests, not a substitute for native binding acceptance. */
-public final class Bitwig613RuntimeTest {
+public final class Bitwig614RuntimeTest {
     private static int assertions;
     public static void main(String[] args) throws Exception {
         deniedRuntimeRetainsEachDomainCode();
         nativeRejectionsRetainTheirInvocationBoundary();
-        System.out.println("Bitwig613RuntimeTest: " + assertions + " assertions");
+        System.out.println("Bitwig614RuntimeTest: " + assertions + " assertions");
     }
     private static void deniedRuntimeRetainsEachDomainCode() {
-        Bitwig613Runtime runtime = new Bitwig613Runtime(new Object(), "unsupported-version", () -> {});
-        Bitwig613Runtime.Access grid = runtime.access("grid_unavailable"), modulators = runtime.access("modulator_unavailable");
+        Bitwig614Runtime runtime = new Bitwig614Runtime(new Object(), "unsupported-version", () -> {});
+        Bitwig614Runtime.Access grid = runtime.access("grid_unavailable"), modulators = runtime.access("modulator_unavailable");
         check(grid.gateError() != null && grid.gateError().equals(modulators.gateError()),
                 "one failed runtime gate is reported consistently to independent domain accessors");
         expect("grid_unavailable", grid::requireAvailable);
@@ -21,7 +21,7 @@ public final class Bitwig613RuntimeTest {
         expect("grid_unavailable", () -> grid.execute(() -> { throw new AssertionError("Denied runtime dispatched work"); }));
         expect("modulator_unavailable", modulators::documentThread);
         expect("modulator_unavailable", () -> modulators.requireModelThread(new Object()));
-        expect("cancelled", () -> new Bitwig613Runtime(new Object(), "unsupported-version",
+        expect("cancelled", () -> new Bitwig614Runtime(new Object(), "unsupported-version",
                 () -> { throw HostServices.failure("cancelled", "stop before binding"); }));
     }
     private static void nativeRejectionsRetainTheirInvocationBoundary() throws Exception {
@@ -29,16 +29,16 @@ public final class Bitwig613RuntimeTest {
         for (String code : new String[]{"grid_unavailable", "modulator_unavailable"}) {
             RpcException nativeRejection = HostServices.failure("cancelled", "native code threw an RPC-shaped error");
             try {
-                Bitwig613Runtime.invoke(code, reader, new ThrowingRead(nativeRejection));
+                Bitwig614Runtime.invoke(code, reader, new ThrowingRead(nativeRejection));
                 throw new AssertionError("Expected reflected native rejection");
             } catch (RpcException translated) {
-                check(code.equals(translated.code) && Bitwig613Runtime.isInvocationFailure(translated),
+                check(code.equals(translated.code) && Bitwig614Runtime.isInvocationFailure(translated),
                         "native rejection is classified as a failed invocation in the calling domain");
                 check(translated.getCause() instanceof InvocationTargetException
                         && translated.getCause().getCause() == nativeRejection,
                         "translation preserves the actual invocation boundary and native throwable identity");
             }
-            check(!Bitwig613Runtime.isInvocationFailure(nativeRejection),
+            check(!Bitwig614Runtime.isInvocationFailure(nativeRejection),
                     "ordinary controller cancellation remains distinct from reflected invocation failure");
         }
     }

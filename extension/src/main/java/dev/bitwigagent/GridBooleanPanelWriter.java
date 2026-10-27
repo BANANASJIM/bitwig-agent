@@ -2,7 +2,7 @@ package dev.bitwigagent;
 
 import com.google.gson.*;
 
-/** One panel CAS with its unique same-module TZj dependency guarded and reported explicitly. */
+/** One panel CAS with its unique same-module bipolar scalar guarded and reported explicitly. */
 final class GridBooleanPanelWriter {
     interface Access {
         void requireSupported(Object parameter);

@@ -60,11 +60,11 @@ Changes to the system package do not update an already-copied user extension. Us
 
 The separate [`aur.yml` workflow](https://github.com/BANANASJIM/bitwig-agent/blob/main/.github/workflows/aur.yml) runs on a published GitHub release or explicit manual dispatch, **not** on each main-branch push: its immutable release sources must already exist. It checks tag/Python/recipe version agreement, then builds and rebuilds as an unprivileged user inside a digest-pinned disposable official Arch container. It checks `.SRCINFO`, rejects namcap errors, installs with documentation extraction enabled, verifies owned files and exercises the matching installed Python/MCP consumer plus the explicit user-extension copy. The release run verifies real published downloads; updating main afterward cannot repair a stale recipe in an existing tag. It never uploads to AUR, installs Bitwig or changes a real user's extension directory. Consult actual workflow output; configured checks are not proof of success.
 
-The currently observed AUR `bitwig-studio` version is 6.1.4; the project's native evidence remains Linux / 6.1.3 / API 25 with an exact loaded-JAR gate for private operations. Packaging must not silently relax that safety boundary.
+Published `0.1.2` and its pinned AUR recipe retain the 6.1.3 private-access boundary. The source adapter now targets 6.1.4, but that does not change already-published artifacts or authorize republishing different bytes under `0.1.2`. Package the change only through a separately reviewed, matching-version release; never relax the exact loaded-JAR gate to accommodate a host upgrade.
 
 ## Build once, promote the same artifacts
 
-The maintainer builds the Python wheel, Python sdist and Java extension from one reviewed source/version snapshot. Java building requires the maintainer's own licensed host JAR and JDK 25+; public CI is not supplied with the proprietary JAR. The extension targets Java 11 bytecode but its Bitwig 6.1.3 loader superclass requires JDK 25 to read during building/checking.
+The maintainer builds the Python wheel, Python sdist and Java extension from one reviewed source/version snapshot. Java building requires the maintainer's own licensed host JAR and JDK 25+; public CI is not supplied with the proprietary JAR. The extension targets Java 11 bytecode but its Bitwig 6.1.4 loader superclass requires JDK 25 to read during building/checking.
 
 1. Update matching versions and installation links, resolve the lockfile, and run the applicable [verification layers](../VERIFICATION.md). Record which layers actually ran.
 2. Build wheel and sdist with `uv build`, then the extension with `uv run --locked python scripts/build.py`.

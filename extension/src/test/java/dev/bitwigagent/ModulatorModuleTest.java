@@ -208,9 +208,9 @@ public final class ModulatorModuleTest {
 
     private static void sharedRuntimeAndGridPolicyRemainIndependent() {
         Fixture f = new Fixture(); HostOperation op = new HostOperation(Long.MAX_VALUE);
-        Bitwig613Runtime first = f.host.services.nativeRuntime(op);
+        Bitwig614Runtime first = f.host.services.nativeRuntime(op);
         check(first == f.host.services.nativeRuntime(new HostOperation(Long.MAX_VALUE)), "services compose one lazy shared runtime gate");
-        GridModule grid = new GridModule(f.host.services, new Bitwig613GridAdapter(first.access("grid_unavailable")));
+        GridModule grid = new GridModule(f.host.services, new Bitwig614GridAdapter(first.access("grid_unavailable")));
         f.devices.child("scrollPosition").emit(1); f.devices.child("itemCount").emit(2); f.device.child("position").emit(1);
         JsonObject target = request().getAsJsonObject("parent"); target.addProperty("deviceIndex", 1);
         HostOperation gridRead = f.host.submit(grid, "grid.get", target); f.host.next();

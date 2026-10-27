@@ -46,9 +46,9 @@ The main sources are under [`extension/src/main/java/dev/bitwigagent`](https://g
 - `GridModule` separates target/RPC guards from bounded graph serialization and scalar, boolean-panel and topology writers. `GridTopologyQuarantine` shares native lifetime admission across topology editors.
 - `ModulatorModule` and `ModulatorSnapshotReader` own bounded, nonloading primary-modulator reads. They share root target/read-context machinery, not Grid write authority.
 
-`Bitwig613Runtime` is lazy and shared per `HostServices`. It checks the exact host version, loaded JAR CodeSource/hash/ClassLoader and mapped descriptors before private dispatch. Native target/read-context helpers corroborate ownership and lifecycle. Grid and modulator availability remains independently reported; successful read binding does not enable a writer.
+`Bitwig614Runtime` is lazy and shared per `HostServices`. It checks the exact host version, loaded JAR CodeSource/hash/ClassLoader and mapped descriptors before private dispatch. Native target/read-context helpers corroborate ownership and lifecycle. Grid and modulator availability remains independently reported; successful read binding does not enable a writer.
 
-The unnamed-package [`BitwigAgent613GridInsertion.java`](https://github.com/BANANASJIM/bitwig-agent/blob/main/extension/src/main/java/BitwigAgent613GridInsertion.java) is intentional: the native superclass is in that package and the loader expects the exact class name. It is a narrow insertion boundary, not another transport, planner or generic transaction framework.
+The unnamed-package [`BitwigAgent614GridInsertion.java`](https://github.com/BANANASJIM/bitwig-agent/blob/main/extension/src/main/java/BitwigAgent614GridInsertion.java) is intentional: the native superclass is in that package and the loader expects the exact class name. It is a narrow insertion boundary, not another transport, planner or generic transaction framework.
 
 ## Request lifecycle and outcomes
 
@@ -76,7 +76,7 @@ Names can change, same-metadata replacement can be ambiguous, and module/modulat
 - A Grid page's `window.complete` is page coverage. Whole-result coverage may still be partial, and stored connections are not proof of the active DSP graph.
 - MIDI reads use explicit channel/grid/window bounds and do not establish lossless arbitrary-clip export; selection/grid settling is not a general acknowledgement barrier.
 - String panels are read-only. Modulator loading/mapping/writes, arranger clip editing, automation curves and dedicated master/cue tools are outside the structured surface.
-- Native evidence is limited to **Linux / Bitwig Studio 6.1.3 / API 25**. Private Grid/modulator access additionally requires the exact loaded host-JAR hash. A 6.1.4 host package or a successful macOS/Windows Python install does not extend that evidence. Do not bypass the compatibility gate.
+- Current source maps private access to **Bitwig 6.1.4 / API 25** and the exact loaded host-JAR hash; published `0.1.2` retains its 6.1.3 boundary. This is a single-version cutover, not a compatibility platform. [Native evidence](../VERIFICATION.md) is bounded to exercised Linux cases; a host package or successful macOS/Windows Python install does not extend it. Do not bypass the gate.
 
 The agent can explicitly use separately authorized Computer Use for an unsupported operation, but there is no implicit GUI fallback. The scratch music recipe's Pad VOICES 8 step is one such explicit gap, not a hidden voice-count API. See [usage](../USAGE.md#make-grid-instruments-without-preset-files).
 
