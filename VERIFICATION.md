@@ -109,11 +109,42 @@ GUI receipts, independent renders, isolated Undo/Redo and save/reopen comparison
 
 Launcher regressions in `LauncherModuleTest` cover queued and immediately observed launch/stop, plus missing observations without re-dispatch. For a native queued case, inspect the slot separately from transport: a saved Launcher clip can remain engaged while transport is stopped. Declare any preparatory stop before writing and separately observe disengagement. Then verify queued launch and actual playing, stop the Launcher while transport still runs, and finally stop transport, retaining full receipts. Static GUI frames alone do not establish queue timing.
 
+### Native 6.1.4 production check — unreleased source
+
+An isolated Linux / Bitwig **6.1.4 / API 25** session exercised the public clip, note and transport path. Creation and exact eight-note window readback were observed; the saved eight-beat phrase was then reopened and independently verified with the final transport candidate. The temporary installed Python consumer came from commit `8d5137a`; the private candidate extension SHA-256 was `5488139de5fcef455a6f1057ab109d6afc327e881bc8ff6d8e8ca29c7d16f95f`.
+
+The original combined stop/seek case **failed**: stop was observed, position remained nonzero, and completion was `unknown`. Its writer stopped and the failure was retained. The fix observes the asynchronous stop before dispatching remaining fields, under one bounded observation window and existing cancellation/safety guards. Regression tests fail against the earlier code and cover delayed stop, cancellation, a changed safety mode and an already-expired observation window.
+
+The transport candidate's independent native case observed quantized launch → playing, quantized clip stop → stopped while global transport kept running, then exactly one `transport.set` with `playing:false, positionBeats:0`. Both fields reported `observer_after_write`; independent reads remained stopped at zero, including one 2.57 seconds later. The actual GUI showed `1.1.1.00 / 0:00.000`; all three recording/automation flags remained false and the target mix was unchanged.
+
+This is a muted, bounded production-path observation, **not audio audition, universal timing proof or 6.1.4 private Grid support**. The private gate still rejects 6.1.4. Raw fixture/project/screenshots remain private rather than being redistributed. The staged transport fix is unreleased source; the published `0.1.2` extension does not include it merely because the development build retains that version label.
+
+#### GUI-assisted A/B and reopen navigation
+
+In the same isolated 6.1.4 fixture, GUI operation preserved the original Poly Grid pluck as A and duplicated an independent B, with the same eight-note phrase and eight-beat loop. The deliberately changed ADSR Decay was **180 ms on A / 360 ms on B**; actual canvas titles and hovered values were inspected independently. This used desktop input/capture outside the bridge, not a private-API gate bypass or a shipped automatic GUI fallback.
+
+Separate non-destructive Pre-Fader bounces produced stereo 48 kHz, 32-bit-float files of eight seconds each. The observed repeating loop occupied seconds **[4, 8)**, distinct from the full file/event. File-only comparison cropped that same passage and applied constant attenuation, without compression, limiting or dynamic normalization:
+
+| Measurement | A | B |
+|---|---:|---:|
+| Raw loop integrated loudness | −19.38 LUFS | −17.66 LUFS |
+| Constant preview gain | −3.64 dB | −5.36 dB |
+| Measured preview integrated loudness | −23.04 LUFS | −23.02 LUFS |
+| Preview true peak | −9.78 dBTP | −11.48 dBTP |
+
+The previews differed by **0.02 LU** and source files remained unchanged. **No audio audition or preference decision was performed.** Uncontrolled oscillator phase/voice state means these renders do not establish decay-only causality. A temporary desktop driver's same-position synchronized mouse move had timed out in the original GUI case; that failure remains retained. A separately planned case used explicit pointer-position observation before clicking. This helper correction is not a bridge feature or proof of a general desktop-automation solution.
+
+Save, actual close/reopen, bounded note readback and inspection preserved the A/B tracks, renders and phrase. A subsequent owning-track selection exposed a separate failure: the legacy selected-state callback could remain unreadable after rebind, so the old setter-style wait returned `unknown` even though the UI navigated and auto-armed the track. Writes stopped; the original failed receipt remains failed.
+
+The corrected `tracks.select` explicitly requests navigation once and returns **`dispatched` / `not_observed`**, not a fabricated observer acknowledgement; see [the selection contract](PROTOCOL.md#domain-controls). A new private candidate, SHA-256 `a25af7abda2e4b9a03c23c58cd4135deb65fb33136b8eb9d1539ef8dd6db7938`, independently exercised both intentional reselection and missing callbacks after another actual close/reopen. Actual GUI inspection established navigation; observed auto-arm was cleared, and saved A/B decay values remained 180/360 ms. The expanded Grid canvas could retain A while the lower device panel showed B: the canvas's own title, followed by closing the old editor and opening B's preview, established the correct target before any prospective edit.
+
+That candidate also repeated quantized launch/stop and exactly one combined stop/seek. Both fields reported `observer_after_write`; independent reads more than two seconds apart and the actual GUI remained stopped at zero. All four source/render tracks ended muted, source arms and global record/write flags were false, mix values were preserved, and the saved project file was unchanged. These are bounded native observations, not universal selection/timing/persistence guarantees. **Neither fix is included in published `0.1.2`.**
+
 ## Coverage limits and unresolved results
 
 This source snapshot supplies reproducible host-free checks, not a redistributable native acceptance corpus. The limitations below summarize prior bounded native observations; they are not a fresh native rerun or independently reproducible native pass claim from this checkout. Previous failures remain failures even where a separate correction or later case succeeded.
 
-- **Host and scope:** native experience is limited to Linux / Bitwig 6.1.3 / API 25. Track, root-device and launcher windows are 16, sends eight; layers are one hop with two layers and two children per layer. Deeper hierarchy, project paging, named slots/drum pads, arranger clip edits, automation curves and dedicated master/cue controls are not supported. No lossless project export or all-module acceptance is established.
+- **Host and scope:** native experience covers Linux / Bitwig 6.1.3 / API 25 plus the narrow 6.1.4 production cases above; other versions/platforms and wider 6.1.4 coverage remain unverified. Track, root-device and launcher windows are 16, sends eight; layers are one hop with two layers and two children per layer. Deeper hierarchy, project paging, named slots/drum pads, arranger clip edits, automation curves and dedicated master/cue controls are not supported. No lossless project export or all-module acceptance is established.
 - **Identity and safety:** public index/name/context observations are not persistent physical-device identities or locks. Same-metadata replacement, native ABA, general races, atomic transport exclusion and project-wide routing preservation are not guaranteed. Module/modulator UUIDs can change on reopen. Topology quarantine can survive extension reload; full JVM restart does not prove rollback. Follow the exact recovery boundaries in [PROTOCOL.md](PROTOCOL.md).
 - **MIDI:** grid settling is scheduled, not acknowledged. A connection case failed full MIDI preservation when one sentinel was observed at beat 1 initially versus beat 2 finally. A later first-read correction does not retroactively pass that case or prove a general callback barrier. Sub-step/multiple-onset cell data and whole-clip completeness are not established.
 - **Grid reads and modulators:** stored cables need not be active signal paths. Unknown native children remain unsupported. Real Grid-family QEE coverage is absent; materialized Macro QEE observations do not establish Grid ownership or native unmaterialized-content behavior. Nonempty FX numeric Remote Controls, the native track-alias branch and forced conflict/unavailable-context cases lack comprehensive coverage. Selection and sends can remain partial or unreadable after reopen.

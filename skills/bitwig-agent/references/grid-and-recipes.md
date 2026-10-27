@@ -4,7 +4,7 @@ Use this reference before native Grid edits or the public scratch-music recipe. 
 
 ## Compatibility and discovery
 
-Native evidence is limited to Linux / Bitwig Studio **6.1.3 / API 25**. Private Grid/modulator access also checks the exact supported **loaded host-JAR** SHA-256. An installed 6.1.4 package, another JAR on disk, successful Python installation or a passing package smoke does not extend compatibility. Do not bypass a mismatch.
+Private Grid/modulator native evidence is limited to Linux / Bitwig Studio **6.1.3 / API 25** and the exact supported **loaded host-JAR** SHA-256. The current gate rejects 6.1.4. Another JAR on disk, successful Python installation or a passing package smoke does not extend this private binding's compatibility. Public SDK operations and separately authorized GUI work have different scopes; verify each independently. Do not bypass a mismatch. See [versions and sources](version-and-sources.md).
 
 Call `grid.capabilities` and inspect separate read/write availability and topology admission. Availability means a binding is present, not that every module/type has native acceptance. Start a structure/layout/wiring/name inspection with a small `grid.get` page, `includeParameters=false`, and an explicit current device target. Inspect `window.complete` and unsupported coverage; top-level completeness has additional requirements. Stored cables are not proof of the active signal graph.
 
@@ -28,7 +28,7 @@ Only `report.json`'s `createdTracks` and their slot-0 clips/devices are owned ou
 
 ### Required Pad voice-count gap
 
-The original factory Pad was **Mono / 1 voice**; its nine exposed direct parameters did not include voice count. Four-note chords need polyphony. After successful authoring, **only with separate GUI permission**, select the actual owned Pad/Poly Grid, open its device inspector and set **VOICES to 8** using the numeric field's **Type value** interaction. Observe the resulting field before rendering. Eight voices permit overlapping releases.
+The original factory Pad was **Mono / 1 voice**; its nine exposed direct parameters did not include voice count. Four-note chords need polyphony. After successful authoring, **only when GUI work is within the authorized scope**, select the actual owned Pad/Poly Grid, open its device inspector and set **VOICES to 8** using the numeric field's **Type value** interaction. Observe the resulting field before rendering. Eight voices permit overlapping releases.
 
 The recipe uses Pad Triangle Level **0.125 per voice** for headroom and Pluck Level **1.0**, and reports the required GUI step in stdout `next`. Do not omit the voice step or invent a structured voice-count API. It is explicit Computer Use, not automatic fallback. The original Mono case lacked three chord fundamentals; a later corrected case does not retroactively pass it, uniquely isolate simultaneous voice/level changes, or establish whole-recipe persistence/listening acceptance.
 

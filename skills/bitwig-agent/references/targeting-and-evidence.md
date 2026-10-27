@@ -45,4 +45,4 @@ Report:
 4. Whether GUI, audio, listening, Undo/Redo or save/reopen evidence was obtained separately; otherwise say it was not established.
 5. The next action that needs explicit permission or prerequisites, without silently performing it.
 
-A GUI gap requires separate Computer Use permission and fresh target/dialog observation. Never replay an uncertain API operation through the GUI. A successful correction or later case does not retroactively pass an earlier failed criterion.
+A known GUI gap requires Computer Use permission and fresh target/dialog observation; that permission may already be included in the delegated task. It is not granted by a missing API. Never replay an uncertain API operation through GUI. A successful correction or later case does not retroactively pass an earlier failed criterion.

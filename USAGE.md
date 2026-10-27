@@ -20,7 +20,7 @@ The agent owns the plan, user permission, target selection and evidence interpre
 
 [skills/bitwig-agent](https://github.com/BANANASJIM/bitwig-agent/tree/main/skills/bitwig-agent) is an [Agent Skills](https://agentskills.io/specification) directory. Copy the **entire `bitwig-agent` folder**, including `references/` and `LICENSE`, into a skill location supported by your client. The Arch package supplies that folder under `/usr/share/bitwig-agent/skills/bitwig-agent/`. Keep the directory name unchanged. It has no client-specific global configuration or permission grant; follow your client's skill discovery instructions and configure MCP separately.
 
-The skill supplies a short discovery/target/write/observe workflow and focused safety and Grid references. It is not a replacement for live schemas, user authorization or the protocol. [Format validation](CONTRIBUTING.md#agent-skill-maintenance) checks packaging conventions, not safe DAW behavior.
+The skill supports screenshot-only guidance, delegated production and troubleshooting. Its short working loop loads focused references for music workflows, sound design, controlled A/B, real-image feedback, diagnosis and version-specific official knowledge. Creative changes preserve A and make an independently editable B for a comparable audition and the user's choice. Screenshot/GUI operation needs separate client tools and applicable permission; product knowledge does not extend native API coverage. It is not a replacement for live schemas or the protocol. [Format validation](CONTRIBUTING.md#agent-skill-maintenance) checks packaging conventions, not safe DAW behavior.
 
 ## Control domains and boundaries
 

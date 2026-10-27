@@ -10,7 +10,7 @@ These guides describe the public implementation and supported user workflows. Th
 | Choose persistent uv, ephemeral uvx or Arch/AUR installation | [uv alternatives](../INSTALL.md#persistent-uv-tools-and-ephemeral-uvx) · [Arch/AUR](../INSTALL.md#arch-linux-aur) |
 | Connect an MCP client without changing global settings automatically | [MCP connection](../README.md#3-connect-your-mcp-client) |
 | Operate tracks/devices/MIDI/Grid safely | [Usage and safety](../USAGE.md) |
-| Give an agent portable, focused operating instructions | [Agent skill](https://github.com/BANANASJIM/bitwig-agent/tree/main/skills/bitwig-agent) |
+| Get production guidance, screenshot help, diagnosis and controlled A/B | [Portable agent skill](https://github.com/BANANASJIM/bitwig-agent/tree/main/skills/bitwig-agent) |
 | Understand interfaces, state ownership and failure boundaries | [Architecture](architecture.md) |
 | Look up exact schemas, bounds and side effects | [Protocol](../PROTOCOL.md) |
 | Understand package contents, AUR maintenance and PyPI promotion | [Packaging and releases](packaging.md) |
@@ -23,7 +23,7 @@ These guides describe the public implementation and supported user workflows. Th
 - A tool appearing in discovery means the interface exists, not that every host/version supports it.
 - A successful package install or MCP handshake does not establish a Bitwig connection.
 - A host response may establish dispatch or bounded model readback, not audio, GUI completion or persistence.
-- Native evidence is limited to Linux / Bitwig Studio 6.1.3 / API 25. Exact loaded-JAR gates remain mandatory for private Grid/modulator access.
+- Native evidence covers Linux / Bitwig 6.1.3 / API 25 plus bounded 6.1.4 public-operation and GUI-assisted production cases on unreleased source; see [the exact coverage](../VERIFICATION.md#native-614-production-check--unreleased-source). Private Grid/modulator access still requires the mapped 6.1.3 loaded JAR.
 - GitHub release availability, AUR publication and PyPI publication are separate facts. Use the explicit installation source documented for the release.
 
 The architecture guide links implementation ownership rather than reproducing every schema. The packaging guide separates end-user installation from maintainer release/account operations. Native voice-count, recipe and bounce caveats remain in [usage](../USAGE.md#make-grid-instruments-without-preset-files) and [verification](../VERIFICATION.md#coverage-limits-and-unresolved-results), where they can be read in context.

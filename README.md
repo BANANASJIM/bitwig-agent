@@ -11,7 +11,7 @@
 [Quickstart](#quickstart) · [Documentation](https://github.com/BANANASJIM/bitwig-agent/blob/main/docs/README.md) · [Agent skill](https://github.com/BANANASJIM/bitwig-agent/tree/main/skills/bitwig-agent) · [Contributing](https://github.com/BANANASJIM/bitwig-agent/blob/main/CONTRIBUTING.md)
 
 > **Experimental — use a disposable project and keep backups.**
-> Native evidence is limited to **Linux / Bitwig Studio 6.1.3 / Controller API 25**; other versions and platforms are unverified. Read the [safety boundaries](#safety-and-compatibility) before enabling the controller.
+> Native evidence covers **Linux / Bitwig 6.1.3 / API 25** plus [bounded 6.1.4 production checks on unreleased source](https://github.com/BANANASJIM/bitwig-agent/blob/main/VERIFICATION.md#native-614-production-check--unreleased-source). Private Grid/modulator access still requires **6.1.3** and its exact host JAR. The stop/seek and track-selection fixes are not in published `0.1.2`; read the [safety boundaries](#safety-and-compatibility) before enabling the controller.
 
 ## Quickstart
 
@@ -81,7 +81,7 @@ bitwig-agent-rpc describe notes.edit
 bitwig-agent-rpc tracks.set --help
 ```
 
-For an agent, copy the complete [portable skill folder](https://github.com/BANANASJIM/bitwig-agent/tree/main/skills/bitwig-agent), including its references and license, into your client's supported skill location. A skill is guidance, **not permission to operate the DAW**.
+For an agent, copy the complete [portable skill folder](https://github.com/BANANASJIM/bitwig-agent/tree/main/skills/bitwig-agent), including its references and license, into your client's supported skill location. It covers production workflows, troubleshooting, screenshot-guided next steps and **preserve-A / compare-B creative edits**. Live screenshots and GUI input need your client's desktop tools; the bridge does not control the entire interface. A skill is guidance, **not permission to operate the DAW**.
 
 ## Safety and compatibility
 
@@ -97,7 +97,7 @@ For an agent, copy the complete [portable skill folder](https://github.com/BANAN
 | Installation, upgrades or connection help | [Installation](https://github.com/BANANASJIM/bitwig-agent/blob/main/INSTALL.md) |
 | Operations, targeting and Grid recipes | [Usage](https://github.com/BANANASJIM/bitwig-agent/blob/main/USAGE.md) · [Protocol](https://github.com/BANANASJIM/bitwig-agent/blob/main/PROTOCOL.md) |
 | How the Python and Java bridge works | [Architecture](https://github.com/BANANASJIM/bitwig-agent/blob/main/docs/architecture.md) |
-| Reusable agent instructions | [Agent skill](https://github.com/BANANASJIM/bitwig-agent/tree/main/skills/bitwig-agent) |
+| Production guidance, screenshots and A/B workflow | [Agent skill](https://github.com/BANANASJIM/bitwig-agent/tree/main/skills/bitwig-agent) |
 | Tests and evidence boundaries | [Verification](https://github.com/BANANASJIM/bitwig-agent/blob/main/VERIFICATION.md) |
 | Development and releases | [Contributing](https://github.com/BANANASJIM/bitwig-agent/blob/main/CONTRIBUTING.md) · [Packaging](https://github.com/BANANASJIM/bitwig-agent/blob/main/docs/packaging.md) |
 | Private vulnerability reports | [Security](https://github.com/BANANASJIM/bitwig-agent/blob/main/SECURITY.md) |
