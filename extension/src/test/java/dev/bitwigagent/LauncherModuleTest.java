@@ -16,6 +16,7 @@ public final class LauncherModuleTest {
     private static final String ID = "11111111-1111-1111-1111-111111111111";
 
     public static void main(String[] args) throws Exception {
+        settingsIsolationIsShared();
         strictWindowAndBatchValidation();
         createAndReadActualMusic();
         createdPlaybackExtentMatchesRequestedLength();
@@ -43,6 +44,21 @@ public final class LauncherModuleTest {
         preDispatchFailuresDoNotQuarantine();
         unresolvedCreatesKeepTargetQuarantined();
         System.out.println("LauncherModuleTest: " + assertions + " assertions passed (simulated host only)");
+    }
+
+    private static void settingsIsolationIsShared() throws Exception {
+        Fake f = new Fake();
+        f.module.settingsWriteGuard = () -> { throw HostServices.failure("unresolved_mutation", "settings unresolved"); };
+        expectOutcome("unresolved_mutation", "not_applied", f.start("launcher.create", createTarget()));
+        check(f.creates == 0, "settings quarantine blocks launcher create before dispatch");
+        f.module.settingsWriteGuard = () -> {};
+        Path file = Files.createTempFile("settings-import-quarantine-", ".wav");
+        try {
+            f.failImport = true;
+            f.start("launcher.import", importTarget(file));
+            try { f.module.requireSettingsSafe(ID, 0); throw new AssertionError("unresolved import admitted settings"); }
+            catch (RpcException error) { check(error.code.equals("unresolved_mutation"), "unresolved import blocks native settings"); }
+        } finally { Files.delete(file); }
     }
 
     private static void strictWindowAndBatchValidation() {

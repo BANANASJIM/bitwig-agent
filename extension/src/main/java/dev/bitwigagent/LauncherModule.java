@@ -26,6 +26,7 @@ final class LauncherModule implements HostModule {
     private long sequence, bindingGeneration;
     private GridObservation gridObservation;
     private HostOperation cursorOwner;
+    Runnable settingsWriteGuard = () -> {};
     // Only positive completion removes these; completed futures and later callbacks cannot reset quarantine.
     private final List<Mutation> unresolvedMutations = new ArrayList<>();
     private Mutation cursorMutation;
@@ -225,7 +226,14 @@ final class LauncherModule implements HostModule {
         cursorMutation = null;
     }
 
+    void requireSettingsSafe(String id, int index) {
+        if (cursorOwner != null && !cursorOwner.result.isDone())
+            throw HostServices.failure("busy", "Launcher editor operation is still pending");
+        requireResolved(id, slots[s.trackSlot(id)][index], index);
+    }
+
     private void requireResolved(String id, Slot slot, int index) {
+        settingsWriteGuard.run();
         for (Mutation mutation : unresolvedMutations) {
             // Keep both the logical target and its native proxy quarantined across track-bank rebinding.
             if (mutation.slot == slot || mutation.trackId.equals(id) && mutation.index == index)

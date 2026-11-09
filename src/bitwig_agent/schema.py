@@ -242,6 +242,25 @@ class ClipCreateArgs(ClipArgs):
     name: str = Field(min_length=1, max_length=128)
 
 
+class ClipSettingsArgs(ClipArgs):
+    expectedClipName: str = Field(min_length=1, max_length=256)
+
+
+class ClipSettingsSetArgs(ClipSettingsArgs):
+    nextAction: Literal["play_next", "stop"] = omitted()
+    nextActionEnabled: bool = omitted()
+    nextActionLinkToLoop: bool = omitted()
+    nextActionLoopCount: Annotated[int, Field(ge=1, le=64)] = omitted()
+    nextActionDelayBeats: Annotated[float, Field(ge=0, le=4194304)] = omitted()
+
+    @model_validator(mode="after")
+    def validate_settings(self):
+        settings = self.model_fields_set - {"trackId", "slotIndex", "expectedClipName", "timeoutMs"}
+        if not settings:
+            raise ValueError("supply at least one clip setting")
+        return self
+
+
 class ClipImportArgs(ClipArgs):
     path: Nonempty
 
