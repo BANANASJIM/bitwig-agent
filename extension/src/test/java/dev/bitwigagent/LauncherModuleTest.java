@@ -18,6 +18,7 @@ public final class LauncherModuleTest {
     public static void main(String[] args) throws Exception {
         strictWindowAndBatchValidation();
         createAndReadActualMusic();
+        createdPlaybackExtentMatchesRequestedLength();
         collisionsFailBeforeAnyWrite();
         identityAndDeadlineGuards();
         selectionDispatchPreventsNotAppliedFailure();
@@ -31,6 +32,7 @@ public final class LauncherModuleTest {
         delayedGridPropagationKeepsReadinessExplicit();
         firstGridReadWaitsForNativeDebounce();
         fileImportValidationAndOccupancy();
+        emptyMidiImportFailsBeforeMutation();
         fileImportObservesOnlyContentTransition();
         fileImportSharesCursorLease();
         fileImportMutationBoundaryGuards();
@@ -102,6 +104,28 @@ public final class LauncherModuleTest {
         JsonArray highEdits = new JsonArray(); highEdits.add(set(0, 127, 127, .25)); highChannel.add("edits", highEdits);
         check(f.call("notes.edit", highChannel).getAsJsonArray("notes").size() == 1, "channel15 and pitch127 are writable/readable");
         check(f.notes.containsKey(key(0, 0, 0, 64)), "channel15 edit leaves channel0 intact");
+    }
+
+    private static void createdPlaybackExtentMatchesRequestedLength() throws Exception {
+        for (int length : new int[]{1, 16, 4096}) {
+            Fake f = new Fake();
+            JsonObject p = createTarget(); p.addProperty("lengthBeats", length);
+            JsonObject out = f.call("launcher.create", p);
+            check(out.get("status").getAsString().equals("observed"), "created extent is observed");
+            check(out.get("playStopBeats").getAsDouble() == length,
+                    "play stop must match requested extent instead of the host default four beats");
+            check(f.stopWrites == 1, "new clip playback stop is explicitly initialized once");
+            check(f.slots[1].playStop == 4, "unrelated slot playback stop is preserved");
+        }
+        Fake f = new Fake(); f.applyStop = false;
+        JsonObject p = createTarget(); p.addProperty("lengthBeats", 16);
+        HostOperation op = f.startShort("launcher.create", p); f.drain(op);
+        JsonObject out = op.result.join();
+        check(out.get("status").getAsString().equals("dispatched"), "unapplied stop cannot claim creation verified");
+        check(out.get("playStopBeats").getAsDouble() == 4, "unapplied stop exposes actual host default");
+        check(out.get("mutationUnresolved").getAsBoolean(), "unapplied stop retains mutation quarantine");
+        expectQuarantine(f.start("launcher.create", createTarget()), "launcher.create", ID);
+        check(f.stopWrites == 1, "unobserved stop is not automatically retried");
     }
 
     private static void collisionsFailBeforeAnyWrite() throws Exception {
@@ -317,6 +341,47 @@ public final class LauncherModuleTest {
             f.slots[0].content = true;
             expectFuture("slot_occupied", f.start("launcher.import", importTarget(file)));
             check(f.imports == 0 && f.slots[0].content, "occupied content is never replaced");
+        } finally { Files.delete(file); }
+    }
+
+    private static void emptyMidiImportFailsBeforeMutation() throws Exception {
+        Path file = Files.createTempFile("launcher-empty-", ".MID");
+        try {
+            javax.sound.midi.Sequence sequence = new javax.sound.midi.Sequence(javax.sound.midi.Sequence.PPQ, 480);
+            javax.sound.midi.Track track = sequence.createTrack();
+            javax.sound.midi.MetaMessage end = new javax.sound.midi.MetaMessage();
+            end.setMessage(0x2f, new byte[0], 0);
+            track.add(new javax.sound.midi.MidiEvent(end, 7680));
+            javax.sound.midi.MidiSystem.write(sequence, 1, file.toFile());
+            Fake f = new Fake();
+            expectOutcome("empty_midi_file", "not_applied", f.start("launcher.import", importTarget(file)));
+            check(f.imports == 0, "EOT-only MIDI never reaches host insertion");
+            javax.sound.midi.ShortMessage zero = new javax.sound.midi.ShortMessage();
+            zero.setMessage(javax.sound.midi.ShortMessage.NOTE_ON, 0, 60, 0);
+            track.add(new javax.sound.midi.MidiEvent(zero, 0));
+            javax.sound.midi.MidiSystem.write(sequence, 1, file.toFile());
+            expectOutcome("empty_midi_file", "not_applied", f.start("launcher.import", importTarget(file)));
+            check(f.imports == 0, "zero-velocity note-on is not a playable note");
+            Files.writeString(file, "not midi");
+            expectOutcome("invalid_midi_file", "not_applied", f.start("launcher.import", importTarget(file)));
+            check(f.imports == 0, "malformed MIDI is rejected before host insertion");
+            javax.sound.midi.ShortMessage note = new javax.sound.midi.ShortMessage();
+            note.setMessage(javax.sound.midi.ShortMessage.NOTE_ON, 0, 60, 90);
+            track.add(new javax.sound.midi.MidiEvent(note, 0));
+            javax.sound.midi.MidiSystem.write(sequence, 1, file.toFile());
+            HostOperation op = f.start("launcher.import", importTarget(file));
+            check(f.imports == 1, "preflight failures do not quarantine a later valid import");
+            f.observeContent(0, true); f.drain(op);
+            check(op.result.join().get("status").getAsString().equals("observed"), "valid MIDI still uses host content observation");
+            javax.sound.midi.Sequence ccSequence = new javax.sound.midi.Sequence(javax.sound.midi.Sequence.PPQ, 480);
+            javax.sound.midi.ShortMessage cc = new javax.sound.midi.ShortMessage();
+            cc.setMessage(javax.sound.midi.ShortMessage.CONTROL_CHANGE, 0, 1, 64);
+            ccSequence.createTrack().add(new javax.sound.midi.MidiEvent(cc, 0));
+            javax.sound.midi.MidiSystem.write(ccSequence, 1, file.toFile());
+            Fake ccHost = new Fake();
+            HostOperation ccImport = ccHost.start("launcher.import", importTarget(file));
+            check(ccHost.imports == 1, "controller-only MIDI remains eligible for host import");
+            ccHost.observeContent(0, true); ccHost.drain(ccImport);
         } finally { Files.delete(file); }
     }
 
@@ -645,12 +710,13 @@ public final class LauncherModuleTest {
         final HostServices services;
         final LauncherModule module;
         NoteStepChangedCallback observer;
-        int selected, start, writes, creates, failWriteAt, nameWrites, playbackDispatches;
+        int selected, start, writes, creates, failWriteAt, nameWrites, playbackDispatches, stopWrites;
         double size = .25, loopStart;
         String trackId = ID;
         boolean emitNotes = true, launchPlaying, stopped = true;
         boolean emitPlaybackState = true, queueStop, stopQueued;
         boolean deferGridChanges;
+        boolean applyStop = true;
         boolean deferCreate, failCreate, failImport, emitCreateContent = true, applyName = true;
         Double pendingSize;
         Integer pendingStart;
@@ -744,7 +810,10 @@ public final class LauncherModuleTest {
             }
             Node clip = new Node(Clip.class); clip.action("getTrack", a -> tracks[0]);
             clip.value("exists", () -> slots[selected].content); clip.value("getLoopLength", () -> slots[selected].length);
-            clip.value("getLoopStart", () -> loopStart); clip.value("getPlayStart", () -> 0.0); clip.value("getPlayStop", () -> slots[selected].length); clip.value("isLoopEnabled", () -> true);
+            clip.value("getLoopStart", () -> loopStart); clip.value("getPlayStart", () -> 0.0); Node playStop = new Node(SettableBeatTimeValue.class);
+            playStop.action("get", a -> slots[selected].playStop);
+            playStop.action("set", a -> { stopWrites++; if (applyStop) slots[selected].playStop = (Double) a[0]; return null; });
+            clip.action("getPlayStop", a -> playStop.proxy); clip.value("isLoopEnabled", () -> true);
             Node cursorSlot = new Node(ClipLauncherSlot.class);
             cursorSlot.action("createEqualsValue", a -> {
                 Object target = a[0];
@@ -846,7 +915,7 @@ public final class LauncherModuleTest {
     private static final class SlotData {
         boolean content, playing, queued;
         String name = "";
-        double length = 4;
+        double length = 4, playStop = 4;
         final List<BooleanValueChangedCallback> contentObservers = new ArrayList<>();
     }
     private static final class Note {

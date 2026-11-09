@@ -2,6 +2,12 @@
 
 Checks prove only their exercised layer. The toolkit implements 45 methods; neither that count nor passing fixtures establishes comprehensive native acceptance. [PROTOCOL.md](PROTOCOL.md) defines requests, units, side effects and bounded semantics. This guide is not approval to operate a live DAW; use the actual check output for the revision being evaluated.
 
+## Launcher creation and empty MIDI import regression — 2026-11-08
+
+A native music workflow exposed two issues in the previously installed extension: a requested 16-beat launcher clip reported a 16-beat loop but retained a four-beat playback stop, and importing an EOT-only MIDI file produced no observed clip, leaving the dispatched mutation unresolved. Creation now explicitly initializes and verifies playback stop. MIDI preflight rejects malformed, metadata-only and note-off-only files before dispatch while permitting positive-velocity notes and other channel events. It does not clear an existing unresolved mutation or prove the host accepts every eligible MIDI file.
+
+The playback-stop regression failed against the old implementation after the fake host's playback stop was separated from loop length. After the fixes, all 14 Java simulated-host test mains passed, including 435 launcher assertions; 1,038 focused Python schema, CLI and MCP tests passed. Independent source review identified the potential rejection of controller-only MIDI; the implementation and regression test were corrected, then re-reviewed without further blockers. Extension compilation/package build passed. These fixes were not installed or exercised in the running native host, and no live GUI, playback, render or persistence checks were performed for the candidate. Next Action and scene configuration remain native-interface gaps, not implemented by these fixes.
+
 ## Reproducible host-free checks
 
 Run from the repository root. Prerequisites are Python 3.11+, `uv`, **JDK 25+**, and your own installed Bitwig 6.1.4 / API 25 JAR for current source. Its loader superclass requires JDK 25 to read; generated extension classes target Java 11. Neither the host JAR nor the JDK is redistributed. The build downloads and verifies pinned Gson on first use, so that first build requires network access.

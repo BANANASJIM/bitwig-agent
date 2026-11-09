@@ -256,6 +256,7 @@ final class LauncherModule implements HostModule {
             throw HostServices.failure("file_unavailable", "Import requires a readable regular local file.");
         if (slot.api.hasContent().get())
             throw HostServices.failure("slot_occupied", "Import only accepts an observed empty slot.");
+        MidiImportPreflight.validate(path);
         InsertionPoint insertion = slot.api.replaceInsertionPoint();
         // Resolve everything first, then recheck the target, safety and deadline at the mutation boundary.
         guard(op, id, track);
@@ -330,6 +331,8 @@ final class LauncherModule implements HostModule {
         if (method.equals("launcher.create")) {
             cursorGuard(op, id, track, slot);
             clip.setName(Params.string(p, "name"));
+            // Native createEmptyClip can leave playback stop at its four-beat default.
+            clip.getPlayStop().set(Params.integer(p, "lengthBeats", 1, 4096));
             s.schedule(op, () -> awaitName(op, id, track, slot, index, p, end), 20);
         } else if (method.equals("notes.read")) {
             cursorGuard(op, id, track, slot);
@@ -339,7 +342,8 @@ final class LauncherModule implements HostModule {
 
     private void awaitName(HostOperation op, String id, Track track, Slot slot, int index, JsonObject p, long end) {
         cursorGuard(op, id, track, slot);
-        boolean matches = slot.api.name().get().equals(Params.string(p, "name")) && clip.getLoopLength().get() == Params.integer(p, "lengthBeats", 1, 4096);
+        boolean matches = slot.api.name().get().equals(Params.string(p, "name")) && clip.getLoopLength().get() == Params.integer(p, "lengthBeats", 1, 4096)
+                && clip.getPlayStop().get() == Params.integer(p, "lengthBeats", 1, 4096);
         if (!matches && System.nanoTime() < end) { s.schedule(op, () -> awaitName(op, id, track, slot, index, p, end), 20); return; }
         JsonObject out = base(id, index);
         out.addProperty("status", matches ? "observed" : "dispatched");
