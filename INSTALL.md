@@ -134,7 +134,9 @@ Use that JSON rather than a bare executable name: GUI clients may not inherit th
 1. Confirm the extension is installed in the directory Bitwig scans, then restart Bitwig if necessary.
 2. Add/enable vendor **Bitwig Agent**, model **Local API bridge** under Settings → Controllers. No MIDI ports are needed.
 3. Run `bitwig-agent-rpc status`. Unlike `list`, `describe` and `--help`, this contacts the host.
-4. Use the local endpoint `127.0.0.1:61172`; the generated MCP configuration sets `BITWIG_AGENT_PORT=61172`. Changing a client's port does not reconfigure the extension.
+4. The default endpoint is `127.0.0.1:61172`; the generated MCP configuration sets `BITWIG_AGENT_PORT=61172`. To run a separate host instance, launch that Bitwig process with a distinct `BITWIG_AGENT_PORT` (for example, `61174`), and set the same value on its MCP/CLI client. The extension reads its process environment during controller initialization. Changing only the client's variable does not reconfigure an already running host.
+
+`BITWIG_AGENT_PORT` is optional. When present in the host environment it must contain one to five ASCII decimal digits representing a port in `1..65535`; empty, signed, whitespace-padded and out-of-range values fail initialization before host bridge construction. The listening address remains fixed at `127.0.0.1`, with no external-interface or automatic port-selection option. Choose distinct ports for separate Bitwig processes; multiple controller instances in one process share its environment and therefore cannot use the same port concurrently.
 
 A stdio adapter starting successfully is not proof that the extension is reachable. An observed status response is connection evidence, not full tool acceptance. Private Grid operations may still be unavailable because their separate version/hash gates fail closed. Do not bypass those gates or expose the unauthenticated endpoint to a network. See [usage safety](USAGE.md) and [verification limits](VERIFICATION.md).
 

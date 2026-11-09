@@ -13,7 +13,7 @@ This is the implementation reference, not a tutorial or a host-acceptance report
 - [Grid controls](#version-gated-grid-controls)
 - [Architecture and evidence boundary](#architecture-and-evidence-boundary)
 
-The MCP adapter connects to IPv4 loopback `127.0.0.1:61172`. One UTF-8 JSON request and one JSON response per TCP connection, each terminated by newline. This is internal transport, not an extra agent orchestration protocol. No automatic retries. Requests and responses are limited to 1 MiB.
+The MCP adapter connects to IPv4 loopback `127.0.0.1:61172` by default. Both the extension host process and client may set `BITWIG_AGENT_PORT` to the same alternate port; the extension reads it during initialization, validates ASCII decimal `1..65535`, and still binds only `127.0.0.1`. One UTF-8 JSON request and one JSON response per TCP connection, each terminated by newline. This is internal transport, not an extra agent orchestration protocol. No automatic retries. Requests and responses are limited to 1 MiB.
 
 The TCP endpoint is unauthenticated. Any local process able to connect can invoke tools; use only in a trusted local environment and never expose or forward this port to a network. Context tokens and target guards are not authentication.
 
