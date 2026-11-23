@@ -176,9 +176,10 @@ final class LauncherModule implements HostModule {
         if (method.equals("launcher.list")) {
             JsonObject out = base(id, -1);
             JsonArray entries = new JsonArray();
-            for (int j = 0; j < 16; j++) { ready(slots[t][j]); entries.add(slotJson(slots[t][j], j)); }
+            int scenes = track.clipLauncherSlotBank().itemCount().get();
+            for (int j = 0; j < Math.min(16, scenes); j++) { ready(slots[t][j]); entries.add(slotJson(slots[t][j], j)); }
             out.add("slots", entries);
-            out.add("window", HostServices.window(0, 16, track.clipLauncherSlotBank().itemCount().get()));
+            out.add("window", HostServices.window(0, 16, scenes));
             op.result.complete(out);
             return;
         }
@@ -191,6 +192,10 @@ final class LauncherModule implements HostModule {
             return;
         }
         int j = Params.integer(p, "slotIndex", 0, 15);
+        int scenes = track.clipLauncherSlotBank().itemCount().get();
+        if (j >= scenes)
+            throw HostServices.failure("slot_out_of_range", "slotIndex " + j + " does not exist: the project has " + scenes
+                + " scene(s). Add a scene first (actions.invoke actionId=\"Create Scene\"), then re-run launcher.list");
         Slot slot = slots[t][j];
         ready(slot);
         if (method.equals("launcher.launch")) {

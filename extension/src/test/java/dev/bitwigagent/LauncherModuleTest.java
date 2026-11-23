@@ -43,6 +43,7 @@ public final class LauncherModuleTest {
         reboundTargetsRemainQuarantined();
         preDispatchFailuresDoNotQuarantine();
         unresolvedCreatesKeepTargetQuarantined();
+        slotsBeyondSceneCountAreRejectedAndNotListed();
         System.out.println("LauncherModuleTest: " + assertions + " assertions passed (simulated host only)");
     }
 
@@ -669,6 +670,19 @@ public final class LauncherModuleTest {
     private static JsonObject createTarget() {
         JsonObject p = target(); p.addProperty("lengthBeats", 4); p.addProperty("name", "Quarantine fixture"); return p;
     }
+    private static void slotsBeyondSceneCountAreRejectedAndNotListed() throws Exception {
+        Fake f = new Fake();
+        f.scenes = 1;
+        check(f.call("launcher.list", trackTarget()).getAsJsonArray("slots").size() == 1, "list follows scene count");
+        JsonObject far = createTarget(); far.addProperty("slotIndex", 1);
+        expectOutcome("slot_out_of_range", "not_applied", f.start("launcher.create", far));
+        check(f.creates == 0, "out-of-range create is never dispatched");
+        HostOperation valid = f.start("launcher.create", createTarget());
+        check(f.creates == 1, "out-of-range rejection leaves no quarantine");
+        f.observeContent(0, true); f.drain(valid);
+        check(valid.result.join().get("status").getAsString().equals("observed"), "in-range create still completes");
+    }
+
     private static void expectQuarantine(HostOperation op, String method, String originalId) {
         expectOutcome("unresolved_mutation", "not_applied", op);
         try { op.result.join(); }
@@ -726,6 +740,7 @@ public final class LauncherModuleTest {
         final HostServices services;
         final LauncherModule module;
         NoteStepChangedCallback observer;
+        int scenes = 16;
         int selected, start, writes, creates, failWriteAt, nameWrites, playbackDispatches, stopWrites;
         double size = .25, loopStart;
         String trackId = ID;
@@ -764,7 +779,7 @@ public final class LauncherModuleTest {
                 track.action("channelId", a -> identity.proxy);
                 track.value("name", () -> "Track"); track.value("position", () -> trackIndex);
                 track.value("isStopped", () -> stopped); track.value("isQueuedForStop", () -> stopQueued);
-                Node bank = new Node(ClipLauncherSlotBank.class); bank.value("scrollPosition", () -> bankOffset); bank.value("itemCount", () -> 16);
+                Node bank = new Node(ClipLauncherSlotBank.class); bank.value("scrollPosition", () -> bankOffset); bank.value("itemCount", () -> scenes);
                 ClipLauncherSlot[] slotApis = new ClipLauncherSlot[16];
                 for (int j = 0; j < 16; j++) {
                     final int index = j; SlotData data = slots[j]; Node slot = new Node(ClipLauncherSlot.class);

@@ -129,9 +129,9 @@ Layer discovery and parameter observations do not establish native write isolati
 | `grid.modules.delete` | `D`, `moduleId`; selective singleton deletion with native bypass/reconnection, never clear-all or missing-is-success |
 | `grid.modules.rename` | `D`, `moduleId`, required raw `expectedCustomName` and `customName`; strict JSON strings, empty allowed, each at most1024UTF-16 code units; single current-module name CAS, not a type/string-panel/selection target |
 | `grid.connections.set` | `D`, `targetModuleId`, `targetPortKey`, required nullable `expectedSource`, required nullable `source`; each nonnull endpoint is exactly `{"moduleId":"...","portKey":"..."}`; single-input compare-and-set |
-| `launcher.list` | `T`; sixteen slots, including empties and observed playback/recording states |
-| `launcher.create` | `T`, `slotIndex` (0–15), `lengthBeats` (integer 1–4096), `name` (1–128 UTF-16 units); empty slots only |
-| `launcher.import` | `T`, `slotIndex` (0–15), absolute normalized local `path`; readable regular file, empty slot only, never overwrite |
+| `launcher.list` | `T`; up to sixteen slots, only those below the scene count (`window.total`), including empties and observed playback/recording states |
+| `launcher.create` | `T`, `slotIndex` (0–15, below scene count; else `slot_out_of_range`, not applied), `lengthBeats` (integer 1–4096), `name` (1–128 UTF-16 units); empty slots only |
+| `launcher.import` | `T`, `slotIndex` (0–15, below scene count; else `slot_out_of_range`), absolute normalized local `path`; readable regular file, empty slot only, never overwrite |
 | `launcher.launch` | `T`, `slotIndex`; queued and actually playing are distinct |
 | `launcher.stop` | `T`; stop launcher clips on that track |
 | `notes.read` | Explicit MIDI window below |
