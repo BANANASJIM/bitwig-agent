@@ -131,12 +131,13 @@ Layer discovery and parameter observations do not establish native write isolati
 | `grid.modules.rename` | `D`, `moduleId`, required raw `expectedCustomName` and `customName`; strict JSON strings, empty allowed, each at most1024UTF-16 code units; single current-module name CAS, not a type/string-panel/selection target |
 | `grid.connections.set` | `D`, `targetModuleId`, `targetPortKey`, required nullable `expectedSource`, required nullable `source`; each nonnull endpoint is exactly `{"moduleId":"...","portKey":"..."}`; single-input compare-and-set |
 | `launcher.list` | `T`; up to sixteen slots, only those below the scene count (`window.total`), including empties and observed playback/recording states |
-| `launcher.create` | `T`, `slotIndex` (0–15, below scene count; else `slot_out_of_range`, not applied), `lengthBeats` (integer 1–4096), `name` (1–128 UTF-16 units); empty slots only |
+| `launcher.create` | `T`, `slotIndex` (0–15, below scene count; else `slot_out_of_range`, not applied), `lengthBeats` (integer 1–4096), `name` (1–128 UTF-16 units), optional `notes` (1–256 `op:set` entries `beat`/`pitch`/`velocity`/`durationBeats`, must fit `lengthBeats`) and `channel` (default 0); empty slots only. With `notes`, they are written after the clip is observed; result adds `noteWrite` (the notes.edit result, per-edit verification). A create not observed writes none (`noteWrite:"not_attempted"`) |
 | `launcher.import` | `T`, `slotIndex` (0–15, below scene count; else `slot_out_of_range`), absolute normalized local `path`; readable regular file, empty slot only, never overwrite |
 | `launcher.launch` | `T`, `slotIndex` (below scene count; else `slot_out_of_range`); queued and actually playing are distinct |
 | `launcher.stop` | `T`; stop launcher clips on that track |
-| `notes.read` | Explicit MIDI window below |
-| `notes.edit` | Explicit MIDI window plus `edits` (1–256 entries) |
+| `scenes.append` | Optional `count` (1–16, default 1; total scenes must stay ≤ 16, else `scene_limit`/`not_applied`); appends empty scene(s) after the last scene so existing slots do not move. Observed when the scene count rises by `count`; otherwise `scene_count_not_observed`/`unknown` |
+| `notes.read` | MIDI window below; window may be omitted (whole loop, all pitches) |
+| `notes.edit` | MIDI window below (optional, derived from the edits when omitted) plus `edits` (1–256 entries) |
 
 Transport uses raw BPM and quarter-note beats. Tempo 20–666 is a toolkit-supported range evidenced by a shipped controller, not a claim about every native raw limit. Position/loop start are nonnegative; duration is positive; their sum must remain finite. Recording/arranger automation/launcher automation write flags are read-only. While enabled, non-stop transport mutations are rejected; explicit stop remains available. Multi-field mutations are not transactions: each field is guarded and separately verified, and earlier changes can remain when a later field fails.
 
@@ -164,7 +165,7 @@ Unresolved dispatched launcher creation/import stays quarantined beyond the RPC 
 
 ### MIDI window and edits
 
-Every `notes.read/edit` request supplies `trackId`, `slotIndex` (below scene count; else `slot_out_of_range`), `channel` (0–15), `stepSizeBeats` (1/128–4), `startStep` (0–1048576), `steps` (1–128), `pitchStart` (0–127), `pitchCount` (1–128; range must end at or below 128). MIDI numbers avoid octave-label conventions: 60 means the same pitch even when the UI calls it C3 rather than C4.
+Every `notes.read/edit` request supplies `trackId`, `slotIndex` (below scene count; else `slot_out_of_range`) and optional `channel` (0–15, default 0). The five grid fields are supplied together or all omitted. Explicit: `stepSizeBeats` (1/128–4), `startStep` (0–1048576), `steps` (1–128), `pitchStart` (0–127), `pitchCount` (1–128; range must end at or below 128). Omitted on `notes.edit`: the coarsest grid among 1, 1/2 … 1/128 beat that aligns every beat/duration, `startStep` at the earliest edit and the pitch range of the edits are derived (echoed with `derived:true`); more than 128 steps is `invalid_params` (split by time or use a coarser grid). Omitted on `notes.read`: the loop is read over pitches 0–127 at 0.125 beat (1/32 note) when the loop is at most 16 beats, else 0.25 beat (1/16 note), at most 128 steps; if the loop is longer, `windowCoversLoop:false` and `continuation` names the next explicit window (never coarser than 1/16). MIDI numbers avoid octave-label conventions: 60 means the same pitch even when the UI calls it C3 rather than C4.
 
 Each edit is either `{"op":"set","beat":0,"pitch":60,"velocity":90,"durationBeats":1}` or `{"op":"clear","beat":0,"pitch":60}`. Velocity is an integer 1–127, duration 1/128–4096 beats. Beat and duration must align exactly to the requested step grid. Set duration must fit the requested window and observed loop end. Duplicate cells, overlapping same-pitch sets, existing onset collisions and edits starting inside a sustain are rejected before note writes. Clearing an obstructing note requires an explicit earlier call; there is no whole-clip replacement.
 

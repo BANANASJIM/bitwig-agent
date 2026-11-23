@@ -11,8 +11,12 @@ import java.util.concurrent.TimeUnit;
 
 /** Explicit launcher targets; cursor leases and unresolved native mutations have separate lifetimes. */
 final class LauncherModule implements HostModule {
-    static final Set<String> METHODS = Set.of("launcher.list", "launcher.create", "launcher.import", "launcher.launch", "launcher.stop", "notes.read", "notes.edit");
-    private static final Set<String> WINDOW_FIELDS = Set.of("trackId", "slotIndex", "channel", "stepSizeBeats", "startStep", "steps", "pitchStart", "pitchCount");
+    static final Set<String> METHODS = Set.of("launcher.list", "launcher.create", "launcher.import", "launcher.launch", "launcher.stop", "notes.read", "notes.edit", "scenes.append");
+    // channel defaults to 0; the five grid fields are all-or-none (omitted: window derived from the edits or the clip loop).
+    private static final Set<String> WINDOW_OPTIONAL = Set.of("channel", "stepSizeBeats", "startStep", "steps", "pitchStart", "pitchCount");
+    private static final Set<String> GRID_FIELDS = Set.of("stepSizeBeats", "startStep", "steps", "pitchStart", "pitchCount");
+    private static final BigDecimal[] DERIVED_GRIDS = {BigDecimal.ONE, new BigDecimal("0.5"), new BigDecimal("0.25"), new BigDecimal("0.125"),
+        new BigDecimal("0.0625"), new BigDecimal("0.03125"), new BigDecimal("0.015625"), new BigDecimal("0.0078125")};
     // Bitwig 6.1.3 debounces step-size grid regeneration by 100ms before queuing controller delivery.
     // This margin avoids consuming that known old cache; it is not a configuration acknowledgement.
     private static final int NOTE_GRID_SETTLE_MS = 150;
@@ -31,6 +35,8 @@ final class LauncherModule implements HostModule {
     private final List<Mutation> unresolvedMutations = new ArrayList<>();
     private Mutation cursorMutation;
     private boolean clipExistsReady, lengthReady;
+    private HostOperation carryOp; // launcher.create result awaiting its note-write stage
+    private JsonObject carry;
 
     LauncherModule(HostServices services) {
         s = services;
@@ -96,20 +102,28 @@ final class LauncherModule implements HostModule {
                 Params.absoluteFilePath(p, "path");
                 break;
             case "launcher.create": {
-                Params.fields(p, Set.of("trackId", "slotIndex", "lengthBeats", "name"), Set.of());
-                Params.integer(p, "lengthBeats", 1, 4096);
+                Params.fields(p, Set.of("trackId", "slotIndex", "lengthBeats", "name"), Set.of("notes", "channel"));
+                int length = Params.integer(p, "lengthBeats", 1, 4096);
                 if (Params.string(p, "name").length() > 128) throw invalid("name must contain 1..128 characters");
+                if (p.has("notes")) {
+                    JsonObject ep = createNotes(p);
+                    edits(ep, resolveWindow("notes.edit", ep));
+                    for (JsonElement n : ep.getAsJsonArray("edits")) {
+                        JsonObject e = n.getAsJsonObject();
+                        if (e.get("beat").getAsDouble() + e.get("durationBeats").getAsDouble() > length)
+                            throw invalid("notes must fit inside lengthBeats");
+                    }
+                } else if (p.has("channel")) throw invalid("channel is only valid together with notes");
                 break;
             }
+            case "scenes.append":
+                Params.fields(p, Set.of(), Set.of("count"));
+                if (p.has("count")) Params.integer(p, "count", 1, 16);
+                return;
             case "notes.read":
             case "notes.edit": {
-                Set<String> required = WINDOW_FIELDS;
-                if (method.equals("notes.edit")) {
-                    required = new HashSet<>(WINDOW_FIELDS);
-                    required.add("edits");
-                }
-                Params.fields(p, required, Set.of());
-                Window w = new Window(p);
+                Params.fields(p, method.equals("notes.edit") ? Set.of("trackId", "slotIndex", "edits") : Set.of("trackId", "slotIndex"), WINDOW_OPTIONAL);
+                Window w = resolveWindow(method, p);
                 if (method.equals("notes.edit")) edits(p, w);
                 break;
             }
@@ -133,7 +147,7 @@ final class LauncherModule implements HostModule {
             if (!set && !op.equals("clear")) throw invalid("edit op must be set or clear");
             Params.fields(e, set ? Set.of("op", "beat", "pitch", "velocity", "durationBeats") : Set.of("op", "beat", "pitch"), Set.of());
             Params.number(e, "beat", 0, 4194304);
-            int absolute = aligned(e.get("beat"), p.get("stepSizeBeats"), "beat");
+            int absolute = aligned(e.get("beat"), new JsonPrimitive(w.exact), "beat");
             int x = absolute - w.start;
             int pitch = Params.integer(e, "pitch", 0, 127);
             if (x < 0 || x >= w.steps || pitch < w.pitch || pitch >= w.pitch + w.pitches)
@@ -141,7 +155,7 @@ final class LauncherModule implements HostModule {
             if (!cells.add(x * 128 + pitch)) throw invalid("multiple edits address the same channel/step/pitch cell");
             int velocity = set ? Params.integer(e, "velocity", 1, 127) : 0;
             double duration = set ? Params.number(e, "durationBeats", 1.0 / 128, 4096) : 0;
-            int durationSteps = set ? aligned(e.get("durationBeats"), p.get("stepSizeBeats"), "durationBeats") : 0;
+            int durationSteps = set ? aligned(e.get("durationBeats"), new JsonPrimitive(w.exact), "durationBeats") : 0;
             if (set && (durationSteps < 1 || x + durationSteps > w.steps))
                 throw invalid("set duration must fit entirely inside the explicit window");
             result.add(new Edit(x, pitch, velocity, duration, durationSteps, set));
@@ -158,6 +172,132 @@ final class LauncherModule implements HostModule {
         return result;
     }
 
+    static boolean hasGrid(JsonObject p) {
+        int present = 0;
+        for (String key : GRID_FIELDS) if (p.has(key)) present++;
+        if (present != 0 && present != GRID_FIELDS.size())
+            throw invalid("stepSizeBeats, startStep, steps, pitchStart and pitchCount must be supplied together or all omitted");
+        return present != 0;
+    }
+
+    /** Explicit window, or for notes.edit the smallest one derived from the edits; null for a notes.read to be sized from the clip loop. */
+    static Window resolveWindow(String method, JsonObject p) {
+        if (hasGrid(p)) return new Window(p);
+        return method.equals("notes.edit") ? deriveEditWindow(p) : null;
+    }
+
+    static void applyWindow(JsonObject p, Window w) {
+        p.addProperty("stepSizeBeats", w.exact); p.addProperty("startStep", w.start); p.addProperty("steps", w.steps);
+        p.addProperty("pitchStart", w.pitch); p.addProperty("pitchCount", w.pitches);
+        p.addProperty("channel", w.channel); p.addProperty("windowDerived", true);
+    }
+
+    /** Coarsest power-of-two grid (1..1/128 beat) aligning every beat and duration, i.e. the fewest steps. */
+    static Window deriveEditWindow(JsonObject p) {
+        if (!p.has("edits") || !p.get("edits").isJsonArray()) throw invalid("edits must be an array");
+        JsonArray array = p.getAsJsonArray("edits");
+        if (array.size() < 1 || array.size() > 256) throw invalid("edits must contain 1..256 entries");
+        List<BigDecimal[]> spans = new ArrayList<>(); // {beat, duration or null}
+        int low = 128, high = -1;
+        for (JsonElement value : array) {
+            if (!value.isJsonObject()) throw invalid("each edit must be an object");
+            JsonObject e = value.getAsJsonObject();
+            boolean set = Params.string(e, "op").equals("set");
+            Params.number(e, "beat", 0, 4194304);
+            int pitch = Params.integer(e, "pitch", 0, 127);
+            if (set) Params.number(e, "durationBeats", 1.0 / 128, 4096);
+            low = Math.min(low, pitch); high = Math.max(high, pitch);
+            spans.add(new BigDecimal[]{e.get("beat").getAsBigDecimal(), set ? e.get("durationBeats").getAsBigDecimal() : null});
+        }
+        BigDecimal grid = null;
+        for (BigDecimal candidate : DERIVED_GRIDS) {
+            boolean fits = true;
+            for (BigDecimal[] span : spans)
+                fits &= span[0].remainder(candidate).signum() == 0 && (span[1] == null || span[1].remainder(candidate).signum() == 0);
+            if (fits) { grid = candidate; break; }
+        }
+        if (grid == null) throw invalid("beat and durationBeats must be multiples of 1/128 beat to derive a window; no rounding is performed");
+        long first = Long.MAX_VALUE, last = 0;
+        for (BigDecimal[] span : spans) {
+            long x = span[0].divide(grid).longValueExact();
+            first = Math.min(first, x);
+            last = Math.max(last, x + (span[1] == null ? 1 : span[1].divide(grid).longValueExact()));
+        }
+        if (last - first > 128)
+            throw invalid("edits span " + (last - first) + " steps on the derived " + grid.stripTrailingZeros().toPlainString()
+                + "-beat grid (maximum 128 per call): split them by time range into several calls, or use beats/durations that fit a coarser grid");
+        JsonObject w = new JsonObject();
+        w.addProperty("stepSizeBeats", grid); w.addProperty("startStep", first); w.addProperty("steps", last - first);
+        w.addProperty("pitchStart", low); w.addProperty("pitchCount", high - low + 1);
+        if (p.has("channel")) w.add("channel", p.get("channel"));
+        return new Window(w);
+    }
+
+    /** launcher.create notes are set entries of notes.edit; returns the equivalent notes.edit params with a derived window. */
+    static JsonObject createNotes(JsonObject p) {
+        if (!p.get("notes").isJsonArray()) throw invalid("notes must be an array");
+        JsonObject ep = new JsonObject();
+        ep.add("trackId", p.get("trackId")); ep.add("slotIndex", p.get("slotIndex"));
+        if (p.has("channel")) ep.add("channel", p.get("channel"));
+        JsonArray list = new JsonArray();
+        for (JsonElement n : p.getAsJsonArray("notes")) {
+            if (!n.isJsonObject()) throw invalid("each note must be an object");
+            JsonObject e = n.getAsJsonObject().deepCopy();
+            if (e.has("op") && !(e.get("op").isJsonPrimitive() && e.get("op").getAsString().equals("set"))) throw invalid("notes entries must be op=set");
+            e.addProperty("op", "set");
+            list.add(e);
+        }
+        ep.add("edits", list);
+        applyWindow(ep, deriveEditWindow(ep));
+        return ep;
+    }
+
+    /** Whole clip loop over all pitches at the finest of 1/32 and 1/16 note that fits 128 steps; never coarser. */
+    private void deriveReadWindow(JsonObject p) {
+        double start = clip.getLoopStart().get(), length = clip.getLoopLength().get();
+        double size = length / 0.125 <= 128 + 1e-9 ? 0.125 : 0.25;
+        JsonObject w = new JsonObject();
+        w.addProperty("stepSizeBeats", size); w.addProperty("startStep", (int) Math.floor(start / size + 1e-9));
+        w.addProperty("steps", Math.max(1, Math.min(128, (int) Math.ceil(length / size - 1e-9))));
+        w.addProperty("pitchStart", 0); w.addProperty("pitchCount", 128);
+        if (p.has("channel")) w.add("channel", p.get("channel"));
+        applyWindow(p, new Window(w));
+    }
+
+    private void appendScenes(HostOperation op, JsonObject p) {
+        int count = p.has("count") ? Params.integer(p, "count", 1, 16) : 1;
+        if (!s.tracksObserved) throw HostServices.failure("not_ready", "Track bank has not reported its size yet.");
+        Track probe = (Track) s.tracks.getItemAt(0);
+        if (!probe.exists().get())
+            throw HostServices.failure("not_ready", "Scene count is observed through the first track, which does not exist; create a track first");
+        ClipLauncherSlotBank bank = probe.clipLauncherSlotBank();
+        if (bank.scrollPosition().get() != 0) throw HostServices.failure("stale_context", "Launcher bank is not at scene offset zero");
+        int before = bank.itemCount().get();
+        if (before + count > HostServices.SCENES)
+            throw HostServices.failure("scene_limit", "The project has " + before + " scene(s); the launcher tools address at most "
+                + HostServices.SCENES + ", so " + count + " more cannot be appended");
+        op.dispatched = true;
+        // Project.createScene() is documented to create "a new empty scene as the last scene"; existing slot indices do not move.
+        for (int i = 0; i < count; i++) s.host.getProject().createScene();
+        awaitScenes(op, bank, before, count, until(op));
+    }
+
+    private void awaitScenes(HostOperation op, ClipLauncherSlotBank bank, int before, int count, long end) {
+        s.check(op);
+        int now = bank.itemCount().get();
+        if (now == before + count) {
+            JsonObject out = HostServices.observed();
+            out.addProperty("status", "observed"); out.addProperty("verification", "scene_count");
+            out.addProperty("sceneCountBefore", before); out.addProperty("sceneCount", now);
+            out.addProperty("appended", count); out.addProperty("firstNewSlotIndex", before);
+            out.addProperty("placement", "last_scene_per_api_documentation; position is not read back, count is");
+            op.result.complete(out);
+        } else if (System.nanoTime() >= end) {
+            throw new RpcException("scene_count_not_observed", "Scene creation was dispatched, but the scene count did not reach " + (before + count)
+                + " (observed " + now + "); inspect launcher.list and do not blindly repeat", "unknown");
+        } else s.schedule(op, () -> awaitScenes(op, bank, before, count, end), 20);
+    }
+
     static int aligned(JsonElement beat, JsonElement size, String field) {
         BigDecimal[] parts = beat.getAsBigDecimal().divideAndRemainder(size.getAsBigDecimal());
         if (parts[1].signum() != 0) throw invalid(field + " must exactly align with stepSizeBeats; no rounding is performed");
@@ -168,6 +308,9 @@ final class LauncherModule implements HostModule {
     public void dispatch(HostOperation op, String method, JsonObject p) {
         s.check(op);
         validateParams(method, p);
+        p = p.deepCopy();
+        if (method.equals("scenes.append")) { appendScenes(op, p); return; }
+        if (method.equals("notes.edit") && !hasGrid(p)) applyWindow(p, resolveWindow(method, p));
         String id = Params.string(p, "trackId");
         Track track = s.track(id);
         int t = s.trackSlot(id);
@@ -195,7 +338,7 @@ final class LauncherModule implements HostModule {
         int scenes = track.clipLauncherSlotBank().itemCount().get();
         if (j >= scenes)
             throw HostServices.failure("slot_out_of_range", "slotIndex " + j + " does not exist: the project has " + scenes
-                + " scene(s). Add a scene first (actions.invoke actionId=\"Create Scene\"), then re-run launcher.list");
+                + " scene(s). Append scenes with scenes.append, then re-run launcher.list");
         Slot slot = slots[t][j];
         ready(slot);
         if (method.equals("launcher.launch")) {
@@ -311,6 +454,7 @@ final class LauncherModule implements HostModule {
         else if (System.nanoTime() >= end) {
             JsonObject out = base(id, index);
             out.addProperty("status", "dispatched"); out.addProperty("verification", "content_not_observed");
+            if (p.has("notes")) out.addProperty("noteWrite", "not_attempted");
             out.addProperty("mutationUnresolved", true);
             out.addProperty("quarantine", "extension_instance");
             out.add("slot", slotJson(slot, index)); op.result.complete(out);
@@ -334,6 +478,7 @@ final class LauncherModule implements HostModule {
             return;
         }
         if (!settled) {
+            if (method.equals("notes.read") && !p.has("stepSizeBeats")) deriveReadWindow(p);
             if (method.startsWith("notes.")) {
                 Window w = new Window(p);
                 clip.setStepSize(w.size);
@@ -370,7 +515,13 @@ final class LauncherModule implements HostModule {
         out.add("slot", slotJson(slot, index));
         addClipMetadata(out);
         if (matches) finishMutation();
-        else {
+        if (matches && p.has("notes")) {
+            carryOp = op; carry = out; // clip creation is complete; the note write is an ordinary notes.edit stage
+            bind(op, id, track, slot, index, createNotes(p), "notes.edit", until(op));
+            return;
+        }
+        if (!matches) {
+            if (p.has("notes")) out.addProperty("noteWrite", "not_attempted");
             out.addProperty("mutationUnresolved", true);
             out.addProperty("quarantine", "extension_instance");
         }
@@ -439,7 +590,14 @@ final class LauncherModule implements HostModule {
             item.add("observed", noteJson(clip.getStep(w.channel, e.x, e.pitch), w, e.x, e.pitch));
             results.add(item);
         }
-        out.add("edits", results); op.result.complete(out);
+        out.add("edits", results);
+        if (carryOp == op) {
+            JsonObject merged = carry; carryOp = null; carry = null;
+            merged.addProperty("status", out.get("status").getAsString());
+            merged.add("noteWrite", out);
+            out = merged;
+        }
+        op.result.complete(out);
     }
 
     static boolean matches(Edit e, NoteStep note) {
@@ -477,7 +635,16 @@ final class LauncherModule implements HostModule {
         out.addProperty("notesReturned", notes.size());
         out.addProperty("completeWindow", total == notes.size());
         out.addProperty("noteResponseLimit", 2048);
-        if (total > notes.size()) out.addProperty("continuation", "Subdivide steps or pitchCount to read the remaining onset cells; response is bounded below the 1 MiB transport limit");
+        String continuation = null;
+        if (total > notes.size()) continuation = "Subdivide steps or pitchCount to read the remaining onset cells; response is bounded below the 1 MiB transport limit";
+        double loopEnd = clip.getLoopStart().get() + clip.getLoopLength().get(), windowEnd = (w.start + w.steps) * w.size;
+        boolean coversLoop = windowEnd >= loopEnd - 1e-9;
+        if (w.derived) {
+            out.addProperty("windowCoversLoop", coversLoop);
+            if (!coversLoop) continuation = (continuation == null ? "" : continuation + ". ") + "The clip loop continues past this window and a coarser grid would drop below 1/16 note: read the rest with an explicit window, startStep="
+                + (w.start + w.steps) + " stepSizeBeats=" + w.exact.stripTrailingZeros().toPlainString() + " steps=128 pitchStart=0 pitchCount=128";
+        }
+        if (continuation != null) out.addProperty("continuation", continuation);
         return out;
     }
 
@@ -560,9 +727,13 @@ final class LauncherModule implements HostModule {
     static final class Window {
         final int channel, start, steps, pitch, pitches;
         final double size;
+        final BigDecimal exact;
+        final boolean derived;
         Window(JsonObject p) {
-            channel = Params.integer(p, "channel", 0, 15);
+            channel = p.has("channel") ? Params.integer(p, "channel", 0, 15) : 0;
             size = Params.number(p, "stepSizeBeats", 1.0 / 128, 4);
+            exact = p.get("stepSizeBeats").getAsBigDecimal();
+            derived = p.has("windowDerived");
             start = Params.integer(p, "startStep", 0, 1048576);
             steps = Params.integer(p, "steps", 1, 128);
             pitch = Params.integer(p, "pitchStart", 0, 127);
@@ -572,6 +743,7 @@ final class LauncherModule implements HostModule {
         JsonObject json() {
             JsonObject out = new JsonObject(); out.addProperty("channel", channel); out.addProperty("stepSizeBeats", size);
             out.addProperty("startStep", start); out.addProperty("steps", steps); out.addProperty("pitchStart", pitch); out.addProperty("pitchCount", pitches);
+            if (derived) out.addProperty("derived", true);
             out.addProperty("startBeat", start * size); out.addProperty("endBeatExclusive", (start + steps) * size);
             return out;
         }
