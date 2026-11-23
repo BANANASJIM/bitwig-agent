@@ -6,6 +6,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import tomllib
 import urllib.request
 import zipfile
 
@@ -37,6 +38,20 @@ def gson_jar():
     return target
 
 
+def build_properties():
+    """Package version plus git short SHA and a dirty flag; "unknown" outside git."""
+    version = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
+    try:
+        git = lambda *args: subprocess.run(["git", "-C", str(ROOT), *args], check=True,
+                                           capture_output=True, text=True).stdout.strip()
+        build = git("rev-parse", "--short", "HEAD")
+        if git("status", "--porcelain"):
+            build += "-dirty"
+    except (OSError, subprocess.CalledProcessError):
+        build = "unknown"
+    return f"version={version}\nbuild={build}\n"
+
+
 def compile_java(sources, target, classpath):
     target.mkdir(parents=True, exist_ok=True)
     subprocess.run([os.environ.get("JAVAC", "javac"), "--release", "11", "-encoding", "UTF-8",
@@ -65,6 +80,7 @@ def build():
     output = BUILD / "BitwigAgent.bwextension"
     with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\n\n")
+        archive.writestr("bitwig-agent-build.properties", build_properties())
         for directory in [classes, ROOT / "extension/src/main/resources"]:
             if directory.exists():
                 for path in sorted(directory.rglob("*")):

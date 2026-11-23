@@ -19,7 +19,10 @@ async def test_real_stdio_preserves_partial_domain_results(mcp_session, host):
         host.reply = lambda request, result=result: {"id": request["id"], "result": result}
         response = await mcp_session.call_tool(method, params)
         assert response.is_error is False
-        assert response.structured_content == {"result": result}
+        got = response.structured_content
+        if method == "status":  # client adds a mismatch note when the host reports no extension version
+            got["result"].pop("extensionMismatch")
+        assert got == {"result": result}
         assert host.requests[-1]["params"] == params
     assert host.connections == len(TOOLS)
 

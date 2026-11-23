@@ -17,6 +17,10 @@ final class MixModule implements HostModule {
     // A completed/cancelled RPC does not cancel a void native factory. Never reuse its attribution window.
     private boolean creationUnresolved;
 
+    @Override public List<String> unresolved() {
+        return creationUnresolved ? List.of("A prior tracks.create factory remains unattributed.") : List.of();
+    }
+
     MixModule(HostServices services) {
         s = services;
         for (int i = 0; i < states.length; i++) {
