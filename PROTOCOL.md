@@ -129,10 +129,10 @@ Layer discovery and parameter observations do not establish native write isolati
 | `grid.modules.delete` | `D`, `moduleId`; selective singleton deletion with native bypass/reconnection, never clear-all or missing-is-success |
 | `grid.modules.rename` | `D`, `moduleId`, required raw `expectedCustomName` and `customName`; strict JSON strings, empty allowed, each at most1024UTF-16 code units; single current-module name CAS, not a type/string-panel/selection target |
 | `grid.connections.set` | `D`, `targetModuleId`, `targetPortKey`, required nullable `expectedSource`, required nullable `source`; each nonnull endpoint is exactly `{"moduleId":"...","portKey":"..."}`; single-input compare-and-set |
-| `launcher.list` | `T`; sixteen slots, including empties and observed playback/recording states |
-| `launcher.create` | `T`, `slotIndex` (0–15), `lengthBeats` (integer 1–4096), `name` (1–128 UTF-16 units); empty slots only |
-| `launcher.import` | `T`, `slotIndex` (0–15), absolute normalized local `path`; readable regular file, empty slot only, never overwrite |
-| `launcher.launch` | `T`, `slotIndex`; queued and actually playing are distinct |
+| `launcher.list` | `T`; up to sixteen slots, only those below the scene count (`window.total`), including empties and observed playback/recording states |
+| `launcher.create` | `T`, `slotIndex` (0–15, below scene count; else `slot_out_of_range`, not applied), `lengthBeats` (integer 1–4096), `name` (1–128 UTF-16 units); empty slots only |
+| `launcher.import` | `T`, `slotIndex` (0–15, below scene count; else `slot_out_of_range`), absolute normalized local `path`; readable regular file, empty slot only, never overwrite |
+| `launcher.launch` | `T`, `slotIndex` (below scene count; else `slot_out_of_range`); queued and actually playing are distinct |
 | `launcher.stop` | `T`; stop launcher clips on that track |
 | `notes.read` | Explicit MIDI window below |
 | `notes.edit` | Explicit MIDI window plus `edits` (1–256 entries) |
@@ -163,7 +163,7 @@ Unresolved dispatched launcher creation/import stays quarantined beyond the RPC 
 
 ### MIDI window and edits
 
-Every `notes.read/edit` request supplies `trackId`, `slotIndex`, `channel` (0–15), `stepSizeBeats` (1/128–4), `startStep` (0–1048576), `steps` (1–128), `pitchStart` (0–127), `pitchCount` (1–128; range must end at or below 128). MIDI numbers avoid octave-label conventions: 60 means the same pitch even when the UI calls it C3 rather than C4.
+Every `notes.read/edit` request supplies `trackId`, `slotIndex` (below scene count; else `slot_out_of_range`), `channel` (0–15), `stepSizeBeats` (1/128–4), `startStep` (0–1048576), `steps` (1–128), `pitchStart` (0–127), `pitchCount` (1–128; range must end at or below 128). MIDI numbers avoid octave-label conventions: 60 means the same pitch even when the UI calls it C3 rather than C4.
 
 Each edit is either `{"op":"set","beat":0,"pitch":60,"velocity":90,"durationBeats":1}` or `{"op":"clear","beat":0,"pitch":60}`. Velocity is an integer 1–127, duration 1/128–4096 beats. Beat and duration must align exactly to the requested step grid. Set duration must fit the requested window and observed loop end. Duplicate cells, overlapping same-pitch sets, existing onset collisions and edits starting inside a sustain are rejected before note writes. Clearing an obstructing note requires an explicit earlier call; there is no whole-clip replacement.
 
