@@ -165,14 +165,16 @@ final class GridInsertionWriter {
      * Same-device batch: types and geometry first (any failure inserts nothing), then entries run in order through the
      * ordinary single path, each settling before the next starts; stops at the first failure or unknown.
      */
-    void insertAll(Object proxy, UUID trackId, List<Request> given, Runnable check, Runnable dispatch,
+    /** Time left before the RPC deadline must exceed this to start another batch entry (a load plus its delivery). */
+    static final long NEXT_ENTRY_MARGIN_NANOS = java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(1500);
+    void insertAll(Object proxy, UUID trackId, List<Request> given, java.util.function.BooleanSupplier timeLeft, Runnable check, Runnable dispatch,
             Consumer<JsonObject> complete, Consumer<Throwable> fail) {
         quarantine.requireAvailable(); values.documentThread(); check.run();
         List<Request> requests = resolveNames(given, check);
         GridSnapshotReader.NativeTarget target = snapshots.target(proxy, trackId);
         Layout before = layout(target.graph, check); before.capacity(requests.size()); before.requested(requests);
         JsonObject graphBefore = snapshots.snapshot(proxy, trackId, 0, GridTopologyContext.MAX_MODULES, false, false, null, check);
-        new Batch(proxy, trackId, requests, graphBefore, check, dispatch, complete, fail).next(0);
+        new Batch(proxy, trackId, requests, graphBefore, timeLeft, check, dispatch, complete, fail).next(0);
     }
 
     private final class Batch {
@@ -180,8 +182,10 @@ final class GridInsertionWriter {
         final Runnable check, dispatch; final Consumer<JsonObject> complete; final Consumer<Throwable> fail;
         final JsonArray items = new JsonArray();
         JsonObject lastGraph; String status = "applied"; int written; boolean done;
-        Batch(Object proxy, UUID trackId, List<Request> requests, JsonObject graphBefore, Runnable check,
-                Runnable dispatch, Consumer<JsonObject> complete, Consumer<Throwable> fail) {
+        final java.util.function.BooleanSupplier timeLeft;
+        Batch(Object proxy, UUID trackId, List<Request> requests, JsonObject graphBefore, java.util.function.BooleanSupplier timeLeft,
+                Runnable check, Runnable dispatch, Consumer<JsonObject> complete, Consumer<Throwable> fail) {
+            this.timeLeft = timeLeft;
             this.proxy = proxy; this.trackId = trackId; this.requests = requests; this.graphBefore = graphBefore;
             this.check = check; this.dispatch = dispatch; this.complete = complete; this.fail = fail;
         }
@@ -194,6 +198,13 @@ final class GridInsertionWriter {
         void next(int i) {
             if (done) return;
             if (i == requests.size()) { finish(); return; }
+            if (i > 0 && !timeLeft.getAsBoolean()) { // Stop cleanly while per-entry results can still be delivered.
+                status = "partial";
+                for (int k = i; k < requests.size(); k++) {
+                    JsonObject rest = item(requests.get(k)); rest.addProperty("status", "not_dispatched"); items.add(rest);
+                }
+                finish(); return;
+            }
             Request request = requests.get(i);
             JsonObject item = item(request);
             items.add(item);
@@ -228,11 +239,25 @@ final class GridInsertionWriter {
             }
             finish();
         }
+        /** Later inserts can push earlier modules right: report where each module is in the final graph. */
+        private void refreshPositions() {
+            for (JsonElement row : lastGraph.getAsJsonArray("modules")) {
+                JsonObject module = row.getAsJsonObject();
+                for (JsonElement element : items) {
+                    JsonObject item = element.getAsJsonObject();
+                    if (!item.has("moduleId") || !item.get("moduleId").getAsString().equals(module.get("instanceId").getAsString())) continue;
+                    item.add("actualPosition", GridModuleWriter.position(module.get("x").getAsInt(), module.get("y").getAsInt()));
+                    JsonObject wanted = item.getAsJsonObject("requestedPosition");
+                    item.addProperty("matchesRequested", wanted.get("x").equals(module.get("x")) && wanted.get("y").equals(module.get("y")));
+                }
+            }
+        }
         private void finish() {
             if (done) return;
             done = true;
             try {
                 boolean unknown = status.equals("unknown");
+                if (lastGraph != null && !unknown) refreshPositions();
                 JsonObject result = HostServices.observed();
                 result.addProperty("batchStatus", status); result.addProperty("completion", unknown ? "unknown" : "observed");
                 result.addProperty("written", written);

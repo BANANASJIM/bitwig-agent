@@ -272,7 +272,8 @@ final class GridModule implements HostModule {
                 if (topology) {
                     java.util.function.Consumer<JsonObject> complete = value -> deliver(op, target, safety, true, check, GridDiff.shape(value, fullGraph));
                     Runnable dispatch = () -> { check.run(); op.dispatched = true; };
-                    if (insertBatch) adapter.insertModules(target.source.device, target.uuid, insertions, check, dispatch, complete, op::fail);
+                    if (insertBatch) adapter.insertModules(target.source.device, target.uuid, insertions,
+                            () -> op.deadline - System.nanoTime() > GridInsertionWriter.NEXT_ENTRY_MARGIN_NANOS, check, dispatch, complete, op::fail);
                     else if (inserting) adapter.insertModule(target.source.device, target.uuid, insertion, check, dispatch, complete, op::fail);
                     else if (renaming) adapter.renameModule(target.source.device, target.uuid, moduleId, name, check, dispatch, complete, op::fail);
                     else if (cableBatch) adapter.setConnections(target.source.device, target.uuid, cables, check, dispatch, complete, op::fail);

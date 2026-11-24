@@ -995,7 +995,7 @@ public final class GridModuleTest {
             insertion.edit(request, check, dispatch, complete, failure);
         }
         @Override public void insertModules(Object proxy, UUID track, java.util.List<GridInsertionWriter.Request> requests,
-                Runnable check, Runnable dispatch, java.util.function.Consumer<JsonObject> complete,
+                java.util.function.BooleanSupplier timeLeft, Runnable check, Runnable dispatch, java.util.function.Consumer<JsonObject> complete,
                 java.util.function.Consumer<Throwable> failure) {
             insertion.editAll(requests, check, dispatch, complete, failure);
         }

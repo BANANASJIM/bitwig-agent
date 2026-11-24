@@ -135,7 +135,7 @@ INT32_DESCRIPTION = "Requested absolute native anchor, not a relative delta or p
 
 def require_name_characters(value):
     """Mirror GridNames.norm: a typeName must keep at least one letter or digit once case, spaces and punctuation are ignored."""
-    if value is not None and not any(ch.isalnum() for ch in value):
+    if value is not None and not any(ch.isalpha() or ch.isdecimal() for ch in value):
         raise ValueError("typeName must contain a letter or digit")
     return value
 

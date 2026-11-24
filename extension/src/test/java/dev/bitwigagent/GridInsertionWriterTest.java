@@ -26,6 +26,7 @@ public final class GridInsertionWriterTest {
         batchInsertsInOrderAndReturnsOneDiff();
         batchValidatesEverythingBeforeLoadingAnything();
         batchStopsAtFirstFailureOrUnknown();
+        batchReportsFinalPositionsAndStopsBeforeTheDeadline();
         System.out.println("GridInsertionWriterTest: " + assertions + " assertions passed (semantic fake native lifecycle only)");
     }
     private static void processOwnersSurviveReplacementAndRejectMalformedMarkers() {
@@ -352,7 +353,7 @@ public final class GridInsertionWriterTest {
         }
         RpcException named = null;
         try { f.writer.insertAll(f.model.proxy, TRACK, List.of(new GridInsertionWriter.Request(null, "alpha", 8, 3),
-                new GridInsertionWriter.Request(null, "gamma", 12, 3)), () -> {}, () -> {}, v -> {}, e -> {}); }
+                new GridInsertionWriter.Request(null, "gamma", 12, 3)), () -> true, () -> {}, () -> {}, v -> {}, e -> {}); }
         catch (RpcException caught) { named = caught; }
         check(named != null && named.getMessage().contains("#1") && !named.getMessage().contains("#0"), "the failing entry is named");
         Fixture crowded = new Fixture(); crowded.population(127); HostOperation op = crowded.startAll(batchOf(TYPE, TYPE));
@@ -392,6 +393,30 @@ public final class GridInsertionWriterTest {
                 && modules.get(2).getAsJsonObject().get("status").getAsString().equals("not_dispatched")
                 && !result.has("graph") && unknown.guard.quarantined() && unknown.loads == 2,
                 "a failure after dispatch is unknown, offers no diff, never retries and keeps the process quarantine");
+    }
+    private static void batchReportsFinalPositionsAndStopsBeforeTheDeadline() {
+        Fixture f = new Fixture(); f.fresh = true;
+        HostOperation op = f.startAll(batchOf(TYPE, TYPE));
+        f.deliver();
+        // The second insertion's native reflow pushes the first module right before the batch settles.
+        f.reflow = true;
+        f.next(); f.deliver(); f.next();
+        JsonObject result = op.result.join(); JsonArray modules = result.getAsJsonArray("modules");
+        JsonObject first = modules.get(0).getAsJsonObject();
+        int finalX = -1;
+        for (JsonElement row : result.getAsJsonObject("graph").getAsJsonArray("modules"))
+            if (row.getAsJsonObject().get("instanceId").getAsString().equals(first.get("moduleId").getAsString())) finalX = row.getAsJsonObject().get("x").getAsInt();
+        check(finalX > 8 && first.getAsJsonObject("actualPosition").get("x").getAsInt() == finalX
+                && !first.get("matchesRequested").getAsBoolean(), "entry positions are refreshed from the final graph, matching the diff");
+        Fixture late = new Fixture(); late.fresh = true;
+        op = late.startAll(batchOf(TYPE, TYPE, TYPE));
+        late.deliver(); late.timeLeft = false; late.next();
+        result = op.result.join(); modules = result.getAsJsonArray("modules");
+        check(late.loads == 1 && result.get("batchStatus").getAsString().equals("partial") && result.get("completion").getAsString().equals("observed")
+                && modules.get(1).getAsJsonObject().get("status").getAsString().equals("not_dispatched")
+                && modules.get(2).getAsJsonObject().get("status").getAsString().equals("not_dispatched") && result.has("graph"),
+                "with too little time left the batch stops cleanly, keeps its diff and dispatches nothing more");
+        late.guard.requireAvailable();
     }
     private static void expect(String code, Runnable action) {
         try { action.run(); throw new AssertionError("Expected " + code); }
@@ -435,8 +460,9 @@ public final class GridInsertionWriterTest {
             }, () -> op.dispatched = true, op.result::complete, op::fail); } catch (Throwable error) { op.fail(error); }
             return op;
         }
+        boolean timeLeft = true;
         void editAll(List<GridInsertionWriter.Request> requests, Runnable check, Runnable dispatch, Consumer<JsonObject> complete, Consumer<Throwable> fail) {
-            writer.insertAll(model.proxy, TRACK, requests, check, dispatch, complete, fail);
+            writer.insertAll(model.proxy, TRACK, requests, () -> timeLeft, check, dispatch, complete, fail);
         }
         GridInsertionWriter.Request request() { return new GridInsertionWriter.Request(TYPE, 8, 3); }
         HostOperation start() { return start(request()); }

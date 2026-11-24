@@ -879,4 +879,11 @@ def test_grid_parameter_set_display_replaces_value_for_float_only():
     ):
         with pytest.raises(ValidationError):
             validate_call("grid.parameters.set", bad)
- (feat(grid): loose catalog lookup, typeName and batch insert, display-unit parameter writes)
+
+
+def test_grid_insert_type_name_needs_a_letter_or_decimal_digit_like_java():
+    named = {key: value for key, value in GRID_INSERT.items() if key != "typeId"}
+    for bad in ("\u00b2", "\u00bd", "\u2163", "---"):
+        with pytest.raises(ValidationError):
+            validate_call("grid.modules.insert", {**named, "typeName": bad})
+    validate_call("grid.modules.insert", {**named, "typeName": "Osc 2"})
