@@ -17,6 +17,7 @@ public final class LauncherModuleTest {
 
     public static void main(String[] args) throws Exception {
         settingsIsolationIsShared();
+        parallelSelectionIsRejectedWhileCursorEditRuns();
         strictWindowAndBatchValidation();
         createAndReadActualMusic();
         createdPlaybackExtentMatchesRequestedLength();
@@ -162,6 +163,18 @@ public final class LauncherModuleTest {
         edits = new JsonArray(); edits.add(set(.25, 60, 100, .25)); p.add("edits", edits);
         expectFuture("note_collision", f.startAndDrain("notes.edit", p));
         check(f.writes == 0, "sustained cell never overwrites earlier onset");
+    }
+
+    private static void parallelSelectionIsRejectedWhileCursorEditRuns() throws Exception {
+        Fake f = new Fake(); f.slots[0].content = true;
+        HostOperation edit = f.start("notes.edit", editFixture());
+        check(!edit.result.isDone() && f.services.selectionHeld(), "pending cursor edit holds the selection lease");
+        try { f.services.requireSelectionFree(); throw new AssertionError("select must be rejected"); }
+        catch (RpcException e) { check(e.code.equals("busy") && e.outcome.equals("not_applied"), "select methods fail fast, not applied"); }
+        f.drain(edit);
+        check(edit.result.join().get("status").getAsString().equals("observed"), "edit completes undisturbed");
+        f.services.requireSelectionFree();
+        check(!f.services.selectionHeld(), "lease released with the operation");
     }
 
     private static void identityAndDeadlineGuards() throws Exception {

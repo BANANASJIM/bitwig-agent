@@ -58,8 +58,7 @@ final class TransportModule implements HostModule {
         double duration = p.has("loopDurationBeats") ? p.get("loopDurationBeats").getAsDouble() : values.get("loopDurationBeats").value.getAsDouble();
         if (!Double.isFinite(start + duration)) throw HostServices.failure("invalid_params", "Loop end must be finite.");
         Map<String, Long> writes = new LinkedHashMap<>();
-        long until = Math.min(op.deadline - TimeUnit.MILLISECONDS.toNanos(25),
-                System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(750));
+        long until = HostServices.observeUntil(op);
         boolean stopping = p.has("playing") && !p.get("playing").getAsBoolean();
         try {
             if (stopping) write(op, p, "playing", writes);

@@ -17,6 +17,7 @@ public final class TransportModuleTest {
         stopIsObservedBeforeSeeking();
         lateStopDoesNotSeekAfterObservationBudget();
         cancelledStopDoesNotSeekLater();
+        shortTimeoutYieldsBoundedNotObservedNotDeadlineExceeded();
         safetyChangeWhileStoppingPreventsSeek();
         sharedSafetyRequiresObservationsButAllowsStop();
         System.out.println("TransportModuleTest: " + assertions + " assertions passed (simulated host only)");
@@ -133,6 +134,22 @@ public final class TransportModuleTest {
         check(result.get("completion").getAsString().equals("unknown"), "a late observed stop cannot turn the incomplete request into success");
         check(result.getAsJsonObject("fields").getAsJsonObject("positionBeats").get("verification").getAsString().equals("not_dispatched"), "an expired observation budget prevents the dependent seek");
         check(f.transport.child("playPosition").data.equals(12.5) && f.transport.actions == 1, "late stop leaves its final position without another mutation");
+    }
+    private static void shortTimeoutYieldsBoundedNotObservedNotDeadlineExceeded() throws InterruptedException {
+        TransportMixFixture f = new TransportMixFixture(); TransportModule module = new TransportModule(f.services);
+        f.transport.child("tempo").child("value").emitWrites = false;
+        long timeoutMs = 300;
+        HostOperation op = f.submit(module, "transport.set", TransportMixFixture.json("{\"tempoBpm\":130}"),
+                System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(timeoutMs));
+        f.next();
+        check(!op.result.isDone(), "unobserved write keeps polling");
+        // The controller thread is late: poll lands after the observation end but before the hard deadline.
+        Thread.sleep(timeoutMs - HostServices.DEADLINE_MARGIN_NANOS / 1_000_000 / 2);
+        f.next();
+        JsonObject result = op.result.join();
+        check(result.get("status").getAsString().equals("dispatched") && result.get("completion").getAsString().equals("unknown"),
+                "short timeout yields the bounded dispatched/not-observed result, not deadline_exceeded");
+        check(f.transport.child("tempo").child("value").writes == 1, "no retry write");
     }
     private static void cancelledStopDoesNotSeekLater() {
         TransportMixFixture f = new TransportMixFixture(); TransportModule module = new TransportModule(f.services);
