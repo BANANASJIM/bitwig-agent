@@ -71,7 +71,7 @@ public final class GridModuleTest {
     }
     private static void requiresExplicitObservedTarget() {
         Fixture f = new Fixture(); f.device.child("name").emit("Tool");
-        HostOperation op = f.start(target()); TransportMixFixture.error(op, "stale_context");
+        HostOperation op = f.start(target()); TransportMixFixture.error(op, "stale_target");
         check(f.adapter.tasks.isEmpty(), "wrong expected name never enters document queue");
         f.device.child("name").emit("Poly Grid"); f.device.child("exists").emit(false);
         TransportMixFixture.error(f.start(target()), "target_not_found");
@@ -92,6 +92,10 @@ public final class GridModuleTest {
         f.device.child("name").emit("Other"); f.device.child("name").emit("Poly Grid");
         f.adapter.next(); TransportMixFixture.error(op, "stale_context");
         check(f.adapter.reads == 0, "generation change detects ABA name transition before native read");
+        Fixture type = new Fixture(); op = type.start(target());
+        type.device.child("deviceType").emit("Instrument");
+        type.adapter.next(); TransportMixFixture.error(op, "stale_context");
+        check(type.adapter.reads == 0, "device-type replacement retires a queued Grid read (shared root target)");
         Fixture track = new Fixture(); op = track.start(target());
         track.host.tracks[0].child("channelId").emit(TransportMixFixture.B);
         track.host.tracks[0].child("channelId").emit(TransportMixFixture.A);
@@ -926,8 +930,11 @@ public final class GridModuleTest {
         Fixture(boolean observed, boolean safety) {
             host = new TransportMixFixture(safety);
             device = host.tracks[0].child("createDeviceBank").item(0);
-            device.child("exists").data = true; device.child("name").data = "Poly Grid"; device.child("position").data = 0;
-            device.child("name").initial = observed; module = new GridModule(host.services, adapter);
+            TransportMixFixture.Node bank = host.tracks[0].child("createDeviceBank");
+            device.child("exists").emit(true); device.child("position").emit(0); device.child("deviceType").emit("AudioEffect");
+            bank.child("itemCount").emit(1);
+            device.child("name").emit(observed ? "Poly Grid" : "");
+            module = new GridModule(host.services, adapter);
         }
         HostOperation start(JsonObject p) { HostOperation op = host.submit(module, "grid.get", p); host.next(); return op; }
         HostOperation startWrite() { HostOperation op = host.submit(module, "grid.parameters.set", writeTarget()); host.next(); return op; }

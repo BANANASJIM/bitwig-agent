@@ -409,27 +409,17 @@ final class DeviceModule implements HostModule {
     }
 
     private Target target(JsonObject p) {
-        String id = p.get("trackId").getAsString();
-        int t = s.trackSlot(id);
-        int index = p.get("deviceIndex").getAsInt();
-        if (s.devices[t].scrollPosition().get() != 0)
-            throw HostServices.failure("stale_context", "Device bank is not at the advertised zero-based window.");
-        Source source = sources[t][index];
+        s.sources.requireZeroWindow(p);
+        DeviceSources.Source root = s.sources.root(p);
+        Source source = sources[s.trackSlot(root.track.id)][p.get("deviceIndex").getAsInt()];
         if (!source.ready()) throw HostServices.failure("not_ready", "Device metadata has not been observed.");
-        if (!source.device.exists().get() || source.device.position().get() != index)
-            throw HostServices.failure("target_not_found", "Device is absent at the explicit index.");
-        String name = p.get("expectedDeviceName").getAsString();
-        if (!name.equals(source.device.name().get()))
-            throw HostServices.failure("stale_context", "Device name differs from expectedDeviceName.");
-        return new Target(id, t, index, name, source, source.identity.revision);
+        return new Target(root.track.id, root.track.slot, source.deviceIndex, root.name, source, root.revision);
     }
 
     private boolean matches(Target target) {
-        Device device = target.source.device;
-        return s.trackMatches(target.trackId, (Track) s.tracks.getItemAt(target.trackSlot))
-                && s.devices[target.trackSlot].scrollPosition().get() == 0
-                && target.source.identity.revision == target.generation && device.exists().get()
-                && device.position().get() == target.index && target.name.equals(device.name().get());
+        DeviceSources.Source root = target.source.identity;
+        return root.revision == target.generation && root.present()
+                && s.devices[target.trackSlot].scrollPosition().get() == 0;
     }
 
     private void guard(HostOperation op, Target target) {

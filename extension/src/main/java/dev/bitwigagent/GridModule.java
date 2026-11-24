@@ -5,7 +5,6 @@ import com.bitwig.extension.controller.api.*;
 import com.google.gson.*;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.atomic.AtomicLong;
 import static dev.bitwigagent.HostServices.failure;
 
 /** Strict RPC boundary and observed public-device targeting; native operations use a separate adapter. */
@@ -13,34 +12,10 @@ final class GridModule implements HostModule {
     static final Set<String> METHODS = Set.of("grid.capabilities", "grid.catalog", "grid.get", "grid.parameters.get", "grid.parameters.set",
             "grid.modules.move", "grid.modules.delete", "grid.modules.insert", "grid.modules.rename", "grid.connections.set");
     private final HostServices s;
-    private final Source[][] sources = new Source[HostServices.TRACKS][HostServices.DEVICES];
-    private final AtomicLong[] tracks = new AtomicLong[HostServices.TRACKS];
     private GridAdapter adapter;
 
     GridModule(HostServices services) { this(services, null); }
-    GridModule(HostServices services, GridAdapter adapter) {
-        s = services; this.adapter = adapter;
-        for (int t = 0; t < HostServices.TRACKS; t++) {
-            AtomicLong epoch = tracks[t] = new AtomicLong();
-            Track track = (Track) s.tracks.getItemAt(t);
-            track.channelId().addValueObserver((StringValueChangedCallback) value -> epoch.incrementAndGet());
-            track.exists().addValueObserver((BooleanValueChangedCallback) value -> epoch.incrementAndGet());
-            track.position().addValueObserver((IntegerValueChangedCallback) value -> epoch.incrementAndGet());
-            s.devices[t].scrollPosition().addValueObserver((IntegerValueChangedCallback) value -> epoch.incrementAndGet());
-            for (int d = 0; d < HostServices.DEVICES; d++) {
-                Source source = sources[t][d] = new Source((Device) s.devices[t].getItemAt(d));
-                source.device.exists().addValueObserver((BooleanValueChangedCallback) value -> {
-                    source.existsObserved = true; source.epoch.incrementAndGet();
-                });
-                source.device.name().addValueObserver((StringValueChangedCallback) value -> {
-                    source.nameObserved = true; source.epoch.incrementAndGet();
-                });
-                source.device.position().addValueObserver((IntegerValueChangedCallback) value -> {
-                    source.positionObserved = true; source.epoch.incrementAndGet();
-                });
-            }
-        }
-    }
+    GridModule(HostServices services, GridAdapter adapter) { s = services; this.adapter = adapter; }
     @Override public Set<String> methods() { return METHODS; }
     @Override public void validate(String method, JsonObject params) { validateParams(method, params); }
     static void validateParams(String method, JsonObject p) {
@@ -250,7 +225,8 @@ final class GridModule implements HostModule {
         final GridInsertionWriter.Request insertion = inserting && !insertBatch ? GridInsertionWriter.Request.parse(p) : null;
         final GridModuleNameWriter.Request name = renaming ? GridModuleNameWriter.Request.parse(p) : null;
         final HostServices.SafetyObservation safety = writing ? s.stoppedSafety(op) : null;
-        final Target target = method.equals("grid.get") || inspection || topology ? target(p) : null;
+        final DeviceSources.RootReadTicket target = method.equals("grid.get") || inspection || topology ? target(p) : null;
+        final UUID trackUuid = target == null ? null : UUID.fromString(target.trackId);
         final UUID moduleId = (inspection && !batching) || moduleEditing || renaming ? UUID.fromString(p.get("moduleId").getAsString()) : null;
         final String parameterId = inspection && !batching ? p.get("parameterId").getAsString() : null;
         final int offset = integer(p, target == null ? "offset" : "moduleOffset", 0);
@@ -264,31 +240,30 @@ final class GridModule implements HostModule {
             try {
                 Runnable check = () -> {
                     s.check(op);
-                    if (target != null && (tracks[target.slot].get() != target.trackEpoch || target.source.epoch.get() != target.deviceEpoch))
-                        throw failure("stale_context", "Observed bank target changed while the Grid read was queued or running.");
+                    if (target != null) target.check();
                     if (writing) s.guardStoppedSafety(safety);
                 };
                 check.run();
                 if (topology) {
                     java.util.function.Consumer<JsonObject> complete = value -> deliver(op, target, safety, true, check, GridDiff.shape(value, fullGraph));
                     Runnable dispatch = () -> { check.run(); op.dispatched = true; };
-                    if (insertBatch) adapter.insertModules(target.source.device, target.uuid, insertions,
+                    if (insertBatch) adapter.insertModules(target.device, trackUuid, insertions,
                             () -> op.deadline - System.nanoTime() > GridInsertionWriter.NEXT_ENTRY_MARGIN_NANOS, check, dispatch, complete, op::fail);
-                    else if (inserting) adapter.insertModule(target.source.device, target.uuid, insertion, check, dispatch, complete, op::fail);
-                    else if (renaming) adapter.renameModule(target.source.device, target.uuid, moduleId, name, check, dispatch, complete, op::fail);
-                    else if (cableBatch) adapter.setConnections(target.source.device, target.uuid, cables, check, dispatch, complete, op::fail);
-                    else if (connection) adapter.setConnection(target.source.device, target.uuid, cable, check, dispatch, complete, op::fail);
-                    else if (moving) adapter.moveModule(target.source.device, target.uuid, moduleId, move, check, dispatch, complete, op::fail);
-                    else adapter.deleteModule(target.source.device, target.uuid, moduleId, check, dispatch, complete, op::fail);
+                    else if (inserting) adapter.insertModule(target.device, trackUuid, insertion, check, dispatch, complete, op::fail);
+                    else if (renaming) adapter.renameModule(target.device, trackUuid, moduleId, name, check, dispatch, complete, op::fail);
+                    else if (cableBatch) adapter.setConnections(target.device, trackUuid, cables, check, dispatch, complete, op::fail);
+                    else if (connection) adapter.setConnection(target.device, trackUuid, cable, check, dispatch, complete, op::fail);
+                    else if (moving) adapter.moveModule(target.device, trackUuid, moduleId, move, check, dispatch, complete, op::fail);
+                    else adapter.deleteModule(target.device, trackUuid, moduleId, check, dispatch, complete, op::fail);
                     return;
                 }
                 JsonObject value = target == null ? adapter.catalog(query, offset, limit, check)
-                        : batching ? adapter.setParameters(target.source.device, target.uuid, entries, check,
+                        : batching ? adapter.setParameters(target.device, trackUuid, entries, check,
                                 () -> { check.run(); op.dispatched = true; })
-                        : writing ? GridDiff.shape(adapter.setParameter(target.source.device, target.uuid, moduleId, parameterId, request, check,
+                        : writing ? GridDiff.shape(adapter.setParameter(target.device, trackUuid, moduleId, parameterId, request, check,
                                 () -> { check.run(); op.dispatched = true; }), true)
-                        : inspection ? adapter.parameter(target.source.device, target.uuid, moduleId, parameterId, check)
-                        : adapter.snapshot(target.source.device, target.uuid, offset, limit, parameters, diagnostics, moduleFilter, check);
+                        : inspection ? adapter.parameter(target.device, trackUuid, moduleId, parameterId, check)
+                        : adapter.snapshot(target.device, trackUuid, offset, limit, parameters, diagnostics, moduleFilter, check);
                 deliver(op, target, safety, writing, check, value);
             } catch (RuntimeException error) {
                 op.fail(error instanceof RpcException ? error
@@ -298,7 +273,7 @@ final class GridModule implements HostModule {
             }
         });
     }
-    private void deliver(HostOperation op, Target target, HostServices.SafetyObservation safety,
+    private void deliver(HostOperation op, DeviceSources.RootReadTicket target, HostServices.SafetyObservation safety,
             boolean writing, Runnable check, JsonObject value) {
         check.run();
         // No native model, stream, or mutable JSON crosses the document-to-controller boundary.
@@ -310,7 +285,7 @@ final class GridModule implements HostModule {
             if (writing) s.guardStoppedSafety(safety);
             JsonObject result = JsonParser.parseString(serialized).getAsJsonObject();
             if (target != null) {
-                JsonObject identity = new JsonObject(); identity.addProperty("trackId", target.id);
+                JsonObject identity = new JsonObject(); identity.addProperty("trackId", target.trackId);
                 identity.addProperty("deviceIndex", target.index); identity.addProperty("expectedDeviceName", target.name);
                 if (!writing) {
                     identity.addProperty("identityScope", "observed_bank_proxy_not_persistent_device_identity");
@@ -323,44 +298,17 @@ final class GridModule implements HostModule {
             op.result.complete(result);
         }, 0);
     }
-    private Target target(JsonObject p) {
-        String id = p.get("trackId").getAsString(); int slot = s.trackSlot(id), index = p.get("deviceIndex").getAsInt();
-        Source source = sources[slot][index];
-        if (!source.existsObserved || !source.nameObserved || !source.positionObserved)
-            throw failure("not_ready", "Explicit device metadata has not been observed.");
-        if (s.devices[slot].scrollPosition().get() != 0) throw failure("stale_context", "Device bank is not at the zero-based window.");
-        if (!source.device.exists().get() || source.device.position().get() != index)
-            throw failure("target_not_found", "Device is absent at the explicit index.");
-        String name = p.get("expectedDeviceName").getAsString();
-        if (!name.equals(source.device.name().get())) throw failure("stale_context", "Device name differs from expectedDeviceName.");
-        return new Target(id, slot, index, name, source, tracks[slot].get(), source.epoch.get());
+    private DeviceSources.RootReadTicket target(JsonObject p) {
+        s.sources.requireZeroWindow(p);
+        return s.sources.rootRead(p);
     }
-    private void guard(HostOperation op, Target target) {
-        s.check(op); if (target == null) return;
-        Device device = target.source.device;
-        if (tracks[target.slot].get() != target.trackEpoch || target.source.epoch.get() != target.deviceEpoch
-                || !s.trackMatches(target.id, (Track) s.tracks.getItemAt(target.slot))
-                || s.devices[target.slot].scrollPosition().get() != 0 || !device.exists().get()
-                || device.position().get() != target.index || !target.name.equals(device.name().get()))
-            throw failure("stale_context", "Explicit bank device changed before the Grid result could be delivered.");
+    private void guard(HostOperation op, DeviceSources.RootReadTicket target) {
+        s.check(op);
+        if (target != null) s.sources.guardRootRead(target);
     }
     static void canonicalUuid(JsonObject p, String key) {
         if (!Params.string(p, key).matches("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"))
             throw failure("invalid_params", key + " must be a canonical UUID.");
     }
     private static int integer(JsonObject p, String key, int fallback) { return p.has(key) ? p.get(key).getAsInt() : fallback; }
-    private static final class Source {
-        final Device device; final AtomicLong epoch = new AtomicLong();
-        boolean existsObserved, nameObserved, positionObserved;
-        Source(Device device) { this.device = device; }
-    }
-    private static final class Target {
-        final String id, name; final int slot, index; final Source source; final long trackEpoch, deviceEpoch;
-        final UUID uuid;
-        Target(String id, int slot, int index, String name, Source source, long trackEpoch, long deviceEpoch) {
-            this.id = id; this.slot = slot; this.index = index; this.name = name; this.source = source;
-            this.uuid = UUID.fromString(id);
-            this.trackEpoch = trackEpoch; this.deviceEpoch = deviceEpoch;
-        }
-    }
 }
