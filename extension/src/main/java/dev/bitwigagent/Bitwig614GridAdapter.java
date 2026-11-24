@@ -297,9 +297,10 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
         require(gateError, "gate"); require(catalogError, "catalog");
         return snapshots.catalog(query, offset, limit, check);
     }
-    @Override public JsonObject snapshot(Object proxy, UUID expectedTrackId, int offset, int limit, boolean parameters, Runnable check) {
+    @Override public JsonObject snapshot(Object proxy, UUID expectedTrackId, int offset, int limit, boolean parameters,
+            boolean diagnostics, java.util.Set<String> moduleIds, Runnable check) {
         require(gateError, "gate"); require(identityError, "native owning-track identity"); require(structureError, "structure");
-        return snapshots.snapshot(proxy, expectedTrackId, offset, limit, parameters, check);
+        return snapshots.snapshot(proxy, expectedTrackId, offset, limit, parameters, diagnostics, moduleIds, check);
     }
     @Override public JsonObject parameter(Object proxy, UUID expectedTrackId, UUID moduleId, String parameterId, Runnable check) {
         require(gateError, "gate"); require(identityError, "native owning-track identity"); require(structureError, "structure");
@@ -310,6 +311,11 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
             GridParameterWriter.Request request, Runnable check, Runnable dispatch) {
         require(gateError, "gate"); require(writeError, "parameter write");
         return parameterWriter.set(proxy, expectedTrackId, moduleId, parameterId, request, check, dispatch);
+    }
+    @Override public JsonObject setParameters(Object proxy, UUID expectedTrackId, java.util.List<GridParameterWriter.Entry> writes,
+            Runnable check, Runnable dispatch) {
+        require(gateError, "gate"); require(writeError, "parameter write");
+        return parameterWriter.setAll(proxy, expectedTrackId, writes, check, dispatch);
     }
     @Override public void moveModule(Object proxy, UUID trackId, UUID moduleId, GridModuleWriter.Move request,
             Runnable check, Runnable dispatch, Consumer<JsonObject> complete, Consumer<Throwable> fail) {

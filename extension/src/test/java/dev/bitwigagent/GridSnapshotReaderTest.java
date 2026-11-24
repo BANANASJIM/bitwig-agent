@@ -42,6 +42,10 @@ public final class GridSnapshotReaderTest {
         rawParameterTypesAndRepresentability();
         rawParameterCasRangesAndActualEnumValues();
         rawParameterNoopAndNativeReadback();
+        expectedValuesMayComeFromARecentGridGet();
+        diagnosticsGateNativeIdentityAndModuleFilterSelectsRows();
+        batchChecksEveryCasBeforeAnyWrite();
+        batchStopsAtFirstFailureAndNeverRetries();
         rawParameterLiveGuardChanges();
         rawParameterMutationFailuresRemainUnknown();
         booleanPanelInspectionKeepsScalarApplicabilityDistinct();
@@ -576,6 +580,96 @@ public final class GridSnapshotReaderTest {
         check((Integer) f.child.values.get(ENUM_VALUE) == 10, "enum uses listed nonordinal option value");
         f.child.put(ENUM_VALUE, 99);
         expect("grid_unavailable", () -> f.set(request("enum", "99", "10")));
+    }
+
+    private static void diagnosticsGateNativeIdentityAndModuleFilterSelectsRows() {
+        Fixture f = inspectionFixture();
+        JsonObject quiet = f.reader.snapshot(f.proxy, TRACK_ID, 0, 64, true, false, null, () -> {});
+        JsonObject row = quiet.getAsJsonArray("modules").get(0).getAsJsonObject();
+        check(!row.has("modelClass") && !row.getAsJsonArray("parameters").get(0).getAsJsonObject().has("path")
+                && !quiet.has("coverage") && !quiet.has("identityCaveat") && !quiet.has("device") && !quiet.has("graph"),
+                "default read omits obfuscated native class/path and constant coverage prose");
+        check(row.get("instanceId").getAsString().equals(new UUID(1, 1).toString()) && row.has("localKey")
+                && row.has("typeId") && row.getAsJsonArray("parameters").get(0).getAsJsonObject().has("parameterId"),
+                "identity fields writes need stay in the default read");
+        JsonObject loud = f.reader.snapshot(f.proxy, TRACK_ID, 0, 64, true, true, null, () -> {});
+        check(loud.getAsJsonArray("modules").get(0).getAsJsonObject().has("modelClass") && loud.has("coverage")
+                && loud.has("identityCaveat"), "diagnostics restores native class/path and coverage prose");
+        String second = new UUID(1, 2).toString(), absent = new UUID(9, 9).toString();
+        JsonObject filtered = f.reader.snapshot(f.proxy, TRACK_ID, 0, 64, true, false, Set.of(second, absent), () -> {});
+        check(filtered.getAsJsonArray("modules").size() == 1
+                && filtered.getAsJsonArray("modules").get(0).getAsJsonObject().get("instanceId").getAsString().equals(second)
+                && filtered.getAsJsonArray("missingModuleIds").size() == 1
+                && filtered.getAsJsonArray("missingModuleIds").get(0).getAsString().equals(absent)
+                && !filtered.get("complete").getAsBoolean() && filtered.getAsJsonObject("window").get("total").getAsInt() == 1,
+                "moduleIds returns only matching rows, names the missing ids and is never reported complete");
+    }
+
+    private static WriterFixture batchFixture() {
+        WriterFixture f = new WriterFixture();
+        Node other = f.model.parameter(BOOLEAN, f.model.first).put(PARAMETER_ID, "OTHER_ID").put(BOOLEAN_VALUE, true);
+        Node third = f.model.parameter(BOOLEAN, f.model.first).put(PARAMETER_ID, "THIRD_ID").put(BOOLEAN_VALUE, true);
+        f.model.first.put(CHILDREN, List.of(f.child, other, third));
+        return f;
+    }
+    private static GridParameterWriter.Entry entry(String id, String expected, String value) {
+        return new GridParameterWriter.Entry(new UUID(1, 1), id, request("boolean", expected, value));
+    }
+    private static JsonObject batch(WriterFixture f, GridParameterWriter.Entry... entries) {
+        return f.writer.setAll(f.model.proxy, TRACK_ID, List.of(entries), () -> {}, () -> f.op.dispatched = true);
+    }
+    private static void batchChecksEveryCasBeforeAnyWrite() {
+        WriterFixture f = batchFixture();
+        JsonObject ok = batch(f, entry("LOCAL_ID", "true", "false"), entry("OTHER_ID", "true", "true"));
+        JsonArray writes = ok.getAsJsonArray("writes");
+        check(ok.get("status").getAsString().equals("applied") && ok.get("completion").getAsString().equals("observed")
+                && ok.get("written").getAsInt() == 1 && f.calls == 1
+                && writes.get(0).getAsJsonObject().get("status").getAsString().equals("applied")
+                && !writes.get(0).getAsJsonObject().get("value").getAsBoolean()
+                && writes.get(1).getAsJsonObject().get("status").getAsString().equals("already_matched"),
+                "batch applies changed entries in order and reports already-matched ones without dispatch");
+        WriterFixture stale = batchFixture();
+        RpcException error = null;
+        try { batch(stale, entry("LOCAL_ID", "true", "false"), entry("OTHER_ID", "false", "true"), entry("THIRD_ID", "false", "true")); }
+        catch (RpcException caught) { error = caught; }
+        check(error != null && error.code.equals("stale_context") && error.outcome.equals("not_applied")
+                && stale.calls == 0 && !stale.op.dispatched
+                && error.getMessage().contains("#1") && error.getMessage().contains("#2") && !error.getMessage().contains("#0"),
+                "one stale expectedValue rejects the whole batch before any native write, naming each failing entry");
+        WriterFixture missing = batchFixture(); error = null;
+        try { batch(missing, entry("LOCAL_ID", "true", "false"), entry("NOPE", "true", "false")); }
+        catch (RpcException caught) { error = caught; }
+        check(error != null && error.outcome.equals("not_applied") && missing.calls == 0, "unknown parameter id fails the batch closed");
+    }
+    private static void batchStopsAtFirstFailureAndNeverRetries() {
+        WriterFixture f = batchFixture();
+        int[] seen = {0};
+        f.afterMutation = () -> { if (++seen[0] == 1) f.apply = false; };
+        JsonObject result = batch(f, entry("LOCAL_ID", "true", "false"), entry("OTHER_ID", "true", "false"), entry("THIRD_ID", "true", "false"));
+        JsonArray writes = result.getAsJsonArray("writes");
+        check(f.calls == 2, "failed readback stops dispatch");
+        check(writes.get(0).getAsJsonObject().get("status").getAsString().equals("applied")
+                && writes.get(1).getAsJsonObject().get("status").getAsString().equals("unknown")
+                && writes.get(1).getAsJsonObject().getAsJsonObject("error").get("code").getAsString().equals("grid_verification_failed")
+                && writes.get(2).getAsJsonObject().get("status").getAsString().equals("not_dispatched")
+                && result.get("status").getAsString().equals("unknown") && result.get("completion").getAsString().equals("unknown"),
+                "unknown entry is reported, later entries are not_dispatched, overall completion is unknown");
+        WriterFixture first = batchFixture(); first.apply = false;
+        JsonObject head = batch(first, entry("LOCAL_ID", "true", "false"), entry("OTHER_ID", "true", "false"));
+        check(first.calls == 1 && head.get("status").getAsString().equals("unknown") && head.get("written").getAsInt() == 0
+                && head.getAsJsonArray("writes").get(1).getAsJsonObject().get("status").getAsString().equals("not_dispatched"),
+                "an unknown first entry is reported, not thrown away, and nothing after it is dispatched or retried");
+    }
+
+    private static void expectedValuesMayComeFromARecentGridGet() {
+        WriterFixture f = new WriterFixture();
+        JsonObject row = f.model.read(0, 64, true).getAsJsonArray("modules").get(0).getAsJsonObject()
+                .getAsJsonArray("parameters").get(0).getAsJsonObject();
+        GridParameterWriter.Request fromGet = request(row.get("kind").getAsString(), row.get("value").toString(), "false");
+        f.set(fromGet);
+        check(f.calls == 1 && !((Boolean) f.child.values.get(BOOLEAN_VALUE)), "grid.get kind/value is accepted as the CAS expectation");
+        expect("stale_context", () -> f.set(fromGet));
+        check(f.calls == 1, "a grid.get snapshot gone stale is rejected not_applied without a write");
     }
 
     private static void rawParameterNoopAndNativeReadback() {
@@ -1524,6 +1618,9 @@ public final class GridSnapshotReaderTest {
         }
         JsonObject set(GridParameterWriter.Request request, Runnable check, Runnable dispatch) {
             return writer.set(model.proxy, TRACK_ID, new UUID(1, 1), "LOCAL_ID", request, check, dispatch);
+        }
+        JsonObject setAll(java.util.List<GridParameterWriter.Entry> entries, Runnable check, Runnable dispatch) {
+            return writer.setAll(model.proxy, TRACK_ID, entries, check, dispatch);
         }
         RpcException failure(GridParameterWriter.Request request) {
             try { set(request); throw new AssertionError("Expected failed write"); }

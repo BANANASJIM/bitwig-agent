@@ -59,23 +59,28 @@ final class GridModule implements HostModule {
                 if (p.has("limit")) Params.integer(p, "limit", 1, 256);
                 return;
             case "grid.connections.set":
-                if (p == null || !p.keySet().equals(Set.of("trackId", "deviceIndex", "expectedDeviceName",
+                if (p == null || !p.keySet().containsAll(Set.of("trackId", "deviceIndex", "expectedDeviceName",
                         "targetModuleId", "targetPortKey", "expectedSource", "source")))
-                    throw failure("invalid_params", "Connection edits require exactly trackId, deviceIndex, expectedDeviceName, targetModuleId, targetPortKey, expectedSource and source; source fields must be explicitly nullable.");
+                    throw failure("invalid_params", "Connection edits require trackId, deviceIndex, expectedDeviceName, targetModuleId, targetPortKey, expectedSource and source (optional graph); source fields must be explicitly nullable.");
+                for (String key : p.keySet())
+                    if (!key.equals("graph") && !Set.of("trackId", "deviceIndex", "expectedDeviceName",
+                            "targetModuleId", "targetPortKey", "expectedSource", "source").contains(key))
+                        throw failure("invalid_params", "Unknown parameter: " + key);
+                graphMode(p);
                 canonicalUuid(p, "trackId");
                 Params.integer(p, "deviceIndex", 0, HostServices.DEVICES - 1);
                 Params.string(p, "expectedDeviceName");
                 GridConnectionWriter.Request.parse(p);
                 return;
             case "grid.modules.insert":
-                Params.fields(p, Set.of("trackId", "deviceIndex", "expectedDeviceName", "typeId", "x", "y"), Set.of());
+                Params.fields(p, Set.of("trackId", "deviceIndex", "expectedDeviceName", "typeId", "x", "y"), Set.of("graph")); graphMode(p);
                 canonicalUuid(p, "trackId");
                 Params.integer(p, "deviceIndex", 0, HostServices.DEVICES - 1);
                 Params.string(p, "expectedDeviceName");
                 GridInsertionWriter.Request.parse(p);
                 return;
             case "grid.modules.rename":
-                Params.fields(p, Set.of("trackId", "deviceIndex", "expectedDeviceName", "moduleId", "expectedCustomName", "customName"), Set.of());
+                Params.fields(p, Set.of("trackId", "deviceIndex", "expectedDeviceName", "moduleId", "expectedCustomName", "customName"), Set.of("graph")); graphMode(p);
                 canonicalUuid(p, "trackId"); canonicalUuid(p, "moduleId");
                 Params.integer(p, "deviceIndex", 0, HostServices.DEVICES - 1);
                 Params.string(p, "expectedDeviceName");
@@ -86,7 +91,8 @@ final class GridModule implements HostModule {
                 boolean moving = method.equals("grid.modules.move");
                 Params.fields(p, moving
                         ? Set.of("trackId", "deviceIndex", "expectedDeviceName", "moduleId", "expectedX", "expectedY", "x", "y")
-                        : Set.of("trackId", "deviceIndex", "expectedDeviceName", "moduleId"), Set.of());
+                        : Set.of("trackId", "deviceIndex", "expectedDeviceName", "moduleId"), Set.of("graph"));
+                graphMode(p);
                 canonicalUuid(p, "trackId"); canonicalUuid(p, "moduleId");
                 Params.integer(p, "deviceIndex", 0, HostServices.DEVICES - 1);
                 Params.string(p, "expectedDeviceName");
@@ -95,6 +101,7 @@ final class GridModule implements HostModule {
             case "grid.parameters.set":
             case "grid.parameters.get":
                 boolean writing = method.equals("grid.parameters.set");
+                if (writing && p != null && p.has("writes")) { validateBatch(p); return; }
                 Params.fields(p, writing
                         ? Set.of("trackId", "deviceIndex", "expectedDeviceName", "moduleId", "parameterId", "expectedKind", "expectedValue", "value")
                         : Set.of("trackId", "deviceIndex", "expectedDeviceName", "moduleId", "parameterId"), Set.of());
@@ -107,7 +114,7 @@ final class GridModule implements HostModule {
                 if (writing) GridParameterWriter.Request.parse(p);
                 return;
             case "grid.get":
-                Params.fields(p, Set.of("trackId", "deviceIndex", "expectedDeviceName"), Set.of("moduleOffset", "moduleLimit", "includeParameters"));
+                Params.fields(p, Set.of("trackId", "deviceIndex", "expectedDeviceName"), Set.of("moduleOffset", "moduleLimit", "includeParameters", "diagnostics", "moduleIds"));
                 String id = Params.string(p, "trackId");
                 if (!id.matches("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"))
                     throw failure("invalid_params", "trackId must be a canonical UUID.");
@@ -115,9 +122,61 @@ final class GridModule implements HostModule {
                 if (p.has("moduleOffset")) Params.integer(p, "moduleOffset", 0, 100000);
                 if (p.has("moduleLimit")) Params.integer(p, "moduleLimit", 1, 128);
                 if (p.has("includeParameters")) Params.bool(p, "includeParameters");
+                if (p.has("diagnostics")) Params.bool(p, "diagnostics");
+                if (p.has("moduleIds")) moduleIds(p);
                 return;
             default: throw failure("unknown_method", "Unknown Grid operation.");
         }
+    }
+    private static boolean graphMode(JsonObject p) {
+        if (!p.has("graph")) return false;
+        JsonElement value = p.get("graph");
+        if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isString()
+                || !(value.getAsString().equals("diff") || value.getAsString().equals("full")))
+            throw failure("invalid_params", "graph must be \"diff\" or \"full\".");
+        return value.getAsString().equals("full");
+    }
+    private static Set<String> moduleIds(JsonObject p) {
+        JsonElement value = p.get("moduleIds");
+        if (!value.isJsonArray() || value.getAsJsonArray().size() < 1 || value.getAsJsonArray().size() > 128)
+            throw failure("invalid_params", "moduleIds must be an array of 1..128 canonical UUIDs.");
+        Set<String> ids = new java.util.HashSet<>();
+        for (JsonElement item : value.getAsJsonArray()) {
+            if (!item.isJsonPrimitive() || !item.getAsJsonPrimitive().isString() || !item.getAsString().matches(UUID_PATTERN))
+                throw failure("invalid_params", "moduleIds must be an array of 1..128 canonical UUIDs.");
+            ids.add(item.getAsString().toLowerCase(java.util.Locale.ROOT));
+        }
+        return ids;
+    }
+    private static final String UUID_PATTERN = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
+    private static java.util.List<GridParameterWriter.Entry> batch(JsonObject p) {
+        java.util.List<GridParameterWriter.Entry> entries = new java.util.ArrayList<>();
+        Set<String> seen = new java.util.HashSet<>();
+        JsonElement writes = p.get("writes");
+        if (!writes.isJsonArray() || writes.getAsJsonArray().size() < 1 || writes.getAsJsonArray().size() > 64)
+            throw failure("invalid_params", "writes must be an array of 1..64 parameter writes.");
+        for (JsonElement element : writes.getAsJsonArray()) {
+            if (!element.isJsonObject()) throw failure("invalid_params", "Each write must be an object.");
+            JsonObject w = element.getAsJsonObject();
+            Params.fields(w, Set.of("moduleId", "parameterId", "expectedKind", "expectedValue", "value"), Set.of());
+            canonicalUuid(w, "moduleId");
+            if (!w.get("parameterId").isJsonPrimitive() || !w.get("parameterId").getAsJsonPrimitive().isString()
+                    || w.get("parameterId").getAsString().length() > GridSnapshotReader.MAX_TEXT)
+                throw failure("invalid_params", "parameterId must be a string of at most 1024 UTF-16 units.");
+            UUID module = UUID.fromString(w.get("moduleId").getAsString());
+            String parameter = w.get("parameterId").getAsString();
+            if (!seen.add(module + "/" + parameter))
+                throw failure("invalid_params", "writes must not repeat a moduleId/parameterId pair.");
+            entries.add(new GridParameterWriter.Entry(module, parameter, GridParameterWriter.Request.parse(w)));
+        }
+        return entries;
+    }
+    private static void validateBatch(JsonObject p) {
+        Params.fields(p, Set.of("trackId", "deviceIndex", "expectedDeviceName", "writes"), Set.of());
+        canonicalUuid(p, "trackId");
+        Params.integer(p, "deviceIndex", 0, HostServices.DEVICES - 1);
+        Params.string(p, "expectedDeviceName");
+        batch(p);
     }
     @Override public void dispatch(HostOperation op, String method, JsonObject p) {
         s.check(op);
@@ -130,20 +189,25 @@ final class GridModule implements HostModule {
         final boolean moduleEditing = moving || method.equals("grid.modules.delete");
         final boolean topology = moduleEditing || connection || inserting || renaming;
         final boolean scalarWriting = method.equals("grid.parameters.set");
+        final boolean batching = scalarWriting && p.has("writes");
+        final boolean fullGraph = topology && graphMode(p);
+        final java.util.List<GridParameterWriter.Entry> entries = batching ? batch(p) : null;
         final boolean writing = scalarWriting || topology;
         final boolean inspection = method.equals("grid.parameters.get") || scalarWriting;
-        final GridParameterWriter.Request request = scalarWriting ? GridParameterWriter.Request.parse(p) : null;
+        final GridParameterWriter.Request request = scalarWriting && !batching ? GridParameterWriter.Request.parse(p) : null;
         final GridModuleWriter.Move move = moving ? GridModuleWriter.Move.parse(p) : null;
         final GridConnectionWriter.Request cable = connection ? GridConnectionWriter.Request.parse(p) : null;
         final GridInsertionWriter.Request insertion = inserting ? GridInsertionWriter.Request.parse(p) : null;
         final GridModuleNameWriter.Request name = renaming ? GridModuleNameWriter.Request.parse(p) : null;
         final HostServices.SafetyObservation safety = writing ? s.stoppedSafety(op) : null;
         final Target target = method.equals("grid.get") || inspection || topology ? target(p) : null;
-        final UUID moduleId = inspection || moduleEditing || renaming ? UUID.fromString(p.get("moduleId").getAsString()) : null;
-        final String parameterId = inspection ? p.get("parameterId").getAsString() : null;
+        final UUID moduleId = (inspection && !batching) || moduleEditing || renaming ? UUID.fromString(p.get("moduleId").getAsString()) : null;
+        final String parameterId = inspection && !batching ? p.get("parameterId").getAsString() : null;
         final int offset = integer(p, target == null ? "offset" : "moduleOffset", 0);
         final int limit = integer(p, target == null ? "limit" : "moduleLimit", 64);
         final boolean parameters = !p.has("includeParameters") || p.get("includeParameters").getAsBoolean();
+        final boolean diagnostics = p.has("diagnostics") && p.get("diagnostics").getAsBoolean();
+        final Set<String> moduleFilter = p.has("moduleIds") ? moduleIds(p) : null;
         final String query = p.has("query") ? p.get("query").getAsString() : "";
         guard(op, target);
         adapter.execute(() -> {
@@ -156,7 +220,7 @@ final class GridModule implements HostModule {
                 };
                 check.run();
                 if (topology) {
-                    java.util.function.Consumer<JsonObject> complete = value -> deliver(op, target, safety, true, check, value);
+                    java.util.function.Consumer<JsonObject> complete = value -> deliver(op, target, safety, true, check, GridDiff.shape(value, fullGraph));
                     Runnable dispatch = () -> { check.run(); op.dispatched = true; };
                     if (inserting) adapter.insertModule(target.source.device, target.uuid, insertion, check, dispatch, complete, op::fail);
                     else if (renaming) adapter.renameModule(target.source.device, target.uuid, moduleId, name, check, dispatch, complete, op::fail);
@@ -166,10 +230,12 @@ final class GridModule implements HostModule {
                     return;
                 }
                 JsonObject value = target == null ? adapter.catalog(query, offset, limit, check)
-                        : writing ? adapter.setParameter(target.source.device, target.uuid, moduleId, parameterId, request, check,
+                        : batching ? adapter.setParameters(target.source.device, target.uuid, entries, check,
                                 () -> { check.run(); op.dispatched = true; })
+                        : writing ? GridDiff.shape(adapter.setParameter(target.source.device, target.uuid, moduleId, parameterId, request, check,
+                                () -> { check.run(); op.dispatched = true; }), true)
                         : inspection ? adapter.parameter(target.source.device, target.uuid, moduleId, parameterId, check)
-                        : adapter.snapshot(target.source.device, target.uuid, offset, limit, parameters, check);
+                        : adapter.snapshot(target.source.device, target.uuid, offset, limit, parameters, diagnostics, moduleFilter, check);
                 deliver(op, target, safety, writing, check, value);
             } catch (RuntimeException error) {
                 op.fail(error instanceof RpcException ? error
@@ -193,10 +259,13 @@ final class GridModule implements HostModule {
             if (target != null) {
                 JsonObject identity = new JsonObject(); identity.addProperty("trackId", target.id);
                 identity.addProperty("deviceIndex", target.index); identity.addProperty("expectedDeviceName", target.name);
-                identity.addProperty("identityScope", "observed_bank_proxy_not_persistent_device_identity");
-                identity.addProperty("nativeOwningTrack", "corroborated_before_and_after_capture");
-                identity.addProperty("devicePosition", "public_observed_only");
-                result.add("target", identity); result.addProperty("scope", "top_level_device_bank");
+                if (!writing) {
+                    identity.addProperty("identityScope", "observed_bank_proxy_not_persistent_device_identity");
+                    identity.addProperty("nativeOwningTrack", "corroborated_before_and_after_capture");
+                    identity.addProperty("devicePosition", "public_observed_only");
+                    result.addProperty("scope", "top_level_device_bank");
+                }
+                result.add("target", identity);
             }
             op.result.complete(result);
         }, 0);

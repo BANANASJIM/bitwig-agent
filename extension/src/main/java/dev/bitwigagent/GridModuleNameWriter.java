@@ -31,6 +31,7 @@ final class GridModuleNameWriter {
         if (!values.metadataAvailable(GridSnapshotReader.Metadata.MODULE_NAMES))
             throw failure("grid_unavailable", "Native raw custom-name and effective-name readers are required for module naming.");
         GridSnapshotReader.NativeTarget target = snapshots.target(proxy, trackId);
+        JsonObject graphBefore = snapshots.snapshot(proxy, trackId, 0, MAX_MODULES, false, false, null, check);
         Members before = members(target.graph, check);
         Object selected = before.require(moduleId);
         nativeWriter.requireSupported(selected);
@@ -56,7 +57,7 @@ final class GridModuleNameWriter {
                 guard(target, proxy, trackId, before, context, check);
                 Names actual = names(selected);
                 requireActual(actual, request);
-                JsonObject graph = snapshots.snapshot(proxy, trackId, 0, MAX_MODULES, false, check);
+                JsonObject graph = snapshots.snapshot(proxy, trackId, 0, MAX_MODULES, false, false, null, check);
                 guard(target, proxy, trackId, before, context, check);
                 Names finalNames = names(selected);
                 requireActual(finalNames, request);
@@ -69,7 +70,7 @@ final class GridModuleNameWriter {
                 result.addProperty("requestedCustomName", request.customName);
                 result.addProperty("actualCustomName", actual.custom);
                 result.addProperty("previousName", previous.effective); result.addProperty("actualName", actual.effective);
-                result.add("graph", graph);
+                result.add("graph", graph); result.add("graphBefore", graphBefore);
                 result.addProperty("mutationDispatched", changed); result.addProperty("nativeMutation", changed);
                 result.addProperty("nativeUndo", changed);
                 result.addProperty("verification", changed ? "later_document_event_bounded_native_graph_observation" : "already_matched");

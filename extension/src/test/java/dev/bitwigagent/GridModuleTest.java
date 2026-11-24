@@ -32,6 +32,7 @@ public final class GridModuleTest {
         connectionResultsWaitForBothQueues();
         connectionSafetyTargetsAndCancellationGuardQueues();
         insertionArguments();
+        batchAndReadOptionsValidateAndDispatch();
         insertionWaitsForNativeSettlementAndControllerDelivery();
         insertionSafetyCancellationAndCloseKeepNativeLifetimeIndependent();
         renameArgumentsRejectBeforeQueues();
@@ -144,7 +145,7 @@ public final class GridModuleTest {
                 && !noSource.capabilities().getAsJsonObject("moduleInsert").has("bindingIdentity"),
                 "unverified source cannot advertise any native topology capability");
         try {
-            noSource.snapshot(new Object(), UUID.fromString(TransportMixFixture.A), 0, 64, true, () -> {});
+            noSource.snapshot(new Object(), UUID.fromString(TransportMixFixture.A), 0, 64, true, false, null, () -> {});
             throw new AssertionError("snapshot escaped identity gate");
         } catch (RpcException error) { check(error.code.equals("grid_unavailable"), "snapshot requires exact verified identity gate"); }
         try { noSource.execute(() -> { throw new AssertionError("read escaped gate"); }); throw new AssertionError("expected gate failure"); }
@@ -362,8 +363,9 @@ public final class GridModuleTest {
             check(!op.result.isDone(), "later document observation still requires controller handoff");
             f.host.next();
             JsonObject result = op.result.join();
-            check(result.get("mutationDispatched").getAsBoolean() && result.has("target") && result.has("graph"),
-                    "observed topology result includes guarded target and bounded graph");
+            check(result.get("mutationDispatched").getAsBoolean() && result.has("target") && result.has("moduleCount") && !result.has("graph")
+                    && !result.has("graphBefore") && !result.has("safetyScope"),
+                    "observed topology result includes guarded target and a diff, not the bounded graph or constant prose");
         }
     }
     private static void topologySafetyAndTargetsGuardEveryQueueBoundary() {
@@ -453,8 +455,22 @@ public final class GridModuleTest {
         f.adapter.next(); check(!op.result.isDone(), "later observation still waits for controller target recheck");
         f.host.next(); JsonObject result = op.result.join();
         check(result.get("matchesRequested").getAsBoolean() && result.has("target")
-                && result.get("previousSource").isJsonNull() && result.getAsJsonObject("graph").has("connections"),
-                "serialized result preserves nullable previous source and full bounded graph");
+                && result.get("previousSource").isJsonNull() && !result.has("graph") && !result.has("nativeUndoScope"),
+                "serialized result preserves nullable previous source and carries a diff, not the graph");
+        JsonArray changed = result.getAsJsonArray("connectionsChanged");
+        check(changed.size() == 1 && changed.get(0).getAsJsonObject().get("from").isJsonNull()
+                && changed.get(0).getAsJsonObject().getAsJsonObject("to").get("portKey").getAsString().equals("out")
+                && changed.get(0).getAsJsonObject().getAsJsonObject("target").get("portKey").getAsString().equals("in")
+                && !result.has("modulesAdded") && result.get("moduleCount").getAsInt() == 2,
+                "diff lists exactly the changed cable with endpoints and module count");
+        Fixture full = new Fixture(); JsonObject fullParams = connectionTarget(); fullParams.addProperty("graph", "full");
+        HostOperation fullOp = full.host.submit(full.module, "grid.connections.set", fullParams); full.host.next();
+        full.adapter.next(); full.adapter.next(); full.host.next();
+        JsonObject fullResult = fullOp.result.join();
+        check(fullResult.getAsJsonObject("graph").has("connections") && !fullResult.has("connectionsChanged")
+                && !fullResult.has("graphBefore"), "graph=full returns the bounded graph instead of the diff");
+        JsonObject bad = connectionTarget(); bad.addProperty("graph", "everything");
+        TransportMixFixture.error(full.host.submit(full.module, "grid.connections.set", bad), "invalid_params");
         Fixture noop = new Fixture(); JsonObject p = connectionTarget(); p.add("source", JsonNull.INSTANCE);
         op = noop.host.submit(noop.module, "grid.connections.set", p); noop.host.next(); noop.adapter.next();
         noop.adapter.next(); noop.host.next(); result = op.result.join();
@@ -511,7 +527,52 @@ public final class GridModuleTest {
         JsonObject p = target(); p.addProperty("typeId", GridInsertionWriterTest.TYPE.toString());
         p.addProperty("x", 8); p.addProperty("y", 3); return p;
     }
-    private static void insertionArguments() {
+    private static JsonObject batchTarget(String... ids) {
+        JsonObject p = target(); JsonArray writes = new JsonArray();
+        for (String id : ids) {
+            JsonObject w = new JsonObject();
+            w.addProperty("moduleId", "00000000-0000-0001-0000-000000000001"); w.addProperty("parameterId", id);
+            w.addProperty("expectedKind", "boolean"); w.addProperty("expectedValue", true); w.addProperty("value", false);
+            writes.add(w);
+        }
+        p.add("writes", writes); return p;
+    }
+    private static void batchAndReadOptionsValidateAndDispatch() {
+        Fixture f = new Fixture();
+        GridModule.validateParams("grid.parameters.set", batchTarget("LOCAL_ID", "OTHER"));
+        JsonObject mixed = batchTarget("LOCAL_ID"); mixed.addProperty("parameterId", "LOCAL_ID");
+        JsonObject empty = batchTarget(); JsonObject dup = batchTarget("LOCAL_ID", "LOCAL_ID");
+        JsonObject extra = batchTarget("LOCAL_ID"); extra.getAsJsonArray("writes").get(0).getAsJsonObject().addProperty("nope", 1);
+        JsonObject nullValue = batchTarget("LOCAL_ID"); nullValue.getAsJsonArray("writes").get(0).getAsJsonObject().add("value", JsonNull.INSTANCE);
+        JsonObject badKind = batchTarget("LOCAL_ID"); badKind.getAsJsonArray("writes").get(0).getAsJsonObject().addProperty("expectedKind", "string");
+        String[] many = new String[65]; for (int i = 0; i < many.length; i++) many[i] = "P" + i;
+        String[] limit = new String[64]; for (int i = 0; i < limit.length; i++) limit[i] = "P" + i;
+        GridModule.validateParams("grid.parameters.set", batchTarget(limit));
+        for (JsonObject bad : List.of(mixed, empty, dup, extra, nullValue, badKind, batchTarget(many)))
+            TransportMixFixture.error(f.host.submit(f.module, "grid.parameters.set", bad), "invalid_params");
+        JsonObject getBad = target(); getBad.addProperty("diagnostics", "yes");
+        JsonObject idsBad = target(); JsonArray ids = new JsonArray(); ids.add("not-a-uuid"); idsBad.add("moduleIds", ids);
+        JsonObject idsEmpty = target(); idsEmpty.add("moduleIds", new JsonArray());
+        JsonObject idsMany = target(); JsonArray lots = new JsonArray();
+        for (int i = 0; i < 129; i++) lots.add("00000000-0000-0001-0000-" + String.format("%012d", i)); idsMany.add("moduleIds", lots);
+        for (JsonObject bad : List.of(getBad, idsBad, idsEmpty, idsMany))
+            TransportMixFixture.error(f.host.submit(f.module, "grid.get", bad), "invalid_params");
+        JsonObject good = target(); JsonArray one = new JsonArray(); one.add("00000000-0000-0001-0000-000000000001");
+        good.add("moduleIds", one); good.addProperty("diagnostics", true); GridModule.validateParams("grid.get", good);
+        check(f.host.tasks.isEmpty() && f.adapter.tasks.isEmpty(), "invalid batch and read options reject before scheduling");
+        HostOperation op = f.host.submit(f.module, "grid.parameters.set", batchTarget("LOCAL_ID")); f.host.next();
+        check(!op.dispatched && !op.result.isDone(), "batch controller dispatch is not native invocation");
+        f.adapter.next(); f.host.next();
+        JsonObject result = op.result.join();
+        check(op.dispatched && result.get("status").getAsString().equals("applied") && result.get("written").getAsInt() == 1
+                && result.getAsJsonArray("writes").size() == 1 && result.has("target") && f.adapter.writer.calls == 1,
+                "batch crosses both queues once and returns per-entry results with the explicit target");
+        Fixture single = new Fixture(); HostOperation write = single.startWrite(); single.adapter.next(); single.host.next();
+        JsonObject one2 = write.result.join();
+        check(one2.has("parameter") && !one2.has("nativeUndoScope") && !one2.has("safetyScope") && !one2.has("scope")
+                && !one2.getAsJsonObject("target").has("identityScope"), "single write keeps its form without constant prose");
+    }
+        private static void insertionArguments() {
         Fixture f = new Fixture();
         for (String key : List.of("trackId", "deviceIndex", "expectedDeviceName", "typeId", "x", "y")) {
             JsonObject p = insertionTarget(); p.remove(key);
@@ -555,6 +616,11 @@ public final class GridModuleTest {
         check(result.getAsJsonObject("target").get("trackId").getAsString().equals(TransportMixFixture.A)
                 && result.get("loaderDispatched").getAsBoolean() && result.get("placementDispatched").getAsBoolean(),
                 "actual insertion result receives existing explicit target envelope");
+        check(result.getAsJsonArray("modulesAdded").size() == 1 && !result.has("graph") && !result.has("graphBefore")
+                && result.getAsJsonArray("modulesAdded").get(0).getAsJsonObject().get("instanceId").getAsString()
+                        .equals(result.get("moduleId").getAsString())
+                && result.getAsJsonArray("modulesAdded").get(0).getAsJsonObject().has("outputs"),
+                "insert returns the new module row with ports as a diff, so it can be wired without a grid.get");
     }
     private static void insertionSafetyCancellationAndCloseKeepNativeLifetimeIndependent() {
         for (String key : List.of("isPlaying", "isArrangerRecordEnabled", "isArrangerAutomationWriteEnabled", "isClipLauncherAutomationWriteEnabled")) {
@@ -761,7 +827,13 @@ public final class GridModuleTest {
         @Override public JsonObject catalog(String query, int offset, int limit, Runnable check) {
             check.run(); reads++; return result(offset, limit, false);
         }
-        @Override public JsonObject snapshot(Object proxy, UUID expectedTrackId, int offset, int limit, boolean parameters, Runnable check) {
+        @Override public JsonObject setParameters(Object proxy, UUID track, java.util.List<GridParameterWriter.Entry> writes,
+                Runnable check, Runnable dispatch) {
+            last = writer.setAll(writes, check, dispatch);
+            return last;
+        }
+        @Override public JsonObject snapshot(Object proxy, UUID expectedTrackId, int offset, int limit, boolean parameters,
+                boolean diagnostics, java.util.Set<String> moduleIds, Runnable check) {
             check.run(); reads++;
             if (fail) throw HostServices.failure("not_grid", "not a Grid device");
             return result(offset, limit, parameters);

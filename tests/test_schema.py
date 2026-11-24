@@ -706,3 +706,73 @@ def test_context_get_takes_no_parameters():
     assert TOOLS["context.get"].read_only
     with pytest.raises(ValidationError):
         validate_call("context.get", {"trackId": TRACK})
+
+
+GRID_WRITE = {"moduleId": TRACK, "parameterId": "", "expectedKind": "float", "expectedValue": 0.25, "value": 0.5}
+
+
+def test_grid_parameter_set_accepts_a_batch_and_preserves_each_raw_entry():
+    writes = [GRID_WRITE, {**GRID_WRITE, "parameterId": "B", "expectedKind": "boolean", "expectedValue": False, "value": True}]
+    params, _ = validate_call("grid.parameters.set", {**TARGET, "writes": writes})
+    assert params == {**TARGET, "writes": writes}
+    assert type(params["writes"][1]["value"]) is bool
+    assert validate_call("grid.parameters.set", {**TARGET, "writes": [
+        {**GRID_WRITE, "parameterId": str(i)} for i in range(64)]})
+
+
+@pytest.mark.parametrize("changes", [
+    {"writes": []},
+    {"writes": [{**GRID_WRITE, "parameterId": str(i)} for i in range(65)]},
+    {"writes": [GRID_WRITE, GRID_WRITE]},
+    {"writes": [GRID_WRITE, {**GRID_WRITE, "moduleId": TRACK.upper()}]},
+    {"writes": [{**GRID_WRITE, "value": "0.5"}]},
+    {"writes": [{**GRID_WRITE, "expectedKind": "boolean"}]},
+    {"writes": [{key: value for key, value in GRID_WRITE.items() if key != "expectedValue"}]},
+    {"writes": [{**GRID_WRITE, "extra": 1}]},
+    {"writes": [GRID_WRITE], "value": 0.5},
+    {"writes": [GRID_WRITE], "moduleId": TRACK},
+    {"writes": None},
+])
+def test_grid_parameter_set_rejects_malformed_or_mixed_batches(changes):
+    with pytest.raises(ValidationError):
+        validate_call("grid.parameters.set", {**TARGET, **changes})
+
+
+def test_grid_parameter_set_rejects_a_partial_single_form_and_an_empty_call():
+    with pytest.raises(ValidationError):
+        validate_call("grid.parameters.set", {**TARGET, "moduleId": TRACK, "parameterId": "", "value": 0.5})
+    with pytest.raises(ValidationError):
+        validate_call("grid.parameters.set", dict(TARGET))
+
+
+def test_grid_get_accepts_module_filter_and_diagnostics_and_rejects_bad_ones():
+    params, _ = validate_call("grid.get", {**TARGET, "moduleIds": [TRACK], "diagnostics": True})
+    assert params == {**TARGET, "moduleIds": [TRACK], "diagnostics": True}
+    assert validate_call("grid.get", {**TARGET, "moduleIds": [TRACK] * 128})
+    for bad in ([], [TRACK] * 129, ["not-a-uuid"], [None], None, TRACK):
+        with pytest.raises(ValidationError):
+            validate_call("grid.get", {**TARGET, "moduleIds": bad})
+    for bad in (0, 1, "true", None):
+        with pytest.raises(ValidationError):
+            validate_call("grid.get", {**TARGET, "diagnostics": bad})
+
+
+@pytest.mark.parametrize("method,args", [
+    ("grid.modules.insert", GRID_INSERT), ("grid.modules.move", GRID_MOVE), ("grid.modules.delete", GRID_MODULE),
+    ("grid.modules.rename", {**GRID_MODULE, "expectedCustomName": "", "customName": "x"}),
+    ("grid.connections.set", {**TARGET, "targetModuleId": TRACK, "targetPortKey": "in", "expectedSource": None, "source": None}),
+])
+def test_topology_writes_take_a_diff_or_full_graph_mode_only(method, args):
+    for mode in ("diff", "full"):
+        assert validate_call(method, {**args, "graph": mode})[0] == {**args, "graph": mode}
+    for bad in ("compact", "", None, True, "FULL"):
+        with pytest.raises(ValidationError):
+            validate_call(method, {**args, "graph": bad})
+    assert "graph" not in validate_call(method, args)[0]
+
+
+def test_graph_mode_is_not_accepted_by_reads_or_parameter_writes():
+    for method, args in (("grid.get", TARGET), ("grid.parameters.get", {**TARGET, "moduleId": TRACK, "parameterId": ""}),
+                         ("grid.parameters.set", GRID_SET)):
+        with pytest.raises(ValidationError):
+            validate_call(method, {**args, "graph": "full"})

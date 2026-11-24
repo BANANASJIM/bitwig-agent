@@ -51,8 +51,10 @@ final class GridInsertionWriter {
         nativeWriter.requirePlacementReady(target.graph);
         String path = nativeWriter.resolve(request.typeId);
         check.run();
+        JsonObject graphBefore = snapshots.snapshot(proxy, trackId, 0, GridTopologyContext.MAX_MODULES, false, false, null, check);
         String owner = quarantine.reserve();
         Lifetime lifetime = new Lifetime(owner, proxy, trackId, request, target, before, context, check, complete, fail);
+        lifetime.graphBefore = graphBefore;
         try {
             Runnable load = nativeWriter.prepareLoad(context.project(), path, lifetime);
             snapshots.guardTarget(target, proxy, trackId);
@@ -97,7 +99,7 @@ final class GridInsertionWriter {
         final AtomicBoolean claimed = new AtomicBoolean(), queued = new AtomicBoolean();
         volatile boolean loaderDispatched, placementDispatched, normalHandling;
         volatile Throwable lifecycleError, rejection;
-        Row incoming;
+        Row incoming; JsonObject graphBefore;
         Lifetime(String owner, Object proxy, UUID trackId, Request request, GridSnapshotReader.NativeTarget target,
                 Layout before, GridTopologyContext.Capture context, Runnable check, Consumer<JsonObject> complete, Consumer<Throwable> fail) {
             this.owner = owner; this.proxy = proxy; this.trackId = trackId; this.request = request; this.target = target;
@@ -191,7 +193,7 @@ final class GridInsertionWriter {
             try {
                 if (rejection != null) { fail.accept(rejection); return; }
                 check.run();
-                JsonObject graph = snapshots.snapshot(proxy, trackId, 0, GridTopologyContext.MAX_MODULES, false, check);
+                JsonObject graph = snapshots.snapshot(proxy, trackId, 0, GridTopologyContext.MAX_MODULES, false, false, null, check);
                 after.same(layout(target.graph, check));
                 snapshots.guardTarget(target, proxy, trackId);
                 contexts.capture(target.target, target.graph, after.modules, context, check);
@@ -213,7 +215,7 @@ final class GridInsertionWriter {
                 result.addProperty("graphScope", "bounded_actual_membership_types_layout_and_mapped_incoming_connections_not_DSP_or_opaque_children");
                 result.addProperty("maximumModules", GridTopologyContext.MAX_MODULES);
                 result.addProperty("maximumOccupiedYSpan", GridModuleWriter.MAX_Y_SPAN);
-                result.add("graph", graph); check.run(); complete.accept(result);
+                result.add("graph", graph); result.add("graphBefore", graphBefore); check.run(); complete.accept(result);
             } catch (Throwable error) {
                 // A failed external notification cannot resurrect a positively settled native lifetime.
                 try { fail.accept(error); } catch (Throwable notificationError) { lifecycleError = notificationError; }

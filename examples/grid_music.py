@@ -46,8 +46,7 @@ def checked_graph(graph: dict, target: dict, observed_target: dict | None = None
         raise RuntimeError("Grid native owning track was not corroborated")
     window = graph["window"]
     if (window.get("complete") is not True or window.get("offset") != 0
-            or window.get("total") != len(graph["modules"])
-            or graph["coverage"].get("structure") != "mapped_modules_and_ports"):
+            or window.get("total") != len(graph["modules"])):
         raise RuntimeError("Grid module/port window is incomplete")
     modules = {module["instanceId"]: module for module in graph["modules"]}
     if len(modules) != len(graph["modules"]):
@@ -119,27 +118,19 @@ async def build_grid(call, target: dict, types: dict[str, str], label: str) -> d
     # MODULE resources: factory initialization is not patch construction.
     for module_id in list(modules):
         result = await call("grid.modules.delete", {**target, "moduleId": module_id})
-        after = checked_graph(result["graph"], target, result["target"])
-        if set(after) != set(modules) - {module_id}:
+        if [item["moduleId"] for item in result.get("modulesRemoved", [])] != [module_id] or result.get("modulesAdded"):
             raise RuntimeError("Deleting an owned default changed unexpected modules")
-        modules = after
+        del modules[module_id]  # only defaults remain, so repair can only touch their own cables
+    # The diff's modulesAdded row carries ports, so inserted modules are wired without another grid.get.
+    by_name = {}
     for x, name in enumerate(("Union", "ADSR", "Audio Out")):
         result = await call("grid.modules.insert", {**target, "typeId": types[name], "x": x * 4, "y": 0})
-        after = checked_graph(result["graph"], target, result["target"])
-        added = set(after) - set(modules)
-        if (len(added) != 1 or set(after) - added != set(modules)
-                or result.get("moduleId") not in added
-                or after[result["moduleId"]]["typeId"] != types[name]):
+        added = result.get("modulesAdded", [])
+        if (len(added) != 1 or added[0]["instanceId"] != result.get("moduleId")
+                or added[0]["typeId"] != types[name] or result.get("modulesRemoved")
+                or result.get("connectionsChanged") or added[0]["instanceId"] in modules):
             raise RuntimeError("Insertion did not establish the requested owned module")
-        modules = after
-    graph = await call("grid.get", target)
-    modules = checked_graph(graph, target)
-    by_name = {}
-    for name, type_id in types.items():
-        matches = [module for module in modules.values() if module["typeId"] == type_id]
-        if len(matches) != 1:
-            raise RuntimeError(f"Missing or ambiguous {name} module")
-        by_name[name] = matches[0]
+        modules[added[0]["instanceId"]] = by_name[name] = added[0]
 
     def port(module_name: str, direction: str, name: str) -> dict:
         module = by_name[module_name]
@@ -150,8 +141,12 @@ async def build_grid(call, target: dict, types: dict[str, str], label: str) -> d
 
     wires = [(port("Union", "outputs", "Signal Out"), port("ADSR", "inputs", "Signal In")),
              (port("ADSR", "outputs", "Signal Out"), port("Audio Out", "inputs", "Audio In"))]
-    if graph["connections"]:
-        raise RuntimeError("Newly inserted modules have unexpected stored cables")
+    # Controls come from one filtered read of just the two modules that have them.
+    controls = await call("grid.get", {**target, "moduleIds": [by_name["Union"]["instanceId"], by_name["ADSR"]["instanceId"]]})
+    if controls.get("missingModuleIds") or controls["connections"]:
+        raise RuntimeError("Newly inserted modules are missing or have unexpected stored cables")
+    for row in controls["modules"]:
+        by_name["Union" if row["instanceId"] == by_name["Union"]["instanceId"] else "ADSR"] = row
     # Native-observed Analog ADSR RAW settings, not seconds or a unit parser:
     # pluck 2 ms/180 ms/0%/100 ms; pad 350 ms/800 ms/70%/1.20 s.
     envelope = ((0.12599210498948732, 0.5646216173286172, 0.0, 0.4641588833612779)
@@ -190,34 +185,30 @@ async def build_grid(call, target: dict, types: dict[str, str], label: str) -> d
         raise RuntimeError("Calibrated envelope requires one unambiguous Analog ADSR model")
     expected["parameters"].insert(0, {"moduleId": by_name["ADSR"]["instanceId"],
                                       "parameterId": model[0]["parameterId"], "kind": "enum", "value": analog[0]})
-    for wanted in expected["parameters"]:
-        address = {**target, "moduleId": wanted["moduleId"], "parameterId": wanted["parameterId"]}
-        fresh = await call("grid.parameters.get", address)
-        actual = fresh["parameter"]
-        if (fresh.get("moduleId") != wanted["moduleId"] or actual.get("supported") is not True
-                or actual.get("parameterId") != wanted["parameterId"] or actual.get("kind") != wanted["kind"]):
-            raise RuntimeError("Fresh Grid control target/kind differs from discovery")
-        if actual["value"] != wanted["value"]:
-            written = await call("grid.parameters.set", {**address, "expectedKind": actual["kind"],
-                                                         "expectedValue": actual["value"], "value": wanted["value"]})
-            if (written.get("moduleId") != wanted["moduleId"]
-                    or any(written["parameter"].get(key) != wanted[key] for key in ("parameterId", "kind", "value"))):
-                raise RuntimeError("Native parameter write did not establish the requested control value")
+    # One batch: expectedKind/expectedValue come from the grid.get rows above; a stale one writes nothing.
+    rows = {(module["instanceId"], item["parameterId"]): item
+            for module in by_name.values() if "parameters" in module for item in module["parameters"]}
+    writes = [{"moduleId": wanted["moduleId"], "parameterId": wanted["parameterId"],
+               "expectedKind": rows[wanted["moduleId"], wanted["parameterId"]]["kind"],
+               "expectedValue": rows[wanted["moduleId"], wanted["parameterId"]]["value"], "value": wanted["value"]}
+              for wanted in expected["parameters"]]
+    written = await call("grid.parameters.set", {**target, "writes": writes})
+    if (written.get("status") != "applied" or len(written["writes"]) != len(writes)
+            or any(item.get("status") not in ("applied", "already_matched") or item.get("value") != wanted["value"]
+                   for item, wanted in zip(written["writes"], expected["parameters"]))):
+        raise RuntimeError("Native parameter batch did not establish the requested control values")
     for source, destination in wires:
         result = await call("grid.connections.set", {**target, "targetModuleId": destination["moduleId"],
                                                     "targetPortKey": destination["portKey"],
                                                     "expectedSource": None, "source": source})
-        if result.get("matchesRequested") is not True or result.get("actualSource") != source:
-            raise RuntimeError("Native cable repair did not retain the requested source")
-        after = checked_graph(result["graph"], target, result["target"])
-        if {key: module["typeId"] for key, module in after.items()} != expected["moduleTypes"]:
-            raise RuntimeError("Native cable write changed the owned module identities/types")
+        change = {"target": {"moduleId": destination["moduleId"], "portKey": destination["portKey"]},
+                  "from": None, "to": source}
+        if (result.get("matchesRequested") is not True or result.get("actualSource") != source
+                or result.get("connectionsChanged") != [change] or result.get("modulesAdded")
+                or result.get("modulesRemoved") or result.get("graphComplete") is False):
+            raise RuntimeError("Native cable repair did not retain exactly the requested source")
         expected["connections"].append({"sourceModuleId": source["moduleId"], "sourcePortKey": source["portKey"],
                                          "targetModuleId": destination["moduleId"], "targetPortKey": destination["portKey"]})
-        fields = ("sourceModuleId", "sourcePortKey", "targetModuleId", "targetPortKey")
-        if sorted(tuple(item[key] for key in fields) for item in result["graph"]["connections"]) != sorted(
-                tuple(item[key] for key in fields) for item in expected["connections"]):
-            raise RuntimeError("Native cable graph differs from the requested patch")
     graph = await call("grid.get", target)
     checked_patch(graph, target, expected)
     return {"target": target, "expectedPatch": expected, "graphReadback": graph}
@@ -284,14 +275,16 @@ async def create(args: argparse.Namespace) -> int:
         finally:
             with (args.artifacts / "calls.jsonl").open("a", encoding="utf-8") as output:
                 output.write(json.dumps(entry, ensure_ascii=False, allow_nan=False) + "\n")
-        if (result.get("status") != "observed" or result.get("completion") == "unknown"
+        ok_status = "applied" if method == "grid.parameters.set" and "writes" in params else "observed"
+        if (result.get("status") != ok_status or result.get("completion") == "unknown"
                 or result.get("topologyQuarantined") is True or result.get("topologyAdmissionBlocked") is True):
             report.setdefault("uncertainOperations", []).append(entry)
             raise RuntimeError(f"{method} did not establish its postcondition; inspect calls.jsonl before another write")
         if "expectedDeviceName" in params:
             identity = result["target"]
+            # Reads also corroborate the native owning track; write results echo only the explicit identity.
             if (any(identity.get(key) != params[key] for key in ("trackId", "deviceIndex", "expectedDeviceName"))
-                    or identity.get("nativeOwningTrack") != "corroborated_before_and_after_capture"):
+                    or method == "grid.get" and identity.get("nativeOwningTrack") != "corroborated_before_and_after_capture"):
                 raise RuntimeError(f"{method} did not corroborate the owned Grid target")
         return result
 
