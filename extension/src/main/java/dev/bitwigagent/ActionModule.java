@@ -9,8 +9,10 @@ import static dev.bitwigagent.HostServices.*;
 /** Native action catalog and dispatch, deliberately not a workflow/completion engine. */
 final class ActionModule implements HostModule {
     static final Set<String> METHODS = Set.of("actions.list", "actions.invoke");
-    /** Project-lifecycle actions that can discard unsaved work (IDs from the 6.1.4 catalog; no Revert action exists there). */
-    static final Set<String> DISCARDING = Set.of("Quit", "Close", "New", "Open", "new_from_template");
+    /** Closes the current project tab; guarded by the current tab's observed saved state. New/Open open another tab (observed on 6.1.4). */
+    static final Set<String> DISCARDING = Set.of("Close");
+    /** Closes every open tab; the bridge only observes the current one, so explicit consent is always required. */
+    static final Set<String> ALWAYS_CONSENT = Set.of("Quit");
     private final HostServices s;
     ActionModule(HostServices s) { this.s = s; }
     @Override public Set<String> methods() { return METHODS; }
@@ -71,8 +73,11 @@ final class ActionModule implements HostModule {
         Action action = s.application.getAction(actionId);
         if (action == null) throw failure("unknown_action", "Action ID is absent from the host catalog.");
         boolean discard = params.has("discardUnsavedChanges") && params.get("discardUnsavedChanges").getAsBoolean();
+        if (ALWAYS_CONSENT.contains(actionId) && !discard)
+            throw failure("unsaved_changes", "Action \"" + actionId + "\" closes every open project tab; only the current tab's saved state is observable (projectModified="
+                    + s.projectModifiedJson() + "). Save each tab, then pass discardUnsavedChanges:true with user consent.");
         if (DISCARDING.contains(actionId) && !discard && !Boolean.FALSE.equals(s.projectModified()))
-            throw failure("unsaved_changes", "Action \"" + actionId + "\" can discard unsaved work and the project is not observed saved (projectModified="
+            throw failure("unsaved_changes", "Action \"" + actionId + "\" closes the current project tab, which is not observed saved (projectModified="
                     + s.projectModifiedJson() + "). Run project.save, or pass discardUnsavedChanges:true with user consent.");
         s.check(request);
         // Host actions can retarget the launcher cursor clip (select clip/track); never mid launcher edit.

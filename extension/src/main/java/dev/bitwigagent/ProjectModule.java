@@ -35,7 +35,8 @@ final class ProjectModule implements HostModule {
         s.check(op);
         op.dispatched = true;
         save.invoke();
-        await(op, before, op.deadline - TimeUnit.MILLISECONDS.toNanos(25));
+        // Full request deadline, not observeUntil's 750 ms window: a real save can take longer. Shared margin keeps the last poll inside it.
+        await(op, before, op.deadline - HostServices.DEADLINE_MARGIN_NANOS);
     }
 
     private void await(HostOperation op, long before, long until) {
@@ -50,7 +51,7 @@ final class ProjectModule implements HostModule {
             result.addProperty("saved", false);
             result.addProperty("completion", "not_observed");
             result.add("projectModified", s.projectModifiedJson());
-            result.addProperty("hint", "Save was dispatched once, not retried. An untitled project opens a Save As dialog that needs GUI/user completion; check projectModified via status before any further action.");
+            result.addProperty("hint", "Save was dispatched once, not retried. A modal dialog (Save As for an untitled project, crash recovery, ...) can block the save and needs GUI/user completion; check projectModified via status before any further action.");
             op.result.complete(result);
         } else {
             s.schedule(op, () -> await(op, before, until), 20);

@@ -184,7 +184,7 @@ public final class HostBridgeTest {
         check(unobserved.saveInvocations == 1, "save dispatched exactly once, never re-invoked while waiting");
         check(result.get("status").getAsString().equals("dispatched") && !result.get("saved").getAsBoolean()
                 && result.get("completion").getAsString().equals("not_observed") && result.get("hint").getAsString().contains("Save As"),
-                "no observation is not_observed with Save As hint");
+                "no observation is not_observed with a dialog hint");
         // A stale false from before the dispatch is not evidence.
         Fake stale = new Fake(); HostBridge b3 = stale.bridge();
         stale.modified.set(true); stale.saveClears = false;
@@ -207,16 +207,18 @@ public final class HostBridgeTest {
             expectError(refused, "unsaved_changes");
         }
         check(host.quitInvocations == 0, "refused lifecycle action never invokes");
-        for (String id : new String[]{"Close", "New", "Open", "new_from_template"}) {
-            CompletableFuture<JsonObject> refused = bridge.handle("actions.invoke", actionParams(id), deadline()); host.next();
-            expectError(refused, "unsaved_changes");
-        }
+        CompletableFuture<JsonObject> closeRefused = bridge.handle("actions.invoke", actionParams("Close"), deadline()); host.next();
+        expectError(closeRefused, "unsaved_changes");
         JsonObject consent = actionParams("Quit"); consent.addProperty("discardUnsavedChanges", true);
         check(call(host, bridge, "actions.invoke", consent).get("status").getAsString().equals("dispatched") && host.quitInvocations == 1,
                 "explicit discardUnsavedChanges dispatches");
         host.modified.set(false);
-        call(host, bridge, "actions.invoke", actionParams("Quit"));
-        check(host.quitInvocations == 2, "observed-saved project needs no consent");
+        CompletableFuture<JsonObject> quitSaved = bridge.handle("actions.invoke", actionParams("Quit"), deadline()); host.next();
+        expectError(quitSaved, "unsaved_changes");
+        check(host.quitInvocations == 1, "Quit always needs consent: other open tabs are not observable");
+        call(host, bridge, "actions.invoke", actionParams("Close"));
+        call(host, bridge, "actions.invoke", actionParams("New"));
+        check(host.lifecycleInvocations == 2, "Close on an observed-saved tab and New (opens a tab) need no consent");
         host.modified.set(true);
         call(host, bridge, "actions.invoke", actionParams("fixture.action"));
         check(host.actionInvocations > 0, "non-lifecycle actions are never guarded");
@@ -979,7 +981,7 @@ public final class HostBridgeTest {
         final double[] parameterValues = new double[16];
         final int[] deviceWrites = new int[16];
         int writes, idEmissions;
-        Val modified; int saveInvocations, quitInvocations; boolean saveClears = true;
+        Val modified; int saveInvocations, quitInvocations, lifecycleInvocations; boolean saveClears = true;
         final Node[] layerNodes = new Node[2], childBanks = new Node[2];
         final Node[][] childNodes = new Node[2][2];
         final StringArrayValueChangedCallback[][] childIds = new StringArrayValueChangedCallback[2][2];
@@ -1138,6 +1140,7 @@ public final class HostBridgeTest {
                             if (method2.equals("invoke")) {
                                 if ("Save".equals(args[0])) { saveInvocations++; if (saveClears) modified.set(false); }
                                 else if ("Quit".equals(args[0])) quitInvocations++;
+                                else lifecycleInvocations++;
                             }
                             return null;
                         };
