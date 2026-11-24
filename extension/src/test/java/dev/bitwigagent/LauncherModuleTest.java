@@ -50,6 +50,7 @@ public final class LauncherModuleTest {
         createWritesNotesAfterObservingTheClip();
         compactEditReportsSummaryAndOnlyUnverifiedEdits();
         noteRowsUseEditUnitsAndCarryNoConstantProse();
+        echoingAReadRowIsAlreadyMatched();
         launcherListAndContextExposeTheCursorClip();
         System.out.println("LauncherModuleTest: " + assertions + " assertions passed (simulated host only)");
     }
@@ -786,12 +787,12 @@ public final class LauncherModuleTest {
         JsonObject p = manyEdits(32);
         JsonObject out = f.call("notes.edit", p);
         JsonObject sum = out.getAsJsonObject("summary");
-        check(out.get("status").getAsString().equals("observed") && sum.get("requested").getAsInt() == 32 && sum.get("applied").getAsInt() == 32
+        check(out.get("status").getAsString().equals("observed") && sum.get("requested").getAsInt() == 32 && sum.get("dispatched").getAsInt() == 32
                 && sum.get("alreadyMatched").getAsInt() == 0 && sum.get("verified").getAsInt() == 32 && sum.get("unverified").getAsInt() == 0, "compact summary counts every edit");
         check(!out.has("edits") && !out.has("unverifiedEdits") && !out.has("notes") && out.get("notesInWindow").getAsInt() == 32, "verified edits and the window listing are not repeated");
         int compact = out.toString().length();
         JsonObject again = f.call("notes.edit", p);
-        check(again.getAsJsonObject("summary").get("alreadyMatched").getAsInt() == 32 && again.getAsJsonObject("summary").get("applied").getAsInt() == 0, "unchanged edits are alreadyMatched, not applied");
+        check(again.getAsJsonObject("summary").get("alreadyMatched").getAsInt() == 32 && again.getAsJsonObject("summary").get("dispatched").getAsInt() == 0, "unchanged edits are alreadyMatched, not applied");
         JsonObject full = manyEdits(32); full.addProperty("detail", "full");
         JsonObject fullOut = f.call("notes.edit", full);
         check(fullOut.getAsJsonArray("edits").size() == 32 && fullOut.getAsJsonArray("notes").size() == 32 && fullOut.get("status").getAsString().equals("observed"), "detail=full returns today's window listing and every edit");
@@ -809,6 +810,20 @@ public final class LauncherModuleTest {
         expect("invalid_params", () -> LauncherModule.validateParams("notes.read", read));
     }
 
+    private static void echoingAReadRowIsAlreadyMatched() throws Exception {
+        Fake f = new Fake(); f.slots[0].content = true;
+        f.put(0, 0, 0, 60, 64, .5); f.notes.get(key(0, 0, 0, 60)).exact = 0.5; // GUI value 0.5 reads as MIDI 64
+        JsonObject row = f.call("notes.read", window()).getAsJsonArray("notes").get(0).getAsJsonObject();
+        check(row.get("velocity").getAsInt() == 64, "host 0.5 reads as MIDI 64");
+        JsonObject p = window(); JsonArray edits = new JsonArray();
+        edits.add(set(row.get("beat").getAsDouble(), row.get("pitch").getAsInt(), row.get("velocity").getAsInt(), row.get("durationBeats").getAsDouble()));
+        p.add("edits", edits);
+        JsonObject out = f.call("notes.edit", p);
+        check(f.writes == 0 && out.getAsJsonObject("summary").get("alreadyMatched").getAsInt() == 1
+                && out.getAsJsonObject("summary").get("dispatched").getAsInt() == 0 && out.get("status").getAsString().equals("observed"),
+                "echoing a read row back is alreadyMatched with no rewrite");
+    }
+
     private static void noteRowsUseEditUnitsAndCarryNoConstantProse() throws Exception {
         Fake f = new Fake(); f.slots[0].content = true;
         f.put(0, 0, 4, 61, 100, 1.5);
@@ -819,6 +834,11 @@ public final class LauncherModuleTest {
         for (String gone : new String[]{"gridReadinessLimitation", "onsetPrecision", "selectionSideEffect", "identityVerification", "completeClip", "scope"})
             check(!read.has(gone), gone + " no longer repeated per response");
         check(read.has("gridReadiness") && read.has("completeWindow") && read.get("window").getAsJsonObject().get("channel").getAsInt() == 0, "machine-actionable flags and channel remain");
+        f.notes.get(key(0, 0, 4, 61)); // sustain marker row below
+        f.put(0, 0, 0, 70, 60, 4); f.slots[0].length = 8;
+        JsonObject later = window(); later.addProperty("startStep", 2); later.addProperty("steps", 4);
+        for (JsonElement v : f.call("notes.read", later).getAsJsonArray("continuingAtWindowStart"))
+            check(v.getAsJsonObject().get("state").getAsString().equals("NoteSustain"), "continuing rows are marked, not copyable onsets");
         check(LauncherModule.midiVelocity(1 / 127.0) == 1 && LauncherModule.midiVelocity(1.0) == 127 && LauncherModule.midiVelocity(0.0) == 1, "velocity conversion stays within 1..127");
     }
 
@@ -838,6 +858,7 @@ public final class LauncherModuleTest {
         check(occupied.size() == 2 && occupied.get(1).getAsJsonObject().get("slotIndex").getAsInt() == 2 && occupied.get(1).getAsJsonObject().get("name").getAsString().equals("Other"), "only occupied slots listed");
         f.bankOffset = 1;
         check(f.module.occupiedSlots(0, f.tracks[0]) == null, "unobserved bank offset yields null, not a guess");
+        check(f.module.cursorSlotIndex(0, f.tracks[0]) == -2, "cursor clip is not determinable off scene offset zero");
         check(f.writes == 0 && f.creates == 1, "context reads never write");
     }
 
@@ -1123,7 +1144,7 @@ public final class LauncherModuleTest {
             }
             final Note found = on; final NoteStep$State actual = state;
             Node n = new Node(NoteStep.class); n.action("channel", a -> channel); n.action("x", a -> x); n.action("y", a -> pitch); n.action("state", a -> actual);
-            n.action("velocity", a -> found == null ? 0.0 : found.velocity / 127.0); n.action("duration", a -> found == null ? 0.0 : found.duration); return (NoteStep) n.proxy;
+            n.action("velocity", a -> found == null ? 0.0 : found.exact != null ? found.exact : found.velocity / 127.0); n.action("duration", a -> found == null ? 0.0 : found.duration); return (NoteStep) n.proxy;
         }
         HostOperation start(String method, JsonObject p) {
             HostOperation op = new HostOperation(System.nanoTime() + TimeUnit.SECONDS.toNanos(2));
@@ -1152,6 +1173,7 @@ public final class LauncherModuleTest {
     private static final class Note {
         final int velocity;
         final double duration;
+        Double exact; // host velocity that is not a whole MIDI step, e.g. a GUI drag
         Note(int velocity, double duration) { this.velocity = velocity; this.duration = duration; }
     }
 

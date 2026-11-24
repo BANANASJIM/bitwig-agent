@@ -337,7 +337,7 @@ final class LauncherModule implements HostModule {
             JsonObject out = base(id, -1);
             JsonArray entries = new JsonArray();
             int scenes = track.clipLauncherSlotBank().itemCount().get();
-            for (int j = 0; j < Math.min(16, scenes); j++) { ready(slots[t][j]); entries.add(slotJson(slots[t][j], j, true)); }
+            for (int j = 0; j < Math.min(16, scenes); j++) { ready(slots[t][j]); entries.add(slotJson(slots[t][j], j, id)); }
             out.add("slots", entries);
             out.add("window", HostServices.window(0, 16, scenes));
             op.result.complete(out);
@@ -635,7 +635,7 @@ final class LauncherModule implements HostModule {
             results.add(item);
         }
         JsonObject summary = new JsonObject();
-        summary.addProperty("requested", changes.size()); summary.addProperty("applied", changes.size() - matched);
+        summary.addProperty("requested", changes.size()); summary.addProperty("dispatched", changes.size() - matched);
         summary.addProperty("alreadyMatched", matched); summary.addProperty("verified", verified);
         summary.addProperty("unverified", changes.size() - verified);
         out.add("summary", summary);
@@ -647,7 +647,7 @@ final class LauncherModule implements HostModule {
     static boolean matches(Edit e, NoteStep note) {
         if (note == null) return false;
         if (!e.set) return note.state() == NoteStep$State.Empty;
-        return note.state() == NoteStep$State.NoteOn && Math.abs(note.velocity() - e.velocity / 127.0) <= 1.0 / 16383 + 1e-9
+        return note.state() == NoteStep$State.NoteOn && midiVelocity(note.velocity()) == e.velocity
                 && Math.abs(note.duration() - e.duration) <= 1e-9;
     }
 
@@ -668,7 +668,11 @@ final class LauncherModule implements HostModule {
                 total++;
                 if (list && notes.size() < NOTE_LIMIT) notes.add(noteJson(note, w, x, pitch));
             }
-            else if (list && note.state() == NoteStep$State.NoteSustain && x == 0) sustains.add(noteJson(note, w, x, pitch));
+            else if (list && note.state() == NoteStep$State.NoteSustain && x == 0) {
+                JsonObject row = noteJson(note, w, x, pitch);
+                row.addProperty("state", "NoteSustain"); // continues from before the window: not an onset to copy
+                sustains.add(row);
+            }
         }
         out.addProperty("notesInWindow", total);
         if (!list) return out;
@@ -733,9 +737,10 @@ final class LauncherModule implements HostModule {
             throw new RpcException("stale_context", "Explicit track or launcher bank changed", op.dispatched ? "unknown" : "not_applied");
     }
     /** Whether the launcher cursor clip is this slot's clip; null until the cursor identity has been observed. Read-only. */
-    private Boolean selected(Slot slot) {
+    private Boolean selected(Slot slot, String trackId) {
         if (!slot.equalReady || !clipExistsReady) return null;
-        return slot.equal.get() && clip.exists().get() && slot.api.hasContent().get();
+        return slot.equal.get() && clip.exists().get() && slot.api.hasContent().get()
+                && clipTrack.exists().get() && trackId.equals(clipTrack.channelId().get());
     }
 
     /** For context.get: occupied slots of one track, without touching selection; null when unobserved. */
@@ -758,9 +763,10 @@ final class LauncherModule implements HostModule {
 
     /** Slot index of the cursor clip on track t, -1 when none, -2 when not yet observable. */
     int cursorSlotIndex(int t, Track track) {
+        if (track.clipLauncherSlotBank().scrollPosition().get() != 0) return -2;
         if (!clipExistsReady || !clipTrack.exists().get() || !s.trackMatches(clipTrack.channelId().get(), track)) return -1;
         for (int j = 0; j < HostServices.SCENES; j++) {
-            Boolean sel = selected(slots[t][j]);
+            Boolean sel = selected(slots[t][j], track.channelId().get());
             if (sel == null) return -2;
             if (sel) return j;
         }
@@ -798,10 +804,10 @@ final class LauncherModule implements HostModule {
         out.addProperty("playStopBeats", clip.getPlayStop().get());
         out.addProperty("loopEnabled", clip.isLoopEnabled().get());
     }
-    private JsonObject slotJson(Slot slot, int index) { return slotJson(slot, index, false); }
-    private JsonObject slotJson(Slot slot, int index, boolean withSelected) {
+    private JsonObject slotJson(Slot slot, int index) { return slotJson(slot, index, null); }
+    private JsonObject slotJson(Slot slot, int index, String selectedFor) {
         JsonObject out = new JsonObject(); out.addProperty("slotIndex", index);
-        if (withSelected) { Boolean sel = selected(slot); out.add("selected", sel == null ? JsonNull.INSTANCE : new JsonPrimitive(sel)); }
+        if (selectedFor != null) { Boolean sel = selected(slot, selectedFor); out.add("selected", sel == null ? JsonNull.INSTANCE : new JsonPrimitive(sel)); }
         out.addProperty("hasContent", slot.api.hasContent().get()); out.addProperty("name", slot.api.name().get());
         out.addProperty("playing", slot.api.isPlaying().get()); out.addProperty("queued", slot.api.isPlaybackQueued().get());
         out.addProperty("recording", slot.api.isRecording().get());
