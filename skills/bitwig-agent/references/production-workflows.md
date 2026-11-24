@@ -34,6 +34,10 @@ For a speed retrospective, record actual search/insertion/configuration/note-wri
 
 **Observed production failure:** installed Polysynth, Distortion and Reverb files produced a 31-note lead, but the user rejected it as not black metal. Fourteen verified parameter writes and one batch note write plus complete-window readback were **operation success only, not musical success**. The native fallback substituted an available synth for an unproven source/style match; short audio A/B and independent listening review were needed before expansion. Separately, parallel parameter discovery for the two effects caused one definite `stale_context/not_applied` rejection; device-by-device discovery/writes then succeeded. Retain that bank-handling lesson without claiming a measured speedup, accepted sound or saved persistence.
 
+## Clip variants and edits
+
+Use `clips.edit` (one op per call, with `expectedClipName`; ops in [protocol](https://github.com/BANANASJIM/bitwig-agent/blob/main/PROTOCOL.md)). For melody/progression variants, `copyTo` an empty slot then `transpose` instead of re-sending notes. Quantize recorded takes before editing (`notes.read` snaps onsets to cells). `quantize` `amount` morphs toward Bitwig's own grid; amount 1 with no change returns `no_cell_change`. `color` may snap to the palette; `copyTo` keeps the source and name on 6.1.4; `transpose` checks only observed channel-0 loop notes.
+
 ## 1. Orient before making music
 
 Establish the actual project, selected track/clip/device, group level, focused panel, transport, record-arm and automation state. Use the Inspector to identify the selected object rather than guessing from screen position. Distinguish track selection from clip selection and the device chain from an expanded device editor. Hidden FX/deactivated tracks and collapsed groups are not empty project space.
