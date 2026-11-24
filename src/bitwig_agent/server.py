@@ -21,7 +21,7 @@ from mcp.types import (
     ToolAnnotations,
 )
 
-from bitwig_agent.catalog import TOOLS, validate_call
+from bitwig_agent.catalog import TOOLS, invalid_params_message, validate_call
 from bitwig_agent.client import BridgeClient, BridgeError, configured_port
 
 
@@ -47,7 +47,7 @@ def create_server(client: BridgeClient | None = None) -> Server:
             payload = {"error": exc.error}
             failed = True
         except (ValueError, TypeError) as exc:
-            payload = {"error": {"code": "invalid_params", "message": str(exc), "outcome": "not_dispatched"}}
+            payload = {"error": {"code": "invalid_params", "message": invalid_params_message(params.name, exc), "outcome": "not_dispatched"}}
             failed = True
         return CallToolResult(content=[TextContent(type="text", text=json.dumps(payload, allow_nan=False, separators=(",", ":")))], structured_content=payload, is_error=failed)
 

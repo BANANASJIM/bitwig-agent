@@ -94,7 +94,7 @@ Both options may be combined:
 bitwig-agent-install --extension ./BitwigAgent.bwextension --destination "/absolute/path/to/Extensions"
 ```
 
-A different existing extension is backed up to `DESTINATION_PARENT/.bitwig-agent-backups/OLD_SHA256/BitwigAgent.bwextension`, outside Bitwig's extension scan directory. Installing identical bytes preserves the existing file. After replacing a loaded extension, restart Bitwig or reload its controller before expecting the new code to run. Keep the Python package and extension matched when upgrading or restoring a backup.
+A different existing extension is backed up to `DESTINATION_PARENT/.bitwig-agent-backups/OLD_SHA256/BitwigAgent.bwextension`, outside Bitwig's extension scan directory. Installing identical bytes preserves the existing file. After replacing a loaded extension, restart Bitwig before expecting the new code to run: on 6.1.4 neither the Settings controller toggle nor `extension.restart` loads a replaced `.bwextension` (check `status.extension.build`). Keep the Python package and extension matched when upgrading or restoring a backup.
 
 For a PyPI installation, review the new release's compatibility before upgrading both components:
 
@@ -131,7 +131,7 @@ Use that JSON rather than a bare executable name: GUI clients may not inherit th
 
 ### Write quarantine after an unresolved create/import/note write
 
-`extension.restart` replaces toggling the controller in Settings for clearing this per-instance quarantine: it refuses while unresolved mutations exist unless `discardUnresolved:true`, and lists them so you can inspect the project afterwards. Poll `status` until it answers again, then re-discover targets. Whether `restart()` reloads a replaced `.bwextension` file is not yet verified natively; compare `status.extension.build` with what you installed. The process-wide Grid topology quarantine still needs a full Bitwig restart.
+`extension.restart` replaces toggling the controller in Settings for clearing this per-instance quarantine: it refuses while unresolved mutations exist unless `discardUnresolved:true`, and lists them so you can inspect the project afterwards. Poll `status` until it answers again, then re-discover targets. Observed on 6.1.4: `restart()` does not load a replaced `.bwextension` file (`status.extension.build` stays the same); restart Bitwig to run a new build. The process-wide Grid topology quarantine still needs a full Bitwig restart.
 
 ### Controller missing or connection refused
 

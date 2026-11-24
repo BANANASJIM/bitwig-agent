@@ -434,3 +434,15 @@ async def test_grid_rename_cli_unknown_preserves_native_uncertainty_without_retr
     assert payload == {"error": error}
     assert host.requests[0]["params"] == params
     assert len(host.requests) == host.connections == 1
+
+
+def test_unknown_argument_names_closest_field():
+    from pydantic import ValidationError
+    import pytest
+    from bitwig_agent.catalog import invalid_params_message, validate_call
+    with pytest.raises(ValidationError) as error:
+        validate_call("grid.connections.set", {"moduleId": "x"})
+    message = invalid_params_message("grid.connections.set", error.value)
+    assert "did you mean targetModuleId?" in message
+    assert "errors.pydantic.dev" not in message
+    assert "timeoutMs" not in message.split("Accepted:")[1]

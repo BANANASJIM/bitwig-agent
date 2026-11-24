@@ -8,7 +8,7 @@ import json
 import sys
 from typing import Any
 
-from bitwig_agent.catalog import TOOLS, validate_call
+from bitwig_agent.catalog import TOOLS, invalid_params_message, unknown_arguments_message, validate_call
 from bitwig_agent.client import BridgeClient, BridgeError, configured_port, load_json
 
 
@@ -60,7 +60,7 @@ def parse_arguments(method: str, pairs: list[str], raw: str | None, timeout_ms: 
             if key in values:
                 raise ValueError(f"Duplicate argument: {key}")
             if key not in properties:
-                raise ValueError(f"Unknown argument for {method}: {key}")
+                raise ValueError(unknown_arguments_message(method, [key]))
             if properties[key].get("type") == "string":
                 values[key] = load_json(value) if value.startswith('"') else value
             else:
@@ -74,6 +74,7 @@ def parse_arguments(method: str, pairs: list[str], raw: str | None, timeout_ms: 
 
 async def execute(argv: list[str]) -> tuple[dict[str, Any], int]:
     """Return the exact JSON envelope and exit code; no output side effects."""
+    command = ""
     try:
         args = parser().parse_intermixed_args(argv)
         command = args.command
@@ -105,7 +106,7 @@ async def execute(argv: list[str]) -> tuple[dict[str, Any], int]:
     except BridgeError as exc:
         return {"error": exc.error}, 1
     except (ValueError, TypeError, RecursionError) as exc:
-        return {"error": {"code": "invalid_params", "message": str(exc), "outcome": "not_dispatched"}}, 2
+        return {"error": {"code": "invalid_params", "message": invalid_params_message(command, exc), "outcome": "not_dispatched"}}, 2
 
 
 def main(argv: list[str] | None = None) -> int:
