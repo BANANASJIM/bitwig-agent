@@ -295,7 +295,6 @@ class FakeGrid:
             for edit in edits:
                 self.cables[edit["targetModuleId"], edit["targetPortKey"]] = edit["source"]
             return {"status": "observed", "batchStatus": "applied", "completion": "observed", "written": len(edits),
-                    "allMatchRequested": True,
                     "connections": [{"targetModuleId": edit["targetModuleId"], "targetPortKey": edit["targetPortKey"],
                                      "status": "applied", "matchesRequested": True} for edit in edits],
                     "connectionsChanged": [{"target": {"moduleId": edit["targetModuleId"], "portKey": edit["targetPortKey"]},

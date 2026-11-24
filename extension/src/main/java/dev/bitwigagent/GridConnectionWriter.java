@@ -27,9 +27,15 @@ final class GridConnectionWriter {
     }
     void set(Object proxy, UUID trackId, Request request, Runnable check, Runnable dispatch,
             Consumer<JsonObject> complete, Consumer<Throwable> fail) {
+        set(proxy, trackId, request, check, dispatch, complete, fail, true);
+    }
+    private void set(Object proxy, UUID trackId, Request request, Runnable check, Runnable dispatch,
+            Consumer<JsonObject> complete, Consumer<Throwable> fail, boolean withBefore) {
         quarantine.requireAvailable(); values.documentThread(); check.run();
         GridSnapshotReader.NativeTarget target = snapshots.target(proxy, trackId);
-        JsonObject graphBefore = snapshots.snapshot(proxy, trackId, 0, GridTopologyContext.MAX_MODULES, false, false, null, check);
+        // The batch keeps one graphBefore for the whole call; per-entry snapshots would be discarded.
+        JsonObject graphBefore = withBefore
+                ? snapshots.snapshot(proxy, trackId, 0, GridTopologyContext.MAX_MODULES, false, false, null, check) : null;
         Graph before = capture(target.graph, check);
         Port input = before.require(request.target, true);
         Object source = request.source == null ? null : before.require(request.source, false).model;
@@ -74,7 +80,8 @@ final class GridConnectionWriter {
                 result.add("requestedSource", Endpoint.json(request.source));
                 result.add("actualSource", Endpoint.json(actual.sourceEndpoint));
                 result.addProperty("matchesRequested", Objects.equals(request.source, actual.sourceEndpoint));
-                result.add("graph", graph); result.add("graphBefore", graphBefore);
+                result.add("graph", graph);
+                if (graphBefore != null) result.add("graphBefore", graphBefore);
                 result.addProperty("mutationDispatched", changed);
                 result.addProperty("nativeMutation", changed); result.addProperty("nativeUndo", changed);
                 result.addProperty("verification", changed ? "later_document_event_bounded_native_graph_observation" : "already_matched");
@@ -133,7 +140,7 @@ final class GridConnectionWriter {
         final Object proxy; final UUID trackId; final java.util.List<Request> requests; final JsonObject graphBefore;
         final Runnable check, dispatch; final Consumer<JsonObject> complete; final Consumer<Throwable> fail;
         final JsonArray items = new JsonArray();
-        JsonObject lastGraph; String status = "applied"; int written, completed; boolean allMatch = true;
+        JsonObject lastGraph; String status = "applied"; int written, completed;
         Batch(Object proxy, UUID trackId, java.util.List<Request> requests, JsonObject graphBefore, Runnable check,
                 Runnable dispatch, Consumer<JsonObject> complete, Consumer<Throwable> fail) {
             this.proxy = proxy; this.trackId = trackId; this.requests = requests; this.graphBefore = graphBefore;
@@ -149,16 +156,29 @@ final class GridConnectionWriter {
             boolean[] sent = {false};
             try {
                 set(proxy, trackId, request, check, () -> { dispatch.run(); sent[0] = true; },
-                        one -> { record(item, one); next(i + 1); }, error -> failed(i, item, error, sent[0]));
+                        one -> { if (record(item, one)) next(i + 1); else stop(i, "partial"); },
+                        error -> failed(i, item, error, sent[0]), false);
             } catch (Throwable error) { failed(i, item, error, sent[0]); }
         }
-        private void record(JsonObject item, JsonObject one) {
+        /** Returns false when native repair left a different source: the state is known, but later entries may depend on it. */
+        private boolean record(JsonObject item, JsonObject one) {
             boolean changed = one.get("mutationDispatched").getAsBoolean();
-            item.addProperty("status", changed ? "applied" : "already_matched");
+            boolean matches = one.get("matchesRequested").getAsBoolean();
+            item.addProperty("status", !matches ? "mismatch" : changed ? "applied" : "already_matched");
             for (String key : new String[] {"previousSource", "actualSource", "matchesRequested"}) item.add(key, one.get(key));
-            allMatch &= one.get("matchesRequested").getAsBoolean();
             lastGraph = one.getAsJsonObject("graph");
             completed++; if (changed) written++;
+            return matches;
+        }
+        private void stop(int i, String verdict) {
+            status = verdict;
+            for (int k = i + 1; k < requests.size(); k++) {
+                Request later = requests.get(k); JsonObject rest = new JsonObject();
+                rest.addProperty("targetModuleId", later.target.moduleId.toString());
+                rest.addProperty("targetPortKey", later.target.portKey);
+                rest.addProperty("status", "not_dispatched"); items.add(rest);
+            }
+            finish();
         }
         private void failed(int i, JsonObject item, Throwable error, boolean dispatched) {
             boolean unknown = dispatched || error instanceof RpcException && "unknown".equals(((RpcException) error).outcome);
@@ -168,21 +188,14 @@ final class GridConnectionWriter {
             why.addProperty("code", error instanceof RpcException ? ((RpcException) error).code : "internal_error");
             why.addProperty("message", error.getMessage());
             item.add("error", why);
-            status = unknown ? "unknown" : written > 0 ? "partial" : "failed";
-            for (int k = i + 1; k < requests.size(); k++) {
-                Request later = requests.get(k); JsonObject rest = new JsonObject();
-                rest.addProperty("targetModuleId", later.target.moduleId.toString());
-                rest.addProperty("targetPortKey", later.target.portKey);
-                rest.addProperty("status", "not_dispatched"); items.add(rest);
-            }
-            finish();
+            stop(i, unknown ? "unknown" : written > 0 ? "partial" : "failed");
         }
         private void finish() {
             try {
                 boolean unknown = status.equals("unknown");
                 JsonObject result = HostServices.observed();
                 result.addProperty("batchStatus", status); result.addProperty("completion", unknown ? "unknown" : "observed");
-                result.addProperty("written", written); result.addProperty("allMatchRequested", allMatch);
+                result.addProperty("written", written);
                 result.add("connections", items);
                 result.addProperty("mutationDispatched", written > 0 || unknown);
                 result.addProperty("nativeMutation", written > 0 || unknown); result.addProperty("nativeUndo", written > 0 || unknown);

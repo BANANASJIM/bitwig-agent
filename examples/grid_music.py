@@ -203,7 +203,7 @@ async def build_grid(call, target: dict, types: dict[str, str], label: str) -> d
     result = await call("grid.connections.set", {**target, "connections": edits})
     changes = [{"target": {"moduleId": edit["targetModuleId"], "portKey": edit["targetPortKey"]},
                 "from": None, "to": edit["source"]} for edit in edits]
-    if (result.get("batchStatus") != "applied" or result.get("allMatchRequested") is not True
+    if (result.get("batchStatus") != "applied"
             or sorted(result.get("connectionsChanged", []), key=repr) != sorted(changes, key=repr) or result.get("modulesAdded")
             or result.get("modulesRemoved") or result.get("graphComplete") is False):
         raise RuntimeError("Native cable repair did not retain exactly the requested sources")

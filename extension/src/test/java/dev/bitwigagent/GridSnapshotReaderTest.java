@@ -70,6 +70,7 @@ public final class GridSnapshotReaderTest {
         connectionBatchAppliesInOrderWithOneDiff();
         connectionBatchChecksEveryExpectationBeforeWriting();
         connectionBatchStopsAtFirstFailureAndUnknownQuarantines();
+        connectionBatchStopsAtNativeRepairMismatch();
         connectionBatchParsingIsBounded();
         connectionBoundsAndIndependentGeometry();
         connectionFailuresShareStickyQuarantine();
@@ -1442,7 +1443,7 @@ public final class GridSnapshotReaderTest {
         f.next(); JsonObject result = op.result.join();
         JsonArray items = result.getAsJsonArray("connections");
         check(result.get("status").getAsString().equals("observed") && result.get("batchStatus").getAsString().equals("applied")
-                && result.get("written").getAsInt() == 2 && result.get("allMatchRequested").getAsBoolean()
+                && result.get("written").getAsInt() == 2
                 && items.size() == 2 && items.get(1).getAsJsonObject().get("status").getAsString().equals("applied")
                 && items.get(1).getAsJsonObject().get("matchesRequested").getAsBoolean(),
                 "batch reports per-entry results and a separate batchStatus");
@@ -1495,6 +1496,21 @@ public final class GridSnapshotReaderTest {
                 && result.getAsJsonArray("connections").get(1).getAsJsonObject().get("status").getAsString().equals("failed")
                 && result.has("graph") && !drift.quarantine.quarantined(),
                 "a later entry that fails before its own dispatch is failed (partial) with the observed diff and no quarantine");
+    }
+    private static void connectionBatchStopsAtNativeRepairMismatch() {
+        ConnectionFixture f = new ConnectionFixture(); f.extraInputs();
+        HostOperation op = f.startBatch(List.of(f.request(null, f.output()), cable(f, "in2", new UUID(1, 2), null)));
+        // Native repair drops the first link after the setter returned.
+        f.model.input.put(INPUT_SOURCE, null);
+        f.next(); JsonObject result = op.result.join();
+        JsonArray items = result.getAsJsonArray("connections");
+        check(result.get("status").getAsString().equals("observed") && result.get("batchStatus").getAsString().equals("partial")
+                && result.get("completion").getAsString().equals("observed") && f.calls == 1
+                && items.get(0).getAsJsonObject().get("status").getAsString().equals("mismatch")
+                && items.get(0).getAsJsonObject().get("actualSource").isJsonNull()
+                && items.get(1).getAsJsonObject().get("status").getAsString().equals("not_dispatched")
+                && result.has("graph") && result.has("graphBefore") && !f.quarantine.quarantined() && f.events.isEmpty(),
+                "a native-repair mismatch stops the batch as partial with known state and a diff, never quarantining");
     }
     private static void connectionBatchParsingIsBounded() {
         UUID id = new UUID(1, 1);
