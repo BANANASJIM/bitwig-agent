@@ -843,6 +843,8 @@ public final class DeviceModuleTest {
             transport.put("isArrangerAutomationWriteEnabled", false);
             transport.put("isClipLauncherAutomationWriteEnabled", false);
             Node host = new Node(); host.objects.put("createApplication", app.proxy(Application.class));
+            Node project = new Node(); project.put("isModified", false);
+            host.objects.put("getProject", project.proxy(Project.class));
             host.objects.put("createTransport", transport.proxy(Transport.class));
             host.objects.put("createTrackBank", trackBank.proxy(TrackBank.class));
             host.custom = (name, args) -> {

@@ -33,6 +33,7 @@ final class ContextModule implements HostModule {
     private JsonObject snapshot() {
         JsonObject out = HostServices.observed();
         for (Map.Entry<String, JsonElement> e : transport.basics().entrySet()) out.add(e.getKey(), e.getValue());
+        out.add("projectModified", s.projectModifiedJson());
         for (Map.Entry<String, JsonElement> e : s.playbackSafety().entrySet()) out.add(e.getKey(), e.getValue());
         out.add("sceneCount", s.tracksObserved ? new JsonPrimitive(s.tracks.sceneBank().itemCount().get()) : JsonNull.INSTANCE);
         out.add("tracks", JsonNull.INSTANCE); out.add("selectedTrack", JsonNull.INSTANCE); out.add("cursorClip", JsonNull.INSTANCE);

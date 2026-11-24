@@ -2,33 +2,55 @@ package dev.bitwigagent;
 
 import com.bitwig.extension.controller.api.*;
 import com.google.gson.*;
+import java.util.Locale;
 import java.util.Set;
 import static dev.bitwigagent.HostServices.*;
 
 /** Native action catalog and dispatch, deliberately not a workflow/completion engine. */
 final class ActionModule implements HostModule {
     static final Set<String> METHODS = Set.of("actions.list", "actions.invoke");
+    /** Closes the current project tab; guarded by the current tab's observed saved state. New/Open open another tab (observed on 6.1.4). */
+    static final Set<String> DISCARDING = Set.of("Close");
+    /** Closes every open tab; the bridge only observes the current one, so explicit consent is always required. */
+    static final Set<String> ALWAYS_CONSENT = Set.of("Quit");
     private final HostServices s;
     ActionModule(HostServices s) { this.s = s; }
     @Override public Set<String> methods() { return METHODS; }
     @Override public void validate(String method, JsonObject params) { validateParams(method, params); }
     static void validateParams(String method, JsonObject params) {
         if (!METHODS.contains(method)) throw failure("unknown_method", "Unknown Action method.");
-        Params.fields(params, method.equals("actions.invoke") ? Set.of("actionId") : Set.of(), Set.of());
-        if (method.equals("actions.invoke")) Params.string(params, "actionId");
+        if (method.equals("actions.invoke")) {
+            Params.fields(params, Set.of("actionId"), Set.of("discardUnsavedChanges"));
+            Params.string(params, "actionId");
+            if (params.has("discardUnsavedChanges")) Params.bool(params, "discardUnsavedChanges");
+        } else {
+            Params.fields(params, Set.of(), Set.of("query", "category", "limit"));
+            if (params.has("query")) Params.string(params, "query");
+            if (params.has("category")) Params.string(params, "category");
+            if (params.has("limit")) Params.integer(params, "limit", 1, 1000);
+        }
     }
     @Override public void dispatch(HostOperation request, String method, JsonObject params) {
-        if (method.equals("actions.list")) request.result.complete(listActions());
-        else invokeAction(request, params.get("actionId").getAsString());
+        if (method.equals("actions.list")) request.result.complete(listActions(params));
+        else invokeAction(request, params);
     }
 
-    private JsonObject listActions() {
+    private JsonObject listActions(JsonObject params) {
+        String query = params.has("query") ? params.get("query").getAsString().toLowerCase(Locale.ROOT) : null;
+        String wanted = params.has("category") ? params.get("category").getAsString().toLowerCase(Locale.ROOT) : null;
+        int limit = params.has("limit") ? params.get("limit").getAsInt() : 100;
         JsonArray actions = new JsonArray();
+        int total = 0;
         for (Action action : s.application.getActions()) {
+            ActionCategory category = action.getCategory();
+            if (query != null && !action.getId().toLowerCase(Locale.ROOT).contains(query)
+                    && !action.getName().toLowerCase(Locale.ROOT).contains(query)) continue;
+            if (wanted != null && (category == null || !(category.getId().toLowerCase(Locale.ROOT).equals(wanted)
+                    || category.getName().toLowerCase(Locale.ROOT).equals(wanted)))) continue;
+            if (total++ >= limit) continue;
             JsonObject item = new JsonObject();
             item.addProperty("actionId", action.getId());
             item.addProperty("name", action.getName());
-            ActionCategory category = action.getCategory();
             if (category == null) item.add("category", JsonNull.INSTANCE);
             else {
                 JsonObject group = new JsonObject();
@@ -40,13 +62,23 @@ final class ActionModule implements HostModule {
         }
         JsonObject result = observed();
         result.addProperty("scope", "host_action_catalog");
+        result.addProperty("total", total);
+        result.addProperty("complete", total <= limit);
         result.add("actions", actions);
         return result;
     }
 
-    private void invokeAction(HostOperation request, String actionId) {
+    private void invokeAction(HostOperation request, JsonObject params) {
+        String actionId = params.get("actionId").getAsString();
         Action action = s.application.getAction(actionId);
         if (action == null) throw failure("unknown_action", "Action ID is absent from the host catalog.");
+        boolean discard = params.has("discardUnsavedChanges") && params.get("discardUnsavedChanges").getAsBoolean();
+        if (ALWAYS_CONSENT.contains(actionId) && !discard)
+            throw failure("unsaved_changes", "Action \"" + actionId + "\" closes every open project tab; only the current tab's saved state is observable (projectModified="
+                    + s.projectModifiedJson() + "). Save each tab, then pass discardUnsavedChanges:true with user consent.");
+        if (DISCARDING.contains(actionId) && !discard && !Boolean.FALSE.equals(s.projectModified()))
+            throw failure("unsaved_changes", "Action \"" + actionId + "\" closes the current project tab, which is not observed saved (projectModified="
+                    + s.projectModifiedJson() + "). Run project.save, or pass discardUnsavedChanges:true with user consent.");
         s.check(request);
         // Host actions can retarget the launcher cursor clip (select clip/track); never mid launcher edit.
         s.requireSelectionFree();

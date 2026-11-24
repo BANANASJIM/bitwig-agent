@@ -812,3 +812,23 @@ def test_grid_capabilities_detail_is_summary_or_full_only():
     for bad in ("all", "", True, None):
         with pytest.raises(ValidationError):
             validate_call("grid.capabilities", {"detail": bad})
+
+
+def test_actions_list_filters_and_invoke_consent_flag_serialize_only_when_given():
+    params, _ = validate_call("actions.list", {"query": "save", "category": "File", "limit": 5})
+    assert params == {"query": "save", "category": "File", "limit": 5}
+    for bad in ({"query": ""}, {"category": ""}, {"limit": 0}, {"limit": 1001}, {"query": None}):
+        with pytest.raises(ValidationError):
+            validate_call("actions.list", bad)
+    assert validate_call("actions.invoke", {"actionId": "Quit"})[0] == {"actionId": "Quit"}
+    assert validate_call("actions.invoke", {"actionId": "Quit", "discardUnsavedChanges": True})[0]["discardUnsavedChanges"] is True
+    with pytest.raises(ValidationError):
+        validate_call("actions.invoke", {"actionId": "Quit", "discardUnsavedChanges": "yes"})
+
+
+def test_project_save_is_a_write_tool_without_arguments():
+    assert TOOLS["project.save"].read_only is False
+    assert validate_call("project.save", {})[0] == {}
+    with pytest.raises(ValidationError):
+        validate_call("project.save", {"force": True})
+    assert "projectModified" in TOOLS["extension.restart"].description
