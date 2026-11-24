@@ -48,6 +48,8 @@ final class ActionModule implements HostModule {
         Action action = s.application.getAction(actionId);
         if (action == null) throw failure("unknown_action", "Action ID is absent from the host catalog.");
         s.check(request);
+        // Host actions can retarget the launcher cursor clip (select clip/track); never mid launcher edit.
+        s.requireSelectionFree();
         request.dispatched = true;
         action.invoke();
         JsonObject result = new JsonObject();

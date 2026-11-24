@@ -384,6 +384,7 @@ final class DeviceModule implements HostModule {
         if (method.startsWith("devices.remote.")) { remoteWrite(op, method, p, target); return; }
         if (method.equals("devices.select")) {
             guard(op, target);
+            s.requireSelectionFree();
             op.dispatched = true;
             target.source.device.selectInEditor();
             JsonObject result = metadata(target);
@@ -567,7 +568,7 @@ final class DeviceModule implements HostModule {
     }
 
     private static long observationEnd(HostOperation op) {
-        return Math.min(System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(750), op.deadline - TimeUnit.MILLISECONDS.toNanos(30));
+        return HostServices.observeUntil(op);
     }
 
     private static void uncertain(HostOperation op, String reason) {

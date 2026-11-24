@@ -88,6 +88,7 @@ final class MixModule implements HostModule {
         if (method.equals("tracks.get")) { op.result.complete(snapshot(target)); return; }
         if (method.equals("tracks.select")) {
             guard(op, target);
+            s.requireSelectionFree();
             op.dispatched = true;
             target.state.track.selectInEditor();
             guard(op, target);
@@ -132,7 +133,7 @@ final class MixModule implements HostModule {
             finish(op, target, changes, writes, created, error.code); return;
         }
         await(op, target, changes, writes, created,
-                Math.min(op.deadline - TimeUnit.MILLISECONDS.toNanos(25), System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(750)));
+                HostServices.observeUntil(op));
     }
 
     private void guard(HostOperation op, Target target) {
@@ -195,7 +196,7 @@ final class MixModule implements HostModule {
             default: throw new IllegalArgumentException("type");
         }
         awaitCreation(op, p, before, null,
-                Math.min(op.deadline - TimeUnit.MILLISECONDS.toNanos(25), System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(750)));
+                HostServices.observeUntil(op));
     }
 
     private void awaitCreation(HostOperation op, JsonObject p, Creation before, String previousCandidate, long until) {

@@ -76,6 +76,31 @@ final class HostServices implements AutoCloseable {
         }, delayMs);
     }
 
+    /** One observation window per write and ONE margin before the deadline (>= 2x every poll period, so the last poll
+     *  always runs and a late controller thread still yields the bounded not-observed result, not deadline_exceeded). */
+    static final long OBSERVE_WINDOW_NANOS = java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(750);
+    static final long DEADLINE_MARGIN_NANOS = java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(50);
+
+    static long observeUntil(HostOperation operation) {
+        return Math.min(operation.deadline - DEADLINE_MARGIN_NANOS, System.nanoTime() + OBSERVE_WINDOW_NANOS);
+    }
+
+    /** Selection lease: launcher cursor operations bind the global editor selection for their whole life. */
+    HostOperation selectionOwner;
+
+    boolean selectionHeld() { return selectionOwner != null && !selectionOwner.result.isDone(); }
+
+    void acquireSelection(HostOperation operation) {
+        requireSelectionFree();
+        selectionOwner = operation;
+    }
+
+    /** Selection-moving methods fail fast instead of rebinding the cursor under a running edit; nothing is queued. */
+    void requireSelectionFree() {
+        if (selectionHeld())
+            throw failure("busy", "A launcher cursor operation holds the editor selection; no request was queued.");
+    }
+
     void check(HostOperation operation) {
         if (closed) throw new RpcException("unavailable", "Extension has stopped.", operation.dispatched ? "unknown" : "not_applied");
         if (operation.result.isDone()) throw new RpcException("cancelled", "Operation is no longer awaiting a result.",

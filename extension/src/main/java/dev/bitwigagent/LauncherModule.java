@@ -32,7 +32,6 @@ final class LauncherModule implements HostModule {
     private final long[][] noteGenerations = new long[128][128];
     private long sequence, bindingGeneration;
     private GridObservation gridObservation;
-    private HostOperation cursorOwner;
     Runnable settingsWriteGuard = () -> {};
     // Only positive completion removes these; completed futures and later callbacks cannot reset quarantine.
     private final List<Mutation> unresolvedMutations = new ArrayList<>();
@@ -388,14 +387,12 @@ final class LauncherModule implements HostModule {
     }
 
     private void acquire(HostOperation op) {
-        if (cursorOwner != null && !cursorOwner.result.isDone())
-            throw HostServices.failure("busy", "Another launcher cursor operation is active; no request was queued");
-        cursorOwner = op;
+        s.acquireSelection(op);
         cursorMutation = null;
     }
 
     void requireSettingsSafe(String id, int index) {
-        if (cursorOwner != null && !cursorOwner.result.isDone())
+        if (s.selectionHeld())
             throw HostServices.failure("busy", "Launcher editor operation is still pending");
         requireResolved(id, slots[s.trackSlot(id)][index], index);
     }
@@ -539,7 +536,7 @@ final class LauncherModule implements HostModule {
             // Clip creation is complete and released. The note write is an ordinary notes.edit child sharing the deadline;
             // its failure is reported inside noteWrite and never discards the observed create.
             HostOperation child = new HostOperation(op.deadline);
-            cursorOwner = child;
+            s.selectionOwner = child;
             child.result.whenComplete((written, error) -> {
                 if (error == null) {
                     out.addProperty("status", written.get("status").getAsString());
@@ -733,7 +730,7 @@ final class LauncherModule implements HostModule {
     private void guard(HostOperation op, String id, Track track) {
         s.check(op);
         if (op.result.isDone()) throw new RpcException("cancelled", "Operation is no longer active", op.dispatched ? "unknown" : "not_applied");
-        if (cursorOwner == op && cursorMutation != null && cursorMutation.rebound)
+        if (s.selectionOwner == op && cursorMutation != null && cursorMutation.rebound)
             throw new RpcException("stale_context", cursorMutation.description()
                     + " Its target binding changed; the mutation remains quarantined for this extension instance.", "unknown");
         if (!s.trackMatches(id, track) || track.clipLauncherSlotBank().scrollPosition().get() != 0)
@@ -782,7 +779,7 @@ final class LauncherModule implements HostModule {
     }
     private void cursorGuard(HostOperation op, String id, Track track, Slot slot) {
         guard(op, id, track);
-        if (cursorOwner != op || !bound(id, slot))
+        if (s.selectionOwner != op || !bound(id, slot))
             throw new RpcException("stale_context", "Launcher cursor no longer proxies the explicit slot", op.dispatched ? "unknown" : "not_applied");
     }
     private static void ready(Slot slot) {
@@ -792,7 +789,7 @@ final class LauncherModule implements HostModule {
         if (!slot.api.hasContent().get()) throw HostServices.failure("clip_not_found", "Explicit launcher slot is empty");
     }
     private static long until(HostOperation op) {
-        return Math.min(op.deadline - TimeUnit.MILLISECONDS.toNanos(40), System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(750));
+        return HostServices.observeUntil(op);
     }
     private static RpcException invalid(String message) { return HostServices.failure("invalid_params", message); }
     private static JsonObject base(String id, int slot) {

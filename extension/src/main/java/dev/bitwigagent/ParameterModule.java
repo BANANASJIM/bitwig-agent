@@ -157,8 +157,7 @@ final class ParameterModule implements HostModule {
         if (!matches(target)) throw failure("stale_context", "Target changed before parameter dispatch.");
         request.dispatched = true;
         source.identity.device.setDirectParameterValueNormalized(id, Math.round(requestedValue * (RESOLUTION - 1)), RESOLUTION);
-        long observeUntil = Math.min(request.deadline - TimeUnit.MILLISECONDS.toNanos(40),
-                System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(750));
+        long observeUntil = HostServices.observeUntil(request);
         awaitValue(request, target, token, id, requestedValue, applied, before, observeUntil);
     }
 

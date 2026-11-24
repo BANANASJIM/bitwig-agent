@@ -32,6 +32,7 @@ public final class MixModuleTest {
         reopenedSourcesWaitForFlushAndIdentityAgreement();
         reboundGenerationNeverAcknowledgesOldWrite();
         briefReportsSelectionOnlyWhenObserved();
+        selectionFailsFastWhileLauncherLeaseHeld();
         System.out.println("MixModuleTest: " + assertions + " assertions passed (simulated host only)");
     }
     private static void readsExposeNormalizedUnitsAndSends() {
@@ -117,6 +118,18 @@ public final class MixModuleTest {
                 "reopened track cannot inherit the previous generation's selected value");
         check(!result.has("fields") && !result.has("matchesRequested"), "UI navigation does not pretend to be a verified mix setter");
         check(f.tracks[0].actions == 1 && f.tasks.isEmpty(), "selection dispatches once without deferred retries or callback polling");
+    }
+    private static void selectionFailsFastWhileLauncherLeaseHeld() {
+        TransportMixFixture f = new TransportMixFixture(); MixModule module = new MixModule(f.services);
+        HostOperation holder = new HostOperation(Long.MAX_VALUE);
+        f.services.acquireSelection(holder);
+        HostOperation op = f.submit(module, "tracks.select", TransportMixFixture.target(TransportMixFixture.B)); f.next();
+        RpcException busy = TransportMixFixture.error(op, "busy");
+        check(busy.outcome.equals("not_applied") && f.tracks[1].actions == 0, "held lease rejects select before dispatch");
+        check(f.tasks.isEmpty(), "rejected select is not queued");
+        holder.result.complete(new JsonObject());
+        check(f.call(module, "tracks.select", TransportMixFixture.target(TransportMixFixture.B)).get("status").getAsString().equals("dispatched")
+                && f.tracks[1].actions == 1, "released lease allows select");
     }
     private static void selectionRespectsOperationAndIdentityGuards() {
         TransportMixFixture f = new TransportMixFixture(); MixModule module = new MixModule(f.services);
