@@ -35,13 +35,14 @@ final class LauncherModule implements HostModule {
     private final List<Mutation> unresolvedMutations = new ArrayList<>();
     private Mutation cursorMutation;
     private boolean clipExistsReady, lengthReady;
-    private HostOperation carryOp; // launcher.create result awaiting its note-write stage
-    private JsonObject carry;
+    private final SceneBank sceneBank;
 
     LauncherModule(HostServices services) {
         s = services;
         clip = s.host.createLauncherCursorClip(128, 128);
         clipTrack = clip.getTrack();
+        sceneBank = s.tracks.sceneBank();
+        sceneBank.itemCount().markInterested();
         clipTrack.channelId().markInterested();
         clipTrack.exists().markInterested();
         clip.exists().addValueObserver((BooleanValueChangedCallback) value -> clipExistsReady = true);
@@ -192,7 +193,7 @@ final class LauncherModule implements HostModule {
         p.addProperty("channel", w.channel); p.addProperty("windowDerived", true);
     }
 
-    /** Coarsest power-of-two grid (1..1/128 beat) aligning every beat and duration, i.e. the fewest steps. */
+    /** Finest power-of-two grid (1..1/128 beat) aligning every edit within 128 steps, so finer existing onsets stay visible. */
     static Window deriveEditWindow(JsonObject p) {
         if (!p.has("edits") || !p.get("edits").isJsonArray()) throw invalid("edits must be an array");
         JsonArray array = p.getAsJsonArray("edits");
@@ -209,23 +210,28 @@ final class LauncherModule implements HostModule {
             low = Math.min(low, pitch); high = Math.max(high, pitch);
             spans.add(new BigDecimal[]{e.get("beat").getAsBigDecimal(), set ? e.get("durationBeats").getAsBigDecimal() : null});
         }
-        BigDecimal grid = null;
-        for (BigDecimal candidate : DERIVED_GRIDS) {
-            boolean fits = true;
+        // Finest first: a finer grid keeps existing finer onsets visible to the collision/sustain checks.
+        BigDecimal grid = null, coarsest = null;
+        long first = 0, last = 0;
+        for (int i = DERIVED_GRIDS.length - 1; i >= 0 && grid == null; i--) {
+            BigDecimal candidate = DERIVED_GRIDS[i];
+            boolean aligns = true;
             for (BigDecimal[] span : spans)
-                fits &= span[0].remainder(candidate).signum() == 0 && (span[1] == null || span[1].remainder(candidate).signum() == 0);
-            if (fits) { grid = candidate; break; }
+                aligns &= span[0].remainder(candidate).signum() == 0 && (span[1] == null || span[1].remainder(candidate).signum() == 0);
+            if (!aligns) continue;
+            long lo = Long.MAX_VALUE, hi = 0;
+            for (BigDecimal[] span : spans) {
+                long x = span[0].divide(candidate).longValueExact();
+                lo = Math.min(lo, x);
+                hi = Math.max(hi, x + (span[1] == null ? 1 : span[1].divide(candidate).longValueExact()));
+            }
+            coarsest = candidate;
+            if (hi - lo <= 128) { grid = candidate; first = lo; last = hi; }
         }
-        if (grid == null) throw invalid("beat and durationBeats must be multiples of 1/128 beat to derive a window; no rounding is performed");
-        long first = Long.MAX_VALUE, last = 0;
-        for (BigDecimal[] span : spans) {
-            long x = span[0].divide(grid).longValueExact();
-            first = Math.min(first, x);
-            last = Math.max(last, x + (span[1] == null ? 1 : span[1].divide(grid).longValueExact()));
-        }
-        if (last - first > 128)
-            throw invalid("edits span " + (last - first) + " steps on the derived " + grid.stripTrailingZeros().toPlainString()
-                + "-beat grid (maximum 128 per call): split them by time range into several calls, or use beats/durations that fit a coarser grid");
+        if (coarsest == null) throw invalid("beat and durationBeats must be multiples of 1/128 beat to derive a window; no rounding is performed");
+        if (grid == null)
+            throw invalid("edits do not fit 128 steps on any grid that aligns them (coarsest is " + coarsest.stripTrailingZeros().toPlainString()
+                + " beat): split them by time range into several calls, or use beats/durations that fit a coarser grid");
         JsonObject w = new JsonObject();
         w.addProperty("stepSizeBeats", grid); w.addProperty("startStep", first); w.addProperty("steps", last - first);
         w.addProperty("pitchStart", low); w.addProperty("pitchCount", high - low + 1);
@@ -267,24 +273,19 @@ final class LauncherModule implements HostModule {
     private void appendScenes(HostOperation op, JsonObject p) {
         int count = p.has("count") ? Params.integer(p, "count", 1, 16) : 1;
         if (!s.tracksObserved) throw HostServices.failure("not_ready", "Track bank has not reported its size yet.");
-        Track probe = (Track) s.tracks.getItemAt(0);
-        if (!probe.exists().get())
-            throw HostServices.failure("not_ready", "Scene count is observed through the first track, which does not exist; create a track first");
-        ClipLauncherSlotBank bank = probe.clipLauncherSlotBank();
-        if (bank.scrollPosition().get() != 0) throw HostServices.failure("stale_context", "Launcher bank is not at scene offset zero");
-        int before = bank.itemCount().get();
+        int before = sceneBank.itemCount().get();
         if (before + count > HostServices.SCENES)
             throw HostServices.failure("scene_limit", "The project has " + before + " scene(s); the launcher tools address at most "
                 + HostServices.SCENES + ", so " + count + " more cannot be appended");
         op.dispatched = true;
         // Project.createScene() is documented to create "a new empty scene as the last scene"; existing slot indices do not move.
         for (int i = 0; i < count; i++) s.host.getProject().createScene();
-        awaitScenes(op, bank, before, count, until(op));
+        awaitScenes(op, before, count, until(op));
     }
 
-    private void awaitScenes(HostOperation op, ClipLauncherSlotBank bank, int before, int count, long end) {
+    private void awaitScenes(HostOperation op, int before, int count, long end) {
         s.check(op);
-        int now = bank.itemCount().get();
+        int now = sceneBank.itemCount().get();
         if (now == before + count) {
             JsonObject out = HostServices.observed();
             out.addProperty("status", "observed"); out.addProperty("verification", "scene_count");
@@ -295,7 +296,7 @@ final class LauncherModule implements HostModule {
         } else if (System.nanoTime() >= end) {
             throw new RpcException("scene_count_not_observed", "Scene creation was dispatched, but the scene count did not reach " + (before + count)
                 + " (observed " + now + "); inspect launcher.list and do not blindly repeat", "unknown");
-        } else s.schedule(op, () -> awaitScenes(op, bank, before, count, end), 20);
+        } else s.schedule(op, () -> awaitScenes(op, before, count, end), 20);
     }
 
     static int aligned(JsonElement beat, JsonElement size, String field) {
@@ -516,8 +517,27 @@ final class LauncherModule implements HostModule {
         addClipMetadata(out);
         if (matches) finishMutation();
         if (matches && p.has("notes")) {
-            carryOp = op; carry = out; // clip creation is complete; the note write is an ordinary notes.edit stage
-            bind(op, id, track, slot, index, createNotes(p), "notes.edit", until(op));
+            // Clip creation is complete and released. The note write is an ordinary notes.edit child sharing the deadline;
+            // its failure is reported inside noteWrite and never discards the observed create.
+            HostOperation child = new HostOperation(op.deadline);
+            cursorOwner = child;
+            child.result.whenComplete((written, error) -> {
+                if (error == null) {
+                    out.addProperty("status", written.get("status").getAsString());
+                    out.add("noteWrite", written);
+                } else {
+                    Throwable cause = error instanceof java.util.concurrent.CompletionException && error.getCause() != null ? error.getCause() : error;
+                    JsonObject failure = new JsonObject();
+                    failure.addProperty("code", cause instanceof RpcException ? ((RpcException) cause).code : "internal_error");
+                    failure.addProperty("outcome", cause instanceof RpcException ? ((RpcException) cause).outcome : "unknown");
+                    failure.addProperty("message", String.valueOf(cause.getMessage()));
+                    out.addProperty("status", "dispatched");
+                    out.add("noteWrite", failure);
+                }
+                op.result.complete(out);
+            });
+            try { bind(child, id, track, slot, index, createNotes(p), "notes.edit", until(op)); }
+            catch (RuntimeException failure) { child.fail(failure); }
             return;
         }
         if (!matches) {
@@ -591,12 +611,6 @@ final class LauncherModule implements HostModule {
             results.add(item);
         }
         out.add("edits", results);
-        if (carryOp == op) {
-            JsonObject merged = carry; carryOp = null; carry = null;
-            merged.addProperty("status", out.get("status").getAsString());
-            merged.add("noteWrite", out);
-            out = merged;
-        }
         op.result.complete(out);
     }
 

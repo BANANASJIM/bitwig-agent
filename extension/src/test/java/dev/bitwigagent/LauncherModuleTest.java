@@ -727,15 +727,15 @@ public final class LauncherModuleTest {
         JsonObject p = target(); p.add("edits", fixture());
         LauncherModule.validateParams("notes.edit", p);
         LauncherModule.Window w = LauncherModule.deriveEditWindow(p);
-        check(w.exact.compareTo(new java.math.BigDecimal("0.25")) == 0 && w.start == 0 && w.steps == 6, "grid is the coarsest aligning one and window the edit span");
+        check(w.exact.compareTo(new java.math.BigDecimal("0.015625")) == 0 && w.start == 0 && w.steps == 96, "grid is the finest one that fits 128 steps");
         check(w.pitch == 36 && w.pitches == 32, "pitch range comes from the edits");
         JsonObject out = f.call("notes.edit", p);
         check(out.get("status").getAsString().equals("observed") && out.getAsJsonObject("window").get("derived").getAsBoolean(), "derived window edit observed and echoed");
-        check(f.notes.containsKey(key(0, 0, 0, 60)) && f.notes.containsKey(key(0, 0, 4, 62)), "notes landed on absolute steps of the derived grid");
+        check(f.notes.containsKey(key(0, 0, 0, 60)) && f.notes.containsKey(key(0, 0, 64, 62)), "notes landed on absolute steps of the derived grid");
         JsonObject quarter = target(); JsonArray one = new JsonArray(); one.add(set(2, 61, 90, 2)); quarter.add("edits", one);
-        check(LauncherModule.deriveEditWindow(quarter).exact.compareTo(java.math.BigDecimal.ONE) == 0, "whole-beat edits use a one-beat grid");
+        check(LauncherModule.deriveEditWindow(quarter).exact.compareTo(new java.math.BigDecimal("0.015625")) == 0, "long notes fall back to the finest grid that still fits");
         JsonObject fine = target(); JsonArray finer = new JsonArray(); finer.add(set(.0625, 61, 90, .125)); fine.add("edits", finer);
-        check(LauncherModule.deriveEditWindow(fine).exact.compareTo(new java.math.BigDecimal("0.0625")) == 0, "finer edits get a finer grid");
+        check(LauncherModule.deriveEditWindow(fine).exact.compareTo(new java.math.BigDecimal("0.0078125")) == 0, "short fine edits use the finest grid");
         JsonObject wide = target(); JsonArray spread = new JsonArray(); spread.add(set(0, 60, 90, .25)); spread.add(set(40, 60, 90, .25)); wide.add("edits", spread);
         try { LauncherModule.validateParams("notes.edit", wide); throw new AssertionError("accepted > 128 steps"); }
         catch (RpcException error) { check(error.code.equals("invalid_params") && error.getMessage().contains("split") && error.getMessage().contains("coarser"), "oversized span names the remedy"); }
@@ -743,6 +743,13 @@ public final class LauncherModuleTest {
         expect("invalid_params", () -> LauncherModule.validateParams("notes.edit", partial));
         JsonObject odd = target(); JsonArray off = new JsonArray(); off.add(set(.001, 60, 90, .25)); odd.add("edits", off);
         expect("invalid_params", () -> LauncherModule.validateParams("notes.edit", odd));
+        Fake hidden = new Fake(); hidden.call("launcher.create", createTarget());
+        hidden.noteStorageStepSize = 1.0 / 128;
+        hidden.put(0, 0, 0, 36, 90, .5); hidden.put(0, 0, 64, 36, 90, .5); // second onset at beat 0.5
+        JsonObject overlap = target(); JsonArray longNote = new JsonArray(); longNote.add(set(0, 36, 100, 1)); overlap.add("edits", longNote);
+        HostOperation rejectedOverlap = hidden.start("notes.edit", overlap); hidden.drain(rejectedOverlap);
+        expectFuture("note_collision", rejectedOverlap);
+        check(hidden.writes == 0, "derived window cannot hide a finer existing onset");
         JsonObject explicit = window(); explicit.add("edits", fixture());
         check(f.call("notes.edit", explicit).get("status").getAsString().equals("observed"), "explicit windows keep working");
     }
@@ -788,6 +795,12 @@ public final class LauncherModuleTest {
         JsonObject result = op.result.join();
         check(result.get("status").getAsString().equals("dispatched") && result.get("noteWrite").getAsString().equals("not_attempted") && g.writes == 0,
                 "unobserved create writes no notes and stays unresolved");
+        Fake k = new Fake(); k.failWriteAt = 1;
+        HostOperation broken = k.startShort("launcher.create", unobserved.deepCopy()); k.drain(broken);
+        JsonObject kept = broken.result.join();
+        check(kept.get("verification").getAsString().equals("slot_content_name_length") && k.slots[0].content, "observed create survives a failing note stage");
+        check(kept.get("status").getAsString().equals("dispatched") && kept.getAsJsonObject("noteWrite").get("code").getAsString().equals("host_write_failed")
+                && kept.getAsJsonObject("noteWrite").get("outcome").getAsString().equals("unknown"), "note stage failure is reported inside noteWrite");
         Fake h = new Fake(); h.emitNotes = false;
         HostOperation silent = h.startShort("launcher.create", unobserved.deepCopy()); h.drain(silent);
         JsonObject partial = silent.result.join();
@@ -999,6 +1012,8 @@ public final class LauncherModuleTest {
             transport.action("isArrangerAutomationWriteEnabled", a -> value(SettableBooleanValue.class, () -> arrangerAutomation, safetyObserved));
             transport.action("isClipLauncherAutomationWriteEnabled", a -> value(SettableBooleanValue.class, () -> launcherAutomation, safetyObserved));
             Node host = new Node(ControllerHost.class); host.action("createApplication", a -> application.proxy); host.action("createTransport", a -> transport.proxy);
+            Node sceneBankNode = new Node(SceneBank.class); sceneBankNode.value("itemCount", () -> scenes);
+            trackBank.action("sceneBank", a -> sceneBankNode.proxy);
             Node project = new Node(Project.class);
             project.action("createScene", a -> { sceneAppends++; if (applyScene) scenes++; return null; });
             host.action("getProject", a -> project.proxy);
