@@ -257,9 +257,8 @@ async def test_grid_insert_offline_help_exposes_complete_contract(monkeypatch):
     assert code == 0
     description = payload["result"]
     assert description["readOnly"] is False
-    assert set(description["inputSchema"]["required"]) == {
-        "trackId", "deviceIndex", "expectedDeviceName", "typeId", "x", "y",
-    }
+    assert set(description["inputSchema"]["required"]) == {"trackId", "deviceIndex", "expectedDeviceName"}
+    assert {tuple(sorted(branch["required"])) for branch in description["inputSchema"]["oneOf"]} == {("x", "y"), ("modules",)}
     assert description["inputSchema"]["additionalProperties"] is False
 
 

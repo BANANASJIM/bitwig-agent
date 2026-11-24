@@ -347,6 +347,11 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
         require(gateError, "gate"); require(moduleInsertError, "module insertion");
         insertionWriter.insert(proxy, trackId, request, check, dispatch, complete, fail);
     }
+    @Override public void insertModules(Object proxy, UUID trackId, java.util.List<GridInsertionWriter.Request> requests,
+            java.util.function.BooleanSupplier timeLeft, Runnable check, Runnable dispatch, Consumer<JsonObject> complete, Consumer<Throwable> fail) {
+        require(gateError, "gate"); require(moduleInsertError, "module insertion");
+        insertionWriter.insertAll(proxy, trackId, requests, timeLeft, check, dispatch, complete, fail);
+    }
     @Override public boolean parametersAvailable() { return gateError == null && parameterError == null; }
     @Override public boolean displayAvailable() { return gateError == null && displayError == null; }
     @Override public boolean metadataAvailable(GridSnapshotReader.Metadata metadata) {

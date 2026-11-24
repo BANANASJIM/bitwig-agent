@@ -20,14 +20,39 @@ final class GridInsertionWriter {
         void succeed(Object completion, List<?> loaded);
         void execute(Runnable event);
     }
+    static final int MAX_BATCH = 16;
+    /** Exactly one of typeId or typeName; typeName is resolved against the native catalog before anything is loaded. */
     static final class Request {
-        final UUID typeId; final int x, y;
-        Request(UUID typeId, int x, int y) { this.typeId = typeId; this.x = x; this.y = y; }
+        final UUID typeId; final String typeName; final int x, y;
+        Request(UUID typeId, int x, int y) { this(typeId, null, x, y); }
+        Request(UUID typeId, String typeName, int x, int y) { this.typeId = typeId; this.typeName = typeName; this.x = x; this.y = y; }
         static Request parse(JsonObject p) {
+            if (p.has("typeId") == p.has("typeName"))
+                throw failure("invalid_params", "Supply exactly one of typeId or typeName (a catalog module name).");
+            int x = GridModuleWriter.Move.coordinate(p, "x"), y = GridModuleWriter.Move.coordinate(p, "y");
+            if (p.has("typeName")) {
+                String name = Params.string(p, "typeName");
+                if (name.length() > 128 || GridNames.norm(name).isEmpty())
+                    throw failure("invalid_params", "typeName must be a catalog module name of at most 128 UTF-16 units.");
+                return new Request(null, name, x, y);
+            }
             GridModule.canonicalUuid(p, "typeId");
-            return new Request(UUID.fromString(p.get("typeId").getAsString()),
-                    GridModuleWriter.Move.coordinate(p, "x"), GridModuleWriter.Move.coordinate(p, "y"));
+            return new Request(UUID.fromString(p.get("typeId").getAsString()), x, y);
         }
+        static List<Request> parseBatch(JsonObject p) {
+            JsonElement modules = p.get("modules");
+            if (!modules.isJsonArray() || modules.getAsJsonArray().size() < 1 || modules.getAsJsonArray().size() > MAX_BATCH)
+                throw failure("invalid_params", "modules must be an array of 1.." + MAX_BATCH + " insertions.");
+            List<Request> out = new ArrayList<>();
+            for (JsonElement element : modules.getAsJsonArray()) {
+                if (!element.isJsonObject()) throw failure("invalid_params", "Each module must be an object.");
+                JsonObject m = element.getAsJsonObject();
+                Params.fields(m, Set.of("x", "y"), Set.of("typeId", "typeName"));
+                out.add(parse(m));
+            }
+            return out;
+        }
+        Request resolved(UUID id) { return new Request(id, null, x, y); }
     }
     private static final Runnable NATIVE_LIFETIME = () -> {};
     private final GridSnapshotReader snapshots;
@@ -41,9 +66,10 @@ final class GridInsertionWriter {
         this.snapshots = snapshots; this.values = values; this.contexts = contexts;
         this.nativeWriter = nativeWriter; this.quarantine = quarantine;
     }
-    void insert(Object proxy, UUID trackId, Request request, Runnable check, Runnable dispatch,
+    void insert(Object proxy, UUID trackId, Request given, Runnable check, Runnable dispatch,
             Consumer<JsonObject> complete, Consumer<Throwable> fail) {
         quarantine.requireAvailable(); values.documentThread(); check.run();
+        Request request = resolveNames(List.of(given), check).get(0);
         requireKnownModule(request.typeId, check);
         GridSnapshotReader.NativeTarget target = snapshots.target(proxy, trackId);
         Layout before = layout(target.graph, check); before.capacity(); before.bounds(null);
@@ -75,6 +101,177 @@ final class GridInsertionWriter {
             }
         }
     }
+    /** Catalog MODULE entries as (id, name); one bounded read. */
+    private List<Map.Entry<UUID, String>> moduleEntries(Runnable check) {
+        Object catalog = values.read(CATALOG, null);
+        if (!(catalog instanceof List<?>)) throw failure("grid_unavailable", "Native module catalog is unavailable.");
+        List<?> entries = (List<?>) catalog;
+        if (entries.size() > GridSnapshotReader.MAX_CATALOG) throw failure("grid_bounds_exceeded", "Native module catalog exceeds its bound.");
+        List<Map.Entry<UUID, String>> out = new ArrayList<>();
+        for (Object entry : entries) {
+            check.run();
+            if (!values.is(GridSnapshotReader.Kind.ENTRY, entry)) throw failure("grid_unavailable", "Unknown native catalog entry.");
+            if (!"MODULE".equals(values.read(ENTRY_KIND, entry))) continue;
+            Object id = values.read(ENTRY_ID, entry);
+            if (!(id instanceof UUID)) throw failure("grid_unavailable", "Unknown native catalog entry.");
+            out.add(Map.entry((UUID) id, GridSnapshotReader.text(values.read(ENTRY_NAME, entry))));
+        }
+        return out;
+    }
+    /**
+     * Resolves every typeName to exactly one catalog entry (typeId entries are checked for membership); any failure
+     * rejects not_applied naming each entry, so a batch never starts with an unresolved type.
+     */
+    private List<Request> resolveNames(List<Request> requests, Runnable check) {
+        List<Map.Entry<UUID, String>> catalog = null;
+        List<Request> out = new ArrayList<>();
+        StringBuilder rejected = new StringBuilder(); int failures = 0;
+        for (int i = 0; i < requests.size(); i++) {
+            Request request = requests.get(i);
+            if (request.typeName == null) {
+                if (requests.size() == 1) { out.add(request); continue; }
+                try { requireKnownModule(request.typeId, check); out.add(request); }
+                catch (RpcException error) { failures = reject(rejected, failures, i, error.getMessage()); }
+                continue;
+            }
+            if (catalog == null) catalog = moduleEntries(check);
+            List<Map.Entry<UUID, String>> exact = new ArrayList<>();
+            for (Map.Entry<UUID, String> entry : catalog) if (GridNames.same(entry.getValue(), request.typeName)) exact.add(entry);
+            if (exact.size() == 1) { out.add(request.resolved(exact.get(0).getKey())); continue; }
+            List<String> candidates = new ArrayList<>();
+            if (exact.isEmpty()) {
+                List<String> names = new ArrayList<>();
+                for (Map.Entry<UUID, String> entry : catalog) {
+                    if (GridNames.matches(entry.getValue(), request.typeName) && candidates.size() < GridNames.SUGGESTIONS) candidates.add(entry.getValue());
+                    names.add(entry.getValue());
+                }
+                if (candidates.isEmpty()) candidates = GridNames.nearest(names, request.typeName, GridNames.SUGGESTIONS);
+            } else for (Map.Entry<UUID, String> entry : exact) candidates.add(entry.getValue() + " " + entry.getKey());
+            failures = reject(rejected, failures, i, "typeName '" + request.typeName + "' "
+                    + (exact.isEmpty() ? "matches no catalog module exactly" : "is ambiguous")
+                    + (candidates.isEmpty() ? "" : "; candidates: " + String.join(", ", candidates)));
+        }
+        if (failures > 0)
+            throw failure("invalid_params", (requests.size() == 1 ? "" : "No module was inserted; " + failures + " of " + requests.size()
+                    + " entries failed type lookup: ") + rejected + (failures > 8 ? "; ..." : ""));
+        return out;
+    }
+    private static int reject(StringBuilder rejected, int failures, int index, String message) {
+        if (failures < 8) rejected.append(rejected.length() == 0 ? "" : "; ").append('#').append(index).append(' ').append(message);
+        return failures + 1;
+    }
+
+    /**
+     * Same-device batch: types and geometry first (any failure inserts nothing), then entries run in order through the
+     * ordinary single path, each settling before the next starts; stops at the first failure or unknown.
+     */
+    /** Time left before the RPC deadline must exceed this to start another batch entry (a load plus its delivery). */
+    static final long NEXT_ENTRY_MARGIN_NANOS = java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(1500);
+    void insertAll(Object proxy, UUID trackId, List<Request> given, java.util.function.BooleanSupplier timeLeft, Runnable check, Runnable dispatch,
+            Consumer<JsonObject> complete, Consumer<Throwable> fail) {
+        quarantine.requireAvailable(); values.documentThread(); check.run();
+        List<Request> requests = resolveNames(given, check);
+        GridSnapshotReader.NativeTarget target = snapshots.target(proxy, trackId);
+        Layout before = layout(target.graph, check); before.capacity(requests.size()); before.requested(requests);
+        JsonObject graphBefore = snapshots.snapshot(proxy, trackId, 0, GridTopologyContext.MAX_MODULES, false, false, null, check);
+        new Batch(proxy, trackId, requests, graphBefore, timeLeft, check, dispatch, complete, fail).next(0);
+    }
+
+    private final class Batch {
+        final Object proxy; final UUID trackId; final List<Request> requests; final JsonObject graphBefore;
+        final Runnable check, dispatch; final Consumer<JsonObject> complete; final Consumer<Throwable> fail;
+        final JsonArray items = new JsonArray();
+        JsonObject lastGraph; String status = "applied"; int written; boolean done;
+        final java.util.function.BooleanSupplier timeLeft;
+        Batch(Object proxy, UUID trackId, List<Request> requests, JsonObject graphBefore, java.util.function.BooleanSupplier timeLeft,
+                Runnable check, Runnable dispatch, Consumer<JsonObject> complete, Consumer<Throwable> fail) {
+            this.timeLeft = timeLeft;
+            this.proxy = proxy; this.trackId = trackId; this.requests = requests; this.graphBefore = graphBefore;
+            this.check = check; this.dispatch = dispatch; this.complete = complete; this.fail = fail;
+        }
+        JsonObject item(Request request) {
+            JsonObject item = new JsonObject();
+            item.addProperty("typeId", request.typeId.toString());
+            item.add("requestedPosition", GridModuleWriter.position(request.x, request.y));
+            return item;
+        }
+        void next(int i) {
+            if (done) return;
+            if (i == requests.size()) { finish(); return; }
+            if (i > 0 && !timeLeft.getAsBoolean()) { // Stop cleanly while per-entry results can still be delivered.
+                status = "partial";
+                for (int k = i; k < requests.size(); k++) {
+                    JsonObject rest = item(requests.get(k)); rest.addProperty("status", "not_dispatched"); items.add(rest);
+                }
+                finish(); return;
+            }
+            Request request = requests.get(i);
+            JsonObject item = item(request);
+            items.add(item);
+            boolean[] sent = {false};
+            try {
+                insert(proxy, trackId, request, check, () -> { dispatch.run(); sent[0] = true; },
+                        one -> {
+                            if (done) return;
+                            try {
+                                item.addProperty("status", "applied");
+                                item.add("moduleId", one.get("moduleId")); item.add("actualPosition", one.get("actualPosition"));
+                                item.add("matchesRequested", one.get("matchesRequested"));
+                                lastGraph = one.getAsJsonObject("graph"); written++;
+                                next(i + 1);
+                            } catch (Throwable error) { failed(i, item, error, sent[0]); }
+                        },
+                        error -> failed(i, item, error, sent[0]));
+            } catch (Throwable error) { failed(i, item, error, sent[0]); }
+        }
+        private void failed(int i, JsonObject item, Throwable error, boolean dispatched) {
+            if (done) return;
+            boolean unknown = dispatched || error instanceof RpcException && "unknown".equals(((RpcException) error).outcome);
+            if (written == 0 && !unknown || !(error instanceof RuntimeException) && !unknown) { done = true; fail.accept(error); return; }
+            item.addProperty("status", unknown ? "unknown" : "failed");
+            JsonObject why = new JsonObject();
+            why.addProperty("code", error instanceof RpcException ? ((RpcException) error).code : "internal_error");
+            why.addProperty("message", error.getMessage());
+            item.add("error", why);
+            status = unknown ? "unknown" : written > 0 ? "partial" : "failed";
+            for (int k = i + 1; k < requests.size(); k++) {
+                JsonObject rest = item(requests.get(k)); rest.addProperty("status", "not_dispatched"); items.add(rest);
+            }
+            finish();
+        }
+        /** Later inserts can push earlier modules right: report where each module is in the final graph. */
+        private void refreshPositions() {
+            for (JsonElement row : lastGraph.getAsJsonArray("modules")) {
+                JsonObject module = row.getAsJsonObject();
+                for (JsonElement element : items) {
+                    JsonObject item = element.getAsJsonObject();
+                    if (!item.has("moduleId") || !item.get("moduleId").getAsString().equals(module.get("instanceId").getAsString())) continue;
+                    item.add("actualPosition", GridModuleWriter.position(module.get("x").getAsInt(), module.get("y").getAsInt()));
+                    JsonObject wanted = item.getAsJsonObject("requestedPosition");
+                    item.addProperty("matchesRequested", wanted.get("x").equals(module.get("x")) && wanted.get("y").equals(module.get("y")));
+                }
+            }
+        }
+        private void finish() {
+            if (done) return;
+            done = true;
+            try {
+                boolean unknown = status.equals("unknown");
+                if (lastGraph != null && !unknown) refreshPositions();
+                JsonObject result = HostServices.observed();
+                result.addProperty("batchStatus", status); result.addProperty("completion", unknown ? "unknown" : "observed");
+                result.addProperty("written", written);
+                result.add("modules", items);
+                result.addProperty("mutationDispatched", written > 0 || unknown);
+                result.addProperty("nativeMutation", written > 0 || unknown); result.addProperty("nativeUndo", written > 0 || unknown);
+                result.addProperty("verification", "later_document_event_bounded_native_graph_observation_per_entry");
+                // After an unknown entry the last observed graph is not the current one: no diff is offered.
+                if (lastGraph != null && !unknown) { result.add("graph", lastGraph); result.add("graphBefore", graphBefore); }
+                complete.accept(result);
+            } catch (Throwable error) { fail.accept(error); }
+        }
+    }
+
     private void requireKnownModule(UUID id, Runnable check) {
         Object catalog = values.read(CATALOG, null);
         if (!(catalog instanceof List<?>)) throw failure("grid_unavailable", "Native module catalog is unavailable.");
@@ -253,9 +450,21 @@ final class GridInsertionWriter {
         final List<Object> modules; final List<Row> rows;
         Layout(List<Object> modules, List<Row> rows) { this.modules = modules; this.rows = rows; }
         Row find(UUID id) { for (Row row : rows) if (row.id.equals(id)) return row; return null; }
-        void capacity() {
-            if (rows.size() >= GridTopologyContext.MAX_MODULES)
-                throw failure("grid_bounds_exceeded", "Insertion requires destination module count plus one <=128 before loading and placement.");
+        void capacity() { capacity(1); }
+        void capacity(int extra) {
+            if (rows.size() + extra > GridTopologyContext.MAX_MODULES)
+                throw failure("grid_bounds_exceeded", "Insertion requires destination module count plus " + extra + " <=128 before loading and placement.");
+        }
+        /** Requested anchors only (footprints are unknown before loading): int32 endpoints and the occupied y-span. */
+        void requested(List<Request> requests) {
+            long minY = Long.MAX_VALUE, maxY = Long.MIN_VALUE;
+            for (Row row : rows) { minY = Math.min(minY, row.y); maxY = Math.max(maxY, (long) row.y + row.height); }
+            for (Request request : requests) {
+                checked((long) request.x + 1); checked((long) request.y + 1);
+                minY = Math.min(minY, request.y); maxY = Math.max(maxY, (long) request.y + 1);
+            }
+            if (maxY - minY > GridModuleWriter.MAX_Y_SPAN)
+                throw failure("grid_bounds_exceeded", "Insertion occupied y-span exceeds 65536 before native allocation.");
         }
         void same(Layout actual) {
             if (rows.size() != actual.rows.size()) throw failure("stale_context", "Native destination membership changed during insertion.");

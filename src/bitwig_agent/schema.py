@@ -108,7 +108,7 @@ class GridCapabilitiesArgs(StatusArgs):
 
 
 class GridCatalogArgs(StatusArgs):
-    query: str = Field(default="", max_length=128)
+    query: str = Field(default="", max_length=128, description="Case-, space-, hyphen- and punctuation-insensitive; every word must match inside the module name, so 'lowpass' and 'low pass' both find 'Low-pass'. A miss returns up to five nearest names as suggestions.")
     offset: int = Field(default=0, ge=0, le=100000)
     limit: int = Field(default=64, ge=1, le=256)
 
@@ -127,10 +127,64 @@ class GridWriteArgs(ParameterArgs):
         description="diff (default): what changed, computed from the before/after graphs. full: the whole bounded graph after the edit.")
 
 
+GRID_INSERT_FIELDS = {"x", "y"}
+TYPE_ID_DESCRIPTION = "Canonical MODULE type UUID discovered through grid.catalog, not a module instanceId or file path; the host verifies catalog membership."
+TYPE_NAME_DESCRIPTION = "Alternative to typeId: a catalog module name matched exactly, ignoring case, spaces and hyphens ('low pass' = 'Low-pass'). Rejected not_applied with candidates unless exactly one entry matches."
+INT32_DESCRIPTION = "Requested absolute native anchor, not a relative delta or pixels. Signed int32 JSON integer token; native layout bounds checked by host."
+
+
+def require_name_characters(value):
+    """Mirror GridNames.norm: a typeName must keep at least one letter or digit once case, spaces and punctuation are ignored."""
+    if value is not None and not any(ch.isalpha() or ch.isdecimal() for ch in value):
+        raise ValueError("typeName must contain a letter or digit")
+    return value
+
+
+class GridModuleSpec(StrictModel):
+    typeId: TrackId = omitted(description=TYPE_ID_DESCRIPTION)
+    typeName: str = omitted(min_length=1, max_length=128, description=TYPE_NAME_DESCRIPTION)
+    x: int = Field(ge=-(2**31), le=2**31 - 1, description=INT32_DESCRIPTION)
+    y: int = Field(ge=-(2**31), le=2**31 - 1, description=INT32_DESCRIPTION)
+
+    @model_validator(mode="after")
+    def validate_one_type(self):
+        if len({"typeId", "typeName"} & self.model_fields_set) != 1:
+            raise ValueError("supply exactly one of typeId or typeName")
+        return self
+
+    @field_validator("typeName")
+    @classmethod
+    def _type_name_characters(cls, value):
+        return require_name_characters(value)
+
+
 class GridModuleInsertArgs(GridWriteArgs):
-    typeId: TrackId = Field(description="Canonical MODULE type UUID discovered through grid.catalog, not a module instanceId or file path; the host verifies catalog membership.")
-    x: int = Field(ge=-(2**31), le=2**31 - 1, description="Requested absolute native anchor X, not a relative delta or pixels. Signed int32 JSON integer token; native layout bounds checked by host.")
-    y: int = Field(ge=-(2**31), le=2**31 - 1, description="Requested absolute native anchor Y, not a relative delta or pixels. Signed int32 JSON integer token; native layout bounds checked by host.")
+    """One insertion (typeId|typeName, x, y) or a same-device batch (modules), never both."""
+    model_config = ConfigDict(json_schema_extra={
+        "oneOf": [{"required": ["x", "y"]}, {"required": ["modules"]}],
+    })
+
+    typeId: TrackId = omitted(description="Single form: " + TYPE_ID_DESCRIPTION)
+    typeName: str = omitted(min_length=1, max_length=128, description="Single form: " + TYPE_NAME_DESCRIPTION)
+    x: int = omitted(ge=-(2**31), le=2**31 - 1, description="Single form: " + INT32_DESCRIPTION)
+    y: int = omitted(ge=-(2**31), le=2**31 - 1, description="Single form: " + INT32_DESCRIPTION)
+    modules: Annotated[list[GridModuleSpec], Field(min_length=1, max_length=16)] = omitted(
+        description="Batch form: 1..16 insertions on this device, each {typeId|typeName, x, y}. All types and limits are checked first (any failure inserts nothing); then entries insert in order, each settling before the next, and stop at the first failure.")
+
+    @model_validator(mode="after")
+    def validate_one_form(self):
+        single = {"typeId", "typeName", "x", "y"} & self.model_fields_set
+        if "modules" in self.model_fields_set:
+            if single:
+                raise ValueError("supply either modules or the single-insertion fields, not both")
+        elif not (GRID_INSERT_FIELDS <= single and len(single & {"typeId", "typeName"}) == 1):
+            raise ValueError("supply modules, or x, y and exactly one of typeId or typeName")
+        return self
+
+    @field_validator("typeName")
+    @classmethod
+    def _type_name_characters(cls, value):
+        return require_name_characters(value)
 
 
 class GridModuleArgs(ParameterArgs):
@@ -199,6 +253,11 @@ class GridParameterGetArgs(GridModuleArgs):
     parameterId: str = Field(max_length=1024, description="Exact native parameter ID from grid.get, not a name; empty is valid, at most 1024 UTF-16 code units.")
 
 
+DISPLAY_DESCRIPTION = ("Instead of value, for float parameters whose numericUnit has a verified conversion (hertz: raw is a MIDI note, e.g. '1.2 kHz', '440 Hz'; percent: '50 %'; decibel: '-12 dB'). "
+                       "The text needs an explicit unit; the host confirms the unit scale against the current raw/display pair, else rejects not_applied unsupported_unit. "
+                       "The result reports displayMismatch from the post-write display; it never writes again to correct it.")
+
+
 class GridRawWrite(StrictModel):
     moduleId: TrackId = Field(description="Current module instanceId from grid.get; reacquire after reopening the project.")
     parameterId: str = Field(max_length=1024, description="Exact native parameter ID from grid.get, not a name; empty is valid, at most 1024 UTF-16 code units.")
@@ -221,8 +280,9 @@ class GridRawWrite(StrictModel):
         description="Typed kind from a recent grid.get row (or grid.parameters.get); checked before any already-matching no-op.")
     expectedValue: bool | int | float = Field(
         description="Exact current native raw value from a recent grid.get row (or grid.parameters.get), not normalized or display units; stale is rejected not_applied. Must match expectedKind; no tolerance or coercion.")
-    value: bool | int | float = Field(
-        description="Requested native raw value: boolean JSON bool; integer/enum signed int32 JSON integer token; float finite JSON number. Enum uses an actual listed option value, never an ordinal. Native range/representability are checked before dispatch.")
+    value: bool | int | float = omitted(
+        description="Requested native raw value: boolean JSON bool; integer/enum signed int32 JSON integer token; float finite JSON number. Enum uses an actual listed option value, never an ordinal. Native range/representability are checked before dispatch. Exactly one of value or display.")
+    display: str = omitted(min_length=1, max_length=64, description=DISPLAY_DESCRIPTION)
 
     @field_validator("expectedValue", "value", mode="before")
     @classmethod
@@ -240,7 +300,13 @@ class GridRawWrite(StrictModel):
 
     @model_validator(mode="after")
     def validate_raw_kind(self):
+        if len({"value", "display"} & self.model_fields_set) != 1:
+            raise ValueError("supply exactly one of value (raw) or display (text such as '1.2 kHz')")
+        if "display" in self.model_fields_set and self.expectedKind != "float":
+            raise ValueError("display needs expectedKind float")
         for field in ("expectedValue", "value"):
+            if field not in self.model_fields_set:
+                continue
             value = getattr(self, field)
             if self.expectedKind == "boolean":
                 if type(value) is not bool:
@@ -253,7 +319,7 @@ class GridRawWrite(StrictModel):
         return self
 
 
-GRID_WRITE_FIELDS = {"moduleId", "parameterId", "expectedKind", "expectedValue", "value"}
+GRID_WRITE_FIELDS = {"moduleId", "parameterId", "expectedKind", "expectedValue"}
 
 
 class GridParameterSetArgs(ParameterArgs):
@@ -266,7 +332,8 @@ class GridParameterSetArgs(ParameterArgs):
     parameterId: str = omitted(max_length=1024, description="Single form: exact parameterId from grid.get; empty is valid.")
     expectedKind: Literal["float", "integer", "enum", "boolean"] = omitted(description="Single form: kind from a recent grid.get row.")
     expectedValue: bool | int | float = omitted(description="Single form: exact current raw value from a recent grid.get row.")
-    value: bool | int | float = omitted(description="Single form: requested native raw value.")
+    value: bool | int | float = omitted(description="Single form: requested native raw value (or give display instead).")
+    display: str = omitted(min_length=1, max_length=64, description="Single form: " + DISPLAY_DESCRIPTION)
     writes: Annotated[list[GridRawWrite], Field(min_length=1, max_length=64)] = omitted(
         description="Batch form: 1..64 writes on this device, each a full single write. All CAS checks run first; any failure writes nothing. Then writes dispatch in order and stop at the first failure.")
 
@@ -274,15 +341,15 @@ class GridParameterSetArgs(ParameterArgs):
     def validate_one_form(self):
         supplied = GRID_WRITE_FIELDS & self.model_fields_set
         if "writes" in self.model_fields_set:
-            if supplied:
+            if supplied or {"value", "display"} & self.model_fields_set:
                 raise ValueError("supply either writes or the single-write fields, not both")
             keys = [(item.moduleId.lower(), item.parameterId) for item in self.writes]
             if len(set(keys)) != len(keys):
                 raise ValueError("writes must not repeat a moduleId/parameterId pair")
         elif supplied != GRID_WRITE_FIELDS:
-            raise ValueError("supply writes, or all of moduleId, parameterId, expectedKind, expectedValue and value")
+            raise ValueError("supply writes, or moduleId, parameterId, expectedKind, expectedValue and one of value or display")
         else:
-            GridRawWrite.model_validate({key: getattr(self, key) for key in GRID_WRITE_FIELDS})
+            GridRawWrite.model_validate({key: getattr(self, key) for key in GRID_WRITE_FIELDS | {"value", "display"} & self.model_fields_set})
         return self
 
 

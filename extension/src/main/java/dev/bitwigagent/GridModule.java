@@ -87,11 +87,14 @@ final class GridModule implements HostModule {
                 GridConnectionWriter.Request.parse(p);
                 return;
             case "grid.modules.insert":
-                Params.fields(p, Set.of("trackId", "deviceIndex", "expectedDeviceName", "typeId", "x", "y"), Set.of("graph")); graphMode(p);
+                boolean many = p != null && p.has("modules");
+                Params.fields(p, many ? Set.of("trackId", "deviceIndex", "expectedDeviceName", "modules")
+                        : Set.of("trackId", "deviceIndex", "expectedDeviceName", "x", "y"),
+                        many ? Set.of("graph") : Set.of("graph", "typeId", "typeName")); graphMode(p);
                 canonicalUuid(p, "trackId");
                 Params.integer(p, "deviceIndex", 0, HostServices.DEVICES - 1);
                 Params.string(p, "expectedDeviceName");
-                GridInsertionWriter.Request.parse(p);
+                if (many) GridInsertionWriter.Request.parseBatch(p); else GridInsertionWriter.Request.parse(p);
                 return;
             case "grid.modules.rename":
                 Params.fields(p, Set.of("trackId", "deviceIndex", "expectedDeviceName", "moduleId", "expectedCustomName", "customName"), Set.of("graph")); graphMode(p);
@@ -117,8 +120,9 @@ final class GridModule implements HostModule {
                 boolean writing = method.equals("grid.parameters.set");
                 if (writing && p != null && p.has("writes")) { validateBatch(p); return; }
                 Params.fields(p, writing
-                        ? Set.of("trackId", "deviceIndex", "expectedDeviceName", "moduleId", "parameterId", "expectedKind", "expectedValue", "value")
-                        : Set.of("trackId", "deviceIndex", "expectedDeviceName", "moduleId", "parameterId"), Set.of());
+                        ? Set.of("trackId", "deviceIndex", "expectedDeviceName", "moduleId", "parameterId", "expectedKind", "expectedValue")
+                        : Set.of("trackId", "deviceIndex", "expectedDeviceName", "moduleId", "parameterId"),
+                        writing ? Set.of("value", "display") : Set.of());
                 canonicalUuid(p, "trackId"); canonicalUuid(p, "moduleId");
                 Params.integer(p, "deviceIndex", 0, HostServices.DEVICES - 1);
                 Params.string(p, "expectedDeviceName");
@@ -195,7 +199,7 @@ final class GridModule implements HostModule {
         for (JsonElement element : writes.getAsJsonArray()) {
             if (!element.isJsonObject()) throw failure("invalid_params", "Each write must be an object.");
             JsonObject w = element.getAsJsonObject();
-            Params.fields(w, Set.of("moduleId", "parameterId", "expectedKind", "expectedValue", "value"), Set.of());
+            Params.fields(w, Set.of("moduleId", "parameterId", "expectedKind", "expectedValue"), Set.of("value", "display"));
             canonicalUuid(w, "moduleId");
             if (!w.get("parameterId").isJsonPrimitive() || !w.get("parameterId").getAsJsonPrimitive().isString()
                     || w.get("parameterId").getAsString().length() > GridSnapshotReader.MAX_TEXT)
@@ -241,7 +245,9 @@ final class GridModule implements HostModule {
         final boolean cableBatch = connection && p.has("connections");
         final java.util.List<GridConnectionWriter.Request> cables = cableBatch ? GridConnectionWriter.Request.parseBatch(p) : null;
         final GridConnectionWriter.Request cable = connection && !cableBatch ? GridConnectionWriter.Request.parse(p) : null;
-        final GridInsertionWriter.Request insertion = inserting ? GridInsertionWriter.Request.parse(p) : null;
+        final boolean insertBatch = inserting && p.has("modules");
+        final java.util.List<GridInsertionWriter.Request> insertions = insertBatch ? GridInsertionWriter.Request.parseBatch(p) : null;
+        final GridInsertionWriter.Request insertion = inserting && !insertBatch ? GridInsertionWriter.Request.parse(p) : null;
         final GridModuleNameWriter.Request name = renaming ? GridModuleNameWriter.Request.parse(p) : null;
         final HostServices.SafetyObservation safety = writing ? s.stoppedSafety(op) : null;
         final Target target = method.equals("grid.get") || inspection || topology ? target(p) : null;
@@ -266,7 +272,9 @@ final class GridModule implements HostModule {
                 if (topology) {
                     java.util.function.Consumer<JsonObject> complete = value -> deliver(op, target, safety, true, check, GridDiff.shape(value, fullGraph));
                     Runnable dispatch = () -> { check.run(); op.dispatched = true; };
-                    if (inserting) adapter.insertModule(target.source.device, target.uuid, insertion, check, dispatch, complete, op::fail);
+                    if (insertBatch) adapter.insertModules(target.source.device, target.uuid, insertions,
+                            () -> op.deadline - System.nanoTime() > GridInsertionWriter.NEXT_ENTRY_MARGIN_NANOS, check, dispatch, complete, op::fail);
+                    else if (inserting) adapter.insertModule(target.source.device, target.uuid, insertion, check, dispatch, complete, op::fail);
                     else if (renaming) adapter.renameModule(target.source.device, target.uuid, moduleId, name, check, dispatch, complete, op::fail);
                     else if (cableBatch) adapter.setConnections(target.source.device, target.uuid, cables, check, dispatch, complete, op::fail);
                     else if (connection) adapter.setConnection(target.source.device, target.uuid, cable, check, dispatch, complete, op::fail);

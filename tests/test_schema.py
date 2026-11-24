@@ -832,3 +832,58 @@ def test_project_save_is_a_write_tool_without_arguments():
     with pytest.raises(ValidationError):
         validate_call("project.save", {"force": True})
     assert "projectModified" in TOOLS["extension.restart"].description
+
+
+def test_grid_insert_accepts_type_name_or_type_id_but_not_both_or_neither():
+    named = {key: value for key, value in GRID_INSERT.items() if key != "typeId"} | {"typeName": "Low-pass"}
+    assert validate_call("grid.modules.insert", named)[0] == named
+    for bad in (
+        {**GRID_INSERT, "typeName": "Low-pass"},
+        {key: value for key, value in GRID_INSERT.items() if key != "typeId"},
+        {**named, "typeName": ""}, {**named, "typeName": "x" * 129}, {**named, "typeName": None},
+    ):
+        with pytest.raises(ValidationError):
+            validate_call("grid.modules.insert", bad)
+
+
+def test_grid_insert_batch_is_exclusive_bounded_and_per_entry_strict():
+    entry = {"typeName": "Low-pass", "x": 4, "y": 2}
+    base = {key: GRID_INSERT[key] for key in TARGET}
+    params, _ = validate_call("grid.modules.insert", {**base, "modules": [entry, {"typeId": TRACK, "x": 8, "y": 2}]})
+    assert params["modules"][1] == {"typeId": TRACK, "x": 8, "y": 2}
+    validate_call("grid.modules.insert", {**base, "modules": [entry] * 16})
+    for bad in (
+        {**base, "modules": []}, {**base, "modules": [entry] * 17},
+        {**base, "modules": [entry], "x": 1}, {**base, "modules": [entry], "typeName": "a"},
+        {**base, "modules": [{"x": 1, "y": 1}]}, {**base, "modules": [{**entry, "typeId": TRACK}]},
+        {**base, "modules": [{**entry, "x": 1.5}]}, {**base, "modules": [{**entry, "extra": 1}]},
+        {**base, "modules": [{"typeName": "a", "x": 1}]}, {**base, "modules": None},
+    ):
+        with pytest.raises(ValidationError):
+            validate_call("grid.modules.insert", bad)
+
+
+def test_grid_parameter_set_display_replaces_value_for_float_only():
+    display = {key: value for key, value in GRID_SET.items() if key != "value"} | {"display": "1.2 kHz"}
+    assert validate_call("grid.parameters.set", display)[0] == display
+    batch = {**TARGET, "writes": [{key: display[key] for key in ("moduleId", "parameterId", "expectedKind", "expectedValue", "display")},
+                                  {**{k: GRID_SET[k] for k in ("moduleId", "parameterId", "expectedKind", "expectedValue")}, "parameterId": "other", "value": 1}]}
+    assert validate_call("grid.parameters.set", batch)[0] == batch
+    for bad in (
+        {**display, "value": 0.5}, {key: value for key, value in display.items() if key != "display"},
+        {**display, "display": ""}, {**display, "display": "x" * 65}, {**display, "display": 5}, {**display, "display": None},
+        {**display, "expectedKind": "integer", "expectedValue": 1},
+        {**TARGET, "writes": [{**batch["writes"][0], "value": 1}]},
+        {**TARGET, "writes": [{key: value for key, value in batch["writes"][0].items() if key != "display"}]},
+        {**TARGET, "writes": [batch["writes"][0]], "display": "1 Hz"},
+    ):
+        with pytest.raises(ValidationError):
+            validate_call("grid.parameters.set", bad)
+
+
+def test_grid_insert_type_name_needs_a_letter_or_decimal_digit_like_java():
+    named = {key: value for key, value in GRID_INSERT.items() if key != "typeId"}
+    for bad in ("\u00b2", "\u00bd", "\u2163", "---"):
+        with pytest.raises(ValidationError):
+            validate_call("grid.modules.insert", {**named, "typeName": bad})
+    validate_call("grid.modules.insert", {**named, "typeName": "Osc 2"})

@@ -62,6 +62,10 @@ final class GridParameterWriter {
         check.run();
         JsonObject result = values.parameterResult(binding, current);
         result.add("previousValue", previous); result.add("requestedValue", request.value);
+        if (request.display != null) {
+            result.addProperty("requestedDisplay", request.display);
+            result.addProperty("displayMismatch", GridDisplayUnits.mismatch(current, request.display));
+        }
         result.addProperty("mutationDispatched", changed);
         result.addProperty("verification", changed ? "exact_native_model_readback" : "already_matched");
         result.addProperty("nativeMutation", changed);
@@ -132,6 +136,8 @@ final class GridParameterWriter {
                 item.add("value", one.getAsJsonObject("parameter").get("value"));
                 JsonElement display = one.getAsJsonObject("parameter").get("display");
                 if (display != null && !display.isJsonNull()) item.add("display", display);
+                if (one.has("requestedDisplay"))
+                    for (String key : new String[] {"requestedDisplay", "displayMismatch"}) item.add(key, one.get(key));
                 for (String key : new String[] {"previousCoupledParameter", "coupledParameter"})
                     if (one.has(key)) item.add(key, one.get(key));
                 completed++; if (changed) written++;
@@ -156,10 +162,17 @@ final class GridParameterWriter {
 
     static final class Request {
         final String kind;
-        final JsonPrimitive expected, value;
-        final double rawValue;
-        private Request(String kind, JsonPrimitive expected, JsonPrimitive value) {
-            this.kind = kind; this.expected = expected; this.value = value;
+        final JsonPrimitive expected;
+        /** Display-text request; value/rawValue are then resolved from the live row by validateCurrent. */
+        final String display;
+        JsonPrimitive value;
+        double rawValue;
+        private Request(String kind, JsonPrimitive expected, JsonPrimitive value, String display) {
+            this.kind = kind; this.expected = expected; this.display = display;
+            if (value != null) setValue(value);
+        }
+        private void setValue(JsonPrimitive value) {
+            this.value = value;
             rawValue = kind.equals("boolean") ? (value.getAsBoolean() ? 1.0 : 0.0) : value.getAsDouble();
         }
         static Request parse(JsonObject params) {
@@ -167,8 +180,16 @@ final class GridParameterWriter {
             if (!kind.equals("float") && !kind.equals("integer") && !kind.equals("enum") && !kind.equals("boolean"))
                 throw failure("invalid_params", "expectedKind must be float, integer, enum or boolean.");
             JsonPrimitive expected = typed(params.get("expectedValue"), kind, "expectedValue");
-            JsonPrimitive value = typed(params.get("value"), kind, "value");
-            return new Request(kind, expected, value);
+            if (params.has("value") == params.has("display"))
+                throw failure("invalid_params", "Supply exactly one of value (raw) or display (text such as \"1.2 kHz\").");
+            if (params.has("display")) {
+                JsonElement text = params.get("display");
+                if (!kind.equals("float") || !text.isJsonPrimitive() || !text.getAsJsonPrimitive().isString()
+                        || text.getAsString().isEmpty() || text.getAsString().length() > 64)
+                    throw failure("invalid_params", "display must be a string of 1..64 characters and needs expectedKind float.");
+                return new Request(kind, expected, null, text.getAsString());
+            }
+            return new Request(kind, expected, typed(params.get("value"), kind, "value"), null);
         }
         private static JsonPrimitive typed(JsonElement element, String kind, String field) {
             if (element == null || !element.isJsonPrimitive()) throw invalid(field, kind);
@@ -201,6 +222,7 @@ final class GridParameterWriter {
         void validateCurrent(JsonObject current) {
             if (!kind.equals(current.get("kind").getAsString()) || !matches(current.get("value"), expected))
                 throw failure("stale_context", "Parameter kind or exact raw value differs from the expected precondition; reacquire grid.parameters.get.");
+            if (display != null) setValue(new JsonPrimitive(GridDisplayUnits.toRaw(current, display)));
             if (kind.equals("float") || kind.equals("integer")) {
                 double min = current.get("minimum").getAsDouble(), max = current.get("maximum").getAsDouble();
                 if (rawValue < min || rawValue > max)

@@ -44,6 +44,8 @@ public final class GridSnapshotReaderTest {
         rawParameterNoopAndNativeReadback();
         expectedValuesMayComeFromARecentGridGet();
         diagnosticsGateNativeIdentityAndModuleFilterSelectsRows();
+        catalogMatchesLooselyAndSuggestsNearNames();
+        displayWritesConvertOnlyVerifiedUnits();
         batchChecksEveryCasBeforeAnyWrite();
         batchStopsAtFirstFailureAndNeverRetries();
         batchFailureAfterOwnDispatchIsUnknownWhateverTheCode();
@@ -397,6 +399,86 @@ public final class GridSnapshotReaderTest {
         Fixture choices = new Fixture(); Node indexed = choices.parameter(ENUM, choices.first).put(ENUM_VALUE, 0);
         indexed.put(ENUM_DEFINITION, new Node().put(OPTIONS, Collections.nCopies(257, option(0, "x"))));
         choices.first.put(CHILDREN, List.of(indexed)); expect("grid_bounds_exceeded", () -> choices.read(0, 64, true));
+    }
+    private static void catalogMatchesLooselyAndSuggestsNearNames() {
+        Fixture f = new Fixture();
+        f.catalog = List.of(entry("MODULE", "Low-pass", 1), entry("MODULE", "Low-pass LD", 2), entry("MODULE", "Low-pass MG", 3),
+                entry("MODULE", "High-pass", 4), entry("MODULE", "Oscillator", 5), entry("DEVICE", "Low-pass device", 6));
+        for (String query : List.of("lowpass", "low pass", "LOW-PASS", "low  pass", "pass low", "Low-pass."))
+            check(f.reader.catalog(query, 0, 64, () -> {}).getAsJsonArray("entries").size() == 3, "loose query '" + query + "' finds every Low-pass module");
+        check(f.reader.catalog("lowpass ld", 0, 64, () -> {}).getAsJsonArray("entries").size() == 1, "every query word must match");
+        JsonObject none = f.reader.catalog("lowpas", 0, 64, () -> {});
+        check(none.getAsJsonArray("entries").size() == 3, "substring of the normalized name still matches");
+        none = f.reader.catalog("lp mg", 0, 64, () -> {});
+        JsonArray hints = none.getAsJsonArray("suggestions");
+        check(none.getAsJsonArray("entries").isEmpty() && hints != null && hints.size() <= 5 && hints.size() > 0
+                && hints.get(0).getAsJsonObject().has("typeId") && hints.get(0).getAsJsonObject().has("name"),
+                "a miss returns up to five nearest module names with their typeIds");
+        check(f.reader.catalog("lowpass", 0, 64, () -> {}).get("suggestions") == null, "suggestions only accompany a miss");
+        check(f.reader.catalog("oscilator", 0, 64, () -> {}).getAsJsonArray("suggestions").get(0).getAsJsonObject().get("name").getAsString().equals("Oscillator"),
+                "a typo suggests the closest name first");
+        check(f.reader.catalog("zzzzzzzz", 0, 64, () -> {}).getAsJsonArray("suggestions").size() == 0, "an unrelated query suggests nothing");
+        check(f.reader.catalog("", 0, 64, () -> {}).get("suggestions") == null, "empty query lists everything without suggestions");
+    }
+    private static void displayWritesConvertOnlyVerifiedUnits() {
+        WriterFixture f = unitFixture("hertz", 84.0, "1.05 kHz", 0.0, 127.0);
+        f.afterMutation = () -> f.child.put(DISPLAY, "1.20 kHz");
+        JsonObject result = f.set(displayRequest("84", "1.2 kHz"));
+        double raw = (Double) f.child.values.get(FLOAT_VALUE);
+        check(f.calls == 1 && Math.abs(raw - (69 + 12 * Math.log(1200.0 / 440) / Math.log(2))) < 1e-9
+                && result.get("requestedDisplay").getAsString().equals("1.2 kHz") && !result.get("displayMismatch").getAsBoolean()
+                && result.getAsJsonObject("parameter").get("display").getAsString().equals("1.20 kHz"),
+                "hertz display is converted as a MIDI note, written once, and read back as the requested text");
+        // Nothing is rewritten when the readback disagrees: it is only reported.
+        WriterFixture off = unitFixture("hertz", 84.0, "1.05 kHz", 0.0, 127.0);
+        off.afterMutation = () -> off.child.put(DISPLAY, "1.50 kHz");
+        result = off.set(displayRequest("84", "1.2 kHz"));
+        check(off.calls == 1 && result.get("displayMismatch").getAsBoolean(), "a differing post-write display is reported and never corrected by a second write");
+        // Percent: raw is 0..1 shown times 100; the scale is confirmed from the row's own pair.
+        WriterFixture pct = unitFixture("percent", 0.5, "50.0 %", 0.0, 1.0);
+        pct.afterMutation = () -> pct.child.put(DISPLAY, "80.0 %");
+        result = pct.set(displayRequest("0.5", "80 %"));
+        check(Math.abs((Double) pct.child.values.get(FLOAT_VALUE) - 0.8) < 1e-12 && !result.get("displayMismatch").getAsBoolean(), "percent display converts as raw = percent / 100");
+        WriterFixture db = unitFixture("decibel", -96.0, "-96.0 dB", -144.0, 0.0);
+        db.set(displayRequest("-96", "-12 dB"));
+        check((Double) db.child.values.get(FLOAT_VALUE) == -12.0, "decibel display converts as raw = dB where the row confirms it");
+        // Unverified or unconfirmed scales are rejected before any write.
+        for (WriterFixture bad : List.of(unitFixture("seconds", 0.7047298732064893, "350 ms", 0.0, 2.0), unitFixture("semitones_relative", 0.0, "0.00 st", -48.0, 48.0),
+                unitFixture("hertz", 0.0, "0.00 Hz", -3.0, 3.0), unitFixture("percent", 0.0, "0.00 %", 0.0, 1.0),
+                unitFixture("percent", 0.5, "80.0 %", 0.0, 1.0), unitFixture(null, 0.5, "50.0 %", 0.0, 1.0))) {
+            RpcException error = null;
+            try { bad.set(displayRequest(bad.child.values.get(FLOAT_VALUE).toString(), "1 Hz")); } catch (RpcException caught) { error = caught; }
+            check(error != null && error.code.equals("unsupported_unit") && error.outcome.equals("not_applied") && bad.calls == 0 && !bad.op.dispatched,
+                    "unverified unit or a row that does not reproduce the model is unsupported_unit before any write");
+        }
+        WriterFixture suffix = unitFixture("hertz", 84.0, "1.05 kHz", 0.0, 127.0);
+        for (String text : List.of("1.2", "1.2 %", "abc Hz", "-5 Hz", "0 Hz", "1.2 kHz extra"))
+            expect("invalid_params", () -> suffix.set(displayRequest("84", text)));
+        check(suffix.calls == 0, "display text needs a number with a matching explicit unit suffix");
+        expect("invalid_params", () -> GridParameterWriter.Request.parse(TransportMixFixture.json("{\"expectedKind\":\"float\",\"expectedValue\":1}")));
+        expect("invalid_params", () -> GridParameterWriter.Request.parse(TransportMixFixture.json("{\"expectedKind\":\"float\",\"expectedValue\":1,\"value\":2,\"display\":\"1 Hz\"}")));
+        expect("invalid_params", () -> GridParameterWriter.Request.parse(TransportMixFixture.json("{\"expectedKind\":\"integer\",\"expectedValue\":1,\"display\":\"1 Hz\"}")));
+        expect("stale_context", () -> unitFixture("hertz", 84.0, "1.05 kHz", 0.0, 127.0).set(displayRequest("83", "1.2 kHz")));
+        // Batch entries carry the same fields and the same CAS.
+        WriterFixture batch = unitFixture("hertz", 84.0, "1.05 kHz", 0.0, 127.0);
+        batch.afterMutation = () -> batch.child.put(DISPLAY, "440 Hz");
+        JsonObject out = batch.setAll(List.of(new GridParameterWriter.Entry(new UUID(1, 1), "LOCAL_ID", displayRequest("84", "440 Hz"))), () -> {}, () -> batch.op.dispatched = true);
+        JsonObject item = out.getAsJsonArray("writes").get(0).getAsJsonObject();
+        check((Double) batch.child.values.get(FLOAT_VALUE) == 69.0 && item.get("requestedDisplay").getAsString().equals("440 Hz")
+                && !item.get("displayMismatch").getAsBoolean() && item.get("status").getAsString().equals("applied"), "batch entry accepts display and reports displayMismatch");
+    }
+    private static WriterFixture unitFixture(String token, double raw, String display, double min, double max) {
+        WriterFixture f = new WriterFixture();
+        f.scalar(FLOAT, raw, min, max);
+        Node definition = new Node().put(FLOAT_MIN, min).put(FLOAT_MAX, max);
+        if (token != null) definition.put(FLOAT_UNIT, new Node().put(UNIT_TOKEN, token));
+        f.child.put(FLOAT_DEFINITION, definition).put(DISPLAY, display);
+        return f;
+    }
+    private static GridParameterWriter.Request displayRequest(String expected, String display) {
+        JsonObject params = TransportMixFixture.json("{\"expectedKind\":\"float\",\"expectedValue\":" + expected + "}");
+        params.addProperty("display", display);
+        return GridParameterWriter.Request.parse(params);
     }
     private static void catalogFiltersKindsSortsAndPaginates() {
         Fixture f = new Fixture();
