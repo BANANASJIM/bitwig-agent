@@ -207,7 +207,7 @@ public final class GridModuleNameWriterTest {
         check(graph.getAsJsonObject("window").get("complete").getAsBoolean() && graph.getAsJsonArray("modules").size() == 2, "all bounded modules returned despite optional metadata limitations");
         JsonObject other = graph.getAsJsonArray("modules").get(1).getAsJsonObject();
         check(text(other, "customName").equals("untouched") && text(other, "name").equals("Other effective"), "unrelated native module names are untouched");
-        check(graph.getAsJsonObject("coverage").get("parameters").getAsString().equals("not_requested"), "name result omits parameters explicitly");
+        check(graph.getAsJsonArray("unsupported").toString().contains("parameters_not_requested") && !graph.has("coverage"), "name result omits parameters explicitly and diagnostics prose");
         Fixture unavailable = new Fixture(); unavailable.model.unavailable.add(MODULE_NAMES);
         failed(unavailable.start(new GridModuleNameWriter.Request("", "new")), "grid_unavailable", "not_applied");
     }

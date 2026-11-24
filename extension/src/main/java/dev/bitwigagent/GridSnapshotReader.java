@@ -76,6 +76,12 @@ final class GridSnapshotReader {
     }
 
     JsonObject snapshot(Object proxy, UUID expectedTrackId, int offset, int limit, boolean parameters, Runnable check) {
+        return snapshot(proxy, expectedTrackId, offset, limit, parameters, true, null, check);
+    }
+
+    /** diagnostics adds native modelClass/path and constant coverage prose; moduleIds (lowercase UUIDs) selects rows. */
+    JsonObject snapshot(Object proxy, UUID expectedTrackId, int offset, int limit, boolean parameters,
+            boolean diagnostics, Set<String> moduleIds, Runnable check) {
         a.documentThread(); check.run();
         NativeTarget binding = target(proxy, expectedTrackId);
         Object graph = binding.graph;
@@ -93,12 +99,23 @@ final class GridSnapshotReader {
             ids.put(module, id);
         }
         JsonArray modules = new JsonArray(), connections = new JsonArray();
-        int end = Math.min(all.size(), offset + limit);
+        List<Object> window = all;
+        JsonArray missing = new JsonArray();
+        if (moduleIds != null) {
+            window = new ArrayList<>(); Set<String> found = new HashSet<>();
+            for (Object module : all) {
+                String id = ids.get(module);
+                if (id != null && moduleIds.contains(id)) { window.add(module); found.add(id); }
+            }
+            for (String id : new TreeSet<>(moduleIds)) if (!found.contains(id)) missing.add(id);
+            state.unsupported("module_filter_partial");
+        }
+        int end = Math.min(window.size(), offset + limit);
         for (int i = offset; i < end; i++) {
-            Object module = all.get(i); state.check();
+            Object module = window.get(i); state.check();
             if (!ids.containsKey(module)) continue;
             JsonObject item = new JsonObject();
-            item.addProperty("modelClass", text(module.getClass().getName()));
+            if (diagnostics) item.addProperty("modelClass", text(module.getClass().getName()));
             item.addProperty("instanceId", ids.get(module));
             item.addProperty("localKey", text(a.read(Field.LOCAL_KEY, module)));
             metadataText(item, "name", Field.MODULE_NAME, module, Metadata.MODULE_NAMES, state, "module_name");
@@ -115,8 +132,8 @@ final class GridSnapshotReader {
             Object entry = metadataValue(Field.TYPE_ENTRY, typeId, Metadata.TYPE_NAMES, state, "module_type_name");
             metadataText(item, "typeName", Field.TYPE_NAME, entry, Metadata.TYPE_NAMES, state, "module_type_name");
             Set<Object> enumeratedPorts = Collections.newSetFromMap(new IdentityHashMap<>());
-            item.add("inputs", ports(module, graph, ids, true, connections, enumeratedPorts, state));
-            item.add("outputs", ports(module, graph, ids, false, connections, enumeratedPorts, state));
+            item.add("inputs", ports(module, graph, ids, true, connections, enumeratedPorts, diagnostics, state));
+            item.add("outputs", ports(module, graph, ids, false, connections, enumeratedPorts, diagnostics, state));
             JsonArray values = new JsonArray();
             if (parameters && a.parametersAvailable()) {
                 for (Object child : collect(Field.CHILDREN, module, MAX_CHILDREN, state)) {
@@ -125,12 +142,12 @@ final class GridSnapshotReader {
                         if (!enumeratedPorts.contains(child)) state.unsupported("port_child_not_enumerated");
                         continue;
                     }
-                    values.add(parameter(child, module, state));
+                    values.add(parameter(child, module, diagnostics, state));
                 }
             } else state.unsupported(parameters ? "typed_parameter_binding_unavailable" : "parameters_not_requested");
             item.add("parameters", values); modules.add(item);
         }
-        if (offset != 0 || all.size() > limit) state.unsupported("module_window_partial");
+        if (offset != 0 || window.size() > limit) state.unsupported("module_window_partial");
         if (parameters && !a.parametersAvailable()) state.unsupported("typed_parameter_binding_unavailable");
         if (!parameters) state.unsupported("parameters_not_requested");
         check.run();
@@ -139,11 +156,13 @@ final class GridSnapshotReader {
         JsonObject deviceMetadata = new JsonObject(), graphMetadata = new JsonObject();
         deviceMetadata.addProperty("modelClass", text(binding.target.getClass().getName()));
         graphMetadata.addProperty("modelClass", text(graph.getClass().getName()));
-        result.add("device", deviceMetadata); result.add("graph", graphMetadata);
+        if (diagnostics) { result.add("device", deviceMetadata); result.add("graph", graphMetadata); }
         result.add("modules", modules); result.add("connections", connections);
-        result.add("window", window(offset, limit, all.size()));
+        if (missing.size() > 0) result.add("missingModuleIds", missing);
+        result.add("window", window(offset, limit, window.size()));
         result.addProperty("complete", state.unsupported.isEmpty());
         JsonObject coverage = new JsonObject();
+        if (diagnostics) {
         coverage.addProperty("structure", "mapped_modules_and_ports");
         coverage.addProperty("nativeOwningTrack", "device_ancestor_channel_uuid_checked_before_and_after_capture");
         coverage.addProperty("connections", "incoming_to_returned_modules_same_graph_only");
@@ -154,9 +173,10 @@ final class GridSnapshotReader {
         coverage.addProperty("positionUnits", "native_grid_coordinates_unverified");
         coverage.addProperty("nestedChildren", "not_traversed");
         result.add("coverage", coverage);
+        }
         JsonArray unsupported = new JsonArray(); state.unsupported.forEach(unsupported::add); result.add("unsupported", unsupported);
-        result.addProperty("nativeRevisionAvailable", false);
-        result.addProperty("identityCaveat", "instanceId is a current native UUID, not typeId or localKey; observed UUIDs changed across project reopen and must be reacquired. localKey and paths may change after edits. Native owning-track channel UUID is corroborated before and after capture, including the SCA alias mapping. Device index and name remain public observations that can lag native rebinding; same-track same-name replacement is not distinguished. No persistent device identity, native device-position corroboration, native ABA detection, native revision or cross-request atomicity.");
+        if (diagnostics) result.addProperty("nativeRevisionAvailable", false);
+        if (diagnostics) result.addProperty("identityCaveat", "instanceId is a current native UUID, not typeId or localKey; observed UUIDs changed across project reopen and must be reacquired. localKey and paths may change after edits. Native owning-track channel UUID is corroborated before and after capture, including the SCA alias mapping. Device index and name remain public observations that can lag native rebinding; same-track same-name replacement is not distinguished. No persistent device identity, native device-position corroboration, native ABA detection, native revision or cross-request atomicity.");
         result.addProperty("nativeMutation", false); result.addProperty("nativeUndo", false);
         return result;
     }
@@ -249,7 +269,7 @@ final class GridSnapshotReader {
     }
 
     JsonObject parameterValue(ParameterBinding binding) {
-        return parameter(binding.parameter, binding.module, binding.state);
+        return parameter(binding.parameter, binding.module, true, binding.state);
     }
 
     JsonObject parameterResult(ParameterBinding binding, JsonObject value) {
@@ -370,7 +390,7 @@ final class GridSnapshotReader {
 
 
     private JsonArray ports(Object module, Object graph, IdentityHashMap<Object, String> ids,
-            boolean input, JsonArray connections, Set<Object> enumeratedPorts, State state) {
+            boolean input, JsonArray connections, Set<Object> enumeratedPorts, boolean diagnostics, State state) {
         JsonArray ports = new JsonArray(); Set<String> keys = new HashSet<>();
         for (Object port : collect(input ? Field.INPUTS : Field.OUTPUTS, module, MAX_CHILDREN, state)) {
             state.check();
@@ -381,8 +401,10 @@ final class GridSnapshotReader {
             if (!keys.add(key)) throw failure("grid_unavailable", "Duplicate native port key; endpoint identity is ambiguous.");
             enumeratedPorts.add(port);
             JsonObject item = new JsonObject(); item.addProperty("key", key);
-            item.addProperty("modelClass", text(port.getClass().getName()));
-            item.addProperty("path", text(a.read(Field.PATH, port)));
+            if (diagnostics) {
+                item.addProperty("modelClass", text(port.getClass().getName()));
+                item.addProperty("path", text(a.read(Field.PATH, port)));
+            }
             metadataText(item, "name", input ? Field.INPUT_NAME : Field.OUTPUT_NAME, port,
                     Metadata.PORT_NAMES, state, input ? "input_name" : "output_name");
             ports.add(item);
@@ -406,7 +428,7 @@ final class GridSnapshotReader {
         return ports;
     }
 
-    private JsonObject parameter(Object child, Object module, State state) {
+    private JsonObject parameter(Object child, Object module, boolean diagnostics, State state) {
         JsonObject result = new JsonObject();
         Kind kind = parameterKind(child);
         if (kind == null) {
@@ -420,7 +442,7 @@ final class GridSnapshotReader {
         String panelFamily = kind == Kind.PANEL_STRING ? "string_panel" : "boolean_panel";
         result.addProperty("supported", true);
         result.addProperty("kind", panel ? (kind == Kind.PANEL_STRING ? "string" : "boolean") : kind.name().toLowerCase(Locale.ROOT));
-        result.addProperty("path", text(a.read(Field.PATH, child)));
+        if (diagnostics) result.addProperty("path", text(a.read(Field.PATH, child)));
         if (panel) {
             result.addProperty("controlFamily", panelFamily);
             result.addProperty("parameterId", text(a.read(Field.PARAMETER_ID, child)));

@@ -73,6 +73,85 @@ final class GridParameterWriter {
         return result;
     }
 
+    static final class Entry {
+        final UUID moduleId; final String parameterId; final Request request;
+        Entry(UUID moduleId, String parameterId, Request request) {
+            this.moduleId = moduleId; this.parameterId = parameterId; this.request = request;
+        }
+    }
+
+    /** Live CAS and range/option checks only; nothing is dispatched. */
+    private void preflight(Object proxy, UUID trackId, Entry entry, Runnable check) {
+        GridSnapshotReader.ParameterBinding binding = values.bindParameter(proxy, trackId, entry.moduleId, entry.parameterId, check);
+        if (binding.kind == GridSnapshotReader.Kind.PANEL_STRING)
+            throw failure("grid_unavailable", "String panels are read-only; no string write operation is supported.");
+        if (binding.kind == GridSnapshotReader.Kind.PANEL_BOOLEAN) {
+            if (panels == null) throw failure("grid_unavailable", "Boolean panel write bindings are unavailable.");
+            panels.preflight(binding, entry.request, check);
+            return;
+        } else {
+            nativeWriter.requireSupported(binding.parameter, binding.kind);
+            contexts.requireWritable(binding, null, check);
+        }
+        entry.request.validateCurrent(values.parameterValue(binding));
+        values.guardParameter(binding);
+    }
+
+    /**
+     * Same-device batch: every CAS first (any failure writes nothing), then in-order dispatch that stops at the first
+     * failure or unknown. Each write is the ordinary single guarded CAS; nothing is retried or rolled back.
+     */
+    JsonObject setAll(Object proxy, UUID trackId, java.util.List<Entry> entries, Runnable check, Runnable dispatch) {
+        StringBuilder rejected = new StringBuilder(); String code = null; int failures = 0;
+        for (int i = 0; i < entries.size(); i++) {
+            try { preflight(proxy, trackId, entries.get(i), check); }
+            catch (RpcException error) {
+                if (code == null) code = error.code;
+                if (failures++ < 8) rejected.append(rejected.length() == 0 ? "" : "; ").append('#').append(i).append(' ')
+                        .append(error.code).append(": ").append(error.getMessage());
+            }
+        }
+        if (failures > 0)
+            throw new RpcException(code, "No parameter was written; " + failures + " of " + entries.size()
+                    + " writes failed their checks: " + rejected + (failures > 8 ? "; ..." : ""), "not_applied");
+        JsonArray writes = new JsonArray();
+        String status = "applied", completion = "observed"; int written = 0, completed = 0;
+        for (int i = 0; i < entries.size(); i++) {
+            Entry entry = entries.get(i);
+            JsonObject item = new JsonObject();
+            item.addProperty("moduleId", entry.moduleId.toString()); item.addProperty("parameterId", entry.parameterId);
+            writes.add(item);
+            if (!status.equals("applied")) { item.addProperty("status", "not_dispatched"); continue; }
+            boolean[] sent = {false};
+            try {
+                JsonObject one = set(proxy, trackId, entry.moduleId, entry.parameterId, entry.request, check,
+                        () -> { dispatch.run(); sent[0] = true; });
+                boolean changed = one.get("mutationDispatched").getAsBoolean();
+                item.addProperty("status", changed ? "applied" : "already_matched");
+                item.add("previousValue", one.get("previousValue"));
+                item.add("value", one.getAsJsonObject("parameter").get("value"));
+                for (String key : new String[] {"previousCoupledParameter", "coupledParameter"})
+                    if (one.has(key)) item.add(key, one.get(key));
+                completed++; if (changed) written++;
+            } catch (RuntimeException error) {
+                // Any failure after this entry's native dispatch may have landed, whatever outcome the error carries.
+                boolean unknown = sent[0] || error instanceof RpcException && "unknown".equals(((RpcException) error).outcome);
+                if (!unknown && !(error instanceof RpcException)) throw error;
+                if (completed == 0 && !unknown) throw error; // nothing dispatched: ordinary not_applied error
+                item.addProperty("status", unknown ? "unknown" : "failed");
+                JsonObject why = new JsonObject();
+                why.addProperty("code", error instanceof RpcException ? ((RpcException) error).code : "internal_error");
+                why.addProperty("message", error.getMessage());
+                item.add("error", why);
+                status = unknown ? "unknown" : written > 0 ? "partial" : "failed"; if (unknown) completion = "unknown";
+            }
+        }
+        JsonObject result = HostServices.observed();
+        result.addProperty("batchStatus", status); result.addProperty("completion", completion);
+        result.addProperty("written", written); result.add("writes", writes);
+        return result;
+    }
+
     static final class Request {
         final String kind;
         final JsonPrimitive expected, value;

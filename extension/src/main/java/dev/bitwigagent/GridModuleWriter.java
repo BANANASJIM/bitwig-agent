@@ -41,6 +41,7 @@ final class GridModuleWriter {
             Consumer<JsonObject> complete, Consumer<Throwable> fail) {
         available(); values.documentThread(); check.run();
         GridSnapshotReader.NativeTarget target = snapshots.target(proxy, trackId);
+        JsonObject graphBefore = snapshots.snapshot(proxy, trackId, 0, MAX_MODULES, false, false, null, check);
         Layout before = layout(target.graph, check);
         Row selected = before.require(moduleId);
         if (request != null) request.preflight(before, selected);
@@ -69,7 +70,7 @@ final class GridModuleWriter {
                 before.survivors(after, request == null ? selected : null);
                 if (!changed) before.sameLayout(after);
                 else if (request != null) before.requireMoveLayout(after, selected, request);
-                JsonObject graph = snapshots.snapshot(proxy, trackId, 0, MAX_MODULES, false, check);
+                JsonObject graph = snapshots.snapshot(proxy, trackId, 0, MAX_MODULES, false, false, null, check);
                 after.sameLayout(layout(target.graph, check));
                 snapshots.guardTarget(target, proxy, trackId);
                 contexts.capture(target.target, target.graph, after.modules, context, check);
@@ -87,7 +88,7 @@ final class GridModuleWriter {
                     result.add("actualPosition", actual.position());
                     result.addProperty("matchesRequested", actual.x == request.x && actual.y == request.y);
                 }
-                result.add("graph", graph);
+                result.add("graph", graph); result.add("graphBefore", graphBefore);
                 result.addProperty("mutationDispatched", changed);
                 result.addProperty("nativeMutation", changed);
                 result.addProperty("nativeUndo", changed);

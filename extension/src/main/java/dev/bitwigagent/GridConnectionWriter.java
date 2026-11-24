@@ -28,6 +28,7 @@ final class GridConnectionWriter {
             Consumer<JsonObject> complete, Consumer<Throwable> fail) {
         quarantine.requireAvailable(); values.documentThread(); check.run();
         GridSnapshotReader.NativeTarget target = snapshots.target(proxy, trackId);
+        JsonObject graphBefore = snapshots.snapshot(proxy, trackId, 0, GridTopologyContext.MAX_MODULES, false, false, null, check);
         Graph before = capture(target.graph, check);
         Port input = before.require(request.target, true);
         Object source = request.source == null ? null : before.require(request.source, false).model;
@@ -60,7 +61,7 @@ final class GridConnectionWriter {
                 contexts.capture(target.target, target.graph, after.members, context, check);
                 Port actual = after.require(request.target, true);
                 nativeWriter.requireSupported(actual.model, context.undo());
-                JsonObject graph = snapshots.snapshot(proxy, trackId, 0, GridTopologyContext.MAX_MODULES, false, check);
+                JsonObject graph = snapshots.snapshot(proxy, trackId, 0, GridTopologyContext.MAX_MODULES, false, false, null, check);
                 after.same(capture(target.graph, check), true);
                 snapshots.guardTarget(target, proxy, trackId);
                 contexts.capture(target.target, target.graph, after.members, context, check);
@@ -72,7 +73,7 @@ final class GridConnectionWriter {
                 result.add("requestedSource", Endpoint.json(request.source));
                 result.add("actualSource", Endpoint.json(actual.sourceEndpoint));
                 result.addProperty("matchesRequested", Objects.equals(request.source, actual.sourceEndpoint));
-                result.add("graph", graph);
+                result.add("graph", graph); result.add("graphBefore", graphBefore);
                 result.addProperty("mutationDispatched", changed);
                 result.addProperty("nativeMutation", changed); result.addProperty("nativeUndo", changed);
                 result.addProperty("verification", changed ? "later_document_event_bounded_native_graph_observation" : "already_matched");

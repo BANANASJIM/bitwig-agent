@@ -98,7 +98,9 @@ public final class RpcServerTest {
                     + "\"trackId\":\"00000000-0000-0000-0000-000000000001\",\"deviceIndex\":0,"
                     + "\"expectedDeviceName\":\"Poly Grid\",\"targetModuleId\":\"00000000-0000-0001-0000-000000000001\","
                     + "\"targetPortKey\":\"in\",";
-            JsonObject result = call(server, prefix + "\"expectedSource\":null,\"source\":null}}\n").getAsJsonObject("result");
+            JsonObject response = call(server, prefix + "\"expectedSource\":null,\"source\":null}}\n");
+            check(response.has("result"), "Expected result: " + response);
+            JsonObject result = response.getAsJsonObject("result");
             check(result.get("previousSource").isJsonNull() && result.get("requestedSource").isJsonNull()
                     && result.get("actualSource").isJsonNull() && !result.get("mutationDispatched").getAsBoolean(),
                     "explicit nullable CAS reaches real writer semantics and survives JSON response serialization");

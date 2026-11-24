@@ -15,9 +15,9 @@ TrackId = Annotated[str, Field(pattern=r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA
 UnitValue = Annotated[float, Field(ge=0, le=1)]
 
 
-def omitted():
+def omitted(**kwargs):
     """Absent is allowed; explicit null is not part of the wire contract."""
-    return Field(default=None, json_schema_extra=lambda schema: schema.pop("default", None))
+    return Field(default=None, json_schema_extra=lambda schema: schema.pop("default", None), **kwargs)
 
 
 def validate_local_path(value: str) -> None:
@@ -105,9 +105,17 @@ class GridGetArgs(ParameterArgs):
     moduleOffset: int = Field(default=0, ge=0, le=100000)
     moduleLimit: int = Field(default=64, ge=1, le=128)
     includeParameters: bool = True
+    diagnostics: bool = Field(default=False, description="Add obfuscated native modelClass/path and constant coverage notes; no write needs them.")
+    moduleIds: Annotated[list[TrackId], Field(min_length=1, max_length=128)] = omitted(
+        description="Return only these module instanceIds (e.g. one module's parameters without paging); absent ids are listed in missingModuleIds and the read is never complete.")
 
 
-class GridModuleInsertArgs(ParameterArgs):
+class GridWriteArgs(ParameterArgs):
+    graph: Literal["diff", "full"] = omitted(
+        description="diff (default): what changed, computed from the before/after graphs. full: the whole bounded graph after the edit.")
+
+
+class GridModuleInsertArgs(GridWriteArgs):
     typeId: TrackId = Field(description="Canonical MODULE type UUID discovered through grid.catalog, not a module instanceId or file path; the host verifies catalog membership.")
     x: int = Field(ge=-(2**31), le=2**31 - 1, description="Requested absolute native anchor X, not a relative delta or pixels. Signed int32 JSON integer token; native layout bounds checked by host.")
     y: int = Field(ge=-(2**31), le=2**31 - 1, description="Requested absolute native anchor Y, not a relative delta or pixels. Signed int32 JSON integer token; native layout bounds checked by host.")
@@ -117,24 +125,28 @@ class GridModuleArgs(ParameterArgs):
     moduleId: TrackId = Field(description="Current module instanceId from grid.get; reacquire after reopening the project.")
 
 
+class GridModuleEditArgs(GridWriteArgs):
+    moduleId: TrackId = Field(description="Current module instanceId from grid.get; reacquire after reopening the project.")
+
+
 class GridConnectionSource(StrictModel):
     moduleId: TrackId = Field(description="Current source module instanceId from grid.get, not a type UUID.")
     portKey: str = Field(max_length=1024, description="Exact output port key from grid.get; empty is valid, at most 1024 UTF-16 code units.")
 
 
-class GridConnectionSetArgs(ParameterArgs):
+class GridConnectionSetArgs(GridWriteArgs):
     targetModuleId: TrackId = Field(description="Current destination module instanceId from grid.get; reacquire after reopening the project.")
     targetPortKey: str = Field(max_length=1024, description="Exact input port key from grid.get; empty is valid, at most 1024 UTF-16 code units.")
     expectedSource: GridConnectionSource | None = Field(description="Required exact prior source from fresh grid.get, or explicit null for an unconnected input. Checked before even an already-matching no-op; never defaults to null.")
     source: GridConnectionSource | None = Field(description="Required requested output endpoint, or explicit null to disconnect. Must belong to the same current graph; native repair can change the observed result.")
 
 
-class GridModuleRenameArgs(GridModuleArgs):
+class GridModuleRenameArgs(GridModuleEditArgs):
     expectedCustomName: str = Field(max_length=1024, description="Exact raw customName from a fresh grid.get, not effective name or typeName. Required even for no-op; empty is valid. At most 1024 UTF-16 code units; no trimming or coercion.")
     customName: str = Field(max_length=1024, description="Requested raw custom name; empty resets the override through native semantics. Unicode and whitespace are preserved, at most 1024 UTF-16 code units.")
 
 
-class GridModuleMoveArgs(GridModuleArgs):
+class GridModuleMoveArgs(GridModuleEditArgs):
     expectedX: int = Field(ge=-(2**31), le=2**31 - 1, description="Fresh native anchor X; exact stale-state check precedes even a no-op. Signed int32 JSON integer token.")
     expectedY: int = Field(ge=-(2**31), le=2**31 - 1, description="Fresh native anchor Y; exact stale-state check precedes even a no-op. Signed int32 JSON integer token.")
     x: int = Field(ge=-(2**31), le=2**31 - 1, description="Requested absolute native anchor X, not a relative delta or pixels. Signed int32 JSON integer token; native layout bounds checked by host.")
@@ -145,7 +157,9 @@ class GridParameterGetArgs(GridModuleArgs):
     parameterId: str = Field(max_length=1024, description="Exact native parameter ID from grid.get, not a name; empty is valid, at most 1024 UTF-16 code units.")
 
 
-class GridParameterSetArgs(GridParameterGetArgs):
+class GridRawWrite(StrictModel):
+    moduleId: TrackId = Field(description="Current module instanceId from grid.get; reacquire after reopening the project.")
+    parameterId: str = Field(max_length=1024, description="Exact native parameter ID from grid.get, not a name; empty is valid, at most 1024 UTF-16 code units.")
     model_config = ConfigDict(json_schema_extra={
         "oneOf": [
             {"properties": {
@@ -162,9 +176,9 @@ class GridParameterSetArgs(GridParameterGetArgs):
     })
 
     expectedKind: Literal["float", "integer", "enum", "boolean"] = Field(
-        description="Fresh typed kind from grid.parameters.get; checked before any already-matching no-op.")
+        description="Typed kind from a recent grid.get row (or grid.parameters.get); checked before any already-matching no-op.")
     expectedValue: bool | int | float = Field(
-        description="Exact current native raw value from a fresh grid.parameters.get, not normalized or display units. Must match expectedKind; no tolerance or coercion.")
+        description="Exact current native raw value from a recent grid.get row (or grid.parameters.get), not normalized or display units; stale is rejected not_applied. Must match expectedKind; no tolerance or coercion.")
     value: bool | int | float = Field(
         description="Requested native raw value: boolean JSON bool; integer/enum signed int32 JSON integer token; float finite JSON number. Enum uses an actual listed option value, never an ordinal. Native range/representability are checked before dispatch.")
 
@@ -194,6 +208,39 @@ class GridParameterSetArgs(GridParameterGetArgs):
                     raise ValueError(f"{field} must be a signed int32 JSON integer for {self.expectedKind} kind")
             elif type(value) not in (int, float):
                 raise ValueError(f"{field} must be a finite JSON number for float kind")
+        return self
+
+
+GRID_WRITE_FIELDS = {"moduleId", "parameterId", "expectedKind", "expectedValue", "value"}
+
+
+class GridParameterSetArgs(ParameterArgs):
+    """One write (the five fields) or a same-device batch (writes), never both."""
+    model_config = ConfigDict(json_schema_extra={
+        "oneOf": [{"required": sorted(GRID_WRITE_FIELDS)}, {"required": ["writes"]}],
+    })
+
+    moduleId: TrackId = omitted(description="Single form: current module instanceId from grid.get.")
+    parameterId: str = omitted(max_length=1024, description="Single form: exact parameterId from grid.get; empty is valid.")
+    expectedKind: Literal["float", "integer", "enum", "boolean"] = omitted(description="Single form: kind from a recent grid.get row.")
+    expectedValue: bool | int | float = omitted(description="Single form: exact current raw value from a recent grid.get row.")
+    value: bool | int | float = omitted(description="Single form: requested native raw value.")
+    writes: Annotated[list[GridRawWrite], Field(min_length=1, max_length=64)] = omitted(
+        description="Batch form: 1..64 writes on this device, each a full single write. All CAS checks run first; any failure writes nothing. Then writes dispatch in order and stop at the first failure.")
+
+    @model_validator(mode="after")
+    def validate_one_form(self):
+        supplied = GRID_WRITE_FIELDS & self.model_fields_set
+        if "writes" in self.model_fields_set:
+            if supplied:
+                raise ValueError("supply either writes or the single-write fields, not both")
+            keys = [(item.moduleId.lower(), item.parameterId) for item in self.writes]
+            if len(set(keys)) != len(keys):
+                raise ValueError("writes must not repeat a moduleId/parameterId pair")
+        elif supplied != GRID_WRITE_FIELDS:
+            raise ValueError("supply writes, or all of moduleId, parameterId, expectedKind, expectedValue and value")
+        else:
+            GridRawWrite.model_validate({key: getattr(self, key) for key in GRID_WRITE_FIELDS})
         return self
 
 

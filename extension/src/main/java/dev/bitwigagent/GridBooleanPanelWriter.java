@@ -16,6 +16,16 @@ final class GridBooleanPanelWriter {
         this.values = values; this.contexts = contexts; this.nativeWriter = nativeWriter;
     }
 
+    /** Every pre-dispatch check of set(); nothing is written. */
+    void preflight(GridSnapshotReader.ParameterBinding binding, GridParameterWriter.Request request, Runnable check) {
+        nativeWriter.requireSupported(binding.parameter);
+        GridSnapshotReader.ParameterBinding coupled = values.bindBipolarParameter(binding);
+        request.validateCurrent(values.parameterValue(binding));
+        contexts.requireWritable(binding, null, check);
+        contexts.requireWritable(coupled, null, check);
+        values.guardBipolarParameter(binding, coupled);
+    }
+
     JsonObject set(GridSnapshotReader.ParameterBinding binding, GridParameterWriter.Request request,
             Runnable check, Runnable dispatch) {
         nativeWriter.requireSupported(binding.parameter);
