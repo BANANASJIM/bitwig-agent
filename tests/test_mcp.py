@@ -178,10 +178,11 @@ async def test_mcp_discovery_publishes_required_nullable_connection_contract(mcp
     assert tool.annotations.read_only_hint is False
     schema = tool.input_schema
     assert schema["additionalProperties"] is False
-    assert set(schema["required"]) == {
-        "trackId", "deviceIndex", "expectedDeviceName",
-        "targetModuleId", "targetPortKey", "expectedSource", "source",
-    }
+    assert set(schema["required"]) == {"trackId", "deviceIndex", "expectedDeviceName"}
+    assert schema["oneOf"] == [
+        {"required": ["expectedSource", "source", "targetModuleId", "targetPortKey"]},
+        {"required": ["connections"]},
+    ]
     for field in ("expectedSource", "source"):
         endpoint = schema["properties"][field]
         assert "default" not in endpoint

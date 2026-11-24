@@ -32,6 +32,8 @@ public final class GridModuleTest {
         connectionResultsWaitForBothQueues();
         connectionSafetyTargetsAndCancellationGuardQueues();
         insertionArguments();
+        capabilitiesAreCompactByDefault();
+        connectionBatchArgumentsValidateBeforeScheduling();
         batchAndReadOptionsValidateAndDispatch();
         insertionWaitsForNativeSettlementAndControllerDelivery();
         insertionSafetyCancellationAndCloseKeepNativeLifetimeIndependent();
@@ -572,7 +574,57 @@ public final class GridModuleTest {
         check(one2.has("parameter") && !one2.has("nativeUndoScope") && !one2.has("safetyScope") && !one2.has("scope")
                 && !one2.getAsJsonObject("target").has("identityScope"), "single write keeps its form without constant prose");
     }
-        private static void insertionArguments() {
+        private static void capabilitiesAreCompactByDefault() {
+        Fixture f = new Fixture();
+        for (String text : List.of("{\"detail\":\"everything\"}", "{\"detail\":1}", "{\"detail\":null}", "{\"x\":1}"))
+            TransportMixFixture.error(f.host.submit(f.module, "grid.capabilities", TransportMixFixture.json(text)), "invalid_params");
+        GridModule.validateParams("grid.capabilities", TransportMixFixture.json("{\"detail\":\"full\"}"));
+        GridModule.validateParams("grid.capabilities", TransportMixFixture.json("{\"detail\":\"summary\"}"));
+        JsonObject full = new JsonObject();
+        full.addProperty("hostVersion", "6.1.4"); full.addProperty("gatePassed", true); full.addProperty("available", true);
+        full.addProperty("topologyQuarantined", false); full.addProperty("topologyAdmissionBlocked", false);
+        full.addProperty("loadedHostJarSha256", "x".repeat(64));
+        for (String key : List.of("catalog", "structure", "typedParameters", "display", "parameterInspection", "parameterWrite",
+                "moduleMove", "moduleDelete", "moduleRename", "moduleInsert")) {
+            JsonObject binding = new JsonObject(); binding.addProperty("available", !key.equals("moduleMove"));
+            binding.addProperty("coverage", "long coverage text"); binding.add("reason", key.equals("moduleMove") ? new JsonPrimitive("no binding") : JsonNull.INSTANCE);
+            full.add(key, binding);
+        }
+        JsonObject panels = new JsonObject(); panels.addProperty("available", true); panels.addProperty("writeAvailable", false);
+        full.add("booleanPanels", panels);
+        JsonObject cable = new JsonObject(); cable.addProperty("available", true); full.add("connectionWrite", cable);
+        JsonObject compact = GridModule.compactCapabilities(full);
+        check(compact.get("gatePassed").getAsBoolean() && compact.get("hostVersion").getAsString().equals("6.1.4")
+                && !compact.get("topologyQuarantined").getAsBoolean() && !compact.get("topologyAdmissionBlocked").getAsBoolean()
+                && compact.getAsJsonObject("writers").get("connectionWrite").getAsBoolean()
+                && !compact.getAsJsonObject("writers").get("moduleMove").getAsBoolean()
+                && !compact.getAsJsonObject("writers").get("booleanPanels").getAsBoolean()
+                && compact.getAsJsonObject("reads").get("catalog").getAsBoolean()
+                && compact.getAsJsonObject("unavailable").get("moduleMove").getAsString().equals("no binding")
+                && !compact.has("loadedHostJarSha256") && compact.toString().length() < 1200,
+                "default capabilities are availability booleans with reasons only for unavailable bindings");
+        Fixture g = new Fixture();
+        HostOperation op = g.host.submit(g.module, "grid.capabilities", new JsonObject()); g.host.next();
+        check(op.result.join().has("writers") && op.result.join().get("available").getAsBoolean(), "capabilities dispatch returns the compact summary");
+        JsonObject detail = new JsonObject(); detail.addProperty("detail", "full");
+        op = g.host.submit(g.module, "grid.capabilities", detail); g.host.next();
+        check(!op.result.join().has("writers") && op.result.join().get("available").getAsBoolean(), "detail full returns the adapter result unchanged");
+    }
+    private static void connectionBatchArgumentsValidateBeforeScheduling() {
+        Fixture f = new Fixture();
+        JsonObject good = target(); JsonArray list = new JsonArray(); JsonObject c = new JsonObject();
+        c.addProperty("targetModuleId", "00000000-0000-0001-0000-000000000001"); c.addProperty("targetPortKey", "in");
+        c.add("expectedSource", JsonNull.INSTANCE); c.add("source", JsonNull.INSTANCE); list.add(c); good.add("connections", list);
+        GridModule.validateParams("grid.connections.set", good);
+        good.addProperty("graph", "full"); GridModule.validateParams("grid.connections.set", good);
+        JsonObject mixed = good.deepCopy(); mixed.addProperty("targetPortKey", "in");
+        JsonObject empty = good.deepCopy(); empty.add("connections", new JsonArray());
+        JsonObject extra = good.deepCopy(); extra.addProperty("unknown", 1);
+        for (JsonObject bad : List.of(mixed, empty, extra))
+            TransportMixFixture.error(f.host.submit(f.module, "grid.connections.set", bad), "invalid_params");
+        check(f.host.tasks.isEmpty() && f.adapter.tasks.isEmpty(), "invalid connection batches reject before scheduling");
+    }
+    private static void insertionArguments() {
         Fixture f = new Fixture();
         for (String key : List.of("trackId", "deviceIndex", "expectedDeviceName", "typeId", "x", "y")) {
             JsonObject p = insertionTarget(); p.remove(key);
@@ -864,6 +916,11 @@ public final class GridModuleTest {
                 Runnable check, Runnable dispatch, java.util.function.Consumer<JsonObject> complete,
                 java.util.function.Consumer<Throwable> failure) {
             connections.edit(request, check, dispatch, complete, failure);
+        }
+        @Override public void setConnections(Object proxy, UUID track, java.util.List<GridConnectionWriter.Request> requests,
+                Runnable check, Runnable dispatch, java.util.function.Consumer<JsonObject> complete,
+                java.util.function.Consumer<Throwable> failure) {
+            connections.editAll(requests, check, dispatch, complete, failure);
         }
         @Override public void insertModule(Object proxy, UUID track, GridInsertionWriter.Request request,
                 Runnable check, Runnable dispatch, java.util.function.Consumer<JsonObject> complete,

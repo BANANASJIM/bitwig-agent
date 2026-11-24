@@ -197,18 +197,19 @@ async def build_grid(call, target: dict, types: dict[str, str], label: str) -> d
             or any(item.get("status") not in ("applied", "already_matched") or item.get("value") != wanted["value"]
                    for item, wanted in zip(written["writes"], expected["parameters"]))):
         raise RuntimeError("Native parameter batch did not establish the requested control values")
-    for source, destination in wires:
-        result = await call("grid.connections.set", {**target, "targetModuleId": destination["moduleId"],
-                                                    "targetPortKey": destination["portKey"],
-                                                    "expectedSource": None, "source": source})
-        change = {"target": {"moduleId": destination["moduleId"], "portKey": destination["portKey"]},
-                  "from": None, "to": source}
-        if (result.get("matchesRequested") is not True or result.get("actualSource") != source
-                or result.get("connectionsChanged") != [change] or result.get("modulesAdded")
-                or result.get("modulesRemoved") or result.get("graphComplete") is False):
-            raise RuntimeError("Native cable repair did not retain exactly the requested source")
-        expected["connections"].append({"sourceModuleId": source["moduleId"], "sourcePortKey": source["portKey"],
-                                         "targetModuleId": destination["moduleId"], "targetPortKey": destination["portKey"]})
+    # One batch for every cable: all expectedSource checks run first; the single diff lists each changed input.
+    edits = [{"targetModuleId": destination["moduleId"], "targetPortKey": destination["portKey"],
+              "expectedSource": None, "source": source} for source, destination in wires]
+    result = await call("grid.connections.set", {**target, "connections": edits})
+    changes = [{"target": {"moduleId": edit["targetModuleId"], "portKey": edit["targetPortKey"]},
+                "from": None, "to": edit["source"]} for edit in edits]
+    if (result.get("batchStatus") != "applied"
+            or sorted(result.get("connectionsChanged", []), key=repr) != sorted(changes, key=repr) or result.get("modulesAdded")
+            or result.get("modulesRemoved") or result.get("graphComplete") is False):
+        raise RuntimeError("Native cable repair did not retain exactly the requested sources")
+    for edit in edits:
+        expected["connections"].append({"sourceModuleId": edit["source"]["moduleId"], "sourcePortKey": edit["source"]["portKey"],
+                                         "targetModuleId": edit["targetModuleId"], "targetPortKey": edit["targetPortKey"]})
     graph = await call("grid.get", target)
     checked_patch(graph, target, expected)
     return {"target": target, "expectedPatch": expected, "graphReadback": graph}

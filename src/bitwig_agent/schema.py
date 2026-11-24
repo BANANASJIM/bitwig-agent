@@ -95,6 +95,11 @@ class ModulatorParameterGetArgs(StatusArgs):
     parameterId: str = Field(max_length=1024, description="Exact addressable parameterId from modulators.list, not a display name; empty is valid when unique, at most 1024 UTF-16 code units.")
 
 
+class GridCapabilitiesArgs(StatusArgs):
+    detail: Literal["summary", "full"] = omitted(
+        description="summary (default): availability booleans only. full: every binding's coverage, operation and limits.")
+
+
 class GridCatalogArgs(StatusArgs):
     query: str = Field(default="", max_length=128)
     offset: int = Field(default=0, ge=0, le=100000)
@@ -134,11 +139,41 @@ class GridConnectionSource(StrictModel):
     portKey: str = Field(max_length=1024, description="Exact output port key from grid.get; empty is valid, at most 1024 UTF-16 code units.")
 
 
-class GridConnectionSetArgs(GridWriteArgs):
+GRID_CONNECTION_FIELDS = {"targetModuleId", "targetPortKey", "expectedSource", "source"}
+
+
+class GridConnectionEdit(StrictModel):
     targetModuleId: TrackId = Field(description="Current destination module instanceId from grid.get; reacquire after reopening the project.")
     targetPortKey: str = Field(max_length=1024, description="Exact input port key from grid.get; empty is valid, at most 1024 UTF-16 code units.")
     expectedSource: GridConnectionSource | None = Field(description="Required exact prior source from fresh grid.get, or explicit null for an unconnected input. Checked before even an already-matching no-op; never defaults to null.")
     source: GridConnectionSource | None = Field(description="Required requested output endpoint, or explicit null to disconnect. Must belong to the same current graph; native repair can change the observed result.")
+
+
+class GridConnectionSetArgs(GridWriteArgs):
+    """One connection edit (the four fields) or a same-device batch (connections), never both."""
+    model_config = ConfigDict(json_schema_extra={
+        "oneOf": [{"required": sorted(GRID_CONNECTION_FIELDS)}, {"required": ["connections"]}],
+    })
+
+    targetModuleId: TrackId = omitted(description="Single form: current destination module instanceId from grid.get; reacquire after reopening the project.")
+    targetPortKey: str = omitted(max_length=1024, description="Single form: exact input port key from grid.get; empty is valid, at most 1024 UTF-16 code units.")
+    expectedSource: GridConnectionSource | None = omitted(description="Single form: required exact prior source from fresh grid.get, or explicit null for an unconnected input. Checked before even an already-matching no-op; never defaults to null.")
+    source: GridConnectionSource | None = omitted(description="Single form: required requested output endpoint, or explicit null to disconnect. Must belong to the same current graph; native repair can change the observed result.")
+    connections: Annotated[list[GridConnectionEdit], Field(min_length=1, max_length=32)] = omitted(
+        description="Batch form: 1..32 connection edits on this device, each a full single edit on a distinct input. All expectedSource checks run first; any failure writes nothing. Then edits apply in order and stop at the first failure.")
+
+    @model_validator(mode="after")
+    def validate_one_form(self):
+        supplied = GRID_CONNECTION_FIELDS & self.model_fields_set
+        if "connections" in self.model_fields_set:
+            if supplied:
+                raise ValueError("supply either connections or the single-connection fields, not both")
+            keys = [(item.targetModuleId.lower(), item.targetPortKey) for item in self.connections]
+            if len(set(keys)) != len(keys):
+                raise ValueError("connections must not repeat a targetModuleId/targetPortKey pair")
+        elif supplied != GRID_CONNECTION_FIELDS:
+            raise ValueError("supply connections, or all of targetModuleId, targetPortKey, expectedSource and source")
+        return self
 
 
 class GridModuleRenameArgs(GridModuleEditArgs):

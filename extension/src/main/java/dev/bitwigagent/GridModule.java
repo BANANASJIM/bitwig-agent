@@ -45,7 +45,12 @@ final class GridModule implements HostModule {
     @Override public void validate(String method, JsonObject params) { validateParams(method, params); }
     static void validateParams(String method, JsonObject p) {
         switch (method) {
-            case "grid.capabilities": Params.fields(p, Set.of(), Set.of()); return;
+            case "grid.capabilities":
+                Params.fields(p, Set.of(), Set.of("detail"));
+                if (p.has("detail") && !(p.get("detail").isJsonPrimitive() && p.get("detail").getAsJsonPrimitive().isString()
+                        && Set.of("summary", "full").contains(p.get("detail").getAsString())))
+                    throw failure("invalid_params", "detail must be \"summary\" or \"full\".");
+                return;
             case "grid.catalog":
                 Params.fields(p, Set.of(), Set.of("query", "offset", "limit"));
                 if (p.has("query")) {
@@ -59,6 +64,15 @@ final class GridModule implements HostModule {
                 if (p.has("limit")) Params.integer(p, "limit", 1, 256);
                 return;
             case "grid.connections.set":
+                if (p != null && p.has("connections")) {
+                    Params.fields(p, Set.of("trackId", "deviceIndex", "expectedDeviceName", "connections"), Set.of("graph"));
+                    graphMode(p);
+                    canonicalUuid(p, "trackId");
+                    Params.integer(p, "deviceIndex", 0, HostServices.DEVICES - 1);
+                    Params.string(p, "expectedDeviceName");
+                    GridConnectionWriter.Request.parseBatch(p);
+                    return;
+                }
                 if (p == null || !p.keySet().containsAll(Set.of("trackId", "deviceIndex", "expectedDeviceName",
                         "targetModuleId", "targetPortKey", "expectedSource", "source")))
                     throw failure("invalid_params", "Connection edits require trackId, deviceIndex, expectedDeviceName, targetModuleId, targetPortKey, expectedSource and source (optional graph); source fields must be explicitly nullable.");
@@ -128,6 +142,29 @@ final class GridModule implements HostModule {
             default: throw failure("unknown_method", "Unknown Grid operation.");
         }
     }
+    private static final String[] READS = {"catalog", "structure", "typedParameters", "display", "parameterInspection"};
+    private static final String[] WRITERS = {"parameterWrite", "booleanPanels", "moduleMove", "moduleDelete", "moduleRename",
+            "moduleInsert", "connectionWrite"};
+    /** Default grid.capabilities: availability booleans only (reasons for unavailable ones); detail:"full" has every binding. */
+    static JsonObject compactCapabilities(JsonObject full) {
+        JsonObject result = HostServices.observed();
+        for (String key : new String[] {"hostVersion", "gatePassed", "available", "topologyQuarantined", "topologyAdmissionBlocked"})
+            if (full.has(key)) result.add(key, full.get(key));
+        JsonObject reads = new JsonObject(), writers = new JsonObject(), unavailable = new JsonObject();
+        for (String key : READS) summarize(full, key, "available", reads, unavailable);
+        for (String key : WRITERS) summarize(full, key, key.equals("booleanPanels") ? "writeAvailable" : "available", writers, unavailable);
+        result.add("reads", reads); result.add("writers", writers);
+        if (unavailable.size() > 0) result.add("unavailable", unavailable);
+        result.addProperty("detail", "pass detail:\"full\" for per-binding coverage, operations and limits");
+        return result;
+    }
+    private static void summarize(JsonObject full, String key, String flag, JsonObject out, JsonObject unavailable) {
+        if (!full.has(key) || !full.get(key).isJsonObject()) return;
+        JsonObject binding = full.getAsJsonObject(key);
+        boolean available = binding.has(flag) && binding.get(flag).getAsBoolean();
+        out.addProperty(key, available);
+        if (!available && binding.has("reason") && !binding.get("reason").isJsonNull()) unavailable.add(key, binding.get("reason"));
+    }
     private static boolean graphMode(JsonObject p) {
         if (!p.has("graph")) return false;
         JsonElement value = p.get("graph");
@@ -181,7 +218,12 @@ final class GridModule implements HostModule {
     @Override public void dispatch(HostOperation op, String method, JsonObject p) {
         s.check(op);
         if (adapter == null) adapter = new Bitwig614GridAdapter(s.nativeRuntime(op).access("grid_unavailable"));
-        if (method.equals("grid.capabilities")) { s.check(op); op.result.complete(adapter.capabilities()); return; }
+        if (method.equals("grid.capabilities")) {
+            s.check(op);
+            JsonObject full = adapter.capabilities();
+            op.result.complete(p.has("detail") && p.get("detail").getAsString().equals("full") ? full : compactCapabilities(full));
+            return;
+        }
         final boolean moving = method.equals("grid.modules.move");
         final boolean connection = method.equals("grid.connections.set");
         final boolean inserting = method.equals("grid.modules.insert");
@@ -196,7 +238,9 @@ final class GridModule implements HostModule {
         final boolean inspection = method.equals("grid.parameters.get") || scalarWriting;
         final GridParameterWriter.Request request = scalarWriting && !batching ? GridParameterWriter.Request.parse(p) : null;
         final GridModuleWriter.Move move = moving ? GridModuleWriter.Move.parse(p) : null;
-        final GridConnectionWriter.Request cable = connection ? GridConnectionWriter.Request.parse(p) : null;
+        final boolean cableBatch = connection && p.has("connections");
+        final java.util.List<GridConnectionWriter.Request> cables = cableBatch ? GridConnectionWriter.Request.parseBatch(p) : null;
+        final GridConnectionWriter.Request cable = connection && !cableBatch ? GridConnectionWriter.Request.parse(p) : null;
         final GridInsertionWriter.Request insertion = inserting ? GridInsertionWriter.Request.parse(p) : null;
         final GridModuleNameWriter.Request name = renaming ? GridModuleNameWriter.Request.parse(p) : null;
         final HostServices.SafetyObservation safety = writing ? s.stoppedSafety(op) : null;
@@ -224,6 +268,7 @@ final class GridModule implements HostModule {
                     Runnable dispatch = () -> { check.run(); op.dispatched = true; };
                     if (inserting) adapter.insertModule(target.source.device, target.uuid, insertion, check, dispatch, complete, op::fail);
                     else if (renaming) adapter.renameModule(target.source.device, target.uuid, moduleId, name, check, dispatch, complete, op::fail);
+                    else if (cableBatch) adapter.setConnections(target.source.device, target.uuid, cables, check, dispatch, complete, op::fail);
                     else if (connection) adapter.setConnection(target.source.device, target.uuid, cable, check, dispatch, complete, op::fail);
                     else if (moving) adapter.moveModule(target.source.device, target.uuid, moduleId, move, check, dispatch, complete, op::fail);
                     else adapter.deleteModule(target.source.device, target.uuid, moduleId, check, dispatch, complete, op::fail);

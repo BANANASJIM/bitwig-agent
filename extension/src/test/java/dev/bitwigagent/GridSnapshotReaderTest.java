@@ -67,6 +67,11 @@ public final class GridSnapshotReaderTest {
         moduleTopologyReviewRegressions();
         connectionCasNoopAndLaterRepairedGraph();
         connectionMembershipContextAndIdentityGuards();
+        connectionBatchAppliesInOrderWithOneDiff();
+        connectionBatchChecksEveryExpectationBeforeWriting();
+        connectionBatchStopsAtFirstFailureAndUnknownQuarantines();
+        connectionBatchStopsAtNativeRepairMismatch();
+        connectionBatchParsingIsBounded();
         connectionBoundsAndIndependentGeometry();
         connectionFailuresShareStickyQuarantine();
         connectionExactRuntimeGatesRejectOverrides();
@@ -630,6 +635,8 @@ public final class GridSnapshotReaderTest {
                 && !writes.get(0).getAsJsonObject().get("value").getAsBoolean()
                 && writes.get(1).getAsJsonObject().get("status").getAsString().equals("already_matched"),
                 "batch applies changed entries in order and reports already-matched ones without dispatch");
+        check(writes.get(0).getAsJsonObject().get("display").getAsString().equals("native display"),
+                "each batch entry carries the post-write native display string");
         WriterFixture stale = batchFixture();
         RpcException error = null;
         try { batch(stale, entry("LOCAL_ID", "true", "false"), entry("OTHER_ID", "false", "true"), entry("THIRD_ID", "false", "true")); }
@@ -1425,6 +1432,108 @@ public final class GridSnapshotReaderTest {
         }
     }
 
+    private static GridConnectionWriter.Request cable(ConnectionFixture f, String inputKey, UUID owner, GridConnectionWriter.Endpoint expected) {
+        return new GridConnectionWriter.Request(new GridConnectionWriter.Endpoint(owner, inputKey), expected, f.output());
+    }
+    private static void connectionBatchAppliesInOrderWithOneDiff() {
+        ConnectionFixture f = new ConnectionFixture(); f.extraInputs();
+        HostOperation op = f.startBatch(List.of(f.request(null, f.output()), cable(f, "in2", new UUID(1, 2), null)));
+        check(op.dispatched && !op.result.isDone() && f.calls == 1, "first entry dispatches and the next waits for its later observation");
+        f.next(); check(f.calls == 2 && !op.result.isDone(), "second entry starts only after the first was observed");
+        f.next(); JsonObject result = op.result.join();
+        JsonArray items = result.getAsJsonArray("connections");
+        check(result.get("status").getAsString().equals("observed") && result.get("batchStatus").getAsString().equals("applied")
+                && result.get("written").getAsInt() == 2
+                && items.size() == 2 && items.get(1).getAsJsonObject().get("status").getAsString().equals("applied")
+                && items.get(1).getAsJsonObject().get("matchesRequested").getAsBoolean(),
+                "batch reports per-entry results and a separate batchStatus");
+        JsonObject shaped = GridDiff.shape(result, false);
+        check(!shaped.has("graph") && shaped.getAsJsonArray("connectionsChanged").size() == 2,
+                "one diff covers every connection of the batch");
+        op = f.startBatch(List.of(f.request(f.output(), f.output())));
+        f.next(); result = op.result.join();
+        check(result.get("batchStatus").getAsString().equals("applied") && result.get("written").getAsInt() == 0
+                && result.getAsJsonArray("connections").get(0).getAsJsonObject().get("status").getAsString().equals("already_matched")
+                && f.calls == 2, "already matching entries are not dispatched");
+    }
+    private static void connectionBatchChecksEveryExpectationBeforeWriting() {
+        ConnectionFixture f = new ConnectionFixture(); f.extraInputs();
+        HostOperation op = f.startBatch(List.of(f.request(null, f.output()), cable(f, "in2", new UUID(1, 2), f.output()),
+                cable(f, "nope", new UUID(1, 2), null)));
+        RpcException error = TransportMixFixture.error(op, "stale_context");
+        check(error.outcome.equals("not_applied") && f.calls == 0 && !op.dispatched && f.events.isEmpty()
+                && error.getMessage().contains("#1") && error.getMessage().contains("#2") && !error.getMessage().contains("#0"),
+                "any mismatch or absent port writes nothing and names each failing entry");
+        ConnectionFixture unsupported = new ConnectionFixture(); unsupported.supported = false;
+        check(TransportMixFixture.error(unsupported.startBatch(List.of(unsupported.request(null, unsupported.output()))), "grid_unavailable")
+                .outcome.equals("not_applied") && unsupported.calls == 0 && !unsupported.quarantine.quarantined(),
+                "unsupported runtime class is rejected before any entry dispatches");
+    }
+    private static void connectionBatchStopsAtFirstFailureAndUnknownQuarantines() {
+        ConnectionFixture f = new ConnectionFixture(); f.extraInputs();
+        f.afterMutation = () -> { if (f.calls == 2) throw new AssertionError("native failure on second entry"); };
+        HostOperation op = f.startBatch(List.of(f.request(null, f.output()), cable(f, "in2", new UUID(1, 2), null),
+                cable(f, "in3", new UUID(1, 2), null)));
+        f.next(); JsonObject result = op.result.join();
+        JsonArray items = result.getAsJsonArray("connections");
+        check(result.get("status").getAsString().equals("observed") && result.get("batchStatus").getAsString().equals("unknown")
+                && result.get("completion").getAsString().equals("unknown") && f.calls == 2 && f.quarantine.quarantined()
+                && items.get(0).getAsJsonObject().get("status").getAsString().equals("applied")
+                && items.get(1).getAsJsonObject().get("status").getAsString().equals("unknown")
+                && items.get(2).getAsJsonObject().get("status").getAsString().equals("not_dispatched")
+                && !result.has("graph") && !result.has("connectionsChanged") && f.events.isEmpty(),
+                "a failure after an entry's native set is unknown, quarantines topology, stops the rest and offers no diff");
+        ConnectionFixture first = new ConnectionFixture(); first.extraInputs();
+        first.afterMutation = () -> { throw new AssertionError("native failure on first entry"); };
+        op = first.startBatch(List.of(first.request(null, first.output()), cable(first, "in2", new UUID(1, 2), null)));
+        check(op.result.join().get("batchStatus").getAsString().equals("unknown") && first.calls == 1 && first.quarantine.quarantined(),
+                "unknown first entry still quarantines and never starts the second");
+        ConnectionFixture drift = new ConnectionFixture(); drift.extraInputs();
+        op = drift.startBatch(List.of(drift.request(null, drift.output()), cable(drift, "in2", new UUID(1, 2), null)));
+        ((Node) ((List<?>) drift.model.second.values.get(INPUTS)).get(0)).put(INPUT_SOURCE, drift.model.output);
+        drift.next(); result = op.result.join();
+        check(result.get("batchStatus").getAsString().equals("partial") && drift.calls == 1
+                && result.getAsJsonArray("connections").get(1).getAsJsonObject().get("status").getAsString().equals("failed")
+                && result.has("graph") && !drift.quarantine.quarantined(),
+                "a later entry that fails before its own dispatch is failed (partial) with the observed diff and no quarantine");
+    }
+    private static void connectionBatchStopsAtNativeRepairMismatch() {
+        ConnectionFixture f = new ConnectionFixture(); f.extraInputs();
+        HostOperation op = f.startBatch(List.of(f.request(null, f.output()), cable(f, "in2", new UUID(1, 2), null)));
+        // Native repair drops the first link after the setter returned.
+        f.model.input.put(INPUT_SOURCE, null);
+        f.next(); JsonObject result = op.result.join();
+        JsonArray items = result.getAsJsonArray("connections");
+        check(result.get("status").getAsString().equals("observed") && result.get("batchStatus").getAsString().equals("partial")
+                && result.get("completion").getAsString().equals("observed") && f.calls == 1
+                && items.get(0).getAsJsonObject().get("status").getAsString().equals("mismatch")
+                && items.get(0).getAsJsonObject().get("actualSource").isJsonNull()
+                && items.get(1).getAsJsonObject().get("status").getAsString().equals("not_dispatched")
+                && result.has("graph") && result.has("graphBefore") && !f.quarantine.quarantined() && f.events.isEmpty(),
+                "a native-repair mismatch stops the batch as partial with known state and a diff, never quarantining");
+    }
+    private static void connectionBatchParsingIsBounded() {
+        UUID id = new UUID(1, 1);
+        java.util.function.Function<Integer, JsonObject> body = count -> {
+            JsonObject p = new JsonObject(); JsonArray list = new JsonArray();
+            for (int i = 0; i < count; i++) {
+                JsonObject c = new JsonObject(); c.addProperty("targetModuleId", id.toString());
+                c.addProperty("targetPortKey", "in" + i); c.add("expectedSource", JsonNull.INSTANCE); c.add("source", JsonNull.INSTANCE);
+                list.add(c);
+            }
+            p.add("connections", list); return p;
+        };
+        check(GridConnectionWriter.Request.parseBatch(body.apply(32)).size() == 32, "32 connections are accepted");
+        expect("invalid_params", () -> GridConnectionWriter.Request.parseBatch(body.apply(0)));
+        expect("invalid_params", () -> GridConnectionWriter.Request.parseBatch(body.apply(33)));
+        JsonObject repeat = body.apply(2); repeat.getAsJsonArray("connections").get(1).getAsJsonObject().addProperty("targetPortKey", "in0");
+        expect("invalid_params", () -> GridConnectionWriter.Request.parseBatch(repeat));
+        JsonObject extra = body.apply(1); extra.getAsJsonArray("connections").get(0).getAsJsonObject().addProperty("x", 1);
+        expect("invalid_params", () -> GridConnectionWriter.Request.parseBatch(extra));
+        JsonObject missing = body.apply(1); missing.getAsJsonArray("connections").get(0).getAsJsonObject().remove("source");
+        expect("invalid_params", () -> GridConnectionWriter.Request.parseBatch(missing));
+    }
+
     private static void connectionBoundsAndIndependentGeometry() {
         ConnectionFixture independent = new ConnectionFixture();
         independent.model.unavailable.add(FOOTPRINT); independent.model.second.put(Y, Integer.MAX_VALUE);
@@ -1533,6 +1642,21 @@ public final class GridSnapshotReaderTest {
             writer.set(model.proxy, TRACK_ID, request, check, dispatch, complete, fail);
         }
         void next() { events.removeFirst().run(); }
+        /** Adds in2 and in3 inputs on the second module for batch tests. */
+        void extraInputs() {
+            model.second.put(INPUTS, List.of(model.port(INPUT, model.second, "in2"), model.port(INPUT, model.second, "in3")));
+        }
+        void editAll(List<GridConnectionWriter.Request> requests, Runnable check, Runnable dispatch,
+                java.util.function.Consumer<JsonObject> complete, java.util.function.Consumer<Throwable> fail) {
+            writer.setAll(model.proxy, TRACK_ID, requests, check, dispatch, complete, fail);
+        }
+        HostOperation startBatch(List<GridConnectionWriter.Request> requests) {
+            HostOperation op = new HostOperation(Long.MAX_VALUE);
+            try { writer.setAll(model.proxy, TRACK_ID, requests, () -> { if (cancelled) throw HostServices.failure("cancelled", "cancelled"); },
+                    () -> op.dispatched = true, value -> op.result.complete(value), op::fail); }
+            catch (Throwable error) { op.fail(error); }
+            return op;
+        }
         @Override public void requireSupported(Object input, Object undo) {
             if (!supported) throw HostServices.failure("grid_unavailable", "unsupported runtime class");
         }
