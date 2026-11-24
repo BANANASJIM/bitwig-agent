@@ -53,6 +53,10 @@ public final class LauncherModuleTest {
         noteRowsUseEditUnitsAndCarryNoConstantProse();
         echoingAReadRowIsAlreadyMatched();
         launcherListAndContextExposeTheCursorClip();
+        clipEditValidation();
+        clipEditRenameResizeColor();
+        clipEditNoteOps();
+        clipEditDeleteAndCopy();
         System.out.println("LauncherModuleTest: " + assertions + " assertions passed (simulated host only)");
     }
 
@@ -922,6 +926,180 @@ public final class LauncherModuleTest {
         check(!op.dispatched, "quarantine rejects before any native content mutation");
     }
 
+    // ---- clips.edit ----
+    private static JsonObject clipEdit(String op, Object... fields) {
+        JsonObject p = target(); p.addProperty("expectedClipName", "Riff"); p.addProperty("op", op);
+        for (int i = 0; i < fields.length; i += 2) {
+            if (fields[i + 1] instanceof Number) p.addProperty((String) fields[i], (Number) fields[i + 1]);
+            else p.addProperty((String) fields[i], (String) fields[i + 1]);
+        }
+        return p;
+    }
+    private static JsonObject clipEditNamed(String expected, String op, Object... fields) {
+        JsonObject p = clipEdit(op, fields); p.addProperty("expectedClipName", expected); return p;
+    }
+    private static Fake riff() {
+        Fake f = new Fake(); f.slots[0].content = true; f.slots[0].name = "Riff";
+        f.put(0, 0, 0, 60, 100, 4); f.put(0, 0, 8, 64, 90, 4); f.put(0, 0, 3, 67, 80, 2);
+        return f;
+    }
+    private static JsonObject run(Fake f, JsonObject p) throws Exception { return f.call("clips.edit", p); }
+    private static HostOperation fail(Fake f, JsonObject p, String code, String outcome) throws Exception {
+        HostOperation op = f.startShort("clips.edit", p); f.drain(op); expectOutcome(code, outcome, op); return op;
+    }
+    private static void validClipEdits(JsonObject... all) { for (JsonObject p : all) LauncherModule.validateParams("clips.edit", p); }
+    private static void rejectClipEdit(JsonObject p) { expect("invalid_params", () -> LauncherModule.validateParams("clips.edit", p)); }
+    private static String repeat(int n) { return "a".repeat(n); }
+
+    private static void clipEditValidation() {
+        validClipEdits(clipEdit("rename", "name", repeat(128)), clipEdit("resize", "lengthBeats", 4096), clipEdit("color", "rgb", "#aB09fF"),
+            clipEdit("transpose", "semitones", -48), clipEdit("transpose", "semitones", 48), clipEdit("quantize", "amount", 0.01), clipEdit("quantize", "amount", 1),
+            clipEdit("duplicateContent"), clipEdit("delete"), clipEdit("copyTo", "targetSlotIndex", 15));
+        JsonObject longName = clipEdit("delete"); longName.addProperty("expectedClipName", repeat(256)); validClipEdits(longName);
+        longName.addProperty("expectedClipName", repeat(257)); rejectClipEdit(longName);
+        rejectClipEdit(clipEdit("bogus"));
+        rejectClipEdit(clipEdit("rename"));
+        rejectClipEdit(clipEdit("rename", "name", ""));
+        rejectClipEdit(clipEdit("rename", "name", repeat(129)));
+        rejectClipEdit(clipEdit("rename", "name", "x", "semitones", 1));
+        rejectClipEdit(clipEdit("resize", "lengthBeats", 0)); rejectClipEdit(clipEdit("resize", "lengthBeats", 4097)); rejectClipEdit(clipEdit("resize", "lengthBeats", 1.5));
+        rejectClipEdit(clipEdit("color", "rgb", "ff0000")); rejectClipEdit(clipEdit("color", "rgb", "#ff00")); rejectClipEdit(clipEdit("color", "rgb", "#gg0000"));
+        rejectClipEdit(clipEdit("transpose", "semitones", 49)); rejectClipEdit(clipEdit("transpose", "semitones", -49));
+        rejectClipEdit(clipEdit("quantize", "amount", 0)); rejectClipEdit(clipEdit("transpose", "semitones", 0));
+        rejectClipEdit(clipEdit("quantize", "amount", 1.01)); rejectClipEdit(clipEdit("quantize", "amount", -0.01));
+        rejectClipEdit(clipEdit("copyTo", "targetSlotIndex", 16)); rejectClipEdit(clipEdit("copyTo"));
+        rejectClipEdit(clipEdit("delete", "name", "x")); rejectClipEdit(clipEdit("duplicateContent", "amount", 1));
+        JsonObject noName = clipEdit("delete"); noName.remove("expectedClipName"); rejectClipEdit(noName);
+        JsonObject extra = clipEdit("delete"); extra.addProperty("force", true); rejectClipEdit(extra);
+    }
+
+    private static void clipEditRenameResizeColor() throws Exception {
+        Fake f = riff(); f.selected = 5;
+        expectOutcome("stale_target", "not_applied", f.start("clips.edit", clipEditNamed("Wrong", "rename", "name", "Verse")));
+        check(f.nameWrites == 0 && f.selected == 5, "a mismatched expectedClipName is rejected before the cursor moves or anything is written");
+        JsonObject r = run(f, clipEdit("rename", "name", "Verse"));
+        check(r.get("status").getAsString().equals("observed") && r.get("verification").getAsString().equals("slot_name") && f.slots[0].name.equals("Verse") && f.nameWrites == 1, "rename is verified by name readback");
+        check(f.module.unresolved().isEmpty(), "rename does not quarantine");
+        f = riff();
+        r = run(f, clipEdit("rename", "name", "Riff"));
+        check(r.get("verification").getAsString().equals("already_matched_readback") && f.nameWrites == 0, "matching name is not rewritten");
+        f = riff(); f.applyName = false;
+        HostOperation op = f.startShort("clips.edit", clipEdit("rename", "name", "Verse")); f.drain(op);
+        r = op.result.join();
+        check(r.get("status").getAsString().equals("dispatched") && r.get("verification").getAsString().equals("readback_mismatch") && f.module.unresolved().isEmpty(), "unread rename is dispatched, not observed, idempotent so no quarantine");
+
+        f = riff();
+        r = run(f, clipEdit("resize", "lengthBeats", 8));
+        check(r.get("status").getAsString().equals("observed") && f.slots[0].length == 8 && f.slots[0].playStop == 8 && r.get("loopLengthBeats").getAsDouble() == 8, "resize is verified by loop length and play stop readback");
+        f = riff();
+        check(run(f, clipEdit("resize", "lengthBeats", 4)).get("verification").getAsString().equals("already_matched_readback") && f.loopSets == 0, "same length is not rewritten");
+        f = riff(); f.applyLoop = false;
+        op = f.startShort("clips.edit", clipEdit("resize", "lengthBeats", 8)); f.drain(op);
+        check(op.result.join().get("verification").getAsString().equals("readback_mismatch"), "unobserved loop length is not reported as done");
+        f = riff(); f.applyStop = false;
+        op = f.startShort("clips.edit", clipEdit("resize", "lengthBeats", 8)); f.drain(op);
+        check(op.result.join().get("status").getAsString().equals("dispatched"), "unobserved play stop is not reported as done");
+
+        f = riff();
+        r = run(f, clipEdit("color", "rgb", "#ff8800"));
+        check(r.get("status").getAsString().equals("observed") && r.get("color").getAsString().equals("#ff8800") && f.colorSets == 1, "color is verified by readback");
+        check(run(f, clipEdit("color", "rgb", "#ff8800")).get("verification").getAsString().equals("already_matched_readback") && f.colorSets == 1, "matching color is not rewritten");
+        f = riff(); f.applyColor = false;
+        op = f.startShort("clips.edit", clipEdit("color", "rgb", "#ff8800")); f.drain(op);
+        check(op.result.join().get("verification").getAsString().equals("readback_mismatch"), "unobserved color is dispatched only");
+    }
+
+    private static void clipEditNoteOps() throws Exception {
+        Fake f = riff();
+        JsonObject r = run(f, clipEdit("transpose", "semitones", 2));
+        JsonObject c = r.getAsJsonObject("compared");
+        check(r.get("status").getAsString().equals("observed") && f.transposes == 1 && f.notes.containsKey(key(0, 0, 0, 62)) && !f.notes.containsKey(key(0, 0, 0, 60)), "transpose shifts the cells");
+        check(c.get("notesBefore").getAsInt() == 3 && c.get("notesAfter").getAsInt() == 3 && c.get("pitchMinBefore").getAsInt() == 60 && c.get("pitchMinAfter").getAsInt() == 62
+            && c.get("pitchMaxAfter").getAsInt() == 69 && c.get("verifiedChannel").getAsInt() == 0, "transpose reports what was compared");
+        check(f.module.unresolved().isEmpty(), "an observed transpose releases its mutation");
+        check(f.selected == 0, "the clip was selected on the cursor");
+
+        f = riff(); f.put(0, 0, 16, 120, 90, 2);
+        fail(f, clipEdit("transpose", "semitones", 12), "invalid_params", "not_applied");
+        check(f.transposes == 0 && f.module.unresolved().isEmpty(), "out-of-range transpose changes nothing");
+        Fake empty = new Fake(); empty.slots[0].content = true; empty.slots[0].name = "Riff";
+        fail(empty, clipEdit("transpose", "semitones", 2), "no_notes", "not_applied");
+        f = riff(); f.slots[0].length = 64;
+        fail(f, clipEdit("transpose", "semitones", 2), "unverifiable_clip", "not_applied");
+        check(f.transposes == 0, "unverifiable clip is rejected before dispatch");
+
+        f = riff(); f.applyClipOp = false;
+        fail(f, clipEdit("transpose", "semitones", 2), "transpose_not_observed", "unknown");
+        check(f.transposes == 1 && f.module.unresolved().size() == 1, "unobserved transpose latches the unresolved mutation list");
+        expectQuarantine(f.start("clips.edit", clipEdit("rename", "name", "Verse")), "clips.edit transpose", ID);
+        expectQuarantine(f.start("notes.edit", editFixture()), "clips.edit transpose", ID);
+        f.call("notes.read", window());
+        check(f.transposes == 1 && f.nameWrites == 0, "no retry and no further write on the quarantined slot");
+
+        f = riff();
+        r = run(f, clipEdit("quantize", "amount", 1));
+        c = r.getAsJsonObject("compared");
+        check(r.get("status").getAsString().equals("observed") && f.notes.containsKey(key(0, 0, 4, 67)) && f.quantizes == 1
+            && c.get("notesBefore").getAsInt() == 3 && c.get("notesAfter").getAsInt() == 3, "quantize is observed with count and pitches preserved");
+        f = riff(); f.quantizeMoves = false;
+        fail(f, clipEdit("quantize", "amount", 0.5), "quantize_not_observed", "unknown");
+        check(f.module.unresolved().size() == 1, "partial quantize with no observed change is unknown and quarantined");
+        f = riff(); f.put(0, 0, 4, 67, 80, 2);
+        fail(f, clipEdit("quantize", "amount", 1), "quantize_invariants_violated", "unknown");
+        check(f.module.unresolved().size() == 1, "quantize that changes the onset count is unknown and quarantined");
+        f = riff(); f.quantizeMoves = false;
+        r = run(f, clipEdit("quantize", "amount", 1));
+        check(r.get("status").getAsString().equals("dispatched") && r.get("verification").getAsString().equals("no_cell_change") && f.module.unresolved().isEmpty(), "amount 1 with no movement is idempotent: no quarantine");
+
+        f = riff();
+        r = run(f, clipEdit("duplicateContent"));
+        check(r.get("status").getAsString().equals("observed") && f.slots[0].length == 8 && r.getAsJsonObject("compared").get("loopLengthBeatsAfter").getAsDouble() == 8, "duplicateContent is verified by the doubled loop");
+        f = riff(); f.applyClipOp = false;
+        fail(f, clipEdit("duplicateContent"), "duplicateContent_not_observed", "unknown");
+        check(f.module.unresolved().size() == 1, "unobserved duplicateContent is quarantined");
+    }
+
+    private static void clipEditDeleteAndCopy() throws Exception {
+        Fake f = riff();
+        JsonObject r = run(f, clipEdit("delete"));
+        check(r.get("status").getAsString().equals("observed") && r.get("verification").getAsString().equals("slot_empty") && !f.slots[0].content && f.deletes == 1 && f.module.unresolved().isEmpty(), "delete is verified by the empty slot");
+        f = riff(); f.slots[0].playing = true;
+        fail(f, clipEdit("delete"), "unsafe_state", "not_applied");
+        f = new Fake(true, true, false, false); f.slots[0].content = true; f.slots[0].name = "Riff";
+        fail(f, clipEdit("delete"), "unsafe_state", "not_applied");
+        check(f.deletes == 0, "delete is blocked while recording or playing");
+        f = riff(); f.applyDelete = false;
+        fail(f, clipEdit("delete"), "delete_not_observed", "unknown");
+        check(f.deletes == 1 && f.module.unresolved().size() == 1, "unobserved delete is unknown and quarantined");
+        expectQuarantine(f.start("launcher.create", createTarget()), "clips.edit delete", ID);
+        f = riff();
+        fail(f, clipEditNamed("Other", "delete"), "stale_target", "not_applied");
+        check(f.deletes == 0, "stale name never reaches delete");
+
+        f = riff();
+        r = run(f, clipEdit("copyTo", "targetSlotIndex", 1));
+        check(r.get("status").getAsString().equals("observed") && f.slots[1].content && f.slots[1].name.equals("Riff") && f.copies == 1 && r.get("targetSlotIndex").getAsInt() == 1
+            && f.module.unresolved().isEmpty(), "copyTo is verified by target content and name");
+        f = riff(); f.slots[1].content = true;
+        fail(f, clipEdit("copyTo", "targetSlotIndex", 1), "slot_occupied", "not_applied");
+        fail(f, clipEdit("copyTo", "targetSlotIndex", 0), "slot_occupied", "not_applied");
+        f = riff(); f.scenes = 1;
+        fail(f, clipEdit("copyTo", "targetSlotIndex", 1), "slot_out_of_range", "not_applied");
+        check(f.copies == 0, "rejected copies never dispatch");
+        f = riff(); f.copyName = "Riff copy";
+        r = run(f, clipEdit("copyTo", "targetSlotIndex", 1));
+        check(r.get("status").getAsString().equals("observed") && r.getAsJsonObject("nameChanged").get("to").getAsString().equals("Riff copy") && f.module.unresolved().isEmpty(), "a renamed copy is observed with nameChanged");
+        check(f.slots[0].content && f.slots[0].name.equals("Riff"), "the source clip is untouched");
+        f = riff(); f.applyCopy = false;
+        fail(f, clipEdit("copyTo", "targetSlotIndex", 1), "copy_not_observed", "unknown");
+        check(f.copies == 1 && f.module.unresolved().size() == 1, "unobserved copy is unknown and quarantines the target");
+        JsonObject create = createTarget(); create.addProperty("slotIndex", 1);
+        HostOperation blocked = f.start("launcher.create", create);
+        expectOutcome("unresolved_mutation", "not_applied", blocked);
+        f.call("notes.read", window());
+    }
+
+
     private static JsonObject importTarget(Path path) { JsonObject p = target(); p.addProperty("path", path.toString()); return p; }
     private static JsonObject editFixture() { JsonObject p = window(); p.add("edits", fixture()); return p; }
     private static void expectOutcome(String code, String outcome, HostOperation op) {
@@ -982,6 +1160,9 @@ public final class LauncherModuleTest {
         Double noteStorageStepSize;
         long gridRefreshDelayMillis, clockMillis, gridReadyAt;
         int imports, importedSlot = -1, bankOffset, sceneAppends;
+        int deletes, copies, transposes, quantizes, duplicates, colorSets, loopSets;
+        String copyName; boolean applyDelete = true, applyCopy = true, applyClipOp = true, quantizeMoves = true, applyColor = true, applyLoop = true;
+        float[] color = {0f, 0f, 0f};
         boolean applyScene = true, initialised;
         String importedPath;
         Runnable beforeInsertion = () -> {};
@@ -1033,12 +1214,22 @@ public final class LauncherModuleTest {
                         }
                         return null;
                     });
+                    slot.action("deleteObject", a -> { deletes++; if (applyDelete && trackIndex == 0) observeContent(index, false); return null; });
                     slot.action("launch", a -> {
                         playbackDispatches++;
                         if (emitPlaybackState) { data.playing = launchPlaying; data.queued = !launchPlaying; stopped = false; }
                         return null;
                     });
                     Node insertion = new Node(InsertionPoint.class);
+                    insertion.action("copySlotsOrScenes", a -> {
+                        copies++;
+                        if (applyCopy && trackIndex == 0) {
+                            ClipLauncherSlotOrScene[] sources = (ClipLauncherSlotOrScene[]) a[0];
+                            for (int src = 0; src < 16; src++) if (slotApis[src] == sources[0]) { data.name = copyName != null ? copyName : slots[src].name; data.length = slots[src].length; }
+                            observeContent(index, true);
+                        }
+                        return null;
+                    });
                     insertion.action("insertFile", a -> {
                         imports++; importedPath = (String) a[0]; importedSlot = index;
                         if (failImport) throw HostServices.failure("host_write_failed", "Fixture native insertion failure");
@@ -1069,7 +1260,19 @@ public final class LauncherModuleTest {
                 tracks[t] = (Track) track.proxy;
             }
             Node clip = new Node(Clip.class); clip.action("getTrack", a -> tracks[0]);
-            clip.value("exists", () -> slots[selected].content); clip.value("getLoopLength", () -> slots[selected].length);
+            clip.value("exists", () -> slots[selected].content);
+            Node loopLength = new Node(SettableBeatTimeValue.class);
+            loopLength.action("get", a -> slots[selected].length);
+            loopLength.action("addValueObserver", a -> { ((DoubleValueChangedCallback) a[a.length - 1]).valueChanged(slots[selected].length); return null; });
+            loopLength.action("set", a -> { loopSets++; if (applyLoop) slots[selected].length = (Double) a[0]; return null; });
+            clip.action("getLoopLength", a -> loopLength.proxy);
+            Node colorNode = new Node(SettableColorValue.class);
+            colorNode.action("red", a -> color[0]); colorNode.action("green", a -> color[1]); colorNode.action("blue", a -> color[2]);
+            colorNode.action("set", a -> { colorSets++; if (applyColor) color = new float[]{(Float) a[0], (Float) a[1], (Float) a[2]}; return null; });
+            clip.action("color", a -> colorNode.proxy);
+            clip.action("transpose", a -> { transposes++; if (applyClipOp) remap(k -> new int[]{k[0], k[1], k[2] + (Integer) a[0]}); return null; });
+            clip.action("quantize", a -> { quantizes++; if (applyClipOp && quantizeMoves) remap(k -> new int[]{k[0], k[1] % 2 == 0 ? k[1] : k[1] + 1, k[2]}); return null; });
+            clip.action("duplicateContent", a -> { duplicates++; if (applyClipOp) slots[selected].length *= 2; return null; });
             clip.value("getLoopStart", () -> loopStart); clip.value("getPlayStart", () -> 0.0); Node playStop = new Node(SettableBeatTimeValue.class);
             playStop.action("get", a -> slots[selected].playStop);
             playStop.action("set", a -> { stopWrites++; if (applyStop) slots[selected].playStop = (Double) a[0]; return null; });
@@ -1148,6 +1351,16 @@ public final class LauncherModuleTest {
         void applyPendingGrid() {
             if (pendingSize != null) { size = pendingSize; pendingSize = null; }
             if (pendingStart != null) { start = pendingStart; pendingStart = null; }
+        }
+        void remap(UnaryOperator<int[]> move) {
+            Map<String, Note> moved = new HashMap<>();
+            for (Iterator<Map.Entry<String, Note>> it = notes.entrySet().iterator(); it.hasNext();) {
+                Map.Entry<String, Note> e = it.next(); String[] k = e.getKey().split(":");
+                if (Integer.parseInt(k[0]) != selected) continue;
+                int[] to = move.apply(new int[]{Integer.parseInt(k[1]), Integer.parseInt(k[2]), Integer.parseInt(k[3])});
+                it.remove(); moved.put(key(selected, to[0], to[1], to[2]), e.getValue());
+            }
+            notes.putAll(moved);
         }
         void put(int slot, int channel, int step, int pitch, int velocity, double duration) { notes.put(key(slot, channel, step, pitch), new Note(velocity, duration)); }
         NoteStep note(int channel, int x, int pitch) {
