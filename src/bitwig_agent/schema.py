@@ -371,6 +371,10 @@ class TrackSetArgs(DeviceArgs):
         return self
 
 
+class ExtensionRestartArgs(StatusArgs):
+    discardUnresolved: bool = omitted()
+
+
 class TrackCreateArgs(StatusArgs):
     type: Literal["audio", "instrument", "effect"]
     position: int = Field(ge=-1, le=2147483647)

@@ -7,11 +7,30 @@ import json
 import math
 import os
 import uuid
+from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 from bitwig_agent.catalog import TOOLS, validate_call
 
 MAX_BYTES = 1024 * 1024
 METHODS = frozenset(TOOLS)
+
+
+def package_version() -> str:
+    try:
+        return version("bitwig-agent")
+    except PackageNotFoundError:
+        return "unknown"
+
+
+def _flag_extension_mismatch(result: dict[str, Any]) -> None:
+    """A status from another extension build is reported, never an error."""
+    extension = result.get("extension")
+    loaded = extension.get("version") if isinstance(extension, dict) else None
+    local = package_version()
+    if loaded != local:
+        result["extensionMismatch"] = {
+            "extensionVersion": loaded, "clientVersion": local,
+            "warning": "Loaded extension differs from this client; reinstall/restart the controller before trusting writes."}
 
 
 class BridgeError(Exception):
@@ -100,6 +119,8 @@ class BridgeClient:
                     raise BridgeError(error)
                 if not isinstance(response["result"], dict):
                     raise ValueError("Host result must be an object")
+                if method == "status":
+                    _flag_extension_mismatch(response["result"])
                 return response["result"]
         except BridgeError:
             raise

@@ -248,6 +248,12 @@ final class LauncherModule implements HostModule {
         }
     }
 
+    @Override public List<String> unresolved() {
+        List<String> result = new ArrayList<>();
+        for (Mutation mutation : unresolvedMutations) result.add(mutation.description());
+        return result;
+    }
+
     private void beginMutation(String id, Track track, Slot slot, int index, String method) {
         cursorMutation = new Mutation(id, track, slot, index, method);
         unresolvedMutations.add(cursorMutation);

@@ -8,6 +8,7 @@ import static dev.bitwigagent.HostServices.*;
 /** Runtime discovery of implemented surfaces, bounded host windows and explicit exclusions. */
 final class DiscoveryModule implements HostModule {
     static final Set<String> METHODS = Set.of("status", "tracks.list", "devices.list", "devices.layers.list", "capabilities");
+    private static final BuildInfo BUILD = BuildInfo.load();
     private final HostServices s;
     private final ParameterModule parameters;
     DiscoveryModule(HostServices s, ParameterModule parameters) { this.s = s; this.parameters = parameters; }
@@ -37,6 +38,7 @@ final class DiscoveryModule implements HostModule {
         result.addProperty("engineActive", s.application.hasActiveEngine().get());
         result.addProperty("playing", s.transport.isPlaying().get());
         result.addProperty("apiVersion", 25);
+        result.add("extension", BUILD.toJson());
         result.addProperty("trackWindowCapacity", TRACKS);
         result.addProperty("deviceWindowCapacity", DEVICES);
         result.add("parameterBindingDiagnostics", parameters.diagnostics());
@@ -48,6 +50,7 @@ final class DiscoveryModule implements HostModule {
         result.addProperty("scope", "implemented_toolkit_interfaces");
         result.addProperty("apiVersion", 25);
         result.addProperty("hostVersion", s.host.getHostVersion());
+        result.add("extension", BUILD.toJson());
         JsonArray methods = new JsonArray();
         JsonObject domains = new JsonObject();
         for (String method : HostBridge.supportedMethods()) {

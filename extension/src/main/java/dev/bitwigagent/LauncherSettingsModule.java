@@ -21,6 +21,7 @@ final class LauncherSettingsModule implements HostModule {
     private LauncherModule launcher;
     private volatile boolean pending,quarantined;
     LauncherSettingsModule(HostServices s,LauncherModule launcher){this(s,(Access)null);this.launcher=launcher;launcher.settingsWriteGuard=this::requireNoPendingOrUnresolved;}
+    @Override public java.util.List<String> unresolved(){return pending||quarantined?java.util.List.of("A launcher.set settings write is pending or unresolved."):java.util.List.of();}
     void requireNoPendingOrUnresolved(){if(pending||quarantined)throw failure("unresolved_mutation","Launcher settings write is pending or unresolved; inspect state before further launcher writes");}
     LauncherSettingsModule(HostServices s,Access access){
         this.s=s;this.access=access;

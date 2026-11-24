@@ -116,3 +116,25 @@ async def test_invalid_layer_client_arguments_do_not_connect(host, changes):
         await BridgeClient(host.port).call("parameters.layer.set", {
             **TOOLS["parameters.layer.set"].examples[0], **changes})
     assert host.connections == 0
+
+
+async def test_status_flags_extension_version_mismatch(host):
+    from bitwig_agent.client import package_version
+    host.reply = lambda r: {"id": r["id"], "result": {"status": "observed", "extension": {"version": "0.0.1", "build": "abc"}}}
+    result = await BridgeClient(host.port).call("status", {})
+    assert result["extensionMismatch"]["extensionVersion"] == "0.0.1"
+    assert result["extensionMismatch"]["clientVersion"] == package_version()
+    host.reply = lambda r: {"id": r["id"], "result": {"status": "observed", "extension": {"version": package_version(), "build": "abc"}}}
+    assert "extensionMismatch" not in await BridgeClient(host.port).call("status", {})
+    host.reply = lambda r: {"id": r["id"], "result": {"status": "observed"}}
+    assert (await BridgeClient(host.port).call("status", {}))["extensionMismatch"]["extensionVersion"] is None
+
+
+async def test_extension_restart_params(host):
+    host.reply = lambda r: {"id": r["id"], "result": {"status": "dispatched"}}
+    await BridgeClient(host.port).call("extension.restart", {"discardUnresolved": True})
+    assert host.requests[-1]["params"] == {"discardUnresolved": True}
+    assert TOOLS["extension.restart"].read_only is False
+    for bad in ({"discardUnresolved": 1}, {"discardUnresolved": None}, {"x": 1}):
+        with pytest.raises(ValidationError):
+            validate_call("extension.restart", bad)
