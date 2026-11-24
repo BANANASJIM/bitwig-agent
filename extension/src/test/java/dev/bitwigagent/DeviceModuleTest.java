@@ -216,7 +216,7 @@ public final class DeviceModuleTest {
         check(result.get("status").getAsString().equals("dispatched")
                 && result.get("completion").getAsString().equals("not_observed"), "selection never fabricates completion");
         p = target(1); p.addProperty("expectedDeviceName", "Wrong"); p.addProperty("enabled", true);
-        error(f.run("devices.set", p), "stale_context");
+        error(f.run("devices.set", p), "stale_target");
         check(f.devices[1].value("isEnabled").writes == 1, "name mismatch fails before dispatch");
         p = target(2); error(f.run("devices.get", p), "target_not_found");
         check(!first.get("nameWritable").getAsBoolean(), "public device rename limitation is explicit");

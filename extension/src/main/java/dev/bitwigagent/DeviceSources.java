@@ -333,6 +333,17 @@ final class DeviceSources {
         }
     }
 
+    /** Grid/Device targets address the zero-scrolled bank; an absent device is target_not_found, not a stale identity. */
+    void requireZeroWindow(JsonObject p) {
+        int t = s.trackSlot(p.get("trackId").getAsString());
+        if (s.devices[t].scrollPosition().get() != 0)
+            throw failure("stale_context", "Device bank is not at the zero-based window.");
+        Source source = roots[t][p.get("deviceIndex").getAsInt()];
+        if (source.metadataReady() && (!Boolean.TRUE.equals(source.exists) || source.position != p.get("deviceIndex").getAsInt()))
+            throw failure("target_not_found", "Device is absent at the explicit index.");
+        if (source.metadataReady() && source.name.isEmpty()) throw failure("not_ready", "Device name has not been observed.");
+    }
+
     Source root(JsonObject p) {
         int t = s.trackSlot(p.get("trackId").getAsString());
         int index = p.get("deviceIndex").getAsInt();
