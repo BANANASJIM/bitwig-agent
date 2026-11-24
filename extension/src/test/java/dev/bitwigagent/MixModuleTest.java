@@ -31,6 +31,7 @@ public final class MixModuleTest {
         creationSurvivesNativeBankShiftWithoutValueReplay();
         reopenedSourcesWaitForFlushAndIdentityAgreement();
         reboundGenerationNeverAcknowledgesOldWrite();
+        briefReportsSelectionOnlyWhenObserved();
         System.out.println("MixModuleTest: " + assertions + " assertions passed (simulated host only)");
     }
     private static void readsExposeNormalizedUnitsAndSends() {
@@ -44,6 +45,21 @@ public final class MixModuleTest {
         check(send.get("enabled").getAsBoolean() && !send.get("preFader").getAsBoolean(), "send metadata observed");
         check(result.getAsJsonObject("window").get("capacity").getAsInt() == 16 && result.getAsJsonObject("sendWindow").get("capacity").getAsInt() == 8, "bounded observation scope explicit");
         check(f.bankCreations == 1, "mix never creates a duplicate track bank");
+    }
+    private static void briefReportsSelectionOnlyWhenObserved() {
+        TransportMixFixture f = new TransportMixFixture(); MixModule module = new MixModule(f.services);
+        f.tracks[0].child("selected").emit(true);
+        f.tracks[0].child("exists").emit(false);
+        f.tracks[0].child("exists").emit(true);
+        module.flush();
+        JsonObject before = module.brief(0);
+        check(before.get("trackId").getAsString().equals(TransportMixFixture.A) && before.get("name").getAsString().equals("Track 0")
+                && before.get("type").getAsString().equals("Audio") && before.get("index").getAsInt() == 0, "brief carries identity from observed values");
+        check(before.get("selected").isJsonNull(), "selection without an observed callback is null, not guessed false");
+        f.tracks[0].child("selected").emit(true);
+        f.tracks[1].child("selected").emit(false);
+        check(module.brief(0).get("selected").getAsBoolean() && !module.brief(1).get("selected").getAsBoolean(), "observed selection is reported");
+        check(f.tracks[0].actions == 0 && f.tasks.isEmpty(), "brief never selects or schedules");
     }
     private static void invalidRequestsNeverSchedule() {
         TransportMixFixture f = new TransportMixFixture(); MixModule module = new MixModule(f.services);

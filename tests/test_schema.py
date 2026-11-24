@@ -684,3 +684,25 @@ def test_scenes_append_count_bounds():
     for count in (0, 17, 1.5, None):
         with pytest.raises(ValidationError):
             validate_call("scenes.append", {"count": count})
+
+
+def test_detail_is_edit_and_create_only_and_enumerated():
+    edits = [note()]
+    params, _ = validate_call("notes.edit", {"trackId": TRACK, "slotIndex": 0, "edits": edits, "detail": "full"})
+    assert params["detail"] == "full"
+    params, _ = validate_call("launcher.create", {"trackId": TRACK, "slotIndex": 0, "lengthBeats": 4, "name": "x",
+                                                  "notes": edits, "detail": "full"})
+    assert params["detail"] == "full"
+    for method, args in (("notes.edit", {"edits": edits, "detail": "verbose"}),
+                         ("notes.read", {"detail": "full"}),
+                         ("launcher.create", {"lengthBeats": 4, "name": "x", "detail": "full"})):
+        with pytest.raises(ValidationError):
+            validate_call(method, {"trackId": TRACK, "slotIndex": 0, **args})
+
+
+def test_context_get_takes_no_parameters():
+    params, _ = validate_call("context.get", {})
+    assert params == {}
+    assert TOOLS["context.get"].read_only
+    with pytest.raises(ValidationError):
+        validate_call("context.get", {"trackId": TRACK})

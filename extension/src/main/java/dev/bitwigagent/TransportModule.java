@@ -159,6 +159,15 @@ final class TransportModule implements HostModule {
         op.result.complete(result);
     }
 
+    /** Observed basics for context.get; unobserved values are null instead of not_ready. */
+    JsonObject basics() {
+        JsonObject out = new JsonObject();
+        out.addProperty("projectName", s.application.projectName().get());
+        out.add("playing", values.get("playing").value);
+        out.add("tempoBpm", values.get("tempoBpm").value);
+        return out;
+    }
+
     private JsonObject snapshot() {
         JsonObject result = HostServices.observed();
         result.addProperty("projectName", s.application.projectName().get());

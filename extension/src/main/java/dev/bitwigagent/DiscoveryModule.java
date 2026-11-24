@@ -83,7 +83,7 @@ final class DiscoveryModule implements HostModule {
         units.addProperty("noteDuration", "quarter_note_beats");
         units.addProperty("noteOnset", "absolute_quarter_note_beats_on_explicit_step_grid");
         units.addProperty("noteWindowPosition", "steps_at_explicit_stepSizeBeats");
-        units.addProperty("noteVelocity", "normalized_0_to_1");
+        units.addProperty("noteVelocity", "midi_1_to_127_integer_same_unit_as_notes.edit");
         units.addProperty("notePitch", "midi_0_to_127");
         units.addProperty("gridParameterValues", "native_raw_typed_values_not_normalized_or_display_units");
         units.addProperty("gridModulePosition", "native_absolute_anchor_grid_coordinates_not_pixels");

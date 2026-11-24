@@ -90,7 +90,7 @@ def checked_notes(readback: dict, window: dict, edits: list[dict]) -> None:
     for key, wanted in expected.items():
         actual = observed[key]
         if (abs(actual["durationBeats"] - wanted["durationBeats"]) > 1e-6
-                or abs(actual["velocityNormalized"] - wanted["velocity"] / 127) > 1 / 127):
+                or actual["velocity"] != wanted["velocity"]):
             raise RuntimeError(f"Observed duration/velocity differs at {key}")
 
 

@@ -48,6 +48,10 @@ public final class LauncherModuleTest {
         omittedWindowIsDerivedFromEdits();
         omittedReadWindowCoversTheClipLoop();
         createWritesNotesAfterObservingTheClip();
+        compactEditReportsSummaryAndOnlyUnverifiedEdits();
+        noteRowsUseEditUnitsAndCarryNoConstantProse();
+        echoingAReadRowIsAlreadyMatched();
+        launcherListAndContextExposeTheCursorClip();
         System.out.println("LauncherModuleTest: " + assertions + " assertions passed (simulated host only)");
     }
 
@@ -101,7 +105,7 @@ public final class LauncherModuleTest {
         f.put(0, 1, 2, 90, 70, .25); // unrelated channel
         f.put(1, 0, 0, 60, 40, .25); // unrelated clip
         f.put(0, 0, 24, 80, 50, .25); // outside requested window
-        JsonObject edits = window(); edits.add("edits", fixture());
+        JsonObject edits = window(); edits.add("edits", fixture()); edits.addProperty("detail", "full");
         JsonObject result = f.call("notes.edit", edits);
         check(result.get("status").getAsString().equals("observed"), "fresh changed notes verified");
         check(result.getAsJsonArray("notes").size() == 5, "actual onset count returns chord/melody/drum notes");
@@ -111,7 +115,7 @@ public final class LauncherModuleTest {
         f.put(0, 0, 0, 60, 37, .75);
         JsonObject read = f.call("notes.read", window());
         JsonObject c = find(read, 60, 0);
-        check(c.get("velocityNormalized").getAsDouble() == 37 / 127.0, "read returns host change, not request echo");
+        check(c.get("velocity").getAsInt() == 37, "read returns host change, not request echo");
         check(c.get("durationBeats").getAsDouble() == .75, "actual duration returned");
         JsonObject clear = window(); JsonArray array = new JsonArray(); JsonObject e = new JsonObject();
         e.addProperty("op", "clear"); e.addProperty("beat", 0); e.addProperty("pitch", 60); array.add(e); clear.add("edits", array);
@@ -120,9 +124,8 @@ public final class LauncherModuleTest {
         check(f.notes.containsKey(key(0, 0, 0, 64)), "other chord note preserved after clear");
         JsonObject later = window(); later.addProperty("startStep", 16); later.addProperty("steps", 16);
         check(f.call("notes.read", later).getAsJsonArray("notes").size() == 1, "nonzero window maps absolute steps");
-        check(!read.get("completeClip").getAsBoolean(), "bounded read never claims full clip");
         JsonObject highChannel = window(); highChannel.addProperty("channel", 15);
-        JsonArray highEdits = new JsonArray(); highEdits.add(set(0, 127, 127, .25)); highChannel.add("edits", highEdits);
+        JsonArray highEdits = new JsonArray(); highEdits.add(set(0, 127, 127, .25)); highChannel.add("edits", highEdits); highChannel.addProperty("detail", "full");
         check(f.call("notes.edit", highChannel).getAsJsonArray("notes").size() == 1, "channel15 and pitch127 are writable/readable");
         check(f.notes.containsKey(key(0, 0, 0, 64)), "channel15 edit leaves channel0 intact");
     }
@@ -208,7 +211,7 @@ public final class LauncherModuleTest {
 
     private static void lateOrMissingObservationsRemainDispatched() throws Exception {
         Fake f = new Fake(); f.slots[0].content = true; f.emitNotes = false;
-        JsonObject p = window(); p.add("edits", fixture());
+        JsonObject p = window(); p.add("edits", fixture()); p.addProperty("detail", "full");
         JsonObject out = f.call("notes.edit", p);
         check(out.get("status").getAsString().equals("dispatched"), "readback without fresh callbacks does not verify changed write");
         check(!out.getAsJsonArray("edits").get(0).getAsJsonObject().get("verified").getAsBoolean(), "per-cell missing observation explicit");
@@ -308,17 +311,17 @@ public final class LauncherModuleTest {
         f.applyPendingGrid();
         f.drain(delayed);
         JsonObject out = delayed.result.join();
-        check(find(out, 72, 16).get("beat").getAsDouble() == 8, "delayed grid delivered during settling yields new window content");
+        check(find(out, 72, 8) != null, "delayed grid delivered during settling yields new window content");
         check(out.get("gridGeneration").getAsLong() > before, "window change gets distinct observation generation");
         check(out.get("gridReadiness").getAsString().equals("scheduled_settling_not_acknowledged"),
                 "scheduled settling never claims a public API grid acknowledgement");
-        check(out.has("gridReadinessLimitation"), "unavailable grid barrier is explicit in consumer response");
+        check(!out.has("gridReadinessLimitation") && !out.has("onsetPrecision") && !out.has("selectionSideEffect"), "constant prose lives in the catalog, not every response");
         f.emitNotes = false;
         JsonArray edits = new JsonArray(); edits.add(set(8, 72, 90, .5)); p.add("edits", edits);
         HostOperation changed = f.start("notes.edit", p);
         f.observer.noteStepChanged(f.note(0, 0, 72)); // Old/read-generation callback while new binding is unsettled.
         f.applyPendingGrid(); f.drain(changed);
-        check(!changed.result.join().getAsJsonArray("edits").get(0).getAsJsonObject().get("verified").getAsBoolean(),
+        check(!changed.result.join().getAsJsonArray("unverifiedEdits").get(0).getAsJsonObject().get("verified").getAsBoolean(),
                 "callback from prior or unsettled window cannot verify a later changed write");
     }
 
@@ -330,7 +333,7 @@ public final class LauncherModuleTest {
         JsonObject p = window(); p.addProperty("stepSizeBeats", .125); p.addProperty("steps", 32);
         JsonObject out = f.call("notes.read", p);
         check(out.getAsJsonArray("notes").size() == 2, "first grid read preserves both stored notes");
-        check(find(out, 64, 16).get("beat").getAsDouble() == 2,
+        check(find(out, 64, 2) != null,
                 "first eighth-beat read must not relabel the old quarter-beat cache as beat one");
         check(f.writes == 0, "grid refresh does not change note content");
     }
@@ -773,6 +776,92 @@ public final class LauncherModuleTest {
         expect("invalid_params", () -> LauncherModule.validateParams("notes.read", partial));
     }
 
+    private static JsonObject manyEdits(int count) {
+        JsonObject p = target(); JsonArray edits = new JsonArray();
+        for (int i = 0; i < count; i++) edits.add(set(i * .5, 48 + i % 12, 60 + i, .25));
+        p.add("edits", edits); return p;
+    }
+
+    private static void compactEditReportsSummaryAndOnlyUnverifiedEdits() throws Exception {
+        Fake f = new Fake(); JsonObject c16 = createTarget(); c16.addProperty("lengthBeats", 16); f.call("launcher.create", c16);
+        JsonObject p = manyEdits(32);
+        JsonObject out = f.call("notes.edit", p);
+        JsonObject sum = out.getAsJsonObject("summary");
+        check(out.get("status").getAsString().equals("observed") && sum.get("requested").getAsInt() == 32 && sum.get("dispatched").getAsInt() == 32
+                && sum.get("alreadyMatched").getAsInt() == 0 && sum.get("verified").getAsInt() == 32 && sum.get("unverified").getAsInt() == 0, "compact summary counts every edit");
+        check(!out.has("edits") && !out.has("unverifiedEdits") && !out.has("notes") && out.get("notesInWindow").getAsInt() == 32, "verified edits and the window listing are not repeated");
+        int compact = out.toString().length();
+        JsonObject again = f.call("notes.edit", p);
+        check(again.getAsJsonObject("summary").get("alreadyMatched").getAsInt() == 32 && again.getAsJsonObject("summary").get("dispatched").getAsInt() == 0, "unchanged edits are alreadyMatched, not applied");
+        JsonObject full = manyEdits(32); full.addProperty("detail", "full");
+        JsonObject fullOut = f.call("notes.edit", full);
+        check(fullOut.getAsJsonArray("edits").size() == 32 && fullOut.getAsJsonArray("notes").size() == 32 && fullOut.get("status").getAsString().equals("observed"), "detail=full returns today's window listing and every edit");
+        System.out.println("notes.edit 32 notes: compact " + compact + " chars, full " + fullOut.toString().length() + " chars");
+        check(compact * 3 < fullOut.toString().length(), "compact is much smaller");
+        Fake silent = new Fake(); silent.call("launcher.create", createTarget()); silent.emitNotes = false;
+        JsonObject bad = silent.call("notes.edit", manyEdits(3));
+        check(bad.get("status").getAsString().equals("dispatched") && bad.get("verification").getAsString().equals("partial_or_unobserved"), "fail-closed status is unchanged");
+        check(bad.getAsJsonObject("summary").get("unverified").getAsInt() == 3 && bad.getAsJsonArray("unverifiedEdits").size() == 3, "every unverified edit is listed");
+        JsonObject item = bad.getAsJsonArray("unverifiedEdits").get(0).getAsJsonObject();
+        check(!item.get("verified").getAsBoolean() && item.get("observed").getAsJsonObject().get("pitch").getAsInt() == 48, "unverified entry carries the observed cell");
+        JsonObject wrong = manyEdits(1); wrong.addProperty("detail", "verbose");
+        invalid(wrong);
+        JsonObject read = window(); read.addProperty("detail", "full");
+        expect("invalid_params", () -> LauncherModule.validateParams("notes.read", read));
+    }
+
+    private static void echoingAReadRowIsAlreadyMatched() throws Exception {
+        Fake f = new Fake(); f.slots[0].content = true;
+        f.put(0, 0, 0, 60, 64, .5); f.notes.get(key(0, 0, 0, 60)).exact = 0.5; // GUI value 0.5 reads as MIDI 64
+        JsonObject row = f.call("notes.read", window()).getAsJsonArray("notes").get(0).getAsJsonObject();
+        check(row.get("velocity").getAsInt() == 64, "host 0.5 reads as MIDI 64");
+        JsonObject p = window(); JsonArray edits = new JsonArray();
+        edits.add(set(row.get("beat").getAsDouble(), row.get("pitch").getAsInt(), row.get("velocity").getAsInt(), row.get("durationBeats").getAsDouble()));
+        p.add("edits", edits);
+        JsonObject out = f.call("notes.edit", p);
+        check(f.writes == 0 && out.getAsJsonObject("summary").get("alreadyMatched").getAsInt() == 1
+                && out.getAsJsonObject("summary").get("dispatched").getAsInt() == 0 && out.get("status").getAsString().equals("observed"),
+                "echoing a read row back is alreadyMatched with no rewrite");
+    }
+
+    private static void noteRowsUseEditUnitsAndCarryNoConstantProse() throws Exception {
+        Fake f = new Fake(); f.slots[0].content = true;
+        f.put(0, 0, 4, 61, 100, 1.5);
+        JsonObject read = f.call("notes.read", window());
+        JsonObject row = read.getAsJsonArray("notes").get(0).getAsJsonObject();
+        check(row.keySet().equals(java.util.Set.of("beat", "pitch", "velocity", "durationBeats")), "rows are beat/pitch/velocity/durationBeats only");
+        check(row.get("velocity").getAsInt() == 100 && row.get("beat").getAsDouble() == 1.0, "velocity is MIDI 1..127 and beat is absolute");
+        for (String gone : new String[]{"gridReadinessLimitation", "onsetPrecision", "selectionSideEffect", "identityVerification", "completeClip", "scope"})
+            check(!read.has(gone), gone + " no longer repeated per response");
+        check(read.has("gridReadiness") && read.has("completeWindow") && read.get("window").getAsJsonObject().get("channel").getAsInt() == 0, "machine-actionable flags and channel remain");
+        f.notes.get(key(0, 0, 4, 61)); // sustain marker row below
+        f.put(0, 0, 0, 70, 60, 4); f.slots[0].length = 8;
+        JsonObject later = window(); later.addProperty("startStep", 2); later.addProperty("steps", 4);
+        for (JsonElement v : f.call("notes.read", later).getAsJsonArray("continuingAtWindowStart"))
+            check(v.getAsJsonObject().get("state").getAsString().equals("NoteSustain"), "continuing rows are marked, not copyable onsets");
+        check(LauncherModule.midiVelocity(1 / 127.0) == 1 && LauncherModule.midiVelocity(1.0) == 127 && LauncherModule.midiVelocity(0.0) == 1, "velocity conversion stays within 1..127");
+    }
+
+    private static void launcherListAndContextExposeTheCursorClip() throws Exception {
+        Fake f = new Fake(); f.call("launcher.create", createTarget());
+        f.slots[2].content = true; f.slots[2].name = "Other";
+        f.selected = 0;
+        JsonObject list = f.call("launcher.list", trackTarget());
+        check(list.getAsJsonArray("slots").get(0).getAsJsonObject().get("selected").getAsBoolean()
+                && !list.getAsJsonArray("slots").get(1).getAsJsonObject().get("selected").getAsBoolean(), "launcher.list marks the cursor clip slot");
+        check(f.module.cursorSlotIndex(0, f.tracks[0]) == 0, "cursor clip resolves to its slot");
+        f.selected = 2; f.writes = 0;
+        check(f.module.cursorSlotIndex(0, f.tracks[0]) == 2, "cursor follows the UI selection");
+        f.selected = 1; // selected but empty: no clip is the cursor clip
+        check(f.module.cursorSlotIndex(0, f.tracks[0]) == -1, "an empty selected slot is not a cursor clip");
+        com.google.gson.JsonArray occupied = f.module.occupiedSlots(0, f.tracks[0]);
+        check(occupied.size() == 2 && occupied.get(1).getAsJsonObject().get("slotIndex").getAsInt() == 2 && occupied.get(1).getAsJsonObject().get("name").getAsString().equals("Other"), "only occupied slots listed");
+        f.bankOffset = 1;
+        check(f.module.occupiedSlots(0, f.tracks[0]) == null, "unobserved bank offset yields null, not a guess");
+        check(f.module.cursorSlotIndex(0, f.tracks[0]) == -2, "cursor clip is not determinable off scene offset zero");
+        check(f.writes == 0 && f.creates == 1, "context reads never write");
+    }
+
     private static void createWritesNotesAfterObservingTheClip() throws Exception {
         Fake f = new Fake();
         JsonObject p = createTarget(); JsonArray notes = new JsonArray();
@@ -780,7 +869,8 @@ public final class LauncherModuleTest {
         JsonObject out = f.call("launcher.create", p);
         check(out.get("status").getAsString().equals("observed") && out.get("verification").getAsString().equals("slot_content_name_length"), "create verified before notes");
         JsonObject write = out.getAsJsonObject("noteWrite");
-        check(write.get("status").getAsString().equals("observed") && write.getAsJsonArray("edits").size() == 3, "per-edit verification returned in the same call");
+        check(write.get("status").getAsString().equals("observed") && write.getAsJsonObject("summary").get("verified").getAsInt() == 3
+                && !write.has("unverifiedEdits") && !write.has("edits") && !write.has("notes"), "compact verification returned in the same call");
         check(f.notes.containsKey(key(0, 0, 0, 60)) && f.notes.size() == 3 && f.creates == 1, "all notes written after exactly one create");
         check(write.getAsJsonObject("window").get("derived").getAsBoolean() && out.get("slot") != null, "create fields and derived window both reported");
         JsonObject early = createTarget(); JsonArray late = new JsonArray(); late.add(set(3.5, 60, 90, 1)); early.add("notes", late);
@@ -841,8 +931,8 @@ public final class LauncherModuleTest {
         JsonArray edits = new JsonArray(); edits.add(set(0, 60, 100, .5)); edits.add(set(0, 64, 80, .5)); edits.add(set(0, 67, 90, .5));
         edits.add(set(1, 62, 100, .5)); edits.add(set(0, 36, 110, .25)); return edits;
     }
-    private static JsonObject find(JsonObject result, int pitch, int step) {
-        for (JsonElement v : result.getAsJsonArray("notes")) { JsonObject n = v.getAsJsonObject(); if (n.get("pitch").getAsInt() == pitch && n.get("step").getAsInt() == step) return n; }
+    private static JsonObject find(JsonObject result, int pitch, double beat) {
+        for (JsonElement v : result.getAsJsonArray("notes")) { JsonObject n = v.getAsJsonObject(); if (n.get("pitch").getAsInt() == pitch && n.get("beat").getAsDouble() == beat) return n; }
         throw new AssertionError("missing observed note");
     }
     private static void invalid(JsonObject p) { expect("invalid_params", () -> LauncherModule.validateParams("notes.edit", p)); }
@@ -1054,7 +1144,7 @@ public final class LauncherModuleTest {
             }
             final Note found = on; final NoteStep$State actual = state;
             Node n = new Node(NoteStep.class); n.action("channel", a -> channel); n.action("x", a -> x); n.action("y", a -> pitch); n.action("state", a -> actual);
-            n.action("velocity", a -> found == null ? 0.0 : found.velocity / 127.0); n.action("duration", a -> found == null ? 0.0 : found.duration); return (NoteStep) n.proxy;
+            n.action("velocity", a -> found == null ? 0.0 : found.exact != null ? found.exact : found.velocity / 127.0); n.action("duration", a -> found == null ? 0.0 : found.duration); return (NoteStep) n.proxy;
         }
         HostOperation start(String method, JsonObject p) {
             HostOperation op = new HostOperation(System.nanoTime() + TimeUnit.SECONDS.toNanos(2));
@@ -1083,6 +1173,7 @@ public final class LauncherModuleTest {
     private static final class Note {
         final int velocity;
         final double duration;
+        Double exact; // host velocity that is not a whole MIDI step, e.g. a GUI drag
         Note(int velocity, double duration) { this.velocity = velocity; this.duration = duration; }
     }
 
