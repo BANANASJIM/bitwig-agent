@@ -3,7 +3,7 @@ package dev.bitwigagent;
 import com.bitwig.extension.controller.api.*;
 import com.bitwig.extension.callback.IntegerValueChangedCallback;
 import com.bitwig.extension.callback.BooleanValueChangedCallback;
-import com.google.gson.JsonObject;
+import com.google.gson.*;
 
 /** One set of fixed host proxies, initialized once and shared by domain modules. */
 final class HostServices implements AutoCloseable {
@@ -11,6 +11,7 @@ final class HostServices implements AutoCloseable {
     static final double TOLERANCE = 1.0 / (RESOLUTION - 1) + 1e-9;
     final ControllerHost host;
     final Application application;
+    final Project project;
     final Transport transport;
     final TrackBank tracks;
     final DeviceBank[] devices = new DeviceBank[TRACKS];
@@ -19,12 +20,16 @@ final class HostServices implements AutoCloseable {
     private volatile boolean closed;
     private Bitwig614Runtime nativeRuntime;
     private Boolean playing, arrangerRecordEnabled, arrangerAutomationWriteEnabled, clipLauncherAutomationWriteEnabled;
+    private volatile Boolean projectModified;
+    private volatile long projectModifiedSequence;
     private volatile SafetyObservation safety = new SafetyObservation(0, null, null, null, null);
 
     HostServices(ControllerHost host) {
         this.host = host;
         application = host.createApplication();
         transport = host.createTransport();
+        project = host.getProject();
+        project.isModified().addValueObserver((BooleanValueChangedCallback) value -> { projectModified = value; projectModifiedSequence++; });
         application.projectName().markInterested();
         application.hasActiveEngine().markInterested();
         transport.isPlaying().addValueObserver((BooleanValueChangedCallback) value -> { playing = value; publishSafety(); });
@@ -109,6 +114,11 @@ final class HostServices implements AutoCloseable {
             throw new RpcException("deadline_exceeded", "Deadline expired; inspect state before another write.",
                     operation.dispatched ? "unknown" : "not_applied");
     }
+
+    /** Observed Project.isModified(); null until the first callback, never a getter default. */
+    Boolean projectModified() { return projectModified; }
+    long projectModifiedSequence() { return projectModifiedSequence; }
+    JsonElement projectModifiedJson() { return projectModified == null ? JsonNull.INSTANCE : new JsonPrimitive(projectModified); }
 
     /** Observed safety inputs are shared by transport and launcher; getter defaults are not evidence. */
     void requirePlaybackSafe() {

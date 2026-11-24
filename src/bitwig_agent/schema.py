@@ -53,6 +53,13 @@ class DeviceArgs(StatusArgs):
 
 class ActionArgs(StatusArgs):
     actionId: Nonempty
+    discardUnsavedChanges: bool = omitted(description="Only with explicit user consent: allow Quit/Close/New/Open when the project is not observed saved.")
+
+
+class ActionListArgs(StatusArgs):
+    query: str = omitted(min_length=1, max_length=4096, description="Case-insensitive substring of actionId or name.")
+    category: str = omitted(min_length=1, max_length=4096, description="Exact category id or name, case-insensitive.")
+    limit: int = Field(default=100, ge=1, le=1000)
 
 
 class ParameterArgs(DeviceArgs):

@@ -28,6 +28,10 @@ public final class HostBridgeTest {
         statusDiagnosticsAreScheduledAndSourceScoped();
         actionsStayOnHostThreadAndReportDispatchOnly();
         invalidAndExpiredActionsNeverInvoke();
+        projectModifiedIsObservedNeverGuessed();
+        projectSaveIsObservedOnceAndNeverRetried();
+        discardingActionsAreGuardedByUnsavedChanges();
+        actionsListFiltersAndReportsTotals();
         capabilitiesDescribeBoundedImplementedSurfaces();
         strictValidationPrecedesAllDomainScheduling();
         rootEarlyDirectCallbacksKeepLegacyAdmission();
@@ -147,6 +151,98 @@ public final class HostBridgeTest {
         pending = bridge.handle("actions.invoke", actionParams("fixture.action"), deadline());
         bridge.close(); host.next(); expectError(pending, "unavailable");
         check(host.actionInvocations == 0, "closed bridge never invokes Action");
+    }
+
+    private static void projectModifiedIsObservedNeverGuessed() {
+        Fake host = new Fake(); HostBridge bridge = host.bridge();
+        check(call(host, bridge, "status", new JsonObject()).get("projectModified").isJsonNull(), "status: unobserved projectModified is null");
+        check(call(host, bridge, "context.get", new JsonObject()).get("projectModified").isJsonNull(), "context: unobserved projectModified is null");
+        host.modified.set(true);
+        check(call(host, bridge, "status", new JsonObject()).get("projectModified").getAsBoolean(), "status reports unsaved");
+        host.modified.set(false);
+        JsonObject context = call(host, bridge, "context.get", new JsonObject());
+        check(context.has("projectModified") && !context.get("projectModified").getAsBoolean(), "context reports saved");
+        check(HostBridge.supportedMethods().contains("project.save"), "project.save registered");
+    }
+
+    private static void projectSaveIsObservedOnceAndNeverRetried() {
+        Fake host = new Fake(); HostBridge bridge = host.bridge();
+        host.modified.set(true);
+        JsonObject saved = call(host, bridge, "project.save", new JsonObject());
+        check(host.saveInvocations == 1 && saved.get("saved").getAsBoolean() && saved.get("status").getAsString().equals("observed"),
+                "observed isModified=false after dispatch reports saved");
+        JsonObject again = call(host, bridge, "project.save", new JsonObject());
+        check(host.saveInvocations == 1 && again.get("alreadySaved").getAsBoolean() && again.get("saved").getAsBoolean(),
+                "observed-saved project dispatches nothing");
+        // Unobserved (null) state still dispatches, and only a fresh false callback counts.
+        Fake unobserved = new Fake(); HostBridge b2 = unobserved.bridge();
+        unobserved.saveClears = false;
+        CompletableFuture<JsonObject> pending = b2.handle("project.save", new JsonObject(), System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(150));
+        int spins = 0;
+        while (!pending.isDone() && spins++ < 100000000) unobserved.next();
+        JsonObject result = pending.join();
+        check(unobserved.saveInvocations == 1, "save dispatched exactly once, never re-invoked while waiting");
+        check(result.get("status").getAsString().equals("dispatched") && !result.get("saved").getAsBoolean()
+                && result.get("completion").getAsString().equals("not_observed") && result.get("hint").getAsString().contains("Save As"),
+                "no observation is not_observed with Save As hint");
+        // A stale false from before the dispatch is not evidence.
+        Fake stale = new Fake(); HostBridge b3 = stale.bridge();
+        stale.modified.set(true); stale.saveClears = false;
+        pending = b3.handle("project.save", new JsonObject(), System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(150));
+        stale.next();
+        stale.modified.set(false);
+        spins = 0;
+        while (!pending.isDone() && spins++ < 100000000) stale.next();
+        check(pending.join().get("saved").getAsBoolean(), "later observer callback to false confirms save");
+        Fake bad = new Fake(); HostBridge b4 = bad.bridge();
+        JsonObject extra = new JsonObject(); extra.addProperty("x", 1);
+        expectError(b4.handle("project.save", extra, deadline()), "invalid_params");
+    }
+
+    private static void discardingActionsAreGuardedByUnsavedChanges() {
+        Fake host = new Fake(); HostBridge bridge = host.bridge();
+        for (Boolean state : new Boolean[]{null, true}) {
+            if (state != null) host.modified.set(state);
+            CompletableFuture<JsonObject> refused = bridge.handle("actions.invoke", actionParams("Quit"), deadline()); host.next();
+            expectError(refused, "unsaved_changes");
+        }
+        check(host.quitInvocations == 0, "refused lifecycle action never invokes");
+        for (String id : new String[]{"Close", "New", "Open", "new_from_template"}) {
+            CompletableFuture<JsonObject> refused = bridge.handle("actions.invoke", actionParams(id), deadline()); host.next();
+            expectError(refused, "unsaved_changes");
+        }
+        JsonObject consent = actionParams("Quit"); consent.addProperty("discardUnsavedChanges", true);
+        check(call(host, bridge, "actions.invoke", consent).get("status").getAsString().equals("dispatched") && host.quitInvocations == 1,
+                "explicit discardUnsavedChanges dispatches");
+        host.modified.set(false);
+        call(host, bridge, "actions.invoke", actionParams("Quit"));
+        check(host.quitInvocations == 2, "observed-saved project needs no consent");
+        host.modified.set(true);
+        call(host, bridge, "actions.invoke", actionParams("fixture.action"));
+        check(host.actionInvocations > 0, "non-lifecycle actions are never guarded");
+        JsonObject bad = actionParams("Quit"); bad.addProperty("discardUnsavedChanges", "yes");
+        expectError(bridge.handle("actions.invoke", bad, deadline()), "invalid_params");
+    }
+
+    private static void actionsListFiltersAndReportsTotals() {
+        Fake host = new Fake(); HostBridge bridge = host.bridge();
+        JsonObject all = call(host, bridge, "actions.list", new JsonObject());
+        check(all.get("total").getAsInt() == 2 && all.get("complete").getAsBoolean(), "unfiltered total and complete");
+        JsonObject p = new JsonObject(); p.addProperty("query", "OTHER");
+        JsonObject byId = call(host, bridge, "actions.list", p);
+        check(byId.getAsJsonArray("actions").size() == 1 && byId.get("total").getAsInt() == 1, "query matches id case-insensitively");
+        p = new JsonObject(); p.addProperty("query", "音色");
+        check(call(host, bridge, "actions.list", p).getAsJsonArray("actions").size() == 1, "query matches name");
+        p = new JsonObject(); p.addProperty("category", "CATEGORY");
+        check(call(host, bridge, "actions.list", p).getAsJsonArray("actions").size() == 1, "category matches name; null category excluded");
+        p = new JsonObject(); p.addProperty("limit", 1);
+        JsonObject limited = call(host, bridge, "actions.list", p);
+        check(limited.getAsJsonArray("actions").size() == 1 && limited.get("total").getAsInt() == 2 && !limited.get("complete").getAsBoolean(),
+                "limit truncates and reports incomplete total");
+        p = new JsonObject(); p.addProperty("limit", 0);
+        expectError(bridge.handle("actions.list", p, deadline()), "invalid_params");
+        p = new JsonObject(); p.addProperty("query", "");
+        expectError(bridge.handle("actions.list", p, deadline()), "invalid_params");
     }
 
     private static JsonObject actionParams(String id) {
@@ -883,6 +979,7 @@ public final class HostBridgeTest {
         final double[] parameterValues = new double[16];
         final int[] deviceWrites = new int[16];
         int writes, idEmissions;
+        Val modified; int saveInvocations, quitInvocations; boolean saveClears = true;
         final Node[] layerNodes = new Node[2], childBanks = new Node[2];
         final Node[][] childNodes = new Node[2][2];
         final StringArrayValueChangedCallback[][] childIds = new StringArrayValueChangedCallback[2][2];
@@ -1035,11 +1132,25 @@ public final class HostBridgeTest {
                         try { Thread.sleep(50); } catch (InterruptedException error) { throw new AssertionError(error); }
                     }
                     for (Action action : actions) if (action.getId().equals(args[0])) return action;
+                    if ("Save".equals(args[0]) || "Quit".equals(args[0]) || Set.of("Close", "New", "Open", "new_from_template").contains(args[0])) {
+                        Node extra = new Node();
+                        extra.custom = (method2, args2) -> {
+                            if (method2.equals("invoke")) {
+                                if ("Save".equals(args[0])) { saveInvocations++; if (saveClears) modified.set(false); }
+                                else if ("Quit".equals(args[0])) quitInvocations++;
+                            }
+                            return null;
+                        };
+                        return extra.proxy(Action.class);
+                    }
                 }
                 return null;
             };
             Node transport = new Node(); transport.put("isPlaying", false);
-            Node host = new Node(); host.objects.put("createApplication", app.proxy(Application.class));
+            Node project = new Node(); project.put("isModified", false);
+            modified = project.value("isModified"); modified.publishInitial = false;
+            Node host = new Node(); host.objects.put("getProject", project.proxy(Project.class));
+             host.objects.put("createApplication", app.proxy(Application.class));
             hostNode = host;
             host.objects.put("createTransport", transport.proxy(Transport.class));
             host.objects.put("createTrackBank", trackBank.proxy(TrackBank.class));

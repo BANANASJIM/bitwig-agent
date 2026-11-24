@@ -111,6 +111,7 @@ final class TransportMixFixture {
         host.custom = (name, args) -> {
             if (name.equals("createApplication")) return application.proxy(Application.class);
             if (name.equals("createTransport")) return transport.proxy(Transport.class);
+            if (name.equals("getProject")) return new Node().proxy(Project.class);
             if (name.equals("createTrackBank")) { bankCreations++; return bank.proxy(TrackBank.class); }
             if (name.equals("scheduleTask")) tasks.add((Runnable) args[0]);
             return null;
