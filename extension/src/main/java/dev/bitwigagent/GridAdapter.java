@@ -22,6 +22,8 @@ interface GridAdapter {
             Runnable check, Runnable dispatch, Consumer<JsonObject> complete, Consumer<Throwable> fail);
     void renameModule(Object deviceProxy, UUID expectedTrackId, UUID moduleId, GridModuleNameWriter.Request request,
             Runnable check, Runnable dispatch, Consumer<JsonObject> complete, Consumer<Throwable> fail);
+    void setConnections(Object deviceProxy, UUID expectedTrackId, java.util.List<GridConnectionWriter.Request> requests,
+            Runnable check, Runnable dispatch, Consumer<JsonObject> complete, Consumer<Throwable> fail);
     void insertModule(Object deviceProxy, UUID expectedTrackId, GridInsertionWriter.Request request,
             Runnable check, Runnable dispatch, Consumer<JsonObject> complete, Consumer<Throwable> fail);
     void setConnection(Object deviceProxy, UUID expectedTrackId, GridConnectionWriter.Request request,

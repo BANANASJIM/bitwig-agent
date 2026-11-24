@@ -8,6 +8,7 @@ import static dev.bitwigagent.HostServices.failure;
 
 /** One input source CAS, with exact membership and later actual graph observation, never compensation. */
 final class GridConnectionWriter {
+    static final int MAX_BATCH = 32;
     interface Access {
         void requireSupported(Object input, Object undo);
         Runnable prepareSet(Object input, Object source);
@@ -90,6 +91,109 @@ final class GridConnectionWriter {
         });
     }
 
+    /** Live CAS, membership and support checks for every entry; nothing is dispatched. */
+    private void preflight(Object proxy, UUID trackId, java.util.List<Request> requests, Runnable check) {
+        quarantine.requireAvailable(); values.documentThread(); check.run();
+        GridSnapshotReader.NativeTarget target = snapshots.target(proxy, trackId);
+        Graph before = capture(target.graph, check);
+        GridTopologyContext.Capture context = contexts.capture(target.target, target.graph, before.members, null, check);
+        StringBuilder rejected = new StringBuilder(); String code = null; int failures = 0;
+        for (int i = 0; i < requests.size(); i++) {
+            Request request = requests.get(i);
+            try {
+                Port input = before.require(request.target, true);
+                if (request.source != null) before.require(request.source, false);
+                request.requireExpected(input.sourceEndpoint);
+                nativeWriter.requireSupported(input.model, context.undo());
+            } catch (RpcException error) {
+                if (code == null) code = error.code;
+                if (failures++ < 8) rejected.append(rejected.length() == 0 ? "" : "; ").append('#').append(i).append(' ')
+                        .append(error.code).append(": ").append(error.getMessage());
+            }
+        }
+        if (failures > 0)
+            throw new RpcException(code, "No connection was written; " + failures + " of " + requests.size()
+                    + " entries failed their checks: " + rejected + (failures > 8 ? "; ..." : ""), "not_applied");
+        snapshots.guardTarget(target, proxy, trackId);
+    }
+
+    /**
+     * Same-device batch: every expectedSource is checked against the live graph first (any failure writes nothing),
+     * then entries run in order through the ordinary single-input path, stopping at the first failure or unknown.
+     * One graph diff covers the batch; nothing is retried or rolled back.
+     */
+    void setAll(Object proxy, UUID trackId, java.util.List<Request> requests, Runnable check, Runnable dispatch,
+            Consumer<JsonObject> complete, Consumer<Throwable> fail) {
+        preflight(proxy, trackId, requests, check);
+        JsonObject graphBefore = snapshots.snapshot(proxy, trackId, 0, GridTopologyContext.MAX_MODULES, false, false, null, check);
+        new Batch(proxy, trackId, requests, graphBefore, check, dispatch, complete, fail).next(0);
+    }
+
+    private final class Batch {
+        final Object proxy; final UUID trackId; final java.util.List<Request> requests; final JsonObject graphBefore;
+        final Runnable check, dispatch; final Consumer<JsonObject> complete; final Consumer<Throwable> fail;
+        final JsonArray items = new JsonArray();
+        JsonObject lastGraph; String status = "applied"; int written, completed; boolean allMatch = true;
+        Batch(Object proxy, UUID trackId, java.util.List<Request> requests, JsonObject graphBefore, Runnable check,
+                Runnable dispatch, Consumer<JsonObject> complete, Consumer<Throwable> fail) {
+            this.proxy = proxy; this.trackId = trackId; this.requests = requests; this.graphBefore = graphBefore;
+            this.check = check; this.dispatch = dispatch; this.complete = complete; this.fail = fail;
+        }
+        void next(int i) {
+            if (i == requests.size()) { finish(); return; }
+            Request request = requests.get(i);
+            JsonObject item = new JsonObject();
+            item.addProperty("targetModuleId", request.target.moduleId.toString());
+            item.addProperty("targetPortKey", request.target.portKey);
+            items.add(item);
+            boolean[] sent = {false};
+            try {
+                set(proxy, trackId, request, check, () -> { dispatch.run(); sent[0] = true; },
+                        one -> { record(item, one); next(i + 1); }, error -> failed(i, item, error, sent[0]));
+            } catch (Throwable error) { failed(i, item, error, sent[0]); }
+        }
+        private void record(JsonObject item, JsonObject one) {
+            boolean changed = one.get("mutationDispatched").getAsBoolean();
+            item.addProperty("status", changed ? "applied" : "already_matched");
+            for (String key : new String[] {"previousSource", "actualSource", "matchesRequested"}) item.add(key, one.get(key));
+            allMatch &= one.get("matchesRequested").getAsBoolean();
+            lastGraph = one.getAsJsonObject("graph");
+            completed++; if (changed) written++;
+        }
+        private void failed(int i, JsonObject item, Throwable error, boolean dispatched) {
+            boolean unknown = dispatched || error instanceof RpcException && "unknown".equals(((RpcException) error).outcome);
+            if (completed == 0 && !unknown || !(error instanceof RuntimeException) && !unknown) { fail.accept(error); return; }
+            item.addProperty("status", unknown ? "unknown" : "failed");
+            JsonObject why = new JsonObject();
+            why.addProperty("code", error instanceof RpcException ? ((RpcException) error).code : "internal_error");
+            why.addProperty("message", error.getMessage());
+            item.add("error", why);
+            status = unknown ? "unknown" : written > 0 ? "partial" : "failed";
+            for (int k = i + 1; k < requests.size(); k++) {
+                Request later = requests.get(k); JsonObject rest = new JsonObject();
+                rest.addProperty("targetModuleId", later.target.moduleId.toString());
+                rest.addProperty("targetPortKey", later.target.portKey);
+                rest.addProperty("status", "not_dispatched"); items.add(rest);
+            }
+            finish();
+        }
+        private void finish() {
+            try {
+                boolean unknown = status.equals("unknown");
+                JsonObject result = HostServices.observed();
+                result.addProperty("batchStatus", status); result.addProperty("completion", unknown ? "unknown" : "observed");
+                result.addProperty("written", written); result.addProperty("allMatchRequested", allMatch);
+                result.add("connections", items);
+                result.addProperty("mutationDispatched", written > 0 || unknown);
+                result.addProperty("nativeMutation", written > 0 || unknown); result.addProperty("nativeUndo", written > 0 || unknown);
+                result.addProperty("verification", "later_document_event_bounded_native_graph_observation_per_entry");
+                // After an unknown entry the last observed graph is not the current one: no diff is offered.
+                if (lastGraph != null && !unknown) { result.add("graph", lastGraph); result.add("graphBefore", graphBefore); }
+                complete.accept(result);
+            } catch (Throwable error) { fail.accept(error); }
+        }
+    }
+
     private Graph capture(Object graph, Runnable check) {
         GridSnapshotReader.State state = new GridSnapshotReader.State(check);
         Graph result = new Graph();
@@ -167,6 +271,24 @@ final class GridConnectionWriter {
         final Endpoint target, expectedSource, source;
         Request(Endpoint target, Endpoint expectedSource, Endpoint source) {
             this.target = target; this.expectedSource = expectedSource; this.source = source;
+        }
+        static java.util.List<Request> parseBatch(JsonObject p) {
+            JsonElement value = p.get("connections");
+            if (!value.isJsonArray() || value.getAsJsonArray().size() < 1 || value.getAsJsonArray().size() > MAX_BATCH)
+                throw failure("invalid_params", "connections must be an array of 1.." + MAX_BATCH + " connection edits.");
+            java.util.List<Request> result = new ArrayList<>(); Set<Endpoint> seen = new HashSet<>();
+            for (JsonElement element : value.getAsJsonArray()) {
+                if (!element.isJsonObject()) throw failure("invalid_params", "Each connection must be an object.");
+                JsonObject entry = element.getAsJsonObject();
+                // Source fields are explicitly nullable, so the generic null-rejecting field check does not apply.
+                if (!entry.keySet().equals(Set.of("targetModuleId", "targetPortKey", "expectedSource", "source")))
+                    throw failure("invalid_params", "Each connection requires exactly targetModuleId, targetPortKey, expectedSource and source.");
+                Request request = parse(entry);
+                if (!seen.add(request.target))
+                    throw failure("invalid_params", "connections must not repeat a targetModuleId/targetPortKey pair.");
+                result.add(request);
+            }
+            return result;
         }
         static Request parse(JsonObject p) {
             return new Request(new Endpoint(uuid(p, "targetModuleId"), key(p, "targetPortKey")),

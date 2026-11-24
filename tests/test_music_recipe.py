@@ -290,11 +290,16 @@ class FakeGrid:
                 current["value"] = entry["value"]
             return {"status": "observed", "batchStatus": "applied", "completion": "observed", "written": len(results), "writes": results}
         if method == "grid.connections.set":
-            key = (params["targetModuleId"], params["targetPortKey"])
-            assert params["expectedSource"] == (self.cables.get(key))
-            self.cables[key] = params["source"]
-            return {"status": "observed", "matchesRequested": True, "actualSource": params["source"],
-                    "connectionsChanged": [{"target": {"moduleId": key[0], "portKey": key[1]}, "from": None, "to": params["source"]}],
+            edits = params["connections"]
+            assert all(edit["expectedSource"] == self.cables.get((edit["targetModuleId"], edit["targetPortKey"])) for edit in edits)
+            for edit in edits:
+                self.cables[edit["targetModuleId"], edit["targetPortKey"]] = edit["source"]
+            return {"status": "observed", "batchStatus": "applied", "completion": "observed", "written": len(edits),
+                    "allMatchRequested": True,
+                    "connections": [{"targetModuleId": edit["targetModuleId"], "targetPortKey": edit["targetPortKey"],
+                                     "status": "applied", "matchesRequested": True} for edit in edits],
+                    "connectionsChanged": [{"target": {"moduleId": edit["targetModuleId"], "portKey": edit["targetPortKey"]},
+                                            "from": None, "to": edit["source"]} for edit in edits],
                     "moduleCount": len(self.modules)}
         raise AssertionError(method)
 
@@ -316,8 +321,8 @@ async def test_grid_patch_uses_diffs_and_one_parameter_batch(recipe, label):
     assert methods.count("grid.parameters.set") == 1 and "grid.parameters.get" not in methods
     batch = next(params for method, params in grid.calls if method == "grid.parameters.set")
     assert len(batch["writes"]) == 12
-    # 1 read, 2 deletes, 3 inserts, 1 filtered read, 1 batch, 2 cables, 1 final read
-    assert len(grid.calls) == 11 and methods.count("grid.get") == 3
+    # 1 read, 2 deletes, 3 inserts, 1 filtered read, 1 batch, 1 cable batch, 1 final read
+    assert len(grid.calls) == 10 and methods.count("grid.connections.set") == 1 and methods.count("grid.get") == 3
     filtered = next(params for method, params in grid.calls if method == "grid.get" and "moduleIds" in params)
     assert len(filtered["moduleIds"]) == 2
     assert {item["value"] for item in grid.modules[batch["writes"][0]["moduleId"]]["parameters"] if item["parameterId"] == "ADSR.Model"} == {3}

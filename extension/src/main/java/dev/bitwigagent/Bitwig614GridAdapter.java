@@ -337,6 +337,11 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
         require(gateError, "gate"); require(connectionError, "connection write");
         connectionWriter.set(proxy, trackId, request, check, dispatch, complete, fail);
     }
+    @Override public void setConnections(Object proxy, UUID trackId, java.util.List<GridConnectionWriter.Request> requests,
+            Runnable check, Runnable dispatch, Consumer<JsonObject> complete, Consumer<Throwable> fail) {
+        require(gateError, "gate"); require(connectionError, "connection write");
+        connectionWriter.setAll(proxy, trackId, requests, check, dispatch, complete, fail);
+    }
     @Override public void insertModule(Object proxy, UUID trackId, GridInsertionWriter.Request request,
             Runnable check, Runnable dispatch, Consumer<JsonObject> complete, Consumer<Throwable> fail) {
         require(gateError, "gate"); require(moduleInsertError, "module insertion");

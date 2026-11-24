@@ -776,3 +776,39 @@ def test_graph_mode_is_not_accepted_by_reads_or_parameter_writes():
                          ("grid.parameters.set", GRID_SET)):
         with pytest.raises(ValidationError):
             validate_call(method, {**args, "graph": "full"})
+
+
+GRID_EDIT = {"targetModuleId": TRACK, "targetPortKey": "", "expectedSource": None, "source": GRID_SOURCE}
+
+
+def test_grid_connection_batch_preserves_each_entry_and_explicit_nulls():
+    edits = [GRID_EDIT, {**GRID_EDIT, "targetPortKey": "b", "expectedSource": GRID_SOURCE, "source": None}]
+    params, _ = validate_call("grid.connections.set", {**TARGET, "connections": edits, "graph": "full"})
+    assert params == {**TARGET, "connections": edits, "graph": "full"}
+    assert validate_call("grid.connections.set", {**TARGET, "connections": [
+        {**GRID_EDIT, "targetPortKey": str(i)} for i in range(32)]})
+
+
+@pytest.mark.parametrize("changes", [
+    {"connections": []},
+    {"connections": [{**GRID_EDIT, "targetPortKey": str(i)} for i in range(33)]},
+    {"connections": [GRID_EDIT, GRID_EDIT]},
+    {"connections": [GRID_EDIT, {**GRID_EDIT, "targetModuleId": TRACK.upper()}]},
+    {"connections": [{key: value for key, value in GRID_EDIT.items() if key != "source"}]},
+    {"connections": [{key: value for key, value in GRID_EDIT.items() if key != "expectedSource"}]},
+    {"connections": [{**GRID_EDIT, "extra": 1}]},
+    {"connections": [GRID_EDIT], "targetPortKey": ""},
+    {"connections": [GRID_EDIT], "source": None},
+    {"connections": None},
+])
+def test_grid_connection_batch_rejects_malformed_or_mixed_forms(changes):
+    with pytest.raises(ValidationError):
+        validate_call("grid.connections.set", {**TARGET, **changes})
+
+
+def test_grid_capabilities_detail_is_summary_or_full_only():
+    assert validate_call("grid.capabilities", {"detail": "full"})[0] == {"detail": "full"}
+    assert validate_call("grid.capabilities", {})[0] == {}
+    for bad in ("all", "", True, None):
+        with pytest.raises(ValidationError):
+            validate_call("grid.capabilities", {"detail": bad})

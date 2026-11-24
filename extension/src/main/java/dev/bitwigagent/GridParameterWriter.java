@@ -130,6 +130,8 @@ final class GridParameterWriter {
                 item.addProperty("status", changed ? "applied" : "already_matched");
                 item.add("previousValue", one.get("previousValue"));
                 item.add("value", one.getAsJsonObject("parameter").get("value"));
+                JsonElement display = one.getAsJsonObject("parameter").get("display");
+                if (display != null && !display.isJsonNull()) item.add("display", display);
                 for (String key : new String[] {"previousCoupledParameter", "coupledParameter"})
                     if (one.has(key)) item.add(key, one.get(key));
                 completed++; if (changed) written++;
