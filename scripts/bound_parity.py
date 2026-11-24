@@ -58,7 +58,24 @@ def window_fix(field):
 
 # (method, field path) -> mutate params after the vector value was set, so the
 # vector is valid except for the bound under test.
+def drop(*keys):
+    """Exactly-one-of alternatives: drop the sibling the example already carries."""
+    def fix(params, value, keys=keys):
+        for key in keys:
+            container, _, leaf = key.rpartition(".")
+            target = params
+            for part in filter(None, container.split(".")):
+                target = target[int(part)] if part.isdigit() else target.get(part, {})
+            if isinstance(target, dict):
+                target.pop(leaf, None)
+    return fix
+
+
 FIXUPS = {
+    ("grid.modules.insert", "typeName"): drop("typeId"),
+    ("grid.modules.insert", "typeId"): drop("typeName"),
+    ("grid.modules.insert", "modules.0.typeName"): drop("modules.0.typeId"),
+    ("grid.parameters.set", "display"): drop("value"),
     ("devices.insert", "path"): file_insert,
     ("launcher.import", "path"): lambda p, v: p.__setitem__("path", as_path(v)),
     **{(m, f): window_fix(f) for m in ("notes.read", "notes.edit")
@@ -181,7 +198,7 @@ def bound_vectors(node, defs):
                 yield f"maxLength={top}", "a" * top, True
                 yield "maxLength+", "a" * (top + 1), False
                 # Java counts UTF-16 units; U+1F600 is two.
-                yield f"maxLength={top} utf16", "\U0001F600" * (top // 2) + "a" * (top % 2), True
+                yield f"maxLength={top} utf16", ("\U0001F600" * (top // 2 - 1) + "a" * (2 + top % 2)) if top >= 2 else "a" * top, True
                 yield "maxLength+ utf16", "\U0001F600" * (top // 2 + 1), False
         elif kind == "array":
             if s.get("minItems", 0) > 0:

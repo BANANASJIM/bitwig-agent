@@ -133,6 +133,13 @@ TYPE_NAME_DESCRIPTION = "Alternative to typeId: a catalog module name matched ex
 INT32_DESCRIPTION = "Requested absolute native anchor, not a relative delta or pixels. Signed int32 JSON integer token; native layout bounds checked by host."
 
 
+def require_name_characters(value):
+    """Mirror GridNames.norm: a typeName must keep at least one letter or digit once case, spaces and punctuation are ignored."""
+    if value is not None and not any(ch.isalnum() for ch in value):
+        raise ValueError("typeName must contain a letter or digit")
+    return value
+
+
 class GridModuleSpec(StrictModel):
     typeId: TrackId = omitted(description=TYPE_ID_DESCRIPTION)
     typeName: str = omitted(min_length=1, max_length=128, description=TYPE_NAME_DESCRIPTION)
@@ -144,6 +151,11 @@ class GridModuleSpec(StrictModel):
         if len({"typeId", "typeName"} & self.model_fields_set) != 1:
             raise ValueError("supply exactly one of typeId or typeName")
         return self
+
+    @field_validator("typeName")
+    @classmethod
+    def _type_name_characters(cls, value):
+        return require_name_characters(value)
 
 
 class GridModuleInsertArgs(GridWriteArgs):
@@ -168,6 +180,11 @@ class GridModuleInsertArgs(GridWriteArgs):
         elif not (GRID_INSERT_FIELDS <= single and len(single & {"typeId", "typeName"}) == 1):
             raise ValueError("supply modules, or x, y and exactly one of typeId or typeName")
         return self
+
+    @field_validator("typeName")
+    @classmethod
+    def _type_name_characters(cls, value):
+        return require_name_characters(value)
 
 
 class GridModuleArgs(ParameterArgs):
