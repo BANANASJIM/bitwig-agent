@@ -14,12 +14,15 @@ final class LauncherModule implements HostModule {
     static final Set<String> METHODS = Set.of("launcher.list", "launcher.create", "launcher.import", "launcher.launch", "launcher.stop", "notes.read", "notes.edit", "scenes.append");
     // channel defaults to 0; the five grid fields are all-or-none (omitted: window derived from the edits or the clip loop).
     private static final Set<String> WINDOW_OPTIONAL = Set.of("channel", "stepSizeBeats", "startStep", "steps", "pitchStart", "pitchCount");
+    private static final Set<String> EDIT_OPTIONAL = withDetail(WINDOW_OPTIONAL);
     private static final Set<String> GRID_FIELDS = Set.of("stepSizeBeats", "startStep", "steps", "pitchStart", "pitchCount");
     private static final BigDecimal[] DERIVED_GRIDS = {BigDecimal.ONE, new BigDecimal("0.5"), new BigDecimal("0.25"), new BigDecimal("0.125"),
         new BigDecimal("0.0625"), new BigDecimal("0.03125"), new BigDecimal("0.015625"), new BigDecimal("0.0078125")};
     // Bitwig 6.1.3 debounces step-size grid regeneration by 100ms before queuing controller delivery.
     // This margin avoids consuming that known old cache; it is not a configuration acknowledgement.
     private static final int NOTE_GRID_SETTLE_MS = 150;
+    private static final int NOTE_LIMIT = 2048;
+    private static Set<String> withDetail(Set<String> base) { Set<String> all = new HashSet<>(base); all.add("detail"); return all; }
     private final HostServices s;
     private final Clip clip;
     private final Track clipTrack;
@@ -103,7 +106,7 @@ final class LauncherModule implements HostModule {
                 Params.absoluteFilePath(p, "path");
                 break;
             case "launcher.create": {
-                Params.fields(p, Set.of("trackId", "slotIndex", "lengthBeats", "name"), Set.of("notes", "channel"));
+                Params.fields(p, Set.of("trackId", "slotIndex", "lengthBeats", "name"), Set.of("notes", "channel", "detail"));
                 int length = Params.integer(p, "lengthBeats", 1, 4096);
                 if (Params.string(p, "name").length() > 128) throw invalid("name must contain 1..128 characters");
                 if (p.has("notes")) {
@@ -114,7 +117,8 @@ final class LauncherModule implements HostModule {
                         if (e.get("beat").getAsDouble() + e.get("durationBeats").getAsDouble() > length)
                             throw invalid("notes must fit inside lengthBeats");
                     }
-                } else if (p.has("channel")) throw invalid("channel is only valid together with notes");
+                } else if (p.has("channel") || p.has("detail")) throw invalid("channel and detail are only valid together with notes");
+                detail(p);
                 break;
             }
             case "scenes.append":
@@ -123,7 +127,9 @@ final class LauncherModule implements HostModule {
                 return;
             case "notes.read":
             case "notes.edit": {
-                Params.fields(p, method.equals("notes.edit") ? Set.of("trackId", "slotIndex", "edits") : Set.of("trackId", "slotIndex"), WINDOW_OPTIONAL);
+                Params.fields(p, method.equals("notes.edit") ? Set.of("trackId", "slotIndex", "edits") : Set.of("trackId", "slotIndex"),
+                        method.equals("notes.edit") ? EDIT_OPTIONAL : WINDOW_OPTIONAL);
+                detail(p);
                 Window w = resolveWindow(method, p);
                 if (method.equals("notes.edit")) edits(p, w);
                 break;
@@ -132,6 +138,15 @@ final class LauncherModule implements HostModule {
         }
         Params.string(p, "trackId");
         if (p.has("slotIndex")) Params.integer(p, "slotIndex", 0, 15);
+    }
+
+    /** Presentation only: "full" lists the whole window and every edit; the default reports a summary plus unverified edits. */
+    static boolean detail(JsonObject p) {
+        if (!p.has("detail")) return false;
+        JsonElement d = p.get("detail");
+        if (!d.isJsonPrimitive() || !d.getAsJsonPrimitive().isString() || !Set.of("compact", "full").contains(d.getAsString()))
+            throw invalid("detail must be compact or full");
+        return d.getAsString().equals("full");
     }
 
     static List<Edit> edits(JsonObject p, Window w) {
@@ -245,6 +260,7 @@ final class LauncherModule implements HostModule {
         JsonObject ep = new JsonObject();
         ep.add("trackId", p.get("trackId")); ep.add("slotIndex", p.get("slotIndex"));
         if (p.has("channel")) ep.add("channel", p.get("channel"));
+        if (p.has("detail")) ep.add("detail", p.get("detail"));
         JsonArray list = new JsonArray();
         for (JsonElement n : p.getAsJsonArray("notes")) {
             if (!n.isJsonObject()) throw invalid("each note must be an object");
@@ -321,7 +337,7 @@ final class LauncherModule implements HostModule {
             JsonObject out = base(id, -1);
             JsonArray entries = new JsonArray();
             int scenes = track.clipLauncherSlotBank().itemCount().get();
-            for (int j = 0; j < Math.min(16, scenes); j++) { ready(slots[t][j]); entries.add(slotJson(slots[t][j], j)); }
+            for (int j = 0; j < Math.min(16, scenes); j++) { ready(slots[t][j]); entries.add(slotJson(slots[t][j], j, true)); }
             out.add("slots", entries);
             out.add("window", HostServices.window(0, 16, scenes));
             op.result.complete(out);
@@ -501,7 +517,7 @@ final class LauncherModule implements HostModule {
             s.schedule(op, () -> awaitName(op, id, track, slot, index, p, end), 20);
         } else if (method.equals("notes.read")) {
             cursorGuard(op, id, track, slot);
-            op.result.complete(notesResult(id, index, new Window(p)));
+            op.result.complete(notesResult(id, index, new Window(p), true));
         } else editNotes(op, id, track, slot, index, p);
     }
 
@@ -564,7 +580,8 @@ final class LauncherModule implements HostModule {
             if (e.set) clip.setStep(w.channel, e.x, e.pitch, e.velocity, e.duration);
             else clip.clearStep(w.channel, e.x, e.pitch);
         }
-        s.schedule(op, () -> awaitNotes(op, id, track, slot, index, w, changes, until(op)), 20);
+        boolean full = detail(p);
+        s.schedule(op, () -> awaitNotes(op, id, track, slot, index, w, changes, full, until(op)), 20);
     }
 
     static void preflight(List<Edit> changes, Window w, Clip clip) {
@@ -587,7 +604,7 @@ final class LauncherModule implements HostModule {
         }
     }
 
-    private void awaitNotes(HostOperation op, String id, Track track, Slot slot, int index, Window w, List<Edit> changes, long end) {
+    private void awaitNotes(HostOperation op, String id, Track track, Slot slot, int index, Window w, List<Edit> changes, boolean full, long end) {
         cursorGuard(op, id, track, slot);
         boolean all = true;
         for (Edit e : changes) {
@@ -595,22 +612,35 @@ final class LauncherModule implements HostModule {
             e.verified = (fresh || e.alreadyMatched) && matches(e, clip.getStep(w.channel, e.x, e.pitch));
             all &= e.verified;
         }
-        if (!all && System.nanoTime() < end) { s.schedule(op, () -> awaitNotes(op, id, track, slot, index, w, changes, end), 20); return; }
-        JsonObject out = notesResult(id, index, w);
+        if (!all && System.nanoTime() < end) { s.schedule(op, () -> awaitNotes(op, id, track, slot, index, w, changes, full, end), 20); return; }
+        JsonObject out = notesResult(id, index, w, full);
+        // Status and verification always cover every edit; detail only changes how many entries are listed.
         out.addProperty("status", all ? "observed" : "dispatched");
         out.addProperty("verification", all ? "changed_cells_read_back" : "partial_or_unobserved");
         JsonArray results = new JsonArray();
+        int verified = 0, matched = 0;
         for (Edit e : changes) {
+            if (e.verified) verified++;
+            if (e.alreadyMatched) matched++;
+            if (!full && e.verified) continue;
             JsonObject item = new JsonObject();
             item.addProperty("op", e.set ? "set" : "clear");
-            item.addProperty("step", w.start + e.x); item.addProperty("pitch", e.pitch);
+            if (full) item.addProperty("step", w.start + e.x);
+            else item.addProperty("beat", (w.start + e.x) * w.size);
+            item.addProperty("pitch", e.pitch);
             item.addProperty("verified", e.verified);
             item.addProperty("verification", e.alreadyMatched ? "already_matched_readback"
                     : noteGenerations[e.x][e.pitch] == e.generation && noteVersions[e.x][e.pitch] > e.before ? "observer_after_write" : "not_observed");
-            item.add("observed", noteJson(clip.getStep(w.channel, e.x, e.pitch), w, e.x, e.pitch));
+            item.add("observed", observedJson(clip.getStep(w.channel, e.x, e.pitch), w, e.x, e.pitch));
             results.add(item);
         }
-        out.add("edits", results);
+        JsonObject summary = new JsonObject();
+        summary.addProperty("requested", changes.size()); summary.addProperty("applied", changes.size() - matched);
+        summary.addProperty("alreadyMatched", matched); summary.addProperty("verified", verified);
+        summary.addProperty("unverified", changes.size() - verified);
+        out.add("summary", summary);
+        if (full) out.add("edits", results);
+        else if (results.size() > 0) out.add("unverifiedEdits", results);
         op.result.complete(out);
     }
 
@@ -621,17 +651,13 @@ final class LauncherModule implements HostModule {
                 && Math.abs(note.duration() - e.duration) <= 1e-9;
     }
 
-    private JsonObject notesResult(String id, int index, Window w) {
+    /** Machine-actionable flags only; constant explanations live in the catalog and PROTOCOL.md. list=false omits the note listing. */
+    private JsonObject notesResult(String id, int index, Window w, boolean list) {
         JsonObject out = base(id, index);
         out.add("window", w.json());
         addClipMetadata(out);
-        out.addProperty("scope", "single_channel_grid_window");
-        out.addProperty("completeClip", false);
-        out.addProperty("onsetPrecision", "grid_cell; API does not expose sub-step onset or multiple onsets in one cell");
         out.addProperty("gridGeneration", bindingGeneration);
         out.addProperty("gridReadiness", "scheduled_settling_not_acknowledged");
-        out.addProperty("gridSettleMs", NOTE_GRID_SETTLE_MS);
-        out.addProperty("gridReadinessLimitation", "Grid configuration follows observed cursor identity, then scheduled settling covers the known 6.1.3 100ms refresh debounce plus delivery margin. Public API has no current grid offset/step-size acknowledgement; this is not a host-data barrier. Delayed same-cell callbacks carry no source-window identity.");
         JsonArray notes = new JsonArray();
         JsonArray sustains = new JsonArray();
         int total = 0;
@@ -640,15 +666,15 @@ final class LauncherModule implements HostModule {
             if (note == null || note.state() == null) throw HostServices.failure("not_ready", "Note grid is not readable");
             if (note.state() == NoteStep$State.NoteOn) {
                 total++;
-                if (notes.size() < 2048) notes.add(noteJson(note, w, x, pitch));
+                if (list && notes.size() < NOTE_LIMIT) notes.add(noteJson(note, w, x, pitch));
             }
-            else if (note.state() == NoteStep$State.NoteSustain && x == 0) sustains.add(noteJson(note, w, x, pitch));
+            else if (list && note.state() == NoteStep$State.NoteSustain && x == 0) sustains.add(noteJson(note, w, x, pitch));
         }
-        out.add("notes", notes); out.add("continuingAtWindowStart", sustains);
         out.addProperty("notesInWindow", total);
+        if (!list) return out;
+        out.add("notes", notes); out.add("continuingAtWindowStart", sustains);
         out.addProperty("notesReturned", notes.size());
         out.addProperty("completeWindow", total == notes.size());
-        out.addProperty("noteResponseLimit", 2048);
         String continuation = null;
         if (total > notes.size()) continuation = "Subdivide steps or pitchCount to read the remaining onset cells; response is bounded below the 1 MiB transport limit";
         double loopEnd = clip.getLoopStart().get() + clip.getLoopLength().get(), windowEnd = (w.start + w.steps) * w.size;
@@ -662,15 +688,24 @@ final class LauncherModule implements HostModule {
         return out;
     }
 
+    /** MIDI velocity 1..127, the unit notes.edit takes; the host reports 0..1. */
+    static int midiVelocity(double normalized) { return Math.max(1, Math.min(127, (int) Math.round(normalized * 127))); }
+
+    /** One onset row in the units notes.edit accepts; channel is the window's, step is beat/stepSizeBeats. */
     static JsonObject noteJson(NoteStep note, Window w, int x, int pitch) {
         JsonObject out = new JsonObject();
-        out.addProperty("channel", w.channel); out.addProperty("step", w.start + x);
+        out.addProperty("beat", (w.start + x) * w.size); out.addProperty("pitch", pitch);
+        out.addProperty("velocity", midiVelocity(note.velocity()));
+        out.addProperty("durationBeats", note.duration());
+        return out;
+    }
+
+    /** A cell as read back after an edit: an onset row, or just the cell with its non-onset state. */
+    static JsonObject observedJson(NoteStep note, Window w, int x, int pitch) {
+        if (note.state() == NoteStep$State.NoteOn) return noteJson(note, w, x, pitch);
+        JsonObject out = new JsonObject();
         out.addProperty("beat", (w.start + x) * w.size); out.addProperty("pitch", pitch);
         out.addProperty("state", note.state().name());
-        if (note.state() != NoteStep$State.Empty) {
-            out.addProperty("velocityNormalized", note.velocity());
-            out.addProperty("durationBeats", note.duration());
-        }
         return out;
     }
 
@@ -697,6 +732,41 @@ final class LauncherModule implements HostModule {
         if (!s.trackMatches(id, track) || track.clipLauncherSlotBank().scrollPosition().get() != 0)
             throw new RpcException("stale_context", "Explicit track or launcher bank changed", op.dispatched ? "unknown" : "not_applied");
     }
+    /** Whether the launcher cursor clip is this slot's clip; null until the cursor identity has been observed. Read-only. */
+    private Boolean selected(Slot slot) {
+        if (!slot.equalReady || !clipExistsReady) return null;
+        return slot.equal.get() && clip.exists().get() && slot.api.hasContent().get();
+    }
+
+    /** For context.get: occupied slots of one track, without touching selection; null when unobserved. */
+    JsonArray occupiedSlots(int t, Track track) {
+        ClipLauncherSlotBank bank = track.clipLauncherSlotBank();
+        if (bank.scrollPosition().get() != 0) return null;
+        JsonArray out = new JsonArray();
+        for (int j = 0; j < Math.min(HostServices.SCENES, bank.itemCount().get()); j++) {
+            Slot slot = slots[t][j];
+            if (!slot.ready()) return null;
+            if (!slot.api.hasContent().get()) continue;
+            JsonObject e = new JsonObject();
+            e.addProperty("slotIndex", j); e.addProperty("name", slot.api.name().get()); e.addProperty("playing", slot.api.isPlaying().get());
+            out.add(e);
+        }
+        return out;
+    }
+
+    String slotName(int t, int j) { return slots[t][j].api.name().get(); }
+
+    /** Slot index of the cursor clip on track t, -1 when none, -2 when not yet observable. */
+    int cursorSlotIndex(int t, Track track) {
+        if (!clipExistsReady || !clipTrack.exists().get() || !s.trackMatches(clipTrack.channelId().get(), track)) return -1;
+        for (int j = 0; j < HostServices.SCENES; j++) {
+            Boolean sel = selected(slots[t][j]);
+            if (sel == null) return -2;
+            if (sel) return j;
+        }
+        return -1;
+    }
+
     private boolean bound(String id, Slot slot) {
         return slot.equalReady && slot.equal.get() && clipExistsReady && clip.exists().get() && lengthReady
                 && clipTrack.exists().get() && id.equals(clipTrack.channelId().get()) && slot.api.hasContent().get();
@@ -727,11 +797,11 @@ final class LauncherModule implements HostModule {
         out.addProperty("playStartBeats", clip.getPlayStart().get());
         out.addProperty("playStopBeats", clip.getPlayStop().get());
         out.addProperty("loopEnabled", clip.isLoopEnabled().get());
-        out.addProperty("selectionSideEffect", "explicit launcher slot selected in editor");
-        out.addProperty("identityVerification", "cursor_slot_proxy_equality_and_track_id");
     }
-    private static JsonObject slotJson(Slot slot, int index) {
+    private JsonObject slotJson(Slot slot, int index) { return slotJson(slot, index, false); }
+    private JsonObject slotJson(Slot slot, int index, boolean withSelected) {
         JsonObject out = new JsonObject(); out.addProperty("slotIndex", index);
+        if (withSelected) { Boolean sel = selected(slot); out.add("selected", sel == null ? JsonNull.INSTANCE : new JsonPrimitive(sel)); }
         out.addProperty("hasContent", slot.api.hasContent().get()); out.addProperty("name", slot.api.name().get());
         out.addProperty("playing", slot.api.isPlaying().get()); out.addProperty("queued", slot.api.isPlaybackQueued().get());
         out.addProperty("recording", slot.api.isRecording().get());

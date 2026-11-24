@@ -16,6 +16,7 @@ public final class HostBridgeTest {
         renamedSourceRetainsContinuousObservations();
         invalidInputDoesNotSchedule();
         initialObserverDataAndWindow();
+        contextGetIsReadOnlyAndNeverGuesses();
         matchingWriteRequiresFreshCallback();
         staleValuesDoNotVerifyWrites();
         mismatchedValuesAreReported();
@@ -179,6 +180,20 @@ public final class HostBridgeTest {
         params.addProperty("trackId", "outside");
         CompletableFuture<JsonObject> future = bridge.handle("devices.list", params, deadline()); host.next();
         expectError(future, "outside_window");
+    }
+
+    private static void contextGetIsReadOnlyAndNeverGuesses() {
+        Fake host = new Fake(); HostBridge bridge = host.bridge();
+        JsonObject out = call(host, bridge, "context.get", new JsonObject());
+        for (String key : new String[]{"projectName", "playing", "tempoBpm", "arrangerRecordEnabled", "arrangerAutomationWriteEnabled",
+                "clipLauncherAutomationWriteEnabled", "sceneCount", "tracks", "selectedTrack", "cursorClip"})
+            check(out.has(key), "context.get reports " + key + " (null when unobserved)");
+        check(out.get("cursorClip").isJsonNull() && out.get("selectedTrack").isJsonNull(), "unobserved selection and cursor clip are null, not guessed");
+        check(out.getAsJsonArray("tracks").size() >= 1 && out.getAsJsonArray("tracks").get(0).getAsJsonObject().get("trackId").getAsString().equals(Fake.TRACK_ID),
+                "tracks carry the observed UUID");
+        check(HostBridge.supportedMethods().contains("context.get"), "method is registered with the bridge");
+        JsonObject bad = new JsonObject(); bad.addProperty("x", 1);
+        expectError(bridge.handle("context.get", bad, deadline()), "invalid_params");
     }
 
     private static void matchingWriteRequiresFreshCallback() {

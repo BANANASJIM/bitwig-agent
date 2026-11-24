@@ -275,12 +275,13 @@ class ClipCreateArgs(ClipArgs):
     name: str = Field(min_length=1, max_length=128)
     notes: Annotated[list[ClipNote], Field(min_length=1, max_length=256)] = omitted()
     channel: Annotated[int, Field(ge=0, le=15)] = omitted()
+    detail: Literal["compact", "full"] = omitted()
 
     @model_validator(mode="after")
     def validate_notes(self):
         if "notes" not in self.model_fields_set:
-            if "channel" in self.model_fields_set:
-                raise ValueError("channel is only valid together with notes")
+            if {"channel", "detail"} & self.model_fields_set:
+                raise ValueError("channel and detail are only valid together with notes")
             return self
         check_note_spans(self.notes)
         if any(Decimal(str(n.beat)) + Decimal(str(n.durationBeats)) > self.lengthBeats for n in self.notes):
@@ -360,6 +361,7 @@ class NoteEdit(StrictModel):
 
 class NoteEditArgs(NoteWindowArgs):
     edits: list[NoteEdit] = Field(min_length=1, max_length=256)
+    detail: Literal["compact", "full"] = omitted()
 
     @model_validator(mode="after")
     def validate_edits(self):

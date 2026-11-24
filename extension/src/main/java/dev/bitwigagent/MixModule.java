@@ -279,6 +279,18 @@ final class MixModule implements HostModule {
         return result;
     }
 
+    /** Compact identity row for context.get (null fields when unobserved); never selects. */
+    JsonObject brief(int i) {
+        State state = states[i];
+        JsonObject out = new JsonObject();
+        out.addProperty("trackId", state.track.channelId().get());
+        out.add("index", state.meta("index"));
+        out.add("name", value(state, 0));
+        out.add("type", state.meta("type"));
+        out.add("selected", value(state, 6));
+        return out;
+    }
+
     private JsonObject snapshot(Target target) {
         JsonObject result = scope();
         State state = target.state;

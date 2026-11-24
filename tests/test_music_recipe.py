@@ -132,7 +132,7 @@ async def test_recipe_does_not_report_authored_when_clip_readback_is_wrong(tmp_p
                         "notes": None if problem == "malformed_readback" else [] if problem == "missing_onsets" else [
                             {"beat": item["beat"], "pitch": item["pitch"],
                              "durationBeats": item["durationBeats"],
-                             "velocityNormalized": item["velocity"] / 127}
+                             "velocity": item["velocity"]}
                             for item in recipe.pluck_phrase()],
                         "completeWindow": problem != "incomplete_window",
                         "continuingAtWindowStart": [], "loopStartBeats": 0, "loopLengthBeats": 8,
