@@ -144,7 +144,8 @@ public final class TransportModuleTest {
         f.next();
         check(!op.result.isDone(), "unobserved write keeps polling");
         // The controller thread is late: poll lands after the observation end but before the hard deadline.
-        Thread.sleep(timeoutMs - HostServices.DEADLINE_MARGIN_NANOS / 1_000_000 / 2);
+        // Sleep only guarantees a minimum, so aim just past the observation end to leave most of the margin for overshoot.
+        Thread.sleep(timeoutMs - HostServices.DEADLINE_MARGIN_NANOS / 1_000_000 + 5);
         f.next();
         JsonObject result = op.result.join();
         check(result.get("status").getAsString().equals("dispatched") && result.get("completion").getAsString().equals("unknown"),
