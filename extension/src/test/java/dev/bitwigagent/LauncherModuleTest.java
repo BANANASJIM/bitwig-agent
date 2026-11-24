@@ -44,6 +44,10 @@ public final class LauncherModuleTest {
         preDispatchFailuresDoNotQuarantine();
         unresolvedCreatesKeepTargetQuarantined();
         slotsBeyondSceneCountAreRejectedAndNotListed();
+        scenesAreAppendedAtTheEndAndCountIsObserved();
+        omittedWindowIsDerivedFromEdits();
+        omittedReadWindowCoversTheClipLoop();
+        createWritesNotesAfterObservingTheClip();
         System.out.println("LauncherModuleTest: " + assertions + " assertions passed (simulated host only)");
     }
 
@@ -683,6 +687,127 @@ public final class LauncherModuleTest {
         check(valid.result.join().get("status").getAsString().equals("observed"), "in-range create still completes");
     }
 
+    private static void scenesAreAppendedAtTheEndAndCountIsObserved() throws Exception {
+        Fake f = new Fake(); f.scenes = 3;
+        f.put(0, 0, 0, 60, 90, .25); // clip content in slot 0 must stay addressed by the same index
+        JsonObject out = f.call("scenes.append", new JsonObject());
+        check(out.get("sceneCountBefore").getAsInt() == 3 && out.get("sceneCount").getAsInt() == 4, "default appends one scene, count observed");
+        check(out.get("firstNewSlotIndex").getAsInt() == 3 && f.sceneAppends == 1, "new slot index is the old scene count");
+        JsonObject two = new JsonObject(); two.addProperty("count", 2);
+        out = f.call("scenes.append", two);
+        check(out.get("sceneCount").getAsInt() == 6 && f.sceneAppends == 3, "count appends several scenes in one call");
+        check(f.call("launcher.list", trackTarget()).getAsJsonArray("slots").size() == 6, "new scenes appear in the launcher window");
+        JsonObject many = new JsonObject(); many.addProperty("count", 11);
+        expectOutcome("scene_limit", "not_applied", f.start("scenes.append", many));
+        check(f.sceneAppends == 3, "over-limit append is never dispatched");
+        for (double bad : new double[]{0, 17, 1.5}) {
+            JsonObject p = new JsonObject(); p.addProperty("count", bad);
+            expect("invalid_params", () -> LauncherModule.validateParams("scenes.append", p));
+        }
+        JsonObject extra = new JsonObject(); extra.addProperty("trackId", ID);
+        expect("invalid_params", () -> LauncherModule.validateParams("scenes.append", extra));
+        Fake silent = new Fake(); silent.scenes = 2; silent.applyScene = false;
+        HostOperation op = silent.startShort("scenes.append", new JsonObject()); silent.drain(op);
+        expectFuture("scene_count_not_observed", op);
+        check(op.dispatched && silent.sceneAppends == 1, "unobserved count is unknown after exactly one dispatch");
+        try { op.result.join(); } catch (CompletionException error) {
+            check(((RpcException) error.getCause()).outcome.equals("unknown"), "unobserved scene append outcome is unknown");
+        }
+        Fake create = new Fake(); create.scenes = 1;
+        JsonObject far = createTarget(); far.addProperty("slotIndex", 1);
+        HostOperation rejected = create.start("launcher.create", far); expectFuture("slot_out_of_range", rejected);
+        try { rejected.result.join(); } catch (CompletionException error) {
+            check(error.getCause().getMessage().contains("scenes.append"), "out-of-range message points to scenes.append");
+        }
+    }
+
+    private static void omittedWindowIsDerivedFromEdits() throws Exception {
+        Fake f = new Fake();
+        f.call("launcher.create", createTarget());
+        JsonObject p = target(); p.add("edits", fixture());
+        LauncherModule.validateParams("notes.edit", p);
+        LauncherModule.Window w = LauncherModule.deriveEditWindow(p);
+        check(w.exact.compareTo(new java.math.BigDecimal("0.015625")) == 0 && w.start == 0 && w.steps == 96, "grid is the finest one that fits 128 steps");
+        check(w.pitch == 36 && w.pitches == 32, "pitch range comes from the edits");
+        JsonObject out = f.call("notes.edit", p);
+        check(out.get("status").getAsString().equals("observed") && out.getAsJsonObject("window").get("derived").getAsBoolean(), "derived window edit observed and echoed");
+        check(f.notes.containsKey(key(0, 0, 0, 60)) && f.notes.containsKey(key(0, 0, 64, 62)), "notes landed on absolute steps of the derived grid");
+        JsonObject quarter = target(); JsonArray one = new JsonArray(); one.add(set(2, 61, 90, 2)); quarter.add("edits", one);
+        check(LauncherModule.deriveEditWindow(quarter).exact.compareTo(new java.math.BigDecimal("0.015625")) == 0, "long notes fall back to the finest grid that still fits");
+        JsonObject fine = target(); JsonArray finer = new JsonArray(); finer.add(set(.0625, 61, 90, .125)); fine.add("edits", finer);
+        check(LauncherModule.deriveEditWindow(fine).exact.compareTo(new java.math.BigDecimal("0.0078125")) == 0, "short fine edits use the finest grid");
+        JsonObject wide = target(); JsonArray spread = new JsonArray(); spread.add(set(0, 60, 90, .25)); spread.add(set(40, 60, 90, .25)); wide.add("edits", spread);
+        try { LauncherModule.validateParams("notes.edit", wide); throw new AssertionError("accepted > 128 steps"); }
+        catch (RpcException error) { check(error.code.equals("invalid_params") && error.getMessage().contains("split") && error.getMessage().contains("coarser"), "oversized span names the remedy"); }
+        JsonObject partial = target(); partial.add("edits", fixture()); partial.addProperty("steps", 8);
+        expect("invalid_params", () -> LauncherModule.validateParams("notes.edit", partial));
+        JsonObject odd = target(); JsonArray off = new JsonArray(); off.add(set(.001, 60, 90, .25)); odd.add("edits", off);
+        expect("invalid_params", () -> LauncherModule.validateParams("notes.edit", odd));
+        Fake hidden = new Fake(); hidden.call("launcher.create", createTarget());
+        hidden.noteStorageStepSize = 1.0 / 128;
+        hidden.put(0, 0, 0, 36, 90, .5); hidden.put(0, 0, 64, 36, 90, .5); // second onset at beat 0.5
+        JsonObject overlap = target(); JsonArray longNote = new JsonArray(); longNote.add(set(0, 36, 100, 1)); overlap.add("edits", longNote);
+        HostOperation rejectedOverlap = hidden.start("notes.edit", overlap); hidden.drain(rejectedOverlap);
+        expectFuture("note_collision", rejectedOverlap);
+        check(hidden.writes == 0, "derived window cannot hide a finer existing onset");
+        JsonObject explicit = window(); explicit.add("edits", fixture());
+        check(f.call("notes.edit", explicit).get("status").getAsString().equals("observed"), "explicit windows keep working");
+    }
+
+    private static void omittedReadWindowCoversTheClipLoop() throws Exception {
+        Fake f = new Fake();
+        JsonObject create = createTarget(); create.addProperty("lengthBeats", 13 * 4);
+        f.call("launcher.create", create);
+        f.put(0, 0, 100, 60, 90, .25); // beat 25
+        JsonObject read = f.call("notes.read", target());
+        JsonObject w = read.getAsJsonObject("window");
+        check(w.get("stepSizeBeats").getAsDouble() == .25 && w.get("steps").getAsInt() == 128 && w.get("pitchCount").getAsInt() == 128, "long loop reads 128 steps at 1/16 note");
+        check(!read.get("windowCoversLoop").getAsBoolean() && read.get("continuation").getAsString().contains("startStep=128"), "uncovered loop returns a continuation, not a coarser grid");
+        check(w.get("derived").getAsBoolean() && read.getAsJsonArray("notes").size() == 1, "derived read lists notes");
+        Fake g = new Fake();
+        g.call("launcher.create", createTarget());
+        JsonObject whole = g.call("notes.read", target());
+        check(whole.getAsJsonObject("window").get("stepSizeBeats").getAsDouble() == .125 && whole.getAsJsonObject("window").get("steps").getAsInt() == 32, "short loop is read at 1/32 note");
+        check(whole.get("windowCoversLoop").getAsBoolean() && !whole.has("continuation"), "covered loop has no continuation");
+        JsonObject partial = target(); partial.addProperty("steps", 8);
+        expect("invalid_params", () -> LauncherModule.validateParams("notes.read", partial));
+    }
+
+    private static void createWritesNotesAfterObservingTheClip() throws Exception {
+        Fake f = new Fake();
+        JsonObject p = createTarget(); JsonArray notes = new JsonArray();
+        notes.add(set(0, 60, 100, 1)); notes.add(set(1.5, 64, 80, .5)); notes.add(set(3, 67, 90, 1)); p.add("notes", notes);
+        JsonObject out = f.call("launcher.create", p);
+        check(out.get("status").getAsString().equals("observed") && out.get("verification").getAsString().equals("slot_content_name_length"), "create verified before notes");
+        JsonObject write = out.getAsJsonObject("noteWrite");
+        check(write.get("status").getAsString().equals("observed") && write.getAsJsonArray("edits").size() == 3, "per-edit verification returned in the same call");
+        check(f.notes.containsKey(key(0, 0, 0, 60)) && f.notes.size() == 3 && f.creates == 1, "all notes written after exactly one create");
+        check(write.getAsJsonObject("window").get("derived").getAsBoolean() && out.get("slot") != null, "create fields and derived window both reported");
+        JsonObject early = createTarget(); JsonArray late = new JsonArray(); late.add(set(3.5, 60, 90, 1)); early.add("notes", late);
+        expect("invalid_params", () -> LauncherModule.validateParams("launcher.create", early));
+        JsonObject clearOp = createTarget(); JsonArray bad = new JsonArray(); JsonObject c = set(0, 60, 90, 1); c.addProperty("op", "clear"); bad.add(c); clearOp.add("notes", bad);
+        expect("invalid_params", () -> LauncherModule.validateParams("launcher.create", clearOp));
+        JsonObject lone = createTarget(); lone.addProperty("channel", 1);
+        expect("invalid_params", () -> LauncherModule.validateParams("launcher.create", lone));
+        Fake g = new Fake(); g.deferCreate = true;
+        JsonObject unobserved = createTarget(); unobserved.add("notes", notes.deepCopy());
+        HostOperation op = g.startShort("launcher.create", unobserved); g.drain(op);
+        JsonObject result = op.result.join();
+        check(result.get("status").getAsString().equals("dispatched") && result.get("noteWrite").getAsString().equals("not_attempted") && g.writes == 0,
+                "unobserved create writes no notes and stays unresolved");
+        Fake k = new Fake(); k.failWriteAt = 1;
+        HostOperation broken = k.startShort("launcher.create", unobserved.deepCopy()); k.drain(broken);
+        JsonObject kept = broken.result.join();
+        check(kept.get("verification").getAsString().equals("slot_content_name_length") && k.slots[0].content, "observed create survives a failing note stage");
+        check(kept.get("status").getAsString().equals("dispatched") && kept.getAsJsonObject("noteWrite").get("code").getAsString().equals("host_write_failed")
+                && kept.getAsJsonObject("noteWrite").get("outcome").getAsString().equals("unknown"), "note stage failure is reported inside noteWrite");
+        Fake h = new Fake(); h.emitNotes = false;
+        HostOperation silent = h.startShort("launcher.create", unobserved.deepCopy()); h.drain(silent);
+        JsonObject partial = silent.result.join();
+        check(partial.get("status").getAsString().equals("dispatched") && partial.getAsJsonObject("noteWrite").get("verification").getAsString().equals("partial_or_unobserved"),
+                "unobserved note writes stay dispatched with per-edit evidence");
+    }
+
     private static void expectQuarantine(HostOperation op, String method, String originalId) {
         expectOutcome("unresolved_mutation", "not_applied", op);
         try { op.result.join(); }
@@ -753,7 +878,8 @@ public final class LauncherModuleTest {
         Integer pendingStart;
         Double noteStorageStepSize;
         long gridRefreshDelayMillis, clockMillis, gridReadyAt;
-        int imports, importedSlot = -1, bankOffset;
+        int imports, importedSlot = -1, bankOffset, sceneAppends;
+        boolean applyScene = true;
         String importedPath;
         Runnable beforeInsertion = () -> {};
         final List<BooleanValueChangedCallback> recordObservers = new ArrayList<>();
@@ -886,6 +1012,11 @@ public final class LauncherModuleTest {
             transport.action("isArrangerAutomationWriteEnabled", a -> value(SettableBooleanValue.class, () -> arrangerAutomation, safetyObserved));
             transport.action("isClipLauncherAutomationWriteEnabled", a -> value(SettableBooleanValue.class, () -> launcherAutomation, safetyObserved));
             Node host = new Node(ControllerHost.class); host.action("createApplication", a -> application.proxy); host.action("createTransport", a -> transport.proxy);
+            Node sceneBankNode = new Node(SceneBank.class); sceneBankNode.value("itemCount", () -> scenes);
+            trackBank.action("sceneBank", a -> sceneBankNode.proxy);
+            Node project = new Node(Project.class);
+            project.action("createScene", a -> { sceneAppends++; if (applyScene) scenes++; return null; });
+            host.action("getProject", a -> project.proxy);
             host.action("createTrackBank", a -> trackBank.proxy); host.action("createLauncherCursorClip", a -> clip.proxy);
             host.action("scheduleTask", a -> {
                 Runnable action = (Runnable) a[0]; long delay = ((Number) a[1]).longValue();

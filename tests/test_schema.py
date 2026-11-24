@@ -644,3 +644,43 @@ def test_grid_rename_rejects_coercion_null_and_utf16_overflow(field, value):
 def test_grid_rename_rejects_aliases_implicit_selection_and_wrong_target_types(changes):
     with pytest.raises(ValidationError):
         validate_call("grid.modules.rename", {**GRID_RENAME, **changes})
+
+
+def test_note_window_is_optional_but_all_or_none():
+    params, _ = validate_call("notes.edit", {"trackId": TRACK, "slotIndex": 0, "edits": [note(), note(beat=1, pitch=64)]})
+    assert set(params) == {"trackId", "slotIndex", "edits"}
+    params, _ = validate_call("notes.read", {"trackId": TRACK, "slotIndex": 0})
+    assert set(params) == {"trackId", "slotIndex"}
+    for method, extra in (("notes.read", {}), ("notes.edit", {"edits": [note()]})):
+        with pytest.raises(ValidationError):
+            validate_call(method, {"trackId": TRACK, "slotIndex": 0, "steps": 8, **extra})
+
+
+@pytest.mark.parametrize("edits", [
+    [note(), note()],
+    [note(), note(beat=0.5)],
+    [note(beat=0.001)],
+    [note(durationBeats=0.001)],
+])
+def test_derived_window_still_rejects_cell_and_overlap_errors(edits):
+    with pytest.raises(ValidationError):
+        validate_call("notes.edit", {"trackId": TRACK, "slotIndex": 0, "edits": edits})
+
+
+def test_launcher_create_notes_fail_before_dispatch_when_invalid():
+    base = {"trackId": TRACK, "slotIndex": 0, "lengthBeats": 4, "name": "Sketch"}
+    n = {"beat": 0, "pitch": 60, "velocity": 90, "durationBeats": 1}
+    params, _ = validate_call("launcher.create", {**base, "notes": [n, {**n, "op": "set", "beat": 1}], "channel": 2})
+    assert params["notes"][0] == n and params["channel"] == 2
+    for bad in ({"notes": [{**n, "beat": 3.5}]}, {"notes": [n, n]}, {"notes": [{**n, "op": "clear"}]},
+                {"notes": []}, {"channel": 1}, {"notes": [{**n, "velocity": 0}]}):
+        with pytest.raises(ValidationError):
+            validate_call("launcher.create", {**base, **bad})
+
+
+def test_scenes_append_count_bounds():
+    assert validate_call("scenes.append", {})[0] == {}
+    assert validate_call("scenes.append", {"count": 16})[0] == {"count": 16}
+    for count in (0, 17, 1.5, None):
+        with pytest.raises(ValidationError):
+            validate_call("scenes.append", {"count": count})

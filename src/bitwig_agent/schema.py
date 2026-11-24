@@ -237,9 +237,55 @@ class ClipArgs(DeviceArgs):
     slotIndex: int = Field(ge=0, le=15)
 
 
+class ScenesAppendArgs(StatusArgs):
+    count: Annotated[int, Field(ge=1, le=16)] = omitted()
+
+
+class ClipNote(StrictModel):
+    op: Literal["set"] = omitted()
+    beat: float = Field(ge=0, le=4194304)
+    pitch: int = Field(ge=0, le=127)
+    velocity: int = Field(ge=1, le=127)
+    durationBeats: float = Field(ge=1 / 128, le=4096)
+
+
+def check_note_spans(notes) -> None:
+    """Grid-independent checks; the extension derives or validates the grid itself."""
+    seen: set[tuple[Decimal, int]] = set()
+    spans: dict[int, list[tuple[Decimal, Decimal]]] = {}
+    for note in notes:
+        beat = Decimal(str(note.beat))
+        if beat / Decimal("0.0078125") % 1:
+            raise ValueError("beat must be a multiple of 1/128 beat")
+        if (beat, note.pitch) in seen:
+            raise ValueError("duplicate edit cell")
+        seen.add((beat, note.pitch))
+        if note.op == "clear":
+            continue
+        end = beat + Decimal(str(note.durationBeats))
+        if Decimal(str(note.durationBeats)) / Decimal("0.0078125") % 1:
+            raise ValueError("durationBeats must be a multiple of 1/128 beat")
+        if any(beat < old_end and start < end for start, old_end in spans.setdefault(note.pitch, [])):
+            raise ValueError("same-pitch set durations overlap")
+        spans[note.pitch].append((beat, end))
+
+
 class ClipCreateArgs(ClipArgs):
     lengthBeats: int = Field(ge=1, le=4096)
     name: str = Field(min_length=1, max_length=128)
+    notes: Annotated[list[ClipNote], Field(min_length=1, max_length=256)] = omitted()
+    channel: Annotated[int, Field(ge=0, le=15)] = omitted()
+
+    @model_validator(mode="after")
+    def validate_notes(self):
+        if "notes" not in self.model_fields_set:
+            if "channel" in self.model_fields_set:
+                raise ValueError("channel is only valid together with notes")
+            return self
+        check_note_spans(self.notes)
+        if any(Decimal(str(n.beat)) + Decimal(str(n.durationBeats)) > self.lengthBeats for n in self.notes):
+            raise ValueError("notes must fit inside lengthBeats")
+        return self
 
 
 class ClipSettingsArgs(ClipArgs):
@@ -270,17 +316,27 @@ class ClipImportArgs(ClipArgs):
         return self
 
 
+GRID_FIELDS = {"stepSizeBeats", "startStep", "steps", "pitchStart", "pitchCount"}
+
+
 class NoteWindowArgs(ClipArgs):
-    channel: int = Field(ge=0, le=15)
-    stepSizeBeats: float = Field(ge=1 / 128, le=4)
-    startStep: int = Field(ge=0, le=1048576)
-    steps: int = Field(ge=1, le=128)
-    pitchStart: int = Field(ge=0, le=127)
-    pitchCount: int = Field(ge=1, le=128)
+    channel: Annotated[int, Field(ge=0, le=15)] = omitted()
+    stepSizeBeats: Annotated[float, Field(ge=1 / 128, le=4)] = omitted()
+    startStep: Annotated[int, Field(ge=0, le=1048576)] = omitted()
+    steps: Annotated[int, Field(ge=1, le=128)] = omitted()
+    pitchStart: Annotated[int, Field(ge=0, le=127)] = omitted()
+    pitchCount: Annotated[int, Field(ge=1, le=128)] = omitted()
+
+    @property
+    def explicit_window(self) -> bool:
+        return bool(GRID_FIELDS & self.model_fields_set)
 
     @model_validator(mode="after")
     def validate_pitch_window(self):
-        if self.pitchStart + self.pitchCount > 128:
+        supplied = GRID_FIELDS & self.model_fields_set
+        if supplied and supplied != GRID_FIELDS:
+            raise ValueError("stepSizeBeats, startStep, steps, pitchStart and pitchCount must be supplied together or all omitted")
+        if supplied and self.pitchStart + self.pitchCount > 128:
             raise ValueError("pitchStart + pitchCount must not exceed 128")
         return self
 
@@ -307,6 +363,9 @@ class NoteEditArgs(NoteWindowArgs):
 
     @model_validator(mode="after")
     def validate_edits(self):
+        if not self.explicit_window:
+            check_note_spans(self.edits)
+            return self
         cells = set()
         intervals: dict[int, list[tuple[int, int]]] = {}
         grid = Decimal(str(self.stepSizeBeats))
