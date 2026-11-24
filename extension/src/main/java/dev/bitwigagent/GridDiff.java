@@ -62,9 +62,12 @@ final class GridDiff {
         out.addProperty("moduleCount", now.size());
         // Parameters are never part of a topology diff; any other unsupported marker limits it.
         JsonArray limits = new JsonArray();
-        if (after.has("unsupported"))
-            for (JsonElement flag : after.getAsJsonArray("unsupported"))
-                if (!flag.getAsString().equals("parameters_not_requested")) limits.add(flag);
+        Set<String> seen = new LinkedHashSet<>();
+        for (JsonObject graph : List.of(before, after))
+            if (graph.has("unsupported"))
+                for (JsonElement flag : graph.getAsJsonArray("unsupported"))
+                    if (!flag.getAsString().equals("parameters_not_requested")) seen.add(flag.getAsString());
+        for (String flag : seen) limits.add(flag);
         if (limits.size() > 0) { out.addProperty("graphComplete", false); out.add("graphUnsupported", limits); }
     }
 

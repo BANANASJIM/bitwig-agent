@@ -87,6 +87,8 @@ final class GridParameterWriter {
             throw failure("grid_unavailable", "String panels are read-only; no string write operation is supported.");
         if (binding.kind == GridSnapshotReader.Kind.PANEL_BOOLEAN) {
             if (panels == null) throw failure("grid_unavailable", "Boolean panel write bindings are unavailable.");
+            panels.preflight(binding, entry.request, check);
+            return;
         } else {
             nativeWriter.requireSupported(binding.parameter, binding.kind);
             contexts.requireWritable(binding, null, check);
@@ -120,24 +122,32 @@ final class GridParameterWriter {
             item.addProperty("moduleId", entry.moduleId.toString()); item.addProperty("parameterId", entry.parameterId);
             writes.add(item);
             if (!status.equals("applied")) { item.addProperty("status", "not_dispatched"); continue; }
+            boolean[] sent = {false};
             try {
-                JsonObject one = set(proxy, trackId, entry.moduleId, entry.parameterId, entry.request, check, dispatch);
+                JsonObject one = set(proxy, trackId, entry.moduleId, entry.parameterId, entry.request, check,
+                        () -> { dispatch.run(); sent[0] = true; });
                 boolean changed = one.get("mutationDispatched").getAsBoolean();
                 item.addProperty("status", changed ? "applied" : "already_matched");
                 item.add("previousValue", one.get("previousValue"));
                 item.add("value", one.getAsJsonObject("parameter").get("value"));
+                for (String key : new String[] {"previousCoupledParameter", "coupledParameter"})
+                    if (one.has(key)) item.add(key, one.get(key));
                 completed++; if (changed) written++;
-            } catch (RpcException error) {
-                boolean unknown = "unknown".equals(error.outcome);
+            } catch (RuntimeException error) {
+                // Any failure after this entry's native dispatch may have landed, whatever outcome the error carries.
+                boolean unknown = sent[0] || error instanceof RpcException && "unknown".equals(((RpcException) error).outcome);
+                if (!unknown && !(error instanceof RpcException)) throw error;
                 if (completed == 0 && !unknown) throw error; // nothing dispatched: ordinary not_applied error
                 item.addProperty("status", unknown ? "unknown" : "failed");
-                JsonObject why = new JsonObject(); why.addProperty("code", error.code); why.addProperty("message", error.getMessage());
+                JsonObject why = new JsonObject();
+                why.addProperty("code", error instanceof RpcException ? ((RpcException) error).code : "internal_error");
+                why.addProperty("message", error.getMessage());
                 item.add("error", why);
                 status = unknown ? "unknown" : written > 0 ? "partial" : "failed"; if (unknown) completion = "unknown";
             }
         }
         JsonObject result = HostServices.observed();
-        result.addProperty("status", status); result.addProperty("completion", completion);
+        result.addProperty("batchStatus", status); result.addProperty("completion", completion);
         result.addProperty("written", written); result.add("writes", writes);
         return result;
     }

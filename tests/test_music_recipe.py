@@ -288,7 +288,7 @@ class FakeGrid:
                                 "status": "applied" if changed else "already_matched",
                                 "previousValue": current["value"], "value": entry["value"]})
                 current["value"] = entry["value"]
-            return {"status": "applied", "completion": "observed", "written": len(results), "writes": results}
+            return {"status": "observed", "batchStatus": "applied", "completion": "observed", "written": len(results), "writes": results}
         if method == "grid.connections.set":
             key = (params["targetModuleId"], params["targetPortKey"])
             assert params["expectedSource"] == (self.cables.get(key))

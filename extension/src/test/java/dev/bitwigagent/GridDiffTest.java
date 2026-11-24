@@ -71,6 +71,8 @@ public final class GridDiffTest {
         check(!out.has("graphComplete"), "parameters_not_requested is not a diff limitation");
         JsonObject limited = graph(new JsonObject[] {}, new JsonObject[] {}, "parameters_not_requested", "connection_source_outside_graph");
         out = new JsonObject(); GridDiff.diff(empty, limited, out);
+        JsonObject partialBefore = new JsonObject(); GridDiff.diff(limited, empty, partialBefore);
+        check(partialBefore.getAsJsonArray("graphUnsupported").size() == 1, "a partial baseline is flagged too");
         check(!out.get("graphComplete").getAsBoolean() && out.getAsJsonArray("graphUnsupported").size() == 1
                 && out.getAsJsonArray("graphUnsupported").get(0).getAsString().equals("connection_source_outside_graph"),
                 "coverage limits that matter stay as flags");

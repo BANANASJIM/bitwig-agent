@@ -193,7 +193,7 @@ async def build_grid(call, target: dict, types: dict[str, str], label: str) -> d
                "expectedValue": rows[wanted["moduleId"], wanted["parameterId"]]["value"], "value": wanted["value"]}
               for wanted in expected["parameters"]]
     written = await call("grid.parameters.set", {**target, "writes": writes})
-    if (written.get("status") != "applied" or len(written["writes"]) != len(writes)
+    if (written.get("batchStatus") != "applied" or len(written["writes"]) != len(writes)
             or any(item.get("status") not in ("applied", "already_matched") or item.get("value") != wanted["value"]
                    for item, wanted in zip(written["writes"], expected["parameters"]))):
         raise RuntimeError("Native parameter batch did not establish the requested control values")
@@ -275,8 +275,7 @@ async def create(args: argparse.Namespace) -> int:
         finally:
             with (args.artifacts / "calls.jsonl").open("a", encoding="utf-8") as output:
                 output.write(json.dumps(entry, ensure_ascii=False, allow_nan=False) + "\n")
-        ok_status = "applied" if method == "grid.parameters.set" and "writes" in params else "observed"
-        if (result.get("status") != ok_status or result.get("completion") == "unknown"
+        if (result.get("status") != "observed" or result.get("completion") == "unknown"
                 or result.get("topologyQuarantined") is True or result.get("topologyAdmissionBlocked") is True):
             report.setdefault("uncertainOperations", []).append(entry)
             raise RuntimeError(f"{method} did not establish its postcondition; inspect calls.jsonl before another write")

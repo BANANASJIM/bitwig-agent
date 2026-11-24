@@ -564,7 +564,7 @@ public final class GridModuleTest {
         check(!op.dispatched && !op.result.isDone(), "batch controller dispatch is not native invocation");
         f.adapter.next(); f.host.next();
         JsonObject result = op.result.join();
-        check(op.dispatched && result.get("status").getAsString().equals("applied") && result.get("written").getAsInt() == 1
+        check(op.dispatched && result.get("status").getAsString().equals("observed") && result.get("batchStatus").getAsString().equals("applied") && result.get("written").getAsInt() == 1
                 && result.getAsJsonArray("writes").size() == 1 && result.has("target") && f.adapter.writer.calls == 1,
                 "batch crosses both queues once and returns per-entry results with the explicit target");
         Fixture single = new Fixture(); HostOperation write = single.startWrite(); single.adapter.next(); single.host.next();

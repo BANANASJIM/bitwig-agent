@@ -46,6 +46,8 @@ public final class GridSnapshotReaderTest {
         diagnosticsGateNativeIdentityAndModuleFilterSelectsRows();
         batchChecksEveryCasBeforeAnyWrite();
         batchStopsAtFirstFailureAndNeverRetries();
+        batchFailureAfterOwnDispatchIsUnknownWhateverTheCode();
+        batchPreflightsAndReportsBooleanPanels();
         rawParameterLiveGuardChanges();
         rawParameterMutationFailuresRemainUnknown();
         booleanPanelInspectionKeepsScalarApplicabilityDistinct();
@@ -622,7 +624,7 @@ public final class GridSnapshotReaderTest {
         WriterFixture f = batchFixture();
         JsonObject ok = batch(f, entry("LOCAL_ID", "true", "false"), entry("OTHER_ID", "true", "true"));
         JsonArray writes = ok.getAsJsonArray("writes");
-        check(ok.get("status").getAsString().equals("applied") && ok.get("completion").getAsString().equals("observed")
+        check(ok.get("batchStatus").getAsString().equals("applied") && ok.get("status").getAsString().equals("observed") && ok.get("completion").getAsString().equals("observed")
                 && ok.get("written").getAsInt() == 1 && f.calls == 1
                 && writes.get(0).getAsJsonObject().get("status").getAsString().equals("applied")
                 && !writes.get(0).getAsJsonObject().get("value").getAsBoolean()
@@ -641,6 +643,34 @@ public final class GridSnapshotReaderTest {
         catch (RpcException caught) { error = caught; }
         check(error != null && error.outcome.equals("not_applied") && missing.calls == 0, "unknown parameter id fails the batch closed");
     }
+    private static void batchFailureAfterOwnDispatchIsUnknownWhateverTheCode() {
+        WriterFixture f = batchFixture();
+        int[] seen = {0};
+        f.afterMutation = () -> { if (++seen[0] == 2) throw HostServices.failure("stale_context", "children rebuilt after the native set"); };
+        JsonObject result = batch(f, entry("LOCAL_ID", "true", "false"), entry("OTHER_ID", "true", "false"), entry("THIRD_ID", "true", "false"));
+        JsonArray writes = result.getAsJsonArray("writes");
+        check(f.calls == 2 && result.get("batchStatus").getAsString().equals("unknown") && result.get("completion").getAsString().equals("unknown")
+                && writes.get(1).getAsJsonObject().get("status").getAsString().equals("unknown")
+                && writes.get(1).getAsJsonObject().getAsJsonObject("error").get("code").getAsString().equals("stale_context")
+                && writes.get(2).getAsJsonObject().get("status").getAsString().equals("not_dispatched"),
+                "a not_applied-coded error thrown after the entry's native set is unknown, not failed");
+    }
+    private static void batchPreflightsAndReportsBooleanPanels() {
+        PanelFixture f = new PanelFixture();
+        GridParameterWriter.Entry panel = new GridParameterWriter.Entry(new UUID(1, 1), "PANEL_ID", request("boolean", "true", "false"));
+        JsonObject result = f.writer.setAll(f.model.proxy, TRACK_ID, List.of(panel), () -> {}, () -> f.op.dispatched = true);
+        JsonObject entry = result.getAsJsonArray("writes").get(0).getAsJsonObject();
+        check(f.calls == 1 && entry.getAsJsonObject("coupledParameter").get("value").getAsDouble() == 0.0
+                && entry.getAsJsonObject("previousCoupledParameter").get("value").getAsDouble() == -0.5,
+                "batch entry keeps the coupled-parameter observations of a single panel write");
+        PanelFixture broken = new PanelFixture();
+        broken.model.first.put(CHILDREN, List.of(broken.panel));
+        RpcException error = null;
+        try { broken.writer.setAll(broken.model.proxy, TRACK_ID, List.of(panel), () -> {}, () -> broken.op.dispatched = true); }
+        catch (RpcException caught) { error = caught; }
+        check(error != null && error.outcome.equals("not_applied") && broken.calls == 0 && !broken.op.dispatched,
+                "an unresolvable panel coupling fails the batch before any write");
+    }
     private static void batchStopsAtFirstFailureAndNeverRetries() {
         WriterFixture f = batchFixture();
         int[] seen = {0};
@@ -652,11 +682,11 @@ public final class GridSnapshotReaderTest {
                 && writes.get(1).getAsJsonObject().get("status").getAsString().equals("unknown")
                 && writes.get(1).getAsJsonObject().getAsJsonObject("error").get("code").getAsString().equals("grid_verification_failed")
                 && writes.get(2).getAsJsonObject().get("status").getAsString().equals("not_dispatched")
-                && result.get("status").getAsString().equals("unknown") && result.get("completion").getAsString().equals("unknown"),
+                && result.get("batchStatus").getAsString().equals("unknown") && result.get("completion").getAsString().equals("unknown"),
                 "unknown entry is reported, later entries are not_dispatched, overall completion is unknown");
         WriterFixture first = batchFixture(); first.apply = false;
         JsonObject head = batch(first, entry("LOCAL_ID", "true", "false"), entry("OTHER_ID", "true", "false"));
-        check(first.calls == 1 && head.get("status").getAsString().equals("unknown") && head.get("written").getAsInt() == 0
+        check(first.calls == 1 && head.get("batchStatus").getAsString().equals("unknown") && head.get("written").getAsInt() == 0
                 && head.getAsJsonArray("writes").get(1).getAsJsonObject().get("status").getAsString().equals("not_dispatched"),
                 "an unknown first entry is reported, not thrown away, and nothing after it is dispatched or retried");
     }
