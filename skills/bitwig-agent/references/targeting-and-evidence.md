@@ -10,8 +10,8 @@ Use the installed MCP tool schemas or `bitwig-agent-rpc describe METHOD` for exa
 | Root device/direct parameter | Discover track, zero-based root device index and exact name; call `parameters.list` and use the returned parameter ID/context token |
 | One-hop layer parameter | Use `devices.layers.list`, the exact child address/discovery token and `parameters.layer.list` context; do not treat child indices as root indices |
 | Remote Control | Use the currently observed page/name/parameter and its own context token; do not reuse a direct-parameter token |
-| MIDI | Explicit track/slot/channel/grid/window; inspect occupancy/coverage and understand selection/auto-arm side effects before calling |
-| Grid | Use current graph instance/port/control IDs, target ownership and exact typed raw CAS observations; read a control immediately before writing |
+| MIDI | Track and slot from `context.get` (`cursorClip`, occupied `launcherSlots`) or `launcher.list`; slot below `sceneCount`; channel and window default sensibly. Inspect coverage and selection/auto-arm side effects before calling |
+| Grid | Use current graph instance/port/control IDs, target ownership and the typed raw `kind`/`value` of a recent `grid.get` row as `expectedKind`/`expectedValue`; stale expectations reject `not_applied` |
 | Modulator | Use explicit root parent and current modulator/control IDs; this surface is read-only, not loader/mapping/write support |
 | Host Action | Discover the actual host Action ID and confirm its current UI context; dispatch does not establish enablement or completion |
 
@@ -23,7 +23,7 @@ Tracks, root devices and Launcher slots are bounded to windows of 16; sends to e
 
 Require explicit user permission covering the change and actual target, one writer, and fresh relevant safety/target observations. Use a disposable fixture for experiments. Check the method's schema and guards rather than inventing an `allowWrite` argument. Recording/playback/automation conditions vary by operation; establish all required values rather than treating unknown as false. Read-only metadata and license/property descriptors never themselves authorize a write.
 
-`notes.read` selects its clip. An operation described as inspection can still change UI context; a failed dispatched selection can have `outcome: unknown`. Do not automatically retry it merely because no notes were meant to change.
+Agent `notes.*`, `launcher.create` and `scenes.append` move selection; `context.get` does not. An operation described as inspection can still change UI context; a failed dispatched selection can have `outcome: unknown`. Do not automatically retry it merely because no notes were meant to change.
 
 ## Outcome handling
 
