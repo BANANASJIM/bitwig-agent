@@ -887,3 +887,41 @@ def test_grid_insert_type_name_needs_a_letter_or_decimal_digit_like_java():
         with pytest.raises(ValidationError):
             validate_call("grid.modules.insert", {**named, "typeName": bad})
     validate_call("grid.modules.insert", {**named, "typeName": "Osc 2"})
+CLIP_EDIT = {"trackId": TRACK, "slotIndex": 0, "expectedClipName": "Riff"}
+
+
+@pytest.mark.parametrize("fields", [
+    {"op": "rename", "name": "a" * 128}, {"op": "resize", "lengthBeats": 4096}, {"op": "color", "rgb": "#aB09fF"},
+    {"op": "transpose", "semitones": -48}, {"op": "transpose", "semitones": 48},
+    {"op": "quantize", "amount": 0}, {"op": "quantize", "amount": 1},
+    {"op": "duplicateContent"}, {"op": "delete"}, {"op": "copyTo", "targetSlotIndex": 15},
+])
+def test_clips_edit_accepts_one_operation(fields):
+    params, _ = validate_call("clips.edit", {**CLIP_EDIT, **fields})
+    assert params == {**CLIP_EDIT, **fields}
+
+
+@pytest.mark.parametrize("fields", [
+    {"op": "bogus"}, {"op": "rename"}, {"op": "rename", "name": ""}, {"op": "rename", "name": "a" * 129},
+    {"op": "rename", "name": "x", "semitones": 1}, {"op": "delete", "name": "x"}, {"op": "duplicateContent", "amount": 1},
+    {"op": "resize", "lengthBeats": 0}, {"op": "resize", "lengthBeats": 4097}, {"op": "resize", "lengthBeats": 1.5},
+    {"op": "color", "rgb": "ff0000"}, {"op": "color", "rgb": "#ff00"}, {"op": "color", "rgb": "#gg0000"}, {"op": "color", "rgb": "#ff0000\n"},
+    {"op": "transpose", "semitones": 49}, {"op": "transpose", "semitones": -49}, {"op": "transpose"},
+    {"op": "quantize", "amount": 1.01}, {"op": "quantize", "amount": -0.01}, {"op": "copyTo"}, {"op": "copyTo", "targetSlotIndex": 16},
+    {"op": "delete", "force": True},
+])
+def test_clips_edit_rejects_bad_or_mixed_operations(fields):
+    with pytest.raises(ValidationError):
+        validate_call("clips.edit", {**CLIP_EDIT, **fields})
+
+
+def test_clips_edit_requires_exact_target():
+    for missing in ("trackId", "slotIndex", "expectedClipName", "op"):
+        args = {**CLIP_EDIT, "op": "delete"}
+        del args[missing]
+        with pytest.raises(ValidationError):
+            validate_call("clips.edit", args)
+    with pytest.raises(ValidationError):
+        validate_call("clips.edit", {**CLIP_EDIT, "op": "delete", "expectedClipName": "a" * 257})
+    assert TOOLS["clips.edit"].read_only is False
+    assert {e["op"] for e in TOOLS["clips.edit"].examples} == {"rename", "resize", "color", "transpose", "quantize", "duplicateContent", "delete", "copyTo"}
