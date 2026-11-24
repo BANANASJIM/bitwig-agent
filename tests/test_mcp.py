@@ -198,9 +198,10 @@ async def test_mcp_discovery_publishes_required_nullable_connection_contract(mcp
     assert insertion.annotations.read_only_hint is False
     schema = insertion.input_schema
     assert schema["additionalProperties"] is False
-    assert set(schema["required"]) == {
-        "trackId", "deviceIndex", "expectedDeviceName", "typeId", "x", "y",
-    }
+    assert set(schema["required"]) == {"trackId", "deviceIndex", "expectedDeviceName"}
+    assert {tuple(sorted(branch["required"])) for branch in schema["oneOf"]} == {("x", "y"), ("modules",)}
+    assert {"typeId", "typeName", "modules"} <= set(schema["properties"])
+    assert schema["properties"]["modules"]["minItems"] == 1 and schema["properties"]["modules"]["maxItems"] == 16
     for field in ("x", "y"):
         coordinate = schema["properties"][field]
         assert coordinate["type"] == "integer"

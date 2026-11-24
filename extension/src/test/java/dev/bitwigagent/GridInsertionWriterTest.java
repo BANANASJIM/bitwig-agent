@@ -22,6 +22,10 @@ public final class GridInsertionWriterTest {
         nativeFailuresPoisonButDeliveryFailuresDoNot();
         reflectedConversionFailuresCleanBeforeStickyQuarantine();
         allTopologyWritersConsultPendingLifetime();
+        typeNamesResolveExactlyOrRejectWithCandidates();
+        batchInsertsInOrderAndReturnsOneDiff();
+        batchValidatesEverythingBeforeLoadingAnything();
+        batchStopsAtFirstFailureOrUnknown();
         System.out.println("GridInsertionWriterTest: " + assertions + " assertions passed (semantic fake native lifecycle only)");
     }
     private static void processOwnersSurviveReplacementAndRejectMalformedMarkers() {
@@ -275,6 +279,120 @@ public final class GridInsertionWriterTest {
         Fixture second = new Fixture(f.process, null);
         check(TransportMixFixture.error(second.start(), "grid_unavailable").outcome.equals("not_applied") && second.loads == 0, "overlapping insertion cannot replace pending loader owner");
     }
+    private static List<GridInsertionWriter.Request> batchOf(UUID... types) {
+        List<GridInsertionWriter.Request> out = new ArrayList<>();
+        for (int i = 0; i < types.length; i++) out.add(new GridInsertionWriter.Request(types[i], 8 + 4 * i, 3));
+        return out;
+    }
+    private static void typeNamesResolveExactlyOrRejectWithCandidates() {
+        Fixture f = new Fixture();
+        f.catalogNames("Low-pass", "Low-pass LD", "Low-pass MG", "Oscillator");
+        for (String name : List.of("low-pass", "LOW PASS", "lowpass", " Low  Pass ")) {
+            Fixture g = new Fixture(); g.catalogNames("Low-pass", "Low-pass LD", "Oscillator");
+            HostOperation op = g.start(new GridInsertionWriter.Request(null, name, 8, 3));
+            check(op.dispatched && g.loads == 1, "typeName '" + name + "' resolves case/space/hyphen-insensitively to the exact entry");
+            g.deliver(); g.next();
+            check(op.result.join().get("typeId").getAsString().equals(new UUID(2, 100).toString()), "the resolved typeId is what was inserted");
+        }
+        RpcException error = null;
+        try { f.writer.insert(f.model.proxy, TRACK, new GridInsertionWriter.Request(null, "Low-pass M", 8, 3), () -> {}, () -> {}, v -> {}, e -> {}); }
+        catch (RpcException caught) { error = caught; }
+        check(error != null && error.code.equals("invalid_params") && error.outcome.equals("not_applied") && f.loads == 0
+                && error.getMessage().contains("Low-pass MG") && f.guard.blockedReason() == null,
+                "a partial name is not a match; candidates are listed and nothing is reserved or loaded");
+        f.catalogNames("Filter", "filter", "Oscillator");
+        error = null;
+        try { f.writer.insert(f.model.proxy, TRACK, new GridInsertionWriter.Request(null, "FILTER", 8, 3), () -> {}, () -> {}, v -> {}, e -> {}); }
+        catch (RpcException caught) { error = caught; }
+        check(error != null && error.getMessage().contains("ambiguous") && error.getMessage().contains(new UUID(2, 100).toString())
+                && error.getMessage().contains(new UUID(2, 101).toString()) && f.loads == 0, "two exact matches are ambiguous and both are listed");
+        error = null;
+        try { f.writer.insert(f.model.proxy, TRACK, new GridInsertionWriter.Request(null, "Oscilator", 8, 3), () -> {}, () -> {}, v -> {}, e -> {}); }
+        catch (RpcException caught) { error = caught; }
+        check(error != null && error.getMessage().contains("Oscillator"), "a typo lists the nearest names");
+        for (String bad : List.of("{\"typeId\":\"" + TYPE + "\",\"typeName\":\"x\",\"x\":1,\"y\":1}", "{\"x\":1,\"y\":1}", "{\"typeName\":\"---\",\"x\":1,\"y\":1}"))
+            expect("invalid_params", () -> GridInsertionWriter.Request.parse(TransportMixFixture.json(bad)));
+    }
+    private static void batchInsertsInOrderAndReturnsOneDiff() {
+        Fixture f = new Fixture(); f.fresh = true;
+        f.catalogNames("Alpha", "Beta");
+        List<GridInsertionWriter.Request> requests = List.of(new GridInsertionWriter.Request(null, "alpha", 8, 3),
+                new GridInsertionWriter.Request(new UUID(2, 101), 12, 3));
+        HostOperation op = f.startAll(requests);
+        check(op.dispatched && f.loads == 1 && !op.result.isDone(), "first entry loads through the single path and is not completion");
+        f.deliver(); check(f.loads == 1 && !op.result.isDone(), "second entry waits for the first native settlement");
+        f.next();
+        check(f.loads == 2 && !op.result.isDone() && f.placements == 1, "second entry starts only after the first settled");
+        f.deliver(); f.next();
+        JsonObject result = op.result.join(); f.guard.requireAvailable();
+        JsonArray modules = result.getAsJsonArray("modules");
+        check(result.get("batchStatus").getAsString().equals("applied") && result.get("status").getAsString().equals("observed")
+                && result.get("completion").getAsString().equals("observed") && result.get("written").getAsInt() == 2
+                && modules.size() == 2 && modules.get(0).getAsJsonObject().get("typeId").getAsString().equals(new UUID(2, 100).toString())
+                && modules.get(1).getAsJsonObject().get("typeId").getAsString().equals(new UUID(2, 101).toString())
+                && modules.get(0).getAsJsonObject().get("status").getAsString().equals("applied")
+                && modules.get(0).getAsJsonObject().get("moduleId").getAsString().equals(new UUID(1, 1025).toString())
+                && modules.get(1).getAsJsonObject().get("moduleId").getAsString().equals(new UUID(1, 1026).toString()),
+                "one result with per-entry typeId, moduleId and status, in request order");
+        JsonObject diff = new JsonObject(); GridDiff.diff(result.getAsJsonObject("graphBefore"), result.getAsJsonObject("graph"), diff);
+        check(diff.getAsJsonArray("modulesAdded").size() == 2 && diff.get("moduleCount").getAsInt() == 4,
+                "one graph diff covers every inserted module");
+    }
+    private static void batchValidatesEverythingBeforeLoadingAnything() {
+        Fixture f = new Fixture(); f.catalogNames("Alpha", "Beta");
+        for (List<GridInsertionWriter.Request> bad : List.of(
+                List.of(new GridInsertionWriter.Request(null, "alpha", 8, 3), new GridInsertionWriter.Request(null, "gamma", 12, 3)),
+                List.of(new GridInsertionWriter.Request(new UUID(2, 100), 8, 3), new GridInsertionWriter.Request(new UUID(9, 9), 12, 3)),
+                List.of(new GridInsertionWriter.Request(new UUID(2, 100), 8, 3), new GridInsertionWriter.Request(new UUID(2, 100), Integer.MAX_VALUE, 3)),
+                List.of(new GridInsertionWriter.Request(new UUID(2, 100), 8, 3), new GridInsertionWriter.Request(new UUID(2, 100), 8, -100000)))) {
+            HostOperation op = f.startAll(bad);
+            RpcException error = failed(op);
+            check(error.outcome.equals("not_applied") && f.loads == 0 && !op.dispatched && f.guard.blockedReason() == null,
+                    "any bad type or geometry rejects the whole batch before reservation, dispatch or loading");
+        }
+        RpcException named = null;
+        try { f.writer.insertAll(f.model.proxy, TRACK, List.of(new GridInsertionWriter.Request(null, "alpha", 8, 3),
+                new GridInsertionWriter.Request(null, "gamma", 12, 3)), () -> {}, () -> {}, v -> {}, e -> {}); }
+        catch (RpcException caught) { named = caught; }
+        check(named != null && named.getMessage().contains("#1") && !named.getMessage().contains("#0"), "the failing entry is named");
+        Fixture crowded = new Fixture(); crowded.population(127); HostOperation op = crowded.startAll(batchOf(TYPE, TYPE));
+        check(TransportMixFixture.error(op, "grid_bounds_exceeded").outcome.equals("not_applied") && crowded.loads == 0,
+                "destination count plus the whole batch must fit before loading");
+    }
+    private static RpcException failed(HostOperation op) {
+        try { op.result.join(); throw new AssertionError("Expected rejection"); }
+        catch (java.util.concurrent.CompletionException error) { return (RpcException) error.getCause(); }
+    }
+    private static void batchStopsAtFirstFailureOrUnknown() {
+        // Failure before the first dispatch is an ordinary not_applied error.
+        Fixture first = new Fixture(); first.failResolve = true;
+        check(TransportMixFixture.error(first.startAll(batchOf(TYPE, TYPE)), "grid_unavailable").outcome.equals("not_applied") && first.loads == 0,
+                "nothing dispatched means a plain not_applied error, not a batch result");
+        // A later prelaunch failure leaves an observed partial result with a diff.
+        Fixture later = new Fixture(); later.fresh = true;
+        HostOperation op = later.startAll(batchOf(TYPE, TYPE, TYPE));
+        later.deliver(); later.failResolve = true; later.next();
+        JsonObject partial = op.result.join(); JsonArray modules = partial.getAsJsonArray("modules");
+        check(partial.get("batchStatus").getAsString().equals("partial") && partial.get("completion").getAsString().equals("observed")
+                && partial.get("written").getAsInt() == 1 && later.loads == 1
+                && modules.get(0).getAsJsonObject().get("status").getAsString().equals("applied")
+                && modules.get(1).getAsJsonObject().get("status").getAsString().equals("failed")
+                && modules.get(1).getAsJsonObject().getAsJsonObject("error").get("code").getAsString().equals("grid_unavailable")
+                && modules.get(2).getAsJsonObject().get("status").getAsString().equals("not_dispatched")
+                && partial.has("graph") && partial.has("graphBefore"), "failure before an entry's dispatch is failed; the rest is not_dispatched; applied part keeps its diff");
+        later.guard.requireAvailable();
+        // A failure after an entry's native loader dispatch is unknown and the topology quarantine stays.
+        Fixture unknown = new Fixture(); unknown.fresh = true;
+        op = unknown.startAll(batchOf(TYPE, TYPE, TYPE));
+        unknown.deliver(); unknown.next(); unknown.failConverted = true; unknown.deliver();
+        JsonObject result = op.result.join(); modules = result.getAsJsonArray("modules");
+        check(result.get("batchStatus").getAsString().equals("unknown") && result.get("completion").getAsString().equals("unknown")
+                && modules.get(0).getAsJsonObject().get("status").getAsString().equals("applied")
+                && modules.get(1).getAsJsonObject().get("status").getAsString().equals("unknown")
+                && modules.get(2).getAsJsonObject().get("status").getAsString().equals("not_dispatched")
+                && !result.has("graph") && unknown.guard.quarantined() && unknown.loads == 2,
+                "a failure after dispatch is unknown, offers no diff, never retries and keeps the process quarantine");
+    }
     private static void expect(String code, Runnable action) {
         try { action.run(); throw new AssertionError("Expected " + code); }
         catch (RpcException error) { check(code.equals(error.code), "expected " + code + ", got " + error.code); }
@@ -287,7 +405,8 @@ public final class GridInsertionWriterTest {
         final Properties process; final GridTopologyQuarantine guard; final GridInsertionWriter writer;
         final Deque<Runnable> events = new ArrayDeque<>(); final Consumer<Runnable> queue;
         final List<String> order = new ArrayList<>();
-        final Node incoming = model.module(1024, null); final Object result = new Object(), completion = new Object();
+        Node incoming = model.module(1024, null); final Object result = new Object(), completion = new Object();
+        boolean fresh; int created;
         List<?> loaded = List.of(incoming); GridInsertionBridge.Callback callback;
         int loads, placements, cleanups, successes, normalization;
         boolean reflow, deleted, parented, owned, placementReady = true;
@@ -303,6 +422,21 @@ public final class GridInsertionWriterTest {
             model.catalog = List.of(new Node(ENTRY).put(ENTRY_ID, TYPE).put(ENTRY_KIND, "MODULE").put(ENTRY_NAME, "Catalog module"));
             context.override(incoming, NativeReadContext.Field.CONTEXT, null);
             context.override(incoming, NativeReadContext.Field.PROJECT, null);
+        }
+        void catalogNames(String... names) {
+            List<Object> entries = new ArrayList<>();
+            for (int i = 0; i < names.length; i++) entries.add(new Node(ENTRY).put(ENTRY_ID, new UUID(2, 100 + i)).put(ENTRY_KIND, "MODULE").put(ENTRY_NAME, names[i]));
+            model.catalog = entries;
+        }
+        HostOperation startAll(List<GridInsertionWriter.Request> requests) {
+            HostOperation op = new HostOperation(Long.MAX_VALUE);
+            try { editAll(requests, () -> {
+                if (op.result.isDone()) throw HostServices.failure("cancelled", "request already completed");
+            }, () -> op.dispatched = true, op.result::complete, op::fail); } catch (Throwable error) { op.fail(error); }
+            return op;
+        }
+        void editAll(List<GridInsertionWriter.Request> requests, Runnable check, Runnable dispatch, Consumer<JsonObject> complete, Consumer<Throwable> fail) {
+            writer.insertAll(model.proxy, TRACK, requests, check, dispatch, complete, fail);
         }
         GridInsertionWriter.Request request() { return new GridInsertionWriter.Request(TYPE, 8, 3); }
         HostOperation start() { return start(request()); }
@@ -329,11 +463,19 @@ public final class GridInsertionWriterTest {
         }
         void deliver() { if (callback.delivered(result, completion)) callback.returned(); }
         void next() { events.removeFirst().run(); }
+        UUID lastResolved = TYPE;
         @Override public String resolve(UUID id) {
+            lastResolved = id;
             if (failResolve) throw HostServices.failure("grid_unavailable", "missing native resource"); return "native-resolved-resource";
         }
         @Override public Runnable prepareLoad(Object project, String path, GridInsertionBridge.Callback callback) {
             if (failPrepare) throw HostServices.failure("grid_unavailable", "adapter construction failed");
+            if (fresh && created++ > 0) { // Each batch entry loads its own detached singleton.
+                incoming = model.module(1024 + created - 1, null); loaded = List.of(incoming);
+                context.override(incoming, NativeReadContext.Field.CONTEXT, null);
+                context.override(incoming, NativeReadContext.Field.PROJECT, null);
+            }
+            incoming.put(DESCRIPTOR, new Node().put(TYPE_ID, lastResolved)); // The loader delivers the requested type.
             this.callback = callback;
             return () -> { loads++; order.add("load"); if (failLaunch) throw new AssertionError("load failure"); };
         }

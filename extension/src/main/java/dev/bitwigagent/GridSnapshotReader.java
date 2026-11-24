@@ -52,14 +52,15 @@ final class GridSnapshotReader {
         List<?> catalog = (List<?>) value;
         if (catalog.size() > MAX_CATALOG) throw failure("grid_bounds_exceeded", "Native catalog exceeds 16384 entries; no partial catalog returned.");
         List<CatalogEntry> matches = new ArrayList<>();
-        String needle = query.toLowerCase(Locale.ROOT);
+        List<CatalogEntry> everything = new ArrayList<>();
         for (Object entry : catalog) {
             check.run();
             if (!a.is(Kind.ENTRY, entry)) throw failure("grid_unavailable", "Unknown native catalog entry type.");
             if (!"MODULE".equals(String.valueOf(a.read(Field.ENTRY_KIND, entry)))) continue;
             String name = text(a.read(Field.ENTRY_NAME, entry));
-            if (!name.toLowerCase(Locale.ROOT).contains(needle)) continue;
-            matches.add(new CatalogEntry(uuid(a.read(Field.ENTRY_ID, entry)), name));
+            CatalogEntry row = new CatalogEntry(uuid(a.read(Field.ENTRY_ID, entry)), name);
+            everything.add(row);
+            if (GridNames.matches(name, query)) matches.add(row);
         }
         matches.sort(Comparator.comparing((CatalogEntry x) -> x.name, String.CASE_INSENSITIVE_ORDER)
                 .thenComparing(x -> x.name).thenComparing(x -> x.id));
@@ -70,6 +71,16 @@ final class GridSnapshotReader {
         }
         JsonObject result = HostServices.observed();
         result.add("entries", entries); result.add("window", window(offset, limit, matches.size()));
+        if (matches.isEmpty() && !GridNames.norm(query).isEmpty()) {
+            Map<String, CatalogEntry> byName = new LinkedHashMap<>();
+            for (CatalogEntry row : everything) byName.putIfAbsent(row.name, row);
+            JsonArray suggestions = new JsonArray();
+            for (String name : GridNames.nearest(byName.keySet(), query, GridNames.SUGGESTIONS)) {
+                JsonObject item = new JsonObject();
+                item.addProperty("typeId", byName.get(name).id); item.addProperty("name", name); suggestions.add(item);
+            }
+            result.add("suggestions", suggestions);
+        }
         result.addProperty("source", "native_module_catalog");
         result.addProperty("nativeMutation", false); result.addProperty("nativeUndo", false);
         check.run(); return result;

@@ -32,6 +32,9 @@ public final class GridModuleTest {
         connectionResultsWaitForBothQueues();
         connectionSafetyTargetsAndCancellationGuardQueues();
         insertionArguments();
+        insertionBatchAndTypeNameArguments();
+        insertionBatchCrossesBothQueuesWithOneDiff();
+        displayWriteArgumentsValidateBeforeScheduling();
         capabilitiesAreCompactByDefault();
         connectionBatchArgumentsValidateBeforeScheduling();
         batchAndReadOptionsValidateAndDispatch();
@@ -648,6 +651,70 @@ public final class GridModuleTest {
         check(f.host.tasks.isEmpty() && f.adapter.tasks.isEmpty() && f.adapter.insertion.loads == 0,
                 "strict insertion shape rejects before any queue/native load");
     }
+    private static JsonObject batchInsertion(JsonObject... modules) {
+        JsonObject p = target(); JsonArray array = new JsonArray();
+        for (JsonObject m : modules) array.add(m);
+        p.add("modules", array); return p;
+    }
+    private static JsonObject moduleAt(String key, String value, int x, int y) {
+        JsonObject m = new JsonObject(); m.addProperty(key, value); m.addProperty("x", x); m.addProperty("y", y); return m;
+    }
+    private static void insertionBatchAndTypeNameArguments() {
+        Fixture f = new Fixture();
+        JsonObject named = insertionTarget(); named.remove("typeId"); named.addProperty("typeName", "Low-pass");
+        GridModule.validateParams("grid.modules.insert", named);
+        JsonObject both = insertionTarget(); both.addProperty("typeName", "Low-pass");
+        JsonObject blank = insertionTarget(); blank.remove("typeId"); blank.addProperty("typeName", " - ");
+        JsonObject longName = insertionTarget(); longName.remove("typeId"); longName.addProperty("typeName", "a".repeat(129));
+        String type = GridInsertionWriterTest.TYPE.toString();
+        GridModule.validateParams("grid.modules.insert", batchInsertion(moduleAt("typeId", type, 1, 1), moduleAt("typeName", "Low-pass", 5, 1)));
+        JsonObject withSingle = batchInsertion(moduleAt("typeId", type, 1, 1)); withSingle.addProperty("x", 1);
+        JsonObject emptyBatch = batchInsertion();
+        JsonObject[] many = new JsonObject[17]; Arrays.fill(many, moduleAt("typeId", type, 1, 1));
+        GridModule.validateParams("grid.modules.insert", batchInsertion(Arrays.copyOf(many, 16)));
+        JsonObject neither = batchInsertion(moduleAt("typeId", type, 1, 1)); neither.getAsJsonArray("modules").get(0).getAsJsonObject().remove("typeId");
+        JsonObject badCoordinate = batchInsertion(moduleAt("typeId", type, 1, 1)); badCoordinate.getAsJsonArray("modules").get(0).getAsJsonObject().addProperty("x", 1.5);
+        JsonObject extraKey = batchInsertion(moduleAt("typeId", type, 1, 1)); extraKey.getAsJsonArray("modules").get(0).getAsJsonObject().addProperty("copy", true);
+        for (JsonObject bad : List.of(both, blank, longName, withSingle, emptyBatch, batchInsertion(many), neither, badCoordinate, extraKey))
+            TransportMixFixture.error(f.host.submit(f.module, "grid.modules.insert", bad), "invalid_params");
+        check(f.host.tasks.isEmpty() && f.adapter.tasks.isEmpty() && f.adapter.insertion.loads == 0, "invalid insertion batches reject before scheduling or loading");
+    }
+    private static void insertionBatchCrossesBothQueuesWithOneDiff() {
+        Fixture f = new Fixture(); f.adapter.insertion.fresh = true;
+        f.adapter.insertion.catalogNames("Alpha", "Beta");
+        HostOperation op = f.host.submit(f.module, "grid.modules.insert", batchInsertion(
+                moduleAt("typeName", "alpha", 8, 3), moduleAt("typeId", new UUID(2, 101).toString(), 12, 3)));
+        f.host.next(); f.adapter.next();
+        check(op.dispatched && f.adapter.insertion.loads == 1 && !op.result.isDone(), "first entry loads; a controller dispatch is not completion");
+        f.adapter.insertion.deliver(); f.adapter.next();
+        check(f.adapter.insertion.loads == 2 && !op.result.isDone(), "second entry starts only after the first settled");
+        f.adapter.insertion.deliver(); f.adapter.next(); f.adapter.insertion.guard.requireAvailable();
+        f.host.next();
+        JsonObject result = op.result.join();
+        check(result.get("status").getAsString().equals("observed") && result.get("batchStatus").getAsString().equals("applied")
+                && result.get("written").getAsInt() == 2 && result.getAsJsonArray("modules").size() == 2
+                && result.getAsJsonArray("modulesAdded").size() == 2 && !result.has("graph") && !result.has("graphBefore")
+                && result.getAsJsonObject("target").get("trackId").getAsString().equals(TransportMixFixture.A),
+                "batch returns per-entry results, one diff of every added module and the explicit target");
+    }
+    private static void displayWriteArgumentsValidateBeforeScheduling() {
+        Fixture f = new Fixture();
+        JsonObject single = target(); single.addProperty("moduleId", "00000000-0000-0001-0000-000000000001"); single.addProperty("parameterId", "P");
+        single.addProperty("expectedKind", "float"); single.addProperty("expectedValue", 84); single.addProperty("display", "1.2 kHz");
+        GridModule.validateParams("grid.parameters.set", single);
+        JsonObject batch = batchTarget("P"); JsonObject w = batch.getAsJsonArray("writes").get(0).getAsJsonObject();
+        w.addProperty("expectedKind", "float"); w.addProperty("expectedValue", 84); w.remove("value"); w.addProperty("display", "440 Hz");
+        GridModule.validateParams("grid.parameters.set", batch);
+        JsonObject both = single.deepCopy(); both.addProperty("value", 90);
+        JsonObject neither = single.deepCopy(); neither.remove("display");
+        JsonObject notFloat = single.deepCopy(); notFloat.addProperty("expectedKind", "integer");
+        JsonObject number = single.deepCopy(); number.addProperty("display", 5);
+        JsonObject empty = single.deepCopy(); empty.addProperty("display", "");
+        JsonObject batchBoth = batchTarget("P"); batchBoth.getAsJsonArray("writes").get(0).getAsJsonObject().addProperty("display", "1 %");
+        for (JsonObject bad : List.of(both, neither, notFloat, number, empty, batchBoth))
+            TransportMixFixture.error(f.host.submit(f.module, "grid.parameters.set", bad), "invalid_params");
+        check(f.host.tasks.isEmpty() && f.adapter.tasks.isEmpty(), "display and value are mutually exclusive and typed before scheduling");
+    }
     private static void insertionWaitsForNativeSettlementAndControllerDelivery() {
         Fixture f = new Fixture();
         HostOperation op = f.host.submit(f.module, "grid.modules.insert", insertionTarget()); f.host.next();
@@ -926,6 +993,11 @@ public final class GridModuleTest {
                 Runnable check, Runnable dispatch, java.util.function.Consumer<JsonObject> complete,
                 java.util.function.Consumer<Throwable> failure) {
             insertion.edit(request, check, dispatch, complete, failure);
+        }
+        @Override public void insertModules(Object proxy, UUID track, java.util.List<GridInsertionWriter.Request> requests,
+                Runnable check, Runnable dispatch, java.util.function.Consumer<JsonObject> complete,
+                java.util.function.Consumer<Throwable> failure) {
+            insertion.editAll(requests, check, dispatch, complete, failure);
         }
         @Override public void renameModule(Object proxy, UUID track, UUID module, GridModuleNameWriter.Request request,
                 Runnable check, Runnable dispatch, java.util.function.Consumer<JsonObject> complete,
