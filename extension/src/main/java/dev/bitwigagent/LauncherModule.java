@@ -39,12 +39,15 @@ final class LauncherModule implements HostModule {
     private Mutation cursorMutation;
     private boolean clipExistsReady, lengthReady;
     private final SceneBank sceneBank;
+    // Bitwig only hands out the Project during extension init; calling getProject() later throws.
+    private final Project project;
 
     LauncherModule(HostServices services) {
         s = services;
         clip = s.host.createLauncherCursorClip(128, 128);
         clipTrack = clip.getTrack();
         sceneBank = s.tracks.sceneBank();
+        project = s.host.getProject();
         sceneBank.itemCount().markInterested();
         clipTrack.channelId().markInterested();
         clipTrack.exists().markInterested();
@@ -295,7 +298,7 @@ final class LauncherModule implements HostModule {
                 + HostServices.SCENES + ", so " + count + " more cannot be appended");
         op.dispatched = true;
         // Project.createScene() is documented to create "a new empty scene as the last scene"; existing slot indices do not move.
-        for (int i = 0; i < count; i++) s.host.getProject().createScene();
+        for (int i = 0; i < count; i++) project.createScene();
         awaitScenes(op, before, count, until(op));
     }
 

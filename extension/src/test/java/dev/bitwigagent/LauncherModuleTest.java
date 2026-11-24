@@ -969,7 +969,7 @@ public final class LauncherModuleTest {
         Double noteStorageStepSize;
         long gridRefreshDelayMillis, clockMillis, gridReadyAt;
         int imports, importedSlot = -1, bankOffset, sceneAppends;
-        boolean applyScene = true;
+        boolean applyScene = true, initialised;
         String importedPath;
         Runnable beforeInsertion = () -> {};
         final List<BooleanValueChangedCallback> recordObservers = new ArrayList<>();
@@ -1106,7 +1106,11 @@ public final class LauncherModuleTest {
             trackBank.action("sceneBank", a -> sceneBankNode.proxy);
             Node project = new Node(Project.class);
             project.action("createScene", a -> { sceneAppends++; if (applyScene) scenes++; return null; });
-            host.action("getProject", a -> project.proxy);
+            host.action("getProject", a -> {
+                // Mirrors Bitwig: the Project is only available while the extension initialises.
+                if (initialised) throw new IllegalStateException("getProject can only be called during init");
+                return project.proxy;
+            });
             host.action("createTrackBank", a -> trackBank.proxy); host.action("createLauncherCursorClip", a -> clip.proxy);
             host.action("scheduleTask", a -> {
                 Runnable action = (Runnable) a[0]; long delay = ((Number) a[1]).longValue();
@@ -1118,6 +1122,7 @@ public final class LauncherModuleTest {
                 return null;
             });
             services = new HostServices((ControllerHost) host.proxy); module = new LauncherModule(services);
+            initialised = true;
         }
         void observeTrackId(String id) {
             trackId = id;
