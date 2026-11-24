@@ -22,6 +22,8 @@ ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("extension_build", ROOT / "scripts/build.py")
 build = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(build)
+sys.path.insert(0, str(ROOT / "scripts"))
+import bound_parity  # noqa: E402
 
 FIXTURE = """
 package dev.bitwigagent;
@@ -115,8 +117,10 @@ async def exercise(folder: Path, api: Path) -> None:
                 # Exercise the actual MCP validation boundary, not model validation alone.
                 invalid = await session.call_tool("status", {"unexpected": True})
                 require(invalid.is_error, "MCP accepted an extra argument")
+                vectors = await bound_parity.run(port)
         print(f"PASS: {len(names)} matching Java/MCP tools, {calls} example roundtrips, "
-              "Unicode, strict MCP arguments, unknown error propagation. FIXTURE ONLY; no native host.")
+              f"Unicode, strict MCP arguments, unknown error propagation, {vectors} bound/optional parity vectors. "
+              "FIXTURE ONLY; no native host.")
     finally:
         if process.stdin:
             process.stdin.close()

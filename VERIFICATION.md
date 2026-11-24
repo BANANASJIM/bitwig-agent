@@ -1,6 +1,6 @@
 # Verification
 
-Checks prove only their exercised layer. The toolkit implements 45 methods; neither that count nor passing fixtures establishes comprehensive native acceptance. [PROTOCOL.md](PROTOCOL.md) defines requests, units, side effects and bounded semantics. This guide is not approval to operate a live DAW; use the actual check output for the revision being evaluated.
+Checks prove only their exercised layer. Neither the number of implemented methods nor passing fixtures establishes comprehensive native acceptance. [PROTOCOL.md](PROTOCOL.md) defines requests, units, side effects and bounded semantics. This guide is not approval to operate a live DAW; use the actual check output for the revision being evaluated.
 
 ## Launcher creation and empty MIDI import regression — 2026-11-08
 
