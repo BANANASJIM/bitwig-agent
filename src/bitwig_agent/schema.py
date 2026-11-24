@@ -474,12 +474,14 @@ class ClipEditArgs(ClipSettingsArgs):
     lengthBeats: Annotated[int, Field(ge=1, le=4096)] = omitted()
     rgb: Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$")] = omitted()
     semitones: Annotated[int, Field(ge=-48, le=48)] = omitted()
-    amount: Annotated[float, Field(ge=0, le=1)] = omitted()
+    amount: Annotated[float, Field(gt=0, le=1)] = omitted()
     targetSlotIndex: Annotated[int, Field(ge=0, le=15)] = omitted()
 
     @model_validator(mode="after")
     def validate_op_fields(self):
         payload = self.model_fields_set & set().union(*CLIP_EDIT_OPS.values())
+        if self.semitones == 0:
+            raise ValueError("semitones must be nonzero")
         if payload != CLIP_EDIT_OPS[self.op]:
             raise ValueError(f"op {self.op} takes exactly {sorted(CLIP_EDIT_OPS[self.op]) or 'no extra fields'}")
         return self

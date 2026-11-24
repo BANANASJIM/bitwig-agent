@@ -143,8 +143,8 @@ final class LauncherModule implements HostModule {
                 if (op.equals("rename") && Params.string(p, "name").length() > 128) throw invalid("name must contain 1..128 characters");
                 if (op.equals("resize")) Params.integer(p, "lengthBeats", 1, 4096);
                 if (op.equals("color") && !RGB.matcher(Params.string(p, "rgb")).matches()) throw invalid("rgb must be #RRGGBB");
-                if (op.equals("transpose")) Params.integer(p, "semitones", -48, 48);
-                if (op.equals("quantize")) Params.number(p, "amount", 0, 1);
+                if (op.equals("transpose") && Params.integer(p, "semitones", -48, 48) == 0) throw invalid("semitones must be nonzero");
+                if (op.equals("quantize") && Params.number(p, "amount", 0, 1) == 0) throw invalid("amount must be above 0");
                 if (op.equals("copyTo")) Params.integer(p, "targetSlotIndex", 0, 15);
                 break;
             }
@@ -610,10 +610,6 @@ final class LauncherModule implements HostModule {
         if (kind.equals("delete")) deleteClip(op, id, track, slot, index);
         else if (kind.equals("copyTo")) copyClip(op, id, track, t, slot, index, Params.integer(p, "targetSlotIndex", 0, 15), scenes, expected);
         else {
-            if (kind.equals("transpose") && Params.integer(p, "semitones", -48, 48) == 0)
-                throw invalid("transpose semitones must be nonzero");
-            if (kind.equals("quantize") && Params.number(p, "amount", 0, 1) == 0)
-                throw invalid("quantize amount must be above 0");
             bind(op, id, track, slot, index, p, "clips.edit", until(op));
         }
     }
@@ -657,14 +653,22 @@ final class LauncherModule implements HostModule {
         beginMutation(id, track, to, target, "clips.edit copyTo");
         long before = cursorMutation.contentBefore;
         op.dispatched = true;
-        to.api.copyFrom(slot.api);
-        awaitSlot(op, id, track, to, until(op), () -> to.contentVersion > before && to.observedContent && to.api.hasContent().get() && to.api.name().get().equals(name),
-            () -> {
-                JsonObject out = clipResult(id, index, "copyTo", "target_content_and_name");
-                out.addProperty("targetSlotIndex", target); out.add("slot", slotJson(to, target));
-                finishMutation(); op.result.complete(out);
-            },
-            () -> { throw unobserved("copy_not_observed", "Clip copy"); });
+        // copySlotsOrScenes copies the supplied slots to this insertion point; copyFrom's direction is ambiguous in the javadoc.
+        to.api.replaceInsertionPoint().copySlotsOrScenes(slot.api);
+        BooleanSupplier present = () -> to.contentVersion > before && to.observedContent && to.api.hasContent().get();
+        Runnable ok = () -> {
+            String copied = to.api.name().get();
+            JsonObject out = clipResult(id, index, "copyTo", copied.equals(name) ? "target_content_and_name" : "target_content");
+            if (!copied.equals(name)) {
+                JsonObject changed = new JsonObject(); changed.addProperty("from", name); changed.addProperty("to", copied);
+                out.add("nameChanged", changed);
+            }
+            out.addProperty("targetSlotIndex", target); out.add("slot", slotJson(to, target));
+            finishMutation(); op.result.complete(out);
+        };
+        // Bitwig may rename the copy: wait for the equal name, but a verified content transition alone is still observed.
+        awaitSlot(op, id, track, to, until(op), () -> present.getAsBoolean() && to.api.name().get().equals(name), ok,
+            () -> { if (present.getAsBoolean()) ok.run(); else throw unobserved("copy_not_observed", "Clip copy"); });
     }
 
     private void awaitSlot(HostOperation op, String id, Track track, Slot slot, long end, BooleanSupplier done, Runnable ok, Runnable timeout) {
@@ -837,8 +841,18 @@ final class LauncherModule implements HostModule {
                 if (moved && stable && !invariants) throw unobserved("quantize_invariants_violated", "Clip quantize (note count, pitches or loop length changed)");
                 return moved && stable && invariants;
             };
+            // amount 1 snaps to the host grid and is idempotent: no visible movement is reported, not latched.
+            Runnable settled = () -> {
+                if (amount == 1 && sameCells(onsets(w), before) && clip.getLoopLength().get() == loop) {
+                    JsonObject out = clipResult(id, index, kind, "no_cell_change");
+                    out.addProperty("status", "dispatched");
+                    out.addProperty("note", "no onset cell moved: already on the host quantize grid, or the move stays inside a cell");
+                    out.add("slot", slotJson(slot, index)); addClipMetadata(out);
+                    finishMutation(); op.result.complete(out);
+                } else timeout.run();
+            };
             clip.quantize(amount);
-            awaitClip(op, id, track, slot, end, done, complete, timeout);
+            awaitClip(op, id, track, slot, end, done, complete, settled);
         }
     }
 

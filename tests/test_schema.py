@@ -893,7 +893,7 @@ CLIP_EDIT = {"trackId": TRACK, "slotIndex": 0, "expectedClipName": "Riff"}
 @pytest.mark.parametrize("fields", [
     {"op": "rename", "name": "a" * 128}, {"op": "resize", "lengthBeats": 4096}, {"op": "color", "rgb": "#aB09fF"},
     {"op": "transpose", "semitones": -48}, {"op": "transpose", "semitones": 48},
-    {"op": "quantize", "amount": 0}, {"op": "quantize", "amount": 1},
+    {"op": "quantize", "amount": 0.01}, {"op": "quantize", "amount": 1},
     {"op": "duplicateContent"}, {"op": "delete"}, {"op": "copyTo", "targetSlotIndex": 15},
 ])
 def test_clips_edit_accepts_one_operation(fields):
@@ -907,7 +907,7 @@ def test_clips_edit_accepts_one_operation(fields):
     {"op": "resize", "lengthBeats": 0}, {"op": "resize", "lengthBeats": 4097}, {"op": "resize", "lengthBeats": 1.5},
     {"op": "color", "rgb": "ff0000"}, {"op": "color", "rgb": "#ff00"}, {"op": "color", "rgb": "#gg0000"}, {"op": "color", "rgb": "#ff0000\n"},
     {"op": "transpose", "semitones": 49}, {"op": "transpose", "semitones": -49}, {"op": "transpose"},
-    {"op": "quantize", "amount": 1.01}, {"op": "quantize", "amount": -0.01}, {"op": "copyTo"}, {"op": "copyTo", "targetSlotIndex": 16},
+    {"op": "quantize", "amount": 0}, {"op": "transpose", "semitones": 0}, {"op": "quantize", "amount": 1.01}, {"op": "quantize", "amount": -0.01}, {"op": "copyTo"}, {"op": "copyTo", "targetSlotIndex": 16},
     {"op": "delete", "force": True},
 ])
 def test_clips_edit_rejects_bad_or_mixed_operations(fields):
