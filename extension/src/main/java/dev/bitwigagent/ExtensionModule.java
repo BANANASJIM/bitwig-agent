@@ -34,8 +34,9 @@ final class ExtensionModule implements HostModule {
         result.addProperty("completion", "not_observed");
         result.add("unresolvedDiscarded", list);
         result.addProperty("next", "RPC drops during restart; poll status until it answers, then re-discover targets and inspect the unresolved items.");
-        // Respond first; the restart tears down this RPC server shortly after.
+        // Respond first, then stop admitting work so nothing runs on this instance before the restart.
         s.host.scheduleTask(s.host::restart, RESTART_DELAY_MS);
         operation.result.complete(result);
+        s.close();
     }
 }

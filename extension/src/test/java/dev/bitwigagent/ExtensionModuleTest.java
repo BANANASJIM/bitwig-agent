@@ -42,8 +42,11 @@ public final class ExtensionModuleTest {
         check(result.getAsJsonArray("unresolvedDiscarded").size() == 0, "nothing unresolved listed");
         check(restarts[0] == 0, "restart is deferred until after the reply");
         check(f.tasks.size() == 1, "exactly one restart task scheduled");
-        f.next();
-        check(restarts[0] == 1, "host.restart called once");
+        HostOperation late = f.submit(module, "extension.restart", params(null));
+        while (!f.tasks.isEmpty()) f.next();
+        RpcException stopped = TransportMixFixture.error(late, "unavailable");
+        check(stopped.outcome.equals("not_applied"), "instance stops admitting work after replying");
+        check(restarts[0] == 1, "host.restart called once; no second restart");
     }
 
     private static void unresolvedCreationRefusesUnlessDiscarded() {
