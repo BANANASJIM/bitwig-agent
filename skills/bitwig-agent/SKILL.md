@@ -33,7 +33,7 @@ Parallelize only independent, side-effect-free reads. Serialize all mutations an
 
 ## Fast path: add a playable instrument part
 
-Use this when the task needs a new lead, bass or pad rather than a custom synth construction. Reuse session schemas as above; do not start with a complete Grid or plug-in survey.
+Use this when the task needs a new lead, bass or pad rather than a custom synth construction. Reuse session schemas as above; do not start with a complete Grid or plug-in survey. For a custom Grid patch use the batch path in [Grid boundaries](references/grid-and-recipes.md#fast-patch-building).
 
 1. **Find a source that fits the musical job.** Prefer an exact known installed preset file; bound discovery to likely installed locations and a short candidate list. A native fallback must meet the requested source and articulation needs: a playable synth is not automatically a distorted guitar. If no suitable source is available, label the result a draft and report the missing capability, not completion. For ID insertion, obtain the actual native/plug-in **type** identifier; display names and instance UUIDs are not insertion IDs. See the [device/preset route](references/production-workflows.md#devicepreset-fast-path).
 2. **Insert, then configure one device at a time.** Bind the authorized track and observed count; insert once, inspect completion, and discover the resulting index/exact name. Read only relevant Remote Controls or direct parameters and change a small set. Keep each device's parameter discovery and dependent writes serial: source-bound reads can still rebind a shared parameter bank and invalidate another device's token.
@@ -56,6 +56,7 @@ Use this when the task needs a new lead, bass or pad rather than a custom synth 
 
 - Keep the unauthenticated endpoint on trusted loopback; never expose or forward it to a network.
 - Names and context tokens are neither authentication nor permanent physical identity. Bounded discovery is not a complete project export; project-name equality is not full-path identity.
+- Check `projectModified` (current tab only; null = unobserved) before anything that could lose work; use `project.save` (explicit, never re-invoked). `Quit`/`Close` via `actions.invoke` need user consent unless saved; before restarting Bitwig for a new build save every tab or get consent. See [troubleshooting](references/troubleshooting.md) and [protocol](https://github.com/BANANASJIM/bitwig-agent/blob/main/PROTOCOL.md).
 - Playback, recording, bounce, save, project replacement and installation need applicable authorization. A delegated goal may cover routine playback/save/render, but never silently broaden it to destructive edits or global configuration.
 - Respect the user's desktop boundary. Do not steal focus, capture unrelated windows or drive the main compositor when only an isolated session is authorized.
 - A copied skill remains instructions, not a runtime dependency or privilege grant. Keep this entire folder, its direct references and [MIT license](LICENSE) together.

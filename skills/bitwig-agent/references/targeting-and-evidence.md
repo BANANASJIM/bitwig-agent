@@ -35,6 +35,8 @@ Agent `notes.*`, `launcher.create` and `scenes.append` move selection; `context.
 
 After unknown, do not retry, undo, delete partial objects, restart a controller or switch to GUI as automatic recovery. Use only authorized inspection to reconcile the actual state and report what remains unknown. A fresh plan requires explicitly addressed uncertainty and applicable permission/guards; later matching readback alone does not acknowledge the original write. Launcher/topology quarantines have specific protocol lifetimes. A required full JVM restart may clear a process guard, but does not prove rollback and is itself a separately authorized action.
 
+`actions.invoke` is dispatch-only; its unsaved-work guard needs user consent for `Quit` (always) and `Close` (unless the current tab is observed saved). The agent never supplies that consent. `actions.list` takes `query`/`category`/`limit`; check `total`/`complete`.
+
 ## Honest handoff to the user
 
 Report:
