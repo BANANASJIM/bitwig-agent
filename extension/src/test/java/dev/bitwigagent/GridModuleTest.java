@@ -668,7 +668,7 @@ public final class GridModuleTest {
         JsonObject named = insertionTarget(); named.remove("typeId"); named.addProperty("typeName", "Low-pass");
         GridModule.validateParams("grid.modules.insert", named);
         JsonObject both = insertionTarget(); both.addProperty("typeName", "Low-pass");
-        JsonObject blank = insertionTarget(); blank.remove("typeId"); blank.addProperty("typeName", " - ");
+        JsonObject blank = insertionTarget(); blank.remove("typeId"); blank.addProperty("typeName", "");
         JsonObject longName = insertionTarget(); longName.remove("typeId"); longName.addProperty("typeName", "a".repeat(129));
         String type = GridInsertionWriterTest.TYPE.toString();
         GridModule.validateParams("grid.modules.insert", batchInsertion(moduleAt("typeId", type, 1, 1), moduleAt("typeName", "Low-pass", 5, 1)));

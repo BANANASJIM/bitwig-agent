@@ -284,6 +284,15 @@ async def run(port):
                 covered[label] = covered.get(label, False) or py
             elif py:
                 problems.append(f"{label}: both sides accept a value beyond the schema bound")
+    insert = TOOLS["grid.modules.insert"].examples[0]
+    for name in ("<", "=", ">", "\u2260", "\u2264", "\u2265", "Slope \u2197", "---", "\u00b2"):
+        for params in (insert | {"typeName": name},
+                       {k: v for k, v in insert.items() if k not in ("typeName", "x", "y")} | {"modules": [{"typeName": name, "x": 1, "y": 1}]}):
+            py = python_verdict("grid.modules.insert", params)
+            java, error = await java_verdict(port, "grid.modules.insert", params)
+            checked += 1
+            if not (py and java):
+                problems.append(f"typeName {name!r} must be accepted by both: python={py} java={java} {error}")
     problems += [f"VACUOUS {label}: no example base is valid with this vector, so it never exercised the bound"
                  for label, ok in covered.items() if not ok]
     if problems:

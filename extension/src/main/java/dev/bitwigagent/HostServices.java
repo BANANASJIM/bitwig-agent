@@ -185,6 +185,16 @@ final class HostServices implements AutoCloseable {
         return track.exists().get() && trackId.equals(track.channelId().get());
     }
 
+    /** Which Bitwig process answered: pid plus display variables (null when unset). */
+    static JsonObject instance() {
+        JsonObject result = new JsonObject();
+        result.addProperty("pid", ProcessHandle.current().pid());
+        ProcessHandle.current().parent().ifPresent(parent -> result.addProperty("parentPid", parent.pid()));
+        result.addProperty("display", System.getenv("DISPLAY"));
+        result.addProperty("waylandDisplay", System.getenv("WAYLAND_DISPLAY"));
+        return result;
+    }
+
     static JsonObject observed() {
         JsonObject result = new JsonObject(); result.addProperty("status", "observed"); return result;
     }

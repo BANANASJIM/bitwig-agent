@@ -15,6 +15,7 @@ final class GridNames {
 
     /** Every whitespace-separated query word must occur in the normalized name; an empty query matches everything. */
     static boolean matches(String name, String query) {
+        if (norm(query).isEmpty() && !query.trim().isEmpty()) return name.equalsIgnoreCase(query.trim()); // symbol-only query
         String haystack = norm(name);
         for (String word : query.split("\\s+")) {
             String needle = norm(word);
@@ -23,14 +24,34 @@ final class GridNames {
         return true;
     }
 
+    /**
+     * typeName lookup: exact string, then exact ignoring case, then the loose normalized form (skipped for symbol-only
+     * names, which only match exactly). The first step with any hit decides; several hits are ambiguous.
+     */
+    static <T> List<T> resolve(Collection<T> items, java.util.function.Function<T, String> name, String query) {
+        List<T> hits = new ArrayList<>();
+        for (T item : items) if (name.apply(item).equals(query)) hits.add(item);
+        if (!hits.isEmpty()) return hits;
+        for (T item : items) if (name.apply(item).equalsIgnoreCase(query)) hits.add(item);
+        if (!hits.isEmpty() || norm(query).isEmpty()) return hits;
+        for (T item : items) if (same(name.apply(item), query)) hits.add(item);
+        return hits;
+    }
+
     static boolean same(String name, String query) { return norm(name).equals(norm(query)); }
+
+    /** Normalized form, or the lowercased raw text when it is all symbols. */
+    private static String key(String text) {
+        String n = norm(text);
+        return n.isEmpty() ? text.trim().toLowerCase() : n;
+    }
 
     /** Nearest names by edit-distance ratio on the normalized forms, best first; hopeless matches are dropped. */
     static List<String> nearest(Collection<String> names, String query, int limit) {
-        String q = norm(query);
+        String q = key(query);
         List<Map.Entry<Double, String>> scored = new ArrayList<>();
         for (String name : names) {
-            String n = norm(name);
+            String n = key(name);
             int longest = Math.max(q.length(), n.length());
             if (longest == 0) continue;
             double ratio = 1.0 - (double) distance(q, n) / longest;

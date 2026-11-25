@@ -32,7 +32,7 @@ final class GridInsertionWriter {
             int x = GridModuleWriter.Move.coordinate(p, "x"), y = GridModuleWriter.Move.coordinate(p, "y");
             if (p.has("typeName")) {
                 String name = Params.string(p, "typeName");
-                if (name.length() > 128 || GridNames.norm(name).isEmpty())
+                if (name.length() > 128 || name.isEmpty())
                     throw failure("invalid_params", "typeName must be a catalog module name of at most 128 UTF-16 units.");
                 return new Request(null, name, x, y);
             }
@@ -135,8 +135,7 @@ final class GridInsertionWriter {
                 continue;
             }
             if (catalog == null) catalog = moduleEntries(check);
-            List<Map.Entry<UUID, String>> exact = new ArrayList<>();
-            for (Map.Entry<UUID, String> entry : catalog) if (GridNames.same(entry.getValue(), request.typeName)) exact.add(entry);
+            List<Map.Entry<UUID, String>> exact = GridNames.resolve(catalog, Map.Entry::getValue, request.typeName);
             if (exact.size() == 1) { out.add(request.resolved(exact.get(0).getKey())); continue; }
             List<String> candidates = new ArrayList<>();
             if (exact.isEmpty()) {
@@ -148,7 +147,7 @@ final class GridInsertionWriter {
                 if (candidates.isEmpty()) candidates = GridNames.nearest(names, request.typeName, GridNames.SUGGESTIONS);
             } else for (Map.Entry<UUID, String> entry : exact) candidates.add(entry.getValue() + " " + entry.getKey());
             failures = reject(rejected, failures, i, "typeName '" + request.typeName + "' "
-                    + (exact.isEmpty() ? "matches no catalog module exactly" : "is ambiguous")
+                    + (exact.isEmpty() ? "matches no catalog module exactly" : "is ambiguous (use typeId)")
                     + (candidates.isEmpty() ? "" : "; candidates: " + String.join(", ", candidates)));
         }
         if (failures > 0)

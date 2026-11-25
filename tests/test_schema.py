@@ -881,12 +881,15 @@ def test_grid_parameter_set_display_replaces_value_for_float_only():
             validate_call("grid.parameters.set", bad)
 
 
-def test_grid_insert_type_name_needs_a_letter_or_decimal_digit_like_java():
+def test_grid_insert_type_name_accepts_symbol_only_names():
     named = {key: value for key, value in GRID_INSERT.items() if key != "typeId"}
-    for bad in ("\u00b2", "\u00bd", "\u2163", "---"):
-        with pytest.raises(ValidationError):
-            validate_call("grid.modules.insert", {**named, "typeName": bad})
-    validate_call("grid.modules.insert", {**named, "typeName": "Osc 2"})
+    for ok in ("<", "=", ">", "\u2260", "\u2264", "\u2265", "Slope \u2197", "Osc 2", "---"):
+        validate_call("grid.modules.insert", {**named, "typeName": ok})
+        validate_call("grid.modules.insert", {"trackId": GRID_INSERT["trackId"], **{k: named[k] for k in named if k not in ("typeName", "x", "y")}, "modules": [{"typeName": ok, "x": 1, "y": 1}]})
+    with pytest.raises(ValidationError):
+        validate_call("grid.modules.insert", {**named, "typeName": ""})
+
+
 CLIP_EDIT = {"trackId": TRACK, "slotIndex": 0, "expectedClipName": "Riff"}
 
 

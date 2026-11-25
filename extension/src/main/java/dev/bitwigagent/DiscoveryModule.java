@@ -40,6 +40,7 @@ final class DiscoveryModule implements HostModule {
         result.add("projectModified", s.projectModifiedJson());
         result.addProperty("apiVersion", 25);
         result.add("extension", BUILD.toJson());
+        result.add("instance", HostServices.instance());
         result.addProperty("trackWindowCapacity", TRACKS);
         result.addProperty("deviceWindowCapacity", DEVICES);
         result.add("parameterBindingDiagnostics", parameters.diagnostics());
