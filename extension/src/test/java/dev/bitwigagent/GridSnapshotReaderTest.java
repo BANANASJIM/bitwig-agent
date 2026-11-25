@@ -57,6 +57,9 @@ public final class GridSnapshotReaderTest {
         stringPanelBoundsAndSelectedControlIsolation();
         stringPanelIdentityAndLateGuards();
         stringPanelsRejectScalarWritesBeforeAuthorization();
+        stringPanelWritesAreGuardedCompareAndSet();
+        stringPanelWriteFailuresAndBatch();
+        stringRequestBounds();
         booleanPanelWritesReportNativeCoupledChanges();
         booleanPanelGuardsCouplingAndLateFailures();
         moduleFootprintsAreOptionalReadMetadata();
@@ -1005,7 +1008,7 @@ public final class GridSnapshotReaderTest {
             @Override public void setRaw(Object parameter, double value) {
                 throw new AssertionError("String write reached scalar mutation");
             }
-        }, null);
+        }, null, null);
         for (GridParameterWriter.Request request : List.of(request("boolean", "true", "false"), request("boolean", "true", "true"))) {
             try {
                 writer.set(f.proxy, TRACK_ID, new UUID(1, 1), "TEXT_ID", request, () -> {},
@@ -1016,6 +1019,147 @@ public final class GridSnapshotReaderTest {
                         "string panel rejects scalar writes and apparent no-ops before authorization");
             }
         }
+    }
+
+
+    private static final class StringFixture implements GridStringPanelWriter.Access {
+        final Fixture model = new Fixture();
+        final ContextFixture context = new ContextFixture();
+        final HostOperation op = new HostOperation(Long.MAX_VALUE);
+        final Node panel = stringPanel(model, "TEXT_ID", "before");
+        final GridParameterWriter writer;
+        int calls; boolean apply = true; String last;
+        Runnable afterMutation = () -> {};
+        StringFixture() {
+            model.first.put(CHILDREN, List.of(panel));
+            context.values.put(GridParameterContext.Field.GUI_PANEL_STRING, (Supplier<Object>) Object::new);
+            context.values.put(GridParameterContext.Field.LOCK_OWNER, context.dt);
+            Supplier<Object> forbidden = () -> { throw new AssertionError("String panel used scalar permission or GUI property"); };
+            for (GridParameterContext.Field field : List.of(GridParameterContext.Field.LICENSED,
+                    GridParameterContext.Field.TOUCHED, GridParameterContext.Field.GUI_BOOLEAN,
+                    GridParameterContext.Field.GUI_FLOAT, GridParameterContext.Field.GUI_INTEGER, GridParameterContext.Field.GUI_ENUM))
+                context.override(panel, field, forbidden);
+            writer = new GridParameterWriter(model.reader, context.reader, new GridParameterWriter.Access() {
+                @Override public void requireSupported(Object parameter, GridSnapshotReader.Kind kind) {
+                    throw new AssertionError("String panel must not enter scalar authorization");
+                }
+                @Override public void setRaw(Object parameter, double value) {
+                    throw new AssertionError("String panel must not invoke a numeric controller operation");
+                }
+            }, null, new GridStringPanelWriter(model.reader, context.reader, this));
+        }
+        JsonObject set(GridParameterWriter.Request request) {
+            return writer.set(model.proxy, TRACK_ID, new UUID(1, 1), "TEXT_ID", request, () -> {}, () -> op.dispatched = true);
+        }
+        RpcException failure(GridParameterWriter.Request request) {
+            try { set(request); throw new AssertionError("Expected failed string write"); }
+            catch (RpcException error) { return error; }
+        }
+        @Override public void requireSupported(Object parameter) {
+            if (parameter != panel) throw HostServices.failure("grid_unavailable", "unmapped panel");
+        }
+        @Override public void set(Object parameter, String value) {
+            calls++; last = value;
+            if (apply) panel.put(STRING_VALUE, value);
+            afterMutation.run();
+        }
+    }
+
+    private static GridParameterWriter.Request stringRequest(String expected, String value) {
+        return GridParameterWriter.Request.parse(TransportMixFixture.json("{\"expectedKind\":\"string\",\"expectedValue\":"
+                + new JsonPrimitive(expected) + ",\"value\":" + new JsonPrimitive(value) + "}"));
+    }
+
+    private static void stringPanelWritesAreGuardedCompareAndSet() {
+        StringFixture f = new StringFixture();
+        String text = "Line 1\n\uD83D\uDE00 \"quoted\"  ";
+        JsonObject result = f.set(stringRequest("before", text));
+        check(f.calls == 1 && text.equals(f.last) && f.op.dispatched
+                && text.equals(result.getAsJsonObject("parameter").get("value").getAsString())
+                && result.get("previousValue").getAsString().equals("before")
+                && result.get("requestedValue").getAsString().equals(text)
+                && result.get("mutationDispatched").getAsBoolean()
+                && result.get("verification").getAsString().equals("exact_native_string_panel_readback")
+                && !result.get("undoGroupingVerified").getAsBoolean() && !result.get("engineAcknowledgement").getAsBoolean(),
+                "string panel write performs one native operation, preserves text verbatim and reads it back");
+        StringFixture noop = new StringFixture();
+        result = noop.set(stringRequest("before", "before"));
+        check(noop.calls == 0 && !noop.op.dispatched && !result.get("mutationDispatched").getAsBoolean()
+                && result.get("verification").getAsString().equals("already_matched"),
+                "matching string write is a verified no-op without native dispatch");
+        StringFixture empty = new StringFixture();
+        empty.set(stringRequest("before", ""));
+        check(empty.calls == 1 && "".equals(empty.panel.values.get(STRING_VALUE)), "empty text is a valid write");
+        StringFixture stale = new StringFixture();
+        RpcException error = stale.failure(stringRequest("other", "x"));
+        check(error.code.equals("stale_context") && error.outcome.equals("not_applied") && stale.calls == 0 && !stale.op.dispatched,
+                "stale string expectation is rejected before dispatch, even for a no-op");
+        error = stale.failure(request("boolean", "true", "false"));
+        check(error.code.equals("stale_context") && stale.calls == 0, "a scalar request cannot target a string panel");
+        StringFixture skipped = new StringFixture();
+        skipped.context.override(skipped.panel, GridParameterContext.Field.CIU, true);
+        error = skipped.failure(stringRequest("before", "x"));
+        check(error.code.equals("unsafe_state") && skipped.calls == 0, "panel skip predicate gates string writes");
+        StringFixture wrongProject = new StringFixture();
+        wrongProject.context.override(wrongProject.panel, NativeReadContext.Field.PROJECT, new Object());
+        error = wrongProject.failure(stringRequest("before", "x"));
+        check(error.code.equals("stale_context") && wrongProject.calls == 0, "owning project mismatch gates string writes");
+        StringFixture uninitialized = new StringFixture();
+        uninitialized.context.values.put(NativeReadContext.Field.INITIALIZED, false);
+        error = uninitialized.failure(stringRequest("before", "x"));
+        check(error.code.equals("unsafe_state") && uninitialized.calls == 0, "uninitialized document context gates string writes");
+    }
+
+    private static void stringPanelWriteFailuresAndBatch() {
+        StringFixture unread = new StringFixture(); unread.apply = false;
+        RpcException error = unread.failure(stringRequest("before", "x"));
+        check(error.code.equals("grid_verification_failed") && error.outcome.equals("unknown") && unread.calls == 1,
+                "unobserved requested text is not a successful string dispatch");
+        StringFixture partial = new StringFixture();
+        partial.afterMutation = () -> { throw HostServices.failure("grid_unavailable", "native string failure"); };
+        error = partial.failure(stringRequest("before", "x"));
+        check(partial.calls == 1 && partial.op.dispatched, "native exception after dispatch is not retried or rolled back");
+        StringFixture absent = new StringFixture();
+        GridParameterWriter none = new GridParameterWriter(absent.model.reader, absent.context.reader, null, null, null);
+        try {
+            none.set(absent.model.proxy, TRACK_ID, new UUID(1, 1), "TEXT_ID", stringRequest("before", "x"), () -> {},
+                    () -> { throw new AssertionError("dispatched without a string binding"); });
+            throw new AssertionError("string write without binding");
+        } catch (RpcException caught) {
+            check(caught.code.equals("grid_unavailable") && caught.outcome.equals("not_applied"), "missing string write binding fails closed");
+        }
+        StringFixture batch = new StringFixture();
+        GridParameterWriter.Entry entry = new GridParameterWriter.Entry(new UUID(1, 1), "TEXT_ID", stringRequest("before", "batched"));
+        JsonObject result = batch.writer.setAll(batch.model.proxy, TRACK_ID, List.of(entry), () -> {}, () -> batch.op.dispatched = true);
+        JsonObject item = result.getAsJsonArray("writes").get(0).getAsJsonObject();
+        check(batch.calls == 1 && item.get("status").getAsString().equals("applied")
+                && item.get("value").getAsString().equals("batched") && item.get("previousValue").getAsString().equals("before"),
+                "batch entries may write string panels");
+        StringFixture stalePre = new StringFixture();
+        GridParameterWriter.Entry bad = new GridParameterWriter.Entry(new UUID(1, 1), "TEXT_ID", stringRequest("nope", "x"));
+        try {
+            stalePre.writer.setAll(stalePre.model.proxy, TRACK_ID, List.of(bad), () -> {}, () -> stalePre.op.dispatched = true);
+            throw new AssertionError("stale batch accepted");
+        } catch (RpcException caught) {
+            check(caught.outcome.equals("not_applied") && stalePre.calls == 0, "stale string entry fails the batch preflight");
+        }
+    }
+
+    private static void stringRequestBounds() {
+        String max = "a".repeat(1024);
+        stringRequest(max, max);
+        for (String bad : List.of("1", "true", "null", "[]")) {
+            expect("invalid_params", () -> GridParameterWriter.Request.parse(TransportMixFixture.json(
+                    "{\"expectedKind\":\"string\",\"expectedValue\":\"a\",\"value\":" + bad + "}")));
+            expect("invalid_params", () -> GridParameterWriter.Request.parse(TransportMixFixture.json(
+                    "{\"expectedKind\":\"string\",\"expectedValue\":" + bad + ",\"value\":\"a\"}")));
+        }
+        expect("invalid_params", () -> stringRequest(max + "a", "a"));
+        expect("invalid_params", () -> stringRequest("a", max + "a"));
+        expect("invalid_params", () -> stringRequest("a", "\uD83D\uDE00".repeat(513)));
+        expect("invalid_params", () -> GridParameterWriter.Request.parse(TransportMixFixture.json(
+                "{\"expectedKind\":\"string\",\"expectedValue\":\"a\",\"display\":\"1 kHz\"}")));
+        expect("invalid_params", () -> request("float", "0.0", "\"text\""));
     }
 
     private static void booleanPanelInspectionKeepsScalarApplicabilityDistinct() {
@@ -1830,7 +1974,7 @@ public final class GridSnapshotReaderTest {
         final Fixture model = inspectionFixture();
         final ContextFixture context = new ContextFixture();
         final HostOperation op = new HostOperation(Long.MAX_VALUE);
-        final GridParameterWriter writer = new GridParameterWriter(model.reader, context.reader, this, null);
+        final GridParameterWriter writer = new GridParameterWriter(model.reader, context.reader, this, null, null);
         Node child = (Node) ((List<?>) model.first.values.get(CHILDREN)).get(0);
         GridSnapshotReader.Kind kind = BOOLEAN;
         GridSnapshotReader.Field field = BOOLEAN_VALUE;
@@ -1894,7 +2038,7 @@ public final class GridSnapshotReaderTest {
             @Override public void setRaw(Object parameter, double value) {
                 throw new AssertionError("Panel must not invoke a numeric controller operation");
             }
-        }, panelWriter);
+        }, panelWriter, null);
         int calls;
         boolean apply = true;
         Runnable afterMutation = () -> {};

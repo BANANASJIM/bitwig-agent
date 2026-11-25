@@ -240,13 +240,17 @@ public final class GridModuleTest {
         JsonObject stringWrite = writeTarget();
         stringWrite.addProperty("expectedKind", "string");
         stringWrite.addProperty("expectedValue", "before"); stringWrite.addProperty("value", "after");
-        TransportMixFixture.error(f.host.submit(f.module, "grid.parameters.set", stringWrite), "invalid_params");
+        GridModule.validateParams("grid.parameters.set", stringWrite);
+        JsonObject tooLong = stringWrite.deepCopy(); tooLong.addProperty("value", "a".repeat(1025));
+        TransportMixFixture.error(f.host.submit(f.module, "grid.parameters.set", tooLong), "invalid_params");
+        JsonObject mixed = stringWrite.deepCopy(); mixed.addProperty("value", true);
+        TransportMixFixture.error(f.host.submit(f.module, "grid.parameters.set", mixed), "invalid_params");
         for (String field : List.of("expectedValue", "value")) {
             JsonObject scalarWrite = writeTarget(); scalarWrite.addProperty(field, "true");
             TransportMixFixture.error(f.host.submit(f.module, "grid.parameters.set", scalarWrite), "invalid_params");
         }
         check(f.host.tasks.isEmpty() && f.adapter.tasks.isEmpty() && f.adapter.writer.calls == 0,
-                "readable string family does not widen scalar write kind/value schema or schedule native work");
+                "string kind validates text bounds; scalar kinds still reject string values; nothing is scheduled by validation");
     }
 
     private static void queuedWritesRejectSafetyAndTargetTransitions() {
