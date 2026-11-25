@@ -13,8 +13,10 @@ import java.util.concurrent.TimeUnit;
 /** Public API device operations, addressed through fixed, initialization-time bank proxies. */
 final class DeviceModule implements HostModule {
     static final Set<String> METHODS = Set.of("devices.get", "devices.set", "devices.select", "devices.insert",
-            "devices.catalog", "devices.remote.get", "devices.remote.page", "devices.remote.set");
+            "devices.delete", "devices.move", "devices.layers.insert", "devices.catalog", "devices.remote.get",
+            "devices.remote.page", "devices.remote.set");
     private static final Set<String> TARGET = Set.of("trackId", "deviceIndex", "expectedDeviceName");
+    static final int MAX_LAYER_CHILDREN = 4096;
     private final HostServices s;
     private final Source[][] sources = new Source[HostServices.TRACKS][HostServices.DEVICES];
     private final InsertionPoint[] ends = new InsertionPoint[HostServices.TRACKS];
@@ -317,10 +319,29 @@ final class DeviceModule implements HostModule {
                 Params.fields(p, Set.of("trackId", "deviceIndex", "expectedDeviceName", "enabled"), Set.of());
                 validateTarget(p); Params.bool(p, "enabled"); return;
             case "devices.insert":
-                Params.fields(p, Set.of("trackId", "expectedDeviceCount", "kind"), Set.of("id", "path"));
+                Params.fields(p, Set.of("trackId", "expectedDeviceCount", "kind"),
+                        Set.of("id", "path", "position", "deviceIndex", "expectedDeviceName"));
                 Params.string(p, "trackId");
                 Params.integer(p, "expectedDeviceCount", 0, HostServices.DEVICES - 1);
-                validateInsertion(p); return;
+                validateInsertion(p); validatePosition(p); return;
+            case "devices.delete": Params.fields(p, TARGET, Set.of()); validateTarget(p); return;
+            case "devices.move":
+                Params.fields(p, Set.of("trackId", "deviceIndex", "expectedDeviceName", "toIndex"), Set.of());
+                validateTarget(p);
+                if (Params.integer(p, "toIndex", 0, HostServices.DEVICES - 1) == p.get("deviceIndex").getAsInt())
+                    invalid("toIndex equals deviceIndex; nothing to move.");
+                return;
+            case "devices.layers.insert":
+                Params.fields(p, Set.of("parent", "layerId", "expectedChildCount", "kind"),
+                        Set.of("id", "path", "position"));
+                if (!p.get("parent").isJsonObject()) invalid("parent must be an object.");
+                DeviceSources.validateParent(p.getAsJsonObject("parent"));
+                if (!DeviceSources.canonicalUuid(Params.string(p, "layerId"))) invalid("layerId must be a canonical UUID.");
+                Params.integer(p, "expectedChildCount", 0, MAX_LAYER_CHILDREN);
+                validateInsertion(p);
+                if (p.has("position") && !Set.of("start", "end").contains(Params.string(p, "position")))
+                    invalid("position must be start or end for a layer chain.");
+                return;
             case "devices.remote.page":
                 Params.fields(p, Set.of("trackId", "deviceIndex", "expectedDeviceName", "contextToken",
                         "pageIndex", "expectedPageName"), Set.of());
@@ -340,6 +361,20 @@ final class DeviceModule implements HostModule {
         Params.string(p, "trackId");
         Params.integer(p, "deviceIndex", 0, HostServices.DEVICES - 1);
         Params.string(p, "expectedDeviceName");
+    }
+
+    private static void validatePosition(JsonObject p) {
+        String position = p.has("position") ? Params.string(p, "position") : "end";
+        boolean anchored = position.equals("before") || position.equals("after");
+        if (!anchored && !position.equals("start") && !position.equals("end"))
+            invalid("position must be start, end, before or after.");
+        if (anchored) {
+            if (!p.has("deviceIndex") || !p.has("expectedDeviceName"))
+                invalid("position before/after requires deviceIndex and expectedDeviceName of the anchor device.");
+            Params.integer(p, "deviceIndex", 0, HostServices.DEVICES - 1);
+            Params.string(p, "expectedDeviceName");
+        } else if (p.has("deviceIndex") || p.has("expectedDeviceName"))
+            invalid("deviceIndex and expectedDeviceName are only for position before/after.");
     }
 
     private static void validateInsertion(JsonObject p) {
@@ -380,6 +415,9 @@ final class DeviceModule implements HostModule {
             throw HostServices.failure("busy", "Another device mutation is awaiting observations.");
         mutation = op;
         if (method.equals("devices.insert")) { insert(op, p); return; }
+        if (method.equals("devices.layers.insert")) { insertIntoLayer(op, p); return; }
+        if (method.equals("devices.delete")) { delete(op, target(p)); return; }
+        if (method.equals("devices.move")) { move(op, target(p), p.get("toIndex").getAsInt()); return; }
         Target target = target(p);
         if (method.startsWith("devices.remote.")) { remoteWrite(op, method, p, target); return; }
         if (method.equals("devices.select")) {
@@ -462,42 +500,175 @@ final class DeviceModule implements HostModule {
         } else s.schedule(op, () -> observeEnabled(op, target, enabled, sequence, end), 25);
     }
 
+    /** One verified edit in flight: what was planned, how to read the chain, and what to add to the result. */
+    private final class Edit {
+        final String trackId;
+        final int slot;
+        final DeviceChainEdit.View view;
+        final DeviceChainEdit.Plan plan;
+        final long[] prefixRevisions;
+        final java.util.function.BooleanSupplier context;
+        final String contextLost;
+        final JsonObject extra = new JsonObject();
+
+        Edit(String trackId, int slot, DeviceChainEdit.View view, DeviceChainEdit.Plan plan, long[] prefixRevisions,
+             java.util.function.BooleanSupplier context, String contextLost) {
+            this.trackId = trackId; this.slot = slot; this.view = view; this.plan = plan;
+            this.prefixRevisions = prefixRevisions; this.context = context; this.contextLost = contextLost;
+        }
+    }
+
     private void insert(HostOperation op, JsonObject p) {
         String id = p.get("trackId").getAsString();
         int t = s.trackSlot(id);
         int count = p.get("expectedDeviceCount").getAsInt();
-        if (!countObserved[t]) throw HostServices.failure("not_ready", "Device count has not been observed.");
-        if (s.devices[t].scrollPosition().get() != 0 || s.devices[t].itemCount().get() != count)
-            throw HostServices.failure("stale_context", "Device count or bank window differs from expectedDeviceCount.");
-        long[] prefix = new long[count];
-        JsonArray before = new JsonArray();
-        for (int d = 0; d < HostServices.DEVICES; d++) {
-            Source source = sources[t][d];
-            if (source.identity.exists == null || (d < count && !source.ready()))
-                throw HostServices.failure("not_ready", "Device bank has not reported the complete insertion window.");
-            if (source.device.exists().get() != (d < count)
-                    || (d < count && source.device.position().get() != d))
-                throw HostServices.failure("stale_context", "Device count and bank contents disagree.");
-            if (d < count) { prefix[d] = source.identity.revision; before.add(summary(source, d)); }
+        String position = p.has("position") ? p.get("position").getAsString() : "end";
+        TopState state = captureTop(t, count, "Device count or bank window differs from expectedDeviceCount.");
+        int anchor = -1, index;
+        switch (position) {
+            case "start": index = 0; break;
+            case "end": index = count; break;
+            default:
+                anchor = p.get("deviceIndex").getAsInt();
+                if (anchor >= count) throw HostServices.failure("target_not_found", "Anchor device index is beyond the observed device count.");
+                if (!sources[t][anchor].device.name().get().equals(p.get("expectedDeviceName").getAsString()))
+                    throw HostServices.failure("stale_target", "The device at index " + anchor + " is named \""
+                            + sources[t][anchor].device.name().get() + "\", not expectedDeviceName.");
+                index = position.equals("before") ? anchor : anchor + 1;
         }
-        long sequence = countSequence[t];
-        long newNameSequence = sources[t][count].identity.nameSequence;
         s.check(op);
-        if (!s.trackMatches(id, (Track) s.tracks.getItemAt(t)) || !prefixMatches(t, prefix)
+        if (!s.trackMatches(id, (Track) s.tracks.getItemAt(t)) || !prefixMatches(t, state.revisions)
                 || s.devices[t].itemCount().get() != count || s.devices[t].scrollPosition().get() != 0)
             throw HostServices.failure("stale_context", "Insertion target changed before dispatch.");
         String kind = p.get("kind").getAsString();
         String value = p.get(kind.equals("file") ? "path" : "id").getAsString();
+        InsertionPoint point;
+        switch (position) {
+            case "start": point = ((Track) s.tracks.getItemAt(t)).startOfDeviceChainInsertionPoint(); break;
+            case "end": point = ends[t]; break;
+            case "before": point = sources[t][anchor].device.beforeDeviceInsertionPoint(); break;
+            default: point = sources[t][anchor].device.afterDeviceInsertionPoint();
+        }
+        Edit edit = topEdit(id, t, DeviceChainEdit.Plan.insert(index, state.before), state, index);
+        edit.extra.addProperty("requestedIdentifierVerified", false);
+        JsonObject placed = new JsonObject();
+        placed.addProperty("mode", position); placed.addProperty("index", index);
+        edit.extra.add("position", placed);
         op.dispatched = true;
+        insertAt(point, kind, value);
+        observeEdit(op, edit, observationEnd(op));
+    }
+
+    private static void insertAt(InsertionPoint point, String kind, String value) {
         switch (kind) {
-            case "bitwig": ends[t].insertBitwigDevice(UUID.fromString(value)); break;
-            case "vst2": ends[t].insertVST2Device(Integer.parseInt(value)); break;
-            case "vst3": ends[t].insertVST3Device(value); break;
-            case "clap": ends[t].insertCLAPDevice(value); break;
-            case "file": ends[t].insertFile(value); break;
+            case "bitwig": point.insertBitwigDevice(UUID.fromString(value)); break;
+            case "vst2": point.insertVST2Device(Integer.parseInt(value)); break;
+            case "vst3": point.insertVST3Device(value); break;
+            case "clap": point.insertCLAPDevice(value); break;
+            case "file": point.insertFile(value); break;
             default: throw new IllegalStateException("Validated insertion kind changed");
         }
-        observeInsertion(op, id, t, prefix, before, sequence, newNameSequence, observationEnd(op));
+    }
+
+    private void insertIntoLayer(HostOperation op, JsonObject p) {
+        JsonObject parent = p.getAsJsonObject("parent");
+        String layerId = p.get("layerId").getAsString();
+        DeviceSources.Source root = s.sources.root(parent);
+        DeviceSources.Layer layer = s.sources.layer(parent, layerId);
+        int count = p.get("expectedChildCount").getAsInt();
+        LayerView view = new LayerView(layer);
+        if (view.count() != count)
+            throw HostServices.failure("stale_context", "Layer child count differs from expectedChildCount.");
+        DeviceChainEdit.Before before = DeviceChainEdit.Before.capture(view,
+                "Layer child count and window contents disagree.");
+        boolean start = p.has("position") && p.get("position").getAsString().equals("start");
+        s.check(op);
+        String trackId = root.track.id, rootName = root.name;
+        java.util.function.BooleanSupplier context = () -> Boolean.TRUE.equals(root.exists)
+                && root.name.equals(rootName) && root.track.id.equals(trackId)
+                && Boolean.TRUE.equals(layer.exists) && layerId.equals(layer.id);
+        if (!context.getAsBoolean()) throw HostServices.failure("stale_context", "Layer target changed before dispatch.");
+        String kind = p.get("kind").getAsString();
+        String value = p.get(kind.equals("file") ? "path" : "id").getAsString();
+        Edit edit = new Edit(trackId, root.track.slot, view, DeviceChainEdit.Plan.insert(start ? 0 : count, before),
+                null, context, "layer_context_changed_after_dispatch");
+        edit.extra.addProperty("requestedIdentifierVerified", false);
+        edit.extra.add("parent", parent.deepCopy());
+        edit.extra.addProperty("layerId", layerId);
+        edit.extra.addProperty("layerName", layer.name);
+        JsonObject placed = new JsonObject();
+        placed.addProperty("mode", start ? "start" : "end"); placed.addProperty("index", edit.plan.index);
+        edit.extra.add("position", placed);
+        op.dispatched = true;
+        insertAt(start ? layer.proxy.startOfDeviceChainInsertionPoint() : layer.proxy.endOfDeviceChainInsertionPoint(),
+                kind, value);
+        observeEdit(op, edit, observationEnd(op));
+    }
+
+    private void delete(HostOperation op, Target target) {
+        int t = target.trackSlot, index = target.index;
+        s.requirePlaybackSafe();
+        TopState state = captureTop(t, -1, "Device bank contents disagree with the observed device count.");
+        if (index >= state.before.count)
+            throw HostServices.failure("target_not_found", "Device is beyond the observed device count.");
+        guard(op, target);
+        Edit edit = topEdit(target.trackId, t, DeviceChainEdit.Plan.delete(index, state.before), state, index);
+        edit.extra.add("deleted", DeviceChainEdit.summary(index, state.before.names[index], state.before.types[index]));
+        op.dispatched = true;
+        target.source.device.deleteObject();
+        observeEdit(op, edit, observationEnd(op));
+    }
+
+    private void move(HostOperation op, Target target, int to) {
+        int t = target.trackSlot, from = target.index;
+        s.requirePlaybackSafe();
+        TopState state = captureTop(t, -1, "Device bank contents disagree with the observed device count.");
+        int n = state.before.count;
+        if (from >= n) throw HostServices.failure("target_not_found", "Device is beyond the observed device count.");
+        if (to >= n) throw HostServices.failure("target_not_found", "toIndex is beyond the observed device count.");
+        guard(op, target);
+        DeviceChainEdit.Plan plan = DeviceChainEdit.Plan.move(from, to, state.before);
+        Edit edit = topEdit(target.trackId, t, plan, state, 0);
+        JsonObject moved = DeviceChainEdit.summary(from, state.before.names[from], state.before.types[from]);
+        moved.addProperty("toIndex", to);
+        edit.extra.add("moved", moved);
+        // Moving up lands after the device at `to`, moving down lands before it: the device ends at index `to`.
+        InsertionPoint point = to > from ? sources[t][to].device.afterDeviceInsertionPoint()
+                : sources[t][to].device.beforeDeviceInsertionPoint();
+        op.dispatched = true;
+        point.moveDevices(target.source.device);
+        if (plan.indistinguishable()) {
+            // Same names and types in the same order: the host cannot show whether anything moved.
+            finishEdit(op, edit, DeviceChainEdit.Outcome.ambiguous(), "move_indistinguishable_by_name_and_type");
+            return;
+        }
+        observeEdit(op, edit, observationEnd(op));
+    }
+
+    /** Complete, ready top-level window: count, scroll, per-slot existence and the revisions of every present device. */
+    private TopState captureTop(int t, int expectedCount, String staleMessage) {
+        if (!countObserved[t]) throw HostServices.failure("not_ready", "Device count has not been observed.");
+        int count = s.devices[t].itemCount().get();
+        if (s.devices[t].scrollPosition().get() != 0 || (expectedCount >= 0 && count != expectedCount))
+            throw HostServices.failure("stale_context", staleMessage);
+        if (count > HostServices.DEVICES)
+            throw HostServices.failure("outside_window", "The chain is longer than the 16-device window; only inserts at a bounded count are supported.");
+        long[] revisions = new long[count];
+        for (int d = 0; d < HostServices.DEVICES; d++) {
+            Source source = sources[t][d];
+            if (d < count && source.identity.exists != null && source.device.exists().get()
+                    && source.device.position().get() != d)
+                throw HostServices.failure("stale_context", "Device count and bank contents disagree.");
+            if (d < count) revisions[d] = source.identity.revision;
+        }
+        return new TopState(count, revisions, DeviceChainEdit.Before.capture(new TopView(t), staleMessage));
+    }
+
+    private Edit topEdit(String trackId, int t, DeviceChainEdit.Plan plan, TopState state, int fixedPrefix) {
+        long[] prefix = java.util.Arrays.copyOf(state.revisions, Math.min(fixedPrefix, state.revisions.length));
+        return new Edit(trackId, t, new TopView(t), plan, prefix,
+                () -> s.trackMatches(trackId, (Track) s.tracks.getItemAt(t)) && s.devices[t].scrollPosition().get() == 0,
+                "insertion_track_or_window_changed");
     }
 
     private boolean prefixMatches(int t, long[] prefix) {
@@ -509,52 +680,79 @@ final class DeviceModule implements HostModule {
         return true;
     }
 
-    private void observeInsertion(HostOperation op, String trackId, int t, long[] prefix,
-                                  JsonArray before, long sequence, long newNameSequence, long end) {
-        if (!s.trackMatches(trackId, (Track) s.tracks.getItemAt(t)) || s.devices[t].scrollPosition().get() != 0) {
-            uncertain(op, "insertion_track_or_window_changed"); return;
-        }
-        int count = s.devices[t].itemCount().get();
-        String verification = null;
-        boolean identified = false;
-        if (!prefixMatches(t, prefix) || count < prefix.length || count > prefix.length + 1)
-            verification = "ambiguous_chain_change";
-        else if (count == prefix.length + 1 && countSequence[t] > sequence) {
-            Source added = sources[t][prefix.length];
-            boolean complete = added.ready() && added.device.exists().get()
-                    && added.device.position().get() == prefix.length && added.identity.nameSequence > newNameSequence
-                    && !added.device.name().get().isEmpty();
-            for (int d = count; d < HostServices.DEVICES; d++) complete &= !sources[t][d].device.exists().get();
-            if (complete) { identified = true; verification = "observed_count_increment_and_unchanged_prefix"; }
-        }
-        if (verification == null && System.nanoTime() < end) {
-            s.schedule(op, () -> observeInsertion(op, trackId, t, prefix, before, sequence, newNameSequence, end), 25);
+    private void observeEdit(HostOperation op, Edit edit, long end) {
+        if (!edit.context.getAsBoolean()) { uncertain(op, edit.contextLost); return; }
+        DeviceChainEdit.Outcome outcome = edit.prefixRevisions != null && !prefixMatches(edit.slot, edit.prefixRevisions)
+                ? DeviceChainEdit.Outcome.ambiguous() : DeviceChainEdit.observe(edit.view, edit.plan);
+        if (outcome.pending && System.nanoTime() < end) {
+            s.schedule(op, () -> observeEdit(op, edit, end), 25);
             return;
         }
+        finishEdit(op, edit, outcome, null);
+    }
+
+    private void finishEdit(HostOperation op, Edit edit, DeviceChainEdit.Outcome outcome, String override) {
+        DeviceChainEdit.View view = edit.view;
+        DeviceChainEdit.Plan plan = edit.plan;
+        boolean insert = plan.kind == DeviceChainEdit.INSERT;
+        String verification = override != null ? override : outcome.pending
+                ? (insert ? "insertion_not_observed" : plan.kind == DeviceChainEdit.DELETE ? "deletion_not_observed"
+                        : "move_not_observed") : outcome.verification;
         JsonObject result = HostServices.observed();
-        result.addProperty("status", identified ? "observed" : "dispatched");
-        result.addProperty("verification", verification == null ? "insertion_not_observed" : verification);
-        result.addProperty("trackId", trackId);
-        result.addProperty("beforeCount", prefix.length);
-        result.addProperty("afterCount", count);
+        result.addProperty("status", outcome.ok ? "observed" : "dispatched");
+        result.addProperty("verification", verification);
+        result.addProperty("trackId", edit.trackId);
+        result.addProperty("beforeCount", plan.before.count);
+        result.addProperty("afterCount", view.count());
         result.addProperty("identityScope", "observed_bank_delta_not_persistent_device_identity");
-        result.addProperty("requestedIdentifierVerified", false);
-        result.add("before", before);
-        JsonArray after = new JsonArray();
-        for (int d = 0; d < HostServices.DEVICES; d++)
-            if (sources[t][d].device.exists().get()) after.add(summary(sources[t][d], d));
-        result.add("after", after);
-        if (identified) result.add("inserted", summary(sources[t][prefix.length], prefix.length));
-        else result.add("inserted", JsonNull.INSTANCE);
+        result.add("before", DeviceChainEdit.before(plan.before));
+        result.add("after", DeviceChainEdit.after(view));
+        for (String key : edit.extra.keySet()) result.add(key, edit.extra.get(key));
+        if (insert) {
+            boolean identified = outcome.ok && plan.index < view.window();
+            result.add("inserted", identified
+                    ? DeviceChainEdit.summary(plan.index, view.name(plan.index), view.type(plan.index)) : JsonNull.INSTANCE);
+        }
         op.result.complete(result);
     }
 
-    private static JsonObject summary(Source source, int index) {
-        JsonObject result = new JsonObject();
-        result.addProperty("deviceIndex", index);
-        result.addProperty("name", source.device.name().get());
-        result.addProperty("type", source.device.deviceType().get());
-        return result;
+    private final class TopView implements DeviceChainEdit.View {
+        final int t;
+        TopView(int t) { this.t = t; }
+        @Override public int count() { return s.devices[t].itemCount().get(); }
+        @Override public int window() { return HostServices.DEVICES; }
+        @Override public long countSequence() { return countSequence[t]; }
+        @Override public boolean known(int slot) { return sources[t][slot].identity.exists != null; }
+        @Override public boolean exists(int slot) { return sources[t][slot].device.exists().get(); }
+        @Override public boolean ready(int slot) { return sources[t][slot].ready() && !sources[t][slot].device.name().get().isEmpty(); }
+        @Override public String name(int slot) { return sources[t][slot].device.name().get(); }
+        @Override public String type(int slot) { return sources[t][slot].device.deviceType().get(); }
+        @Override public long nameSequence(int slot) { return sources[t][slot].identity.nameSequence; }
+    }
+
+    /** A layer's child window: two observed slots, with the layer's own total count. */
+    private static final class LayerView implements DeviceChainEdit.View {
+        final DeviceSources.Layer layer;
+        LayerView(DeviceSources.Layer layer) { this.layer = layer; }
+        private DeviceSources.Source child(int slot) { return layer.children[slot]; }
+        @Override public int count() { return layer.window.count == null ? -1 : layer.window.count; }
+        @Override public int window() { return DeviceSources.CHILDREN; }
+        @Override public long countSequence() { return layer.window.countSequence; }
+        @Override public boolean known(int slot) { return child(slot).exists != null; }
+        @Override public boolean exists(int slot) { return Boolean.TRUE.equals(child(slot).exists); }
+        @Override public boolean ready(int slot) { return child(slot).metadataReady() && !child(slot).name.isEmpty(); }
+        @Override public String name(int slot) { return child(slot).name == null ? "" : child(slot).name; }
+        @Override public String type(int slot) { return child(slot).type == null ? "" : child(slot).type; }
+        @Override public long nameSequence(int slot) { return child(slot).nameSequence; }
+    }
+
+    private static final class TopState {
+        final int count;
+        final long[] revisions;
+        final DeviceChainEdit.Before before;
+        TopState(int count, long[] revisions, DeviceChainEdit.Before before) {
+            this.count = count; this.revisions = revisions; this.before = before;
+        }
     }
 
     private static long observationEnd(HostOperation op) {

@@ -521,30 +521,75 @@ class DeviceSetArgs(ParameterArgs):
     enabled: bool
 
 
+def validate_insertion(self):
+    if self.kind == "file":
+        if "id" in self.model_fields_set or "path" not in self.model_fields_set:
+            raise ValueError("file insertion requires path and forbids id")
+        validate_local_path(self.path)
+    else:
+        if "path" in self.model_fields_set or "id" not in self.model_fields_set:
+            raise ValueError("plug-in insertion requires id and forbids path")
+        if self.kind == "bitwig" and not re.fullmatch(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", self.id):
+            raise ValueError("bitwig id must be a canonical UUID")
+        if self.kind == "vst2" and (not re.fullmatch(r"-?(0|[1-9][0-9]{0,9})", self.id) or not -(2**31) <= int(self.id) < 2**31):
+            raise ValueError("vst2 id must be a signed int32 decimal string")
+        if self.kind == "vst3" and not re.fullmatch(r"[0-9a-fA-F]{32}", self.id):
+            raise ValueError("vst3 id must be 32 hexadecimal characters")
+        if self.kind == "clap" and not re.fullmatch(r"[!-~]{1,256}", self.id):
+            raise ValueError("clap id must be 1..256 printable non-whitespace ASCII characters")
+    return self
+
+
 class DeviceInsertArgs(DeviceArgs):
     expectedDeviceCount: int = Field(ge=0, le=15)
     kind: Literal["bitwig", "vst2", "vst3", "clap", "file"]
     id: Nonempty = omitted()
     path: Nonempty = omitted()
+    position: Literal["start", "end", "before", "after"] = omitted(description="Where in the chain; default end. before/after need deviceIndex and expectedDeviceName of the anchor device.")
+    deviceIndex: int = omitted(ge=0, le=15, description="Anchor device for position before/after.")
+    expectedDeviceName: Nonempty = omitted(description="Exact name of the anchor device.")
 
     @model_validator(mode="after")
     def validate_identifier(self):
-        if self.kind == "file":
-            if "id" in self.model_fields_set or "path" not in self.model_fields_set:
-                raise ValueError("file insertion requires path and forbids id")
-            validate_local_path(self.path)
-        else:
-            if "path" in self.model_fields_set or "id" not in self.model_fields_set:
-                raise ValueError("plug-in insertion requires id and forbids path")
-            if self.kind == "bitwig" and not re.fullmatch(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", self.id):
-                raise ValueError("bitwig id must be a canonical UUID")
-            if self.kind == "vst2" and (not re.fullmatch(r"-?(0|[1-9][0-9]{0,9})", self.id) or not -(2**31) <= int(self.id) < 2**31):
-                raise ValueError("vst2 id must be a signed int32 decimal string")
-            if self.kind == "vst3" and not re.fullmatch(r"[0-9a-fA-F]{32}", self.id):
-                raise ValueError("vst3 id must be 32 hexadecimal characters")
-            if self.kind == "clap" and not re.fullmatch(r"[!-~]{1,256}", self.id):
-                raise ValueError("clap id must be 1..256 printable non-whitespace ASCII characters")
+        anchored = self.position in ("before", "after")
+        given = {"deviceIndex", "expectedDeviceName"} & self.model_fields_set
+        if anchored and len(given) != 2:
+            raise ValueError("position before/after requires deviceIndex and expectedDeviceName")
+        if not anchored and given:
+            raise ValueError("deviceIndex and expectedDeviceName are only for position before/after")
+        return validate_insertion(self)
+
+
+class DeviceMoveArgs(ParameterArgs):
+    toIndex: int = Field(ge=0, le=15)
+
+    @model_validator(mode="after")
+    def validate_move(self):
+        if self.toIndex == self.deviceIndex:
+            raise ValueError("toIndex equals deviceIndex; nothing to move")
         return self
+
+
+class LayerInsertArgs(LayerListArgs):
+    layerId: TrackId
+    expectedChildCount: int = Field(ge=0, le=4096)
+    kind: Literal["bitwig", "vst2", "vst3", "clap", "file"]
+    id: Nonempty = omitted()
+    path: Nonempty = omitted()
+    position: Literal["start", "end"] = omitted(description="Start or end of the layer's chain; default end.")
+
+    @model_validator(mode="after")
+    def validate_identifier(self):
+        return validate_insertion(self)
+
+
+class PresetSearchArgs(StatusArgs):
+    query: str = omitted(min_length=1, max_length=4096, description="Words that must all occur in the preset name, folders, package, creator or readable metadata; case, spaces and punctuation ignored.")
+    device: str = omitted(min_length=1, max_length=4096, description="Device name (readable metadata) or a folder named for it, e.g. Polymer, Poly Grid, Convolution.")
+    deviceType: Literal["instrument", "audio-effect", "note-effect"] = omitted(description="Only presets whose readable metadata gives this type; encrypted package presets have none.")
+    category: str = omitted(min_length=1, max_length=4096, description="Preset/device category from readable metadata, or a folder name (e.g. Synth Bass, Drums).")
+    limit: int = Field(default=25, ge=1, le=200)
+    offset: int = Field(default=0, ge=0, le=1000000)
 
 
 class ClipArgs(DeviceArgs):

@@ -229,6 +229,7 @@ final class DeviceSources {
         final int capacity;
         Boolean exists;
         Integer count, offset;
+        long countSequence;
         Window(int capacity) { this.capacity = capacity; }
         void observe(BooleanValue existence, IntegerValue size, IntegerValue scroll, WindowChange changed) {
             existence.addValueObserver((BooleanValueChangedCallback) value -> {
@@ -237,7 +238,7 @@ final class DeviceSources {
             });
             size.addValueObserver((IntegerValueChangedCallback) value -> {
                 boolean change = count != null && count != value, populated = count != null && count > 0;
-                count = value; if (change) changed.changed(populated);
+                count = value; countSequence++; if (change) changed.changed(populated);
             });
             scroll.addValueObserver((IntegerValueChangedCallback) value -> {
                 boolean change = offset != null && offset != value;
@@ -418,9 +419,22 @@ final class DeviceSources {
     }
 
     Source child(JsonObject p) {
-        Source root = root(p.getAsJsonObject("parent"));
+        Layer found = layer(p.getAsJsonObject("parent"), p.get("layerId").getAsString());
+        int index = p.get("childDeviceIndex").getAsInt();
+        if (index >= CHILDREN) throw failure("outside_window", "Child is outside the fixed two-device window.");
+        Source child = found.children[index];
+        if (child.rebound) throw failure("not_ready", "Nested proxy physically rebound; direct callback provenance is unavailable until extension reload.");
+        if (!child.present()) throw failure("not_ready", "Child metadata or ancestor/window context is not ready.");
+        if (!child.name.equals(p.get("expectedChildDeviceName").getAsString())
+                || !child.discoveryToken.equals(p.get("discoveryToken").getAsString()))
+            throw failure("stale_context", "Rediscover the layer child after an observed context change.");
+        return child;
+    }
+
+    /** The observed, ready layer of an explicit root parent; the shared half of child addressing. */
+    Layer layer(JsonObject parent, String id) {
+        Source root = root(parent);
         requireBranch(root.branch);
-        String id = p.get("layerId").getAsString();
         Layer found = null;
         for (Layer layer : root.branch.layers) {
             if (layer.slot >= root.branch.window.count) continue;
@@ -433,15 +447,7 @@ final class DeviceSources {
         }
         if (found == null) throw failure("stale_context", "Layer UUID is absent from the observed window.");
         if (!found.ready()) throw failure("not_ready", "Layer and child window are not ready at offset zero.");
-        int index = p.get("childDeviceIndex").getAsInt();
-        if (index >= CHILDREN) throw failure("outside_window", "Child is outside the fixed two-device window.");
-        Source child = found.children[index];
-        if (child.rebound) throw failure("not_ready", "Nested proxy physically rebound; direct callback provenance is unavailable until extension reload.");
-        if (!child.present()) throw failure("not_ready", "Child metadata or ancestor/window context is not ready.");
-        if (!child.name.equals(p.get("expectedChildDeviceName").getAsString())
-                || !child.discoveryToken.equals(p.get("discoveryToken").getAsString()))
-            throw failure("stale_context", "Rediscover the layer child after an observed context change.");
-        return child;
+        return found;
     }
 
     private void requireBranch(Branch branch) {
