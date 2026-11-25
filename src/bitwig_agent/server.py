@@ -23,7 +23,7 @@ from mcp.types import (
 
 from bitwig_agent.catalog import CLIENT_SIDE, TOOLS, invalid_params_message, validate_call
 from bitwig_agent.client import BridgeClient, BridgeError, configured_port
-from bitwig_agent.grid_apply import apply as grid_apply
+from bitwig_agent.client_side import run as run_client_side
 
 
 def create_server(client: BridgeClient | None = None) -> Server:
@@ -43,7 +43,7 @@ def create_server(client: BridgeClient | None = None) -> Server:
         try:
             arguments, timeout_ms = validate_call(params.name, params.arguments or {})
             if params.name in CLIENT_SIDE:
-                payload = {"result": await grid_apply(bridge, arguments, timeout_ms)}
+                payload = {"result": await run_client_side(params.name, bridge, arguments, timeout_ms)}
             else:
                 payload = {"result": await bridge.call(params.name, arguments, timeout_ms)}
             failed = False

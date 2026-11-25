@@ -1,0 +1,285 @@
+"""Client-side `grid.render`: read one Grid device with grid.get and draw its layout as SVG (or PNG).
+
+Read-only toward Bitwig: only grid.get is called. The only side effect is the file written at outPath.
+The returned summary lets an agent judge the layout (overlaps, orphans, sections, density) without the image.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import html
+import math
+import os
+import re
+import shutil
+import subprocess
+from typing import Any
+
+from bitwig_agent.client import BridgeError
+
+PAGE, PARAM_IDS = 128, 32
+CELL = 46  # svg units per grid cell
+MAX_SPAN = 2000  # cells per axis; refuse to draw anything larger
+LIST_CAP = 50
+
+# The one category table: category -> (colour, exact module type names, name keywords as fallback).
+CATEGORIES: dict[str, tuple[str, frozenset[str], tuple[str, ...]]] = {
+    "sequencing": ("#4f8fd8", frozenset({
+        "Transport", "Clock", "Clock Divide", "Clock Quantize", "Ø Counter", "Ø Mirror", "Steps", "Triggers", "Gates", "Accents",
+        "Probabilities", "Pitches", "Step Access", "Array", "Recorder", "Shift Register", "Trigger", "Transport Playing",
+        "Select In", "Counter"}), ("clock", "step", "counter", "sequenc", "transport")),
+    "random": ("#d8a24f", frozenset({"Dice", "Chance", "Noise", "S/H LFO", "Sample / Hold", "Hold", "Latch", "N-Latch"}), ("random", "dice", "noise", "latch")),
+    "pitch": ("#7cc47c", frozenset({
+        "Key Quantize", "Pitch Quantize", "Semitone Quantize", "Transpose", "Root Key", "Pitch Class", "Octaver", "Pitch",
+        "Scale Steps", "Pitch Scaler", "Quantize", "Bend"}), ("quantize", "pitch", "transpose", "scale", "key")),
+    "oscillator": ("#d86a6a", frozenset({"Sine", "Sawtooth", "Triangle", "Pulse", "Union", "Wavetable", "Phase-1", "Swarm", "Bite", "Sampler", "Pluck", "LFO"}),
+                   ("osc", "wave")),
+    "envelope": ("#b07cd8", frozenset({"AD", "ADSR", "AR", "Gate Length", "Gate Repeat", "Lag", "Slopes", "Segments", "Curves"}), ("envelope", "slope")),
+    "filter": ("#d87cb0", frozenset({"SVF", "Low-pass", "High-pass", "Low-pass LD", "Low-pass MG", "Sallen-Key", "Comb", "All-pass", "Vowels"}),
+               ("pass", "filter", "formant")),
+    "fx": ("#5fb8b8", frozenset({"All-pass Delay", "Mod Delay", "Long Delay", "Delay", "Chorus+", "Flanger+", "Phaser+", "Pitch Shift", "Freq Shift+", "Distortion"}),
+           ("delay", "chorus", "flanger", "phaser", "reverb", "shift", "distort", "crush", "fold")),
+    "output": ("#e0e0e0", frozenset({"Audio Out", "Note Out", "Modulator Out", "Mixer", "Amplify", "Blend", "Pan", "Stereo Width"}), (" out", "mix", "pan")),
+    "visualization": ("#f0d040", frozenset({"VU Meter", "Oscilloscope", "Spectrum", "Value Readout", "Tuner", "XY"}), ("meter", "scope", "spectrum", "readout")),
+    "text": ("#888888", frozenset({"Label", "Comment"}), ()),
+    "other": ("#9aa0a6", frozenset(), ()),
+}
+_BY_TYPE = {t: k for k, (_, names, _kw) in CATEGORIES.items() for t in names}
+
+
+def category(type_name: str) -> str:
+    if type_name in _BY_TYPE:
+        return _BY_TYPE[type_name]
+    low = type_name.casefold()
+    for key, (_, _names, words) in CATEGORIES.items():
+        if any(w in low for w in words):
+            return key
+    return "other"
+
+
+SECTION_PREFIX = re.compile(r"^([^\s:]{1,16}):\s")
+
+
+def _fail(message: str, code: str = "invalid_params", details: dict[str, Any] | None = None) -> BridgeError:
+    error: dict[str, Any] = {"code": code, "message": message, "outcome": "not_dispatched"}
+    if details:
+        error["details"] = details
+    return BridgeError(error)
+
+
+def _converter() -> list[str] | None:
+    if shutil.which("rsvg-convert"):
+        return ["rsvg-convert", "-f", "png"]
+    if shutil.which("magick"):
+        return ["magick", "svg:-", "png:-"]
+    return None
+
+
+# ---- reading ---------------------------------------------------------------------------------------------
+async def _get(client: Any, target: dict[str, Any], timeout_ms: int, **extra: Any) -> dict[str, Any]:
+    result = await client.call("grid.get", {**target, **extra}, timeout_ms)
+    if not isinstance(result, dict) or not isinstance(result.get("modules"), list):
+        raise BridgeError({"code": "not_applied", "message": "grid.get returned an unusable result", "outcome": "not_dispatched", "details": result if isinstance(result, dict) else {}})
+    return result
+
+
+async def read_layout(client: Any, target: dict[str, Any], timeout_ms: int) -> tuple[list[dict], list[dict]]:
+    """All modules and cables of the device, paging until the window is complete. Structure only."""
+    rows: list[dict] = []
+    cables: dict[tuple, dict] = {}
+    total = None
+    while total is None or len(rows) < total:
+        page = await _get(client, target, timeout_ms, moduleOffset=len(rows), moduleLimit=PAGE, includeParameters=False)
+        got = page["modules"]
+        rows += got
+        for c in page.get("connections", []):
+            cables[(c["targetModuleId"], c["targetPortKey"])] = c
+        total = (page.get("window") or {}).get("total", len(rows))
+        if not got and len(rows) < total:
+            raise BridgeError({"code": "graph_incomplete", "message": f"grid.get returned {len(rows)} of {total} modules", "outcome": "not_dispatched"})
+    return rows, list(cables.values())
+
+
+async def read_comment_text(client: Any, target: dict[str, Any], timeout_ms: int, ids: list[str]) -> dict[str, str]:
+    texts: dict[str, str] = {}
+    for i in range(0, len(ids), PARAM_IDS):
+        page = await _get(client, target, timeout_ms, moduleOffset=0, moduleLimit=PAGE, includeParameters=True, moduleIds=ids[i:i + PARAM_IDS])
+        for row in page["modules"]:
+            for p in row.get("parameters") or []:
+                if p.get("parameterId") == "TEXT" and isinstance(p.get("value"), str):
+                    texts[row["instanceId"]] = p["value"]
+    return texts
+
+
+# ---- analysis --------------------------------------------------------------------------------------------
+def _box(rows: list[dict]) -> dict[str, int]:
+    x0, y0 = min(r["x"] for r in rows), min(r["y"] for r in rows)
+    x1, y1 = max(r["x"] + r["width"] for r in rows), max(r["y"] + r["height"] for r in rows)
+    return {"x": x0, "y": y0, "width": x1 - x0, "height": y1 - y0}
+
+
+def _label(row: dict) -> str:
+    return (row.get("customName") or "").strip() or row["typeName"]
+
+
+def _ref(row: dict) -> dict[str, Any]:
+    return {"name": _label(row), "type": row["typeName"], "x": row["x"], "y": row["y"], "width": row["width"], "height": row["height"]}
+
+
+def summarize(rows: list[dict], cables: list[dict], namespace: str | None = None) -> dict[str, Any]:
+    if not rows:
+        return {"moduleCount": 0, "connectionCount": 0, "boundingBox": None, "categories": {}, "overlaps": [], "overlapCount": 0,
+                "unconnected": [], "unconnectedCount": 0, "sections": [], "density": 0.0}
+    owner: dict[tuple[int, int], dict] = {}
+    pairs: dict[tuple[str, str], tuple[dict, dict]] = {}
+    for r in rows:
+        for cx in range(r["x"], r["x"] + r["width"]):
+            for cy in range(r["y"], r["y"] + r["height"]):
+                other = owner.setdefault((cx, cy), r)
+                if other is not r:
+                    pairs.setdefault((other["instanceId"], r["instanceId"]), (other, r))
+    box = _box(rows)
+    linked = {c["sourceModuleId"] for c in cables} | {c["targetModuleId"] for c in cables}
+    loose = [r for r in rows if r["instanceId"] not in linked and category(r["typeName"]) != "text"]
+    cats: dict[str, int] = {}
+    for r in rows:
+        key = category(r["typeName"])
+        cats[key] = cats.get(key, 0) + 1
+    groups: dict[str, list[dict]] = {}
+    for r in rows:
+        m = SECTION_PREFIX.match((r.get("customName") or "").strip())
+        if m:
+            groups.setdefault(m.group(1) + ": ", []).append(r)
+    sections = [{"prefix": p, "moduleCount": len(rs), "boundingBox": _box(rs)} for p, rs in sorted(groups.items())]
+    out: dict[str, Any] = {
+        "moduleCount": len(rows), "connectionCount": len(cables), "boundingBox": box,
+        "categories": dict(sorted(cats.items(), key=lambda kv: -kv[1])),
+        "overlapCount": len(pairs), "overlaps": [[_ref(a), _ref(b)] for a, b in list(pairs.values())[:LIST_CAP]],
+        "unconnectedCount": len(loose), "unconnected": [_ref(r) for r in loose[:LIST_CAP]],
+        "sections": sections,
+        "density": round(len(owner) / (box["width"] * box["height"]), 3)}
+    if namespace is not None:
+        out["namespace"] = {"prefix": namespace, "moduleCount": sum(1 for r in rows if (r.get("customName") or "").startswith(namespace))}
+    return out
+
+
+# ---- drawing ---------------------------------------------------------------------------------------------
+def _fit(text: str, px: float, size: float) -> str:
+    limit = max(2, int((px - 6) / (size * 0.56)))
+    return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
+def _wrap(text: str, px: float, size: float, lines: int = 12) -> list[str]:
+    width = max(8, int((px - 8) / (size * 0.56)))
+    out: list[str] = []
+    for para in text.strip("\n").split("\n"):
+        out += [para[i:i + width] for i in range(0, len(para), width)] or [""]
+    return out[:lines]
+
+
+def _port_y(row: dict, ports: list[dict], key: str) -> float:
+    keys = [p["key"] for p in ports]
+    i = keys.index(key) if key in keys else 0
+    return row["y"] + row["height"] * (i + 0.5) / max(1, len(keys))
+
+
+def draw(rows: list[dict], cables: list[dict], texts: dict[str, str], *, namespace: str | None, show_connections: bool, scale: float) -> str:
+    box = _box(rows)
+    pad = 1
+    x0, y0 = box["x"] - pad, box["y"] - pad
+    W, H = (box["width"] + 2 * pad) * CELL, (box["height"] + 2 * pad) * CELL + 34
+    by_id = {r["instanceId"]: r for r in rows}
+    inside = (lambda r: (r.get("customName") or "").startswith(namespace)) if namespace else (lambda r: True)
+    o = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{W * scale:.0f}" height="{H * scale:.0f}" viewBox="0 0 {W} {H}" font-family="sans-serif">',
+         f'<rect width="{W}" height="{H}" fill="#1e1f22"/>']
+    if show_connections:
+        o.append("<g fill=\"none\" stroke-width=\"1.3\">")
+        for c in cables:
+            a, b = by_id.get(c["sourceModuleId"]), by_id.get(c["targetModuleId"])
+            if not a or not b:
+                continue
+            ax, ay = (a["x"] + a["width"] - x0) * CELL, (_port_y(a, a.get("outputs", []), c["sourcePortKey"]) - y0) * CELL
+            bx, by = (b["x"] - x0) * CELL, (_port_y(b, b.get("inputs", []), c["targetPortKey"]) - y0) * CELL
+            dx = max(24, min(120, abs(bx - ax) / 2))
+            op = 0.55 if inside(a) or inside(b) else 0.15
+            color = CATEGORIES[category(a["typeName"])][0]
+            o.append(f'<path d="M{ax:.0f},{ay:.0f} C{ax + dx:.0f},{ay:.0f} {bx - dx:.0f},{by:.0f} {bx:.0f},{by:.0f}" stroke="{color}" stroke-opacity="{op}"/>')
+        o.append("</g>")
+    for r in rows:
+        kind = category(r["typeName"])
+        color = CATEGORIES[kind][0]
+        x, y = (r["x"] - x0) * CELL, (r["y"] - y0) * CELL
+        w, h = r["width"] * CELL - 3, r["height"] * CELL - 3
+        title = _label(r)
+        dim = ' opacity="0.3"' if not inside(r) else ""
+        o.append(f"<g{dim}>")
+        if r["typeName"] == "Label":
+            o.append(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="4" fill="{color}" fill-opacity="0.12" stroke="{color}" stroke-opacity="0.5"/>')
+            o.append(f'<text x="{x + 4}" y="{y + 15}" font-size="13" font-weight="bold" fill="#eee">{html.escape(_fit(title, w, 13))}</text>')
+        elif r["typeName"] == "Comment":
+            body = _wrap(texts.get(r["instanceId"], ""), w, 9)
+            h2 = max(h, 15 + 11 * len(body))
+            o.append(f'<rect x="{x}" y="{y}" width="{w}" height="{h2}" rx="4" fill="{color}" fill-opacity="0.18" stroke="{color}" stroke-dasharray="4 3"/>')
+            o.append(f'<text x="{x + 4}" y="{y + 11}" font-size="9" font-weight="bold" fill="#ddd">{html.escape(_fit(title, w, 9))}</text>')
+            for i, line in enumerate(body):
+                o.append(f'<text x="{x + 4}" y="{y + 22 + 11 * i}" font-size="8" fill="#ccc" xml:space="preserve">{html.escape(line)}</text>')
+        else:
+            o.append(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="4" fill="{color}" fill-opacity="0.85" stroke="{color}"/>')
+            o.append(f'<text x="{x + 3}" y="{y + 12}" font-size="9" fill="#111">{html.escape(_fit(title, w, 9))}</text>')
+            if (r.get("customName") or "").strip():
+                o.append(f'<text x="{x + 3}" y="{y + 23}" font-size="7" fill="#222">{html.escape(_fit(r["typeName"], w, 7))}</text>')
+        o.append("</g>")
+    lx = 10
+    for key, (color, _n, _k) in CATEGORIES.items():
+        o.append(f'<rect x="{lx}" y="{H - 26}" width="12" height="12" fill="{color}"/><text x="{lx + 16}" y="{H - 16}" font-size="11" fill="#ddd">{key}</text>')
+        lx += 22 + 7 * len(key)
+    o.append("</svg>")
+    return "\n".join(o)
+
+
+# ---- entry point -----------------------------------------------------------------------------------------
+def _write(path: str, data: bytes, overwrite: bool) -> None:
+    parent = os.path.dirname(path)
+    if not os.path.isdir(parent):
+        raise _fail(f"Parent directory does not exist: {parent}")
+    try:
+        with open(path, "wb" if overwrite else "xb") as handle:
+            handle.write(data)
+    except FileExistsError as exc:
+        raise _fail(f"{path} exists; pass overwrite=true to replace it", "file_exists") from exc
+    except OSError as exc:
+        raise _fail(f"Cannot write {path}: {exc}", "write_failed") from exc
+
+
+async def render(client: Any, args: dict[str, Any], timeout_ms: int = 5000) -> dict[str, Any]:
+    path, fmt, overwrite = args["outPath"], args.get("format", "svg"), args.get("overwrite", False)
+    if not overwrite and os.path.exists(path):
+        raise _fail(f"{path} exists; pass overwrite=true to replace it", "file_exists")
+    if not os.path.isdir(os.path.dirname(path)):
+        raise _fail(f"Parent directory does not exist: {os.path.dirname(path)}")
+    convert = None
+    if fmt == "png":
+        convert = _converter()
+        if convert is None:
+            raise _fail("format=png needs rsvg-convert or magick on PATH; use format=svg")
+    target = {k: args[k] for k in ("trackId", "deviceIndex", "expectedDeviceName")}
+    rows, cables = await read_layout(client, target, timeout_ms)
+    if not rows:
+        raise _fail("The Grid device has no modules to render", "empty_grid")
+    box = _box(rows)
+    if max(box["width"], box["height"]) > MAX_SPAN:
+        raise _fail(f"Layout spans {box['width']}x{box['height']} cells (limit {MAX_SPAN}); too sparse to draw", "layout_too_large", {"boundingBox": box})
+    ids = [r["instanceId"] for r in rows if r["typeName"] == "Comment"]
+    texts = await read_comment_text(client, target, timeout_ms, ids) if ids else {}
+    namespace = args.get("namespace")
+    svg = draw(rows, cables, texts, namespace=namespace, show_connections=args.get("showConnections", True), scale=args.get("scale", 1.0))
+    data = svg.encode("utf-8")
+    if convert is not None:
+        done = await asyncio.to_thread(subprocess.run, convert, input=data, capture_output=True, timeout=120)
+        if done.returncode != 0 or not done.stdout:
+            raise _fail(f"{convert[0]} failed: {done.stderr.decode('utf-8', 'replace')[:300]}", "convert_failed")
+        data = done.stdout
+    _write(path, data, overwrite)
+    return {"status": "rendered", "outPath": path, "format": fmt, "bytes": len(data),
+            "imageSize": {"width": math.ceil(((box["width"] + 2) * CELL) * args.get("scale", 1.0)), "height": math.ceil(((box["height"] + 2) * CELL + 34) * args.get("scale", 1.0))},
+            **summarize(rows, cables, namespace)}

@@ -665,6 +665,20 @@ class GridApplyConnection(StrictModel):
     to: str = Field(min_length=3, max_length=2048, description="Target input 'module name.PORT_KEY'.")
 
 
+class GridRenderArgs(ParameterArgs):
+    outPath: Nonempty = Field(description="Absolute normalized path of the image to write; refused if it exists unless overwrite=true.")
+    format: Literal["svg", "png"] = omitted(description="svg (default) or png (needs rsvg-convert or magick on PATH).")
+    overwrite: bool = omitted(description="Replace an existing file at outPath.")
+    namespace: str = omitted(min_length=1, max_length=1024, description="customName prefix to highlight; other modules are dimmed.")
+    showConnections: bool = omitted(description="Draw cables (default true).")
+    scale: float = omitted(ge=0.25, le=4, description="Image scale factor (default 1).")
+
+    @model_validator(mode="after")
+    def validate_path(self):
+        validate_local_path(self.outPath)
+        return self
+
+
 class GridApplyArgs(StatusArgs):
     target: GridApplyTarget
     modules: Annotated[list[GridApplyModule], Field(min_length=1, max_length=1024)]
