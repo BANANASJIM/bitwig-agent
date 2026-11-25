@@ -102,7 +102,7 @@ final class DiscoveryModule implements HostModule {
         for (String method : List.of("grid.catalog", "grid.get", "grid.parameters.get", "grid.voicing.get")) reads.add(method);
         grid.add("readMethods", reads);
         JsonArray writes = new JsonArray();
-        for (String method : List.of("grid.parameters.set", "grid.voicing.set", "grid.modules.insert", "grid.modules.move", "grid.modules.delete", "grid.modules.rename", "grid.connections.set")) writes.add(method);
+        for (String method : List.of("grid.parameters.set", "grid.voicing.set", "devices.remote.define", "devices.remote.deletePage", "grid.modules.insert", "grid.modules.move", "grid.modules.delete", "grid.modules.rename", "grid.connections.set")) writes.add(method);
         grid.add("writeMethods", writes);
         grid.addProperty("graphWriteAvailability", "query_grid.capabilities_moduleInsert_moduleMove_moduleDelete_moduleRename_and_connectionWrite");
         grid.addProperty("graphWriteScope", "module_insert_move_delete_rename_and_single_input_connection_set");

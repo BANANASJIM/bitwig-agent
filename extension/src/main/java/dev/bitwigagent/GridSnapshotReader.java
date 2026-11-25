@@ -396,6 +396,33 @@ final class GridSnapshotReader {
         return modules;
     }
 
+    /** Current instance UUID of the one module whose native effective name is exactly name. */
+    UUID moduleIdNamed(NativeTarget target, String name, Runnable check) {
+        if (!a.metadataAvailable(Metadata.MODULE_NAMES))
+            throw failure("grid_unavailable", "Native module name readers are required to select a module by name.");
+        State state = new State(check);
+        UUID found = null;
+        for (Object module : collect(Field.MODULES, target.graph, MAX_MODULES, state)) {
+            state.check();
+            if (!a.is(Kind.MODULE, module)) continue;
+            a.requireModelThread(module);
+            if (!name.equals(a.read(Field.MODULE_NAME, module))) continue;
+            Object id = a.read(Field.INSTANCE_ID, module);
+            if (!(id instanceof UUID)) throw failure("grid_unavailable", "Native module UUID is unavailable.");
+            if (found != null) throw failure("stale_context", "Several modules are named \"" + name + "\"; use moduleId.");
+            found = (UUID) id;
+        }
+        if (found == null) throw failure("stale_context", "No module is named \"" + name + "\"; check grid.get names.");
+        return found;
+    }
+
+    /** Native effective name when candidate is a mapped Grid module, else null. */
+    String effectiveModuleName(Object candidate) {
+        if (candidate == null || !a.is(Kind.MODULE, candidate) || !a.metadataAvailable(Metadata.MODULE_NAMES)) return null;
+        Object name = a.read(Field.MODULE_NAME, candidate);
+        return name instanceof String ? (String) name : null;
+    }
+
     /** Document-thread-checked device target for device-level (non-module) operations such as voicing. */
     NativeTarget bindTarget(Object proxy, UUID expectedTrackId, Runnable check) {
         a.documentThread(); check.run();

@@ -10,6 +10,7 @@ final class GridParameterContext {
         "deviceDeleted", "graphDeleted", "moduleDeleted", "parameterDeleted", "projectDeleted"
     };
     private static final String[] VOICING_LABELS = {"deviceDeleted", "graphDeleted", "voicingDeleted", "projectDeleted"};
+    private static final String[] REMOTE_LABELS = {"deviceDeleted", "remoteHostDeleted", "devicePagesDeleted", "projectDeleted"};
     enum Field {
         PARAMETER_PROJECT, LICENSED, GUI_FLOAT, GUI_INTEGER, GUI_ENUM, GUI_BOOLEAN, GUI_PANEL_BOOLEAN, GUI_PANEL_STRING, GUI_STEP_ARRAY, GUI_VOICING,
         SETTABLE, CIU, TOUCHED, UNDO, UNDO_EXECUTING, UNDO_ACTIVE, UNDO_ICL, LOCK, LOCK_OWNER
@@ -135,6 +136,46 @@ final class GridParameterContext {
     }
     void guardVoicing(Capture before, Object device, Object graph, Object voicing, Runnable check) {
         sameIdentities(before, capture(device, graph, null, voicing, GridSnapshotReader.Kind.VOICING, check, false, false));
+    }
+    /**
+     * Remote Controls pages are device-owned models (no GUI property, license or touch of their own): the device's
+     * project, attached context, default transaction, skip predicate, undo manager and lock owner gate the write.
+     */
+    Capture requireRemoteWritable(Object device, Object host, Object pages, Capture before, Runnable check) {
+        Capture current = remote(device, host, pages, check, true);
+        if (before != null) sameIdentities(before, current);
+        return current;
+    }
+    void guardRemote(Capture before, Object device, Object host, Object pages, Runnable check) {
+        sameIdentities(before, remote(device, host, pages, check, false));
+    }
+    private Capture remote(Object device, Object host, Object pages, Runnable check, boolean writing) {
+        check.run();
+        Object project = required(a.read(Field.PARAMETER_PROJECT, device), "Owning project");
+        NativeReadContext.Capture common = readContexts.capture(project, new Object[]{device, host, pages}, REMOTE_LABELS, check, false);
+        Object undo = a.read(Field.UNDO, device);
+        Object lock = a.read(Field.LOCK, device);
+        Object lockOwner = lock == null ? null : a.read(Field.LOCK_OWNER, lock);
+        Object lockContext = lockOwner == null ? null : a.read(NativeReadContext.Field.DT_CONTEXT, lockOwner);
+        check.run();
+        if (writing) {
+            if (!common.initialized) throw failure("unsafe_state", "Native document context is not initialized.");
+            if (common.root != project) throw failure("stale_context", "Attached context root is not the owning project.");
+            if (!common.hasDefault || common.current == null || common.defaultDt == null)
+                throw failure("grid_unavailable", "Native current/default transaction context is unavailable.");
+            if (common.current != common.defaultDt || common.defaultDtContext != common.context)
+                throw failure("unsafe_state", "Native transaction is outside the bounded default document context.");
+            if (bool(Field.CIU, device)) throw failure("unsafe_state", "Native device skip state blocks the write.");
+            required(undo, "Ancestor undo manager");
+            if (bool(Field.UNDO_EXECUTING, undo) || bool(Field.UNDO_ACTIVE, undo) || bool(Field.UNDO_ICL, undo))
+                throw failure("unsafe_state", "Native undo manager is outside the bounded idle state.");
+            required(lock, "Device lock"); required(lockOwner, "Device lock owner");
+            if (lockOwner != common.current || lockOwner != common.defaultDt || lockContext != common.context)
+                throw failure("unsafe_state", "Native device lock owner differs from the current/default context.");
+            check.run();
+        }
+        return new Capture(null, new Object[]{project, common.context, common.root, common.current, common.currentContext,
+                common.defaultDt, common.defaultDtContext, undo, lock, lockOwner, lockContext});
     }
     Capture requireWritable(GridSnapshotReader.ParameterBinding binding, Capture before, Runnable check) {
         Capture current = capture(binding.device, binding.graph, binding.module, binding.parameter,
