@@ -35,6 +35,7 @@ class Scale:
 SCALES = {s.name: s for s in (
     Scale("linear_st", "raw = semitones", {"st": _ident}, _ident, _ident),
     Scale("cbrt_st120", "raw = cbrt(st / 120)", {"st": _ident}, lambda v: math.cbrt(v / 120), lambda r: 120 * r ** 3, example='{"display": "12 st"}'),
+    Scale("linear_st120", "raw = st / 120", {"st": _ident}, lambda v: v / 120, lambda r: 120 * r, example='{"display": "12 st"}'),
     Scale("linear_seconds", "raw = seconds", {"s": _ident, "ms": lambda n: n / 1000}, _ident, _ident),
     Scale("cbrt_seconds", "raw = cbrt(seconds)", {"s": _ident, "ms": lambda n: n / 1000},
           lambda v: math.cbrt(v) if v >= 0 else math.nan, lambda r: r ** 3, example='{"display": "250 ms"}'),
@@ -49,7 +50,7 @@ SCALES = {s.name: s for s in (
     Scale("midi_pitch_hz", "raw = MIDI note; Hz = 440 * 2^((raw - 69) / 12)", {"hz": _ident, "khz": lambda n: n * 1000},
           lambda f: 69 + 12 * math.log2(f / 440) if f > 0 else math.nan, lambda r: 440 * 2 ** ((r - 69) / 12), client=False, example='{"display": "800 Hz"}'),
 )}
-BASE_UNIT = {"linear_st": "st", "cbrt_st120": "st", "linear_seconds": "s", "cbrt_seconds": "s", "log10_seconds": "s", "linear_db": "dB", "linear_hz": "Hz", "linear_khz": "kHz",
+BASE_UNIT = {"linear_st": "st", "cbrt_st120": "st", "linear_st120": "st", "linear_seconds": "s", "cbrt_seconds": "s", "log10_seconds": "s", "linear_db": "dB", "linear_hz": "Hz", "linear_khz": "kHz",
              "linear_fraction": "fraction", "cbrt_gain": "gain", "midi_pitch_hz": "Hz"}
 
 
@@ -77,7 +78,8 @@ _add(_OSCILLATORS, "PITCH", Entry("linear_st", "measured", ((0.0, "0.00 st"),), 
 _add(_OSCILLATORS, "PITCH_MOD", Entry("cbrt_st120", "measured", ((0.584, "23.9 st"), (1.0, "120 st"), (0.112, "0.17 st")),
                                       "raw 1.0 = 120 st; display is the full-scale modulation depth"))
 _add(("SVF", "Low-pass LD", "Low-pass MG", "Sallen-Key", "XP", "Rasp", "Ripple", "Comb", "Fizz"), "CUTOFF_MOD",
-     Entry("cbrt_st120", "measured", ((0.584, "23.9 st"), (1.0, "120 st"), (0.112, "0.17 st")), "same module_semitones mapping as PITCH_MOD"))
+     Entry("linear_st120", "measured", ((0.5, "60.00 st"), (0.584804, "70.18 st"), (1.0, "120 st")),
+           "LINEAR, unlike the cube-root oscillator PITCH_MOD: display st = 120 * raw (read back on SVF, Comb, Low-pass LD/MG, Sallen-Key, XP, Rasp, Ripple, Fizz)"))
 _add(("SVF", "Low-pass", "High-pass", "Crossover-2", "Crossover-3", "Low-pass LD", "Low-pass MG", "Sallen-Key", "XP", "Fizz", "Ripple", "Rasp"),
      "CUTOFF", Entry("midi_pitch_hz", "verified", ((60.0, "262 Hz"), (96.0, "2.09 kHz"), (102.8, "3.10 kHz")),
                      "the host's own Hz display write already handles this"))

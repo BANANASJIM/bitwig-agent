@@ -28,6 +28,7 @@
     "Accents": ["DEVICE_PHASE defaults to On and then ignores a cable on PHASE_IN; set DEVICE_PHASE off to drive it from a phase signal."],
     "Slopes": ["DEVICE_PHASE defaults to On and then ignores a cable on PHASE_IN; set DEVICE_PHASE off to drive it from a phase signal."],
     "Triggers": ["STEPS=N fed by a phase produced 2N rising edges per cycle.", "DEVICE_PHASE defaults to On and then ignores a cable on IN; set DEVICE_PHASE off to drive it from a phase signal."],
+    "Comb": ["Resonant pitch = CUTOFF raw + 120 * CUTOFF_MOD * MOD_IN + KEYTRACK * (note - 60) (semitones); CUTOFF_MOD is linear (display st = 120 * raw).", "Negative POLARITY keeps the same fundamental with odd harmonics only (it is not an octave down).", "DAMPING >= 0.5 keeps the pitch within +-0.05 st over MIDI 45-81."],
     "SVF": ["KEYTRACK defaults to 100%: in a Poly Grid the cutoff follows the played note (about 2 octaves darker than written for a C1 note); set KEYTRACK 0 for a fixed cutoff."]
   },
   "rules": {
