@@ -15,6 +15,7 @@ import struct
 from importlib import resources
 from typing import Any
 
+from bitwig_agent import raw_scales
 from bitwig_agent.client import BridgeError
 
 BUNDLED_HOST_VERSION = "6.1.4"
@@ -192,7 +193,7 @@ SECONDS_PARAMS = {
     ("\u00d8 Lag", "RATE"): ("log10", -1.5229, "30.0 ms"),
 }
 # Seconds parameters deliberately absent (default pair fits neither mapping, or only by the raw 1.0 = 1 s coincidence):
-# All-pass Delay TIME, Audio Out HOLD_TIME, Long Delay TIME.
+# Audio Out HOLD_TIME, Long Delay TIME (raw_scales.UNVERIFIED); All-pass Delay TIME is linear (raw_scales).
 _TEXT = re.compile(r"([+-]?(?:\d+(?:\.(\d*))?|\.(\d+)))\s*([A-Za-z%]+)", re.ASCII)
 _JAVA_TRIM = "".join(map(chr, range(33)))
 
@@ -224,10 +225,17 @@ def display_matches(wanted: str, live: str | None, unit: str | None = None) -> b
 
 
 def check_display(pid: str, text: str, unit: str | None, raw_default: Any, display_default: Any, lo: Any, hi: Any,
-                  type_name: str | None = None) -> float:
+                  type_name: str | None = None, context: dict[str, Any] | None = None) -> float:
     """Reject, from description data alone, display writes the host would refuse (unsupported_unit / invalid_params).
 
     Returns the raw value of `text`; seconds parameters are written as that raw value (the host has no seconds display write)."""
+    if (type_name, pid) in raw_scales.RAW_SCALES and raw_scales.scale_for(type_name, pid, context) is None:
+        raise SpecError([f"{pid}: its raw scale depends on {raw_scales.RAW_SCALES[(type_name, pid)].scale['by']}; set it to Hertz/Kilohertz in the same module to write by display, or write the raw value"])
+    if raw_scales.is_client(type_name, pid, context):  # recorded scale: converted here, no live pair needed
+        try:
+            return raw_scales.convert(type_name, pid, text, lo, hi, context)
+        except ValueError as exc:
+            raise SpecError([f"{pid}: {exc}"]) from exc
     if unit not in DISPLAY_UNITS:
         raise SpecError([f"{pid}: display writes support numericUnit hertz/percent/decibel/seconds, not {unit!r}; write the raw value instead"])
     to_raw, from_raw = DISPLAY_UNITS[unit][1:]
@@ -250,15 +258,28 @@ def check_display(pid: str, text: str, unit: str | None, raw_default: Any, displ
     return raw
 
 
-def display_want(unit: str | None, text: str, raw: float) -> dict[str, Any]:
-    """The write for a checked display: hertz/percent/decibel go to the host as display text, seconds as a converted raw value."""
-    return {"value": raw, "shown": text} if unit == "seconds" else {"display": text}
+def display_want(unit: str | None, text: str, raw: float, client: bool = False) -> dict[str, Any]:
+    """The write for a checked display: hertz/percent/decibel go to the host as display text, seconds and recorded raw scales as a converted raw value."""
+    return {"value": raw, "shown": text} if unit == "seconds" or client else {"display": text}
 
 
-def check_display_live(pid: str, text: str, row_param: dict[str, Any], type_name: str | None = None) -> float:
+def check_display_live(pid: str, text: str, row_param: dict[str, Any], type_name: str | None = None,
+                       context: dict[str, Any] | None = None) -> float:
     """The same checks against a live row (current raw/display pair)."""
     return check_display(pid, text, row_param.get("numericUnit"), row_param.get("value"), row_param.get("display"),
-                         row_param.get("minimum"), row_param.get("maximum"), type_name)
+                         row_param.get("minimum"), row_param.get("maximum"), type_name, context)
+
+
+def enum_context(params: dict[str, Any], info: dict[str, Any] | None) -> dict[str, Any]:
+    """Enum parameter values written in a spec, by id (labels resolved), for conditional raw scales."""
+    out: dict[str, Any] = {}
+    options = {p["parameterId"]: p.get("options") or [] for p in (info or {}).get("parameters", ())}
+    for pid, raw in params.items():
+        if type(raw) is int:
+            out[pid] = raw
+        elif isinstance(raw, dict) and "label" in raw:
+            out[pid] = next((o["value"] for o in options.get(pid, ()) if o["label"].casefold() == str(raw["label"]).casefold()), None)
+    return out
 
 
 # --- footprints ---------------------------------------------------------------------------------------------
@@ -384,6 +405,8 @@ def check_value(pid: str, raw: Any, p: dict[str, Any]) -> dict[str, Any]:
 
 def value_matches(kind: str, want: dict[str, Any], row_param: dict[str, Any]) -> bool:
     if "display" in want or "shown" in want:
+        if "shown" in want and type(row_param.get("value")) in (int, float) and math.isclose(row_param["value"], want["value"], rel_tol=1e-5, abs_tol=1e-9):
+            return True  # converted client-side: the live raw already is the converted value
         return display_matches(want.get("display", want.get("shown")), row_param.get("display"), row_param.get("numericUnit"))
     live, new = row_param.get("value"), want["value"]
     if kind == "boolean":
@@ -568,9 +591,10 @@ class Apply:
                     want = check_value(pid, raw, pinfo[pid])
                     if "display" in want:
                         q = pinfo[pid]
+                        ctx = enum_context(m.get("params") or {}, info)
                         raw_value = check_display(pid, want["display"], q.get("numericUnit"), q.get("default"), q.get("defaultDisplay"),
-                                                  q.get("minimum"), q.get("maximum"), type_name)
-                        want = display_want(q.get("numericUnit"), want["display"], raw_value)
+                                                  q.get("minimum"), q.get("maximum"), type_name, ctx)
+                        want = display_want(q.get("numericUnit"), want["display"], raw_value, raw_scales.is_client(type_name, pid, ctx))
                     writes[pid] = {"raw": raw, "want": want}
                 except SpecError as exc:
                     problems += [f"{m['name']!r}: {p}" for p in exc.problems]
@@ -602,9 +626,11 @@ class Apply:
                 raise SpecError([f"{name!r}: parameter {pid!r} is not a supported live parameter.{_near(pid, live)}"])
             lp = live[pid]
             want = spec["want"] or check_value(pid, spec["raw"], lp)
-            if "display" in want and lp.get("numericUnit") == "seconds":  # no bundled schema: convert against the live pair
+            ctx = {k: v.get("value") for k, v in live.items() if v.get("kind") == "enum"}
+            client = raw_scales.is_client(entry["typeName"], pid, ctx)
+            if "display" in want and (lp.get("numericUnit") == "seconds" or client):  # no bundled schema: convert against the live pair
                 try:
-                    want = display_want("seconds", want["display"], check_display_live(pid, want["display"], lp, entry["typeName"]))
+                    want = display_want("seconds", want["display"], check_display_live(pid, want["display"], lp, entry["typeName"], ctx))
                 except SpecError as exc:
                     raise SpecError([f"{name!r}: {p}" for p in exc.problems]) from exc
             if "steps" in want:
@@ -621,9 +647,9 @@ class Apply:
             if value_matches(lp["kind"], want, lp):
                 matched += 1
                 continue
-            if "display" in want or "shown" in want:
+            if ("display" in want or "shown" in want) and not ("shown" in want and (entry["typeName"], pid) in raw_scales.RAW_SCALES):
                 try:
-                    check_display_live(pid, want.get("display", want.get("shown")), lp, entry["typeName"])
+                    check_display_live(pid, want.get("display", want.get("shown")), lp, entry["typeName"], ctx)
                 except SpecError as exc:
                     raise SpecError([f"{name!r}: {p}" for p in exc.problems]) from exc
             writes.append({"module": name, "parameterId": pid, "to": spec["raw"], **({"rawValue": want["value"]} if "shown" in want else {}),
