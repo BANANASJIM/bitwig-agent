@@ -30,6 +30,7 @@ SKIPS: dict[tuple[str, str, str], str] = {
     ("launcher.create", "notes.0.beat", "accept"): "a note must fit lengthBeats (max 4096), so beat 4194304 is unreachable here",
     ("notes.edit", "edits.0.beat", "accept"): "no explicit window: the host derives a grid of <=128 steps (step<=4 beats, startStep<=1048576) and rejects extremes the schema allows; error names the fix",
     ("launcher.create", "notes.0.durationBeats", "accept"): "same derived-grid limit (a 4096-beat note needs >128 steps)",
+    ("arranger.clips.create", "notes.0.beat", "accept"): "a note must fit lengthBeats (max 65536), so beat 4194304 is unreachable here",
     ("notes.edit", "edits.0.durationBeats", "accept"): "same derived-grid limit as edits.0.beat (duration 4096 beats needs >128 steps)",
 }
 

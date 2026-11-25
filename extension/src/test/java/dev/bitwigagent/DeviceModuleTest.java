@@ -958,6 +958,9 @@ public final class DeviceModuleTest {
                 Node track = new Node(); track.put("exists", t == 0 && !lateIdentity);
                 track.put("channelId", t == 0 && !lateIdentity ? TRACK : "");
                 track.put("name", "Fixture"); track.put("position", t);
+                track.put("trackType", "Instrument"); track.put("isGroup", false); track.put("isGroupExpanded", false);
+                Node parentTrack = new Node(); parentTrack.put("exists", false); parentTrack.put("channelId", "");
+                track.objects.put("createParentTrack", parentTrack.proxy(Track.class));
                 if (t == 0) firstTrack = track;
                 Node deviceBank = t == 0 ? bank : new Node();
                 Device[] objects = new Device[16];

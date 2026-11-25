@@ -15,6 +15,8 @@ final class HostServices implements AutoCloseable {
     final Transport transport;
     final TrackBank tracks;
     final DeviceBank[] devices = new DeviceBank[TRACKS];
+    /** One parent-track proxy per bank slot (public createParentTrack), for TrackTree. */
+    final Track[] parents = new Track[TRACKS];
     final DeviceSources sources;
     boolean tracksObserved;
     private volatile boolean closed;
@@ -45,6 +47,12 @@ final class HostServices implements AutoCloseable {
             track.channelId().markInterested();
             track.name().markInterested();
             track.position().markInterested();
+            track.trackType().markInterested();
+            track.isGroup().markInterested();
+            track.isGroupExpanded().markInterested();
+            parents[t] = track.createParentTrack(0, 0);
+            parents[t].exists().markInterested();
+            parents[t].channelId().markInterested();
             devices[t] = track.createDeviceBank(DEVICES);
             devices[t].scrollPosition().markInterested();
             devices[t].itemCount().markInterested();
@@ -157,6 +165,17 @@ final class HostServices implements AutoCloseable {
         return observed;
     }
 
+    /** Recording and both automation-write modes observed off; playback may run. */
+    SafetyObservation recordingSafety(HostOperation operation) {
+        SafetyObservation observed = operation.safetyAtEnqueue == null ? safety : operation.safetyAtEnqueue;
+        observed.requireNotRecording();
+        guardRecordingSafety();
+        return observed;
+    }
+
+    /** Safe from document callbacks: reads only the immutable volatile observation. */
+    void guardRecordingSafety() { safety.requireNotRecording(); }
+
     void guardStoppedSafety(SafetyObservation before) {
         SafetyObservation current = safety;
         if (current.epoch != before.epoch)
@@ -171,6 +190,12 @@ final class HostServices implements AutoCloseable {
         SafetyObservation(long epoch, Boolean playing, Boolean recording, Boolean arrangerAutomation, Boolean launcherAutomation) {
             this.epoch = epoch; this.playing = playing; this.recording = recording;
             this.arrangerAutomation = arrangerAutomation; this.launcherAutomation = launcherAutomation;
+        }
+        void requireNotRecording() {
+            if (recording == null || arrangerAutomation == null || launcherAutomation == null)
+                throw failure("not_ready", "Recording and automation safety states have not all been observed.");
+            if (recording || arrangerAutomation || launcherAutomation)
+                throw failure("unsafe_state", "Recording or automation write is enabled; structural track edits are blocked.");
         }
         void requireStopped() {
             if (playing == null || recording == null || arrangerAutomation == null || launcherAutomation == null)

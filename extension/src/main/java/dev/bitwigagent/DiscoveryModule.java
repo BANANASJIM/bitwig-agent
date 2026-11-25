@@ -130,16 +130,18 @@ final class DiscoveryModule implements HostModule {
         if (!s.tracksObserved) throw failure("not_ready", "Track bank has not reported its size yet.");
         JsonObject result = observed();
         JsonArray items = new JsonArray();
-        for (int i = 0; i < TRACKS; i++) {
-            Track track = (Track) s.tracks.getItemAt(i);
-            if (!track.exists().get()) continue;
+        TrackTree tree = TrackTree.capture(s);
+        for (TrackTree.Node node : tree.nodes) {
+            Track track = (Track) s.tracks.getItemAt(node.slot);
             JsonObject item = new JsonObject();
-            item.addProperty("trackId", track.channelId().get());
-            item.addProperty("index", track.position().get());
+            item.addProperty("trackId", node.id);
+            item.addProperty("index", node.position);
             item.addProperty("name", track.name().get());
+            tree.describe(item, node);
             items.add(item);
         }
         result.add("tracks", items);
+        result.add("tree", tree.summary());
         result.add("window", window(s.tracks.scrollPosition().get(), TRACKS, s.tracks.itemCount().get()));
         result.addProperty("scope", "flat_track_bank");
         return result;
