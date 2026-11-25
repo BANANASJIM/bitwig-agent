@@ -21,6 +21,8 @@ public final class TransportModuleTest {
         safetyChangeWhileStoppingPreventsSeek();
         sharedSafetyRequiresObservationsButAllowsStop();
         timeSignatureIsValidatedWrittenAndReadBack();
+        guideSettingsAreReadWrittenAndVerified();
+        storedValueOutsideOptionsCanBeWrittenBack();
         System.out.println("TransportModuleTest: " + assertions + " assertions passed (simulated host only)");
     }
     private static void readsExposeActualValuesAndUnits() {
@@ -230,6 +232,57 @@ public final class TransportModuleTest {
         f.transport.child("isArrangerRecordEnabled").emit(true);
         HostOperation blocked = f.submit(module, "transport.set", TransportMixFixture.json("{\"timeSignature\":\"5/4\"}")); f.next();
         TransportMixFixture.error(blocked, "unsafe_state");
+    }
+    private static void guideSettingsAreReadWrittenAndVerified() {
+        TransportMixFixture f = new TransportMixFixture(); TransportModule module = new TransportModule(f.services);
+        JsonObject read = f.call(module, "transport.get", new JsonObject());
+        check(read.get("metronomeVolumeNormalized").getAsDouble() == .5 && read.get("preRoll").getAsString().equals("none")
+            && !read.get("punchInEnabled").getAsBoolean() && read.get("defaultLaunchQuantization").getAsString().equals("1")
+            && read.get("recordQuantizationGrid").getAsString().equals("1/16"), "new settings are read");
+        check(read.getAsJsonObject("options").getAsJsonArray("preRoll").size() == 4
+            && read.getAsJsonObject("options").getAsJsonArray("recordQuantizationGrid").get(0).getAsString().equals("1/4"), "options come from the host's enum definitions");
+        for (String bad : List.of("{\"metronomeVolumeNormalized\":1.01}", "{\"metronomeVolumeNormalized\":\"1\"}", "{\"punchInEnabled\":1}",
+                "{\"preRoll\":1}", "{\"preRoll\":\"\"}", "{\"defaultLaunchQuantization\":null}")) {
+            TransportMixFixture.error(f.submit(module, "transport.set", TransportMixFixture.json(bad)), "invalid_params");
+            check(f.tasks.isEmpty(), "invalid request not scheduled: " + bad);
+        }
+        HostOperation unlisted = f.submit(module, "transport.set", TransportMixFixture.json("{\"metronome\":true,\"preRoll\":\"eight_bars\"}")); f.next();
+        check(TransportMixFixture.error(unlisted, "invalid_params").outcome.equals("not_applied"), "option the host does not list is refused");
+        check(f.transport.child("preRoll").writes == 0 && f.transport.child("isMetronomeEnabled").writes == 0, "nothing written when one field is refused");
+        JsonObject result = f.call(module, "transport.set", TransportMixFixture.json(
+            "{\"metronomeVolumeNormalized\":0.75,\"preRoll\":\"two_bars\",\"punchInEnabled\":true,\"punchOutEnabled\":true,"
+            + "\"defaultLaunchQuantization\":\"1/2\",\"recordQuantizationGrid\":\"1/8\"}"));
+        check(result.get("matchesRequested").getAsBoolean() && result.get("completion").getAsString().equals("observed"), "every field verified by observer");
+        check(result.getAsJsonObject("fields").getAsJsonObject("preRoll").get("verification").getAsString().equals("observer_after_write"), "per-field verification");
+        check(f.transport.child("metronomeVolume").writes == 1 && f.transport.child("isPunchInEnabled").writes == 1 && f.application.child("recordQuantizationGrid").writes == 1, "each setter written once");
+        check(f.transport.child("preRoll").data.equals("two_bars") && f.application.child("recordQuantizationGrid").data.equals("1/8"), "values landed");
+        result = f.call(module, "transport.set", TransportMixFixture.json("{\"preRoll\":\"two_bars\",\"punchInEnabled\":true}"));
+        check(result.getAsJsonObject("fields").getAsJsonObject("preRoll").get("verification").getAsString().equals("already_at_value")
+            && f.transport.child("preRoll").writes == 1 && f.transport.child("isPunchInEnabled").writes == 1, "matching values are not rewritten");
+        f.transport.child("preRoll").emitWrites = false;
+        HostOperation silent = f.submit(module, "transport.set", TransportMixFixture.json("{\"preRoll\":\"four_bars\"}"),
+            System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(300));
+        try { for (int i = 0; i < 400 && !silent.result.isDone(); i++) { f.next(); Thread.sleep(2); } }
+        catch (InterruptedException e) { throw new AssertionError(e); }
+        result = silent.result.join();
+        check(!result.get("matchesRequested").getAsBoolean() && result.get("completion").getAsString().equals("unknown"), "unobserved enum change stays unknown");
+        f.transport.child("isArrangerRecordEnabled").emit(true);
+        HostOperation blocked = f.submit(module, "transport.set", TransportMixFixture.json("{\"punchOutEnabled\":false}")); f.next();
+        check(TransportMixFixture.error(blocked, "unsafe_state").outcome.equals("not_applied"), "recording blocks punch edits like the other settings");
+    }
+    private static void storedValueOutsideOptionsCanBeWrittenBack() {
+        TransportMixFixture f = new TransportMixFixture(); TransportModule module = new TransportModule(f.services);
+        f.transport.child("defaultLaunchQuantization").emit("bar");
+        JsonObject read = f.call(module, "transport.get", new JsonObject());
+        check(read.get("defaultLaunchQuantization").getAsString().equals("bar") && read.getAsJsonArray("observedOutsideOptions").size() == 1
+            && read.getAsJsonArray("observedOutsideOptions").get(0).getAsString().equals("defaultLaunchQuantization"), "a stored value outside the host's option list is read and flagged");
+        JsonObject result = f.call(module, "transport.set", TransportMixFixture.json("{\"defaultLaunchQuantization\":\"bar\"}"));
+        check(result.getAsJsonObject("fields").getAsJsonObject("defaultLaunchQuantization").get("verification").getAsString().equals("already_at_value")
+            && f.transport.child("defaultLaunchQuantization").writes == 0, "writing the observed value back is already_at_value");
+        HostOperation refused = f.submit(module, "transport.set", TransportMixFixture.json("{\"defaultLaunchQuantization\":\"beat\"}")); f.next();
+        TransportMixFixture.error(refused, "invalid_params");
+        result = f.call(module, "transport.set", TransportMixFixture.json("{\"defaultLaunchQuantization\":\"1\"}"));
+        check(result.get("matchesRequested").getAsBoolean() && result.getAsJsonArray("observedOutsideOptions").size() == 0, "a listed value still writes and clears the flag");
     }
     private static void check(boolean condition, String message) { assertions++; if (!condition) throw new AssertionError(message); }
 }

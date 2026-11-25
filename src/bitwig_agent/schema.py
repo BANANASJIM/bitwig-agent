@@ -601,6 +601,15 @@ class ScenesAppendArgs(StatusArgs):
     count: Annotated[int, Field(ge=1, le=16)] = omitted()
 
 
+class SceneTargetArgs(StatusArgs):
+    sceneIndex: int = Field(ge=0, le=15, description="Zero-based scene index from scenes.list.")
+    expectedName: str = Field(max_length=256, description="Compare-and-set guard: the scene's exact current name from scenes.list; for an unnamed scene its current positional label (\"Scene N\"), which shifts after inserts/deletes.")
+
+
+class SceneRenameArgs(SceneTargetArgs):
+    name: str = Field(min_length=1, max_length=128)
+
+
 class ClipNote(StrictModel):
     op: Literal["set"] = omitted()
     beat: float = Field(ge=0, le=4194304)
@@ -653,18 +662,27 @@ class ClipSettingsArgs(ClipArgs):
     expectedClipName: str = Field(min_length=1, max_length=256)
 
 
+LAUNCH_SETTINGS = {"launchQuantization", "launchMode", "useLoopStartAsQuantizationReference"}
+
+
 class ClipSettingsSetArgs(ClipSettingsArgs):
     nextAction: Literal["play_next", "stop"] = omitted()
     nextActionEnabled: bool = omitted()
     nextActionLinkToLoop: bool = omitted()
     nextActionLoopCount: Annotated[int, Field(ge=1, le=64)] = omitted()
     nextActionDelayBeats: Annotated[float, Field(ge=0, le=4194304)] = omitted()
+    launchQuantization: Nonempty = omitted(description="Clip launch quantization: one of the host's own options, listed in the result's options.launchQuantization. Selects the clip.")
+    launchMode: Nonempty = omitted(description="Clip launch mode: one of the host's own options, listed in the result's options.launchMode. Selects the clip.")
+    useLoopStartAsQuantizationReference: bool = omitted(description="Quantize the launch to the clip's loop start. Selects the clip.")
 
     @model_validator(mode="after")
     def validate_settings(self):
         settings = self.model_fields_set - {"trackId", "slotIndex", "expectedClipName", "timeoutMs"}
         if not settings:
             raise ValueError("supply at least one clip setting")
+        launch = settings & LAUNCH_SETTINGS
+        if launch and settings - launch:
+            raise ValueError("launch fields (" + ", ".join(sorted(LAUNCH_SETTINGS)) + ") use a different path from the Next Action fields: send two calls")
         return self
 
 
@@ -901,6 +919,12 @@ class TransportSetArgs(StatusArgs):
     loopStartBeats: Annotated[float, Field(ge=0)] = omitted()
     loopDurationBeats: Annotated[float, Field(gt=0)] = omitted()
     timeSignature: str = omitted(description="numerator/denominator, e.g. 7/8: numerator 1..32, denominator 1, 2, 4, 8, 16 or 32.")
+    metronomeVolumeNormalized: UnitValue = omitted(description="Metronome volume 0..1 (not dB); read back as observed.")
+    punchInEnabled: bool = omitted(description="Arranger punch-in on/off.")
+    punchOutEnabled: bool = omitted(description="Arranger punch-out on/off.")
+    preRoll: Nonempty = omitted(description="Pre-roll length: one of transport.get options.preRoll (the host's own list).")
+    defaultLaunchQuantization: Nonempty = omitted(description="Project default clip launch quantization: one of transport.get options.defaultLaunchQuantization.")
+    recordQuantizationGrid: Nonempty = omitted(description="Grid for quantizing recorded notes: one of transport.get options.recordQuantizationGrid.")
 
     @field_validator("timeSignature")
     @classmethod
@@ -930,6 +954,10 @@ class TrackSetArgs(DeviceArgs):
     volumeDisplay: Nonempty = omitted(description='Fader level as the host shows it, e.g. "-6 dB" or "-inf dB".')
     panPercent: Annotated[float, Field(ge=-100, le=100)] = omitted(description="Pan in percent, negative = left, reached by matching the host's displayed value. Alternative to panNormalized/panDisplay.")
     panDisplay: Nonempty = omitted(description='Pan as the host shows it, e.g. "25% L", "40% R" or "Center".')
+    color: Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$")] = omitted(description="Track color as #RRGGBB.")
+    activated: bool = omitted(description="Track activated (false = deactivated, no processing).")
+    monitorMode: Nonempty = omitted(description="Input monitoring: one of tracks.get options.monitorMode (the host's own list).")
+    crossFadeMode: Nonempty = omitted(description="Crossfader assignment: one of tracks.get options.crossFadeMode (the host's own list).")
 
     @model_validator(mode="after")
     def require_change(self):

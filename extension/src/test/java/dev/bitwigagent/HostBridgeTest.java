@@ -1384,6 +1384,8 @@ public final class HostBridgeTest {
                     return objects.computeIfAbsent(key, ignored -> new Node().proxy(CueMarker.class));
                 if (proxy instanceof ClipLauncherSlotBank)
                     return objects.computeIfAbsent(key, ignored -> new Node().proxy(ClipLauncherSlot.class));
+                if (proxy instanceof SceneBank)
+                    return objects.computeIfAbsent(key, ignored -> new Node().proxy(Scene.class));
             }
             // Unrelated domain proxies stay unobserved; these parameter tests never invent their callbacks.
             if (method.getReturnType().isInterface()) {

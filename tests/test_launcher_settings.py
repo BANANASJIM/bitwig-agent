@@ -21,3 +21,17 @@ def test_next_clip_after_one_loop():
 def test_invalid_settings_rejected(changes):
     with pytest.raises(ValidationError):
         validate_call("launcher.set", {**TARGET, **changes})
+
+
+def test_launch_fields_are_their_own_path():
+    args = {**TARGET, "launchQuantization": "1/4", "launchMode": "trigger", "useLoopStartAsQuantizationReference": True}
+    assert validate_call("launcher.set", args)[0] == args
+    assert validate_call("launcher.set", {**TARGET, "launchMode": "gate"})[0] == {**TARGET, "launchMode": "gate"}
+
+
+@pytest.mark.parametrize("changes", [{"launchQuantization": ""}, {"launchQuantization": 4}, {"launchMode": None},
+    {"useLoopStartAsQuantizationReference": "yes"}, {"launchMode": "gate", "nextAction": "stop"},
+    {"launchQuantization": "1", "nextActionEnabled": True}])
+def test_invalid_or_mixed_launch_fields_rejected(changes):
+    with pytest.raises(ValidationError):
+        validate_call("launcher.set", {**TARGET, **changes})

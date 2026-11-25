@@ -42,10 +42,18 @@ final class LauncherSettingsModule implements HostModule {
     static void validateParams(String method,JsonObject p){
         if(!METHODS.contains(method))throw failure("unknown_method","Unknown launcher settings method");
         Set<String> required=Set.of("trackId","slotIndex","expectedClipName");
-        Params.fields(p,required,method.equals("launcher.set")?new HashSet<>(WRITE_ORDER):Set.of());
+        Set<String> optional=new HashSet<>();
+        if(method.equals("launcher.set")){optional.addAll(WRITE_ORDER);optional.addAll(LauncherModule.LAUNCH_FIELDS);}
+        Params.fields(p,required,optional);
         if(!DeviceSources.canonicalUuid(Params.string(p,"trackId")))throw failure("invalid_params","trackId must be a canonical UUID");
         Params.integer(p,"slotIndex",0,15);if(Params.string(p,"expectedClipName").length()>256)throw failure("invalid_params","expectedClipName is too long");
         if(method.equals("launcher.set")&&p.size()==3)throw failure("invalid_params","Supply at least one setting");
+        boolean launch=LauncherModule.hasLaunchFields(p),nextAction=false;
+        for(String key:WRITE_ORDER)nextAction|=p.has(key);
+        if(launch&&nextAction)throw failure("invalid_params","Launch fields (launchQuantization, launchMode, useLoopStartAsQuantizationReference) and Next Action fields use different paths; send them in two calls");
+        if(p.has("launchQuantization"))Params.string(p,"launchQuantization");
+        if(p.has("launchMode"))Params.string(p,"launchMode");
+        if(p.has("useLoopStartAsQuantizationReference"))Params.bool(p,"useLoopStartAsQuantizationReference");
         for(String key:WRITE_ORDER)if(p.has(key)){
             if(key.equals("nextAction")){if(!Set.of("play_next","stop").contains(Params.string(p,key)))throw failure("invalid_params","nextAction must be play_next or stop");}
             else if(key.equals("nextActionLoopCount"))Params.integer(p,key,1,64);
@@ -60,6 +68,10 @@ final class LauncherSettingsModule implements HostModule {
     }
     @Override public void dispatch(HostOperation op,String method,JsonObject p){
         s.check(op);boolean write=method.equals("launcher.set");
+        if(write&&LauncherModule.hasLaunchFields(p)){
+            if(launcher==null)throw failure("launcher_unavailable","Launch settings need the launcher module");
+            launcher.launchSettings(op,p);return;
+        }
         if(pending)throw failure("busy","Another native launcher settings operation is pending");
         if(write&&quarantined)throw failure("write_quarantined","An unresolved launcher settings write requires inspection and extension reload");
         String id=p.get("trackId").getAsString(),expected=p.get("expectedClipName").getAsString();int index=s.trackSlot(id),number=p.get("slotIndex").getAsInt();
