@@ -235,9 +235,14 @@ final class Bitwig614ArrangerAccess implements ArrangerModule.Access {
         ArrangerNotes.Readback readback = notes.isEmpty() ? null : ArrangerNotes.verify(noteHost, clip, notes, channel);
         if (readback != null && readback.invalidRows > 0) {
             // Rows outside channel 0..15 / key 0..127 crash Bitwig's note editor when drawn: remove the clip now.
-            a.invoke(delete, lane.timeline, new ArrayList<>(List.of(clip)));
+            String cleanup;
+            try {
+                a.invoke(delete, lane.timeline, new ArrayList<>(List.of(clip)));
+                cleanup = lane.clips().contains(clip) ? "deleting the created clip was dispatched but it is still on the lane"
+                        : "the created clip was deleted again (readback)";
+            } catch (RuntimeException error) { cleanup = "deleting the created clip failed: " + error.getMessage(); }
             throw new RpcException("arranger_verification_failed", readback.invalidRows + " native note rows have a channel outside 0..15 or a key"
-                    + " outside 0..127; the created clip was deleted again. Inspect arranger.clips.list before another write.", "unknown");
+                    + " outside 0..127; " + cleanup + ". Inspect arranger.clips.list before another write.", "unknown");
         }
         if (readback != null && !readback.complete)
             throw new RpcException("arranger_verification_failed", "Clip was created but " + (notes.size() - readback.json.get("verified").getAsInt())

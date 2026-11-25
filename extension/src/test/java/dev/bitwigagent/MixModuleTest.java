@@ -651,6 +651,23 @@ public final class MixModuleTest {
         TrackTree leading = TrackTree.capture(first.services);
         check(leading.complete && leading.byId.get(G).topLevel && G.equals(leading.byId.get(D).parentId) && leading.byId.get(TransportMixFixture.C).topLevel,
                 "a leading self-reporting group never becomes the root of its own children");
+        // Leading group naming an id outside the window: the root still comes from the later top-level track.
+        TransportMixFixture foreign = new TransportMixFixture();
+        group(foreign, 0, G, 0); parent(foreign, 0, ELSEWHERE);
+        foreign.addTrack(1, D, "Audio"); parent(foreign, 1, G);
+        foreign.addTrack(2, E, "Audio"); parent(foreign, 2, G);
+        foreign.addTrack(3, TransportMixFixture.C, "Audio"); parent(foreign, 3, ROOT);
+        TrackTree outside = TrackTree.capture(foreign.services);
+        check(outside.complete && outside.byId.get(G).depth == 0 && outside.byId.get(TransportMixFixture.C).topLevel && outside.byId.get(E).depth == 1,
+                "a leading group naming a foreign id never becomes the root");
+        // Two groups sharing that odd value and no top-level non-group track: the nested group is not made top-level.
+        TransportMixFixture odd = new TransportMixFixture();
+        group(odd, 0, G, 0); parent(odd, 0, ELSEWHERE);
+        group(odd, 1, D, 1); parent(odd, 1, ELSEWHERE);
+        odd.addTrack(2, E, "Audio"); parent(odd, 2, D);
+        TrackTree noRoot = TrackTree.capture(odd.services);
+        check(!noRoot.complete && "group_parent_ambiguous".equals(noRoot.reason) && !noRoot.byId.get(D).topLevel,
+                "without a root observation a group after a group is never guessed top-level");
         // After another group's child, the group could be that child's sibling or top-level: never guessed.
         TransportMixFixture nested = observedGroupLayout(G);
         group(nested, 2, TransportMixFixture.C, 2); parent(nested, 2, ROOT);

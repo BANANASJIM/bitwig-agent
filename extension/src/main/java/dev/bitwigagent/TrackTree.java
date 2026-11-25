@@ -108,12 +108,13 @@ final class TrackTree {
     }
 
     /**
-     * The first track is top-level, so its parent is the root, unless it is a group whose parent observation names
-     * a track in the window; then the root is the parent of the first non-group track not inside a group.
+     * The first track is top-level, so its parent is the root. A group's own parent value is not trusted for that:
+     * when the first track is a group, the root is the parent of the first non-group track (an effect track counts)
+     * whose parent is outside the window; without one there is no root and groups go through inference.
      */
     private String rootParent(List<Node> ordered) {
         Node first = ordered.get(0);
-        if (!first.group() || first.parentRaw == null || !inWindow(first.parentRaw)) return first.parentRaw;
+        if (!first.group()) return first.parentRaw;
         for (Node node : ordered) if (!node.group() && node.parentRaw != null && !inWindow(node.parentRaw)) return node.parentRaw;
         return null;
     }
