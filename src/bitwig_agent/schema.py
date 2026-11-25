@@ -752,3 +752,15 @@ class GridDescribeArgs(StatusArgs):
         if "limit" in self.model_fields_set and "query" not in self.model_fields_set:
             raise ValueError("limit applies only to query")
         return self
+
+
+class HostDiagnosticsArgs(StatusArgs):
+    sinceSeconds: int = omitted(ge=1, le=86400, description="Look back this many seconds (default 300); exclusive with sinceMarker.")
+    sinceMarker: str = omitted(min_length=1, max_length=512, description="Opaque marker from a previous host.diagnostics call: only events written after it.")
+    maxEvents: int = omitted(ge=1, le=500, description="Keep the newest N deduplicated events (default 50).")
+
+    @model_validator(mode="after")
+    def validate_window(self):
+        if {"sinceSeconds", "sinceMarker"} <= self.model_fields_set:
+            raise ValueError("supply at most one of sinceSeconds or sinceMarker")
+        return self

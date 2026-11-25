@@ -37,7 +37,7 @@ UNK = 'Never retry an unknown outcome: inspect with grid.get. A native setter/ca
 
 
 # Composed in Python from host methods; never sent to the host as one request.
-CLIENT_SIDE = frozenset({"grid.apply", "grid.render", "grid.describe", "audio.route", "audio.capture", "audio.analyze"})
+CLIENT_SIDE = frozenset({"grid.apply", "grid.render", "grid.describe", "audio.route", "audio.capture", "audio.analyze", "host.diagnostics"})
 
 
 def tool(model, description, read_only, *examples):
@@ -134,6 +134,7 @@ TOOLS: dict[str, ToolSpec] = {
     "actions.list": tool(schema.ActionListArgs, "List native host Action IDs, names and categories (catalog is >1000 rows: filter with query/category; default limit 100, check total/complete). Availability does not prove completion in the current UI context.", True, {"query": "scene", "limit": 20}),
     "project.save": tool(schema.StatusArgs, "Save the project via the native Save action; saved=true only when Project.isModified is observed false (alreadySaved if nothing to save). Otherwise dispatched/not_observed, never re-invoked: an untitled project opens a Save As dialog needing GUI/user completion. Check projectModified before retrying.", False),
     "actions.invoke": tool(schema.ActionArgs, "Invoke one exact ID from actions.list in the current host/UI context. May edit the project or open a dialog. Quit closes every open tab and only the current tab is observable, so it always needs discardUnsavedChanges=true; Close needs the current tab observed saved (projectModified=false) or discardUnsavedChanges=true. Consent comes from the user only. New/Open open another tab and are not guarded. Returns dispatched only, never completion; inspect state before another write and do not blindly retry.", False, {"actionId": "from-actions.list"}),
+    "host.diagnostics": tool(schema.HostDiagnosticsArgs, "Client-side: host problems invisible through the API, read from Bitwig's shared log (Linux ~/.BitwigStudio/log; macOS/Windows documented paths, else status unsupported). One status call picks this instance's log section by process start time; attribution.certain=false says when other instances may be mixed in. Events {time, level, category: grid_rejected|engine|extension|exception|dialog|other, message, count}; grid_rejected = a Grid device silently dropped from the audio network (check after Grid topology writes), engine = isEngineReady flips. Modal dialogs (Dashboard, Save?, Recover) are NOT in the log. Returns marker: pass it as sinceMarker next time to see only what happened since. Default last 300 s, maxEvents 50.", True, {"sinceSeconds": 300}),
 }
 
 
