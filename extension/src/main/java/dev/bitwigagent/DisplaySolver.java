@@ -23,11 +23,16 @@ final class DisplaySolver {
         JsonElement display();
         void write(double normalized);
         void guard();
+        /** Enabled state of the parameter's owner when writing it can toggle it (a send); null JSON when not applicable. */
+        default JsonElement enabled() { return JsonNull.INSTANCE; }
+        default long enabledSeq() { return 0; }
+        default void writeEnabled(boolean enabled) {}
     }
 
     static final class Result {
         boolean ok, dispatched, restoreAttempted, restored;
         String reason, observedDisplay;
+        Boolean originalEnabled;
         double normalized = Double.NaN, original = Double.NaN;
         int probes;
 
@@ -66,12 +71,16 @@ final class DisplaySolver {
         if (now.isJsonNull() || port.display().isJsonNull())
             throw HostServices.failure("not_ready", "Parameter value or display is not observed yet.");
         result.original = now.getAsDouble();
+        JsonElement enabled = port.enabled();
+        result.originalEnabled = enabled.isJsonNull() ? null : enabled.getAsBoolean();
         // -inf is the bottom of the scale: one probe at 0 either shows it or the target is refused.
         probe(target <= DisplayScale.MINUS_INF ? 0 : 0.5);
     }
 
     private void probe(double x) {
         port.guard();
+        // The scheduler throws deadline_exceeded once the deadline passes, so stop while a restore still fits.
+        if (op.deadline - System.nanoTime() < 2 * PROBE_TIMEOUT_NANOS + HostServices.DEADLINE_MARGIN_NANOS) { fail("deadline"); return; }
         result.probes++;
         long before = port.valueSeq();
         boolean same = near(port.value(), x);
@@ -104,25 +113,32 @@ final class DisplaySolver {
         probe((lo + hi) / 2);
     }
 
-    /** Put the original value back and report whether the host showed it again; never retried. */
+    /** Put the original value (and enabled state, which a probe write can flip) back and report whether the host showed it; never retried. */
     private void fail(String reason) {
         result.reason = reason;
         if (!result.dispatched) { done.accept(result); return; }
         result.restoreAttempted = true;
         try {
             port.guard();
-            long before = port.valueSeq();
-            if (near(port.value(), result.original)) { result.restored = true; done.accept(result); return; }
-            port.write(result.original);
-            awaitRestore(before, System.nanoTime() + PROBE_TIMEOUT_NANOS);
+            long before = port.valueSeq(), enabledBefore = port.enabledSeq();
+            boolean value = !near(port.value(), result.original);
+            JsonElement enabledNow = port.enabled();
+            boolean enabled = result.originalEnabled != null && !enabledNow.isJsonNull() && enabledNow.getAsBoolean() != result.originalEnabled;
+            if (!value && !enabled) { result.restored = true; done.accept(result); return; }
+            if (value) port.write(result.original);
+            if (enabled) port.writeEnabled(result.originalEnabled);
+            awaitRestore(before, enabledBefore, value, enabled, System.nanoTime() + PROBE_TIMEOUT_NANOS);
         } catch (RpcException error) { done.accept(result); }
     }
 
-    private void awaitRestore(long before, long until) {
+    private void awaitRestore(long before, long enabledBefore, boolean value, boolean enabled, long until) {
         try { port.guard(); } catch (RpcException error) { done.accept(result); return; }
-        if (port.valueSeq() > before && near(port.value(), result.original)) { result.restored = true; done.accept(result); return; }
+        JsonElement enabledNow = port.enabled();
+        boolean valueOk = !value || (port.valueSeq() > before && near(port.value(), result.original));
+        boolean enabledOk = !enabled || (port.enabledSeq() > enabledBefore && !enabledNow.isJsonNull() && enabledNow.getAsBoolean() == result.originalEnabled);
+        if (valueOk && enabledOk) { result.restored = true; done.accept(result); return; }
         if (System.nanoTime() >= until) { done.accept(result); return; }
-        s.schedule(op, () -> awaitRestore(before, until), POLL_MS);
+        s.schedule(op, () -> awaitRestore(before, enabledBefore, value, enabled, until), POLL_MS);
     }
 
     private static boolean near(JsonElement value, double x) {

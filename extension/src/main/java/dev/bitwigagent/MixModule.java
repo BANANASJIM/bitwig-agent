@@ -142,7 +142,7 @@ final class MixModule implements HostModule {
     /** One display-addressed mixer value, resolved to a normalized value by DisplaySolver before the ordinary set flow. */
     private static final class Solve {
         final String key, displayKey; final int field; final DisplayScale.Kind kind; final JsonElement request; final boolean numeric;
-        double target; String text;
+        double target, original; String text; long restoreSeq;
         Solve(String key, int field, String displayKey, DisplayScale.Kind kind, JsonElement request, boolean numeric) {
             this.key = key; this.field = field; this.displayKey = displayKey; this.kind = kind; this.request = request; this.numeric = numeric;
         }
@@ -172,25 +172,63 @@ final class MixModule implements HostModule {
             }
             @Override public void guard() { MixModule.this.guard(op, target); }
         };
-        new DisplaySolver(s, op, port, solve.kind, solve.target, result -> {
-            target.extra.add(solve.displayKey.replace("Display", "DisplayWrite"), result.json(solve.text, solve.target));
-            if (!result.ok) { solverFailure(op, target, result); return; }
-            changes.addProperty(solve.key, result.normalized);
-            target.solved.add(solve.key);
-            solveNext(op, target, changes, solves, index + 1);
-        }).start();
+        try {
+            new DisplaySolver(s, op, port, solve.kind, solve.target, result -> {
+                target.extra.add(solve.displayKey.replace("Display", "DisplayWrite"), result.json(solve.text, solve.target));
+                if (!result.ok) { restoreEarlier(op, target, solves, index, restored -> solverFailure(op, target, result, restored)); return; }
+                solve.original = result.original;
+                changes.addProperty(solve.key, result.normalized);
+                target.solved.add(solve.key);
+                solveNext(op, target, changes, solves, index + 1);
+            }).start();
+        } catch (RpcException error) {
+            if (index == 0) throw error;
+            DisplaySolver.Result failed = new DisplaySolver.Result();
+            failed.reason = error.code;
+            restoreEarlier(op, target, solves, index, restored -> solverFailure(op, target, failed, restored));
+        }
+    }
+
+    /** Fields solved earlier in the same call stay at their probed value; put them back so a failed call changes nothing. */
+    private void restoreEarlier(HostOperation op, Target target, List<Solve> solves, int upTo, java.util.function.Consumer<Boolean> done) {
+        List<Solve> pending = new ArrayList<>();
+        try {
+            for (int i = 0; i < upTo; i++) {
+                Solve earlier = solves.get(i);
+                guard(op, target);
+                JsonElement now = value(target.state, earlier.field);
+                if (!now.isJsonNull() && Math.abs(now.getAsDouble() - earlier.original) <= HostServices.TOLERANCE) continue;
+                earlier.restoreSeq = target.state.sequence[earlier.field];
+                Track track = target.state.track;
+                if (earlier.field == 1) track.volume().value().setImmediately(earlier.original); else track.pan().value().setImmediately(earlier.original);
+                pending.add(earlier);
+            }
+        } catch (RpcException error) { done.accept(false); return; }
+        awaitEarlier(op, target, pending, done, System.nanoTime() + DisplaySolver.PROBE_TIMEOUT_NANOS);
+    }
+
+    private void awaitEarlier(HostOperation op, Target target, List<Solve> pending, java.util.function.Consumer<Boolean> done, long until) {
+        boolean all = target.matches(s);
+        if (all) for (Solve earlier : pending) {
+            JsonElement now = value(target.state, earlier.field);
+            all &= target.state.sequence[earlier.field] > earlier.restoreSeq && !now.isJsonNull()
+                    && Math.abs(now.getAsDouble() - earlier.original) <= HostServices.TOLERANCE;
+        }
+        if (all) { done.accept(true); return; }
+        if (!target.matches(s) || System.nanoTime() >= until) { done.accept(false); return; }
+        s.schedule(op, () -> awaitEarlier(op, target, pending, done, until), DisplaySolver.POLL_MS);
     }
 
     /** A failed display write applied nothing else; it either put the original back (observed) or leaves the outcome unknown. */
-    private void solverFailure(HostOperation op, Target target, DisplaySolver.Result result) {
+    private void solverFailure(HostOperation op, Target target, DisplaySolver.Result result, boolean earlierRestored) {
         boolean current = target.matches(s);
         JsonObject out = current ? snapshot(target) : scope();
         out.addProperty("trackId", target.id);
-        boolean restored = !result.dispatched || result.restored;
+        boolean restored = (!result.dispatched || result.restored) && earlierRestored;
         out.addProperty("status", "dispatched");
         out.addProperty("completion", restored && current ? "observed" : "unknown");
         out.addProperty("matchesRequested", false);
-        out.addProperty("otherFieldsApplied", false);
+        out.addProperty("otherFieldsApplied", !earlierRestored);
         out.addProperty("reason", result.reason);
         for (Map.Entry<String, JsonElement> entry : target.extra.entrySet()) out.add(entry.getKey(), entry.getValue());
         op.result.complete(out);
@@ -295,11 +333,14 @@ final class MixModule implements HostModule {
                 @Override public JsonElement display() { return state.meta(prefix + "display"); }
                 @Override public void write(double x) { send.value().setImmediately(x); }
                 @Override public void guard() { guardSend(); }
+                @Override public JsonElement enabled() { return state.meta(prefix + "enabled"); }
+                @Override public long enabledSeq() { return state.metaSeq(prefix + "enabled"); }
+                @Override public void writeEnabled(boolean on) { send.isEnabled().set(on); }
             };
             String text = p.get("display").getAsString();
             new DisplaySolver(s, op, port, DisplayScale.Kind.DB, displayTarget, result -> {
                 target.extra.add("displayWrite", result.json(text, displayTarget));
-                if (!result.ok) { solverFailure(op, target, result); return; }
+                if (!result.ok) { solverFailure(op, target, result, true); return; }
                 requested.put("valueNormalized", new JsonPrimitive(result.normalized));
                 writes.put("valueNormalized", -1L);
                 solvedValue = true;
@@ -309,9 +350,10 @@ final class MixModule implements HostModule {
 
         void writeFields() {
             try {
-                if (p.has("valueNormalized")) write("valueNormalized", p.get("valueNormalized"));
-                // Last: a level write can auto-enable the send, so an explicit enabled=false must follow it.
-                if (p.has("enabled")) write("enabled", p.get("enabled"));
+                boolean level = p.has("valueNormalized") && write("valueNormalized", p.get("valueNormalized"), false);
+                // Last: a level write can auto-enable the send on a later flush, so the metadata is stale and the
+                // explicit enabled write is dispatched regardless of what it currently shows.
+                if (p.has("enabled")) write("enabled", p.get("enabled"), level);
             } catch (RpcException error) {
                 if (!op.dispatched) throw error;
                 finish(error.code); return;
@@ -319,14 +361,15 @@ final class MixModule implements HostModule {
             await(HostServices.observeUntil(op));
         }
 
-        void write(String key, JsonElement value) {
+        boolean write(String key, JsonElement value, boolean force) {
             guardSend();
             requested.put(key, value);
-            if (matches(state.meta(prefix + key), value)) { writes.put(key, -1L); return; }
+            if (!force && matches(state.meta(prefix + key), value)) { writes.put(key, -1L); return false; }
             writes.put(key, state.metaSeq(prefix + key));
             guardSend();
             op.dispatched = true;
             if (key.equals("enabled")) send.isEnabled().set(value.getAsBoolean()); else send.value().setImmediately(value.getAsDouble());
+            return true;
         }
 
         boolean verified(String key) {

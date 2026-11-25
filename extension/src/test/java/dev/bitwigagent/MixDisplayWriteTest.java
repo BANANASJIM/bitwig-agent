@@ -16,6 +16,10 @@ public final class MixDisplayWriteTest {
         panPercentAndDisplay();
         unreachableDisplayRestoresOriginal();
         unparseableDisplayRestoresAndAppliesNothingElse();
+        laterSolveFailureRestoresEarlierField();
+        deadlineStopsProbingWhileRestoreFits();
+        explicitDisableFollowsLevelWriteOnDisabledSend();
+        failedSendProbeRestoresEnabledState();
         minusInfinity();
         staleTargetStopsDisplayWrite();
         System.out.println("MixDisplayWriteTest: " + assertions + " assertions passed (simulated host only)");
@@ -172,6 +176,56 @@ public final class MixDisplayWriteTest {
         JsonObject result = call(f, m[0], "tracks.set", params("{\"volumeDb\":-6,\"arm\":true}"));
         check(result.get("reason").getAsString().equals("display_unparseable") && !result.get("matchesRequested").getAsBoolean(), "fail closed on unreadable display: " + result);
         check(Math.abs(((Number) vol.data).doubleValue() - 0.5) < 1e-9 && Boolean.FALSE.equals(f.tracks[0].child("arm").data), "restored, arm untouched");
+    }
+
+    private static void laterSolveFailureRestoresEarlierField() {
+        MixModule[] m = new MixModule[1]; TransportMixFixture f = fixture(m);
+        TransportMixFixture.Node vol = f.tracks[0].child("volume").child("value");
+        TransportMixFixture.Node pan = f.tracks[0].child("pan").child("value");
+        pan.afterWrite = () -> f.tracks[0].child("pan").child("displayedValue").emit("???");
+        JsonObject result = call(f, m[0], "tracks.set", params("{\"volumeDb\":-6,\"panPercent\":-25}"));
+        check(result.get("reason").getAsString().equals("display_unparseable") && !result.get("matchesRequested").getAsBoolean(), "second solve failed: " + result);
+        check(Math.abs(((Number) vol.data).doubleValue() - 0.5) < 1e-9, "earlier volume solve restored: " + vol.data);
+        check(Math.abs(((Number) pan.data).doubleValue() - 0.5) < 1e-9, "pan restored");
+        check(!result.get("otherFieldsApplied").getAsBoolean() && result.get("completion").getAsString().equals("observed"), "clean restore claimed only because it is true: " + result);
+    }
+
+    private static void deadlineStopsProbingWhileRestoreFits() {
+        MixModule[] m = new MixModule[1]; TransportMixFixture f = fixture(m);
+        TransportMixFixture.Node vol = f.tracks[0].child("volume").child("value");
+        Runnable show = vol.afterWrite;
+        vol.afterWrite = () -> { try { Thread.sleep(100); } catch (InterruptedException e) { throw new AssertionError(e); } show.run(); };
+        HostOperation op = f.submit(m[0], "tracks.set", params("{\"volumeDb\":-6}"), System.nanoTime() + 1_300_000_000L);
+        JsonObject result = run(f, op);
+        check(result.get("reason").getAsString().equals("deadline"), "stopped at the deadline budget, not deadline_exceeded: " + result);
+        check(Math.abs(((Number) vol.data).doubleValue() - 0.5) < 1e-9 && result.getAsJsonObject("volumeDisplayWrite").get("restored").getAsBoolean(), "original restored before the deadline");
+    }
+
+    private static void explicitDisableFollowsLevelWriteOnDisabledSend() {
+        MixModule[] m = new MixModule[1]; TransportMixFixture f = fixture(m);
+        TransportMixFixture.Node send = f.tracks[0].child("sendBank").item(0);
+        TransportMixFixture.Node enabled = send.child("isEnabled");
+        enabled.emit(false);
+        Runnable show = send.child("value").afterWrite;
+        // The host turns the send on at once, but the observer echo only arrives on a later flush.
+        send.child("value").afterWrite = () -> { show.run(); enabled.data = true; f.tasks.add(() -> enabled.emit(enabled.data)); };
+        JsonObject result = call(f, m[0], "tracks.sends.set", params("{\"sendIndex\":0,\"valueNormalized\":0.3,\"enabled\":false}"));
+        check(Boolean.FALSE.equals(enabled.data), "send really ends disabled: " + result);
+        check(result.get("matchesRequested").getAsBoolean() && !result.getAsJsonObject("fields").getAsJsonObject("enabled").get("verification").getAsString().equals("already_at_value"),
+                "enabled write dispatched and verified, not skipped against stale metadata: " + result);
+    }
+
+    private static void failedSendProbeRestoresEnabledState() {
+        MixModule[] m = new MixModule[1]; TransportMixFixture f = fixture(m);
+        TransportMixFixture.Node send = f.tracks[0].child("sendBank").item(0);
+        TransportMixFixture.Node enabled = send.child("isEnabled");
+        enabled.emit(false);
+        Runnable show = send.child("value").afterWrite;
+        send.child("value").afterWrite = () -> { show.run(); enabled.emit(true); };
+        JsonObject result = call(f, m[0], "tracks.sends.set", params("{\"sendIndex\":0,\"display\":\"5 dB\"}"));
+        check(result.get("reason").getAsString().equals("display_not_reachable"), "unreachable: " + result);
+        check(Boolean.FALSE.equals(enabled.data), "enabled state restored");
+        check(result.getAsJsonObject("displayWrite").get("restored").getAsBoolean() && result.get("completion").getAsString().equals("observed"), "restore reported only after both were put back: " + result);
     }
 
     private static void minusInfinity() {
