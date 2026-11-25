@@ -55,6 +55,9 @@ def test_unverified_and_recorded_scales_do_not_overlap_and_alternatives_do_not_f
     ("Transpose", "VALUE", "−12 st", -12.0),
     ("Sine", "PITCH", "7 st", 7.0),
     ("Sine", "PITCH_MOD", "120 st", 1.0),
+    ("Sine", "PITCH_MOD", "15 st", 0.5),  # oscillator PITCH_MOD is cube-root
+    ("Comb", "CUTOFF_MOD", "60 st", 0.5),  # filter CUTOFF_MOD is linear
+    ("SVF", "CUTOFF_MOD", "70.18 st", 0.584833),
     ("Amplify", "VALUE", "50 %", 0.5 ** (1 / 3)),
     ("Amplify", "VALUE", "-6 dB", (10 ** (-6 / 20)) ** (1 / 3)),
     ("Mixer", "LEVEL_2", "-10.3 dB", (10 ** (-10.3 / 20)) ** (1 / 3)),
@@ -149,3 +152,16 @@ def test_query_returns_category_and_finds_filters_by_category():
     except grid_docs.DocsUnavailable:
         pytest.skip("Bitwig install not present")
     assert all("category" in m for m in matches) and {"SVF", "Low-pass"} <= {m["name"] for m in matches}
+
+
+def test_filter_cutoff_mod_is_linear_and_oscillator_pitch_mod_is_cube_root():
+    cutoff = raw_scales.SCALES["linear_st120"]
+    assert raw_scales.RAW_SCALES[("Comb", "CUTOFF_MOD")].scale == "linear_st120"
+    assert raw_scales.RAW_SCALES[("Sine", "PITCH_MOD")].scale == "cbrt_st120"
+    assert fits(cutoff, 0.5, "60.00 st") and fits(cutoff, 0.584804, "70.18 st")
+    assert not fits(raw_scales.SCALES["cbrt_st120"], 0.5, "60.00 st")
+    assert fits(raw_scales.SCALES["cbrt_st120"], 0.5, "15.00 st")
+    for t in ("SVF", "Low-pass LD", "Low-pass MG", "Sallen-Key", "XP", "Rasp", "Ripple", "Comb", "Fizz"):
+        assert raw_scales.RAW_SCALES[(t, "CUTOFF_MOD")].scale == "linear_st120", t
+    assert raw_scales.convert("Comb", "CUTOFF_MOD", "60 st", -1.0, 1.0) == 0.5
+    assert raw_scales.effective(cutoff, 0.5) == "60 st"
