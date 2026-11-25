@@ -64,6 +64,7 @@ final class RenderModule implements HostModule {
         final RenderPlan plan;
         final Export export;
         final Map<String, Clips> before = new LinkedHashMap<>();
+        final Map<String, String> typesBefore = new LinkedHashMap<>();
         volatile boolean dispatched, settled, reported;
         volatile Handle handle;
         volatile long doneAt;
@@ -227,7 +228,10 @@ final class RenderModule implements HostModule {
                     p.has("dither") && p.get("dither").getAsBoolean(), p.has("overwrite") && p.get("overwrite").getAsBoolean(), start, end);
             RenderPlan plan = RenderPlan.export(Path.of(p.get("directory").getAsString()), p.get("baseName").getAsString(), ids.size(), format, options.overwrite);
             next = new Job(EXPORT, ids, proxies, start, end, tap, plan, options);
-        } else next = new Job(BOUNCE, ids, proxies, start, end, tap, null, null);
+        } else {
+            next = new Job(BOUNCE, ids, proxies, start, end, tap, null, null);
+            for (int i = 0; i < ids.size(); i++) next.typesBefore.put(ids.get(i), ((Track) proxies.get(i)).trackType().get());
+        }
         Access bridge = access(op);
         Runnable check = () -> {
             s.check(op); s.guardStoppedSafety(safety);
@@ -380,10 +384,26 @@ final class RenderModule implements HostModule {
             result.addProperty("verification", "native_job_latch_and_file_headers");
         } else {
             result.add("tracks", evaluation.get("tracks"));
+            trackTypes(current, evaluation.getAsJsonArray("tracks"));
             result.addProperty("nativeUndo", true);
             result.addProperty("verification", "native_job_latch_and_arranger_readback");
         }
         op.result.complete(result);
+    }
+
+    /**
+     * Bouncing notes to audio in place turns an instrument track into a Hybrid track (audio clips on a note track);
+     * deleting the bounced clip does not turn it back, Undo does. The public type can lag the job by a flush.
+     */
+    private static void trackTypes(Job current, JsonArray rows) {
+        for (int i = 0; i < rows.size(); i++) {
+            JsonObject row = rows.get(i).getAsJsonObject();
+            String before = current.typesBefore.get(current.ids.get(i)), after = ((Track) current.proxies.get(i)).trackType().get();
+            row.addProperty("trackTypeBefore", before);
+            row.addProperty("trackTypeAfter", after);
+            if (before != null && !before.equals(after))
+                row.addProperty("warning", "track type changed from " + before + " to " + after + "; Undo reverts it, deleting the bounced clip does not");
+        }
     }
 
     private JsonObject pending(Job current, Access bridge) {
