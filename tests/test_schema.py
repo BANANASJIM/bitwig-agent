@@ -849,6 +849,30 @@ def test_project_save_as_takes_a_final_bwproject_path_and_explicit_flags():
             validate_call("project.saveAs", bad)
 
 
+def test_export_audio_and_bounce_in_place_are_strict_long_write_tools():
+    from bitwig_agent.catalog import max_timeout_ms
+    track = "12345678-1234-1234-1234-123456789abc"
+    base = {"sources": ["master", track], "directory": "/home/me/Music", "baseName": "Mix", "startBeats": 0, "endBeats": 16, "format": "wav"}
+    assert validate_call("export.audio", base) == (base, 30000)
+    assert validate_call("export.audio", base | {"format": "flac", "bitDepth": 24, "sampleRate": 48000, "tap": "pre_fader", "dither": True, "overwrite": True})[0]["bitDepth"] == 24
+    assert TOOLS["export.audio"].read_only is False and TOOLS["bounce.inPlace"].read_only is False and TOOLS["render.status"].read_only is True
+    assert max_timeout_ms("export.audio") == max_timeout_ms("bounce.inPlace") == 60000 and max_timeout_ms("render.status") == 10000
+    for bad in ({"sources": []}, {"sources": ["master", "master"]}, {"sources": [track, track.upper()]}, {"sources": ["Master"]},
+                {"directory": "relative"}, {"directory": "/a/../b"}, {"baseName": ""}, {"baseName": ".x"}, {"baseName": "a/b"},
+                {"baseName": " a"}, {"baseName": "x" * 129}, {"endBeats": 0}, {"endBeats": 65537}, {"format": "mp3"},
+                {"bitDepth": 20}, {"format": "flac", "bitDepth": 32}, {"sampleRate": 96000}, {"tap": "pre_fx"}, {"overwrite": "yes"},
+                {"realtime": True}):
+        with pytest.raises(ValidationError):
+            validate_call("export.audio", base | bad)
+    bounce = {"trackIds": [track], "startBeats": 8, "endBeats": 24, "tap": "pre_fx"}
+    assert validate_call("bounce.inPlace", bounce) == (bounce, 30000)
+    for bad in ({"trackIds": ["master"]}, {"trackIds": [track, track]}, {"tap": "custom"}, {"endBeats": 8}):
+        with pytest.raises(ValidationError):
+            validate_call("bounce.inPlace", bounce | bad)
+    with pytest.raises(ValidationError):
+        validate_call("bounce.inPlace", {k: v for k, v in bounce.items() if k != "tap"})
+
+
 def test_grid_insert_accepts_type_name_or_type_id_but_not_both_or_neither():
     named = {key: value for key, value in GRID_INSERT.items() if key != "typeId"} | {"typeName": "Low-pass"}
     assert validate_call("grid.modules.insert", named)[0] == named

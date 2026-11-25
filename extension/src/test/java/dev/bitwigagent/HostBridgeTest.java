@@ -172,6 +172,8 @@ public final class HostBridgeTest {
         check(HostBridge.supportedMethods().contains("project.save") && HostBridge.supportedMethods().contains("project.saveAs"), "project.save and project.saveAs registered");
         JsonObject saveAs = call(host, bridge, "capabilities", new JsonObject()).getAsJsonObject("projectSaveAs");
         check(saveAs.get("method").getAsString().equals("project.saveAs") && !saveAs.get("available").getAsBoolean() && saveAs.has("reason"), "capabilities reports the saveAs binding separately and fails closed off the gated host");
+        JsonObject render = call(host, bridge, "capabilities", new JsonObject()).getAsJsonObject("render");
+        check(render.getAsJsonArray("methods").size() == 3 && !render.get("available").getAsBoolean() && render.has("reason"), "capabilities reports the render binding and fails closed off the gated host");
     }
 
     private static void projectSaveIsObservedOnceAndNeverRetried() {

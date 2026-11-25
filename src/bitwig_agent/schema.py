@@ -1017,6 +1017,59 @@ class ProjectSaveAsArgs(StrictModel):
         return self
 
 
+RENDER_MAX_BEATS = 4194304
+RENDER_MAX_LENGTH = 65536
+
+
+class RenderRangeArgs(StrictModel):
+    timeoutMs: int = Field(default=30000, ge=100, le=TOPOLOGY_TIMEOUT_MS)
+    startBeats: float = Field(ge=0, le=RENDER_MAX_BEATS, description="Range start in quarter-note beats from the project start.")
+    endBeats: float = Field(ge=0, le=RENDER_MAX_BEATS + RENDER_MAX_LENGTH, description="Range end, after startBeats and at most 65536 beats later.")
+
+    @model_validator(mode="after")
+    def validate_range(self):
+        if self.endBeats <= self.startBeats or self.endBeats - self.startBeats > RENDER_MAX_LENGTH:
+            raise ValueError("endBeats must be after startBeats, at most 65536 beats later")
+        return self
+
+
+class ExportAudioArgs(RenderRangeArgs):
+    sources: Annotated[list[TrackId | Literal["master"]], Field(min_length=1, max_length=16)] = Field(
+        description="\"master\" and/or trackIds from tracks.list (audio, instrument, effect or group tracks); one file each, in this order.")
+    directory: str = Field(max_length=4096, description="Existing absolute folder for the files. No ~ expansion.")
+    baseName: str = Field(min_length=1, max_length=128, description="File name without extension: <baseName>.<format> for one source, <baseName>-01, -02, ... for several.")
+    format: Literal["wav", "flac"]
+    bitDepth: Literal[16, 24, 32] = omitted(description="Default 24; 32 = 32-bit float (wav only).")
+    sampleRate: Literal[44100, 48000] = omitted(description="Omitted: the current engine rate.")
+    tap: Literal["post_fader", "pre_fader"] = omitted(description="Default post_fader.")
+    dither: bool = omitted()
+    overwrite: bool = omitted(description="Allow replacing existing files with the same names.")
+
+    @model_validator(mode="after")
+    def validate_export(self):
+        if len({value.lower() for value in self.sources}) != len(self.sources):
+            raise ValueError("sources must be distinct")
+        validate_local_path(self.directory)
+        name = self.baseName
+        if name != name.strip() or name.startswith(".") or "/" in name or "\\" in name or any(ord(c) < 32 or 127 <= ord(c) <= 159 for c in name):
+            raise ValueError("baseName must not contain '/', '\\', control characters, a leading dot or surrounding whitespace")
+        if self.format == "flac" and self.bitDepth == 32:
+            raise ValueError("flac supports bitDepth 16 or 24")
+        return self
+
+
+class BounceInPlaceArgs(RenderRangeArgs):
+    trackIds: Annotated[list[TrackId], Field(min_length=1, max_length=16)] = Field(
+        description="Audio/instrument tracks (trackIds from tracks.list) whose main arranger lane gets the bounced audio.")
+    tap: Literal["pre_fx", "pre_fader", "post_fader"]
+
+    @model_validator(mode="after")
+    def validate_distinct(self):
+        if len({value.lower() for value in self.trackIds}) != len(self.trackIds):
+            raise ValueError("trackIds must be distinct")
+        return self
+
+
 class TrackCreateArgs(StatusArgs):
     type: Literal["audio", "instrument", "effect"]
     position: int = Field(ge=-1, le=2147483647)

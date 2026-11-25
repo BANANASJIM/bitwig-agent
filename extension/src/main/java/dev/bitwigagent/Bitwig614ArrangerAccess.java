@@ -159,6 +159,16 @@ final class Bitwig614ArrangerAccess implements ArrangerModule.Access {
         return result(lane, clips);
     }
 
+    /** Native clip objects (identity) with their list rows, for callers that diff a lane across a native job. */
+    RenderModule.Clips snapshot(Object trackProxy, String trackId, Runnable check) {
+        Lane lane = new Lane(trackProxy, trackId, check);
+        List<Object> clips = lane.clips();
+        JsonArray rows = new JsonArray();
+        for (int i = 0; i < clips.size(); i++) rows.add(describe(clips.get(i), i));
+        lane.guard(check);
+        return new RenderModule.Clips(clips, rows);
+    }
+
     private void requireFree(Lane lane, List<Object> clips, Object except, double from, double to) {
         for (int i = 0; i < clips.size(); i++) {
             Object clip = clips.get(i);
