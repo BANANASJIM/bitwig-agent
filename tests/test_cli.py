@@ -461,3 +461,17 @@ def test_unknown_argument_synonyms_hint_but_never_alias():
             validate_call(method, bad)
         message = invalid_params_message(method, error.value)
         assert "no alias is accepted" in message and all(w in message for w in want), message
+
+
+def test_nested_unknown_argument_names_full_path_and_siblings():
+    from pydantic import ValidationError
+    import pytest
+    from bitwig_agent.catalog import invalid_params_message, validate_call
+    args = {"trackId": "abcdef01-2345-6789-abcd-0123456789ab", "name": "x", "startBeats": 0, "lengthBeats": 4,
+            "notes": [{"beat": 0, "pitch": 60, "velocity": 0.8, "durationBeats": 1}, {"beat": 1, "pitch": 62, "velocity": 0.8, "durationBeats": 1, "channel": 2}]}
+    with pytest.raises(ValidationError) as error:
+        validate_call("arranger.clips.create", args)
+    message = invalid_params_message("arranger.clips.create", error.value)
+    assert "notes[1].channel" in message
+    assert "Accepted at notes[]: " in message and "durationBeats" in message and "velocity" in message
+    assert "notes (did you mean notes?)" not in message and "notes.1" not in message

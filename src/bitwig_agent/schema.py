@@ -1229,13 +1229,29 @@ class GridProbeArgs(ParameterArgs):
     timeoutMs: int = Field(default=5000, ge=100, le=TOPOLOGY_TIMEOUT_MS)
     port: Annotated[str, Field(min_length=3, max_length=1024)] = Field(description="'<module name>.<OUT port key>' of a module in this device, e.g. 'H: lead.OUT'; the name is the customName (or generated name) from grid.graph.")
     seconds: float = Field(ge=0.2, le=20, description="Recording length.")
-    mode: Literal["probe", "mono_pitch", "onsets", "level"] = Field(description="audio.analyze mode run on the recording.")
+    mode: Literal["probe", "mono_pitch", "onsets", "level", "bands"] = Field(description="audio.analyze mode run on the recording. bands = band balance plus spectral peaks (Hz, note name, cents) for steady or noisy sources that mono_pitch cannot pitch.")
     allowAudible: bool = omitted(description="Record without audio.route silent (the probed signal is audible).")
+    outPath: Nonempty = omitted(description="Keep the recorded WAV here (absolute .wav path); otherwise it is deleted after analysis.")
+    overwrite: bool = omitted(description="With outPath: replace an existing file; refused by default.")
+    key: str = omitted(pattern=r"^[A-Ga-g][#b]?:(ionian|dorian|phrygian|lydian|mixolydian|aeolian|locrian|harmonic_minor)$", description="bands: e.g. 'F:aeolian', adds in-key chroma share.")
     bpm: Annotated[float, Field(ge=20, le=666)] = omitted(description="mono_pitch: adds 16th-grid positions.")
     skipSeconds: Annotated[float, Field(ge=0, le=3600)] = omitted(description="Ignore audio before this time.")
     method: Literal["flux", "envelope"] = omitted(description="onsets/mono_pitch onset detector (default flux).")
     threshold: Annotated[float, Field(ge=0.01, le=0.9)] = omitted(description="onsets/mono_pitch sensitivity.")
-    windowSeconds: Annotated[float, Field(ge=0.01, le=60)] = omitted(description="level: window length.")
+    windowSeconds: Annotated[float, Field(ge=0.01, le=60)] = omitted(description="level: window length; bands: window length (default 8).")
+
+    @field_validator("outPath")
+    @classmethod
+    def validate_out_path(cls, value: str) -> str:
+        return _wav_path(value)
+
+    @model_validator(mode="after")
+    def validate_options(self):
+        if self.overwrite and not self.outPath:
+            raise ValueError("overwrite applies with outPath only")
+        if self.key and self.mode != "bands":
+            raise ValueError("key applies to mode=bands only")
+        return self
 
 
 class GridApplyArgs(StatusArgs):

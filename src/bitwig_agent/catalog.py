@@ -1,8 +1,12 @@
 """The public domain catalog; no transport, MCP runtime or host initialization."""
 
 import difflib
+import re
+import typing
 from dataclasses import dataclass
 from typing import Any
+
+from pydantic import BaseModel
 
 from bitwig_agent import schema
 
@@ -161,7 +165,7 @@ TOOLS: dict[str, ToolSpec] = {
         {"target": TARGET, "modules": [{"name": "H: mul", "type": "Multiply", "x": 0, "y": 0},
                                        {"name": "H: out", "type": "Audio Out", "x": 3, "y": 0}],
          "connections": [{"from": "H: mul.OUT", "to": "H: out.IN"}], "dryRun": True}),
-    "grid.probe": tool(schema.GridProbeArgs, "Listen to one Grid output port (client-side, Linux/PipeWire; composed from grid.get, grid.connections.set, audio.capture and audio.analyze). Snapshots the cables into every Audio Out of the device, rewires the probe port '<module name>.<OUT port>' to one existing Audio Out (others are disconnected), records seconds (0.2..20) from the start of the arrangement, restores every cable by compare-and-set and returns audio.analyze of mode probe|mono_pitch|onsets|level. Needs audio.route silent unless allowAudible, recording and automation write off (a playing transport is stopped; it stays stopped). A restore that cannot finish fails probe_restore_failed with the inputs still changed; never retried. Read the Grid first (grid.graph) for names.", False, {**TARGET, "port": "H: osc.OUT", "seconds": 4, "mode": "mono_pitch"}),
+    "grid.probe": tool(schema.GridProbeArgs, "Listen to one Grid output port (client-side, Linux/PipeWire; composed from grid.get, grid.connections.set, audio.capture and audio.analyze). Snapshots the cables into every Audio Out of the device, rewires the probe port '<module name>.<OUT port>' to one existing Audio Out (others are disconnected), records seconds (0.2..20) from the start of the arrangement, restores every cable by compare-and-set and returns audio.analyze of mode probe|mono_pitch|onsets|level|bands (bands = band balance + spectral peaks with note names: use it for steady/noisy sources mono_pitch cannot pitch). outPath (+overwrite) keeps the recorded WAV, otherwise it is deleted. Needs audio.route silent unless allowAudible, recording and automation write off (a playing transport is stopped; it stays stopped). A restore that cannot finish fails probe_restore_failed with the inputs still changed; never retried. Read the Grid first (grid.graph) for names.", False, {**TARGET, "port": "H: osc.OUT", "seconds": 4, "mode": "mono_pitch"}),
     "grid.export": tool(schema.GridExportArgs, "Read ONE Grid device (all pages) and return a grid.apply spec of it, composed client-side from grid.get/grid.voicing.get (not a host method; read-only toward Bitwig, writes only outPath). Use it to work on an existing patch: edit the spec, apply it back. Modules by customName (unnamed ones get a stable generated name '_<type>_<x>_<y>', listed in `unnamed`; grid.apply matches unnamed modules by it), type, x, y, params (raw values, enum as {label}, string and step arrays included), cables as 'name.PORT' pairs, voicing on Poly Grid. includeParams: changed (default; differs from the bundled 6.1.4 defaults) | all | none. namespace exports only that prefix; cables to/from other modules turn into `external` names (grid.apply references them without declaring them). Applying the export to the same device is `unchanged`. outPath writes the spec JSON instead of returning it.", True,
         {**TARGET, "includeParams": "changed"}),
     "grid.graph": tool(schema.GridGraphArgs, "Read ONE Grid device as names, no UUID joins (client-side over grid.get, read-only): modules [{name, type, x, y, size, params?}] and connections [{from:'name.OUT', to:'name.IN'}]; unnamed modules carry a generated name and unnamed:true. Optional namespace prefix filter (cables to outside modules listed in `external`), includeParams none (default) | changed | all. Pages internally; fails with graph_incomplete rather than return part of a device.", True,
@@ -217,27 +221,69 @@ SYNONYMS = {"offset": ("moduleOffset",), "limit": ("moduleLimit",), "tempo": ("t
             "instanceIds": ("moduleIds",), "outputPath": ("outPath",), "path": ("outPath",)}
 
 
-def unknown_arguments_message(method: str, keys: list[str]) -> str:
-    """Name the accepted fields and the closest match, so a mistyped field is fixable in one retry."""
-    fields = [name for name in TOOLS[method].model.model_fields if name != "timeoutMs"]
-    hints = []
+def _models_in(annotation: Any) -> list[type[BaseModel]]:
+    """Every pydantic model reachable through Optional/Union/list/dict/Annotated wrappers of one annotation."""
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        return [annotation]
+    return [m for arg in typing.get_args(annotation) for m in _models_in(arg)]
+
+
+def _fields_at(method: str, parent: tuple) -> list[str]:
+    """Accepted field names of the model(s) found by walking `parent` (a pydantic loc minus its last key) from the tool's args."""
+    models = [TOOLS[method].model]
+    for part in parent:
+        if isinstance(part, int):
+            continue
+        if any(part in model.model_fields for model in models):
+            models = [m for model in models if part in model.model_fields for m in _models_in(model.model_fields[part].annotation)]
+        else:  # a union member appears in the loc by its class name
+            models = [model for model in models if model.__name__ == part] or models
+    return list(dict.fromkeys(name for model in models for name in model.model_fields if name != "timeoutMs"))
+
+
+def _path(loc: tuple) -> str:
+    return "".join(f"[{p}]" if isinstance(p, int) else (f".{p}" if i else str(p)) for i, p in enumerate(loc))
+
+
+def _suggest(key: str, fields: list[str]) -> list[str]:
+    close = difflib.get_close_matches(key, fields, n=1, cutoff=0.5)
+    return close or [name for name in fields if key.lower() in name.lower()][:1]
+
+
+def unknown_arguments_message(method: str, keys: list[str | tuple]) -> str:
+    """Name the accepted fields and the closest match, so a mistyped field is fixable in one retry.
+    A key is a top-level name or the full pydantic loc (tuple) of a nested one: the full path and the siblings at that level are named."""
+    top = [name for name in TOOLS[method].model.model_fields if name != "timeoutMs"]
+    hints, accepted = [], []
     for key in keys:
-        close = [name for name in SYNONYMS.get(key, ()) if name in fields]
-        close = close or difflib.get_close_matches(key, fields, n=1, cutoff=0.5)
-        close = close or [name for name in fields if key.lower() in name.lower()][:1]
-        hints.append(f"{key} (use {' or '.join(close)}; no alias is accepted)" if close and key in SYNONYMS else f"{key} (did you mean {close[0]}?)" if close else key)
-    return f"Unknown argument for {method}: {', '.join(hints)}. Accepted: {', '.join(fields)}"
+        loc = (key,) if isinstance(key, str) else tuple(key)
+        if len(loc) == 1:
+            close = [name for name in SYNONYMS.get(loc[0], ()) if name in top]
+            if close:
+                hints.append(f"{loc[0]} (use {' or '.join(close)}; no alias is accepted)")
+            else:
+                close = _suggest(loc[0], top)
+                hints.append(f"{loc[0]} (did you mean {close[0]}?)" if close else loc[0])
+            accepted.append(f"Accepted: {', '.join(top)}")
+            continue
+        siblings = _fields_at(method, loc[:-1])
+        close = _suggest(str(loc[-1]), siblings)
+        hints.append(f"{_path(loc)} (did you mean {close[0]}?)" if close else _path(loc))
+        level = _path(tuple(p for p in loc[:-1]))
+        level = re.sub(r"\[\d+\]", "[]", level)
+        accepted.append(f"Accepted at {level}: {', '.join(siblings)}")
+    return f"Unknown argument for {method}: {', '.join(hints)}. " + "; ".join(dict.fromkeys(accepted))
 
 
 def invalid_params_message(method: str, exc: Exception) -> str:
-    """Compact validation text: unknown fields get the closest accepted name; no pydantic URLs or input echoes."""
+    """Compact validation text: unknown fields get the closest accepted name at their own level; no pydantic URLs or input echoes."""
     errors = getattr(exc, "errors", None)
     if method not in TOOLS or not callable(errors):
         return str(exc)
     items = errors(include_url=False, include_input=False)
-    unknown = [str(e["loc"][0]) for e in items if e.get("type") == "extra_forbidden" and e.get("loc")]
+    unknown = [tuple(e["loc"]) for e in items if e.get("type") == "extra_forbidden" and e.get("loc")]
     parts = [unknown_arguments_message(method, unknown)] if unknown else []
-    parts += [f"{'.'.join(map(str, e['loc'])) or method}: {e['msg']}" for e in items if e.get("type") != "extra_forbidden"]
+    parts += [f"{_path(tuple(e['loc'])) or method}: {e['msg']}" for e in items if e.get("type") != "extra_forbidden"]
     return "; ".join(parts) or str(exc)
 
 

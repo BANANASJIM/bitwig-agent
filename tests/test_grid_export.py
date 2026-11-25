@@ -104,10 +104,10 @@ def test_external_modules_wire_without_redeclaring_and_are_never_touched():
     host.add("Add", "X: sum", 20, 12)
     spec = {"target": TARGET, "namespace": "H: ", "external": ["X: sum"],
             "modules": [{"name": "H: new", "type": "Multiply", "x": 0, "y": 8}],
-            "connections": [{"from": "H: new.OUT", "to": "X: sum.IN3"}]}
+            "connections": [{"from": "H: new.OUT", "to": "X: sum.IN2"}]}
     host.calls.clear()
     result = run(host, spec, prune=True)
-    assert result["applied"]["connections"] == 1 and host.source("X: sum", "IN3") == ("H: new", "OUT")
+    assert result["applied"]["connections"] == 1 and host.source("X: sum", "IN2") == ("H: new", "OUT")
     assert "grid.modules.move" not in [m for m, _ in host.calls]
     # the external's own namespace-like name is never pruned
     host.calls.clear()
@@ -172,3 +172,21 @@ def test_external_inputs_are_never_pruned_even_with_opt_in():
             "modules": [{"name": "H: mul", "type": "Multiply", "x": 0, "y": 0}], "connections": []}
     result = run(host, spec)
     assert result["status"] == "unchanged" and host.writes() == [] and (s, "IN2") in host.conns
+
+
+def test_external_port_and_default_module_names_are_validated_before_writing():
+    host = built()
+    host.add("Audio Out", "", 30, 0)
+    host.calls.clear()
+    base = {"target": TARGET, "modules": [{"name": "H: new", "type": "Multiply", "x": 0, "y": 8}]}
+    bad_port = {**base, "external": ["_Audio Out_30_0"], "connections": [{"from": "H: new.OUT", "to": "_Audio Out_30_0.IN_L"}]}
+    with pytest.raises(BridgeError) as err:
+        run(host, bad_port)
+    message = err.value.error["message"]
+    assert "no input port 'IN_L'" in message and "valid inputs: IN" in message and host.writes() == []
+    by_type = {**base, "external": ["Audio Out"], "connections": [{"from": "H: new.OUT", "to": "Audio Out.IN"}]}
+    with pytest.raises(BridgeError) as err:
+        run(host, by_type)
+    assert "'_Audio Out_30_0'" in err.value.error["message"] and "generated name" in err.value.error["message"] and host.writes() == []
+    ok = {**bad_port, "connections": [{"from": "H: new.OUT", "to": "_Audio Out_30_0.IN"}]}
+    assert run(host, ok)["applied"]["connections"] == 1
