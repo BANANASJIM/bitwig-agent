@@ -129,15 +129,8 @@ class GridWriteArgs(ParameterArgs):
 
 GRID_INSERT_FIELDS = {"x", "y"}
 TYPE_ID_DESCRIPTION = "Canonical MODULE type UUID discovered through grid.catalog, not a module instanceId or file path; the host verifies catalog membership."
-TYPE_NAME_DESCRIPTION = "Alternative to typeId: a catalog module name matched exactly, ignoring case, spaces and hyphens ('low pass' = 'Low-pass'). Rejected not_applied with candidates unless exactly one entry matches."
+TYPE_NAME_DESCRIPTION = "Alternative to typeId: a catalog module name. Matching order: exact string, then exact ignoring case, then loose (ignoring case, spaces, hyphens and punctuation: 'low pass' = 'Low-pass'); the first step with a match decides. Symbol-only names ('<', '=', '≠', '≤') match exactly, and 'Slope ↗' vs 'Slope ↘' are told apart by exact match. Rejected not_applied with candidates unless exactly one entry matches at that step; if ambiguous, use typeId."
 INT32_DESCRIPTION = "Requested absolute native anchor, not a relative delta or pixels. Signed int32 JSON integer token; native layout bounds checked by host."
-
-
-def require_name_characters(value):
-    """Mirror GridNames.norm: a typeName must keep at least one letter or digit once case, spaces and punctuation are ignored."""
-    if value is not None and not any(ch.isalpha() or ch.isdecimal() for ch in value):
-        raise ValueError("typeName must contain a letter or digit")
-    return value
 
 
 class GridModuleSpec(StrictModel):
@@ -151,11 +144,6 @@ class GridModuleSpec(StrictModel):
         if len({"typeId", "typeName"} & self.model_fields_set) != 1:
             raise ValueError("supply exactly one of typeId or typeName")
         return self
-
-    @field_validator("typeName")
-    @classmethod
-    def _type_name_characters(cls, value):
-        return require_name_characters(value)
 
 
 class GridModuleInsertArgs(GridWriteArgs):
@@ -180,11 +168,6 @@ class GridModuleInsertArgs(GridWriteArgs):
         elif not (GRID_INSERT_FIELDS <= single and len(single & {"typeId", "typeName"}) == 1):
             raise ValueError("supply modules, or x, y and exactly one of typeId or typeName")
         return self
-
-    @field_validator("typeName")
-    @classmethod
-    def _type_name_characters(cls, value):
-        return require_name_characters(value)
 
 
 class GridModuleArgs(ParameterArgs):

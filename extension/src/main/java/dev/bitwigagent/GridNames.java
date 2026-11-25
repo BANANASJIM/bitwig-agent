@@ -23,6 +23,20 @@ final class GridNames {
         return true;
     }
 
+    /**
+     * typeName lookup: exact string, then exact ignoring case, then the loose normalized form (skipped for symbol-only
+     * names, which only match exactly). The first step with any hit decides; several hits are ambiguous.
+     */
+    static <T> List<T> resolve(Collection<T> items, java.util.function.Function<T, String> name, String query) {
+        List<T> hits = new ArrayList<>();
+        for (T item : items) if (name.apply(item).equals(query)) hits.add(item);
+        if (!hits.isEmpty()) return hits;
+        for (T item : items) if (name.apply(item).equalsIgnoreCase(query)) hits.add(item);
+        if (!hits.isEmpty() || norm(query).isEmpty()) return hits;
+        for (T item : items) if (same(name.apply(item), query)) hits.add(item);
+        return hits;
+    }
+
     static boolean same(String name, String query) { return norm(name).equals(norm(query)); }
 
     /** Nearest names by edit-distance ratio on the normalized forms, best first; hopeless matches are dropped. */

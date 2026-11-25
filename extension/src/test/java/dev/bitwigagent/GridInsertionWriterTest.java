@@ -311,7 +311,28 @@ public final class GridInsertionWriterTest {
         try { f.writer.insert(f.model.proxy, TRACK, new GridInsertionWriter.Request(null, "Oscilator", 8, 3), () -> {}, () -> {}, v -> {}, e -> {}); }
         catch (RpcException caught) { error = caught; }
         check(error != null && error.getMessage().contains("Oscillator"), "a typo lists the nearest names");
-        for (String bad : List.of("{\"typeId\":\"" + TYPE + "\",\"typeName\":\"x\",\"x\":1,\"y\":1}", "{\"x\":1,\"y\":1}", "{\"typeName\":\"---\",\"x\":1,\"y\":1}"))
+        // exact string beats case-insensitive beats loose; symbol-only names match only exactly; ambiguity says use typeId
+        for (String[] c : new String[][] {{"Slope \u2197", "1"}, {"Slope \u2198", "2"}, {"\u2260", "3"}, {"<", "4"}, {"=", "5"}, {"slope \u2197", "1"}}) {
+            Fixture g = new Fixture(); g.catalogNames("Slope \u2197", "Slope \u2198", "\u2260", "<", "=", "Oscillator");
+            HostOperation op = g.start(new GridInsertionWriter.Request(null, c[0], 8, 3));
+            g.deliver(); g.next();
+            long index = "Slope \u2197".equalsIgnoreCase(c[0]) ? 100 : "Slope \u2198".equals(c[0]) ? 101 : "\u2260".equals(c[0]) ? 102 : "<".equals(c[0]) ? 103 : 104;
+            check(op.result.join().get("typeId").getAsString().equals(new UUID(2, index).toString()), "name '" + c[0] + "' resolves to its own entry");
+        }
+        f.catalogNames("Filter", "Oscillator", "\u2260");
+        for (String miss : List.of("\u2264", "!=")) {
+            error = null;
+            try { f.writer.insert(f.model.proxy, TRACK, new GridInsertionWriter.Request(null, miss, 8, 3), () -> {}, () -> {}, v -> {}, e -> {}); }
+            catch (RpcException caught) { error = caught; }
+            check(error != null && error.getMessage().contains("matches no catalog module exactly") && f.loads == 0, "symbol-only miss '" + miss + "' is not loosely matched");
+        }
+        f.catalogNames("Filter", "filter", "Oscillator");
+        error = null;
+        try { f.writer.insert(f.model.proxy, TRACK, new GridInsertionWriter.Request(null, "FILTER", 8, 3), () -> {}, () -> {}, v -> {}, e -> {}); }
+        catch (RpcException caught) { error = caught; }
+        check(error != null && error.getMessage().contains("use typeId"), "ambiguity tells the caller to use typeId");
+        check(GridNames.resolve(List.of("Filter", "filter"), x -> x, "filter").equals(List.of("filter")), "exact case-sensitive match wins over a case-insensitive twin");
+        for (String bad : List.of("{\"typeId\":\"" + TYPE + "\",\"typeName\":\"x\",\"x\":1,\"y\":1}", "{\"x\":1,\"y\":1}", "{\"typeName\":\"\",\"x\":1,\"y\":1}"))
             expect("invalid_params", () -> GridInsertionWriter.Request.parse(TransportMixFixture.json(bad)));
     }
     private static void batchInsertsInOrderAndReturnsOneDiff() {
