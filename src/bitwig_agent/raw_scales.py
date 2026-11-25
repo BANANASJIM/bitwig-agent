@@ -1,0 +1,163 @@
+"""Raw <-> display scales of Grid parameters, natively measured on Bitwig 6.1.4.
+
+`numericUnit` names the unit the host displays, not how the raw value maps to it. This table records the mapping per
+(module type, parameter) so display writes ("-12 st", "-6 dB", "4 Hz") can be converted to raw client-side and agents can read
+the scale in `grid.describe`. Seconds scales (cbrt/log10) live in grid_apply.SECONDS_PARAMS.
+
+status: verified = a schema default raw/display pair fits this scale and not the obvious alternatives;
+        measured = measured natively, but the schema default does not discriminate (zero or 1.0), so it only has to agree.
+Parameters whose scale is not known are listed in UNVERIFIED and never converted.
+"""
+
+from __future__ import annotations
+
+import math
+import re
+from dataclasses import dataclass
+from typing import Any, Callable
+
+_TEXT = re.compile(r"([+-]?(?:\d+(?:\.(\d*))?|\.(\d+)))\s*([A-Za-z%]+)", re.ASCII)
+_JAVA_TRIM = "".join(map(chr, range(33)))
+_ident = lambda n: n  # noqa: E731
+
+
+@dataclass(frozen=True)
+class Scale:
+    name: str
+    formula: str
+    suffixes: dict[str, Callable[[float], float]]   # display unit suffix (lower case) -> base value
+    to_raw: Callable[[float], float]
+    from_raw: Callable[[float], float]
+    client: bool = True                             # False: the host's own display write already matches this scale
+
+
+SCALES = {s.name: s for s in (
+    Scale("linear_st", "raw = semitones", {"st": _ident}, _ident, _ident),
+    Scale("cbrt_st120", "raw = cbrt(st / 120)", {"st": _ident}, lambda v: math.cbrt(v / 120), lambda r: 120 * r ** 3),
+    Scale("linear_seconds", "raw = seconds", {"s": _ident, "ms": lambda n: n / 1000}, _ident, _ident),
+    Scale("linear_hz", "raw = Hz", {"hz": _ident, "khz": lambda n: n * 1000}, _ident, _ident),
+    Scale("linear_khz", "raw = kHz", {"hz": lambda n: n / 1000, "khz": _ident}, _ident, _ident),
+    Scale("linear_fraction", "raw = percent / 100", {"%": lambda n: n / 100}, _ident, _ident),
+    Scale("cbrt_gain", "raw = cbrt(linear gain); 100 % = 0 dB = raw 1", {"%": lambda n: n / 100, "db": lambda n: 10 ** (n / 20)},
+          lambda g: math.cbrt(g) if g >= 0 else math.nan, lambda r: r ** 3),
+    Scale("midi_pitch_hz", "raw = MIDI note; Hz = 440 * 2^((raw - 69) / 12)", {"hz": _ident, "khz": lambda n: n * 1000},
+          lambda f: 69 + 12 * math.log2(f / 440) if f > 0 else math.nan, lambda r: 440 * 2 ** ((r - 69) / 12), client=False),
+)}
+BASE_UNIT = {"linear_st": "st", "cbrt_st120": "st", "linear_seconds": "s", "linear_hz": "Hz", "linear_khz": "kHz",
+             "linear_fraction": "fraction", "cbrt_gain": "gain", "midi_pitch_hz": "Hz"}
+
+
+@dataclass(frozen=True)
+class Entry:
+    scale: str | dict[str, Any]          # scale name, or {"by": <enum parameter id>, "options": {enum value: scale name}}
+    status: str
+    evidence: tuple[tuple[float, str], ...]
+    note: str = ""
+
+
+_OSCILLATORS = ("Sine", "Sawtooth", "Pulse", "Triangle", "Phasor", "Scrawl", "Swarm", "Union", "Wavetable", "Bite", "Phase-1")
+_RATE_BY_TIMEBASE = {"by": "TIMEBASE", "options": {0: "linear_hz", 1: "linear_khz"}}
+
+RAW_SCALES: dict[tuple[str, str], Entry] = {}
+
+
+def _add(types: tuple[str, ...] | list[str], pid: str, entry: Entry) -> None:
+    for t in types:
+        RAW_SCALES[(t, pid)] = entry
+
+
+_add(("Transpose",), "VALUE", Entry("linear_st", "measured", ((0.0, "0.00 st"),), "measured on Transpose: raw = semitones"))
+_add(_OSCILLATORS, "PITCH", Entry("linear_st", "measured", ((0.0, "0.00 st"),), "measured on Sine: raw = semitones"))
+_add(_OSCILLATORS, "PITCH_MOD", Entry("cbrt_st120", "measured", ((0.584, "23.9 st"), (1.0, "120 st"), (0.112, "0.17 st")),
+                                      "raw 1.0 = 120 st; display is the full-scale modulation depth"))
+_add(("SVF", "Low-pass LD", "Low-pass MG", "Sallen-Key", "XP", "Rasp", "Ripple", "Comb", "Fizz"), "CUTOFF_MOD",
+     Entry("cbrt_st120", "measured", ((0.584, "23.9 st"), (1.0, "120 st"), (0.112, "0.17 st")), "same module_semitones mapping as PITCH_MOD"))
+_add(("SVF", "Low-pass", "High-pass", "Crossover-2", "Crossover-3", "Low-pass LD", "Low-pass MG", "Sallen-Key", "XP", "Fizz", "Ripple", "Rasp"),
+     "CUTOFF", Entry("midi_pitch_hz", "verified", ((60.0, "262 Hz"), (96.0, "2.09 kHz"), (102.8, "3.10 kHz")),
+                     "the host's own Hz display write already handles this"))
+_add(("Amplify",), "VALUE", Entry("cbrt_gain", "verified", ((1.0, "100 %"), (0.7937, "50 %"), (1.072, "123 %")), "accepts % and dB"))
+for _n in range(1, 7):
+    _add(("Mixer",), f"LEVEL_{_n}", Entry("cbrt_gain", "verified", ((1.0, "0.0 dB"), (0.6727, "-10.3 dB")), "accepts dB and %"))
+_add(("All-pass Delay",), "TIME", Entry("linear_seconds", "verified", ((0.033, "33.0 ms"),), "linear, unlike the cbrt delays"))
+_add(("Clock",), "RATE", Entry("linear_hz", "measured", ((1.0, "1.00 Hz"),), "raw = Hz"))
+_add(("LFO", "S/H LFO"), "RATE", Entry(_RATE_BY_TIMEBASE, "measured", (),
+                                       "raw = Hz with TIMEBASE Hertz, kHz with Kilohertz; other timebases are not hertz and not converted"))
+_add(("Chance",), "PROBABILITY", Entry("linear_fraction", "verified", ((0.5, "50.0 %"),)))
+_add(("SVF",), "RESONANCE", Entry("linear_fraction", "verified", ((0.6, "60.0 %"),)))
+_add(("Mod Delay",), "FEEDBACK", Entry("linear_fraction", "measured", ((0.0, "0.00 %"),), "default 0: the host cannot confirm a percent display write"))
+
+# (module, parameter) -> why no scale is recorded
+UNVERIFIED: dict[tuple[str, str], str] = {
+    ("Attenuate", "VALUE"): "default 1.0 = 100 % fits any power law and the neighbouring Amplify is cubic: not confirmed linear",
+    ("Long Delay", "TIME"): "default 1.0 = 1 s fits linear and cbrt; 0.025 shows '0.02 ms' (cbrt-like) but no confirmed pair",
+    ("Audio Out", "HOLD_TIME"): "default pair fits no recorded scale",
+}
+
+
+def scale_for(type_name: str | None, pid: str, context: dict[str, Any] | None = None) -> tuple[Entry, Scale] | None:
+    """The recorded (entry, scale) for a parameter; conditional entries need the controlling enum value in `context`."""
+    entry = RAW_SCALES.get((type_name, pid))
+    if entry is None:
+        return None
+    name = entry.scale
+    if isinstance(name, dict):
+        name = name["options"].get((context or {}).get(name["by"]))
+        if name is None:
+            return None
+    return entry, SCALES[name]
+
+
+def is_client(type_name: str | None, pid: str, context: dict[str, Any] | None = None) -> bool:
+    found = scale_for(type_name, pid, context)
+    return bool(found and found[1].client)
+
+
+def parse(scale: Scale, text: str | None) -> tuple[float, float, float] | None:
+    """(base value, base lower, base upper) for the display precision of `text`, or None when unparsable."""
+    if not isinstance(text, str):
+        return None
+    m = _TEXT.fullmatch(text.replace("−", "-").strip(_JAVA_TRIM))
+    fn = scale.suffixes.get(m.group(4).lower()) if m else None
+    if fn is None:
+        return None
+    fraction = m.group(2) if m.group(2) is not None else m.group(3) if m.group(3) is not None else ""
+    n, half = float(m.group(1)), 0.5 * 10 ** -len(fraction)
+    lo, hi = sorted((fn(n - half), fn(n + half)))
+    return fn(n), lo, hi
+
+
+def convert(type_name: str | None, pid: str, text: str, lo: Any, hi: Any, context: dict[str, Any] | None = None) -> float:
+    """The raw value for a display text; raises ValueError with a hint when not writable."""
+    found = scale_for(type_name, pid, context)
+    if found is None:
+        raise ValueError(f"no verified scale for {type_name!r} {pid}")
+    entry, scale = found
+    parsed = parse(scale, text)
+    if parsed is None:
+        raise ValueError(f"display {text!r} must be a number with a unit suffix {sorted(scale.suffixes)}")
+    raw = scale.to_raw(parsed[0])
+    if not math.isfinite(raw) or (lo is not None and not lo <= raw <= hi):
+        raise ValueError(f"{text!r} converts to raw {raw:.4g}, outside {lo}..{hi}")
+    return raw
+
+
+def describe(type_name: str, pid: str) -> dict[str, Any] | None:
+    """The `rawScale` block for grid.describe, or None."""
+    entry = RAW_SCALES.get((type_name, pid))
+    if entry is None:
+        reason = UNVERIFIED.get((type_name, pid))
+        return {"scale": None, "status": "unverified", "note": reason} if reason else None
+    if isinstance(entry.scale, dict):
+        scales = {str(v): SCALES[s].formula for v, s in entry.scale["options"].items()}
+        block: dict[str, Any] = {"scale": f"by {entry.scale['by']}", "formulaByValue": scales,
+                                 "displayWrites": f"only while {entry.scale['by']} is one of {sorted(scales)}"}
+        units = sorted({u for s in entry.scale["options"].values() for u in SCALES[s].suffixes})
+    else:
+        scale = SCALES[entry.scale]
+        block = {"scale": scale.name, "formula": scale.formula, "displayWrites": scale.client or "host"}
+        units = sorted(scale.suffixes)
+    shown = {"db": "dB", "hz": "Hz", "khz": "kHz"}
+    block.update({"status": entry.status, "units": [shown.get(u, u) for u in units], "evidence": [{"raw": r, "display": d} for r, d in entry.evidence]})
+    if entry.note:
+        block["note"] = entry.note
+    return block

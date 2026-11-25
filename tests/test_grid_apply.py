@@ -8,7 +8,7 @@ import uuid
 
 import pytest
 
-from bitwig_agent import grid_apply
+from bitwig_agent import grid_apply, raw_scales
 from bitwig_agent.catalog import validate_call
 from bitwig_agent.cli import parse_arguments
 from bitwig_agent.client import BridgeError
@@ -737,7 +737,6 @@ def test_seconds_dry_run_shows_the_converted_raw_value():
 @pytest.mark.parametrize("module,param,text", [
     ("Long Delay", "TIME", "100 ms"),  # default 1.0 = "1.00 s" fits cbrt only by coincidence
     ("Audio Out", "HOLD_TIME", "100 ms"),  # linear
-    ("All-pass Delay", "TIME", "10 ms"),  # linear
     ("ADSR", "ATTACK", "1 kb"),
 ])
 def test_unverified_seconds_display_is_rejected_offline(module, param, text):
@@ -763,6 +762,8 @@ def test_seconds_table_matches_bundled_schema_and_nothing_else_fits():
                 seen.add(key)
                 assert fits == [mapping] and display == p["defaultDisplay"] and abs(raw - p["default"]) < 1e-4
                 assert grid_apply.check_display(*args) == pytest.approx(p["default"], abs=0.01)
+            elif key in raw_scales.RAW_SCALES:  # linear seconds: covered by test_raw_scales
+                continue
             else:  # not writable by display: no mapping fits, or the only fit is the ambiguous raw 1.0
                 assert fits == [] or p["default"] == 1.0, key
                 with pytest.raises(grid_apply.SpecError):

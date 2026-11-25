@@ -13,7 +13,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from bitwig_agent.grid_apply import bundled_schema
+from bitwig_agent import raw_scales
+from bitwig_agent.grid_apply import SECONDS_PARAMS, bundled_schema
 
 DEFAULT_ROOTS = ("/opt/bitwig-studio",)
 LANGS = ("en", "de", "es", "fr", "ja", "ko", "zh")
@@ -221,6 +222,29 @@ def _stem(word: str) -> str:
     return word[:-1] if len(word) > 3 and word.endswith("s") else word
 
 
+PARAM_FACTS = ("kind", "numericUnit", "minimum", "maximum", "default", "defaultDisplay", "options")
+
+
+def raw_scale(type_name: str, pid: str) -> dict[str, Any] | None:
+    """How a parameter's raw value maps to its display: client-side table, then the seconds scales."""
+    block = raw_scales.describe(type_name, pid)
+    if block is None and (type_name, pid) in SECONDS_PARAMS:
+        mapping, raw, display = SECONDS_PARAMS[(type_name, pid)]
+        formula = {"cbrt": "raw = cbrt(seconds)", "log10": "raw = log10(seconds)"}[mapping]
+        block = {"scale": f"{mapping}_seconds", "formula": formula, "status": "verified", "units": ["ms", "s"],
+                 "evidence": [{"raw": raw, "display": display}], "displayWrites": True}
+    return block
+
+
+def parameter_facts(type_name: str, param: dict[str, Any]) -> dict[str, Any]:
+    """Range, default, enum options and raw scale from the bundled schema (absent keys are omitted)."""
+    facts = {k: param[k] for k in PARAM_FACTS if param.get(k) is not None}
+    scale = raw_scale(type_name, param["parameterId"])
+    if scale:
+        facts["rawScale"] = scale
+    return facts
+
+
 def describe_module(docs: Docs, name: str, info: dict[str, Any]) -> dict[str, Any]:
     rid = docs.resource_id(name)
     prefixes = docs.prefixes_for(([rid] if rid else []) + list(PREFIX_ALIASES.get(name, ())))
@@ -241,7 +265,7 @@ def describe_module(docs: Docs, name: str, info: dict[str, Any]) -> dict[str, An
     ports = [i["row"] for i in items]
     params = []
     for param in info.get("parameters", ()):
-        row = {"id": param["parameterId"], "name": param["name"]}
+        row = {"id": param["parameterId"], "name": param["name"], **parameter_facts(name, param)}
         items.append({"row": row, "key": param["parameterId"], "name": param["name"], "direction": None, "single": False})
         params.append(row)
     claimed: set[str] = set()
@@ -278,6 +302,8 @@ def describe_module(docs: Docs, name: str, info: dict[str, Any]) -> dict[str, An
         categoryDescription = docs.descriptions.get(f"module-category.{category}.desc")
         if categoryDescription:
             result["categoryDescription"] = categoryDescription
+    if "width" in info:
+        result["footprint"] = {"width": info["width"], "height": info["height"]}
     result["ports"] = ports
     result["parameters"] = params
     result["rawEntries"] = {f"{prefix}.{rest}": text for prefix in prefixes for rest, text in docs.prefixes[prefix].items()}
@@ -309,8 +335,12 @@ def search(docs: Docs, modules: dict[str, Any], query: str, limit: int) -> list[
         desc = docs.descriptions.get(docs.ids[rid], "") if rid else ""
         kw = docs.descriptions.get(f"module.{rid}.keywords", "") if rid else ""
         name_t, desc_t, kw_t = _tokens(name), _tokens(desc), _tokens(kw)
+        category = docs.id_category.get(rid) if rid else None
+        cat_t = _tokens(category or "")
         score = 0.0
         for term in terms:
+            if term in cat_t:
+                score += 6
             if term in name_t:
                 score += 5
             elif term in norm(name):
@@ -325,6 +355,8 @@ def search(docs: Docs, modules: dict[str, Any], query: str, limit: int) -> list[
                 score += 1
         if score:
             row: dict[str, Any] = {"name": name, "typeId": info["typeId"], "score": score}
+            if category:
+                row["category"] = category
             if desc:
                 row["description"] = desc
             ranked.append(row)
