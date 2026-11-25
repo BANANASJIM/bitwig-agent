@@ -43,6 +43,7 @@ def help_payload() -> dict[str, Any]:
                   "bitwig-agent-rpc help [method]", "bitwig-agent-rpc <method> key=value ... [--timeout-ms 5000]",
                   "bitwig-agent-rpc <method> --params '{\"key\":\"value\"}'",
                   "bitwig-agent-rpc grid.apply spec=@patch.json [dryRun=true]  (also --params @file; key=@file loads a JSON value)",
+                  "bitwig-agent-rpc grid.export trackId=<uuid> deviceIndex=0 expectedDeviceName='Poly Grid' [includeParams=changed|all|none] [namespace='H: '] [outPath=/abs/spec.json]",
                   "bitwig-agent-rpc grid.render trackId=<uuid> deviceIndex=0 expectedDeviceName='Poly Grid' outPath=/abs/grid.svg [format=png] [overwrite=true]",
                   "bitwig-agent-rpc audio.route mode=silent|restore|status   (Linux/PipeWire)",
                   "bitwig-agent-rpc audio.capture seconds=8 outPath=/abs/out.wav [fromStart=false] [overwrite=true]",
