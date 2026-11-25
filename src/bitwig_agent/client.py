@@ -9,10 +9,10 @@ import os
 import uuid
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any
-from bitwig_agent.catalog import TOOLS, validate_call
+from bitwig_agent.catalog import CLIENT_SIDE, TOOLS, validate_call
 
 MAX_BYTES = 1024 * 1024
-METHODS = frozenset(TOOLS)
+METHODS = frozenset(TOOLS) - CLIENT_SIDE
 
 
 def package_version() -> str:

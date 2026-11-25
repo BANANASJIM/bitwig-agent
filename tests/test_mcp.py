@@ -1,6 +1,6 @@
 import pytest
 
-from bitwig_agent.catalog import TOOLS, NOTE_WINDOW
+from bitwig_agent.catalog import CLIENT_SIDE, TOOLS, NOTE_WINDOW
 
 pytestmark = pytest.mark.anyio
 
@@ -11,6 +11,8 @@ SET = {**TARGET, "contextToken": "context-1", "parameterId": "cutoff", "value": 
 
 async def test_real_stdio_preserves_partial_domain_results(mcp_session, host):
     for method, spec in TOOLS.items():
+        if method in CLIENT_SIDE:
+            continue
         params = spec.examples[0]
         # All domains must preserve a partial result instead of claiming that
         # dispatch, a selected window, or a subset of edits proves completion.
@@ -24,7 +26,7 @@ async def test_real_stdio_preserves_partial_domain_results(mcp_session, host):
             got["result"].pop("extensionMismatch")
         assert got == {"result": result}
         assert host.requests[-1]["params"] == params
-    assert host.connections == len(TOOLS)
+    assert host.connections == len(TOOLS) - len(CLIENT_SIDE)
 
 
 async def test_grid_host_unknown_error_survives_mcp_without_retry(mcp_session, host):

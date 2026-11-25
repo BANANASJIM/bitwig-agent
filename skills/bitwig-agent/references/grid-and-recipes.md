@@ -22,6 +22,8 @@ Native context, license/property and undo observations do not constitute user pe
 
 `grid.catalog` (or `typeName` directly) → one batch `grid.modules.insert` (`modules`) → one batch `grid.connections.set` → one batch `grid.parameters.set` by `display`. Details in [PROTOCOL](https://github.com/BANANASJIM/bitwig-agent/blob/main/PROTOCOL.md).
 
+**Patch as code:** for more than a handful of modules use `grid.apply` (client-side; `bitwig-agent-rpc grid.apply spec=@patch.json`): `modules:[{name,type,x,y,params}]` + `connections:[{from:"name.OUT",to:"name.IN"}]`, `dryRun` first. Name is the unique `customName` identity, so re-applying is a diff and repeated blocks stay identical. `params` take raw values, `{label}` (enum) or `{display}`. `namespace`+`prune` removes stale owned modules/cables only. It stops at the first error/unknown/partial (see `failure`, `notDispatched`); do not retry blindly, inspect then re-apply.
+
 - `typeName` must match exactly one catalog name (case/space/hyphen-insensitive); zero or several reject with candidates. Batch insert stops at the first failure or before the deadline (partial); later inserts can push earlier modules right, so use the reported final positions.
 - `display` writes (`Hz`/`kHz`, `%`, `dB`) work only after per-parameter calibration, else `unsupported_unit` (a Drive with dB display but linear raw was refused natively). Pitch-like parameters are MIDI-note raw (84 = 1.05 kHz). `displayMismatch` is reported, never corrected.
 

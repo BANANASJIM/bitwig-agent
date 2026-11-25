@@ -36,6 +36,10 @@ SAFE = 'Needs a stopped, nonrecording, nonautomation state, a complete bounded g
 UNK = 'Never retry an unknown outcome: inspect with grid.get. A native setter/callback failure quarantines further topology edits until Bitwig restarts.'
 
 
+# Composed in Python from host methods; never sent to the host as one request.
+CLIENT_SIDE = frozenset({"grid.apply"})
+
+
 def tool(model, description, read_only, *examples):
     return ToolSpec(model, description, read_only, examples or ({},))
 
@@ -93,6 +97,10 @@ TOOLS: dict[str, ToolSpec] = {
         {**TARGET, "targetModuleId": "abcdef01-2345-6789-abcd-0123456789ab", "targetPortKey": "from-grid.get-input", "expectedSource": {"moduleId": "abcdef02-2345-6789-abcd-0123456789ab", "portKey": "from-grid.get-output"}, "source": None},
         {**TARGET, "connections": [{"targetModuleId": "abcdef01-2345-6789-abcd-0123456789ab", "targetPortKey": "from-grid.get-input", "expectedSource": {"moduleId": "abcdef02-2345-6789-abcd-0123456789ab", "portKey": "from-grid.get-output"}, "source": {"moduleId": "abcdef03-2345-6789-abcd-0123456789ab", "portKey": "from-grid.get-output"}},
                                    {"targetModuleId": "abcdef03-2345-6789-abcd-0123456789ab", "targetPortKey": "from-grid.get-input", "expectedSource": None, "source": {"moduleId": "abcdef02-2345-6789-abcd-0123456789ab", "portKey": "from-grid.get-output"}}]}),
+    "grid.apply": tool(schema.GridApplyArgs, "Declarative, re-appliable patch for ONE Grid device, composed client-side from the grid.* methods (not a host method). Spec: target, modules=[{name, type|typeId, x, y, params?}], connections=[{from:'module name.OUT', to:'module name.IN'}] (split on the last '.'), optional namespace, prune, dryRun. Identity is the unique non-empty customName: existing modules are reused (type must match), missing ones inserted by typeId (batches of 16), renamed, then moved to x/y after all inserts. params: raw value, {display:'1.2 kHz'} or {label:'16th'} (enum); equal values are skipped. Wrong cables are set (one source per input); unlisted inputs are left alone. prune=true disconnects them and deletes modules whose customName starts with namespace but are absent from the spec; unnamed and out-of-namespace modules are never deleted. The whole spec is validated first (types, ports, parameter ids, did-you-mean) and a failure writes nothing; offline against the bundled Bitwig 6.1.4 schema, else live grid.catalog/grid.get. Stops at the first error/unknown/partial, never retries; returns status, applied, alreadyMatched, steps, moduleIds, plus failure and notDispatched when stopped. dryRun returns the plan only. After a failure fix the cause and re-apply. " + SAFE + UNK, False,
+        {"target": TARGET, "modules": [{"name": "H: mul", "type": "Multiply", "x": 0, "y": 0},
+                                       {"name": "H: out", "type": "Audio Out", "x": 3, "y": 0}],
+         "connections": [{"from": "H: mul.OUT", "to": "H: out.IN"}], "dryRun": True}),
     "launcher.list": tool(schema.DeviceArgs, "Discover occupied and empty launcher clip slots for one track UUID; slotIndex is zero-based within the bounded window; slots exist only up to the scene count (window.total). selected=true marks the slot of the UI cursor clip (null if not yet observed); notes.* calls move that selection.", True, {"trackId": TRACK}),
     "launcher.get": tool(schema.ClipSettingsArgs, "Read exact launcher clip timing and Next Action settings by track UUID, zero-based slot and expectedClipName. Source-bound native model access; no cursor selection. Requires the inspected Bitwig 6.1.4 JAR. Readback is not playback or persistence proof.", True, {**CLIP, "expectedClipName": "Sketch"}),
     "launcher.set": tool(schema.ClipSettingsSetArgs, "Set only supplied launcher Next Action fields (timing and loopEnabled are read-only) on the exact occupied slot. Requires stopped transport with record/automation writes disabled and the inspected Bitwig 6.1.4 JAR. nextAction is play_next or stop; link=true, loopCount=1 follows after one clip loop. Returns native model readback; inspect every fields entry. Unknown writes quarantine further settings writes until extension reload; never retry automatically.", False, {**CLIP, "expectedClipName": "Sketch", "nextAction": "play_next", "nextActionEnabled": True, "nextActionLinkToLoop": True, "nextActionLoopCount": 1, "nextActionDelayBeats": 0}),
@@ -146,4 +154,4 @@ def validate_call(method: str, arguments: dict[str, Any]) -> tuple[dict[str, Any
     if method not in TOOLS:
         raise ValueError(f"Unknown method: {method}. Use list or describe <method> offline.")
     args = TOOLS[method].model.model_validate(arguments)
-    return args.model_dump(exclude={"timeoutMs"}, exclude_unset=True), args.timeoutMs
+    return args.model_dump(exclude={"timeoutMs"}, exclude_unset=True, by_alias=True), args.timeoutMs

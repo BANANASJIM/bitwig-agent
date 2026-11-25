@@ -15,7 +15,7 @@ import re
 
 from pydantic import ValidationError
 
-from bitwig_agent.catalog import TOOLS
+from bitwig_agent.catalog import CLIENT_SIDE, TOOLS
 
 UUID_PATTERN = r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 UUID = re.compile(UUID_PATTERN)
@@ -268,7 +268,7 @@ async def run(port):
     checked = 0
     problems = []
     covered = {}  # (method, field, vector) -> some base was accepted by pydantic
-    for method in sorted(TOOLS):
+    for method in sorted(set(TOOLS) - CLIENT_SIDE):
         seen = set()
         for label, params, field, expect in cases(method):
             key = (label, json.dumps(params, sort_keys=True))

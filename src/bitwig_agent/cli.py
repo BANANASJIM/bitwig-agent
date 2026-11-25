@@ -8,8 +8,18 @@ import json
 import sys
 from typing import Any
 
-from bitwig_agent.catalog import TOOLS, invalid_params_message, unknown_arguments_message, validate_call
+from bitwig_agent.catalog import CLIENT_SIDE, TOOLS, invalid_params_message, unknown_arguments_message, validate_call
 from bitwig_agent.client import BridgeClient, BridgeError, configured_port, load_json
+from bitwig_agent.grid_apply import apply as grid_apply
+
+
+def load_file(value: str) -> Any:
+    """Strict JSON from '@path'."""
+    try:
+        with open(value[1:], encoding="utf-8") as handle:
+            return load_json(handle.read())
+    except OSError as exc:
+        raise ValueError(f"Cannot read {value[1:]}: {exc.strerror}") from exc
 
 
 class ArgumentParser(argparse.ArgumentParser):
@@ -31,7 +41,8 @@ def help_payload() -> dict[str, Any]:
     return {
         "usage": ["bitwig-agent-rpc list [domain]", "bitwig-agent-rpc describe <method>",
                   "bitwig-agent-rpc help [method]", "bitwig-agent-rpc <method> key=value ... [--timeout-ms 5000]",
-                  "bitwig-agent-rpc <method> --params '{\"key\":\"value\"}'"],
+                  "bitwig-agent-rpc <method> --params '{\"key\":\"value\"}'",
+                  "bitwig-agent-rpc grid.apply spec=@patch.json [dryRun=true]  (also --params @file; key=@file loads a JSON value)"],
         "discovery": "list, help and describe are offline. capabilities queries the running host.",
         "arguments": "Strings are unquoted values (shell-quote spaces); numbers/booleans/arrays/objects use strict JSON. Booleans are true/false. Explicit null is accepted only where the method schema allows it; required nullable fields must still be supplied. Duplicate/extra fields are rejected. Raw --params is equally strict.",
         "targets": "Discover track UUIDs with tracks.list and exact device names/zero-based indices with devices.list. Clip slots and MIDI channels are zero-based. Example UUIDs are placeholders.",
@@ -47,7 +58,7 @@ def parse_arguments(method: str, pairs: list[str], raw: str | None, timeout_ms: 
     if raw is not None:
         if pairs:
             raise ValueError("--params cannot be mixed with key=value arguments")
-        values = load_json(raw)
+        values = load_file(raw) if raw.startswith("@") else load_json(raw)
         if not isinstance(values, dict):
             raise ValueError("--params must be a JSON object")
     else:
@@ -59,10 +70,18 @@ def parse_arguments(method: str, pairs: list[str], raw: str | None, timeout_ms: 
                 raise ValueError(f"Expected key=value, got {pair!r}")
             if key in values:
                 raise ValueError(f"Duplicate argument: {key}")
+            if key == "spec" and method in CLIENT_SIDE and value.startswith("@"):
+                spec = load_file(value)
+                if not isinstance(spec, dict) or set(spec) & set(values):
+                    raise ValueError("spec must be a JSON object whose fields are not also given as key=value")
+                values.update(spec)
+                continue
             if key not in properties:
                 raise ValueError(unknown_arguments_message(method, [key]))
             if properties[key].get("type") == "string":
                 values[key] = load_json(value) if value.startswith('"') else value
+            elif value.startswith("@"):
+                values[key] = load_file(value)
             else:
                 values[key] = load_json(value)
     if timeout_ms is not None:
@@ -101,7 +120,8 @@ async def execute(argv: list[str]) -> tuple[dict[str, Any], int]:
             name = arguments[0]
             return {"result": {"method": name, **TOOLS[name].describe()}}, 0
         params, timeout_ms = parse_arguments(command, arguments, args.params, args.timeout_ms)
-        result = await BridgeClient(configured_port()).call(command, params, timeout_ms)
+        client = BridgeClient(configured_port())
+        result = await (grid_apply(client, params, timeout_ms) if command in CLIENT_SIDE else client.call(command, params, timeout_ms))
         return {"result": result}, 0
     except BridgeError as exc:
         return {"error": exc.error}, 1
