@@ -40,6 +40,19 @@ def notes(midis, step=0.125, length=0.1, total=None):
     return out
 
 
+def overlapping(midis, step=0.1, decay=0.26, total=None):
+    """Plucks whose exponential tail (about 260 ms) runs under the next several notes, summed."""
+    n = int((total or 0.1 + step * len(midis) + 0.6) * RATE)
+    out = [0.0] * n
+    for i, m in enumerate(midis):
+        hz = 440 * 2 ** ((m - 69) / 12)
+        start = int((0.1 + i * step) * RATE)
+        for k in range(min(int(1.0 * RATE), n - start)):
+            t = k / RATE
+            out[start + k] += 0.25 * min(1, k / 48) * math.exp(-t / (decay / 4)) * (math.sin(2 * math.pi * hz * t) + 0.4 * math.sin(4 * math.pi * hz * t))
+    return out
+
+
 def run_analyze(path, **args):
     params, _ = validate_call("audio.analyze", {"path": str(path), **args})
     return asyncio.run(audio.analyze(params))
@@ -299,3 +312,22 @@ def test_cli_and_catalog_expose_tools():
     assert code == 1 and payload["error"]["code"] == "invalid_params"
     payload, code = asyncio.run(execute(["describe", "audio.route"]))
     assert code == 0 and json.dumps(payload)
+
+
+def test_flux_counts_overlapping_long_decay_notes(tmp_path):
+    seq = [60, 64, 67, 72, 60, 67, 64, 72, 60, 64, 67, 72, 71, 67, 64, 60]
+    p = tmp_path / "ov.wav"
+    write_wav(p, overlapping(seq))
+    r = run_analyze(p, mode="onsets")
+    assert r["method"] == "flux" and r["count"] == len(seq)
+    assert all(abs(t - (0.1 + 0.1 * i)) < 0.03 for i, t in enumerate(r["onsets"]))
+    old = run_analyze(p, mode="onsets", method="envelope")
+    assert old["method"] == "envelope" and old["count"] < len(seq)
+
+
+def test_mono_pitch_default_follows_flux_on_overlaps(tmp_path):
+    seq = [60, 64, 67, 72, 60, 67, 64, 72]
+    p = tmp_path / "ovp.wav"
+    write_wav(p, overlapping(seq))
+    r = run_analyze(p, mode="mono_pitch")
+    assert [round(n["midi"]) for n in r["notes"]] == seq

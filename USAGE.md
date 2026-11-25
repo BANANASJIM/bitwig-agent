@@ -140,7 +140,7 @@ bitwig-agent-rpc audio.analyze path=/tmp/take.wav mode=mono_pitch bpm=120 skipSe
 bitwig-agent-rpc audio.route mode=restore                      # always: re-link the speakers
 ```
 
-`analyze` modes: `level` (peak/rms/silence), `onsets`, `mono_pitch` (monophonic only), `probe` (10 ms means: route a logic/CV signal to Audio Out to read it as a scope). `audio.route status` shows the current links; the previous targets live in `~/.cache/bitwig-agent/audio-route.json` until `restore`. Only Bitwig's own links are touched.
+`analyze` modes: `level` (peak/rms/silence), `onsets` and `mono_pitch` (spectral-flux onsets by default, which count overlapping notes with long decays; `method=envelope` is the old amplitude-envelope detector) (monophonic only), `probe` (10 ms means: route a logic/CV signal to Audio Out to read it as a scope). `audio.route status` shows the current links; the previous targets live in `~/.cache/bitwig-agent/audio-route.json` until `restore`. Only Bitwig's own links are touched.
 
 ## Host problems the API cannot show (`host.diagnostics`)
 

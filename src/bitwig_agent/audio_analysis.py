@@ -120,8 +120,14 @@ def onsets(x: array, rate: int, threshold: float, skip: float) -> tuple[list[flo
     return found, {"silent": False, "peak": round(top, 4)}
 
 
+_TWIDDLES: dict[int, list[complex]] = {}
+
+
 def _fft(values: list[complex]) -> list[complex]:
     n = len(values)
+    tw = _TWIDDLES.get(n)
+    if tw is None:
+        tw = _TWIDDLES[n] = [cmath.exp(-2j * math.pi * k / n) for k in range(n // 2)]
     j = 0
     for i in range(1, n):
         bit = n >> 1
@@ -133,13 +139,11 @@ def _fft(values: list[complex]) -> list[complex]:
             values[i], values[j] = values[j], values[i]
     size = 2
     while size <= n:
-        step = cmath.exp(-2j * math.pi / size)
+        half, stride = size // 2, n // size
         for start in range(0, n, size):
-            w = 1 + 0j
-            for k in range(start, start + size // 2):
-                a, b = values[k], values[k + size // 2] * w
-                values[k], values[k + size // 2] = a + b, a - b
-                w *= step
+            for k in range(half):
+                a, b = values[start + k], values[start + k + half] * tw[k * stride]
+                values[start + k], values[start + k + half] = a + b, a - b
         size <<= 1
     return values
 
@@ -166,11 +170,81 @@ def pitch_at(x: array, rate: int, start: int) -> float | None:
     return 69 + 12 * math.log2(hz / 440)
 
 
+FLUX_SIZE = 512             # at FLUX_RATE: 21 ms frames
+FLUX_HOP = 240              # 10 ms
+FLUX_RATE = 24000
+FLUX_MAX_HZ = 8000
+MIN_SEPARATION = 0.04       # seconds between onsets
+_FLUX_WINDOW = [0.5 - 0.5 * math.cos(2 * math.pi * i / FLUX_SIZE) for i in range(FLUX_SIZE)]
+
+
+def _decimate(x: array, rate: int) -> tuple[array, int]:
+    """Average-and-drop to about FLUX_RATE (crude low-pass; onsets need no high band)."""
+    factor = max(1, round(rate / FLUX_RATE))
+    if factor == 1:
+        return x, rate
+    return array("d", (sum(x[i:i + factor]) / factor for i in range(0, len(x) - factor + 1, factor))), rate // factor
+
+
+def spectral_flux(x: array, rate: int) -> tuple[list[float], float]:
+    """Half-wave rectified log-magnitude flux per 10 ms hop, and the hop length in seconds."""
+    y, yrate = _decimate(x, rate)
+    hop = max(1, round(FLUX_HOP * yrate / FLUX_RATE))
+    bins = min(max(2, int(FLUX_MAX_HZ * FLUX_SIZE / yrate)), FLUX_SIZE // 2)
+    flux, previous = [], None
+    for start in range(0, len(y) - FLUX_SIZE + 1, hop):
+        spectrum = _fft([complex(v * w) for v, w in zip(y[start:start + FLUX_SIZE], _FLUX_WINDOW)])
+        mags = [math.log1p(200 * abs(c) / FLUX_SIZE) for c in spectrum[1:bins]]
+        flux.append(0.0 if previous is None else sum(max(0.0, a - b) for a, b in zip(mags, previous)))
+        previous = mags
+    return flux, hop * (rate / yrate) / rate
+
+
+def flux_onsets(x: array, rate: int, threshold: float, skip: float) -> tuple[list[float], dict[str, Any]]:
+    """Peaks of the spectral flux: a new note over a long decaying tail still adds new energy per bin, which an
+    amplitude envelope cannot see. A peak is a local maximum that beats its neighbourhood median by
+    threshold*max(flux) and sits MIN_SEPARATION after the previous one; its time is refined to the steepest envelope rise."""
+    top_peak = max(map(abs, x[int(skip * rate):]), default=0.0)
+    info = {"silent": top_peak < SILENT_PEAK, "peak": round(top_peak, 4), "method": "flux"}
+    if info["silent"]:
+        return [], info
+    flux, hop_s = spectral_flux(x, rate)
+    first = max(1, int(skip / hop_s))
+    top = max(flux[first:], default=0.0)
+    found: list[float] = []
+    if top > 0:
+        span = max(2, round(0.5 / hop_s))
+        near = max(1, round(0.03 / hop_s))
+        env_hop = max(1, int(HOP_SECONDS * rate))
+        for i in range(first, len(flux)):
+            v = flux[i]
+            if v <= 0 or any(flux[j] > v or (flux[j] == v and j < i) for j in range(max(0, i - near), min(len(flux), i + near + 1)) if j != i):
+                continue
+            window = sorted(flux[max(0, i - span):i + span + 1])
+            if v - window[len(window) // 2] < threshold * top:
+                continue
+            lo = int(max(0.0, i * hop_s - 0.01) * rate)
+            env = _envelope(x[lo:lo + int((FLUX_SIZE / FLUX_RATE + 0.02) * rate)], env_hop)
+            rise = max(range(1, len(env)), key=lambda k: env[k] - env[k - 1], default=0)
+            t = (lo + rise * env_hop) / rate
+            if t < skip or (found and t - found[-1] < MIN_SEPARATION):
+                continue
+            found.append(round(t, 4))
+    return found, info
+
+
+def find_onsets(x: array, rate: int, threshold: float, skip: float, method: str) -> tuple[list[float], dict[str, Any]]:
+    if method == "envelope":
+        times, info = onsets(x, rate, threshold, skip)
+        return times, {**info, "method": "envelope"}
+    return flux_onsets(x, rate, threshold, skip)
+
+
 NAMES = ("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
 
 
-def mono_pitch(x: array, rate: int, threshold: float, skip: float, bpm: float | None) -> dict[str, Any]:
-    times, info = onsets(x, rate, threshold, skip)
+def mono_pitch(x: array, rate: int, threshold: float, skip: float, bpm: float | None, method: str = "flux") -> dict[str, Any]:
+    times, info = find_onsets(x, rate, threshold, skip, method)
     notes = []
     for t in times:
         midi = pitch_at(x, rate, int(t * rate))
@@ -237,7 +311,7 @@ def analyze(args: dict[str, Any]) -> dict[str, Any]:
         return {**base, **probe(x, rate, skip)}
     threshold = args.get("threshold", 0.15)
     if mode == "onsets":
-        times, info = onsets(x, rate, threshold, skip)
+        times, info = find_onsets(x, rate, threshold, skip, args.get("method", "flux"))
         return {**base, **info, "count": len(times), "onsets": times[:MAX_ONSETS], "truncated": len(times) > MAX_ONSETS,
                 "intervals": [round(b - a, 4) for a, b in zip(times, times[1:])][:MAX_ONSETS]}
-    return {**base, **mono_pitch(x, rate, threshold, skip, args.get("bpm"))}
+    return {**base, **mono_pitch(x, rate, threshold, skip, args.get("bpm"), args.get("method", "flux"))}
