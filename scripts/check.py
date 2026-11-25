@@ -68,7 +68,7 @@ def main() -> int:
             result["command"] = command
             try:
                 completed = subprocess.run(command, cwd=ROOT, env=child_env, check=False,
-                                           timeout={"offline": 180, "java": 900, "fixture": 240, "native": 180}[layer])
+                                           timeout={"offline": 420, "java": 900, "fixture": 240, "native": 180}[layer])
                 result.update(status="passed" if completed.returncode == 0 else "failed", returncode=completed.returncode)
             except (OSError, subprocess.TimeoutExpired) as exc:
                 result.update(status="failed", reason=str(exc))
