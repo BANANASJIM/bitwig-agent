@@ -142,7 +142,9 @@ final class GridModule implements HostModule {
         JsonObject binding = full.getAsJsonObject(key);
         boolean available = binding.has(flag) && binding.get(flag).getAsBoolean();
         out.addProperty(key, available);
-        if (!available && binding.has("reason") && !binding.get("reason").isJsonNull()) unavailable.add(key, binding.get("reason"));
+        JsonElement why = binding.has("reason") && !binding.get("reason").isJsonNull() ? binding.get("reason")
+                : binding.has("writeReason") && !binding.get("writeReason").isJsonNull() ? binding.get("writeReason") : null;
+        if (!available && why != null) unavailable.add(key, why);
     }
     private static boolean graphMode(JsonObject p) {
         if (!p.has("graph")) return false;
