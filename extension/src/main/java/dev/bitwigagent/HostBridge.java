@@ -11,7 +11,8 @@ import static dev.bitwigagent.HostServices.failure;
 public final class HostBridge implements RpcServer.Handler, AutoCloseable {
     static final Set<String> PROJECT_WRITES = Set.of("tracks.create", "devices.insert", "launcher.create", "launcher.import", "scenes.append", "scenes.duplicate", "scenes.delete", "grid.voicing.set",
             "devices.delete", "devices.move", "devices.layers.insert", "tracks.group", "tracks.delete", "arranger.clips.create", "arranger.clips.copyFromLauncher", "arranger.clips.edit",
-            "grid.modules.insert", "grid.modules.move", "grid.modules.delete", "grid.modules.rename", "grid.connections.set", "grid.parameters.set");
+            "grid.modules.insert", "grid.modules.move", "grid.modules.delete", "grid.modules.rename", "grid.connections.set", "grid.parameters.set",
+            "tracks.routing.set", "devices.sidechain.set");
     private static final Map<String, BiConsumer<String, JsonObject>> VALIDATORS = validators();
     private final HostServices services;
     private final Map<String, HostModule> modules = new HashMap<>();
@@ -42,6 +43,7 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
         register(new MeterModule(services));
         register(new ArrangerModule(services));
         register(new AutomationModule(services));
+        register(new RoutingModule(services));
         register(render);
         register(new ContextModule(services, transport, mix, launcher));
         register(new GridModule(services));
@@ -80,6 +82,7 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
         registerValidator(methods, LauncherSettingsModule.METHODS, LauncherSettingsModule::validateParams);
         registerValidator(methods, ArrangerModule.METHODS, ArrangerModule::validateParams);
         registerValidator(methods, AutomationModule.METHODS, AutomationModule::validateParams);
+        registerValidator(methods, RoutingModule.METHODS, RoutingModule::validateParams);
         registerValidator(methods, RenderModule.METHODS, RenderModule::validateParams);
         registerValidator(methods, GridModule.METHODS, GridModule::validateParams);
         registerValidator(methods, ModulatorModule.METHODS, ModulatorModule::validateParams);
