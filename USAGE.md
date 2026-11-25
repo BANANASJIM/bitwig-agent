@@ -81,6 +81,16 @@ bitwig-agent-rpc grid.apply spec=@patch.json        # or --params @patch.json
 
 Keep one spec per Grid device (sections as name prefixes inside it); two specs sharing a namespace with `prune` delete each other's modules. Use a `namespace` prefix (e.g. `"H: "`) plus `prune=true` to also remove stale modules and cables you own. It stops at the first error or unknown outcome and reports what was and was not done; fix the cause and re-apply. See [PROTOCOL](PROTOCOL.md#gridapply-declarative-patch-client-side).
 
+## See a Grid layout
+
+`grid.render` draws one Grid device as SVG (or PNG when `rsvg-convert` or `magick` is installed) and returns a layout summary (overlaps, unconnected modules, sections from `"H: "` name prefixes, density), so you can check a patch without the Grid editor:
+
+```sh
+bitwig-agent-rpc grid.render trackId=<uuid> deviceIndex=0 expectedDeviceName='Poly Grid' outPath=/tmp/grid.png format=png overwrite=true
+```
+
+It only reads from Bitwig and writes `outPath`; it refuses to replace an existing file without `overwrite=true`. See [PROTOCOL](PROTOCOL.md#gridrender-layout-image-client-side).
+
 ## Make Grid instruments without preset files
 
 The recipe runs from a source checkout with `uv sync --locked` (see [contributor setup](CONTRIBUTING.md#source-setup)); it is not installed as a tool by the wheel.

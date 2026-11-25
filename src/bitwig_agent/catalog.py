@@ -37,7 +37,7 @@ UNK = 'Never retry an unknown outcome: inspect with grid.get. A native setter/ca
 
 
 # Composed in Python from host methods; never sent to the host as one request.
-CLIENT_SIDE = frozenset({"grid.apply"})
+CLIENT_SIDE = frozenset({"grid.apply", "grid.render"})
 
 
 def tool(model, description, read_only, *examples):
@@ -104,6 +104,8 @@ TOOLS: dict[str, ToolSpec] = {
         {"target": TARGET, "modules": [{"name": "H: mul", "type": "Multiply", "x": 0, "y": 0},
                                        {"name": "H: out", "type": "Audio Out", "x": 3, "y": 0}],
          "connections": [{"from": "H: mul.OUT", "to": "H: out.IN"}], "dryRun": True}),
+    "grid.render": tool(schema.GridRenderArgs, "Draw ONE Grid device's layout to an image file, composed client-side from grid.get (not a host method; read-only toward Bitwig, writes only outPath). Use it to see what you built when the Grid editor is not visible. Target as grid.get plus outPath (absolute; refused if it exists unless overwrite=true), format svg (default) or png (rsvg-convert, else magick, else error), optional namespace (customName prefix to highlight, others dimmed), showConnections (default true), scale 0.25..4. Modules are coloured by category, Label modules are section headers, Comment modules show their text, cables run from output to input side. Returns status, outPath, bytes, imageSize and a layout summary: moduleCount, connectionCount, boundingBox (cells), categories, overlaps (pairs of modules sharing cells, capped at 50, with overlapCount), unconnected modules (capped), sections inferred from 'P: ' name prefixes with bounding boxes, density (occupied cells / bbox cells). Reads all pages; fails with graph_incomplete rather than draw part of a device.",
+        True, {"trackId": TRACK, "deviceIndex": 0, "expectedDeviceName": "Poly Grid", "outPath": "/tmp/grid.svg"}),
     "launcher.list": tool(schema.DeviceArgs, "Discover occupied and empty launcher clip slots for one track UUID; slotIndex is zero-based within the bounded window; slots exist only up to the scene count (window.total). selected=true marks the slot of the UI cursor clip (null if not yet observed); notes.* calls move that selection.", True, {"trackId": TRACK}),
     "launcher.get": tool(schema.ClipSettingsArgs, "Read exact launcher clip timing and Next Action settings by track UUID, zero-based slot and expectedClipName. Source-bound native model access; no cursor selection. Requires the inspected Bitwig 6.1.4 JAR. Readback is not playback or persistence proof.", True, {**CLIP, "expectedClipName": "Sketch"}),
     "launcher.set": tool(schema.ClipSettingsSetArgs, "Set only supplied launcher Next Action fields (timing and loopEnabled are read-only) on the exact occupied slot. Requires stopped transport with record/automation writes disabled and the inspected Bitwig 6.1.4 JAR. nextAction is play_next or stop; link=true, loopCount=1 follows after one clip loop. Returns native model readback; inspect every fields entry. Unknown writes quarantine further settings writes until extension reload; never retry automatically.", False, {**CLIP, "expectedClipName": "Sketch", "nextAction": "play_next", "nextActionEnabled": True, "nextActionLinkToLoop": True, "nextActionLoopCount": 1, "nextActionDelayBeats": 0}),
