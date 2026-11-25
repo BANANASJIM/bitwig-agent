@@ -15,6 +15,7 @@ public final class DeviceModuleTest {
 
     public static void main(String[] args) {
         strictShapesRejectBeforeScheduling();
+        catalogListsFactoryDevicesWithRuntimeTexts();
         sameNameTargetsStayExplicit();
         bypassNeedsFreshSameSourceObservation();
         targetChangeAndDeadlinesNeverReplay();
@@ -174,6 +175,37 @@ public final class DeviceModuleTest {
                     && control.value("value").writes == 1,
                     "duplicate presence preserves a genuinely fresh value for subsequent no-op");
         }
+    }
+
+    private static void catalogListsFactoryDevicesWithRuntimeTexts() {
+        try {
+            java.nio.file.Path root = java.nio.file.Files.createTempDirectory("bwcatalog");
+            java.nio.file.Path devices = java.nio.file.Files.createDirectories(root.resolve("Library").resolve("devices"));
+            java.nio.file.Path text = java.nio.file.Files.createDirectories(root.resolve("resources").resolve("localization"));
+            for (String name : List.of("Poly Grid.bwdevice", "v9 Hat Open.bwdevice", "Mystery.bwdevice", "ignored.txt"))
+                java.nio.file.Files.write(devices.resolve(name), new byte[]{1});
+            java.nio.file.Files.write(text.resolve("Device-descriptions-resources.properties"), ("\uFEFF#the_grid.\n"
+                    + "device.poly_grid.desc=Modular poly\\nsynth\ndevice.poly_grid.keywords=x\n#drum.\ndevice.v9_open_hat.desc=Open hat\n").getBytes("UTF-8"));
+            java.nio.file.Files.write(text.resolve("Categories-resources.properties"), "The\\ Grid=The Grid\nDrum=Drum\n".getBytes("UTF-8"));
+            JsonObject result = DeviceModule.catalog(root.toString());
+            JsonArray list = result.getAsJsonArray("devices");
+            check(result.get("supported").getAsBoolean() && list.size() == 3, "only .bwdevice files are listed");
+            JsonObject poly = null, hat = null, mystery = null;
+            for (JsonElement e : list) {
+                JsonObject item = e.getAsJsonObject();
+                String name = item.get("name").getAsString();
+                if (name.equals("Poly Grid")) poly = item; else if (name.equals("v9 Hat Open")) hat = item; else mystery = item;
+                check(item.get("kind").getAsString().equals("file") && item.get("path").getAsString().endsWith(name + ".bwdevice"), "kind=file path usable by devices.insert");
+            }
+            check(poly.get("category").getAsString().equals("The Grid") && poly.get("description").getAsString().equals("Modular poly\nsynth"), "category and description come from the resources");
+            check(hat.get("category").getAsString().equals("Drum") && hat.get("description").getAsString().equals("Open hat"), "word order does not matter");
+            check(!mystery.has("category") && !mystery.has("description"), "unknown device keeps name and path only");
+            check(!result.get("bitwigIdAvailable").getAsBoolean(), "no native UUIDs claimed");
+            JsonObject none = DeviceModule.catalog(null);
+            check(!none.get("supported").getAsBoolean() && none.getAsJsonArray("devices").size() == 0, "no root, no guesses");
+            JsonObject missing = DeviceModule.catalog(root.resolve("nowhere").toString());
+            check(missing.get("supported").getAsBoolean() && missing.getAsJsonArray("devices").size() == 0, "missing directory lists nothing");
+        } catch (java.io.IOException error) { throw new AssertionError(error); }
     }
 
     private static void strictShapesRejectBeforeScheduling() {

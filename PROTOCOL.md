@@ -120,7 +120,7 @@ Layer discovery and parameter observations do not establish native write isolati
 | `devices.set` | `D`, `enabled`; device name is read-only in the public API |
 | `devices.select` | `D`; explicit editor-selection dispatch, not observed-selection proof |
 | `devices.insert` | `T`, `expectedDeviceCount` (0–15), `kind`; `id` for `bitwig`/`vst2`/`vst3`/`clap`, or absolute normalized local `path` for `file`; append only |
-| `devices.catalog` | `{}`; existing factory Poly/FX/Note Grid file paths under the host installation, not a full plug-in inventory |
+| `devices.catalog` | `{}`; every installed factory `.bwdevice` under the host installation as `kind:"file"` entries `{name, path, sourceKind, category?, description?}` (category and description read at runtime from the install's localization resources, never copied into the repo). `bitwigIdAvailable:false`: native device UUIDs for `kind:"bitwig"` are not exposed by the install or the API, so insert factory devices by file path. Not a plug-in inventory |
 | `devices.remote.get` | `D`; independent observed page, eight controls and context token |
 | `devices.remote.page` | `D`, `contextToken`, `pageIndex`, `expectedPageName` |
 | `devices.remote.set` | `D`, `contextToken`, `expectedPageName`, `parameterIndex` (0–7), `expectedParameterName`, `normalizedValue` |
