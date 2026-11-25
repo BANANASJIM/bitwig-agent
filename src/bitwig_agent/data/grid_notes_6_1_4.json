@@ -17,9 +17,23 @@
     "AD": ["With GATE on it does not retrigger from short trigger pulses: use GATE off for trigger-driven envelopes.", "ATTACK/DECAY raw = cbrt(seconds)."],
     "ADSR": ["With GATE on it does not retrigger from short trigger pulses: use GATE off for trigger-driven envelopes."],
     "Chance": ["Outputs short triggers."],
-    "Triggers": ["STEPS=N fed by a phase produced 2N rising edges per cycle."],
     "Logic Delay": ["DELAY raw = log10(seconds)."],
     "Gate Length": ["LENGTH raw = log10(seconds)."],
-    "Long Delay": ["TIME 0.025 = shortest (usable as a 1-sample feedback delay)."]
+    "Long Delay": ["TIME 0.025 = shortest (usable as a 1-sample feedback delay)."],
+    "Steps": ["DEVICE_PHASE defaults to On and then ignores a cable on PHASE_IN; set DEVICE_PHASE off to drive it from a phase signal."],
+    "Pitches": ["DEVICE_PHASE defaults to On and then ignores a cable on PHASE_IN; set DEVICE_PHASE off to drive it from a phase signal."],
+    "Gates": ["DEVICE_PHASE defaults to On and then ignores a cable on PHASE_IN; set DEVICE_PHASE off to drive it from a phase signal."],
+    "Probabilities": ["DEVICE_PHASE defaults to On and then ignores a cable on PHASE_IN; set DEVICE_PHASE off to drive it from a phase signal."],
+    "Accents": ["DEVICE_PHASE defaults to On and then ignores a cable on PHASE_IN; set DEVICE_PHASE off to drive it from a phase signal."],
+    "Slopes": ["DEVICE_PHASE defaults to On and then ignores a cable on PHASE_IN; set DEVICE_PHASE off to drive it from a phase signal."],
+    "Triggers": ["STEPS=N fed by a phase produced 2N rising edges per cycle.", "DEVICE_PHASE defaults to On and then ignores a cable on IN; set DEVICE_PHASE off to drive it from a phase signal."],
+    "SVF": ["KEYTRACK defaults to 100%: in a Poly Grid the cutoff follows the played note (about 2 octaves darker than written for a C1 note); set KEYTRACK 0 for a fixed cutoff."]
+  },
+  "rules": {
+    "devicePhase": {"parameter": "DEVICE_PHASE", "message": "has a cable on its phase input but DEVICE_PHASE is on, so the cable is ignored; set DEVICE_PHASE off"},
+    "keytrack": {"parameter": "KEYTRACK", "message": "has KEYTRACK {value} in a Poly Grid, so its cutoff follows the played note; set KEYTRACK 0 for a fixed cutoff"},
+    "unconnected": {"skipTypes": ["Note In"], "message": "has no connections"},
+    "deadEnd": {"types": ["Sine", "Sawtooth", "Pulse", "Triangle", "Phasor", "Sub", "Swarm", "Wavetable", "Scrawl", "Union", "Dice", "AD", "ADSR", "AR", "Pluck"],
+                "message": "has connected inputs but none of its outputs is used"}
   }
 }

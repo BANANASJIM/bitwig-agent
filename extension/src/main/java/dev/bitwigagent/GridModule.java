@@ -92,7 +92,10 @@ final class GridModule implements HostModule {
                 if (moving) GridModuleWriter.Move.parse(p);
                 return;
             case "grid.voicing.get":
-                Params.fields(p, Set.of("trackId", "deviceIndex", "expectedDeviceName"), Set.of());
+                Params.fields(p, Set.of("trackId", "deviceIndex", "expectedDeviceName"), Set.of("detail"));
+                if (p.has("detail") && !(p.get("detail").isJsonPrimitive() && p.get("detail").getAsJsonPrimitive().isString()
+                        && Set.of("summary", "full").contains(p.get("detail").getAsString())))
+                    throw failure("invalid_params", "detail must be \"summary\" or \"full\".");
                 canonicalUuid(p, "trackId");
                 Params.integer(p, "deviceIndex", 0, HostServices.DEVICES - 1);
                 Params.string(p, "expectedDeviceName");
@@ -295,6 +298,7 @@ final class GridModule implements HostModule {
                                 () -> { check.run(); op.dispatched = true; }), true)
                         : inspection ? adapter.parameter(target.device, trackUuid, moduleId, parameterId, fullSteps, check)
                         : adapter.snapshot(target.device, trackUuid, offset, limit, parameters, diagnostics, moduleFilter, fullSteps, check);
+                if (voicingGet && !(p.has("detail") && p.get("detail").getAsString().equals("full"))) value.remove("editContext");
                 deliver(op, target, safety, writing, check, value);
             } catch (RuntimeException error) {
                 op.fail(error instanceof RpcException ? error

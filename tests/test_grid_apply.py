@@ -167,6 +167,9 @@ class FakeGrid:
             entries.append({"moduleId": w["moduleId"], "parameterId": w["parameterId"], "status": "applied"})
         return {"status": "observed", "batchStatus": "applied", "completion": "complete", "writes": entries}
 
+    def h_transport_get(self, p):
+        return {"status": "observed", **getattr(self, "transport", {"playing": False})}
+
     def h_voicing_get(self, p):
         if self.voicing is None:
             return {"status": "observed", "supported": False, "reason": "no_voicing_model: only Poly Grid has device voicing"}
@@ -694,7 +697,7 @@ def test_notes_and_pitch_mod_warning():
     result = run(host, spec, dryRun=True)
     assert [w for w in result["warnings"] if "PITCH_MOD" in w] == ["o: PITCH_IN is connected but PITCH_MOD is 0, so it has no effect (raw 1.0 = 120 semitones)"]
     result = run(host, spec)
-    assert len(result["warnings"]) == 1 and result["warnings"][0].startswith("o:")
+    assert [w for w in result["warnings"] if "PITCH_MOD" in w] == ["o: PITCH_IN is connected but PITCH_MOD is 0, so it has no effect (raw 1.0 = 120 semitones)"]
     assert any(n.startswith("Sine: PITCH_IN is scaled by PITCH_MOD") for n in result["notes"])
     assert not any(n.startswith("Chance:") for n in result["notes"]) and any("voice lifetime" in n for n in result["notes"])
     assert len(result["notes"]) < 8
@@ -947,3 +950,93 @@ def test_voicing_schema_surface():
         validate_call("grid.apply", {"target": TARGET, "modules": [{"name": "A", "type": "Add", "x": 0, "y": 0}], "voicing": {}})
     with pytest.raises(Exception):
         validate_call("grid.apply", {"target": TARGET, "modules": [{"name": "A", "type": "Add", "x": 0, "y": 0}], "voicing": {"voices": 65}})
+
+
+# --- preflight warnings, wouldFail and actionable errors ------------------------------------------------------
+def messages(result, text):
+    return [w for w in result.get("warnings", []) if text in w]
+
+
+def test_device_phase_cable_warning_only_while_device_phase_is_on():
+    mods = [{"name": "ph", "type": "Phasor", "x": 0, "y": 0}, {"name": "st", "type": "Steps", "x": 8, "y": 0},
+            {"name": "st2", "type": "Gates", "x": 16, "y": 0, "params": {"DEVICE_PHASE": False}}]
+    conns = [{"from": "ph.OUT", "to": "st.PHASE_IN"}, {"from": "ph.OUT", "to": "st2.PHASE_IN"}]
+    result = run(FakeGrid(), {"target": TARGET, "modules": mods, "connections": conns}, dryRun=True)
+    assert [w.split(":")[0] for w in messages(result, "DEVICE_PHASE")] == ["st"]
+    assert any(n.startswith("Steps: DEVICE_PHASE defaults to On") for n in result["notes"])
+
+
+def test_keytrack_warning_needs_a_poly_grid_and_nonzero_keytrack():
+    mods = [{"name": "f", "type": "SVF", "x": 0, "y": 0}, {"name": "g", "type": "SVF", "x": 8, "y": 0, "params": {"KEYTRACK": 0}}]
+    conns = [{"from": "f.OUT", "to": "g.IN"}]
+    spec = {"target": TARGET, "modules": mods, "connections": conns}
+    note_grid = run(FakeGrid(), spec, dryRun=True)
+    assert not messages(note_grid, "KEYTRACK")
+    host = FakeGrid()
+    host.voicing = {"voices": 8, "voiceStacking": 1, "monoMode": "true_mono"}
+    result = run(host, spec, dryRun=True)
+    assert [w.split(":")[0] for w in messages(result, "KEYTRACK")] == ["f"]
+
+
+def test_dangling_modules_are_flagged_but_note_in_is_not():
+    mods = [{"name": "n", "type": "Note In", "x": 0, "y": 0}, {"name": "lonely", "type": "Add", "x": 0, "y": 8},
+            {"name": "o", "type": "Sine", "x": 8, "y": 0}, {"name": "m", "type": "Add", "x": 16, "y": 0}]
+    result = run(FakeGrid(), {"target": TARGET, "modules": mods, "connections": [{"from": "m.OUT", "to": "o.PITCH_IN"}]}, dryRun=True)
+    assert messages(result, "lonely: has no connections") and not messages(result, "n: ")
+    assert messages(result, "o: has connected inputs but none of its outputs")
+
+
+def test_dry_run_would_fail_reports_transport_and_stays_read_only():
+    host = FakeGrid()
+    host.transport = {"playing": True}
+    spec = {"target": TARGET, "modules": [{"name": "a", "type": "Add", "x": 0, "y": 0}]}
+    result = run(host, spec, dryRun=True)
+    assert [f["code"] for f in result["wouldFail"]] == ["unsafe_state"] and host.writes() == []
+    host.transport = {"playing": False}
+    assert "wouldFail" not in run(host, spec, dryRun=True)
+
+
+def test_dry_run_would_fail_flags_host_converted_display_and_missing_target():
+    spec = {"target": TARGET, "modules": [{"name": "f", "type": "SVF", "x": 0, "y": 0, "params": {"CUTOFF": {"display": "800 Hz"}}}]}
+    result = run(FakeGrid(), spec, dryRun=True)
+    assert [f["code"] for f in result["wouldFail"]] == ["display_unverified"]
+    host = FakeGrid()
+    host.fail["grid.get"] = BridgeError({"code": "target_not_found", "message": "no device", "outcome": "not_applied"})
+    result = run(host, spec, dryRun=True)
+    assert result["status"] == "dryRun" and result["wouldFail"][0]["code"] == "target_not_found" and host.writes() == []
+    with pytest.raises(BridgeError):
+        run(host, spec)
+
+
+def error_text(host, spec):
+    with pytest.raises(BridgeError) as exc:
+        run(host, spec)
+    return exc.value.error["message"]
+
+
+def test_unknown_parameter_and_port_errors_list_valid_ids():
+    low = {"target": TARGET, "modules": [{"name": "f", "type": "Amplify", "x": 0, "y": 0, "params": {"GAIN": 0.5}}]}
+    text = error_text(FakeGrid(), low)
+    assert "unknown parameter 'GAIN'" in text and "Valid: BIPOLAR, STEREOIZE, VALUE" in text
+    mods = [{"name": "osc", "type": "Sine", "x": 0, "y": 0}, {"name": "t", "type": "Triggers", "x": 8, "y": 0}]
+    text = error_text(FakeGrid(), {"target": TARGET, "modules": mods, "connections": [{"from": "osc.out", "to": "t.PHASE_IN"}]})
+    assert "Did you mean: 'OUT'" in text and "Valid: OUT" in text
+    assert "Did you mean: 'IN'" in text and "Valid: IN" in text
+
+
+def test_overlap_error_names_the_blocker():
+    host = FakeGrid()
+    host.add("Add", "C: bar", 0, 0)
+    host.add("Add", "", 10, 0)
+    text = error_text(host, {"target": TARGET, "modules": [{"name": "a", "type": "Sine", "x": 0, "y": 0}, {"name": "b", "type": "Sine", "x": 10, "y": 0}]})
+    assert "'C: bar' (Add@0,0)" in text and "Add@10,0" in text
+
+
+def test_real_apply_returns_a_diagnostics_marker(tmp_path, monkeypatch):
+    from datetime import datetime
+    log = tmp_path / "bitwig.log"
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S.000")
+    log.write_text(f"[{now} float-main-app info] Starting application version 6.1.4 revision abc\n")
+    monkeypatch.setenv("BITWIG_LOG_PATH", str(log))
+    result = run(FakeGrid(), {"target": TARGET, "modules": [{"name": "a", "type": "Add", "x": 0, "y": 0}]})
+    assert isinstance(result.get("diagnosticsMarker"), str)

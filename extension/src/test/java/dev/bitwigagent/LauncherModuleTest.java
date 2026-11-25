@@ -754,6 +754,9 @@ public final class LauncherModuleTest {
         check(f.notes.containsKey(key(0, 0, 0, 60)) && f.notes.containsKey(key(0, 0, 64, 62)), "notes landed on absolute steps of the derived grid");
         JsonObject quarter = target(); JsonArray one = new JsonArray(); one.add(set(2, 61, 90, 2)); quarter.add("edits", one);
         check(LauncherModule.deriveEditWindow(quarter).exact.compareTo(new java.math.BigDecimal("0.015625")) == 0, "long notes fall back to the finest grid that still fits");
+        JsonObject wholeNote = target(); JsonArray whole = new JsonArray(); whole.add(set(0, 61, 90, 256)); wholeNote.add("edits", whole);
+        LauncherModule.Window coarse = LauncherModule.deriveEditWindow(wholeNote);
+        check(coarse.exact.compareTo(new java.math.BigDecimal("2")) == 0 && coarse.steps == 128, "a single 256-beat note derives a coarse grid instead of failing");
         JsonObject fine = target(); JsonArray finer = new JsonArray(); finer.add(set(.0625, 61, 90, .125)); fine.add("edits", finer);
         check(LauncherModule.deriveEditWindow(fine).exact.compareTo(new java.math.BigDecimal("0.0078125")) == 0, "short fine edits use the finest grid");
         JsonObject wide = target(); JsonArray spread = new JsonArray(); spread.add(set(0, 60, 90, .25)); spread.add(set(40, 60, 90, .25)); wide.add("edits", spread);

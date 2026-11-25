@@ -353,9 +353,11 @@ final class DeviceSources {
         if (slot < 0 || slot >= DEVICES) throw failure("outside_window", "Parent is outside the root device window.");
         Source source = roots[t][slot];
         if (!source.metadataReady() || !track.ready()) throw failure("not_ready", "Parent metadata/window has not been observed.");
-        if (!source.present() || !track.id.equals(p.get("trackId").getAsString())
-                || !source.name.equals(p.get("expectedDeviceName").getAsString()))
+        if (!source.present() || !track.id.equals(p.get("trackId").getAsString()))
             throw failure("stale_target", "Parent address/name no longer matches observed context.");
+        if (!source.name.equals(p.get("expectedDeviceName").getAsString()))
+            throw failure("stale_target", "Parent address/name no longer matches observed context: the device at index "
+                    + p.get("deviceIndex").getAsInt() + " is named \"" + source.name + "\", not expectedDeviceName.");
         return source;
     }
 
