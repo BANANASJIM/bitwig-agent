@@ -965,3 +965,72 @@ def test_grid_parameter_set_rejects_text_for_scalar_kinds(kind, field):
     args = {**GRID_SET, "expectedKind": kind, "expectedValue": base[0], "value": base[1], field: "text"}
     with pytest.raises(ValidationError):
         validate_call("grid.parameters.set", args)
+
+
+GRID_STEPS = {**TARGET, "moduleId": TRACK, "parameterId": "DATA", "expectedKind": "steps",
+              "expectedValues": [0.1, 0.0, -1, 0.5], "values": [0.5, 1.0]}
+
+
+def test_grid_steps_write_is_a_prefix_cas_in_single_and_batch_form():
+    params, _ = validate_call("grid.parameters.set", GRID_STEPS)
+    assert params == GRID_STEPS
+    assert validate_call("grid.parameters.set", {**GRID_STEPS, "full": True})
+    entry = {key: GRID_STEPS[key] for key in ("moduleId", "parameterId", "expectedKind", "expectedValues", "values")}
+    assert validate_call("grid.parameters.set", {**TARGET, "writes": [entry, {**entry, "parameterId": "B", "full": False}]})
+    assert validate_call("grid.parameters.set", {**GRID_STEPS, "expectedValues": [0.0] * 256, "values": [-128, 128.0] * 128, "full": True})
+
+
+@pytest.mark.parametrize("changes", [
+    {"expectedValues": []}, {"values": []}, {"expectedValues": [0.0] * 257}, {"values": [0.0] * 257},
+    {"values": [0.0] * 5}, {"values": [128.0000001]}, {"values": [-128.0000001]}, {"values": [float("nan")]}, {"expectedValues": [float("inf")]},
+    {"values": ["0.5"]}, {"values": [True]}, {"expectedValues": [None]}, {"values": 0.5}, {"full": 1},
+    {"value": 0.5}, {"expectedValue": 0.0}, {"display": "1 kHz"},
+])
+def test_grid_steps_write_rejects_malformed_arrays_and_mixed_forms(changes):
+    with pytest.raises(ValidationError):
+        validate_call("grid.parameters.set", {**GRID_STEPS, **changes})
+    entry = {key: GRID_STEPS[key] for key in ("moduleId", "parameterId", "expectedKind", "expectedValues", "values")}
+    with pytest.raises(ValidationError):
+        validate_call("grid.parameters.set", {**TARGET, "writes": [{**entry, **changes}]})
+
+
+@pytest.mark.parametrize("key", ["expectedValues", "values"])
+def test_grid_steps_write_needs_both_arrays(key):
+    with pytest.raises(ValidationError):
+        validate_call("grid.parameters.set", {k: v for k, v in GRID_STEPS.items() if k != key})
+
+
+@pytest.mark.parametrize("extra", [{"expectedValues": [0.0]}, {"values": [0.5]}, {"full": True}])
+def test_scalar_writes_reject_step_array_fields(extra):
+    with pytest.raises(ValidationError):
+        validate_call("grid.parameters.set", {**GRID_SET, **extra})
+
+
+def test_grid_reads_accept_full_for_step_arrays():
+    assert validate_call("grid.get", {**TARGET, "full": True})
+    assert validate_call("grid.parameters.get", {**TARGET, "moduleId": TRACK, "parameterId": "DATA", "full": True})
+    with pytest.raises(ValidationError):
+        validate_call("grid.get", {**TARGET, "full": "yes"})
+
+
+def test_grid_voicing_get_and_set():
+    assert TOOLS["grid.voicing.get"].read_only and not TOOLS["grid.voicing.set"].read_only
+    assert validate_call("grid.voicing.get", TARGET)
+    args = {**TARGET, "expected": {"voices": 1, "monoMode": "true_mono"}, "set": {"voices": 8, "monoMode": "digi_mono"}}
+    params, _ = validate_call("grid.voicing.set", args)
+    assert params == args
+    everything = {"voices": 64, "voiceStacking": 16, "monoMode": "digi_mono", "retriggerMode": "always",
+                  "notePriority": "high", "legatoGlide": True, "stealSameKey": False, "allowOverlappingNotes": True}
+    assert validate_call("grid.voicing.set", {**TARGET, "expected": everything, "set": everything})
+
+
+@pytest.mark.parametrize("changes", [
+    {"set": {}}, {"expected": {}}, {"expected": {"voices": 1}, "set": {"voices": 2, "voiceStacking": 2}},
+    {"set": {"voices": 0}}, {"set": {"voices": 65}}, {"set": {"voiceStacking": 17}}, {"set": {"voices": 1.0}},
+    {"set": {"voices": True}}, {"set": {"monoMode": "poly"}}, {"set": {"retriggerMode": "sometimes"}},
+    {"set": {"notePriority": "FIRST"}}, {"set": {"legatoGlide": 1}}, {"set": {"bogus": 1}}, {"expected": {"voices": 65}},
+])
+def test_grid_voicing_set_rejects_bad_values_and_missing_preconditions(changes):
+    args = {**TARGET, "expected": {"voices": 1}, "set": {"voices": 2}, **changes}
+    with pytest.raises(ValidationError):
+        validate_call("grid.voicing.set", args)

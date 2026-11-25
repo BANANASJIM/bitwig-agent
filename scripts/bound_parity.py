@@ -71,7 +71,21 @@ def drop(*keys):
     return fix
 
 
+def steps_fix(field):
+    """Keep values no longer than expectedValues while one of the two arrays sweeps its length."""
+    def fix(params, value):
+        for box in (params, *(params.get("writes") or [])):
+            if "expectedValues" in box and "values" in box:
+                if field == "values":
+                    box["expectedValues"] = [0.0] * max(len(box["expectedValues"]), len(box["values"]))
+                else:
+                    box["values"] = box["values"][:len(box["expectedValues"])] or [0.0]
+    return fix
+
+
 FIXUPS = {
+    **{("grid.parameters.set", name): steps_fix(name.rsplit(".", 1)[-1])
+       for name in ("values", "expectedValues", "writes.0.values", "writes.0.expectedValues")},
     ("grid.modules.insert", "typeName"): drop("typeId"),
     ("grid.modules.insert", "typeId"): drop("typeName"),
     ("grid.modules.insert", "modules.0.typeName"): drop("modules.0.typeId"),

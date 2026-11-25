@@ -14,11 +14,13 @@ final class Bitwig614GridParameterContext implements GridParameterContext.Access
     private final Bitwig614ReadContextAccess readContext;
     private final Bitwig614GridBooleanPanelAccess panels;
     private final Bitwig614StringPanelAccess strings;
+    private final Bitwig614StepArrayAccess steps;
+    private final Bitwig614VoicingAccess voicing;
 
     Bitwig614GridParameterContext(Bitwig614Runtime.Access bindings, Bitwig614GridBooleanPanelAccess panels,
-            Bitwig614StringPanelAccess strings)
+            Bitwig614StringPanelAccess strings, Bitwig614StepArrayAccess steps, Bitwig614VoicingAccess voicing)
             throws ReflectiveOperationException {
-        this.bindings = bindings; this.panels = panels; this.strings = strings;
+        this.bindings = bindings; this.panels = panels; this.strings = strings; this.steps = steps; this.voicing = voicing;
         readContext = new Bitwig614ReadContextAccess(bindings);
         Class<?> model = bindings.type(R + "AVL");
         Class<?> dt = bindings.type(R + "XKG"), undo = bindings.type("dfI"), lock = bindings.type(R + "IOJ");
@@ -50,6 +52,14 @@ final class Bitwig614GridParameterContext implements GridParameterContext.Access
         if (field == GUI_PANEL_BOOLEAN) {
             if (panels == null) throw failure("grid_unavailable", "Boolean panel property binding unavailable.");
             return panels.property(object);
+        }
+        if (field == GUI_STEP_ARRAY) {
+            if (steps == null) throw failure("grid_unavailable", "Step array property binding unavailable.");
+            return steps.property(object);
+        }
+        if (field == GUI_VOICING) {
+            if (voicing == null) throw failure("grid_unavailable", "Voicing property binding unavailable.");
+            return voicing.property(object);
         }
         if (field == GUI_PANEL_STRING) {
             if (strings == null) throw failure("grid_unavailable", "String panel property binding unavailable.");

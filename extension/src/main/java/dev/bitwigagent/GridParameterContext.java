@@ -9,8 +9,9 @@ final class GridParameterContext {
     private static final String[] LIFECYCLE_LABELS = {
         "deviceDeleted", "graphDeleted", "moduleDeleted", "parameterDeleted", "projectDeleted"
     };
+    private static final String[] VOICING_LABELS = {"deviceDeleted", "graphDeleted", "voicingDeleted", "projectDeleted"};
     enum Field {
-        PARAMETER_PROJECT, LICENSED, GUI_FLOAT, GUI_INTEGER, GUI_ENUM, GUI_BOOLEAN, GUI_PANEL_BOOLEAN, GUI_PANEL_STRING,
+        PARAMETER_PROJECT, LICENSED, GUI_FLOAT, GUI_INTEGER, GUI_ENUM, GUI_BOOLEAN, GUI_PANEL_BOOLEAN, GUI_PANEL_STRING, GUI_STEP_ARRAY, GUI_VOICING,
         SETTABLE, CIU, TOUCHED, UNDO, UNDO_EXECUTING, UNDO_ACTIVE, UNDO_ICL, LOCK, LOCK_OWNER
     }
     interface Access extends NativeReadContext.Access {
@@ -29,10 +30,14 @@ final class GridParameterContext {
     private Capture capture(Object device, Object graph, Object module, Object parameter,
             GridSnapshotReader.Kind kind, Runnable check, boolean serialize, boolean writing) {
         check.run();
-        boolean panel = kind == GridSnapshotReader.Kind.PANEL_BOOLEAN || kind == GridSnapshotReader.Kind.PANEL_STRING;
+        boolean panel = kind == GridSnapshotReader.Kind.PANEL_BOOLEAN || kind == GridSnapshotReader.Kind.PANEL_STRING
+                || kind == GridSnapshotReader.Kind.STEP_ARRAY || kind == GridSnapshotReader.Kind.VOICING;
+        // The device voicing model is owned by the device itself: no module level (jBG is a K2G, so the skip predicate applies).
+        boolean voicing = kind == GridSnapshotReader.Kind.VOICING;
         Object project = required(a.read(Field.PARAMETER_PROJECT, parameter), "Owning project");
-        NativeReadContext.Capture common = readContexts.capture(project, new Object[]{device, graph, module, parameter},
-                LIFECYCLE_LABELS, check, serialize);
+        NativeReadContext.Capture common = readContexts.capture(project,
+                voicing ? new Object[]{device, graph, parameter} : new Object[]{device, graph, module, parameter},
+                voicing ? VOICING_LABELS : LIFECYCLE_LABELS, check, serialize);
         Object context = common.context, root = common.root, current = common.current;
         Object currentContext = common.currentContext, defaultDt = common.defaultDt, defaultDtContext = common.defaultDtContext;
         boolean initialized = common.initialized, hasDefault = common.hasDefault;
@@ -44,6 +49,8 @@ final class GridParameterContext {
             case BOOLEAN: wrapperField = Field.GUI_BOOLEAN; break;
             case PANEL_BOOLEAN: wrapperField = Field.GUI_PANEL_BOOLEAN; break;
             case PANEL_STRING: wrapperField = Field.GUI_PANEL_STRING; break;
+            case STEP_ARRAY: wrapperField = Field.GUI_STEP_ARRAY; break;
+            case VOICING: wrapperField = Field.GUI_VOICING; break;
             default: throw failure("grid_unavailable", "Parameter context family is unsupported.");
         }
         // These getters construct fresh wrappers; wrapper identity is not native model identity.
@@ -116,6 +123,18 @@ final class GridParameterContext {
             GridSnapshotReader.Kind kind, Runnable check) {
         Capture after = capture(device, graph, module, parameter, kind, check, false, false);
         sameIdentities(before, after);
+    }
+    /** Voicing is a device-level model: observation and write guards without a module or scalar parameter. */
+    Capture captureVoicing(Object device, Object graph, Object voicing, Runnable check) {
+        return capture(device, graph, null, voicing, GridSnapshotReader.Kind.VOICING, check, true, false);
+    }
+    Capture requireVoicingWritable(Object device, Object graph, Object voicing, Capture before, Runnable check) {
+        Capture current = capture(device, graph, null, voicing, GridSnapshotReader.Kind.VOICING, check, false, true);
+        if (before != null) sameIdentities(before, current);
+        return current;
+    }
+    void guardVoicing(Capture before, Object device, Object graph, Object voicing, Runnable check) {
+        sameIdentities(before, capture(device, graph, null, voicing, GridSnapshotReader.Kind.VOICING, check, false, false));
     }
     Capture requireWritable(GridSnapshotReader.ParameterBinding binding, Capture before, Runnable check) {
         Capture current = capture(binding.device, binding.graph, binding.module, binding.parameter,

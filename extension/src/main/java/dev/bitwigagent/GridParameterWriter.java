@@ -19,16 +19,26 @@ final class GridParameterWriter {
     private final Access nativeWriter;
     private final GridBooleanPanelWriter panels;
     private final GridStringPanelWriter strings;
+    private final GridStepArrayWriter steps;
 
     GridParameterWriter(GridSnapshotReader values, GridParameterContext contexts, Access nativeWriter,
             GridBooleanPanelWriter panels, GridStringPanelWriter strings) {
+        this(values, contexts, nativeWriter, panels, strings, null);
+    }
+
+    GridParameterWriter(GridSnapshotReader values, GridParameterContext contexts, Access nativeWriter,
+            GridBooleanPanelWriter panels, GridStringPanelWriter strings, GridStepArrayWriter steps) {
         this.values = values; this.contexts = contexts; this.nativeWriter = nativeWriter; this.panels = panels;
-        this.strings = strings;
+        this.strings = strings; this.steps = steps;
     }
 
     JsonObject set(Object proxy, UUID trackId, UUID moduleId, String parameterId,
             Request request, Runnable check, Runnable dispatch) {
-        GridSnapshotReader.ParameterBinding binding = values.bindParameter(proxy, trackId, moduleId, parameterId, check);
+        GridSnapshotReader.ParameterBinding binding = values.bindParameter(proxy, trackId, moduleId, parameterId, request.full, check);
+        if (binding.kind == GridSnapshotReader.Kind.STEP_ARRAY) {
+            if (steps == null) throw failure("grid_unavailable", "Step array write bindings are unavailable.");
+            return steps.set(binding, request, check, dispatch);
+        }
         if (binding.kind == GridSnapshotReader.Kind.PANEL_STRING) {
             if (strings == null) throw failure("grid_unavailable", "String panel write bindings are unavailable.");
             return strings.set(binding, request, check, dispatch);
@@ -90,7 +100,13 @@ final class GridParameterWriter {
 
     /** Live CAS and range/option checks only; nothing is dispatched. */
     private void preflight(Object proxy, UUID trackId, Entry entry, Runnable check) {
-        GridSnapshotReader.ParameterBinding binding = values.bindParameter(proxy, trackId, entry.moduleId, entry.parameterId, check);
+        GridSnapshotReader.ParameterBinding binding = values.bindParameter(proxy, trackId, entry.moduleId, entry.parameterId,
+                entry.request.full, check);
+        if (binding.kind == GridSnapshotReader.Kind.STEP_ARRAY) {
+            if (steps == null) throw failure("grid_unavailable", "Step array write bindings are unavailable.");
+            steps.preflight(binding, entry.request, check);
+            return;
+        }
         if (binding.kind == GridSnapshotReader.Kind.PANEL_STRING) {
             if (strings == null) throw failure("grid_unavailable", "String panel write bindings are unavailable.");
             strings.preflight(binding, entry.request, check);
@@ -139,8 +155,13 @@ final class GridParameterWriter {
                         () -> { dispatch.run(); sent[0] = true; });
                 boolean changed = one.get("mutationDispatched").getAsBoolean();
                 item.addProperty("status", changed ? "applied" : "already_matched");
-                item.add("previousValue", one.get("previousValue"));
-                item.add("value", one.getAsJsonObject("parameter").get("value"));
+                if (one.has("previousValues")) {
+                    item.add("previousValues", one.get("previousValues"));
+                    item.add("values", one.getAsJsonObject("parameter").get("values"));
+                } else {
+                    item.add("previousValue", one.get("previousValue"));
+                    item.add("value", one.getAsJsonObject("parameter").get("value"));
+                }
                 JsonElement display = one.getAsJsonObject("parameter").get("display");
                 if (display != null && !display.isJsonNull()) item.add("display", display);
                 if (one.has("requestedDisplay"))
@@ -174,9 +195,17 @@ final class GridParameterWriter {
         final String display;
         JsonPrimitive value;
         double rawValue;
+        /** Step arrays: the exposed prefix expected now, the prefix to write, and whether the prefix is the full array. */
+        final JsonArray expectedValues, values;
+        final boolean full;
         private Request(String kind, JsonPrimitive expected, JsonPrimitive value, String display) {
             this.kind = kind; this.expected = expected; this.display = display;
+            this.expectedValues = null; this.values = null; this.full = false;
             if (value != null) setValue(value);
+        }
+        private Request(JsonArray expectedValues, JsonArray values, boolean full) {
+            this.kind = "steps"; this.expected = null; this.display = null;
+            this.expectedValues = expectedValues; this.values = values; this.full = full;
         }
         private void setValue(JsonPrimitive value) {
             this.value = value;
@@ -184,9 +213,12 @@ final class GridParameterWriter {
         }
         static Request parse(JsonObject params) {
             String kind = Params.string(params, "expectedKind");
+            if (kind.equals("steps")) return parseSteps(params);
             if (!kind.equals("float") && !kind.equals("integer") && !kind.equals("enum") && !kind.equals("boolean")
                     && !kind.equals("string"))
-                throw failure("invalid_params", "expectedKind must be float, integer, enum, boolean or string.");
+                throw failure("invalid_params", "expectedKind must be float, integer, enum, boolean, string or steps.");
+            if (params.has("full") || params.has("expectedValues") || params.has("values"))
+                throw failure("invalid_params", "full, expectedValues and values need expectedKind steps.");
             JsonPrimitive expected = typed(params.get("expectedValue"), kind, "expectedValue");
             if (params.has("value") == params.has("display"))
                 throw failure("invalid_params", "Supply exactly one of value (raw) or display (text such as \"1.2 kHz\").");
@@ -198,6 +230,38 @@ final class GridParameterWriter {
                 return new Request(kind, expected, null, text.getAsString());
             }
             return new Request(kind, expected, typed(params.get("value"), kind, "value"), null);
+        }
+        static final int MAX_STEPS = GridSnapshotReader.STEP_FULL;
+        private static Request parseSteps(JsonObject params) {
+            if (params.has("expectedValue") || params.has("value") || params.has("display"))
+                throw failure("invalid_params", "Step arrays take expectedValues and values, not expectedValue, value or display.");
+            JsonArray expected = steps(params.get("expectedValues"), "expectedValues", false);
+            JsonArray written = steps(params.get("values"), "values", true);
+            if (written.size() > expected.size())
+                throw failure("invalid_params", "values must not be longer than expectedValues.");
+            boolean full = false;
+            if (params.has("full")) {
+                JsonElement flag = params.get("full");
+                if (!flag.isJsonPrimitive() || !flag.getAsJsonPrimitive().isBoolean())
+                    throw failure("invalid_params", "full must be a JSON boolean.");
+                full = flag.getAsBoolean();
+            }
+            return new Request(expected, written, full);
+        }
+        private static JsonArray steps(JsonElement element, String field, boolean bounded) {
+            if (element == null || !element.isJsonArray() || element.getAsJsonArray().size() < 1
+                    || element.getAsJsonArray().size() > MAX_STEPS)
+                throw failure("invalid_params", field + " must be an array of 1.." + MAX_STEPS + " finite numbers.");
+            for (JsonElement item : element.getAsJsonArray()) {
+                if (!item.isJsonPrimitive() || !item.getAsJsonPrimitive().isNumber())
+                    throw failure("invalid_params", field + " must be an array of 1.." + MAX_STEPS + " finite numbers.");
+                double number = item.getAsDouble();
+                if (!Double.isFinite(number))
+                    throw failure("invalid_params", field + " must be an array of 1.." + MAX_STEPS + " finite numbers.");
+                if (bounded && (number < GridSnapshotReader.STEP_MIN || number > GridSnapshotReader.STEP_MAX))
+                    throw failure("invalid_params", field + " entries must be within the sanity bound -128..128; no clamping is performed.");
+            }
+            return element.getAsJsonArray();
         }
         private static JsonPrimitive typed(JsonElement element, String kind, String field) {
             if (element == null || !element.isJsonPrimitive()) throw invalid(field, kind);

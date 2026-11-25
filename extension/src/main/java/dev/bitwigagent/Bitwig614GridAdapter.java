@@ -33,6 +33,11 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
     private String booleanPanelError;
     private Bitwig614StringPanelAccess stringPanels;
     private String stringPanelError;
+    private Bitwig614StepArrayAccess stepArrays;
+    private String stepArrayError;
+    private Bitwig614VoicingAccess voicingAccess;
+    private String voicingError;
+    private GridVoicingWriter voicingWriter;
     private String moduleMoveError, moduleDeleteError;
     private GridModuleWriter moduleWriter;
     private String connectionError;
@@ -58,11 +63,16 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
             catch (ReflectiveOperationException | RuntimeException | LinkageError error) { booleanPanelError = diagnostic(error); }
             try { stringPanels = new Bitwig614StringPanelAccess(bindings); }
             catch (ReflectiveOperationException | RuntimeException | LinkageError error) { stringPanelError = diagnostic(error); }
+            try { stepArrays = new Bitwig614StepArrayAccess(bindings); }
+            catch (ReflectiveOperationException | RuntimeException | LinkageError error) { stepArrayError = diagnostic(error); }
+            try { voicingAccess = new Bitwig614VoicingAccess(bindings); }
+            catch (ReflectiveOperationException | RuntimeException | LinkageError error) { voicingError = diagnostic(error); }
             try { bind(DISPLAY, bindings.type("aLw"), "qFI", String.class); }
             catch (ReflectiveOperationException | RuntimeException | LinkageError error) { displayError = diagnostic(error); }
         } else {
             parameterError = "Structure binding unavailable."; displayError = parameterError;
             booleanPanelError = parameterError; stringPanelError = parameterError;
+            stepArrayError = parameterError; voicingError = parameterError;
         }
         for (GridSnapshotReader.Metadata metadata : GridSnapshotReader.METADATA) {
             if (structureError != null) { metadataErrors.put(metadata, "Structure binding unavailable."); continue; }
@@ -74,7 +84,10 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
         else try {
             Class<?> parameter = kind(GridSnapshotReader.Kind.PARAMETER, "rBL");
             bind(PARAMETER_ID, parameter, "aA_", String.class);
-            parameterContexts = new GridParameterContext(new Bitwig614GridParameterContext(bindings, booleanPanels, stringPanels));
+            parameterContexts = new GridParameterContext(new Bitwig614GridParameterContext(bindings, booleanPanels, stringPanels, stepArrays, voicingAccess));
+            // Voicing reads depend only on inspection bindings, never on write-side ones.
+            if (voicingAccess != null)
+                voicingWriter = new GridVoicingWriter(snapshots, parameterContexts, voicingAccess, voicingAccess.setterError() == null);
         } catch (ReflectiveOperationException | RuntimeException | LinkageError error) { inspectionError = diagnostic(error); }
         if (inspectionError != null) writeError = "Required parameter inspection bindings unavailable.";
         else try {
@@ -82,7 +95,9 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
                     : new GridBooleanPanelWriter(snapshots, parameterContexts, booleanPanels);
             GridStringPanelWriter strings = stringPanels == null || stringPanels.setterError() != null ? null
                     : new GridStringPanelWriter(snapshots, parameterContexts, stringPanels);
-            parameterWriter = new GridParameterWriter(snapshots, parameterContexts, new Bitwig614GridParameterWriter(bindings), panels, strings);
+            GridStepArrayWriter steps = stepArrays == null || stepArrays.setterError() != null ? null
+                    : new GridStepArrayWriter(snapshots, parameterContexts, stepArrays);
+            parameterWriter = new GridParameterWriter(snapshots, parameterContexts, new Bitwig614GridParameterWriter(bindings), panels, strings, steps);
         } catch (ReflectiveOperationException | RuntimeException | LinkageError error) { writeError = diagnostic(error); }
         GridTopologyContext topologyContexts = null;
         String topologyContextError = structureError == null ? null : "Required structure binding unavailable.";
@@ -243,6 +258,30 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
         strings.addProperty("nativeUndoAwareOperation", true); strings.addProperty("undoGroupingVerified", false);
         strings.addProperty("engineAcknowledgement", false);
         result.add("stringPanels", strings);
+        JsonObject steps = capability(gateError == null ? stepArrayError : gateError,
+                "exact_imU_FDM_float_array_five_modules_Steps_Pitches_Gates_Probabilities_Accents");
+        steps.addProperty("inspectionAvailable", gateError == null && stepArrayError == null && inspectionError == null);
+        String stepsWriteError = gateError != null ? gateError : stepArrayError != null ? stepArrayError
+                : stepArrays.setterError() != null ? stepArrays.setterError() : writeError;
+        steps.addProperty("writeAvailable", stepsWriteError == null);
+        if (stepsWriteError != null) steps.addProperty("writeReason", stepsWriteError);
+        steps.addProperty("operation", "FDM.FzB(float[]):void/native_recorded_array_change");
+        steps.addProperty("valueDomain", "finite_sanity_bound_not_a_module_range");
+        steps.addProperty("nativeUndoAwareOperation", true); steps.addProperty("undoGroupingVerified", false);
+        steps.addProperty("engineAcknowledgement", false);
+        result.add("stepArrays", steps);
+        JsonObject voicing = capability(gateError == null ? voicingError : gateError,
+                "xlG_Mb2_jBG_SOn_poly_grid_only_note_and_fx_grid_have_no_voicing_model");
+        voicing.addProperty("inspectionAvailable", gateError == null && voicingError == null && inspectionError == null);
+        String voicingWriteError = gateError != null ? gateError : voicingError != null ? voicingError
+                : voicingAccess.setterError() != null ? voicingAccess.setterError() : writeError;
+        voicing.addProperty("writeAvailable", voicingWriteError == null);
+        if (voicingWriteError != null) voicing.addProperty("writeReason", voicingWriteError);
+        voicing.addProperty("operation", "SOn_final_recorded_setters_per_field");
+        voicing.add("fields", new com.google.gson.Gson().toJsonTree(GridVoicingWriter.FIELDS));
+        voicing.addProperty("nativeUndoAwareOperation", true); voicing.addProperty("undoGroupingVerified", false);
+        voicing.addProperty("engineAcknowledgement", false);
+        result.add("voicing", voicing);
         for (GridSnapshotReader.Metadata metadata : GridSnapshotReader.METADATA)
             result.add(metadata.key, capability(gateError == null ? metadataErrors.get(metadata) : gateError, metadata.coverage));
         String quarantine = TOPOLOGY_QUARANTINE.blockedReason();
@@ -306,14 +345,26 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
         return snapshots.catalog(query, offset, limit, check);
     }
     @Override public JsonObject snapshot(Object proxy, UUID expectedTrackId, int offset, int limit, boolean parameters,
-            boolean diagnostics, java.util.Set<String> moduleIds, Runnable check) {
+            boolean diagnostics, java.util.Set<String> moduleIds, boolean fullSteps, Runnable check) {
         require(gateError, "gate"); require(identityError, "native owning-track identity"); require(structureError, "structure");
-        return snapshots.snapshot(proxy, expectedTrackId, offset, limit, parameters, diagnostics, moduleIds, check);
+        return snapshots.snapshot(proxy, expectedTrackId, offset, limit, parameters, diagnostics, moduleIds, fullSteps, check);
     }
-    @Override public JsonObject parameter(Object proxy, UUID expectedTrackId, UUID moduleId, String parameterId, Runnable check) {
+    @Override public JsonObject parameter(Object proxy, UUID expectedTrackId, UUID moduleId, String parameterId,
+            boolean fullSteps, Runnable check) {
         require(gateError, "gate"); require(identityError, "native owning-track identity"); require(structureError, "structure");
         require(parameterError, "typed parameters"); require(inspectionError, "parameter inspection context");
-        return snapshots.parameter(proxy, expectedTrackId, moduleId, parameterId, parameterContexts, check);
+        return snapshots.parameter(proxy, expectedTrackId, moduleId, parameterId, parameterContexts, fullSteps, check);
+    }
+    @Override public JsonObject voicing(Object proxy, UUID expectedTrackId, Runnable check) {
+        require(gateError, "gate"); require(identityError, "native owning-track identity"); require(structureError, "structure");
+        require(inspectionError, "parameter inspection context"); require(voicingError, "voicing");
+        if (voicingWriter == null) throw failure("grid_unavailable", "Grid voicing unavailable: no voicing binding.");
+        return voicingWriter.get(proxy, expectedTrackId, check);
+    }
+    @Override public JsonObject setVoicing(Object proxy, UUID expectedTrackId, GridVoicingWriter.Request request,
+            Runnable check, Runnable dispatch) {
+        require(gateError, "gate"); require(writeError, "parameter write"); require(voicingError, "voicing");
+        return voicingWriter.set(proxy, expectedTrackId, request, check, dispatch);
     }
     @Override public JsonObject setParameter(Object proxy, UUID expectedTrackId, UUID moduleId, String parameterId,
             GridParameterWriter.Request request, Runnable check, Runnable dispatch) {
@@ -368,6 +419,7 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
     @Override public boolean is(GridSnapshotReader.Kind kind, Object object) {
         if (kind == GridSnapshotReader.Kind.PANEL_BOOLEAN) return booleanPanels != null && booleanPanels.isPanel(object);
         if (kind == GridSnapshotReader.Kind.PANEL_STRING) return stringPanels != null && stringPanels.isPanel(object);
+        if (kind == GridSnapshotReader.Kind.STEP_ARRAY) return stepArrays != null && stepArrays.isModel(object);
         if (kind == GridSnapshotReader.Kind.BIPOLAR_FLOAT) return booleanPanels != null && booleanPanels.isBipolar(object);
         Class<?> type = kinds.get(kind); return type != null && type.isInstance(object);
     }
@@ -379,6 +431,11 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
         if (booleanPanels != null && booleanPanels.isPanel(object)) {
             if (field == PARAMETER_ID) return booleanPanels.identifier(object);
             if (field == BOOLEAN_VALUE) return booleanPanels.value(object);
+        }
+        if (stepArrays != null && stepArrays.isModel(object)) {
+            if (field == PARAMETER_ID) return stepArrays.identifier(object);
+            if (field == STEP_VALUES) return stepArrays.data(object);
+            if (field == STEP_LENGTH) return stepArrays.length(object);
         }
         if (stringPanels != null && stringPanels.isPanel(object)) {
             if (field == PARAMETER_ID) return stringPanels.identifier(object);

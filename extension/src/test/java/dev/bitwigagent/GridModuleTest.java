@@ -154,7 +154,7 @@ public final class GridModuleTest {
                 && !noSource.capabilities().getAsJsonObject("moduleInsert").has("bindingIdentity"),
                 "unverified source cannot advertise any native topology capability");
         try {
-            noSource.snapshot(new Object(), UUID.fromString(TransportMixFixture.A), 0, 64, true, false, null, () -> {});
+            noSource.snapshot(new Object(), UUID.fromString(TransportMixFixture.A), 0, 64, true, false, null, false, () -> {});
             throw new AssertionError("snapshot escaped identity gate");
         } catch (RpcException error) { check(error.code.equals("grid_unavailable"), "snapshot requires exact verified identity gate"); }
         try { noSource.execute(() -> { throw new AssertionError("read escaped gate"); }); throw new AssertionError("expected gate failure"); }
@@ -963,13 +963,20 @@ public final class GridModuleTest {
             return last;
         }
         @Override public JsonObject snapshot(Object proxy, UUID expectedTrackId, int offset, int limit, boolean parameters,
-                boolean diagnostics, java.util.Set<String> moduleIds, Runnable check) {
+                boolean diagnostics, java.util.Set<String> moduleIds, boolean fullSteps, Runnable check) {
             check.run(); reads++;
             if (fail) throw HostServices.failure("not_grid", "not a Grid device");
             return result(offset, limit, parameters);
         }
-        @Override public JsonObject parameter(Object proxy, UUID expectedTrackId, UUID moduleId, String parameterId, Runnable check) {
+        @Override public JsonObject parameter(Object proxy, UUID expectedTrackId, UUID moduleId, String parameterId,
+                boolean fullSteps, Runnable check) {
             check.run(); reads++; return HostServices.observed();
+        }
+        @Override public JsonObject voicing(Object proxy, UUID expectedTrackId, Runnable check) {
+            check.run(); reads++; return HostServices.observed();
+        }
+        @Override public JsonObject setVoicing(Object proxy, UUID track, GridVoicingWriter.Request request, Runnable check, Runnable dispatch) {
+            check.run(); dispatch.run(); return HostServices.observed();
         }
         @Override public JsonObject setParameter(Object proxy, UUID track, UUID module, String parameter,
                 GridParameterWriter.Request request, Runnable check, Runnable dispatch) {

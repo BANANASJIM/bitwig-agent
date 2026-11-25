@@ -10,7 +10,8 @@ import static dev.bitwigagent.HostServices.failure;
 /** Strict RPC boundary and observed public-device targeting; native operations use a separate adapter. */
 final class GridModule implements HostModule {
     static final Set<String> METHODS = Set.of("grid.capabilities", "grid.catalog", "grid.get", "grid.parameters.get", "grid.parameters.set",
-            "grid.modules.move", "grid.modules.delete", "grid.modules.insert", "grid.modules.rename", "grid.connections.set");
+            "grid.modules.move", "grid.modules.delete", "grid.modules.insert", "grid.modules.rename", "grid.connections.set",
+            "grid.voicing.get", "grid.voicing.set");
     private final HostServices s;
     private GridAdapter adapter;
 
@@ -90,14 +91,30 @@ final class GridModule implements HostModule {
                 Params.string(p, "expectedDeviceName");
                 if (moving) GridModuleWriter.Move.parse(p);
                 return;
+            case "grid.voicing.get":
+                Params.fields(p, Set.of("trackId", "deviceIndex", "expectedDeviceName"), Set.of());
+                canonicalUuid(p, "trackId");
+                Params.integer(p, "deviceIndex", 0, HostServices.DEVICES - 1);
+                Params.string(p, "expectedDeviceName");
+                return;
+            case "grid.voicing.set":
+                Params.fields(p, Set.of("trackId", "deviceIndex", "expectedDeviceName", "expected", "set"), Set.of());
+                canonicalUuid(p, "trackId");
+                Params.integer(p, "deviceIndex", 0, HostServices.DEVICES - 1);
+                Params.string(p, "expectedDeviceName");
+                GridVoicingWriter.Request.parse(p);
+                return;
             case "grid.parameters.set":
             case "grid.parameters.get":
                 boolean writing = method.equals("grid.parameters.set");
                 if (writing && p != null && p.has("writes")) { validateBatch(p); return; }
+                boolean stepsWrite = writing && isStepsKind(p);
                 Params.fields(p, writing
-                        ? Set.of("trackId", "deviceIndex", "expectedDeviceName", "moduleId", "parameterId", "expectedKind", "expectedValue")
+                        ? stepsWrite ? Set.of("trackId", "deviceIndex", "expectedDeviceName", "moduleId", "parameterId", "expectedKind", "expectedValues", "values")
+                        : Set.of("trackId", "deviceIndex", "expectedDeviceName", "moduleId", "parameterId", "expectedKind", "expectedValue")
                         : Set.of("trackId", "deviceIndex", "expectedDeviceName", "moduleId", "parameterId"),
-                        writing ? Set.of("value", "display") : Set.of());
+                        writing ? stepsWrite ? Set.of("full") : Set.of("value", "display") : Set.of("full"));
+                if (!writing && p.has("full")) Params.bool(p, "full");
                 canonicalUuid(p, "trackId"); canonicalUuid(p, "moduleId");
                 Params.integer(p, "deviceIndex", 0, HostServices.DEVICES - 1);
                 Params.string(p, "expectedDeviceName");
@@ -107,7 +124,8 @@ final class GridModule implements HostModule {
                 if (writing) GridParameterWriter.Request.parse(p);
                 return;
             case "grid.get":
-                Params.fields(p, Set.of("trackId", "deviceIndex", "expectedDeviceName"), Set.of("moduleOffset", "moduleLimit", "includeParameters", "diagnostics", "moduleIds"));
+                Params.fields(p, Set.of("trackId", "deviceIndex", "expectedDeviceName"), Set.of("moduleOffset", "moduleLimit", "includeParameters", "diagnostics", "moduleIds", "full"));
+                if (p.has("full")) Params.bool(p, "full");
                 String id = Params.string(p, "trackId");
                 if (!id.matches("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"))
                     throw failure("invalid_params", "trackId must be a canonical UUID.");
@@ -122,7 +140,7 @@ final class GridModule implements HostModule {
         }
     }
     private static final String[] READS = {"catalog", "structure", "typedParameters", "display", "parameterInspection"};
-    private static final String[] WRITERS = {"parameterWrite", "booleanPanels", "stringPanels", "moduleMove", "moduleDelete", "moduleRename",
+    private static final String[] WRITERS = {"parameterWrite", "booleanPanels", "stringPanels", "stepArrays", "voicing", "moduleMove", "moduleDelete", "moduleRename",
             "moduleInsert", "connectionWrite"};
     /** Default grid.capabilities: availability booleans only (reasons for unavailable ones); detail:"full" has every binding. */
     static JsonObject compactCapabilities(JsonObject full) {
@@ -131,7 +149,7 @@ final class GridModule implements HostModule {
             if (full.has(key)) result.add(key, full.get(key));
         JsonObject reads = new JsonObject(), writers = new JsonObject(), unavailable = new JsonObject();
         for (String key : READS) summarize(full, key, "available", reads, unavailable);
-        for (String key : WRITERS) summarize(full, key, key.equals("booleanPanels") || key.equals("stringPanels") ? "writeAvailable" : "available", writers, unavailable);
+        for (String key : WRITERS) summarize(full, key, Set.of("booleanPanels", "stringPanels", "stepArrays", "voicing").contains(key) ? "writeAvailable" : "available", writers, unavailable);
         result.add("reads", reads); result.add("writers", writers);
         if (unavailable.size() > 0) result.add("unavailable", unavailable);
         result.addProperty("detail", "pass detail:\"full\" for per-binding coverage, operations and limits");
@@ -145,6 +163,10 @@ final class GridModule implements HostModule {
         JsonElement why = binding.has("reason") && !binding.get("reason").isJsonNull() ? binding.get("reason")
                 : binding.has("writeReason") && !binding.get("writeReason").isJsonNull() ? binding.get("writeReason") : null;
         if (!available && why != null) unavailable.add(key, why);
+    }
+    private static boolean isStepsKind(JsonObject w) {
+        JsonElement kind = w == null ? null : w.get("expectedKind");
+        return kind != null && kind.isJsonPrimitive() && kind.getAsJsonPrimitive().isString() && kind.getAsString().equals("steps");
     }
     private static boolean graphMode(JsonObject p) {
         if (!p.has("graph")) return false;
@@ -176,7 +198,8 @@ final class GridModule implements HostModule {
         for (JsonElement element : writes.getAsJsonArray()) {
             if (!element.isJsonObject()) throw failure("invalid_params", "Each write must be an object.");
             JsonObject w = element.getAsJsonObject();
-            Params.fields(w, Set.of("moduleId", "parameterId", "expectedKind", "expectedValue"), Set.of("value", "display"));
+            if (isStepsKind(w)) Params.fields(w, Set.of("moduleId", "parameterId", "expectedKind", "expectedValues", "values"), Set.of("full"));
+            else Params.fields(w, Set.of("moduleId", "parameterId", "expectedKind", "expectedValue"), Set.of("value", "display"));
             canonicalUuid(w, "moduleId");
             if (!w.get("parameterId").isJsonPrimitive() || !w.get("parameterId").getAsJsonPrimitive().isString()
                     || w.get("parameterId").getAsString().length() > GridSnapshotReader.MAX_TEXT)
@@ -211,11 +234,12 @@ final class GridModule implements HostModule {
         final boolean renaming = method.equals("grid.modules.rename");
         final boolean moduleEditing = moving || method.equals("grid.modules.delete");
         final boolean topology = moduleEditing || connection || inserting || renaming;
+        final boolean voicingGet = method.equals("grid.voicing.get"), voicingSet = method.equals("grid.voicing.set");
         final boolean scalarWriting = method.equals("grid.parameters.set");
         final boolean batching = scalarWriting && p.has("writes");
         final boolean fullGraph = topology && graphMode(p);
         final java.util.List<GridParameterWriter.Entry> entries = batching ? batch(p) : null;
-        final boolean writing = scalarWriting || topology;
+        final boolean writing = scalarWriting || topology || voicingSet;
         final boolean inspection = method.equals("grid.parameters.get") || scalarWriting;
         final GridParameterWriter.Request request = scalarWriting && !batching ? GridParameterWriter.Request.parse(p) : null;
         final GridModuleWriter.Move move = moving ? GridModuleWriter.Move.parse(p) : null;
@@ -226,8 +250,10 @@ final class GridModule implements HostModule {
         final java.util.List<GridInsertionWriter.Request> insertions = insertBatch ? GridInsertionWriter.Request.parseBatch(p) : null;
         final GridInsertionWriter.Request insertion = inserting && !insertBatch ? GridInsertionWriter.Request.parse(p) : null;
         final GridModuleNameWriter.Request name = renaming ? GridModuleNameWriter.Request.parse(p) : null;
+        final GridVoicingWriter.Request voicing = voicingSet ? GridVoicingWriter.Request.parse(p) : null;
+        final boolean fullSteps = p.has("full") && !scalarWriting && p.get("full").getAsBoolean();
         final HostServices.SafetyObservation safety = writing ? s.stoppedSafety(op) : null;
-        final DeviceSources.RootReadTicket target = method.equals("grid.get") || inspection || topology ? target(p) : null;
+        final DeviceSources.RootReadTicket target = method.equals("grid.get") || inspection || topology || voicingGet || voicingSet ? target(p) : null;
         final UUID trackUuid = target == null ? null : UUID.fromString(target.trackId);
         final UUID moduleId = (inspection && !batching) || moduleEditing || renaming ? UUID.fromString(p.get("moduleId").getAsString()) : null;
         final String parameterId = inspection && !batching ? p.get("parameterId").getAsString() : null;
@@ -260,12 +286,15 @@ final class GridModule implements HostModule {
                     return;
                 }
                 JsonObject value = target == null ? adapter.catalog(query, offset, limit, check)
+                        : voicingGet ? adapter.voicing(target.device, trackUuid, check)
+                        : voicingSet ? adapter.setVoicing(target.device, trackUuid, voicing, check,
+                                () -> { check.run(); op.dispatched = true; })
                         : batching ? adapter.setParameters(target.device, trackUuid, entries, check,
                                 () -> { check.run(); op.dispatched = true; })
                         : writing ? GridDiff.shape(adapter.setParameter(target.device, trackUuid, moduleId, parameterId, request, check,
                                 () -> { check.run(); op.dispatched = true; }), true)
-                        : inspection ? adapter.parameter(target.device, trackUuid, moduleId, parameterId, check)
-                        : adapter.snapshot(target.device, trackUuid, offset, limit, parameters, diagnostics, moduleFilter, check);
+                        : inspection ? adapter.parameter(target.device, trackUuid, moduleId, parameterId, fullSteps, check)
+                        : adapter.snapshot(target.device, trackUuid, offset, limit, parameters, diagnostics, moduleFilter, fullSteps, check);
                 deliver(op, target, safety, writing, check, value);
             } catch (RuntimeException error) {
                 op.fail(error instanceof RpcException ? error
