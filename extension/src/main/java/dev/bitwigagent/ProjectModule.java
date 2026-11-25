@@ -44,7 +44,7 @@ final class ProjectModule implements HostModule {
     @Override public void validate(String method, JsonObject params) { validateParams(method, params); }
     static void validateParams(String method, JsonObject params) {
         if (!METHODS.contains(method)) throw failure("unknown_method", "Unknown project method.");
-        if (method.equals(SAVE)) { Params.fields(params, Set.of(), Set.of()); return; }
+        if (method.equals(SAVE) || method.equals(ACTIVATE)) { Params.fields(params, Set.of(), Set.of()); return; }
         Params.fields(params, Set.of("path"), Set.of("overwrite", "allowAnyPath"));
         ProjectSaveAsPlan.projectName(Params.absoluteFilePath(params, "path"));
         if (params.has("overwrite")) Params.bool(params, "overwrite");
