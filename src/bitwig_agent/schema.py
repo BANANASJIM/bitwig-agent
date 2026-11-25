@@ -682,6 +682,29 @@ class ExtensionRestartArgs(StatusArgs):
     discardUnresolved: bool = omitted()
 
 
+PROJECT_EXTENSION = ".bwproject"
+
+
+class ProjectSaveAsArgs(StrictModel):
+    timeoutMs: int = Field(default=30000, ge=100, le=TOPOLOGY_TIMEOUT_MS)
+    path: str = Field(max_length=4096, description="Final project file: <dir>/<Name>/<Name>.bwproject for a new project folder (Bitwig creates <Name>/), or any .bwproject inside an existing project folder. Absolute; no ~ expansion.")
+    overwrite: bool = omitted(description="Allow replacing an existing file at path (Bitwig keeps the old one in the project's auto-backups folder).")
+    allowAnyPath: bool = omitted(description="Allow a path outside Bitwig's configured projects folder.")
+
+    @model_validator(mode="after")
+    def validate_path(self):
+        validate_local_path(self.path)
+        path = PurePosixPath(self.path)
+        if len(path.parts) < 3 or not path.name.endswith(PROJECT_EXTENSION):
+            raise ValueError(f"path must name a {PROJECT_EXTENSION} file inside a folder")
+        name = path.name[: -len(PROJECT_EXTENSION)]
+        if not name or len(name.encode("utf-16-le", errors="surrogatepass")) // 2 > 128 or name != name.strip() or name.startswith(".") or name.lower() == "template":
+            raise ValueError("project name must be 1..128 characters without leading/trailing whitespace or a leading dot, and not 'template'")
+        if "auto-backups" in path.parts:
+            raise ValueError("Bitwig refuses to save inside an auto-backups folder")
+        return self
+
+
 class TrackCreateArgs(StatusArgs):
     type: Literal["audio", "instrument", "effect"]
     position: int = Field(ge=-1, le=2147483647)

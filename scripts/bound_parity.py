@@ -46,6 +46,15 @@ def file_insert(params, value):
     params["path"] = as_path(value)
 
 
+def project_path(params, value):
+    """A final <dir>/S/S.bwproject path of the vector's UTF-16 length (same astral-character mix)."""
+    tail = "/S/S.bwproject"
+    body = len(value.encode("utf-16-le", errors="surrogatepass")) // 2 - len(tail) - 1
+    if body > 0:
+        filler = "\U0001F600" * (body // 2) + "a" * (body % 2) if any(ord(c) > 0xFFFF for c in value) else "a" * body
+        params["path"] = "/" + filler + tail
+
+
 def window_fix(field):
     """Keep the explicit note window self-consistent while one window field sweeps."""
     def fix(params, value):
@@ -92,6 +101,7 @@ FIXUPS = {
     ("grid.parameters.set", "display"): drop("value"),
     ("devices.insert", "path"): file_insert,
     ("launcher.import", "path"): lambda p, v: p.__setitem__("path", as_path(v)),
+    ("project.saveAs", "path"): project_path,
     **{(m, f): window_fix(f) for m in ("notes.read", "notes.edit")
        for f in ("stepSizeBeats", "startStep", "steps", "pitchStart", "pitchCount")},
 }

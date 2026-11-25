@@ -834,6 +834,21 @@ def test_project_save_is_a_write_tool_without_arguments():
     assert "projectModified" in TOOLS["extension.restart"].description
 
 
+def test_project_save_as_takes_a_final_bwproject_path_and_explicit_flags():
+    from bitwig_agent.catalog import max_timeout_ms
+    path = "/home/me/Bitwig Studio/Projects/Song/Song.bwproject"
+    assert TOOLS["project.saveAs"].read_only is False
+    assert validate_call("project.saveAs", {"path": path}) == ({"path": path}, 30000)
+    assert validate_call("project.saveAs", {"path": path, "overwrite": True, "allowAnyPath": False})[0] == {"path": path, "overwrite": True, "allowAnyPath": False}
+    assert max_timeout_ms("project.saveAs") == 60000
+    for bad in ({}, {"path": "Song/Song.bwproject"}, {"path": "~/Song/Song.bwproject"}, {"path": "/p/Song/Song.txt"},
+                {"path": "/p/../Song/Song.bwproject"}, {"path": "/Song.bwproject"}, {"path": "/p/Song/ Song.bwproject"},
+                {"path": "/p/Song/.bwproject"}, {"path": "/p/t/Template.bwproject"}, {"path": "/p/auto-backups/S/S.bwproject"},
+                {"path": path, "overwrite": "yes"}, {"path": path, "overwrite": None}, {"path": path, "force": True}):
+        with pytest.raises(ValidationError):
+            validate_call("project.saveAs", bad)
+
+
 def test_grid_insert_accepts_type_name_or_type_id_but_not_both_or_neither():
     named = {key: value for key, value in GRID_INSERT.items() if key != "typeId"} | {"typeName": "Low-pass"}
     assert validate_call("grid.modules.insert", named)[0] == named
