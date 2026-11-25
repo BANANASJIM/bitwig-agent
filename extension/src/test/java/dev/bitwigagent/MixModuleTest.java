@@ -40,6 +40,7 @@ public final class MixModuleTest {
         reboundGenerationNeverAcknowledgesOldWrite();
         briefReportsSelectionOnlyWhenObserved();
         selectionFailsFastWhileLauncherLeaseHeld();
+        deleteIsNameGuardedAndVerifiedByUuidAndCount();
         System.out.println("MixModuleTest: " + assertions + " assertions passed (simulated host only)");
     }
     private static void readsExposeNormalizedUnitsAndSends() {
@@ -194,6 +195,33 @@ public final class MixModuleTest {
     }
     private static void creationNamesOnlyUniqueObservedAddition() {
         for (String type : List.of("audio", "instrument", "effect")) verifyCreation(type);
+    }
+    private static JsonObject delete(String id, String name) {
+        JsonObject p = TransportMixFixture.target(id); p.addProperty("expectedName", name); return p;
+    }
+    private static void deleteIsNameGuardedAndVerifiedByUuidAndCount() {
+        TransportMixFixture f = new TransportMixFixture(); MixModule module = new MixModule(f.services);
+        f.delete = slot -> f.removeTrack(slot, 1);
+        HostOperation wrong = f.submit(module, "tracks.delete", delete(TransportMixFixture.B, "Nope")); f.next();
+        check(TransportMixFixture.error(wrong, "stale_target").outcome.equals("not_applied") && f.tracks[1].actions == 0, "name mismatch never dispatches");
+        f.tracks[1].child("trackType").emit("Master");
+        HostOperation master = f.submit(module, "tracks.delete", delete(TransportMixFixture.B, "Track 1")); f.next();
+        check(TransportMixFixture.error(master, "unsupported_scope").outcome.equals("not_applied") && f.tracks[1].actions == 0, "master refused");
+        f.tracks[1].child("trackType").emit("Audio");
+        f.transport.child("isPlaying").emit(true);
+        HostOperation playing = f.submit(module, "tracks.delete", delete(TransportMixFixture.B, "Track 1")); f.next();
+        check(TransportMixFixture.error(playing, "unsafe_state").outcome.equals("not_applied") && f.tracks[1].actions == 0, "playing refused");
+        f.transport.child("isPlaying").emit(false);
+        HostOperation op = f.submit(module, "tracks.delete", delete(TransportMixFixture.B, "Track 1")); f.next();
+        if (!op.result.isDone()) f.next();
+        JsonObject result = op.result.join();
+        check(f.tracks[1].actions == 1 && result.get("completion").getAsString().equals("observed")
+                && result.get("verification").getAsString().equals("uuid_absent_count_decremented")
+                && result.get("trackCountBefore").getAsInt() == 2 && result.get("trackCountAfter").getAsInt() == 1, "deleted once, verified");
+        TransportMixFixture silent = new TransportMixFixture(); MixModule other = new MixModule(silent.services);
+        HostOperation nothing = silent.submit(other, "tracks.delete", delete(TransportMixFixture.B, "Track 1")); silent.next();
+        while (!nothing.result.isDone() && !silent.tasks.isEmpty()) silent.next();
+        check(nothing.result.isDone() && nothing.result.join().get("completion").getAsString().equals("unknown"), "no observed change stays unknown");
     }
     private static void verifyCreation(String type) {
         TransportMixFixture f = new TransportMixFixture(); MixModule module = new MixModule(f.services);

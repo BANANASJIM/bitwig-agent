@@ -1,4 +1,4 @@
-"""Stdlib-only WAV analysis for audio.analyze: level, onsets, monophonic pitch, 10 ms probe."""
+"""Stdlib-only WAV analysis for audio.analyze: level, onsets, monophonic pitch, 10 ms probe, spectral bands."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import cmath
 import math
 import struct
 import sys
+import zlib
 from array import array
 from statistics import median
 from typing import Any
@@ -297,9 +298,182 @@ def probe(x: array, rate: int, skip: float) -> dict[str, Any]:
             "max": round(max(means), 4) if means else None, "means": [round(v, 4) for v in shown]}
 
 
+# ---- bands ----------------------------------------------------------------------------------------------
+BAND_EDGES = (("sub", 0, 60), ("low", 60, 250), ("mid", 250, 2000), ("high", 2000, 8000), ("air", 8000, math.inf))
+FRAMES_PER_WINDOW = 16      # frames sampled evenly across a window (FFT_SIZE samples each), not every sample
+CHROMA_LOW, CHROMA_HIGH = 50.0, 1500.0
+MODES = {"ionian": (0, 2, 4, 5, 7, 9, 11), "dorian": (0, 2, 3, 5, 7, 9, 10), "phrygian": (0, 1, 3, 5, 7, 8, 10),
+         "lydian": (0, 2, 4, 6, 7, 9, 11), "mixolydian": (0, 2, 4, 5, 7, 9, 10), "aeolian": (0, 2, 3, 5, 7, 8, 10),
+         "locrian": (0, 1, 3, 5, 6, 8, 10), "harmonic_minor": (0, 2, 3, 5, 7, 8, 11)}
+_TONICS = {"C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11}
+
+
+def parse_key(key: str) -> tuple[int, str]:
+    """'F:aeolian' / 'C#:dorian' / 'Bb:ionian' -> (tonic pitch class, mode)."""
+    tonic, _, mode = key.partition(":")
+    pc = _TONICS.get(tonic[:1].upper())
+    accidental = tonic[1:]
+    if pc is None or accidental not in ("", "#", "b") or mode.lower() not in MODES:
+        raise WavError(f"key must look like 'F:aeolian' (tonic A-G with optional #/b; mode one of {', '.join(MODES)})")
+    return (pc + {"": 0, "#": 1, "b": -1}[accidental]) % 12, mode.lower()
+
+
+def _frame(x: array, start: int) -> tuple[list[float], list[float]]:
+    """Power and magnitude of bins 0..N/2 of one Hann-windowed frame."""
+    spectrum = _fft([complex(v * w) for v, w in zip(x[start:start + FFT_SIZE], _WINDOW)])
+    mags = [abs(c) for c in spectrum[:FFT_SIZE // 2 + 1]]
+    return [m * m for m in mags], mags
+
+
+def _chroma(mags: list[float], rate: int) -> list[float]:
+    """Pitch-class weights from spectral peaks in CHROMA_LOW..CHROMA_HIGH (parabolic frequency, magnitude-squared weight)."""
+    out = [0.0] * 12
+    lo, hi = max(1, int(CHROMA_LOW * FFT_SIZE / rate)), int(CHROMA_HIGH * FFT_SIZE / rate) + 1
+    floor = max(mags[lo:hi], default=0.0) ** 2 * 1e-4
+    for k in range(lo, min(hi, len(mags) - 1)):
+        a, b, c = mags[k - 1], mags[k], mags[k + 1]
+        if b <= a or b < c or b * b <= floor:
+            continue
+        la, lb, lc = (math.log(max(v, 1e-12)) for v in (a, b, c))
+        denom = la - 2 * lb + lc
+        hz = (k + (0.5 * (la - lc) / denom if denom else 0.0)) * rate / FFT_SIZE
+        if CHROMA_LOW <= hz <= CHROMA_HIGH:
+            out[round(69 + 12 * math.log2(hz / 440)) % 12] += b * b
+    return out
+
+
+def _rel_db(part: float, total: float) -> float | None:
+    return round(10 * math.log10(part / total), 1) if part > 0 and total > 0 else None
+
+
+def _chroma_report(weights: list[float], scale: set[int]) -> dict[str, Any]:
+    total = sum(weights)
+    if total <= 0:
+        return {"inKeyShare": None, "topPitchClasses": []}
+    top = sorted(range(12), key=lambda p: -weights[p])[:3]
+    return {"inKeyShare": round(sum(weights[p] for p in scale) / total, 3),
+            "topPitchClasses": [{"name": NAMES[p], "share": round(weights[p] / total, 3)} for p in top if weights[p] > 0]}
+
+
+def bands(x: array, rate: int, window_seconds: float, key: str | None, shift: float) -> dict[str, Any]:
+    """Per-window band energy relative to the window's total power (dB), spectral centroid and RMS; optional in-key chroma."""
+    nyquist = rate / 2
+    edges = [(n, math.ceil(lo * FFT_SIZE / rate), min(FFT_SIZE // 2 + 1, math.ceil(hi * FFT_SIZE / rate) if hi != math.inf else FFT_SIZE // 2 + 1))
+             for n, lo, hi in BAND_EDGES if lo < nyquist]
+    scale: set[int] | None = None
+    if key:
+        tonic, mode = parse_key(key)
+        scale = {(tonic + i) % 12 for i in MODES[mode]}
+    window_seconds = max(window_seconds, len(x) / rate / MAX_WINDOWS)
+    size = max(FFT_SIZE, int(window_seconds * rate))
+    freqs = [k * rate / FFT_SIZE for k in range(FFT_SIZE // 2 + 1)]
+    rows, all_chroma = [], [0.0] * 12
+    for begin in range(0, len(x), size):
+        end = min(len(x), begin + size)
+        if end - begin < FFT_SIZE:
+            break
+        hop = max(FFT_SIZE, (end - begin - FFT_SIZE) // (FRAMES_PER_WINDOW - 1))
+        power, weighted, chroma = [0.0] * (FFT_SIZE // 2 + 1), 0.0, [0.0] * 12
+        for start in range(begin, end - FFT_SIZE + 1, hop):
+            p, mags = _frame(x, start)
+            power = [a + b for a, b in zip(power, p)]
+            if scale is not None:
+                chroma = [a + b for a, b in zip(chroma, _chroma(mags, rate))]
+        total = sum(power[1:])
+        row: dict[str, Any] = {"t": round(begin / rate + shift, 3), "rms": round(_rms(x[begin:end]), 4)}
+        if total > 0:
+            weighted = sum(f * v for f, v in zip(freqs[1:], power[1:]))
+            row["bandsDb"] = {n: _rel_db(sum(power[max(lo, 1):hi]), total) for n, lo, hi in edges}
+            row["centroidHz"] = round(weighted / total)
+        else:
+            row["bandsDb"], row["centroidHz"] = {n: None for n, _, _ in edges}, None
+        if scale is not None:
+            all_chroma = [a + b for a, b in zip(all_chroma, chroma)]
+            row["chroma"] = _chroma_report(chroma, scale)
+        rows.append(row)
+    out: dict[str, Any] = {"windowSeconds": round(window_seconds, 3), "windows": rows,
+                           "bandEdgesHz": {n: [lo, None if hi == math.inf else hi] for n, lo, hi in BAND_EDGES if lo < nyquist},
+                           "note": f"each window samples up to {FRAMES_PER_WINDOW} Hann frames of {FFT_SIZE} samples; bandsDb are relative to the window's total power"}
+    if scale is not None:
+        out["key"] = key
+        out["chroma"] = {**_chroma_report(all_chroma, scale), "rangeHz": [CHROMA_LOW, CHROMA_HIGH],
+                         "note": "spectral peaks folded to pitch classes; drums, noise and inharmonic partials pollute it, so use it on pitched stems"}
+    return out
+
+
+def stereo_correlation(left: array, right: array | None, skip: int) -> float | None:
+    """Pearson correlation of the two channels over the whole (skipped) file; None for mono or a silent channel."""
+    if right is None:
+        return None
+    a, b = left[skip:], right[skip:]
+    n = len(a)
+    if not n:
+        return None
+    ma, mb = sum(a) / n, sum(b) / n
+    saa = sum(v * v for v in a) - n * ma * ma
+    sbb = sum(v * v for v in b) - n * mb * mb
+    sab = sum(map(float.__mul__, a, b)) - n * ma * mb
+    return round(sab / math.sqrt(saa * sbb), 3) if saa > 1e-12 and sbb > 1e-12 else None
+
+
+# ---- spectrogram ----------------------------------------------------------------------------------------
+SPEC_COLUMNS, SPEC_ROWS, SPEC_RANGE_DB, SPEC_LOW_HZ = 800, 256, 80.0, 30.0
+_PALETTE = ((0, 0, 0), (40, 0, 90), (160, 20, 120), (240, 110, 30), (255, 230, 120), (255, 255, 255))
+
+
+def _color(level: float) -> bytes:
+    pos = min(max(level, 0.0), 1.0) * (len(_PALETTE) - 1)
+    i = min(int(pos), len(_PALETTE) - 2)
+    f = pos - i
+    return bytes(round(a + (b - a) * f) for a, b in zip(_PALETTE[i], _PALETTE[i + 1]))
+
+
+def write_png(path: str, width: int, height: int, rgb_rows: list[bytes]) -> None:
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data))
+    raw = b"".join(b"\0" + row for row in rgb_rows)
+    png = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+           + chunk(b"IDAT", zlib.compress(raw, 6)) + chunk(b"IEND", b""))
+    try:
+        with open(path, "wb") as handle:
+            handle.write(png)
+    except OSError as exc:
+        raise WavError(f"Cannot write {path}: {exc.strerror}") from exc
+
+
+def spectrogram(x: array, rate: int, path: str) -> dict[str, Any]:
+    """Log-frequency PNG (low frequencies at the bottom, time left to right), SPEC_RANGE_DB below the loudest cell."""
+    if len(x) < FFT_SIZE:
+        raise WavError("Audio is shorter than one analysis frame; no spectrogram")
+    columns = min(SPEC_COLUMNS, (len(x) - FFT_SIZE) // (FFT_SIZE // 4) + 1)
+    hop = (len(x) - FFT_SIZE) / (columns - 1) if columns > 1 else 0
+    top_hz = min(rate / 2, 16000.0)
+    ratio = (top_hz / SPEC_LOW_HZ) ** (1 / SPEC_ROWS)
+    ranges = []
+    for r in range(SPEC_ROWS):
+        lo, hi = SPEC_LOW_HZ * ratio ** r, SPEC_LOW_HZ * ratio ** (r + 1)
+        a, b = int(lo * FFT_SIZE / rate), int(hi * FFT_SIZE / rate)
+        ranges.append((a, max(b, a) + 1))
+    cells = []
+    for c in range(columns):
+        _, mags = _frame(x, int(c * hop))
+        cells.append([max(mags[a:b]) for a, b in ranges])
+    peak = max((v for col in cells for v in col), default=0.0)
+    floor = peak * 10 ** (-SPEC_RANGE_DB / 20)
+    rows = []
+    for r in range(SPEC_ROWS - 1, -1, -1):
+        rows.append(b"".join(_color(0.0 if cells[c][r] <= floor else
+                                    1 + 20 * math.log10(cells[c][r] / peak) / SPEC_RANGE_DB) for c in range(columns)))
+    write_png(path, columns, SPEC_ROWS, rows)
+    return {"path": path, "width": columns, "height": SPEC_ROWS, "fMinHz": SPEC_LOW_HZ, "fMaxHz": round(top_hz),
+            "axis": "log frequency, low at the bottom; time left to right", "dynamicRangeDb": SPEC_RANGE_DB}
+
+
 def analyze(args: dict[str, Any]) -> dict[str, Any]:
     if args["mode"] == "loudness":
         return loudness_mode(args)
+    if args["mode"] == "bands":
+        return analyze_bands(args)
     rate, channels, x = read_wav(args["path"])
     skip = args.get("skipSeconds", 0.0)
     mode = args["mode"]
@@ -339,3 +513,20 @@ def loudness_mode(args: dict[str, Any]) -> dict[str, Any]:
         raise WavError(str(exc)) from exc
     return {"path": args["path"], "mode": "loudness", "sampleRate": rate, "channels": count,
             "durationSeconds": round(frames / rate, 3), "analyzedChannel": "all", "startSeconds": round(begin / rate, 3), **measured}
+
+
+def analyze_bands(args: dict[str, Any]) -> dict[str, Any]:
+    rate, channels, data = read_wav(args["path"], all_channels=True)
+    left, right = data[0], data[1] if channels > 1 else None
+    skip = args.get("skipSeconds", 0.0)
+    if skip >= len(left) / rate:
+        raise WavError("skipSeconds is beyond the end of the file")
+    start = int(skip * rate)
+    body = left[start:]
+    out: dict[str, Any] = {"path": args["path"], "mode": "bands", "sampleRate": rate, "channels": channels,
+                           "durationSeconds": round(len(left) / rate, 3), "analyzedChannel": 0}
+    out.update(bands(body, rate, args.get("windowSeconds", 8.0), args.get("key"), start / rate))
+    out["stereoCorrelation"] = stereo_correlation(left, right, start)
+    if args.get("spectrogramPath"):
+        out["spectrogram"] = spectrogram(body, rate, args["spectrogramPath"])
+    return out

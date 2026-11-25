@@ -21,11 +21,13 @@ final class TransportMixFixture {
     int bankCreations;
     Consumer<String> create = type -> {};
     Runnable addMarker = () -> {};
+    Consumer<Integer> delete = slot -> {};
 
     TransportMixFixture() { this(true); }
     TransportMixFixture(boolean observeSafetyInitially) {
         for (int i = 0; i < tracks.length; i++) {
             Node track = tracks[i] = new Node();
+            final int slot = i;
             track.child("exists").data = i < 2;
             track.child("channelId").data = i == 0 ? A : i == 1 ? B : "";
             track.child("name").data = "Track " + i;
@@ -48,6 +50,7 @@ final class TransportMixFixture {
                     selected.afterWrite.run();
                     return null;
                 }
+                if (name.equals("deleteObject")) { mutation(); track.actions++; delete.accept(slot); return null; }
                 return null;
             };
             Node devices = track.child("createDeviceBank");
@@ -161,6 +164,11 @@ final class TransportMixFixture {
         track.child("channelId").emit(id); track.child("exists").emit(true);
         track.child("trackType").emit(type); track.child("position").emit(slot);
         bank.child("itemCount").emit(slot + 1);
+    }
+    void removeTrack(int slot, int remaining) {
+        Node track = tracks[slot];
+        track.child("exists").emit(false); track.child("channelId").emit("");
+        bank.child("itemCount").emit(remaining);
     }
     void mutation() { if (!onHost) throw new AssertionError("Host mutation outside scheduled callback"); }
     static JsonObject json(String text) { return JsonParser.parseString(text).getAsJsonObject(); }

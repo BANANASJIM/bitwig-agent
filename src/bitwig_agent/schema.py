@@ -980,6 +980,10 @@ class TrackGroupArgs(StatusArgs):
         return self
 
 
+class TrackDeleteArgs(DeviceArgs):
+    expectedName: Nonempty
+
+
 class RemotePageArgs(ParameterArgs):
     contextToken: Nonempty
     pageIndex: int = Field(ge=0, le=4095)
@@ -1136,6 +1140,7 @@ class GridApplyArgs(StatusArgs):
         description="Cables between declared modules; one source per target input.")
     namespace: str = omitted(min_length=1, max_length=1024, description="customName prefix (e.g. 'H: ') that prune may delete from.")
     prune: bool = omitted(description="Also disconnect unlisted inputs of declared modules inside the namespace and delete namespace modules absent from the spec. Inputs of declared modules outside the namespace are kept (warning names both ends) unless allowOutsideDisconnect.")
+    pruneAll: bool = omitted(description="Opt in to managing the WHOLE device (mutually exclusive with namespace): delete every module the spec does not declare (unnamed ones too; `external` excepted), replace same-named modules of another type (as replace:true), and disconnect every undeclared input. Deletes run first; all of it is listed in the dryRun plan and warnings. Use dryRun first.")
     allowOutsideDisconnect: bool = omitted(description="With prune and a namespace: also disconnect unlisted inputs of declared modules outside the namespace (listed by name in warnings and the dryRun plan).")
     external: Annotated[list[Annotated[str, Field(min_length=1, max_length=1024)]], Field(max_length=1024)] = omitted(
         description="Names of live modules this spec only wires to or from (e.g. 'X: sum'); they must exist, are used in connections like declared modules, and their type, position and params are never touched; never pruned.")
@@ -1147,8 +1152,10 @@ class GridApplyArgs(StatusArgs):
     def validate_spec(self):
         if "voicing" in self.model_fields_set and not self.voicing.model_fields_set:
             raise ValueError("voicing must name at least one field")
-        if not self.modules and not self.instances and not (self.prune and self.namespace):
-            raise ValueError("modules may be empty only with prune=true and a non-empty namespace, or with instances")
+        if self.pruneAll and (self.namespace or self.allowOutsideDisconnect):
+            raise ValueError("pruneAll manages the whole device: do not combine it with namespace or allowOutsideDisconnect")
+        if not self.modules and not self.instances and not (self.prune and self.namespace) and not self.pruneAll:
+            raise ValueError("modules may be empty only with prune=true and a non-empty namespace, pruneAll=true, or with instances")
         if self.instances and not self.blocks:
             raise ValueError("instances need blocks")
         names = [m.name for m in self.modules or []]
@@ -1194,17 +1201,34 @@ class AudioCaptureArgs(StatusArgs):
 
 class AudioAnalyzeArgs(StatusArgs):
     path: Nonempty
-    mode: Literal["level", "onsets", "mono_pitch", "probe", "loudness"]
+    mode: Literal["level", "onsets", "mono_pitch", "probe", "loudness", "bands"]
     bpm: Annotated[float, Field(ge=20, le=666)] = omitted(description="mono_pitch: adds 16th-grid positions.")
     skipSeconds: Annotated[float, Field(ge=0, le=3600)] = omitted(description="Ignore audio before this time; reported times stay relative to the file start.")
     method: Literal["flux", "envelope"] = omitted(description="onsets/mono_pitch: flux (default) = spectral flux, counts overlapping notes with long decays; envelope = rising crossings of a 5 ms peak envelope.")
     threshold: Annotated[float, Field(ge=0.01, le=0.9)] = omitted(description="onsets/mono_pitch: flux: how far a flux peak must stand above its neighbourhood, as a fraction of the strongest peak; envelope: fraction of the peak envelope that counts as an onset (default 0.15).")
-    windowSeconds: Annotated[float, Field(ge=0.01, le=60)] = omitted(description="level: window length (default 0.5).")
+    windowSeconds: Annotated[float, Field(ge=0.01, le=60)] = omitted(description="level: window length (default 0.5); bands: window length (default 8).")
+    key: str = omitted(pattern=r"^[A-Ga-g][#b]?:(ionian|dorian|phrygian|lydian|mixolydian|aeolian|locrian|harmonic_minor)$",
+                       description="bands: e.g. 'F:aeolian'; adds per-window and overall in-key chroma share (50-1500 Hz peaks folded to pitch classes) and top pitch classes. Drums and noise pollute chroma.")
+    spectrogramPath: Nonempty = omitted(description="bands: absolute .png path to write a log-frequency spectrogram to (an existing file is replaced).")
 
     @field_validator("path")
     @classmethod
     def validate_path(cls, value: str) -> str:
         return _wav_path(value)
+
+    @field_validator("spectrogramPath")
+    @classmethod
+    def validate_spectrogram_path(cls, value: str) -> str:
+        validate_local_path(value)
+        if not value.lower().endswith(".png"):
+            raise ValueError("spectrogramPath must end in .png")
+        return value
+
+    @model_validator(mode="after")
+    def validate_bands_only(self):
+        if self.mode != "bands" and (self.key or self.spectrogramPath):
+            raise ValueError("key and spectrogramPath apply to mode=bands only")
+        return self
 
 class GridDescribeArgs(StatusArgs):
     type: str = omitted(min_length=1, max_length=128, description="Module display name (e.g. 'Select In') or typeId; exactly one of type or query.")

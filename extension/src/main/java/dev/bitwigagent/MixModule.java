@@ -8,7 +8,7 @@ import java.util.concurrent.TimeUnit;
 
 /** UUID-targeted mix operations over the single shared, bounded track bank. */
 final class MixModule implements HostModule {
-    static final Set<String> METHODS = Set.of("tracks.get", "tracks.set", "tracks.create", "tracks.select", "tracks.sends.set", "tracks.group");
+    static final Set<String> METHODS = Set.of("tracks.get", "tracks.set", "tracks.create", "tracks.select", "tracks.sends.set", "tracks.group", "tracks.delete");
     /** Long enough for the native group operation, which may first save plug-in states asynchronously. */
     static final long GROUP_OBSERVE_NANOS = TimeUnit.MILLISECONDS.toNanos(3000);
     interface GroupAccess {
@@ -111,6 +111,9 @@ final class MixModule implements HostModule {
                 trackIds(p);
                 if (p.has("name")) Params.string(p, "name");
                 return;
+            case "tracks.delete":
+                Params.fields(p, Set.of("trackId", "expectedName"), Set.of());
+                Params.string(p, "trackId"); Params.string(p, "expectedName"); return;
             default: throw HostServices.failure("unknown_method", "Unknown track method.");
         }
     }
@@ -145,6 +148,7 @@ final class MixModule implements HostModule {
         String id = p.get("trackId").getAsString();
         State state = states[s.trackSlot(id)];
         Target target = new Target(id, state);
+        if (method.equals("tracks.delete")) { delete(op, target, p.get("expectedName").getAsString()); return; }
         if (method.equals("tracks.get")) { op.result.complete(snapshot(target)); return; }
         if (method.equals("tracks.sends.set")) { sendSet(op, target, p); return; }
         if (method.equals("tracks.select")) {
@@ -647,6 +651,48 @@ final class MixModule implements HostModule {
         result.add("trackId", JsonNull.INSTANCE);
         result.addProperty("quarantine", "tracks.create and tracks.group refuse until extension.restart; inspect tracks.list, never retry");
         op.result.complete(result);
+    }
+
+    /** Delete one audio/instrument/effect track by Track.deleteObject (DeleteableObject), verified by bank UUID set and count. */
+    private void delete(HostOperation op, Target target, String expectedName) {
+        HostServices.SafetyObservation safety = s.stoppedSafety(op);
+        if (!s.tracksObserved) throw HostServices.failure("not_ready", "Track bank has not reported its size yet.");
+        guard(op, target);
+        JsonElement type = target.state.meta("type"), name = value(target.state, 0), index = target.state.meta("index");
+        if (type.isJsonNull() || name.isJsonNull()) throw HostServices.failure("not_ready", "Track type/name have not been observed.");
+        if (!Set.of("Audio", "Instrument", "Effect").contains(type.getAsString()))
+            throw HostServices.failure("unsupported_scope", "Only Audio, Instrument and Effect tracks can be deleted; this track is " + type.getAsString() + " (hybrid, group and master are refused); nothing was dispatched.");
+        if (!name.getAsString().equals(expectedName))
+            throw HostServices.failure("stale_target", "Track name differs from expectedName; no delete was dispatched.");
+        Creation before = capture();
+        if (!before.complete || !before.ids.contains(target.id))
+            throw HostServices.failure("not_ready", "Deletion needs the whole project observed in the 16-track bank window (offset 0, at most 16 tracks including group children and effect tracks, every UUID/type/position read); this project exceeds it or is not fully observed yet. Nothing was dispatched.");
+        s.guardStoppedSafety(safety);
+        guard(op, target);
+        op.dispatched = true;
+        target.state.track.deleteObject();
+        JsonObject deleted = new JsonObject();
+        deleted.addProperty("trackId", target.id); deleted.addProperty("name", expectedName);
+        deleted.addProperty("type", type.getAsString()); deleted.add("index", index);
+        awaitDeletion(op, target.id, deleted, before, HostServices.observeUntil(op));
+    }
+
+    private void awaitDeletion(HostOperation op, String id, JsonObject deleted, Creation before, long until) {
+        Creation after = capture();
+        Set<String> others = new HashSet<>(before.ids); others.remove(id);
+        boolean gone = after.complete && !after.ids.contains(id) && after.total == before.total - 1 && after.ids.equals(others);
+        if (gone || System.nanoTime() >= until) {
+            JsonObject result = scope();
+            result.addProperty("status", gone ? "observed" : "dispatched");
+            result.addProperty("completion", gone ? "observed" : "unknown");
+            result.addProperty("matchesRequested", gone);
+            result.addProperty("verification", gone ? "uuid_absent_count_decremented" : "deletion_not_observed");
+            result.add("deleted", deleted);
+            result.addProperty("trackCountBefore", before.total); result.addProperty("trackCountAfter", after.total);
+            op.result.complete(result);
+            return;
+        }
+        s.schedule(op, () -> awaitDeletion(op, id, deleted, before, until), 20);
     }
 
     private void awaitCreation(HostOperation op, JsonObject p, Creation before, String previousCandidate, long until) {

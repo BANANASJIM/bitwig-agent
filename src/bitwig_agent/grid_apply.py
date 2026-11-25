@@ -164,6 +164,10 @@ def _pos(row: dict[str, Any]) -> tuple[int, int]:
     return row["x"], row["y"]
 
 
+def label_of(row: dict[str, Any]) -> str:
+    return row.get("customName") or generated_name(row)
+
+
 def generated_name(row: dict[str, Any]) -> str:
     """Stable stand-in name of an unnamed live module (grid.export writes it, grid.apply matches unnamed modules by it)."""
     return f"_{row.get('typeName') or row.get('typeId')}_{row['x']}_{row['y']}"
@@ -446,8 +450,10 @@ class Apply:
         self.instances = instances or []
         self.target = args["target"]
         self.dry = bool(args.get("dryRun"))
-        self.prune = bool(args.get("prune"))
-        self.replace_default = bool(args.get("replace"))
+        self.prune_all = bool(args.get("pruneAll"))  # manage the whole device: no namespace, unnamed modules included
+        self.prune = bool(args.get("prune")) or self.prune_all
+        self.replace_default = bool(args.get("replace")) or self.prune_all
+        self.gone_ids: set[str] = set()  # modules this run deletes: their cables disappear with them
         self.replaced_names: list[str] = []
         self.external: list[str] = args.get("external") or []  # live modules the spec only references
         self.outside_ok = bool(args.get("allowOutsideDisconnect"))
@@ -466,6 +472,7 @@ class Apply:
         self.wrote = False
         self.topo_written = False
         self.unnamed: dict[str, str] = {}
+        self.name_existing: list[str] = []
         self.phase = "validate"
         self.live_schema = False
         self.has_steps = any(is_steps(v) for m in self.modules for v in (m.get("params") or {}).values())
@@ -473,6 +480,10 @@ class Apply:
         self.voicing_set: dict[str, Any] = {}
         self.voicing_expected: dict[str, Any] = {}
         self.clock = monotonic
+
+    def warn(self, text: str) -> None:
+        if text not in self.warnings:  # planning repeats (preflight, dry run, report)
+            self.warnings.append(text)
 
     # ---- transport -------------------------------------------------------------------------------------------
     async def call(self, method: str, params: dict[str, Any], *, write: bool = False) -> dict[str, Any]:
@@ -699,7 +710,8 @@ class Apply:
 
     def plan_connections(self, rows: dict[str, dict], conns: list[dict]) -> list[dict]:
         """Edits (as host entries + readable fields) for rows keyed by module name; modules absent from rows are new."""
-        incoming = {(c["targetModuleId"], c["targetPortKey"]): (c["sourceModuleId"], c["sourcePortKey"]) for c in conns}
+        incoming = {(c["targetModuleId"], c["targetPortKey"]): (c["sourceModuleId"], c["sourcePortKey"]) for c in conns
+                    if c["sourceModuleId"] not in self.gone_ids and c["targetModuleId"] not in self.gone_ids}
         name_of = {r["instanceId"]: r.get("customName") or generated_name(r) for r in [*self.rows0, *rows.values()]}
         edits, wanted = [], set()
         for src, sport, dst, dport in self.edges:
@@ -719,11 +731,11 @@ class Apply:
                                  "source": {"moduleId": srow["instanceId"], "portKey": sport}}
             edits.append(edit)
         if self.prune:
-            held, cut = [], []
+            held, cut, undeclared = [], [], []
             for name, row in rows.items():
                 if name in self.external:  # referenced only: never pruned
                     continue
-                outside = bool(self.namespace) and not name.startswith(self.namespace)
+                outside = bool(self.namespace) and not name.startswith(self.namespace) and not self.prune_all
                 for port in row.get("inputs", []):
                     key = (row["instanceId"], port["key"])
                     if key in incoming and key not in wanted:
@@ -734,6 +746,8 @@ class Apply:
                             continue
                         if outside:
                             cut.append(end)
+                        elif self.prune_all:
+                            undeclared.append(end)
                         edits.append({"from": None, "to": f"{name}.{port['key']}",
                                       "previous": f"{name_of.get(cur[0], cur[0])}.{cur[1]}",
                                       "write": {"targetModuleId": row["instanceId"], "targetPortKey": port["key"],
@@ -741,7 +755,9 @@ class Apply:
             for items, text in ((held, "prune kept {n} cable(s) into modules outside namespace {ns!r}; allowOutsideDisconnect:true cuts them: {l}"),
                                 (cut, "allowOutsideDisconnect: disconnecting {n} input(s) of modules outside namespace {ns!r}: {l}")):
                 if items:
-                    self.warnings.append(text.format(n=len(items), ns=self.namespace, l="; ".join(items[:10]) + (" ..." if len(items) > 10 else "")))
+                    self.warn(text.format(n=len(items), ns=self.namespace, l="; ".join(items[:10]) + (" ..." if len(items) > 10 else "")))
+            if undeclared:
+                self.warn(f"pruneAll: disconnecting {len(undeclared)} input(s) the spec does not declare: " + "; ".join(undeclared[:10]) + (" ..." if len(undeclared) > 10 else ""))
         return edits
 
     def live_checks(self, rows: dict[str, dict]) -> None:
@@ -857,10 +873,18 @@ class Apply:
             else:
                 problems.append(f"external module {name!r} " + (f"matches {len(found)} modules; names must be unique" if found else f"is not in the device.{_near(name, by_custom)}"))
         deletes = list(replaced)
-        if self.prune and self.namespace:
+        if self.prune_all:
+            stale = [r for r in rows if label_of(r) not in self.by_spec and label_of(r) not in self.external]
+            deletes += stale
+            if stale:
+                self.warn(f"pruneAll: deleting {len(stale)} module(s) the spec does not declare: " + ", ".join(map(label_of, stale[:10])) + (" ..." if len(stale) > 10 else ""))
+            if replaced:
+                self.warn(f"pruneAll: replacing {len(replaced)} module(s) whose type changed: " + ", ".join(f"{label_of(r)} ({r.get('typeName') or r.get('typeId')} -> {self.resolved[label_of(r)]['typeName']})" for r in replaced[:10]) + (" ..." if len(replaced) > 10 else ""))
+        elif self.prune and self.namespace:
             deletes += [r for r in rows if r["customName"].startswith(self.namespace) and r["customName"] not in self.by_spec
                         and r["customName"] not in self.external]
-        self.replaced_names = [r["customName"] for r in replaced]
+        self.gone_ids = {r["instanceId"] for r in deletes}
+        self.replaced_names = [label_of(r) for r in replaced]
         self.dropped = self.dropped_cables(replaced, rows, conns)
         if self.dropped:
             self.warnings.append(f"replace drops {len(self.dropped)} cable(s) the spec does not declare: {'; '.join(self.dropped[:10])}" + (" ..." if len(self.dropped) > 10 else ""))
@@ -877,6 +901,8 @@ class Apply:
         if problems:
             raise SpecError(problems)
         self.ids = {n: r["instanceId"] for n, r in existing.items()}
+        # An unnamed live module matched by its generated name that has to move is named first, or the move would change that name and the next run would see a stranger.
+        self.name_existing = [n for n, r in existing.items() if not r["customName"] and _pos(r) != (self.by_spec[n]["x"], self.by_spec[n]["y"])]
         self.matched["modules"] = len(existing)
         if self.live_schema:
             self.live_checks({**existing, **self.ext_rows})
@@ -925,13 +951,13 @@ class Apply:
             moves.append({"name": name, "from": list(pos[name]), "to": list(at)})
             pos[name] = at
         edits = self.plan_connections({**existing, **self.ext_rows}, conns)
-        plan = {"deletes": [r["customName"] for r in deletes], **({"replaces": self.replaced_names} if self.replaced_names else {}),
+        plan = {"deletes": [label_of(r) for r in deletes], **({"replaces": self.replaced_names} if self.replaced_names else {}),
                 **({"droppedConnections": self.dropped} if self.dropped else {}),
                 "inserts": [{"name": n, "type": self.resolved[n]["typeName"], "x": self.by_spec[n]["x"], "y": self.by_spec[n]["y"]} for n in inserts],
-                "renames": list(inserts), "moves": moves, "params": param_plan,
+                "renames": [*self.name_existing, *inserts], "moves": moves, "params": param_plan,
                 "connections": [{k: v for k, v in e.items() if k != "write"} for e in edits],
                 **({"voicing": {"set": self.voicing_set, "from": self.voicing_expected}} if self.voicing_want else {})}
-        planned = {"inserted": len(inserts), "renamed": len(inserts), "moved": len(moves), "paramsWritten": planned_params,
+        planned = {"inserted": len(inserts), "renamed": len(inserts) + len(self.name_existing), "moved": len(moves), "paramsWritten": planned_params,
                    "connections": sum(1 for e in edits if e["from"]), "disconnected": sum(1 for e in edits if not e["from"]), "deleted": len(deletes),
                    **({"voicingFields": len(self.voicing_set)} if self.voicing_want else {})}
         notes = ["modules already in the device are moved before inserting; inserted modules are only moved if the host reflows them"] if inserts else []
@@ -1025,7 +1051,7 @@ class Apply:
                     and self.known_value(name, rule["parameter"], existing) is False):
                 self.warnings.append(f"{name}: {rule['message']}")
             ignored = self.unit_ignores_time(name, ids, existing, rules.get("unitIgnoresTime"))
-            self.raw_scale_warnings(name, type_name, ids, ignored, rules.get("rawNonLinear"))
+            self.raw_scale_warnings(name, type_name, ids, ignored, rules.get("rawNonLinear"), rules.get("rawTiny"))
 
     def unit_ignores_time(self, name: str, ids: dict[str, Any], existing: dict[str, dict], rule: dict[str, Any] | None) -> bool:
         """Warn when TIME is written while UNIT is a note value; True when the TIME is covered by that warning."""
@@ -1039,9 +1065,10 @@ class Apply:
         self.warnings.append(f"{name}: {rule['message'].format(unit=label)}")
         return True
 
-    def raw_scale_warnings(self, name: str, type_name: str, ids: dict[str, Any], skip_time: bool, rule: dict[str, Any] | None) -> None:
+    def raw_scale_warnings(self, name: str, type_name: str, ids: dict[str, Any], skip_time: bool, rule: dict[str, Any] | None,
+                           tiny: dict[str, Any] | None = None) -> None:
         """A raw number written to a non-linear scale rarely means what its display shows."""
-        if not rule:
+        if not rule and not tiny:
             return
         params = self.resolved[name]["params"]
         ctx = enum_context(self.by_spec[name].get("params") or {}, self.resolved[name]["info"])
@@ -1050,7 +1077,10 @@ class Apply:
             if skip_time and pid == "TIME" or type(raw) not in (int, float) or not want or "shown" in want or "display" in want:
                 continue
             found = raw_scales.scale_for(type_name, pid, ctx)
-            if found is None or found[1].name not in rule["scales"] or raw == ids[pid].get("default"):
+            if tiny and found is not None and pid == tiny["parameter"] and found[1].name == tiny["scale"] and 0 < abs(raw) < tiny["below"]:
+                self.warn(f"{name}: " + tiny["message"].format(parameter=pid, raw=raw, effective=raw_scales.effective(found[1], raw), example=found[1].example))
+                continue
+            if not rule or found is None or found[1].name not in rule["scales"] or raw == ids[pid].get("default"):
                 continue
             self.warnings.append(f"{name}: " + rule["message"].format(parameter=pid, raw=raw, effective=raw_scales.effective(found[1], raw), example=found[1].example))
 
@@ -1066,7 +1096,7 @@ class Apply:
         """What a real apply would be refused for, knowable now without writing."""
         out: list[dict[str, str]] = []
         kept = self.matched["connections"]
-        writes = bool(inserts or deletes or self.pre_moves or self.voicing_set or self.plan_connections(existing, conns)
+        writes = bool(inserts or deletes or self.name_existing or self.pre_moves or self.voicing_set or self.plan_connections(existing, conns)
                       or any(self.pre_params[n][0] for n in self.names))
         self.matched["connections"] = kept  # planning is repeated by dry_run
         if writes:
@@ -1119,7 +1149,13 @@ class Apply:
             self.verify("grid.modules.delete", result)
             self.applied["deleted"] += 1
             pending["deleted"] -= 1
-            self.steps.append({"op": "delete", "name": row["customName"], **({"replace": True} if row["customName"] in self.replaced_names else {})})
+            self.steps.append({"op": "delete", "name": label_of(row), **({"replace": True} if label_of(row) in self.replaced_names else {})})
+        self.phase = "rename"
+        for n in self.name_existing:
+            renamed = await self.call("grid.modules.rename", {"moduleId": self.ids[n], "expectedCustomName": "", "customName": n}, write=True)
+            self.verify("grid.modules.rename", renamed)
+            self.applied["renamed"] += 1
+            self.steps.append({"op": "rename", "name": n})
         self.phase = "premove"
         pos = {self.ids[n]: p for n, p in current.items()}
         for name, at in self.pre_moves:

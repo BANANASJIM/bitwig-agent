@@ -48,7 +48,7 @@ def help_payload() -> dict[str, Any]:
                   "bitwig-agent-rpc grid.probe trackId=<uuid> deviceIndex=0 expectedDeviceName='Poly Grid' port='H: lead.OUT' seconds=4 mode=mono_pitch  (reroute, record, restore cables)",
                   "bitwig-agent-rpc audio.route mode=silent|restore|status   (Linux/PipeWire)",
                   "bitwig-agent-rpc audio.capture seconds=8 outPath=/abs/out.wav [fromStart=false] [overwrite=true]",
-                  "bitwig-agent-rpc audio.analyze path=/abs/out.wav mode=level|onsets|mono_pitch|probe [bpm=120] [skipSeconds=2]",
+                  "bitwig-agent-rpc audio.analyze path=/abs/out.wav mode=level|onsets|mono_pitch|probe|bands [bpm=120] [skipSeconds=2]",
                   "bitwig-agent-rpc host.diagnostics [sinceSeconds=300 | sinceMarker=<marker>] [maxEvents=50]  (Bitwig log: grid_rejected, engine, extension errors)",
                   "bitwig-agent-rpc grid.describe type=\"Select In\" | query=\"random trigger\" [lang=de]  (offline Bitwig module docs)"],
         "discovery": "list, help and describe are offline. capabilities queries the running host.",

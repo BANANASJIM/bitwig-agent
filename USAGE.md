@@ -35,7 +35,7 @@ The skill supports screenshot-only guidance, delegated production and troublesho
 | Discovery | Status, capabilities, `context.get` (project/transport safety, scenes, tracks with occupied slots, selection, cursor clip), tracks, root devices, fixed one-hop layers and host Actions |
 | Transport | Play/stop, raw tempo, time signature, seek, metronome and arranger loop, with recording/automation safety guards |
 | Markers | `markers.list/insert/rename/delete`: arranger cue markers by rank + exact name, verified by whole-list readback |
-| Tracks | UUID-targeted mix/name/mute/solo/arm, volume/pan by dB or percent text, send level/enable writes (`tracks.sends.set`), VU peak/RMS windows (`tracks.meters`), selection and audio/instrument/effect creation |
+| Tracks | UUID-targeted mix/name/mute/solo/arm, volume/pan by dB or percent text, send level/enable writes (`tracks.sends.set`), VU peak/RMS windows (`tracks.meters`), selection, audio/instrument/effect creation and name-guarded deletion (`tracks.delete`) |
 | Devices and parameters | Bypass, selection, native/plug-in/preset insertion at a chain position or layer, device delete/move, offline preset search (`presets.search`), eight Remote Controls with page/context guards, named Grid macro pages (`devices.remote.define`/`deletePage`); source-bound normalized direct parameters on roots and fixed layer children |
 | Launcher/MIDI | Empty-slot clip creation (optionally with notes), scene append, local audio/clip-file import, launch/stop, note reads and bounded edits |
 | Grid | Native catalog, bounded graph/metadata/footprint and parameter-context reads; guarded raw scalar and coupled boolean-panel writes; known-catalog insertion, move/delete, raw custom-name CAS and single-input cable CAS |
