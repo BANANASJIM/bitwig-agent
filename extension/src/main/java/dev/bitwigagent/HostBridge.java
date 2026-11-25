@@ -17,8 +17,11 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
     private final Map<String, HostModule> modules = new HashMap<>();
     private final List<HostModule> domains = new ArrayList<>();
 
-    public HostBridge(ControllerHost host) {
-        services = new HostServices(host);
+    public HostBridge(ControllerHost host) { this(host, System::nanoTime); }
+
+    /** Test seam: injectable clock for the project settle window. */
+    HostBridge(ControllerHost host, java.util.function.LongSupplier clock) {
+        services = new HostServices(host, clock);
         ParameterModule parameters = new ParameterModule(services);
         register(parameters);
         ProjectModule project = new ProjectModule(services);

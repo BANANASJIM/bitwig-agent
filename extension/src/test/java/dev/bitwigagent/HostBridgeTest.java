@@ -247,7 +247,7 @@ public final class HostBridgeTest {
     private static void writesWaitForSettledProject() {
         Fake f = new Fake(); HostBridge bridge = f.bridge();
         JsonObject create = new JsonObject(); create.addProperty("type", "audio"); create.addProperty("position", -1); create.addProperty("name", "x");
-        f.projectName.set("Fixture2"); // the constructor's own observation used the real clock; restart on the fake one
+        f.projectName.set("Fixture2");
         JsonObject status = call(f, bridge, "status", new JsonObject());
         check(!status.get("projectReady").getAsBoolean() && status.get("projectReadyReason").getAsString().equals("project_changed_settling"),
                 "a freshly observed project name opens the settle window");
@@ -1338,7 +1338,7 @@ public final class HostBridgeTest {
                 return null;
             };
             initializing = true;
-            try { HostBridge b = new HostBridge(host.proxy(ControllerHost.class)); b.services().clock = () -> now; return b; }
+            try { HostBridge b = new HostBridge(host.proxy(ControllerHost.class), () -> now); now = 2 * HostServices.PROJECT_SETTLE_NANOS; return b; }
             finally { initializing = false; }
         }
         void emitIds(int index) { emitIds(index, new String[]{"gain"}); }

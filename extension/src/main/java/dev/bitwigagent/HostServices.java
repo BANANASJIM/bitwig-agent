@@ -27,7 +27,7 @@ final class HostServices implements AutoCloseable {
     /** A name change (extension start, project switch/recovery, Save As) opens a settle window in which writes may land in a transient project. */
     static final long PROJECT_SETTLE_NANOS = java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(3000);
     /** Test seam for the settle window. */
-    volatile LongSupplier clock = System::nanoTime;
+    volatile LongSupplier clock;
     private volatile boolean projectNameObserved;
     private volatile String observedProjectName;
     private volatile long projectChangedAt;
@@ -35,7 +35,10 @@ final class HostServices implements AutoCloseable {
     private volatile long projectModifiedSequence;
     private volatile SafetyObservation safety = new SafetyObservation(0, null, null, null, null);
 
-    HostServices(ControllerHost host) {
+    HostServices(ControllerHost host) { this(host, System::nanoTime); }
+
+    HostServices(ControllerHost host, LongSupplier clock) {
+        this.clock = clock;
         this.host = host;
         application = host.createApplication();
         transport = host.createTransport();
