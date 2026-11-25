@@ -64,14 +64,15 @@ DISPLAY_UNITS = {
     "percent": ({"%": 1.0}, lambda p: p / 100, lambda raw: raw * 100),
     "decibel": ({"db": 1.0}, lambda d: d, lambda raw: raw),
 }
-_TEXT = re.compile(r"([+-]?(?:\d+(?:\.(\d*))?|\.(\d+)))\s*([A-Za-z%]+)")
+_TEXT = re.compile(r"([+-]?(?:\d+(?:\.(\d*))?|\.(\d+)))\s*([A-Za-z%]+)", re.ASCII)
+_JAVA_TRIM = "".join(map(chr, range(33)))
 
 
 def parse_quantity(unit: str, text: str | None) -> tuple[float, float] | None:
     """(natural value, half display step) or None; same grammar as the host."""
     if not isinstance(text, str) or unit not in DISPLAY_UNITS:
         return None
-    m = _TEXT.fullmatch(text.replace("\u2212", "-").strip())
+    m = _TEXT.fullmatch(text.replace("\u2212", "-").strip(_JAVA_TRIM))
     scale = DISPLAY_UNITS[unit][0].get(m.group(4).lower()) if m else None
     if scale is None:
         return None
@@ -106,7 +107,7 @@ def check_display(pid: str, text: str, unit: str | None, raw_default: Any, displ
     if abs(shown[0]) < shown[1]:
         raise SpecError([f"{pid}: the host cannot confirm the {unit} scale while the display reads zero (default {display_default!r}); write the raw value instead"])
     raw = DISPLAY_UNITS[unit][1](wanted[0])
-    if not math.isfinite(raw) or (lo is not None and not lo - 1e-9 <= raw <= hi + 1e-9):
+    if not math.isfinite(raw) or (lo is not None and not lo <= raw <= hi):
         raise SpecError([f"{pid}: {text!r} converts to raw {raw:.4g}, outside {lo}..{hi}"])
 
 
@@ -154,9 +155,13 @@ def order_moves(current: dict[str, tuple[int, int]], target: dict[str, tuple[int
             n = next((m for m in todo if m not in parked), None)
             if n is None:
                 raise SpecError(["footprints cannot be ordered into a collision-free move sequence"])
-            right = max([f[0] + f[2] for f in fixed] + [q[0] + size.get(m, (1, 1))[0] for m, q in {**pos, **target}.items()])
-            pos[n] = (right + 2, pos[n][1])
-            plan.append((n, pos[n]))
+            right = max([f[0] + f[2] for f in fixed] + [q[0] + size.get(m, (1, 1))[0] for m, q in pos.items()]
+                        + [q[0] + size.get(m, (1, 1))[0] for m, q in target.items()])
+            spot = (right + 2, pos[n][1])
+            if spot == pos[n] or not free(n, spot):
+                raise SpecError(["footprints cannot be ordered into a collision-free move sequence"])
+            pos[n] = spot
+            plan.append((n, spot))
             parked.add(n)
     return plan
 
@@ -223,6 +228,7 @@ class Apply:
         self.ids: dict[str, str] = {}
         self.warnings: list[str] = []
         self.wrote = False
+        self.topo_written = False
         self.unnamed: dict[str, str] = {}
         self.phase = "validate"
         self.live_schema = False
@@ -232,6 +238,7 @@ class Apply:
         timeout = max(self.timeout_ms, WRITE_TIMEOUT_MS) if write else self.timeout_ms
         if write:
             self.wrote = True
+            self.topo_written |= method not in ("grid.parameters.set", "grid.connections.set")
         try:
             host_params = params if method in ("grid.capabilities", "grid.catalog") else {**self.target, **params}
             result = await self.client.call(method, host_params, timeout)
@@ -471,6 +478,23 @@ class Apply:
             problems += [f"{a!r} at {ra[:2]} overlaps existing module {fn!r}, which the spec does not manage" for fn, f in zip(fixed_names, self.fixed) if overlaps(ra, f)]
         return problems
 
+    def module_limit(self) -> int:
+        """Smallest maximumModules the host reports for insert/move/rename, else the early-failure constant."""
+        found = [self.caps[k]["maximumModules"] for k in ("moduleInsert", "moduleMove", "moduleRename")
+                 if isinstance(self.caps.get(k), dict) and type(self.caps[k].get("maximumModules")) is int]
+        return min(found + [MAX_DEVICE_MODULES])
+
+    def admission(self, inserting: bool, deleting: bool) -> list[str]:
+        caps, problems = self.caps, []
+        sections = {k: caps.get(k) for k in ("moduleInsert", "moduleMove", "moduleRename", "moduleDelete") if isinstance(caps.get(k), dict)}
+        if caps.get("topologyQuarantined") or any(v.get("topologyQuarantined") for v in sections.values()):
+            problems.append("the host reports topologyQuarantined; topology edits are blocked until Bitwig restarts")
+        if inserting and any(sections.get(k, {}).get("available") is False for k in ("moduleInsert", "moduleRename")):
+            problems.append("the host reports module insert/rename as unavailable")
+        if deleting and sections.get("moduleDelete", {}).get("available") is False:
+            problems.append("the host reports module delete as unavailable")
+        return problems
+
     @staticmethod
     def unreadable_names(caps, rows) -> list[str]:
         bad = [r for r in rows if not isinstance(r.get("customName"), str)]
@@ -485,6 +509,7 @@ class Apply:
         self.validate_spec()
         self.phase = "read"
         rows, conns = await self.read_graph()
+        self.rows0, self.conns0 = rows, conns
         problems = self.unreadable_names(self.caps, rows)
         if problems:
             raise SpecError(problems)
@@ -508,8 +533,11 @@ class Apply:
             deletes = [r for r in rows if r["customName"].startswith(self.namespace) and r["customName"] not in self.by_spec]
         inserts = [n for n in self.names if n not in existing]
         total = len(rows) - len(deletes) + len(inserts)
-        if total > MAX_DEVICE_MODULES:
-            problems.append(f"the device would hold {total} modules; the limit is {MAX_DEVICE_MODULES}")
+        limit = self.module_limit()
+        if total > limit:
+            problems.append(f"the device would hold {total} modules; the host limit is {limit}")
+        if not self.dry:
+            problems += self.admission(bool(inserts), bool(deletes))
         problems += self.footprints(existing, rows, deletes)
         if problems:
             raise SpecError(problems)
@@ -584,9 +612,10 @@ class Apply:
         pos = {self.ids[n]: p for n, p in current.items()}
         for name, at in self.pre_moves:
             await self.move_to(name, pos, at)
-        for i in range(0, len(inserts), INSERT_BATCH):
+        queue = list(inserts)
+        while queue:
             self.phase = "insert"
-            chunk = inserts[i:i + INSERT_BATCH]
+            chunk = queue[:INSERT_BATCH]
             result = await self.call("grid.modules.insert", {"modules": [
                 {"typeId": self.resolved[n]["typeId"], "x": self.by_spec[n]["x"], "y": self.by_spec[n]["y"]} for n in chunk]}, write=True)
             entries = result.get("modules", [])
@@ -613,39 +642,51 @@ class Apply:
                     self.unnamed.pop(self.ids[n], None)
                     self.steps.append({"op": "rename", "name": n})
             self.phase = "insert"
-            self.verify("grid.modules.insert", result, "modules")
             if len(entries) != len(chunk):
                 raise Stop("grid.modules.insert", result, "unknown")
-        self.phase = "move"
-        rows, _ = await self.read_graph()
-        by_id = {r["instanceId"]: r for r in rows}
-        for n in self.names:
-            if self.ids[n] not in by_id:
-                raise Stop("grid.get", {"error": {"code": "stale_context", "message": f"module {n!r} is missing after insertion"}}, "not_applied")
-        pos = {i: _pos(r) for i, r in by_id.items()}
-        for n in self.names:
-            row = by_id[self.ids[n]]
-            if n not in self.size and type(row.get("width")) is int and type(row.get("height")) is int:
-                self.size[n] = (row["width"], row["height"])
-        spec_ids = {self.ids[n] for n in self.names}
-        fixed = [(r["x"], r["y"], r["width"], r["height"]) for i, r in by_id.items()
-                 if i not in spec_ids and all(type(r.get(k)) is int for k in ("x", "y", "width", "height"))]
-        try:
-            plan = order_moves({n: pos[self.ids[n]] for n in self.names}, {n: (self.by_spec[n]["x"], self.by_spec[n]["y"]) for n in self.names},
-                               self.size, fixed)
-        except SpecError as exc:
-            raise Stop("grid.get", {"error": {"code": "invalid_spec", "message": "; ".join(exc.problems)}}, "not_applied") from exc
-        for name, at in plan:
-            await self.move_to(name, pos, at)
+            # A batch cut short only by the host deadline margin (applied entries, then not_dispatched) just continues.
+            cut = result.get("batchStatus") == "partial" and result.get("status") in (None, "observed") and bool(fresh) \
+                and all(e.get("status") in ("applied", "not_dispatched") for e in entries)
+            if not cut:
+                self.verify("grid.modules.insert", result, "modules")
+            queue = queue[len(fresh):] if cut else queue[len(chunk):]
+        if inserts:  # only insertion can displace modules; otherwise the pre-moves were exact
+            self.phase = "move"
+            rows, _ = await self.read_graph()
+            by_id = {r["instanceId"]: r for r in rows}
+            for n in self.names:
+                if self.ids[n] not in by_id:
+                    raise Stop("grid.get", {"error": {"code": "stale_context", "message": f"module {n!r} is missing after insertion"}}, "not_applied")
+            pos = {i: _pos(r) for i, r in by_id.items()}
+            for n in self.names:
+                row = by_id[self.ids[n]]
+                if n not in self.size and type(row.get("width")) is int and type(row.get("height")) is int:
+                    self.size[n] = (row["width"], row["height"])
+            spec_ids = {self.ids[n] for n in self.names}
+            fixed = [(r["x"], r["y"], r["width"], r["height"]) for i, r in by_id.items()
+                     if i not in spec_ids and all(type(r.get(k)) is int for k in ("x", "y", "width", "height"))]
+            try:
+                plan = order_moves({n: pos[self.ids[n]] for n in self.names}, {n: (self.by_spec[n]["x"], self.by_spec[n]["y"]) for n in self.names},
+                                   self.size, fixed)
+            except SpecError as exc:
+                raise Stop("grid.get", {"error": {"code": "invalid_spec", "message": "; ".join(exc.problems)}}, "not_applied") from exc
+            for name, at in plan:
+                await self.move_to(name, pos, at)
         self.phase = "params"
         with_params = [n for n in self.names if self.resolved[n]["params"]]
-        param_rows = await self.read_params([self.ids[n] for n in with_params])
         writes: list[dict] = []
         try:
-            for n in with_params:
-                got, matched = self.plan_params(n, param_rows[self.ids[n]])
-                self.matched["params"] += matched
-                writes += [w["write"] for w in got]
+            if not self.topo_written:  # nothing structural changed since the validation read: reuse its CAS values
+                for n in with_params:
+                    got, matched = self.pre_params[n]
+                    self.matched["params"] += matched
+                    writes += [w["write"] for w in got]
+            else:
+                param_rows = await self.read_params([self.ids[n] for n in with_params])
+                for n in with_params:
+                    got, matched = self.plan_params(n, param_rows[self.ids[n]])
+                    self.matched["params"] += matched
+                    writes += [w["write"] for w in got]
         except SpecError as exc:
             raise Stop("grid.get", {"error": {"code": "invalid_spec", "message": "; ".join(exc.problems)}}, "not_applied") from exc
         for i in range(0, len(writes), PARAM_BATCH):
@@ -658,7 +699,7 @@ class Apply:
             self.steps.append({"op": "params", "count": len(chunk), "status": result.get("batchStatus")})
             self.verify("grid.parameters.set", result, "writes")
         self.phase = "connections"
-        rows, conns = await self.read_graph()
+        rows, conns = (self.rows0, self.conns0) if not self.topo_written else await self.read_graph()
         by_id = {r["instanceId"]: r for r in rows}
         by_name = {n: by_id[self.ids[n]] for n in self.names if self.ids[n] in by_id}
         if len(by_name) != len(self.names):

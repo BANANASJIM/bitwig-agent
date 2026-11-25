@@ -27,6 +27,8 @@ class FakeGrid:
         self.calls: list[tuple[str, dict]] = []
         self.shift = 0  # insert lands this far right of the request, like native reflow
         self.fail: dict[str, object] = {}
+        self.caps_extra: dict = {}
+        self.cut_status = "failed"  # status of the entry where a capped insert stops
         self.insert_caps: list[int] = []  # per insert call: apply only this many entries, then report partial
 
     # state helpers
@@ -76,7 +78,7 @@ class FakeGrid:
         return getattr(self, "h_" + method.replace("grid.", "").replace(".", "_"))(params)
 
     def h_capabilities(self, p):
-        return {"status": "observed", "hostVersion": self.version}
+        return {"status": "observed", "hostVersion": self.version, **self.caps_extra}
 
     def h_catalog(self, p):
         entries = [{"typeId": m["typeId"], "name": n} for n, m in self.catalog.items()]
@@ -95,7 +97,7 @@ class FakeGrid:
         cap = self.insert_caps.pop(0) if self.insert_caps else len(p["modules"])
         for k, spec in enumerate(p["modules"]):
             if k >= cap:
-                entries.append({"typeId": spec["typeId"], "status": "not_dispatched" if k > cap else "failed"})
+                entries.append({"typeId": spec["typeId"], "status": "not_dispatched" if k > cap else self.cut_status})
                 continue
             name = next(n for n, m in self.catalog.items() if m["typeId"] == spec["typeId"])
             iid = self.add(name, "", spec["x"] + self.shift, spec["y"])
@@ -487,3 +489,68 @@ def test_null_names_fail_closed_and_unexpected_errors_keep_the_report():
     host.fail["grid.connections.set"] = {"status": "observed", "batchStatus": "applied", "connections": [None]}
     result = run(host, SPEC)
     assert result["status"] == "unknown" and result["failure"]["method"] == "internal" and result["applied"]["inserted"] == 5
+
+
+def test_park_spot_is_always_free_and_converges():
+    host = FakeGrid()
+    host.add("Add", "P", 10, 0)
+    host.add("Phasor", "A", 0, 0)  # 3x1
+    host.add("Add", "B", 4, 0)
+    spec = {"target": TARGET, "modules": [{"name": "P", "type": "Add", "x": 2, "y": 0}, {"name": "A", "type": "Phasor", "x": 4, "y": 0},
+                                          {"name": "B", "type": "Add", "x": 0, "y": 0}]}
+    result = run(host, spec)  # the fake host rejects any move onto an occupied anchor
+    assert result["status"] == "applied" and result["applied"]["moved"] <= 6
+    assert [(host.named(n)["x"], host.named(n)["y"]) for n in "PAB"] == [(2, 0), (4, 0), (0, 0)]
+    host.calls.clear()
+    assert run(host, spec)["status"] == "unchanged" and host.writes() == []
+
+
+def test_order_moves_is_bounded_on_impossible_layouts():
+    size = {"A": (3, 1), "B": (3, 1)}
+    plan = grid_apply.order_moves({"A": (0, 0), "B": (3, 0)}, {"A": (3, 0), "B": (0, 0)}, size, [])
+    assert len(plan) <= 4
+    with pytest.raises(grid_apply.SpecError):  # the target is blocked by an unmovable module
+        grid_apply.order_moves({"A": (0, 0)}, {"A": (5, 0)}, {"A": (1, 1)}, [(5, 0, 1, 1)])
+
+
+def test_host_capabilities_bound_the_spec_and_block_quarantined_topology():
+    spec = {"target": TARGET, "modules": [{"name": f"M{i}", "type": "Add", "x": i * 3, "y": 0} for i in range(4)]}
+    host = FakeGrid()
+    host.caps_extra = {"moduleInsert": {"available": True, "maximumModules": 3}, "moduleMove": {"maximumModules": 5}}
+    with pytest.raises(BridgeError) as err:
+        run(host, spec)
+    assert "host limit is 3" in err.value.error["message"] and host.writes() == []
+    host.caps_extra = {"moduleInsert": {"available": True, "maximumModules": 8, "topologyQuarantined": True}}
+    with pytest.raises(BridgeError) as err:
+        run(host, spec)
+    assert "topologyQuarantined" in err.value.error["message"] and host.writes() == []
+    assert run(host, spec, dryRun=True)["status"] == "dryRun"
+    host.caps_extra = {"moduleInsert": {"available": False}}
+    with pytest.raises(BridgeError):
+        run(host, spec)
+
+
+def test_deadline_cut_batches_continue_with_the_remaining_modules():
+    spec = {"target": TARGET, "modules": [{"name": f"D{i}", "type": "Add", "x": i * 3, "y": 0} for i in range(20)]}
+    host = FakeGrid()
+    host.cut_status = "not_dispatched"  # the host stopped for lack of time, nothing failed
+    host.insert_caps = [5, 3]
+    result = run(host, spec)
+    assert result["status"] == "applied" and result["applied"]["inserted"] == 20 and result["applied"]["renamed"] == 20
+    assert [len(c["modules"]) for m, c in host.calls if m == "grid.modules.insert"] == [16, 15, 12]
+    assert not [m for m in host.mods.values() if not m["customName"]]
+
+
+def test_unchanged_spec_reads_only_what_it_needs():
+    host = FakeGrid()
+    run(host, SPEC)
+    host.calls.clear()
+    assert run(host, SPEC)["status"] == "unchanged"
+    names = [m for m, _ in host.calls]
+    assert names.count("grid.get") == 2  # structure once, parameters once; no post-insert or post-param re-read
+    assert host.writes() == []
+
+
+def test_display_grammar_matches_the_host_trim_and_ascii_digits():
+    q = grid_apply.parse_quantity
+    assert q("decibel", " 6 dB") is None and q("decibel", "٣ dB") is None and q("decibel", " 6 dB\t")[0] == 6
