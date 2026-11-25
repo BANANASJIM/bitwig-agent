@@ -1,7 +1,7 @@
 # Maintainer: BANANASJIM <77719403+BANANASJIM@users.noreply.github.com>
 
 pkgname=bitwig-agent
-pkgver=0.2.0
+pkgver=0.3.0
 pkgrel=1
 pkgdesc='Thin MCP/CLI bridge and controller extension for Bitwig Studio'
 arch=('any')
