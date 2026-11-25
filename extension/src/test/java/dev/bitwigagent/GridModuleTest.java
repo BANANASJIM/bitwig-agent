@@ -965,7 +965,7 @@ public final class GridModuleTest {
         HostOperation startWrite() { HostOperation op = host.submit(module, "grid.parameters.set", writeTarget()); host.next(); return op; }
     }
     private static final class FakeAdapter implements GridAdapter {
-        final Deque<Runnable> tasks = new ArrayDeque<>(); int reads; boolean fail; JsonObject last;
+        final Deque<Runnable> tasks = new ArrayDeque<>(); int reads, remoteCalls; boolean fail; JsonObject last;
         final GridSnapshotReaderTest.WriterFixture writer = new GridSnapshotReaderTest.WriterFixture();
         final GridSnapshotReaderTest.ModuleWriterFixture topology = new GridSnapshotReaderTest.ModuleWriterFixture(tasks::add);
         final GridSnapshotReaderTest.ConnectionFixture connections = new GridSnapshotReaderTest.ConnectionFixture(tasks::add);
@@ -998,6 +998,12 @@ public final class GridModuleTest {
         }
         @Override public JsonObject setVoicing(Object proxy, UUID track, GridVoicingWriter.Request request, Runnable check, Runnable dispatch) {
             check.run(); dispatch.run(); return HostServices.observed();
+        }
+        @Override public JsonObject defineRemotePage(Object proxy, UUID track, GridRemotePageWriter.Request request, Runnable check, Runnable dispatch) {
+            check.run(); dispatch.run(); remoteCalls++; return HostServices.observed();
+        }
+        @Override public JsonObject deleteRemotePage(Object proxy, UUID track, String pageName, Runnable check, Runnable dispatch) {
+            check.run(); dispatch.run(); remoteCalls++; return HostServices.observed();
         }
         @Override public JsonObject setParameter(Object proxy, UUID track, UUID module, String parameter,
                 GridParameterWriter.Request request, Runnable check, Runnable dispatch) {

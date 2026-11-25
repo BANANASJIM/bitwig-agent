@@ -702,6 +702,38 @@ class RemoteSetArgs(ParameterArgs):
     normalizedValue: UnitValue
 
 
+class RemoteSlotSpec(StrictModel):
+    """One Remote Control slot: a scalar Grid parameter by module (exactly one of moduleId or moduleName) and parameterId."""
+    moduleId: TrackId = omitted(description="Current module instanceId from grid.get.")
+    moduleName: str = omitted(min_length=1, max_length=1024, description="Exact effective module name from grid.get; must be unique in the device.")
+    parameterId: str = Field(max_length=1024, description="Exact parameterId from grid.get (e.g. VALUE of a Value module); empty is valid.")
+    label: str = omitted(max_length=256, description="Knob label shown instead of the parameter's own name; empty or absent keeps Bitwig's default.")
+
+    @model_validator(mode="after")
+    def validate_module(self):
+        if len({"moduleId", "moduleName"} & self.model_fields_set) != 1:
+            raise ValueError("supply exactly one of moduleId or moduleName")
+        return self
+
+
+class RemoteDefineArgs(ParameterArgs):
+    pageName: str = Field(min_length=1, max_length=256, description="Page name shown in the device's Remote Controls page list; kept verbatim.")
+    slots: Annotated[list[RemoteSlotSpec | None], Field(min_length=1, max_length=8)] = Field(
+        description="Slot k is entry k (0..7); null or absent trailing entries leave that slot empty (replace clears it).")
+    mode: Literal["create", "replace"] = omitted(description="create (default) refuses an existing page of that name; replace redefines the one preset page of that name, or creates it.")
+
+    @model_validator(mode="after")
+    def validate_distinct(self):
+        pairs = [((s.moduleId or "").lower(), s.moduleName or "", s.parameterId) for s in self.slots if s is not None]
+        if len(pairs) != len(set(pairs)):
+            raise ValueError("slots must not repeat a module/parameter pair")
+        return self
+
+
+class RemoteDeletePageArgs(ParameterArgs):
+    pageName: str = Field(min_length=1, max_length=256, description="Exact name of one preset Remote Controls page (made by devices.remote.define or Add New Page); device, module and plugin pages are refused.")
+
+
 class GridApplyTarget(StrictModel):
     trackId: TrackId
     deviceIndex: int = Field(ge=0, le=15)

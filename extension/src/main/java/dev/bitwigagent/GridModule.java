@@ -11,7 +11,7 @@ import static dev.bitwigagent.HostServices.failure;
 final class GridModule implements HostModule {
     static final Set<String> METHODS = Set.of("grid.capabilities", "grid.catalog", "grid.get", "grid.parameters.get", "grid.parameters.set",
             "grid.modules.move", "grid.modules.delete", "grid.modules.insert", "grid.modules.rename", "grid.connections.set",
-            "grid.voicing.get", "grid.voicing.set", "grid.topology.reconcile");
+            "grid.voicing.get", "grid.voicing.set", "grid.topology.reconcile", "devices.remote.define", "devices.remote.deletePage");
     /** Topology edits verify against a full graph read per entry; large graphs need more than the default 10 s ceiling. */
     static final Set<String> LONG_TIMEOUT_METHODS = Set.of("grid.modules.insert", "grid.modules.move", "grid.modules.delete",
             "grid.modules.rename", "grid.connections.set", "grid.topology.reconcile");
@@ -110,6 +110,16 @@ final class GridModule implements HostModule {
                 Params.integer(p, "deviceIndex", 0, HostServices.DEVICES - 1);
                 Params.string(p, "expectedDeviceName");
                 return;
+            case "devices.remote.define":
+            case "devices.remote.deletePage":
+                boolean defining = method.equals("devices.remote.define");
+                Params.fields(p, defining ? Set.of("trackId", "deviceIndex", "expectedDeviceName", "pageName", "slots")
+                        : Set.of("trackId", "deviceIndex", "expectedDeviceName", "pageName"), defining ? Set.of("mode") : Set.of());
+                canonicalUuid(p, "trackId");
+                Params.integer(p, "deviceIndex", 0, HostServices.DEVICES - 1);
+                Params.string(p, "expectedDeviceName");
+                if (defining) GridRemotePageWriter.Request.parse(p); else GridRemotePageWriter.Request.pageName(p);
+                return;
             case "grid.voicing.set":
                 Params.fields(p, Set.of("trackId", "deviceIndex", "expectedDeviceName", "expected", "set"), Set.of());
                 canonicalUuid(p, "trackId");
@@ -153,7 +163,7 @@ final class GridModule implements HostModule {
         }
     }
     private static final String[] READS = {"catalog", "structure", "typedParameters", "display", "parameterInspection"};
-    private static final String[] WRITERS = {"parameterWrite", "booleanPanels", "stringPanels", "stepArrays", "voicing", "moduleMove", "moduleDelete", "moduleRename",
+    private static final String[] WRITERS = {"parameterWrite", "booleanPanels", "stringPanels", "stepArrays", "voicing", "remotePages", "moduleMove", "moduleDelete", "moduleRename",
             "moduleInsert", "connectionWrite"};
     /** Default grid.capabilities: availability booleans only (reasons for unavailable ones); detail:"full" has every binding. */
     static JsonObject compactCapabilities(JsonObject full) {
@@ -249,11 +259,13 @@ final class GridModule implements HostModule {
         final boolean topology = moduleEditing || connection || inserting || renaming;
         final boolean voicingGet = method.equals("grid.voicing.get"), voicingSet = method.equals("grid.voicing.set");
         final boolean reconciling = method.equals("grid.topology.reconcile");
+        final boolean remoteDefine = method.equals("devices.remote.define"), remoteDelete = method.equals("devices.remote.deletePage");
+        final boolean remotePages = remoteDefine || remoteDelete;
         final boolean scalarWriting = method.equals("grid.parameters.set");
         final boolean batching = scalarWriting && p.has("writes");
         final boolean fullGraph = topology && graphMode(p);
         final java.util.List<GridParameterWriter.Entry> entries = batching ? batch(p) : null;
-        final boolean writing = scalarWriting || topology || voicingSet;
+        final boolean writing = scalarWriting || topology || voicingSet || remotePages;
         final boolean inspection = method.equals("grid.parameters.get") || scalarWriting;
         final GridParameterWriter.Request request = scalarWriting && !batching ? GridParameterWriter.Request.parse(p) : null;
         final GridModuleWriter.Move move = moving ? GridModuleWriter.Move.parse(p) : null;
@@ -265,9 +277,11 @@ final class GridModule implements HostModule {
         final GridInsertionWriter.Request insertion = inserting && !insertBatch ? GridInsertionWriter.Request.parse(p) : null;
         final GridModuleNameWriter.Request name = renaming ? GridModuleNameWriter.Request.parse(p) : null;
         final GridVoicingWriter.Request voicing = voicingSet ? GridVoicingWriter.Request.parse(p) : null;
+        final GridRemotePageWriter.Request remotePage = remoteDefine ? GridRemotePageWriter.Request.parse(p) : null;
+        final String deletedPage = remoteDelete ? GridRemotePageWriter.Request.pageName(p) : null;
         final boolean fullSteps = p.has("full") && !scalarWriting && p.get("full").getAsBoolean();
         final HostServices.SafetyObservation safety = writing ? s.stoppedSafety(op) : null;
-        final DeviceSources.RootReadTicket target = method.equals("grid.get") || inspection || topology || voicingGet || voicingSet || reconciling ? target(p) : null;
+        final DeviceSources.RootReadTicket target = method.equals("grid.get") || inspection || topology || voicingGet || voicingSet || reconciling || remotePages ? target(p) : null;
         final UUID trackUuid = target == null ? null : UUID.fromString(target.trackId);
         final UUID moduleId = (inspection && !batching) || moduleEditing || renaming ? UUID.fromString(p.get("moduleId").getAsString()) : null;
         final String parameterId = inspection && !batching ? p.get("parameterId").getAsString() : null;
@@ -303,6 +317,10 @@ final class GridModule implements HostModule {
                         : reconciling ? adapter.reconcileTopology(target.device, trackUuid, check)
                         : voicingGet ? adapter.voicing(target.device, trackUuid, check)
                         : voicingSet ? adapter.setVoicing(target.device, trackUuid, voicing, check,
+                                () -> { check.run(); op.dispatched = true; })
+                        : remoteDefine ? adapter.defineRemotePage(target.device, trackUuid, remotePage, check,
+                                () -> { check.run(); op.dispatched = true; })
+                        : remoteDelete ? adapter.deleteRemotePage(target.device, trackUuid, deletedPage, check,
                                 () -> { check.run(); op.dispatched = true; })
                         : batching ? adapter.setParameters(target.device, trackUuid, entries, check,
                                 () -> { check.run(); op.dispatched = true; })

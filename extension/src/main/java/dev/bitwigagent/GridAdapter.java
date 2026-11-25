@@ -14,6 +14,8 @@ interface GridAdapter {
     JsonObject parameter(Object deviceProxy, UUID expectedTrackId, UUID moduleId, String parameterId, boolean fullSteps, Runnable check);
     JsonObject voicing(Object deviceProxy, UUID expectedTrackId, Runnable check);
     JsonObject setVoicing(Object deviceProxy, UUID expectedTrackId, GridVoicingWriter.Request request, Runnable check, Runnable dispatch);
+    JsonObject defineRemotePage(Object deviceProxy, UUID expectedTrackId, GridRemotePageWriter.Request request, Runnable check, Runnable dispatch);
+    JsonObject deleteRemotePage(Object deviceProxy, UUID expectedTrackId, String pageName, Runnable check, Runnable dispatch);
     JsonObject setParameter(Object deviceProxy, UUID expectedTrackId, UUID moduleId, String parameterId,
             GridParameterWriter.Request request, Runnable check, Runnable dispatch);
     JsonObject setParameters(Object deviceProxy, UUID expectedTrackId, java.util.List<GridParameterWriter.Entry> writes,

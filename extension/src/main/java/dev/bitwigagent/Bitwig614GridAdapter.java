@@ -38,6 +38,9 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
     private Bitwig614VoicingAccess voicingAccess;
     private String voicingError;
     private GridVoicingWriter voicingWriter;
+    private Bitwig614RemotePageAccess remotePageAccess;
+    private String remotePageError;
+    private GridRemotePageWriter remotePageWriter;
     private String moduleMoveError, moduleDeleteError;
     private GridModuleWriter moduleWriter;
     private String connectionError;
@@ -89,6 +92,13 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
             if (voicingAccess != null)
                 voicingWriter = new GridVoicingWriter(snapshots, parameterContexts, voicingAccess, voicingAccess.setterError() == null);
         } catch (ReflectiveOperationException | RuntimeException | LinkageError error) { inspectionError = diagnostic(error); }
+        // Remote Controls pages: own bindings, plus parameter binding/contexts and module names; never a read dependency.
+        if (inspectionError != null) remotePageError = "Required parameter inspection bindings unavailable.";
+        else if (metadataErrors.containsKey(GridSnapshotReader.Metadata.MODULE_NAMES)) remotePageError = "Required native module name readers unavailable.";
+        else try {
+            remotePageAccess = new Bitwig614RemotePageAccess(bindings);
+            remotePageWriter = new GridRemotePageWriter(snapshots, parameterContexts, remotePageAccess);
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError error) { remotePageError = diagnostic(error); }
         if (inspectionError != null) writeError = "Required parameter inspection bindings unavailable.";
         else try {
             GridBooleanPanelWriter panels = booleanPanels == null ? null
@@ -282,6 +292,14 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
         voicing.addProperty("nativeUndoAwareOperation", true); voicing.addProperty("undoGroupingVerified", false);
         voicing.addProperty("engineAcknowledgement", false);
         result.add("voicing", voicing);
+        JsonObject remotePages = capability(gateError == null ? remotePageError : gateError,
+                "one_named_user_preset_page_per_call_8_slots_scalar_grid_parameters_device_module_plugin_pages_read_only");
+        remotePages.addProperty("methods", "devices.remote.define,devices.remote.deletePage");
+        remotePages.addProperty("operation", "riz.OzW_create+faW.cfM(String)_name+vNq.cfM(int,String,SYo)_map+vNq.MRY(int)_clear+riz.cfM(FyM)_delete");
+        remotePages.addProperty("pageList", "preset_pages_LQR.BNq_as_UI_Add_New_Page_device_pages_refuse_grid_module_parameters");
+        remotePages.addProperty("nativeUndoAwareOperation", true); remotePages.addProperty("undoGroupingVerified", false);
+        remotePages.addProperty("engineAcknowledgement", false);
+        result.add("remotePages", remotePages);
         for (GridSnapshotReader.Metadata metadata : GridSnapshotReader.METADATA)
             result.add(metadata.key, capability(gateError == null ? metadataErrors.get(metadata) : gateError, metadata.coverage));
         String quarantine = TOPOLOGY_QUARANTINE.blockedReason();
@@ -382,6 +400,15 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
             Runnable check, Runnable dispatch) {
         require(gateError, "gate"); require(writeError, "parameter write"); require(voicingError, "voicing");
         return voicingWriter.set(proxy, expectedTrackId, request, check, dispatch);
+    }
+    @Override public JsonObject defineRemotePage(Object proxy, UUID expectedTrackId, GridRemotePageWriter.Request request,
+            Runnable check, Runnable dispatch) {
+        require(gateError, "gate"); require(remotePageError, "Remote Controls pages");
+        return remotePageWriter.define(proxy, expectedTrackId, request, check, dispatch);
+    }
+    @Override public JsonObject deleteRemotePage(Object proxy, UUID expectedTrackId, String pageName, Runnable check, Runnable dispatch) {
+        require(gateError, "gate"); require(remotePageError, "Remote Controls pages");
+        return remotePageWriter.deletePage(proxy, expectedTrackId, pageName, check, dispatch);
     }
     @Override public JsonObject setParameter(Object proxy, UUID expectedTrackId, UUID moduleId, String parameterId,
             GridParameterWriter.Request request, Runnable check, Runnable dispatch) {
