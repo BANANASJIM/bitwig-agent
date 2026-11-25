@@ -858,7 +858,8 @@ class AudioAnalyzeArgs(StatusArgs):
     mode: Literal["level", "onsets", "mono_pitch", "probe"]
     bpm: Annotated[float, Field(ge=20, le=666)] = omitted(description="mono_pitch: adds 16th-grid positions.")
     skipSeconds: Annotated[float, Field(ge=0, le=3600)] = omitted(description="Ignore audio before this time; reported times stay relative to the file start.")
-    threshold: Annotated[float, Field(ge=0.01, le=0.9)] = omitted(description="onsets/mono_pitch: fraction of the peak envelope that counts as an onset (default 0.15).")
+    method: Literal["flux", "envelope"] = omitted(description="onsets/mono_pitch: flux (default) = spectral flux, counts overlapping notes with long decays; envelope = rising crossings of a 5 ms peak envelope.")
+    threshold: Annotated[float, Field(ge=0.01, le=0.9)] = omitted(description="onsets/mono_pitch: flux: how far a flux peak must stand above its neighbourhood, as a fraction of the strongest peak; envelope: fraction of the peak envelope that counts as an onset (default 0.15).")
     windowSeconds: Annotated[float, Field(ge=0.01, le=60)] = omitted(description="level: window length (default 0.5).")
 
     @field_validator("path")
