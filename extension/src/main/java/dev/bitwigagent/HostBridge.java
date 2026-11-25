@@ -10,7 +10,7 @@ import static dev.bitwigagent.HostServices.failure;
 /** Composition and the single network-to-host boundary; domain state belongs to modules. */
 public final class HostBridge implements RpcServer.Handler, AutoCloseable {
     static final Set<String> PROJECT_WRITES = Set.of("tracks.create", "devices.insert", "launcher.create", "launcher.import", "scenes.append", "grid.voicing.set",
-            "devices.delete", "devices.move", "devices.layers.insert",
+            "devices.delete", "devices.move", "devices.layers.insert", "tracks.group", "arranger.clips.create", "arranger.clips.copyFromLauncher", "arranger.clips.edit",
             "grid.modules.insert", "grid.modules.move", "grid.modules.delete", "grid.modules.rename", "grid.connections.set", "grid.parameters.set");
     private static final Map<String, BiConsumer<String, JsonObject>> VALIDATORS = validators();
     private final HostServices services;
