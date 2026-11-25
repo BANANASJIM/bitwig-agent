@@ -70,6 +70,17 @@ Names, context tokens and module UUIDs are not persistent physical identities. M
 
 For New Project, Save As/Bounce or an unexposed control, use explicit Computer Use only when separately authorized and after confirming the actual target/dialog, then observe completion. Missing API support is not permission for GUI control. GUI-completed work is not structured API support; do not repeat an uncertain API write through the GUI. Native work requires one designated writer and a disposable fixture, not a stale process/window snapshot.
 
+## Read module docs before using an unfamiliar Grid module
+
+`grid.describe` returns Bitwig's own documentation (description, keywords, per-port and per-parameter notes) for a module, read offline from your local Bitwig install; nothing is bundled. Read it before using a module you have not used (e.g. whether Select In is a mux, or what Chance emits).
+
+```sh
+bitwig-agent-rpc grid.describe type="Select In"
+bitwig-agent-rpc grid.describe query="random trigger" [lang=de] [limit=10]
+```
+
+The install is found from `installationRoot=`, `$BITWIG_INSTALLATION_ROOT`, the install of `$BITWIG_API_JAR`, then `/opt/bitwig-studio`. See [PROTOCOL](PROTOCOL.md#griddescribe-module-documentation-client-side).
+
 ## Apply a Grid patch from a spec
 
 `grid.apply` builds or updates one Grid device from a JSON spec (named modules, params, connections) and is safe to re-run: existing named modules are reused and only differences are written. Preview with `dryRun`, then apply:
