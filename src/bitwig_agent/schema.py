@@ -43,8 +43,13 @@ class StrictModel(BaseModel):
         return self
 
 
+MAX_TIMEOUT_MS = 10000
+# Topology edits verify against a full graph read per entry; large graphs need longer (host enforces the same split).
+TOPOLOGY_TIMEOUT_MS = 60000
+
+
 class StatusArgs(StrictModel):
-    timeoutMs: int = Field(default=5000, ge=100, le=10000)
+    timeoutMs: int = Field(default=5000, ge=100, le=MAX_TIMEOUT_MS)
 
 
 class DeviceArgs(StatusArgs):
@@ -123,7 +128,12 @@ class GridGetArgs(ParameterArgs):
     full: bool = omitted(description="Step-array parameters (kind steps) return all 256 entries instead of the first STEPS ones.")
 
 
+class GridTopologyReconcileArgs(ParameterArgs):
+    timeoutMs: int = Field(default=5000, ge=100, le=TOPOLOGY_TIMEOUT_MS)
+
+
 class GridWriteArgs(ParameterArgs):
+    timeoutMs: int = Field(default=5000, ge=100, le=TOPOLOGY_TIMEOUT_MS)
     graph: Literal["diff", "full"] = omitted(
         description="diff (default): what changed, computed from the before/after graphs. full: the whole bounded graph after the edit.")
 

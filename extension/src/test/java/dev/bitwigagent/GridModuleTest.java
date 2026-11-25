@@ -34,6 +34,7 @@ public final class GridModuleTest {
         insertionArguments();
         insertionBatchAndTypeNameArguments();
         insertionBatchCrossesBothQueuesWithOneDiff();
+        reconcileReleasesSettlementMismatchThroughTheQueues();
         displayWriteArgumentsValidateBeforeScheduling();
         capabilitiesAreCompactByDefault();
         connectionBatchArgumentsValidateBeforeScheduling();
@@ -723,6 +724,26 @@ public final class GridModuleTest {
             TransportMixFixture.error(f.host.submit(f.module, "grid.parameters.set", bad), "invalid_params");
         check(f.host.tasks.isEmpty() && f.adapter.tasks.isEmpty(), "display and value are mutually exclusive and typed before scheduling");
     }
+    private static void reconcileReleasesSettlementMismatchThroughTheQueues() {
+        Fixture f = new Fixture();
+        HostOperation op = f.host.submit(f.module, "grid.modules.insert", insertionTarget()); f.host.next(); f.adapter.next();
+        f.adapter.insertion.deliver(); f.adapter.insertion.incoming.put(GridSnapshotReader.Field.Y, 9); f.adapter.next();
+        check(f.adapter.insertion.guard.quarantined() && op.result.isCompletedExceptionally(), "settlement mismatch quarantines with an unknown request");
+        JsonObject compact = GridModule.compactCapabilities(capabilitiesWith(f.adapter.insertion.guard));
+        check(compact.getAsJsonObject("topologyQuarantine").get("recoverable").getAsBoolean(), "compact capabilities keep quarantine origin");
+        TransportMixFixture.error(f.host.submit(f.module, "grid.topology.reconcile", insertionTarget()), "invalid_params");
+        HostOperation reconcile = f.host.submit(f.module, "grid.topology.reconcile", target()); f.host.next(); f.adapter.next(); f.host.next();
+        JsonObject result = reconcile.result.join();
+        check(result.get("released").getAsBoolean() && result.getAsJsonObject("found").getAsJsonObject("module").get("inserted").getAsBoolean()
+                && result.getAsJsonObject("target").get("trackId").getAsString().equals(TransportMixFixture.A) && !reconcile.dispatched,
+                "reconcile is a document-queue read that releases a consistent mismatch");
+        f.adapter.insertion.guard.requireAvailable();
+    }
+    private static JsonObject capabilitiesWith(GridTopologyQuarantine guard) {
+        JsonObject full = new JsonObject(); full.addProperty("topologyQuarantined", guard.quarantined());
+        full.add("topologyQuarantine", Bitwig614GridAdapter.quarantineState(guard));
+        return full;
+    }
     private static void insertionWaitsForNativeSettlementAndControllerDelivery() {
         Fixture f = new Fixture();
         HostOperation op = f.host.submit(f.module, "grid.modules.insert", insertionTarget()); f.host.next();
@@ -1013,9 +1034,12 @@ public final class GridModuleTest {
             insertion.edit(request, check, dispatch, complete, failure);
         }
         @Override public void insertModules(Object proxy, UUID track, java.util.List<GridInsertionWriter.Request> requests,
-                java.util.function.BooleanSupplier timeLeft, Runnable check, Runnable dispatch, java.util.function.Consumer<JsonObject> complete,
+                java.util.function.LongSupplier timeLeft, Runnable check, Runnable dispatch, java.util.function.Consumer<JsonObject> complete,
                 java.util.function.Consumer<Throwable> failure) {
             insertion.editAll(requests, check, dispatch, complete, failure);
+        }
+        @Override public JsonObject reconcileTopology(Object proxy, UUID track, Runnable check) {
+            return insertion.writer.reconcile(insertion.model.proxy, GridInsertionWriterTest.TRACK, check);
         }
         @Override public void renameModule(Object proxy, UUID track, UUID module, GridModuleNameWriter.Request request,
                 Runnable check, Runnable dispatch, java.util.function.Consumer<JsonObject> complete,

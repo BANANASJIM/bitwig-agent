@@ -58,6 +58,15 @@ async def test_invalid_timeout_rejected_before_connection(host, timeout):
     assert host.connections == 0
 
 
+async def test_topology_edits_allow_a_60_second_timeout(host):
+    target = {"trackId": "12345678-1234-1234-1234-123456789abc", "deviceIndex": 0, "expectedDeviceName": "Poly Grid"}
+    with pytest.raises(ValueError, match="100..60000"):
+        await BridgeClient(host.port).call("grid.modules.insert", {**target, "typeName": "Add", "x": 0, "y": 0}, 60001)
+    with pytest.raises(ValueError, match="100..10000"):
+        await BridgeClient(host.port).call("grid.parameters.get", {**target, "moduleId": target["trackId"], "parameterId": "P"}, 60000)
+    assert host.connections == 0
+
+
 async def test_connection_refused_is_not_dispatched():
     server = await asyncio.start_server(lambda reader, writer: writer.close(), "127.0.0.1", 0)
     port = server.sockets[0].getsockname()[1]

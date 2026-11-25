@@ -11,7 +11,11 @@ import static dev.bitwigagent.HostServices.failure;
 final class GridModule implements HostModule {
     static final Set<String> METHODS = Set.of("grid.capabilities", "grid.catalog", "grid.get", "grid.parameters.get", "grid.parameters.set",
             "grid.modules.move", "grid.modules.delete", "grid.modules.insert", "grid.modules.rename", "grid.connections.set",
-            "grid.voicing.get", "grid.voicing.set");
+            "grid.voicing.get", "grid.voicing.set", "grid.topology.reconcile");
+    /** Topology edits verify against a full graph read per entry; large graphs need more than the default 10 s ceiling. */
+    static final Set<String> LONG_TIMEOUT_METHODS = Set.of("grid.modules.insert", "grid.modules.move", "grid.modules.delete",
+            "grid.modules.rename", "grid.connections.set", "grid.topology.reconcile");
+    static final int MAX_TOPOLOGY_TIMEOUT_MS = 60000;
     private final HostServices s;
     private GridAdapter adapter;
 
@@ -91,6 +95,12 @@ final class GridModule implements HostModule {
                 Params.string(p, "expectedDeviceName");
                 if (moving) GridModuleWriter.Move.parse(p);
                 return;
+            case "grid.topology.reconcile":
+                Params.fields(p, Set.of("trackId", "deviceIndex", "expectedDeviceName"), Set.of());
+                canonicalUuid(p, "trackId");
+                Params.integer(p, "deviceIndex", 0, HostServices.DEVICES - 1);
+                Params.string(p, "expectedDeviceName");
+                return;
             case "grid.voicing.get":
                 Params.fields(p, Set.of("trackId", "deviceIndex", "expectedDeviceName"), Set.of("detail"));
                 if (p.has("detail") && !(p.get("detail").isJsonPrimitive() && p.get("detail").getAsJsonPrimitive().isString()
@@ -148,7 +158,7 @@ final class GridModule implements HostModule {
     /** Default grid.capabilities: availability booleans only (reasons for unavailable ones); detail:"full" has every binding. */
     static JsonObject compactCapabilities(JsonObject full) {
         JsonObject result = HostServices.observed();
-        for (String key : new String[] {"hostVersion", "gatePassed", "available", "topologyQuarantined", "topologyAdmissionBlocked"})
+        for (String key : new String[] {"hostVersion", "gatePassed", "available", "topologyQuarantined", "topologyAdmissionBlocked", "topologyQuarantine"})
             if (full.has(key)) result.add(key, full.get(key));
         JsonObject reads = new JsonObject(), writers = new JsonObject(), unavailable = new JsonObject();
         for (String key : READS) summarize(full, key, "available", reads, unavailable);
@@ -238,6 +248,7 @@ final class GridModule implements HostModule {
         final boolean moduleEditing = moving || method.equals("grid.modules.delete");
         final boolean topology = moduleEditing || connection || inserting || renaming;
         final boolean voicingGet = method.equals("grid.voicing.get"), voicingSet = method.equals("grid.voicing.set");
+        final boolean reconciling = method.equals("grid.topology.reconcile");
         final boolean scalarWriting = method.equals("grid.parameters.set");
         final boolean batching = scalarWriting && p.has("writes");
         final boolean fullGraph = topology && graphMode(p);
@@ -256,7 +267,7 @@ final class GridModule implements HostModule {
         final GridVoicingWriter.Request voicing = voicingSet ? GridVoicingWriter.Request.parse(p) : null;
         final boolean fullSteps = p.has("full") && !scalarWriting && p.get("full").getAsBoolean();
         final HostServices.SafetyObservation safety = writing ? s.stoppedSafety(op) : null;
-        final DeviceSources.RootReadTicket target = method.equals("grid.get") || inspection || topology || voicingGet || voicingSet ? target(p) : null;
+        final DeviceSources.RootReadTicket target = method.equals("grid.get") || inspection || topology || voicingGet || voicingSet || reconciling ? target(p) : null;
         final UUID trackUuid = target == null ? null : UUID.fromString(target.trackId);
         final UUID moduleId = (inspection && !batching) || moduleEditing || renaming ? UUID.fromString(p.get("moduleId").getAsString()) : null;
         final String parameterId = inspection && !batching ? p.get("parameterId").getAsString() : null;
@@ -279,7 +290,7 @@ final class GridModule implements HostModule {
                     java.util.function.Consumer<JsonObject> complete = value -> deliver(op, target, safety, true, check, GridDiff.shape(value, fullGraph));
                     Runnable dispatch = () -> { check.run(); op.dispatched = true; };
                     if (insertBatch) adapter.insertModules(target.device, trackUuid, insertions,
-                            () -> op.deadline - System.nanoTime() > GridInsertionWriter.NEXT_ENTRY_MARGIN_NANOS, check, dispatch, complete, op::fail);
+                            () -> op.deadline - System.nanoTime(), check, dispatch, complete, op::fail);
                     else if (inserting) adapter.insertModule(target.device, trackUuid, insertion, check, dispatch, complete, op::fail);
                     else if (renaming) adapter.renameModule(target.device, trackUuid, moduleId, name, check, dispatch, complete, op::fail);
                     else if (cableBatch) adapter.setConnections(target.device, trackUuid, cables, check, dispatch, complete, op::fail);
@@ -289,6 +300,7 @@ final class GridModule implements HostModule {
                     return;
                 }
                 JsonObject value = target == null ? adapter.catalog(query, offset, limit, check)
+                        : reconciling ? adapter.reconcileTopology(target.device, trackUuid, check)
                         : voicingGet ? adapter.voicing(target.device, trackUuid, check)
                         : voicingSet ? adapter.setVoicing(target.device, trackUuid, voicing, check,
                                 () -> { check.run(); op.dispatched = true; })

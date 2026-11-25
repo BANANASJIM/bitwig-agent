@@ -67,14 +67,20 @@ public final class RpcServer implements AutoCloseable {
                 clients.add(socket);
                 Socket client = socket;
                 // Also bounds blocked writes, queued connections, and peers that never read.
-                ScheduledFuture<?> expiry = timer.schedule(() -> closeSocket(client), 15, TimeUnit.SECONDS);
+                java.util.concurrent.atomic.AtomicReference<ScheduledFuture<?>> expiry = new java.util.concurrent.atomic.AtomicReference<>(
+                        timer.schedule(() -> closeSocket(client), SOCKET_EXPIRY_MS, TimeUnit.MILLISECONDS));
+                // A request with a longer deadline keeps its socket until that deadline plus delivery.
+                java.util.function.IntConsumer extend = timeoutMs -> {
+                    if (timeoutMs + SOCKET_GRACE_MS > SOCKET_EXPIRY_MS && expiry.get().cancel(false))
+                        expiry.set(timer.schedule(() -> closeSocket(client), timeoutMs + SOCKET_GRACE_MS, TimeUnit.MILLISECONDS));
+                };
                 try {
                     workers.execute(() -> {
-                        try { serve(client, acceptedAt); }
-                        finally { expiry.cancel(false); clients.remove(client); closeSocket(client); }
+                        try { serve(client, acceptedAt, extend); }
+                        finally { expiry.get().cancel(false); clients.remove(client); closeSocket(client); }
                     });
                 } catch (RejectedExecutionException e) {
-                    expiry.cancel(false);
+                    expiry.get().cancel(false);
                     clients.remove(client);
                     closeSocket(client); // Overload closes before dispatch; clients must not retry writes automatically.
                 }
@@ -85,7 +91,7 @@ public final class RpcServer implements AutoCloseable {
         }
     }
 
-    private void serve(Socket socket, long acceptedAt) {
+    private void serve(Socket socket, long acceptedAt, java.util.function.IntConsumer extendExpiry) {
         String id = null;
         boolean dispatched = false;
         try {
@@ -104,8 +110,10 @@ public final class RpcServer implements AutoCloseable {
                 if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isNumber()) throw invalid("timeoutMs must be an integer");
                 try { timeout = value.getAsBigDecimal().intValueExact(); }
                 catch (ArithmeticException | NumberFormatException e) { throw invalid("timeoutMs must be an integer"); }
-                if (timeout < 100 || timeout > 10000) throw invalid("timeoutMs must be 100-10000");
+                int max = maxTimeoutMs(method);
+                if (timeout < 100 || timeout > max) throw invalid("timeoutMs must be 100-" + max + " for " + method);
             }
+            extendExpiry.accept(timeout);
             long deadline = acceptedAt + TimeUnit.MILLISECONDS.toNanos(timeout);
             if (System.nanoTime() >= deadline) throw new RpcException("deadline_exceeded",
                 "Request expired before dispatch; no host operation was scheduled.", "not_dispatched");
@@ -136,6 +144,11 @@ public final class RpcServer implements AutoCloseable {
             response.add("error", detail);
             try { send(socket, response); } catch (IOException | RuntimeException ignored) { /* Peer closed or cannot receive. */ }
         }
+    }
+
+    static final int MAX_TIMEOUT_MS = 10000, SOCKET_EXPIRY_MS = 15000, SOCKET_GRACE_MS = 5000;
+    static int maxTimeoutMs(String method) {
+        return GridModule.LONG_TIMEOUT_METHODS.contains(method) ? GridModule.MAX_TOPOLOGY_TIMEOUT_MS : MAX_TIMEOUT_MS;
     }
 
     private static JsonObject envelope(String id) {

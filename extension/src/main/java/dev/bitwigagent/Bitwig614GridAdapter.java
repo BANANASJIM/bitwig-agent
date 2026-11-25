@@ -321,9 +321,26 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
         result.addProperty("graphWriteScope", "module_insert_move_delete_rename_and_single_input_connection_set");
         result.addProperty("topologyQuarantined", TOPOLOGY_QUARANTINE.quarantined());
         result.addProperty("topologyAdmissionBlocked", quarantine != null);
-        result.addProperty("topologyQuarantineScope", "versioned_String_only_process_marker_shared_across_extension_classloaders_full_JVM_restart_required_for_unsettled_or_poisoned_lifetimes");
+        result.add("topologyQuarantine", quarantineState(TOPOLOGY_QUARANTINE));
+        result.addProperty("topologyQuarantineScope", "versioned_String_only_process_marker_shared_across_extension_classloaders_native_failure_needs_JVM_restart_settlement_mismatch_needs_reconcile");
         result.addProperty("nativeRevisionAvailable", false);
         return result;
+    }
+    /** state idle|pending|native_failure|settlement_mismatch, recoverable, the recorded detail and what to do. */
+    static JsonObject quarantineState(GridTopologyQuarantine guard) {
+        JsonObject state = new JsonObject();
+        String origin = guard.origin();
+        state.addProperty("state", origin == null ? "idle" : origin);
+        state.addProperty("recoverable", GridTopologyQuarantine.SETTLEMENT.equals(origin));
+        String detail = origin == null ? null : guard.detail();
+        if (detail != null) {
+            try { state.add("detail", com.google.gson.JsonParser.parseString(detail)); }
+            catch (RuntimeException malformed) { state.addProperty("detail", "malformed"); }
+        }
+        if (origin != null) state.addProperty("next", GridTopologyQuarantine.SETTLEMENT.equals(origin)
+                ? "grid.topology.reconcile on the recorded device (detail.trackId; another Grid on that track is refused) re-verifies the graph and releases it"
+                : "pending".equals(origin) ? "wait for the native callback; a missing one needs a full Bitwig restart" : "full Bitwig restart");
+        return state;
     }
     private static JsonObject capability(String error, String coverage) {
         JsonObject result = new JsonObject(); result.addProperty("available", error == null);
@@ -407,9 +424,14 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
         insertionWriter.insert(proxy, trackId, request, check, dispatch, complete, fail);
     }
     @Override public void insertModules(Object proxy, UUID trackId, java.util.List<GridInsertionWriter.Request> requests,
-            java.util.function.BooleanSupplier timeLeft, Runnable check, Runnable dispatch, Consumer<JsonObject> complete, Consumer<Throwable> fail) {
+            java.util.function.LongSupplier timeLeft, Runnable check, Runnable dispatch, Consumer<JsonObject> complete, Consumer<Throwable> fail) {
         require(gateError, "gate"); require(moduleInsertError, "module insertion");
         insertionWriter.insertAll(proxy, trackId, requests, timeLeft, check, dispatch, complete, fail);
+    }
+    @Override public JsonObject reconcileTopology(Object proxy, UUID trackId, Runnable check) {
+        require(gateError, "gate"); require(identityError, "native owning-track identity"); require(structureError, "structure");
+        require(moduleInsertError, "module insertion");
+        return insertionWriter.reconcile(proxy, trackId, check);
     }
     @Override public boolean parametersAvailable() { return gateError == null && parameterError == null; }
     @Override public boolean displayAvailable() { return gateError == null && displayError == null; }

@@ -164,6 +164,10 @@ public final class RpcServerTest {
                 request("a", "{\"x\":" + "[".repeat(65) + "0" + "]".repeat(65) + "}", null)
             };
             for (String bad : invalid) error(call(server, bad), "invalid_request", "not_dispatched");
+            error(call(server, request("a", "{}", "60001").replace("status", "grid.modules.insert")), "invalid_request", "not_dispatched");
+            check(RpcServer.maxTimeoutMs("grid.modules.insert") == 60000 && RpcServer.maxTimeoutMs("grid.connections.set") == 60000
+                    && RpcServer.maxTimeoutMs("status") == 10000 && RpcServer.maxTimeoutMs("grid.parameters.set") == 10000,
+                    "only topology edits get the 60 s timeout ceiling");
             error(call(server, request("a", "{}", null).replace("status", "unknown")), "method_not_found", "not_dispatched");
             byte[] badUtf8 = request("a", "{\"x\":\"?\"}", null).getBytes(StandardCharsets.UTF_8);
             for (int i = 0; i < badUtf8.length; i++) if (badUtf8[i] == '?') badUtf8[i] = (byte) 0xff;
