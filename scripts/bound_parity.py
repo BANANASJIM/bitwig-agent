@@ -94,7 +94,29 @@ def steps_fix(field):
     return fix
 
 
+def automation_fix(field):
+    """Keep range ordered and points increasing and inside it while one of them sweeps."""
+    def fix(params, value):
+        box = params.get("range")
+        if box and isinstance(value, (int, float)) and 0 <= value <= 4194304:
+            if field == "startBeat":
+                box["endBeat"] = max(box["endBeat"], value)
+            elif field == "endBeat":
+                box["startBeat"] = min(box["startBeat"], value)
+        if "points" not in params:
+            return
+        low = box["startBeat"] if box else 0.0
+        if field == "points":
+            span = (box["endBeat"] - low) if box else float(value)
+            params["points"] = [{"beat": low + span * i / max(value, 1), "value": 0.5, "interpolation": "linear"} for i in range(value)]
+        elif box:
+            params["points"] = [p for p in params["points"] if box["startBeat"] <= p["beat"] <= box["endBeat"]]
+    return fix
+
+
 FIXUPS = {
+    **{(m, f"range.{f}"): automation_fix(f) for m in ("automation.points.get", "automation.points.set") for f in ("startBeat", "endBeat")},
+    ("automation.points.set", "points"): automation_fix("points"),
     **{("grid.parameters.set", name): steps_fix(name.rsplit(".", 1)[-1])
        for name in ("values", "expectedValues", "writes.0.values", "writes.0.expectedValues")},
     ("grid.modules.insert", "typeName"): drop("typeId"),

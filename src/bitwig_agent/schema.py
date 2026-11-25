@@ -747,6 +747,61 @@ class ArrangerClipEditArgs(DeviceArgs):
         return self
 
 
+class AutomationTarget(StrictModel):
+    kind: Literal["volume", "pan", "grid"] = Field(description="Track volume, track pan, or a float Grid module parameter on a top-level device of the same track.")
+    deviceIndex: Annotated[int, Field(ge=0, le=15)] = omitted()
+    expectedDeviceName: Nonempty = omitted()
+    moduleId: TrackId = omitted(description="Grid module instanceId from grid.get on that device.")
+    parameterId: Annotated[str, Field(max_length=1024)] = omitted(description="Exact parameterId of that module's float control, from grid.get.")
+
+    @model_validator(mode="after")
+    def validate_kind_fields(self):
+        grid = {"deviceIndex", "expectedDeviceName", "moduleId", "parameterId"}
+        given = self.model_fields_set & grid
+        if given != (grid if self.kind == "grid" else set()):
+            raise ValueError("kind grid takes exactly deviceIndex, expectedDeviceName, moduleId and parameterId; volume and pan take none")
+        return self
+
+
+class AutomationRange(StrictModel):
+    startBeat: float = Field(ge=0, le=4194304)
+    endBeat: float = Field(ge=0, le=4194304)
+
+    @model_validator(mode="after")
+    def validate_order(self):
+        if self.startBeat > self.endBeat:
+            raise ValueError("startBeat must not exceed endBeat")
+        return self
+
+
+class AutomationPoint(StrictModel):
+    beat: float = Field(ge=0, le=4194304, description="Arrangement position in beats (quarter notes).")
+    value: UnitValue = Field(description="Normalized 0..1 parameter value.")
+    interpolation: Literal["linear", "hold"]
+
+
+class AutomationPointsGetArgs(DeviceArgs):
+    target: AutomationTarget
+    range: AutomationRange = omitted(description="Only list points with startBeat <= beat <= endBeat; count and pointsHash still cover the whole lane.")
+
+
+class AutomationPointsSetArgs(DeviceArgs):
+    target: AutomationTarget
+    expectedCount: int = Field(ge=0, le=65536, description="count from a fresh automation.points.get.")
+    expectedHash: str = Field(pattern=r"^[0-9a-f]{64}$", description="pointsHash from a fresh automation.points.get.")
+    points: Annotated[list[AutomationPoint], Field(max_length=1024)] = Field(description="Replacement points, strictly increasing beats, inside range if given.")
+    range: AutomationRange = omitted(description="Replace only points with startBeat <= beat <= endBeat; without it the whole lane is replaced.")
+
+    @model_validator(mode="after")
+    def validate_points(self):
+        beats = [point.beat for point in self.points]
+        if any(b <= a for a, b in zip(beats, beats[1:])):
+            raise ValueError("point beats must be strictly increasing")
+        if "range" in self.model_fields_set and any(not self.range.startBeat <= b <= self.range.endBeat for b in beats):
+            raise ValueError("every point must lie inside range")
+        return self
+
+
 class ClipImportArgs(ClipArgs):
     path: Nonempty
 

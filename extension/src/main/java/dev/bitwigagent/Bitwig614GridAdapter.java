@@ -390,6 +390,16 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
         require(parameterError, "typed parameters"); require(inspectionError, "parameter inspection context");
         return snapshots.parameter(proxy, expectedTrackId, moduleId, parameterId, parameterContexts, fullSteps, check);
     }
+    /** A float Grid module parameter's native object (an Opy, so a bDH) for its automation lane; document thread only. */
+    GridSnapshotReader.ParameterBinding automationParameter(Object proxy, UUID expectedTrackId, UUID moduleId, String parameterId, Runnable check) {
+        require(gateError, "gate"); require(identityError, "native owning-track identity"); require(structureError, "structure");
+        require(parameterError, "typed parameters"); require(inspectionError, "parameter inspection context");
+        GridSnapshotReader.ParameterBinding binding = snapshots.bindParameter(proxy, expectedTrackId, moduleId, parameterId, check);
+        if (binding.kind != GridSnapshotReader.Kind.FLOAT)
+            throw failure("unsupported_scope", "Only float Grid parameters are automated here; this one is " + binding.kind.name().toLowerCase(Locale.ROOT) + ".");
+        return binding;
+    }
+    void guardAutomationParameter(GridSnapshotReader.ParameterBinding binding) { snapshots.guardParameter(binding); }
     @Override public JsonObject voicing(Object proxy, UUID expectedTrackId, Runnable check) {
         require(gateError, "gate"); require(identityError, "native owning-track identity"); require(structureError, "structure");
         require(inspectionError, "parameter inspection context"); require(voicingError, "voicing");
