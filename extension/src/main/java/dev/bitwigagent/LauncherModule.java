@@ -61,6 +61,12 @@ final class LauncherModule implements HostModule {
         clip.exists().addValueObserver((BooleanValueChangedCallback) value -> clipExistsReady = true);
         clip.getLoopLength().addValueObserver((DoubleValueChangedCallback) value -> lengthReady = true);
         clip.color().markInterested();
+        clip.launchQuantization().markInterested();
+        clip.launchMode().markInterested();
+        clip.useLoopStartAsQuantizationReference().markInterested();
+        clip.launchQuantization().addValueObserver((EnumValueChangedCallback) value -> launchSequence[0]++);
+        clip.launchMode().addValueObserver((EnumValueChangedCallback) value -> launchSequence[1]++);
+        clip.useLoopStartAsQuantizationReference().addValueObserver((BooleanValueChangedCallback) value -> launchSequence[2]++);
         clip.getPlayStart().markInterested();
         clip.getPlayStop().markInterested();
         clip.getLoopStart().markInterested();
@@ -510,7 +516,7 @@ final class LauncherModule implements HostModule {
         gridObservation = null;
         bindingGeneration++;
         // clips.edit counts as dispatched only at its mutation: selecting alone leaves the clip untouched.
-        op.dispatched = !method.equals("clips.edit");
+        op.dispatched = !method.equals("clips.edit") && !method.equals("launcher.set");
         slot.api.select();
         s.schedule(op, () -> awaitBinding(op, id, track, slot, index, p, method, end, false), 40);
     }
@@ -549,6 +555,8 @@ final class LauncherModule implements HostModule {
             op.result.complete(notesResult(id, index, new Window(p), true));
         } else if (method.equals("clips.edit")) {
             cursorClipEdit(op, id, track, slot, index, p, end);
+        } else if (method.equals("launcher.set")) {
+            cursorLaunchSet(op, id, track, slot, index, p, end);
         } else editNotes(op, id, track, slot, index, p);
     }
 
@@ -597,6 +605,121 @@ final class LauncherModule implements HostModule {
             out.addProperty("quarantine", "extension_instance");
         }
         op.result.complete(out);
+    }
+
+    // ---- launcher.set launch fields: public Clip properties of the cursor clip, so the clip is selected (unlike the native next-action fields) ----
+
+    static final List<String> LAUNCH_FIELDS = List.of("launchQuantization", "launchMode", "useLoopStartAsQuantizationReference");
+
+    static boolean hasLaunchFields(JsonObject p) {
+        for (String key : LAUNCH_FIELDS) if (p.has(key)) return true;
+        return false;
+    }
+
+    /** Entry from launcher.set when it carries launch fields: same slot CAS and stopped-state guard as the native fields, then a cursor-clip bind. */
+    void launchSettings(HostOperation op, JsonObject p) {
+        s.check(op);
+        String id = Params.string(p, "trackId");
+        Track track = s.track(id);
+        int t = s.trackSlot(id);
+        if (track.clipLauncherSlotBank().scrollPosition().get() != 0)
+            throw HostServices.failure("stale_context", "Launcher bank is not at scene offset zero");
+        int j = Params.integer(p, "slotIndex", 0, 15);
+        int scenes = track.clipLauncherSlotBank().itemCount().get();
+        if (j >= scenes)
+            throw HostServices.failure("slot_out_of_range", "slotIndex " + j + " does not exist: the project has " + scenes + " scene(s).");
+        Slot slot = slots[t][j];
+        ready(slot);
+        acquire(op);
+        requireResolved(id, slot, j);
+        requireContent(slot);
+        String expected = Params.string(p, "expectedClipName"), actual = slot.api.name().get();
+        if (!actual.equals(expected))
+            throw new RpcException("stale_target", "Slot " + j + " holds clip \"" + actual + "\", not expectedClipName; re-read launcher.list", "not_applied");
+        // Options are the host's own list; reject before the selection moves.
+        if (p.has("launchQuantization")) EnumOptions.require("launchQuantization", clip.launchQuantization(), p.get("launchQuantization").getAsString());
+        if (p.has("launchMode")) EnumOptions.require("launchMode", clip.launchMode(), p.get("launchMode").getAsString());
+        HostServices.SafetyObservation safety = s.stoppedSafety(op);
+        guard(op, id, track);
+        launchSafety = safety;
+        bind(op, id, track, slot, j, p, "launcher.set", until(op));
+    }
+
+    private HostServices.SafetyObservation launchSafety;
+    // Callback counters of the cursor clip's launch properties, in LAUNCH_FIELDS order.
+    private final long[] launchSequence = new long[3];
+
+    /** Scene duplicate/delete move slot rows: refuse while a cursor operation or an unresolved launcher mutation pins them. */
+    void requireStructureSafe() {
+        if (s.selectionHeld()) throw HostServices.failure("busy", "Launcher editor operation is still pending");
+        settingsWriteGuard.run();
+        if (!unresolvedMutations.isEmpty())
+            throw HostServices.failure("unresolved_mutation", "A launcher mutation is unresolved; a scene edit would shift the slot rows it is quarantined by. Inspect launcher.list first.");
+    }
+
+    private JsonElement launchValue(String key) {
+        switch (key) {
+            case "launchQuantization": return new JsonPrimitive(clip.launchQuantization().get());
+            case "launchMode": return new JsonPrimitive(clip.launchMode().get());
+            default: return new JsonPrimitive(clip.useLoopStartAsQuantizationReference().get());
+        }
+    }
+
+    private void cursorLaunchSet(HostOperation op, String id, Track track, Slot slot, int index, JsonObject p, long end) {
+        cursorGuard(op, id, track, slot);
+        if (!p.get("expectedClipName").getAsString().equals(slot.api.name().get()))
+            throw new RpcException("stale_target", "The bound clip no longer has expectedClipName.", "not_applied");
+        s.guardStoppedSafety(launchSafety);
+        // Only differing fields are written; a written field counts only once its own observer fires after the write.
+        long[] before = launchSequence.clone();
+        Set<String> written = new HashSet<>();
+        for (String key : LAUNCH_FIELDS) {
+            if (!p.has(key) || launchValue(key).equals(p.get(key))) continue;
+            op.dispatched = true;
+            written.add(key);
+            JsonElement value = p.get(key);
+            if (key.equals("launchQuantization")) clip.launchQuantization().set(value.getAsString());
+            else if (key.equals("launchMode")) clip.launchMode().set(value.getAsString());
+            else clip.useLoopStartAsQuantizationReference().set(value.getAsBoolean());
+        }
+        BooleanSupplier matches = () -> {
+            for (int i = 0; i < LAUNCH_FIELDS.size(); i++) {
+                String key = LAUNCH_FIELDS.get(i);
+                if (!p.has(key)) continue;
+                if (!launchValue(key).equals(p.get(key)) || written.contains(key) && launchSequence[i] <= before[i]) return false;
+            }
+            return true;
+        };
+        awaitClip(op, id, track, slot, end, matches, () -> op.result.complete(launchDone(id, index, p, slot, true, written, before)),
+            () -> op.result.complete(launchDone(id, index, p, slot, false, written, before)));
+    }
+
+    private JsonObject launchDone(String id, int index, JsonObject p, Slot slot, boolean observed, Set<String> written, long[] before) {
+        JsonObject out = base(id, index);
+        out.addProperty("status", observed ? "observed" : "dispatched");
+        out.addProperty("completion", observed ? "observed" : "unknown");
+        out.addProperty("matchesRequested", observed);
+        out.addProperty("name", slot.api.name().get());
+        out.addProperty("scope", "cursor_clip_launch_settings");
+        out.addProperty("selectionSideEffect", "launcher_cursor_clip_selected");
+        JsonObject fields = new JsonObject();
+        for (int i = 0; i < LAUNCH_FIELDS.size(); i++) {
+            String key = LAUNCH_FIELDS.get(i);
+            if (!p.has(key)) continue;
+            JsonObject f = new JsonObject();
+            f.add("requested", p.get(key)); f.add("observed", launchValue(key));
+            boolean match = launchValue(key).equals(p.get(key)), fresh = launchSequence[i] > before[i];
+            f.addProperty("matchesRequested", match && (fresh || !written.contains(key)));
+            f.addProperty("verification", !written.contains(key) ? (match ? "already_matched_readback" : "readback_mismatch")
+                : !fresh ? "not_observed" : match ? "observer_after_write" : "readback_mismatch");
+            fields.add(key, f);
+        }
+        out.add("fields", fields);
+        JsonObject options = new JsonObject();
+        options.add("launchQuantization", EnumOptions.json(clip.launchQuantization()));
+        options.add("launchMode", EnumOptions.json(clip.launchMode()));
+        out.add("options", options);
+        return out;
     }
 
     // ---- clips.edit: one whole-clip operation per call, every outcome read back; see PROTOCOL.md ----

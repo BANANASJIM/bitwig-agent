@@ -38,6 +38,10 @@ final class TransportMixFixture {
             track.child("pan").child("value").data = .5;
             track.child("pan").child("displayedValue").data = "Center";
             for (String key : List.of("mute", "solo", "arm", "selected")) track.child(key).data = false;
+            track.child("color").data = new float[]{0f, 0f, 0f};
+            track.child("isActivated").data = true;
+            track.child("monitorMode").data = "AUTO"; enumOptions(track.child("monitorMode"), "AUTO", "ON", "OFF");
+            track.child("crossFadeMode").data = "AB"; enumOptions(track.child("crossFadeMode"), "A", "AB", "B");
             track.custom = (name, args) -> {
                 if (name.equals("addIsSelectedInEditorObserver")) {
                     track.child("selected").listen(args[0]); return null;
@@ -94,6 +98,11 @@ final class TransportMixFixture {
         for (String key : List.of("isPlaying", "isArrangerRecordEnabled", "isArrangerAutomationWriteEnabled", "isClipLauncherAutomationWriteEnabled"))
             transport.child(key).initial = observeSafetyInitially;
         transport.child("tempo").child("value").data = 120.0;
+        transport.child("metronomeVolume").data = .5;
+        transport.child("isPunchInEnabled").data = false; transport.child("isPunchOutEnabled").data = false;
+        transport.child("preRoll").data = "none"; enumOptions(transport.child("preRoll"), "none", "one_bar", "two_bars", "four_bars");
+        transport.child("defaultLaunchQuantization").data = "1"; enumOptions(transport.child("defaultLaunchQuantization"), "none", "8", "4", "2", "1", "1/2");
+        application.child("recordQuantizationGrid").data = "1/16"; enumOptions(application.child("recordQuantizationGrid"), "1/4", "1/8", "1/16");
         transport.child("playPosition").data = 0.0;
         transport.child("timeSignature").data = "4/4";
         transport.child("arrangerLoopStart").data = 0.0;
@@ -123,6 +132,19 @@ final class TransportMixFixture {
             return null;
         };
         services = new HostServices(host.proxy(ControllerHost.class));
+    }
+
+    /** The host's own enum option list, as EnumValue.enumDefinition() reports it. */
+    void enumOptions(Node value, String... ids) {
+        Node definition = value.child("enumDefinition");
+        definition.custom = (name, args) -> {
+            if (name.equals("getValueCount")) return ids.length;
+            if (!name.equals("valueDefinitionAt")) return null;
+            int index = (Integer) args[0];
+            Node option = definition.item(index);
+            option.custom = (inner, innerArgs) -> inner.equals("getId") ? ids[index] : null;
+            return option.proxy(EnumValueDefinition.class);
+        };
     }
 
     private void emptyBank(Node bank) {
@@ -209,9 +231,11 @@ final class TransportMixFixture {
             else if (observer instanceof IntegerValueChangedCallback) ((IntegerValueChangedCallback) observer).valueChanged(data instanceof Number ? ((Number) data).intValue() : 0);
             else if (observer instanceof DoubleValueChangedCallback) ((DoubleValueChangedCallback) observer).valueChanged(data instanceof Number ? ((Number) data).doubleValue() : 0.0);
             else if (observer instanceof StringValueChangedCallback) ((StringValueChangedCallback) observer).valueChanged(data instanceof String ? (String) data : "");
+            else if (observer instanceof ColorValueChangedCallback) { float[] c = rgb(); ((ColorValueChangedCallback) observer).valueChanged(c[0], c[1], c[2]); }
             else if (observer instanceof EnumValueChangedCallback) ((EnumValueChangedCallback) observer).valueChanged(data instanceof String ? (String) data : "");
             else throw new AssertionError("Unexpected observer " + observer.getClass());
         }
+        float[] rgb() { return data instanceof float[] ? (float[]) data : new float[]{0f, 0f, 0f}; }
         @Override public Object invoke(Object proxy, Method method, Object[] supplied) {
             String name = method.getName(); Object[] args = supplied == null ? new Object[0] : supplied;
             if (name.equals("toString")) return "TestHostProxy";
@@ -223,9 +247,10 @@ final class TransportMixFixture {
                 listen(args[0] instanceof IntegerValueChangedCallback ? args[0] : args[args.length - 1]);
                 return null;
             }
+            if (method.getReturnType() == float.class) return rgb()[name.equals("red") ? 0 : name.equals("green") ? 1 : 2];
             if (name.equals("set") || name.equals("setRaw") || name.equals("setImmediately")) {
                 mutation(); writes++;
-                if (updateWrites) data = args[0];
+                if (updateWrites) data = args.length == 3 && args[0] instanceof Float ? new float[]{(Float) args[0], (Float) args[1], (Float) args[2]} : args[0];
                 if (emitWrites) for (Object observer : observers) notifyOne(observer);
                 afterWrite.run(); return null;
             }

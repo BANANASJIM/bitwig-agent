@@ -9,7 +9,7 @@ import static dev.bitwigagent.HostServices.failure;
 
 /** Composition and the single network-to-host boundary; domain state belongs to modules. */
 public final class HostBridge implements RpcServer.Handler, AutoCloseable {
-    static final Set<String> PROJECT_WRITES = Set.of("tracks.create", "devices.insert", "launcher.create", "launcher.import", "scenes.append", "grid.voicing.set",
+    static final Set<String> PROJECT_WRITES = Set.of("tracks.create", "devices.insert", "launcher.create", "launcher.import", "scenes.append", "scenes.duplicate", "scenes.delete", "grid.voicing.set",
             "devices.delete", "devices.move", "devices.layers.insert", "tracks.group", "tracks.delete", "arranger.clips.create", "arranger.clips.copyFromLauncher", "arranger.clips.edit",
             "grid.modules.insert", "grid.modules.move", "grid.modules.delete", "grid.modules.rename", "grid.connections.set", "grid.parameters.set");
     private static final Map<String, BiConsumer<String, JsonObject>> VALIDATORS = validators();
@@ -36,6 +36,7 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
         register(new DeviceModule(services));
         LauncherModule launcher = new LauncherModule(services);
         register(launcher);
+        register(new SceneModule(services, launcher::requireStructureSafe));
         register(new LauncherSettingsModule(services, launcher));
         register(new MarkerModule(services));
         register(new MeterModule(services));
@@ -71,6 +72,7 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
         registerValidator(methods, ProjectModule.METHODS, ProjectModule::validateParams);
         registerValidator(methods, TransportModule.METHODS, TransportModule::validateParams);
         registerValidator(methods, MixModule.METHODS, MixModule::validateParams);
+        registerValidator(methods, SceneModule.METHODS, SceneModule::validateParams);
         registerValidator(methods, MarkerModule.METHODS, MarkerModule::validateParams);
         registerValidator(methods, MeterModule.METHODS, MeterModule::validateParams);
         registerValidator(methods, DeviceModule.METHODS, DeviceModule::validateParams);
@@ -125,6 +127,7 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
     boolean preflight(String method, JsonObject params) {
         if (PROJECT_WRITES.contains(method)) services.requireProjectReady();
         if (method.equals("launcher.launch")) services.requireEngineActive("the clip launch");
+        if (method.equals("scenes.launch")) services.requireEngineActive("the scene launch");
         return method.equals("transport.set") && params.has("playing") && params.get("playing").getAsBoolean() && !services.engineActive();
     }
 

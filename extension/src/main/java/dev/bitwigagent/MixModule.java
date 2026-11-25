@@ -15,8 +15,13 @@ final class MixModule implements HostModule {
         void execute(Runnable work);
         JsonObject group(List<Object> trackProxies, List<String> trackIds, Runnable check, Runnable beforeWrite);
     }
-    private static final String[] FIELDS = {"name", "volumeNormalized", "panNormalized", "mute", "solo", "arm", "selected"};
-    private static final Set<String> WRITABLE = Set.of("name", "volumeNormalized", "panNormalized", "mute", "solo", "arm");
+    private static final String[] FIELDS = {"name", "volumeNormalized", "panNormalized", "mute", "solo", "arm", "selected",
+        "color", "activated", "monitorMode", "crossFadeMode"};
+    /** The first FIELDS entries every track reports; the later ones never decide observationsComplete. */
+    private static final int BASE_FIELDS = 7;
+    private static final Set<String> WRITABLE = Set.of("name", "volumeNormalized", "panNormalized", "mute", "solo", "arm",
+        "color", "activated", "monitorMode", "crossFadeMode");
+    private static final java.util.regex.Pattern RGB = java.util.regex.Pattern.compile("#[0-9a-fA-F]{6}");
     // Display-addressed alternatives to volumeNormalized/panNormalized, resolved against the host's own display text.
     private static final Set<String> DISPLAY_WRITABLE = Set.of("volumeDb", "volumeDisplay", "panPercent", "panDisplay");
     private static final Set<String> SEND_OPTIONAL = Set.of("sendIndex", "sendName", "expectedSendName", "valueNormalized", "display", "enabled");
@@ -53,6 +58,10 @@ final class MixModule implements HostModule {
             track.solo().addValueObserver((BooleanValueChangedCallback) v -> state.seen(4));
             track.arm().addValueObserver((BooleanValueChangedCallback) v -> state.seen(5));
             track.addIsSelectedInEditorObserver(v -> { state.selected = v; state.seen(6); });
+            track.color().addValueObserver((ColorValueChangedCallback) (r, g, b) -> state.seen(7));
+            track.isActivated().addValueObserver((BooleanValueChangedCallback) v -> state.seen(8));
+            track.monitorMode().addValueObserver((EnumValueChangedCallback) v -> state.seen(9));
+            track.crossFadeMode().addValueObserver((EnumValueChangedCallback) v -> state.seen(10));
             observe(state, "volumeDisplay", track.volume().displayedValue());
             observe(state, "panDisplay", track.pan().displayedValue());
             SendBank sends = track.sendBank();
@@ -83,7 +92,10 @@ final class MixModule implements HostModule {
                 if (p.size() == 1) throw HostServices.failure("invalid_params", "At least one track field is required.");
                 if (p.has("name")) Params.string(p, "name");
                 for (String key : List.of("volumeNormalized", "panNormalized")) if (p.has(key)) Params.number(p, key, 0, 1);
-                for (String key : List.of("mute", "solo", "arm")) if (p.has(key)) Params.bool(p, key);
+                for (String key : List.of("mute", "solo", "arm", "activated")) if (p.has(key)) Params.bool(p, key);
+                if (p.has("color") && !RGB.matcher(Params.string(p, "color")).matches())
+                    throw HostServices.failure("invalid_params", "color must be #RRGGBB.");
+                for (String key : List.of("monitorMode", "crossFadeMode")) if (p.has(key)) Params.string(p, key);
                 if (p.has("volumeDb")) Params.number(p, "volumeDb", -150, 24);
                 if (p.has("panPercent")) Params.number(p, "panPercent", -100, 100);
                 for (String key : List.of("volumeDisplay", "panDisplay")) if (p.has(key)) Params.string(p, key);
@@ -166,6 +178,10 @@ final class MixModule implements HostModule {
         }
         JsonObject changes = new JsonObject();
         for (String key : WRITABLE) if (p.has(key)) changes.add(key, p.get(key));
+        if (changes.has("color")) changes.addProperty("color", changes.get("color").getAsString().toLowerCase(Locale.ROOT));
+        // The host's own option list validates the enums before any write or display probe.
+        if (changes.has("monitorMode")) EnumOptions.require("monitorMode", target.state.track.monitorMode(), changes.get("monitorMode").getAsString());
+        if (changes.has("crossFadeMode")) EnumOptions.require("crossFadeMode", target.state.track.crossFadeMode(), changes.get("crossFadeMode").getAsString());
         List<Solve> solves = new ArrayList<>();
         if (p.has("volumeDb") || p.has("volumeDisplay"))
             solves.add(new Solve("volumeNormalized", 1, "volumeDisplay", DisplayScale.Kind.DB, p.get(p.has("volumeDb") ? "volumeDb" : "volumeDisplay"), p.has("volumeDb")));
@@ -294,6 +310,11 @@ final class MixModule implements HostModule {
                     case 3: track.mute().set(next.getAsBoolean()); break;
                     case 4: track.solo().set(next.getAsBoolean()); break;
                     case 5: track.arm().set(next.getAsBoolean()); break;
+                    case 7: track.color().set(Integer.parseInt(next.getAsString().substring(1, 3), 16) / 255f,
+                            Integer.parseInt(next.getAsString().substring(3, 5), 16) / 255f, Integer.parseInt(next.getAsString().substring(5, 7), 16) / 255f); break;
+                    case 8: track.isActivated().set(next.getAsBoolean()); break;
+                    case 9: track.monitorMode().set(next.getAsString()); break;
+                    case 10: track.crossFadeMode().set(next.getAsString()); break;
                     default: throw new IllegalArgumentException(key);
                 }
             }
@@ -811,8 +832,12 @@ final class MixModule implements HostModule {
             JsonElement observed = value(state, i);
             result.add(FIELDS[i], observed);
             readable.addProperty(FIELDS[i], !observed.isJsonNull());
-            complete &= !observed.isJsonNull();
+            if (i < BASE_FIELDS) complete &= !observed.isJsonNull();
         }
+        JsonObject options = new JsonObject();
+        options.add("monitorMode", EnumOptions.json(state.track.monitorMode()));
+        options.add("crossFadeMode", EnumOptions.json(state.track.crossFadeMode()));
+        result.add("options", options);
         for (String key : List.of("index", "type", "volumeDisplay", "panDisplay")) {
             JsonElement observed = state.meta(key);
             result.add(key, observed);
@@ -876,6 +901,11 @@ final class MixModule implements HostModule {
             case 5: return new JsonPrimitive(track.arm().get());
             // This legacy observer has no interested-value getter to refresh at flush.
             case 6: return state.fresh(i) ? new JsonPrimitive(state.selected) : JsonNull.INSTANCE;
+            case 7: return new JsonPrimitive(String.format("#%02x%02x%02x", Math.round(track.color().red() * 255),
+                    Math.round(track.color().green() * 255), Math.round(track.color().blue() * 255)));
+            case 8: return new JsonPrimitive(track.isActivated().get());
+            case 9: return new JsonPrimitive(track.monitorMode().get());
+            case 10: return new JsonPrimitive(track.crossFadeMode().get());
             default: throw new IllegalArgumentException("field");
         }
     }

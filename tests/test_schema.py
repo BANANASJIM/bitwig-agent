@@ -1155,3 +1155,37 @@ def test_activate_engine_is_a_write_tool_without_arguments():
     assert validate_call("project.activateEngine", {})[0] == {}
     with pytest.raises(ValidationError):
         validate_call("project.activateEngine", {"force": True})
+
+
+def test_transport_guide_settings():
+    args = {"metronomeVolumeNormalized": 0.5, "preRoll": "one_bar", "punchInEnabled": True, "punchOutEnabled": False,
+            "defaultLaunchQuantization": "1", "recordQuantizationGrid": "1/16"}
+    assert validate_call("transport.set", args)[0] == args
+    for bad in ({"metronomeVolumeNormalized": 1.1}, {"metronomeVolumeNormalized": -0.1}, {"preRoll": ""}, {"preRoll": 1},
+                {"punchInEnabled": 1}, {"punchOutEnabled": None}, {"defaultLaunchQuantization": None}, {"recordQuantizationGrid": ""}):
+        with pytest.raises(ValidationError):
+            validate_call("transport.set", bad)
+
+
+def test_track_color_activated_monitor_and_crossfade():
+    args = {"trackId": TRACK, "color": "#ff8800", "activated": False, "monitorMode": "ON", "crossFadeMode": "AB"}
+    assert validate_call("tracks.set", args)[0] == args
+    for bad in ({"color": "ff8800"}, {"color": "#ff88"}, {"color": "#gg0000"}, {"activated": "no"}, {"monitorMode": ""}, {"crossFadeMode": 1}):
+        with pytest.raises(ValidationError):
+            validate_call("tracks.set", {"trackId": TRACK, **bad})
+
+
+def test_scene_tools_use_index_and_exact_name_guard():
+    assert validate_call("scenes.list", {})[0] == {}
+    target = {"sceneIndex": 3, "expectedName": ""}
+    for method in ("scenes.launch", "scenes.duplicate", "scenes.delete"):
+        assert validate_call(method, target)[0] == target
+        assert not TOOLS[method].read_only
+    assert validate_call("scenes.rename", {**target, "name": "Verse"})[0] == {**target, "name": "Verse"}
+    assert TOOLS["scenes.list"].read_only
+    for method, bad in (("scenes.delete", {"sceneIndex": 16, "expectedName": ""}), ("scenes.delete", {"sceneIndex": -1, "expectedName": ""}),
+                        ("scenes.delete", {"sceneIndex": 0}), ("scenes.delete", {"expectedName": ""}),
+                        ("scenes.launch", {"sceneIndex": 0, "expectedName": "x" * 257}), ("scenes.rename", {**target, "name": ""}),
+                        ("scenes.rename", target), ("scenes.duplicate", {**target, "extra": 1}), ("scenes.list", {"sceneIndex": 0})):
+        with pytest.raises(ValidationError):
+            validate_call(method, bad)

@@ -2,6 +2,7 @@ package dev.bitwigagent;
 
 import com.bitwig.extension.callback.BooleanValueChangedCallback;
 import com.bitwig.extension.callback.DoubleValueChangedCallback;
+import com.bitwig.extension.callback.EnumValueChangedCallback;
 import com.bitwig.extension.callback.StringValueChangedCallback;
 import com.bitwig.extension.controller.api.*;
 import com.google.gson.*;
@@ -11,10 +12,16 @@ import java.util.concurrent.TimeUnit;
 /** Absolute transport controls; recording and automation modes are read-only safety inputs. */
 final class TransportModule implements HostModule {
     static final Set<String> METHODS = Set.of("transport.get", "transport.set");
-    private static final String[] ORDER = {"tempoBpm", "timeSignature", "positionBeats", "metronome", "loopStartBeats", "loopDurationBeats", "loopEnabled", "playing"};
+    private static final String[] ORDER = {"tempoBpm", "timeSignature", "positionBeats", "metronome", "metronomeVolumeNormalized", "loopStartBeats", "loopDurationBeats", "loopEnabled",
+        "punchInEnabled", "punchOutEnabled", "preRoll", "defaultLaunchQuantization", "recordQuantizationGrid", "playing"};
+    /** Host-listed enums: the API's own option list validates them at dispatch. */
+    private static final Set<String> ENUM_FIELDS = Set.of("preRoll", "defaultLaunchQuantization", "recordQuantizationGrid");
     private static final Set<String> FIELDS = Set.of(ORDER);
+    /** Fields every host reports at startup; a newer field that is not (yet) observed reads null instead of blocking the rest. */
+    private static final Set<String> BASE = Set.of("tempoBpm", "timeSignature", "positionBeats", "metronome", "loopStartBeats", "loopDurationBeats", "loopEnabled", "playing");
     private final HostServices s;
     private final Map<String, Sample> values = new LinkedHashMap<>();
+    private final Map<String, SettableEnumValue> enums = new LinkedHashMap<>();
 
     TransportModule(HostServices services) {
         s = services;
@@ -29,6 +36,13 @@ final class TransportModule implements HostModule {
         observe("loopEnabled", s.transport.isArrangerLoopEnabled());
         observe("loopStartBeats", s.transport.arrangerLoopStart());
         observe("loopDurationBeats", s.transport.arrangerLoopDuration());
+        Sample volume = sample("metronomeVolumeNormalized");
+        s.transport.metronomeVolume().addValueObserver((DoubleValueChangedCallback) volume::number);
+        observe("punchInEnabled", s.transport.isPunchInEnabled());
+        observe("punchOutEnabled", s.transport.isPunchOutEnabled());
+        observe("preRoll", s.transport.preRoll());
+        observe("defaultLaunchQuantization", s.transport.defaultLaunchQuantization());
+        observe("recordQuantizationGrid", s.application.recordQuantizationGrid());
     }
 
     @Override public Set<String> methods() { return METHODS; }
@@ -39,7 +53,9 @@ final class TransportModule implements HostModule {
         if (!method.equals("transport.set")) throw HostServices.failure("unknown_method", "Unknown transport method.");
         Params.fields(p, Set.of(), FIELDS);
         if (p.size() == 0) throw HostServices.failure("invalid_params", "At least one transport field is required.");
-        for (String key : List.of("playing", "metronome", "loopEnabled")) if (p.has(key)) Params.bool(p, key);
+        for (String key : List.of("playing", "metronome", "loopEnabled", "punchInEnabled", "punchOutEnabled")) if (p.has(key)) Params.bool(p, key);
+        if (p.has("metronomeVolumeNormalized")) Params.number(p, "metronomeVolumeNormalized", 0, 1);
+        for (String key : ENUM_FIELDS) if (p.has(key)) Params.string(p, key);
         // The installed Maschine JAM/MainKnobControl.js uses raw BPM 20..666.
         // RangedValue Javadoc leaves raw limits undefined: these are toolkit-supported bounds.
         if (p.has("tempoBpm")) Params.number(p, "tempoBpm", 20, 666);
@@ -63,8 +79,11 @@ final class TransportModule implements HostModule {
     @Override public void dispatch(HostOperation op, String method, JsonObject p) {
         s.check(op);
         if (method.equals("transport.get")) { op.result.complete(snapshot()); return; }
-        for (String key : FIELDS) require(key);
+        for (String key : BASE) require(key);
+        for (String key : p.keySet()) require(key);
         for (String key : p.keySet()) guard(key, p.get(key));
+        for (Map.Entry<String, SettableEnumValue> entry : enums.entrySet())
+            if (p.has(entry.getKey())) EnumOptions.require(entry.getKey(), entry.getValue(), p.get(entry.getKey()).getAsString());
         double start = p.has("loopStartBeats") ? p.get("loopStartBeats").getAsDouble() : values.get("loopStartBeats").value.getAsDouble();
         double duration = p.has("loopDurationBeats") ? p.get("loopDurationBeats").getAsDouble() : values.get("loopDurationBeats").value.getAsDouble();
         if (!Double.isFinite(start + duration)) throw HostServices.failure("invalid_params", "Loop end must be finite.");
@@ -122,6 +141,11 @@ final class TransportModule implements HostModule {
             case "positionBeats": s.transport.setPosition(value.getAsDouble()); break;
             case "metronome": s.transport.isMetronomeEnabled().set(value.getAsBoolean()); break;
             case "loopEnabled": s.transport.isArrangerLoopEnabled().set(value.getAsBoolean()); break;
+            // Absolute RPC target: no physical-controller pickup.
+            case "metronomeVolumeNormalized": s.transport.metronomeVolume().setImmediately(value.getAsDouble()); break;
+            case "punchInEnabled": s.transport.isPunchInEnabled().set(value.getAsBoolean()); break;
+            case "punchOutEnabled": s.transport.isPunchOutEnabled().set(value.getAsBoolean()); break;
+            case "preRoll": case "defaultLaunchQuantization": case "recordQuantizationGrid": enums.get(key).set(value.getAsString()); break;
             case "loopStartBeats": s.transport.arrangerLoopStart().set(value.getAsDouble()); break;
             case "loopDurationBeats": s.transport.arrangerLoopDuration().set(value.getAsDouble()); break;
             default: throw new IllegalArgumentException(key);
@@ -184,16 +208,20 @@ final class TransportModule implements HostModule {
         result.addProperty("projectName", s.application.projectName().get());
         result.addProperty("scope", "project_transport_observed_values");
         for (Map.Entry<String, Sample> entry : values.entrySet()) {
-            require(entry.getKey());
+            if (BASE.contains(entry.getKey())) require(entry.getKey());
             result.add(entry.getKey(), entry.getValue().value);
         }
         JsonObject units = new JsonObject();
         units.addProperty("tempoBpm", "bpm_raw");
         units.addProperty("timeSignature", "numerator/denominator as the host reports it; time-signature change markers are not in the public API");
         units.addProperty("positionBeats", "quarter_note_beats_current_play_position");
+        units.addProperty("metronomeVolumeNormalized", "normalized_0_1_not_db");
         units.addProperty("loopStartBeats", "quarter_note_beats");
         units.addProperty("loopDurationBeats", "quarter_note_beats");
         result.add("units", units);
+        JsonObject options = new JsonObject();
+        for (Map.Entry<String, SettableEnumValue> entry : enums.entrySet()) options.add(entry.getKey(), EnumOptions.json(entry.getValue()));
+        result.add("options", options);
         JsonObject tempoRange = new JsonObject();
         tempoRange.addProperty("minimum", 20); tempoRange.addProperty("maximum", 666);
         tempoRange.addProperty("scope", "toolkit_supported_shipped_controller_range_not_api_raw_limit");
@@ -214,8 +242,14 @@ final class TransportModule implements HostModule {
         Sample value = sample(key);
         source.addValueObserver((DoubleValueChangedCallback) value::number);
     }
+    private void observe(String key, SettableEnumValue source) {
+        Sample value = sample(key);
+        enums.put(key, source);
+        source.addValueObserver((EnumValueChangedCallback) v -> value.set(new JsonPrimitive((String) v)));
+    }
     private static boolean matches(String key, JsonElement a, JsonElement b) {
         if (a.isJsonNull()) return false;
+        if (key.equals("metronomeVolumeNormalized")) return Math.abs(a.getAsDouble() - b.getAsDouble()) <= HostServices.TOLERANCE;
         if (key.equals("tempoBpm") || key.endsWith("Beats")) return Math.abs(a.getAsDouble() - b.getAsDouble()) <= 1e-6;
         return a.equals(b);
     }

@@ -23,7 +23,7 @@ Tracks, root devices and Launcher slots are bounded to windows of 16; sends to e
 
 Require explicit user permission covering the change and actual target, one writer, and fresh relevant safety/target observations. Use a disposable fixture for experiments. Check the method's schema and guards rather than inventing an `allowWrite` argument. Recording/playback/automation conditions vary by operation; establish all required values rather than treating unknown as false. Read-only metadata and license/property descriptors never themselves authorize a write.
 
-Agent `notes.*`, `launcher.create` and `scenes.append` move selection; `context.get` does not. An operation described as inspection can still change UI context; a failed dispatched selection can have `outcome: unknown`. Do not automatically retry it merely because no notes were meant to change.
+Agent `notes.*`, `launcher.create`, `launcher.set` launch fields (`launchQuantization`, `launchMode`, `useLoopStartAsQuantizationReference`) and `scenes.append` move selection; `context.get` does not. An operation described as inspection can still change UI context; a failed dispatched selection can have `outcome: unknown`. Do not automatically retry it merely because no notes were meant to change.
 
 ## Outcome handling
 

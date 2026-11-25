@@ -10,6 +10,7 @@ public final class MixModuleTest {
         readsExposeNormalizedUnitsAndSends();
         invalidRequestsNeverSchedule();
         writesOnlyExplicitUuidAndFields();
+        colorActivatedMonitorAndCrossFadeAreReadAndWritten();
         selectionWithoutReplayedCallbackIsDispatchOnly();
         selectionUsesUuidNotCurrentUi();
         selectionRespectsOperationAndIdentityGuards();
@@ -99,6 +100,39 @@ public final class MixModuleTest {
         check(f.tracks[1].child("mute").writes == 1, "no unnecessary second mute write");
         HostOperation absent = f.submit(module, "tracks.set", TransportMixFixture.json("{\"trackId\":\"outside\",\"mute\":true}")); f.next();
         TransportMixFixture.error(absent, "outside_window"); check(f.tracks[0].child("mute").writes == 0, "absent UUID never falls back to selected track");
+    }
+    private static void colorActivatedMonitorAndCrossFadeAreReadAndWritten() {
+        TransportMixFixture f = new TransportMixFixture(); MixModule module = new MixModule(f.services);
+        JsonObject read = f.call(module, "tracks.get", TransportMixFixture.target(TransportMixFixture.B));
+        check(read.get("color").getAsString().equals("#000000") && read.get("activated").getAsBoolean()
+            && read.get("monitorMode").getAsString().equals("AUTO") && read.get("crossFadeMode").getAsString().equals("AB"), "new track fields are read");
+        check(read.getAsJsonObject("options").getAsJsonArray("monitorMode").size() == 3
+            && read.getAsJsonObject("options").getAsJsonArray("crossFadeMode").get(0).getAsString().equals("A"), "enum options come from the host");
+        for (String text : List.of("{\"color\":\"ff0000\"}", "{\"color\":\"#ff00\"}", "{\"color\":1}", "{\"activated\":\"yes\"}", "{\"monitorMode\":3}", "{\"crossFadeMode\":\"\"}")) {
+            JsonObject p = TransportMixFixture.json(text); p.addProperty("trackId", TransportMixFixture.B);
+            TransportMixFixture.error(f.submit(module, "tracks.set", p), "invalid_params");
+            check(f.tasks.isEmpty(), "invalid field rejected before scheduling: " + text);
+        }
+        JsonObject unlisted = TransportMixFixture.json("{\"mute\":true,\"monitorMode\":\"LOUD\"}"); unlisted.addProperty("trackId", TransportMixFixture.B);
+        HostOperation refused = f.submit(module, "tracks.set", unlisted); f.next();
+        check(TransportMixFixture.error(refused, "invalid_params").outcome.equals("not_applied"), "option the host does not list is refused");
+        check(f.tracks[1].child("monitorMode").writes == 0 && f.tracks[1].child("mute").writes == 0, "nothing written when an option is refused");
+        JsonObject p = TransportMixFixture.json("{\"color\":\"#FF8800\",\"activated\":false,\"monitorMode\":\"ON\",\"crossFadeMode\":\"B\"}");
+        p.addProperty("trackId", TransportMixFixture.B);
+        JsonObject result = f.call(module, "tracks.set", p);
+        check(result.get("matchesRequested").getAsBoolean() && result.get("color").getAsString().equals("#ff8800")
+            && !result.get("activated").getAsBoolean() && result.get("monitorMode").getAsString().equals("ON") && result.get("crossFadeMode").getAsString().equals("B"), "every new field is read back");
+        check(result.getAsJsonObject("fields").getAsJsonObject("color").get("verification").getAsString().equals("observer_after_write"), "color verified by observer");
+        check(f.tracks[1].child("color").writes == 1 && f.tracks[0].child("color").writes == 0 && f.tracks[0].child("monitorMode").writes == 0, "only UUID B is written");
+        JsonObject again = f.call(module, "tracks.set", p);
+        check(again.getAsJsonObject("fields").getAsJsonObject("monitorMode").get("verification").getAsString().equals("already_at_value")
+            && f.tracks[1].child("monitorMode").writes == 1 && f.tracks[1].child("isActivated").writes == 1, "matching values are not rewritten");
+        f.tracks[1].child("crossFadeMode").emitWrites = false;
+        JsonObject silent = TransportMixFixture.json("{\"crossFadeMode\":\"A\"}"); silent.addProperty("trackId", TransportMixFixture.B);
+        HostOperation op = f.submit(module, "tracks.set", silent, System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(300));
+        try { for (int i = 0; i < 400 && !op.result.isDone(); i++) { f.next(); Thread.sleep(2); } }
+        catch (InterruptedException e) { throw new AssertionError(e); }
+        check(!op.result.join().get("matchesRequested").getAsBoolean(), "an unobserved enum write is not reported as done");
     }
     private static void selectionUsesUuidNotCurrentUi() {
         TransportMixFixture f = new TransportMixFixture(); MixModule module = new MixModule(f.services);

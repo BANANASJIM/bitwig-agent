@@ -54,7 +54,7 @@ Version `0.2.0` gates private Grid/modulator access to the mapped **Bitwig 6.1.4
 
 Before dispatch, keep an **agent-side write guard**: explicit permission for the requested changes; one designated writer; fresh project/target observations; and the applicable recording, playback and automation conditions established rather than assumed. For native experiments use a disposable fixture. Unknown/null safety fields are not false. Do not invent a universal `allowWrite` RPC argument: inspect each method's schema and its actual guards. The example recipe has its own explicit `--allow-write` CLI switch.
 
-Read-like operations can still have side effects: agent `notes.*`/`launcher.create` calls and `scenes.append` move selection and may affect auto-arm (`context.get` does not). Discover method annotations and protocol side effects before dispatch rather than assuming a read is always harmless.
+Read-like operations can still have side effects: agent `notes.*`/`launcher.create` calls, `launcher.set` launch fields and `scenes.append` move selection and may affect auto-arm (`context.get` does not). Discover method annotations and protocol side effects before dispatch rather than assuming a read is always harmless.
 
 Names, context tokens and module UUIDs are not persistent physical identities. Module/modulator UUIDs changed on actual reopening; reacquire them. `window.complete` is page coverage, not proof of whole-Grid completeness. Stored cables are not a proven active signal graph. MIDI settling is explicitly scheduled but unacknowledged.
 

@@ -57,6 +57,7 @@ public final class LauncherModuleTest {
         clipEditRenameResizeColor();
         clipEditNoteOps();
         clipEditDeleteAndCopy();
+        launcherSetLaunchFields();
         System.out.println("LauncherModuleTest: " + assertions + " assertions passed (simulated host only)");
     }
 
@@ -1062,6 +1063,71 @@ public final class LauncherModuleTest {
         check(f.module.unresolved().size() == 1, "unobserved duplicateContent is quarantined");
     }
 
+    // ---- launcher.set launch fields (public cursor-clip properties) ----
+
+    private static JsonObject launchSet(Object... fields) {
+        JsonObject p = target(); p.addProperty("expectedClipName", "Riff");
+        for (int i = 0; i < fields.length; i += 2) {
+            if (fields[i + 1] instanceof Number) p.addProperty((String) fields[i], (Number) fields[i + 1]);
+            else if (fields[i + 1] instanceof Boolean) p.addProperty((String) fields[i], (Boolean) fields[i + 1]);
+            else p.addProperty((String) fields[i], (String) fields[i + 1]);
+        }
+        return p;
+    }
+    private static HostOperation startSettings(Fake f, LauncherSettingsModule settings, JsonObject p) {
+        HostOperation op = new HostOperation(System.nanoTime() + TimeUnit.SECONDS.toNanos(2));
+        try {
+            settings.validate("launcher.set", p);
+            f.services.schedule(op, () -> settings.dispatch(op, "launcher.set", p), 0); f.tasks.removeLast().run();
+        } catch (RuntimeException error) { op.fail(error); }
+        return op;
+    }
+    private static void launcherSetLaunchFields() throws Exception {
+        // Validation: type checks, no empty request, and the two write paths never mix in one call.
+        for (JsonObject bad : List.of(launchSet("launchQuantization", 1), launchSet("launchMode", ""), launchSet("useLoopStartAsQuantizationReference", "yes"),
+                launchSet("launchMode", "trigger", "nextAction", "stop"), launchSet("launchQuantization", "1", "nextActionEnabled", true)))
+            expect("invalid_params", () -> LauncherSettingsModule.validateParams("launcher.set", bad));
+        LauncherSettingsModule.validateParams("launcher.set", launchSet("launchQuantization", "1/4", "launchMode", "trigger", "useLoopStartAsQuantizationReference", true));
+
+        Fake f = riff(); f.selected = 5; LauncherSettingsModule settings = new LauncherSettingsModule(f.services, f.module);
+        HostOperation op = startSettings(f, settings, launchSet("launchQuantization", "1/4", "useLoopStartAsQuantizationReference", true)); f.drain(op);
+        JsonObject r = op.result.join();
+        check(r.get("status").getAsString().equals("observed") && f.launchQuant.equals("1/4") && f.useLoopStart && f.launchSets == 2, "launch fields are written and read back from the cursor clip");
+        check(f.selected == 0 && r.get("selectionSideEffect").getAsString().equals("launcher_cursor_clip_selected"), "the selection side effect is reported");
+        check(r.getAsJsonObject("fields").getAsJsonObject("launchQuantization").get("verification").getAsString().equals("observer_after_write"), "per-field verification needs a callback after the write");
+        check(r.getAsJsonObject("options").getAsJsonArray("launchMode").size() == 3, "options come from the host's own enum definition");
+        check(f.module.unresolved().isEmpty(), "idempotent absolute setters do not quarantine");
+
+        f = riff(); settings = new LauncherSettingsModule(f.services, f.module);
+        op = startSettings(f, settings, launchSet("launchMode", "from_group", "launchQuantization", "default")); f.drain(op);
+        r = op.result.join();
+        check(r.get("status").getAsString().equals("observed") && f.launchSets == 0
+            && r.getAsJsonObject("fields").getAsJsonObject("launchMode").get("verification").getAsString().equals("already_matched_readback"), "matching fields are not rewritten");
+        f = riff(); f.emitLaunch = false; settings = new LauncherSettingsModule(f.services, f.module);
+        op = startSettings(f, settings, launchSet("launchMode", "gate")); f.drain(op);
+        r = op.result.join();
+        check(f.launchMode.equals("gate") && r.get("status").getAsString().equals("dispatched")
+            && r.getAsJsonObject("fields").getAsJsonObject("launchMode").get("verification").getAsString().equals("not_observed"), "a matching readback without a callback after the write is not observed");
+
+        f = riff(); f.selected = 5; settings = new LauncherSettingsModule(f.services, f.module);
+        op = startSettings(f, settings, launchSet("launchMode", "bogus")); f.drain(op);
+        expectOutcome("invalid_params", "not_applied", op);
+        check(f.launchSets == 0 && f.selected == 5, "an option the host does not list is refused before selecting or writing");
+        op = startSettings(f, settings, launchSet("launchMode", "trigger", "expectedClipName", "Other")); f.drain(op);
+        expectOutcome("stale_target", "not_applied", op);
+
+        f = riff(); settings = new LauncherSettingsModule(f.services, f.module); f.applyLaunch = false;
+        op = startSettings(f, settings, launchSet("launchMode", "gate")); f.drain(op);
+        r = op.result.join();
+        check(r.get("status").getAsString().equals("dispatched") && r.get("completion").getAsString().equals("unknown")
+            && r.getAsJsonObject("fields").getAsJsonObject("launchMode").get("verification").getAsString().equals("not_observed"), "an unread write is dispatched, not observed");
+
+        f = new Fake(true, true, false, false); f.slots[0].content = true; f.slots[0].name = "Riff"; settings = new LauncherSettingsModule(f.services, f.module);
+        op = startSettings(f, settings, launchSet("launchMode", "gate")); f.drain(op);
+        expectOutcome("unsafe_state", "not_applied", op);
+        check(f.launchSets == 0, "a recording state blocks the write");
+    }
+
     private static void clipEditDeleteAndCopy() throws Exception {
         Fake f = riff();
         JsonObject r = run(f, clipEdit("delete"));
@@ -1166,6 +1232,9 @@ public final class LauncherModuleTest {
         int deletes, copies, transposes, quantizes, duplicates, colorSets, loopSets;
         String copyName; boolean applyDelete = true, applyCopy = true, applyClipOp = true, quantizeMoves = true, applyColor = true, applyLoop = true;
         float[] color = {0f, 0f, 0f};
+        String launchQuant = "default", launchMode = "from_group";
+        boolean useLoopStart, applyLaunch = true, emitLaunch = true;
+        int launchSets;
         boolean applyScene = true, initialised;
         String importedPath;
         Runnable beforeInsertion = () -> {};
@@ -1273,6 +1342,20 @@ public final class LauncherModuleTest {
             colorNode.action("red", a -> color[0]); colorNode.action("green", a -> color[1]); colorNode.action("blue", a -> color[2]);
             colorNode.action("set", a -> { colorSets++; if (applyColor) color = new float[]{(Float) a[0], (Float) a[1], (Float) a[2]}; return null; });
             clip.action("color", a -> colorNode.proxy);
+            Object quantNode = enumValue(() -> launchQuant, v -> launchQuant = v, new String[]{"default", "1", "1/4"});
+            Object modeNode = enumValue(() -> launchMode, v -> launchMode = v, new String[]{"from_group", "trigger", "gate"});
+            clip.action("launchQuantization", a -> quantNode);
+            clip.action("launchMode", a -> modeNode);
+            Node useLoop = new Node(SettableBooleanValue.class);
+            final List<BooleanValueChangedCallback> useLoopObservers = new ArrayList<>();
+            useLoop.action("get", a -> useLoopStart);
+            useLoop.action("addValueObserver", a -> { useLoopObservers.add((BooleanValueChangedCallback) a[a.length - 1]); return null; });
+            useLoop.action("set", a -> {
+                launchSets++;
+                if (applyLaunch) { useLoopStart = (Boolean) a[0]; if (emitLaunch) for (BooleanValueChangedCallback o : useLoopObservers) o.valueChanged(useLoopStart); }
+                return null;
+            });
+            clip.action("useLoopStartAsQuantizationReference", a -> useLoop.proxy);
             clip.action("transpose", a -> { transposes++; if (applyClipOp) remap(k -> new int[]{k[0], k[1], k[2] + (Integer) a[0]}); return null; });
             clip.action("quantize", a -> { quantizes++; if (applyClipOp && quantizeMoves) remap(k -> new int[]{k[0], k[1] % 2 == 0 ? k[1] : k[1] + 1, k[2]}); return null; });
             clip.action("duplicateContent", a -> { duplicates++; if (applyClipOp) slots[selected].length *= 2; return null; });
@@ -1342,6 +1425,26 @@ public final class LauncherModuleTest {
             });
             services = new HostServices((ControllerHost) host.proxy); module = new LauncherModule(services);
             initialised = true;
+        }
+        Object enumValue(Supplier<String> get, Consumer<String> apply, String[] options) {
+            Node value = new Node(SettableEnumValue.class);
+            value.action("get", a -> get.get());
+            final List<EnumValueChangedCallback> observers = new ArrayList<>();
+            value.action("addValueObserver", a -> { observers.add((EnumValueChangedCallback) a[a.length - 1]); return null; });
+            value.action("set", a -> {
+                launchSets++;
+                if (applyLaunch) { apply.accept((String) a[0]); if (emitLaunch) for (EnumValueChangedCallback o : observers) o.valueChanged((String) a[0]); }
+                return null;
+            });
+            Node definition = new Node(EnumDefinition.class);
+            definition.action("getValueCount", a -> options.length);
+            definition.action("valueDefinitionAt", a -> {
+                Node option = new Node(EnumValueDefinition.class);
+                option.action("getId", b -> options[(Integer) a[0]]);
+                return option.proxy;
+            });
+            value.action("enumDefinition", a -> definition.proxy);
+            return value.proxy;
         }
         void observeTrackId(String id) {
             trackId = id;
