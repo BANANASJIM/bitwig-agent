@@ -62,7 +62,7 @@ public final class GridModuleTest {
         for (String field : List.of("trackId", "deviceIndex", "expectedDeviceName")) {
             p = target(); p.remove(field); TransportMixFixture.error(f.host.submit(f.module, "grid.get", p), "invalid_params");
         }
-        p = target(); p.addProperty("moduleLimit", 129); TransportMixFixture.error(f.host.submit(f.module, "grid.get", p), "invalid_params");
+        p = target(); p.addProperty("moduleLimit", 257); TransportMixFixture.error(f.host.submit(f.module, "grid.get", p), "invalid_params");
         p = target(); p.addProperty("deviceIndex", 16); TransportMixFixture.error(f.host.submit(f.module, "grid.get", p), "invalid_params");
         p = target(); p.addProperty("includeParameters", "false"); TransportMixFixture.error(f.host.submit(f.module, "grid.get", p), "invalid_params");
         p = target(); p.addProperty("trackId", "not-a-uuid"); TransportMixFixture.error(f.host.submit(f.module, "grid.get", p), "invalid_params");
@@ -567,7 +567,7 @@ public final class GridModuleTest {
         JsonObject idsBad = target(); JsonArray ids = new JsonArray(); ids.add("not-a-uuid"); idsBad.add("moduleIds", ids);
         JsonObject idsEmpty = target(); idsEmpty.add("moduleIds", new JsonArray());
         JsonObject idsMany = target(); JsonArray lots = new JsonArray();
-        for (int i = 0; i < 129; i++) lots.add("00000000-0000-0001-0000-" + String.format("%012d", i)); idsMany.add("moduleIds", lots);
+        for (int i = 0; i < 257; i++) lots.add("00000000-0000-0001-0000-" + String.format("%012d", i)); idsMany.add("moduleIds", lots);
         for (JsonObject bad : List.of(getBad, idsBad, idsEmpty, idsMany))
             TransportMixFixture.error(f.host.submit(f.module, "grid.get", bad), "invalid_params");
         JsonObject good = target(); JsonArray one = new JsonArray(); one.add("00000000-0000-0001-0000-000000000001");

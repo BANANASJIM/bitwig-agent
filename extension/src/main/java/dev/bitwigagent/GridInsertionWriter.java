@@ -447,12 +447,16 @@ final class GridInsertionWriter {
     }
     private static final class Layout {
         final List<Object> modules; final List<Row> rows;
-        Layout(List<Object> modules, List<Row> rows) { this.modules = modules; this.rows = rows; }
-        Row find(UUID id) { for (Row row : rows) if (row.id.equals(id)) return row; return null; }
+        private final Map<UUID, Row> index = new HashMap<>();
+        Layout(List<Object> modules, List<Row> rows) {
+            this.modules = modules; this.rows = rows;
+            for (Row row : rows) index.putIfAbsent(row.id, row);
+        }
+        Row find(UUID id) { return index.get(id); }
         void capacity() { capacity(1); }
         void capacity(int extra) {
             if (rows.size() + extra > GridTopologyContext.MAX_MODULES)
-                throw failure("grid_bounds_exceeded", "Insertion requires destination module count plus " + extra + " <=128 before loading and placement.");
+                throw failure("grid_bounds_exceeded", "Insertion requires destination module count plus " + extra + " <=" + GridTopologyContext.MAX_MODULES + " before loading and placement.");
         }
         /** Requested anchors only (footprints are unknown before loading): int32 endpoints and the occupied y-span. */
         void requested(List<Request> requests) {

@@ -114,9 +114,9 @@ public final class GridModuleNameWriterTest {
         }
         Fixture missing = new Fixture();
         failed(missing.start(new UUID(1, 99), new GridModuleNameWriter.Request("", "new")), "stale_context", "not_applied");
-        Fixture full = new Fixture(); full.population(128); HostOperation op = full.start(new GridModuleNameWriter.Request("", "new")); full.next();
-        check(op.result.join().getAsJsonObject("graph").getAsJsonArray("modules").size() == 128, "128 modules returns full bounded actual graph");
-        Fixture large = new Fixture(); large.population(129);
+        Fixture full = new Fixture(); full.population(1024); HostOperation op = full.start(new GridModuleNameWriter.Request("", "new")); full.next();
+        check(op.result.join().getAsJsonObject("graph").getAsJsonArray("modules").size() == 1024, "1024 modules returns full bounded actual graph");
+        Fixture large = new Fixture(); large.population(1025);
         failed(large.start(new GridModuleNameWriter.Request("", "new")), "grid_bounds_exceeded", "not_applied");
         check(large.calls == 0 && large.model.closed > 0, "over-bound enumeration closes stream before dispatch");
     }

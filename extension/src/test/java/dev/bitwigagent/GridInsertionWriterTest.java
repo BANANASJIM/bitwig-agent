@@ -110,12 +110,14 @@ public final class GridInsertionWriterTest {
         stale.deliver(); check(stale.guard.quarantined() && !stale.guard.release(successor), "stale callback poisons rather than releasing a successor owner");
     }
     private static void capacityCatalogAndDetachedPreflight() {
-        Fixture allowed = new Fixture(); allowed.population(127); HostOperation op = allowed.start(); allowed.deliver(); allowed.next();
-        check(op.result.join().getAsJsonObject("graph").getAsJsonArray("modules").size() == 128, "127 plus one reaches bounded complete graph");
-        Fixture full = new Fixture(); full.population(128);
-        check(TransportMixFixture.error(full.start(), "grid_bounds_exceeded").outcome.equals("not_applied") && full.loads == 0, "128 plus one rejected before loader dispatch");
+        Fixture allowed = new Fixture(); allowed.population(1023); HostOperation op = allowed.start(); allowed.deliver(); allowed.next();
+        check(op.result.join().getAsJsonObject("graph").getAsJsonArray("modules").size() == 1024, "1023 plus one reaches bounded complete graph");
+        Fixture mid = new Fixture(); mid.population(500); op = mid.start(); mid.deliver(); mid.next();
+        check(op.result.join().getAsJsonObject("graph").getAsJsonArray("modules").size() == 501, "insertion into a 500-module device passes survivor verification");
+        Fixture full = new Fixture(); full.population(1024);
+        check(TransportMixFixture.error(full.start(), "grid_bounds_exceeded").outcome.equals("not_applied") && full.loads == 0, "1024 plus one rejected before loader dispatch");
         full.guard.requireAvailable();
-        Fixture grew = new Fixture(); grew.population(127); op = grew.start(); grew.population(128); grew.deliver(); grew.next();
+        Fixture grew = new Fixture(); grew.population(1023); op = grew.start(); grew.population(1024); grew.deliver(); grew.next();
         check(TransportMixFixture.error(op, "grid_bounds_exceeded").outcome.equals("unknown") && grew.placements == 0 && grew.cleanups == 1,
                 "callback capacity rechecked before native placement"); grew.guard.requireAvailable();
         for (int invalid = 0; invalid < 3; invalid++) {
@@ -380,7 +382,7 @@ public final class GridInsertionWriterTest {
                 new GridInsertionWriter.Request(null, "gamma", 12, 3)), () -> true, () -> {}, () -> {}, v -> {}, e -> {}); }
         catch (RpcException caught) { named = caught; }
         check(named != null && named.getMessage().contains("#1") && !named.getMessage().contains("#0"), "the failing entry is named");
-        Fixture crowded = new Fixture(); crowded.population(127); HostOperation op = crowded.startAll(batchOf(TYPE, TYPE));
+        Fixture crowded = new Fixture(); crowded.population(1023); HostOperation op = crowded.startAll(batchOf(TYPE, TYPE));
         check(TransportMixFixture.error(op, "grid_bounds_exceeded").outcome.equals("not_applied") && crowded.loads == 0,
                 "destination count plus the whole batch must fit before loading");
     }
