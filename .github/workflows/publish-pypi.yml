@@ -1,6 +1,8 @@
 name: Verify release / publish to PyPI
 
 on:
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       publish:
@@ -153,7 +155,7 @@ jobs:
       - name: Report verification (not publication)
         env:
           RELEASE_VERSION: ${{ steps.release.outputs.version }}
-          PUBLISH_REQUESTED: ${{ inputs.publish }}
+          PUBLISH_REQUESTED: ${{ github.event_name == 'release' || inputs.publish }}
         run: |
           {
             echo "## GitHub release v$RELEASE_VERSION verified"
@@ -170,7 +172,7 @@ jobs:
   publish:
     name: Publish verified artifacts to PyPI
     needs: verify
-    if: inputs.publish
+    if: github.event_name == 'release' || inputs.publish
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment:
