@@ -218,6 +218,9 @@ public final class DeviceModuleTest {
         p = target(1); p.addProperty("expectedDeviceName", "Wrong"); p.addProperty("enabled", true);
         error(f.run("devices.set", p), "stale_target");
         check(f.devices[1].value("isEnabled").writes == 1, "name mismatch fails before dispatch");
+        try { f.run("devices.set", p).join(); } catch (CompletionException e) {
+            check(e.getCause().getMessage().contains("is named \"") && e.getCause().getMessage().contains("not expectedDeviceName"), "stale_target names the observed device");
+        }
         p = target(2); error(f.run("devices.get", p), "target_not_found");
         check(!first.get("nameWritable").getAsBoolean(), "public device rename limitation is explicit");
     }

@@ -24,7 +24,7 @@ final class LauncherModule implements HostModule {
     private static final Set<String> WINDOW_OPTIONAL = Set.of("channel", "stepSizeBeats", "startStep", "steps", "pitchStart", "pitchCount");
     private static final Set<String> EDIT_OPTIONAL = withDetail(WINDOW_OPTIONAL);
     private static final Set<String> GRID_FIELDS = Set.of("stepSizeBeats", "startStep", "steps", "pitchStart", "pitchCount");
-    private static final BigDecimal[] DERIVED_GRIDS = {BigDecimal.ONE, new BigDecimal("0.5"), new BigDecimal("0.25"), new BigDecimal("0.125"),
+    private static final BigDecimal[] DERIVED_GRIDS = {new BigDecimal("4"), new BigDecimal("2"), BigDecimal.ONE, new BigDecimal("0.5"), new BigDecimal("0.25"), new BigDecimal("0.125"),
         new BigDecimal("0.0625"), new BigDecimal("0.03125"), new BigDecimal("0.015625"), new BigDecimal("0.0078125")};
     // Bitwig 6.1.3 debounces step-size grid regeneration by 100ms before queuing controller delivery.
     // This margin avoids consuming that known old cache; it is not a configuration acknowledgement.
@@ -235,7 +235,7 @@ final class LauncherModule implements HostModule {
         p.addProperty("channel", w.channel); p.addProperty("windowDerived", true);
     }
 
-    /** Finest power-of-two grid (1..1/128 beat) aligning every edit within 128 steps, so finer existing onsets stay visible. */
+    /** Finest power-of-two grid (4..1/128 beat) aligning every edit within 128 steps, so finer existing onsets stay visible. */
     static Window deriveEditWindow(JsonObject p) {
         if (!p.has("edits") || !p.get("edits").isJsonArray()) throw invalid("edits must be an array");
         JsonArray array = p.getAsJsonArray("edits");

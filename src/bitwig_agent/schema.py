@@ -175,6 +175,10 @@ class GridModuleArgs(ParameterArgs):
     moduleId: TrackId = Field(description="Current module instanceId from grid.get; reacquire after reopening the project.")
 
 
+class GridVoicingGetArgs(ParameterArgs):
+    detail: Literal["summary", "full"] = omitted(description="summary (default) omits the editContext observation; full keeps it.")
+
+
 class GridModuleEditArgs(GridWriteArgs):
     moduleId: TrackId = Field(description="Current module instanceId from grid.get; reacquire after reopening the project.")
 

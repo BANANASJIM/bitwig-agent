@@ -52,6 +52,22 @@ def _near(word: str, choices) -> str:
     return f" Did you mean: {', '.join(map(repr, close))}?" if close else ""
 
 
+def _valid(choices, limit: int = 40) -> str:
+    keys = sorted(choices)
+    return f" Valid: {', '.join(keys[:limit])}{' ...' if len(keys) > limit else ''}." if keys else " It has none."
+
+
+def _hint(word: str, choices) -> str:
+    """Did-you-mean (case-insensitive and substring matches first) plus the full list of valid ids."""
+    keys = list(choices)
+    folded = {k.casefold(): k for k in keys}
+    first = [folded[word.casefold()]] if word.casefold() in folded else []
+    first += [k for k in keys if k not in first and word and (word.casefold() in k.casefold() or k.casefold() in word.casefold())]
+    close = [k for k in difflib.get_close_matches(word, keys, n=4, cutoff=0.5) if k not in first]
+    near = (first + close)[:4]
+    return (f" Did you mean: {', '.join(map(repr, near))}?" if near else "") + _valid(keys)
+
+
 class SpecError(Exception):
     def __init__(self, problems: list[str]):
         self.problems = problems
@@ -585,7 +601,7 @@ class Apply:
                     continue
                 pinfo = {p["parameterId"]: p for p in info["parameters"]}
                 if pid not in pinfo:
-                    problems.append(f"{m['name']!r} ({type_name}): unknown parameter {pid!r}.{_near(pid, pinfo)}")
+                    problems.append(f"{m['name']!r} ({type_name}): unknown parameter {pid!r}.{_hint(pid, pinfo)}")
                     continue
                 try:
                     want = check_value(pid, raw, pinfo[pid])
@@ -607,7 +623,7 @@ class Apply:
             for (name, port), want, label in ((src, "outputs", "output"), (dst, "inputs", "input")):
                 info = self.resolved.get(name, {}).get("info")
                 if info is not None and port not in {p["key"] for p in info[want]}:
-                    problems.append(f"{name!r} ({self.resolved[name]['typeName']}) has no {label} {port!r}.{_near(port, [p['key'] for p in info[want]])}")
+                    problems.append(f"{name!r} ({self.resolved[name]['typeName']}) has no {label} {port!r}.{_hint(port, [p['key'] for p in info[want]])}")
             self.edges.append((src[0], src[1], dst[0], dst[1]))
         if problems:
             raise SpecError(problems)
@@ -623,7 +639,7 @@ class Apply:
                 writes.append({"module": name, "parameterId": pid, "to": spec["raw"], **({"rawValue": spec["want"]["value"]} if spec["want"] and "shown" in spec["want"] else {})})
                 continue
             if pid not in live:
-                raise SpecError([f"{name!r}: parameter {pid!r} is not a supported live parameter.{_near(pid, live)}"])
+                raise SpecError([f"{name!r}: parameter {pid!r} is not a supported live parameter.{_hint(pid, live)}"])
             lp = live[pid]
             want = spec["want"] or check_value(pid, spec["raw"], lp)
             ctx = {k: v.get("value") for k, v in live.items() if v.get("kind") == "enum"}
@@ -727,7 +743,7 @@ class Apply:
         for src, sport, dst, dport in self.edges:
             for name, port, want in ((src, sport, "outputs"), (dst, dport, "inputs")):
                 if name in rows and port not in {p["key"] for p in rows[name].get(want, [])}:
-                    problems.append(f"{name!r} has no {want[:-1]} {port!r}.{_near(port, [p['key'] for p in rows[name].get(want, [])])}")
+                    problems.append(f"{name!r} has no {want[:-1]} {port!r}.{_hint(port, [p['key'] for p in rows[name].get(want, [])])}")
         if problems:
             raise SpecError(problems)
 
@@ -752,13 +768,14 @@ class Apply:
                 continue
             if all(known(r.get(k)) for k in ("x", "y", "width", "height")):
                 self.fixed.append((r["x"], r["y"], r["width"], r["height"]))
-                fixed_names.append(r.get("customName") or r.get("name") or r["instanceId"])
+                where = f"{r.get('typeName') or r.get('name') or 'module'}@{r['x']},{r['y']}"
+                fixed_names.append(f"'{r['customName']}' ({where})" if r.get("customName") else where)
         problems = []
         rects = {n: (self.by_spec[n]["x"], self.by_spec[n]["y"], *self.size[n]) for n in self.names if n in self.size}
         items = list(rects.items())
         for i, (a, ra) in enumerate(items):
             problems += [f"{a!r} and {b!r} overlap at their requested positions {ra[:2]} / {rb[:2]}" for b, rb in items[i + 1:] if overlaps(ra, rb)]
-            problems += [f"{a!r} at {ra[:2]} overlaps existing module {fn!r}, which the spec does not manage" for fn, f in zip(fixed_names, self.fixed) if overlaps(ra, f)]
+            problems += [f"{a!r} at {ra[:2]} overlaps existing module {fn}, which the spec does not manage" for fn, f in zip(fixed_names, self.fixed) if overlaps(ra, f)]
         return problems
 
     def module_limit(self) -> int:
@@ -791,9 +808,19 @@ class Apply:
         await self.load_types()
         self.validate_spec()
         if self.voicing_want:
-            await self.plan_voicing()
+            try:
+                await self.plan_voicing()
+            except Stop as stop:
+                if self.dry and isinstance(stop.raw.get("error"), dict):
+                    return await self.dry_unreachable(stop.raw["error"])
+                raise
         self.phase = "read"
-        rows, conns = await self.read_graph()
+        try:
+            rows, conns = await self.read_graph()
+        except Stop as stop:
+            if self.dry and isinstance(stop.raw.get("error"), dict):
+                return await self.dry_unreachable(stop.raw["error"])
+            raise
         self.rows0, self.conns0 = rows, conns
         problems = self.unreadable_names(self.caps, rows)
         if problems:
@@ -831,6 +858,7 @@ class Apply:
         if self.dropped:
             self.warnings.append(f"replace drops {len(self.dropped)} cable(s) the spec does not declare: {'; '.join(self.dropped[:10])}" + (" ..." if len(self.dropped) > 10 else ""))
         self.measured_warnings(existing)
+        await self.trap_warnings(existing)
         inserts = [n for n in self.names if n not in existing]
         total = len(rows) - len(deletes) + len(inserts)
         limit = self.module_limit()
@@ -854,6 +882,7 @@ class Apply:
         self.pre_params = {n: self.plan_params(n, param_rows.get(existing[n]["instanceId"]) if n in existing else None) for n in self.names}
         pending = {"deleted": len(deletes), "inserted": len(inserts)}
         if self.dry:
+            self.would_fail = await self.preflight(existing, conns, deletes, inserts)
             return self.dry_run(existing, conns, deletes, inserts, current)
         try:
             await self.execute(deletes, inserts, current, pending)
@@ -902,6 +931,7 @@ class Apply:
         if self.live_schema:
             notes.append("no bundled schema for this host version: ports, parameters and footprints of inserted modules are validated only after insertion")
         result = {"status": "dryRun", "planned": planned, "alreadyMatched": self.matched, "plan": plan, "steps": []}
+        result |= {"wouldFail": self.would_fail} if self.would_fail else {}
         return result | ({"instances": self.instances} if self.instances else {}) | ({"warnings": self.warnings} if self.warnings else {}) | self.notes_field(notes)
 
     def dropped_cables(self, replaced: list[dict], rows: list[dict], conns: list[dict]) -> list[str]:
@@ -933,6 +963,83 @@ class Apply:
                 value = None if dst in existing else mod.get("default")
             if value == 0:
                 self.warnings.append(f"{dst}: PITCH_IN is connected but PITCH_MOD is 0, so it has no effect (raw 1.0 = 120 semitones)")
+
+    def known_value(self, name: str, pid: str, existing: dict[str, dict]) -> Any:
+        """Value of a parameter after the apply when certain: given in the spec, or the default of a module not inserted yet."""
+        given = self.resolved[name]["params"].get(pid)
+        if given is not None:
+            return given["raw"] if type(given["raw"]) in (int, float, bool) else None
+        info = self.resolved[name]["info"]
+        p = next((p for p in info["parameters"] if p["parameterId"] == pid), None) if info else None
+        return None if name in existing or p is None else p.get("default")
+
+    async def is_poly(self) -> bool:
+        if not hasattr(self, "_poly"):
+            try:
+                got = await self.call("grid.voicing.get", {})
+                self._poly = bool(got.get("supported"))
+            except Stop:
+                self._poly = False
+        return self._poly
+
+    async def trap_warnings(self, existing: dict[str, dict]) -> None:
+        """Measured traps (grid_notes rules): ignored phase cable, filter keytrack in a Poly Grid, dangling modules."""
+        rules = measured_notes().get("rules", {})
+        label = {r["instanceId"]: r["customName"] for r in self.rows0}
+        ins = {(d, dp) for _s, _sp, d, dp in self.edges} | {(label.get(c["targetModuleId"]), c["targetPortKey"]) for c in self.conns0}
+        outs = {(s, sp) for s, sp, _d, _dp in self.edges} | {(label.get(c["sourceModuleId"]), c["sourcePortKey"]) for c in self.conns0}
+        for name in self.names:
+            entry = self.resolved[name]
+            info, type_name = entry["info"], entry["typeName"]
+            if info is None:
+                continue
+            ids = {p["parameterId"]: p for p in info["parameters"]}
+            wired_in = any(n == name for n, _ in ins)
+            wired_out = any(n == name for n, _ in outs)
+            rule = rules.get("devicePhase")
+            if rule and rule["parameter"] in ids and wired_in and self.known_value(name, rule["parameter"], existing) is True:
+                self.warnings.append(f"{name}: {rule['message']}")
+            rule = rules.get("keytrack")
+            if rule and type(ids.get(rule["parameter"], {}).get("default")) is float:
+                value = self.known_value(name, rule["parameter"], existing)
+                if type(value) in (int, float) and value > 0 and await self.is_poly():
+                    self.warnings.append(f"{name}: {rule['message'].format(value=value)}")
+            rule = rules.get("unconnected")
+            if rule and type_name not in rule["skipTypes"] and (info["inputs"] or info["outputs"]) and not wired_in and not wired_out:
+                self.warnings.append(f"{name}: {rule['message']}")
+            rule = rules.get("deadEnd")
+            if rule and type_name in rule["types"] and wired_in and not wired_out:
+                self.warnings.append(f"{name}: {rule['message']}")
+
+    async def transport_blocks(self) -> list[dict[str, str]]:
+        try:
+            state = await self.client.call("transport.get", {}, self.timeout_ms)
+        except Exception:  # noqa: BLE001 - preflight is advisory
+            return []
+        busy = [k for k in ("playing", "recording") if isinstance(state, dict) and state.get(k) is True]
+        return [{"code": "unsafe_state", "message": f"transport is {' and '.join(busy)}; Grid writes need it stopped (transport.set playing=false)"}] if busy else []
+
+    async def preflight(self, existing, conns, deletes, inserts) -> list[dict[str, str]]:
+        """What a real apply would be refused for, knowable now without writing."""
+        out: list[dict[str, str]] = []
+        kept = self.matched["connections"]
+        writes = bool(inserts or deletes or self.pre_moves or self.voicing_set or self.plan_connections(existing, conns)
+                      or any(self.pre_params[n][0] for n in self.names))
+        self.matched["connections"] = kept  # planning is repeated by dry_run
+        if writes:
+            out += await self.transport_blocks()
+        for name in self.names:
+            for w in self.pre_params[name][0]:
+                if isinstance(w.get("to"), dict) and "display" in w["to"] and "rawValue" not in w:
+                    out.append({"code": "display_unverified", "message": f"{name}.{w['parameterId']}: the host converts the display {w['to']['display']!r} itself and may refuse it (unsupported_unit); write the raw value to be certain"})
+        return out
+
+    async def dry_unreachable(self, error: dict[str, Any]) -> dict[str, Any]:
+        """dryRun when the target device cannot be read: the spec itself validated, the real apply would fail on the target."""
+        fail = {"code": error.get("code", "unknown"), "message": error.get("message", "the target device could not be read")}
+        self.measured_warnings({})
+        return {"status": "dryRun", "validated": True, "wouldFail": [fail], "plan": {},
+                **({"warnings": self.warnings} if self.warnings else {}), **self.notes_field(["the spec is valid, but the target device could not be read, so no plan was computed"])}
 
     def notes_field(self, extra: list[str] | None = None) -> dict[str, list[str]]:
         data = measured_notes()
@@ -1114,6 +1221,18 @@ def invalid_spec(problems: list[str]) -> BridgeError:
                         "outcome": "not_dispatched", "details": {"problems": problems}})
 
 
+async def with_marker(client: Any, result: dict[str, Any], wrote: bool, timeout_ms: int) -> dict[str, Any]:
+    """After a build, attach a host.diagnostics marker: sinceMarker=<it> shows only rejections that happened after the build."""
+    if not wrote or result.get("status") == "dryRun":
+        return result
+    from bitwig_agent.diagnostics import diagnostics  # local: keeps the log reader out of the pure planning path
+    try:
+        marker = (await diagnostics(client, {"maxEvents": 1, "sinceSeconds": 1}, timeout_ms)).get("marker")
+    except Exception:  # noqa: BLE001 - diagnostics are best effort
+        marker = None
+    return result | ({"diagnosticsMarker": marker} if marker else {})
+
+
 async def apply(client: Any, args: dict[str, Any], timeout_ms: int = 5000) -> dict[str, Any]:
     """Run a validated grid.apply spec (dict from schema.GridApplyArgs) through `client.call(method, params, timeout_ms)`."""
     try:
@@ -1122,12 +1241,13 @@ async def apply(client: Any, args: dict[str, Any], timeout_ms: int = 5000) -> di
         raise invalid_spec(exc.problems) from exc
     run = Apply(client, args, timeout_ms, instances)
     try:
-        return await run.run()
+        result = await run.run()
+        return await with_marker(client, result, run.wrote, timeout_ms)
     except SpecError as exc:
         raise invalid_spec(exc.problems) from exc
     except Stop as stop:
         if run.wrote:
-            return run.report_stop(stop, {})
+            return await with_marker(client, run.report_stop(stop, {}), True, timeout_ms)
         error = stop.raw.get("error")
         if error is not None:
             raise BridgeError(error) from stop
