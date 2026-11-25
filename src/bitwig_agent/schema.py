@@ -111,6 +111,7 @@ MODULATOR_ID = "Current modulator UUID from modulators.get (or modulators.list),
 TransferFunction = Literal["linear", "rectify_pos", "rectify_neg", "abs_linear", "inv_abs_linear", "cubic", "inv_cubic"]
 ModulationAmount = Annotated[float, Field(ge=-1, le=1)]
 MODULATOR_COUNT = 4096
+MAX_APPLY_CONNECTIONS = 4096  # a full 1024-module Grid typically needs more cables than modules
 
 
 class ModulatorGetArgs(StatusArgs):
@@ -914,7 +915,7 @@ class GridApplyConnection(StrictModel):
 class GridApplyBlock(StrictModel):
     params: dict[str, bool | int | float | str | list[float]] = omitted(description="Parameter name -> default (a list for step arrays); params values of the form '${name}' (whole value) take it, or the instance's args value.")
     modules: Annotated[list[GridApplyModule], Field(min_length=1, max_length=1024, description="Modules with local names and positions relative to the instance (no nesting).")]
-    connections: Annotated[list[GridApplyConnection], Field(max_length=1024)] = omitted(description="Cables between the block's own modules, by local names.")
+    connections: Annotated[list[GridApplyConnection], Field(max_length=MAX_APPLY_CONNECTIONS)] = omitted(description="Cables between the block's own modules, by local names.")
 
 
 class GridApplyInstance(StrictModel):
@@ -976,7 +977,7 @@ class GridApplyArgs(StatusArgs):
     blocks: dict[str, GridApplyBlock] = omitted(description="Reusable sub-patches: {name: {params?, modules, connections?}}; expanded by instances before validation.")
     instances: Annotated[list[GridApplyInstance], Field(max_length=1024)] = omitted(
         description="Copies of blocks: {block, prefix?, dx?, dy?, args?}. Module names become prefix+local name, positions shift by dx/dy; cables from/to an instance use the expanded names.")
-    connections: Annotated[list[GridApplyConnection], Field(max_length=1024)] = omitted(
+    connections: Annotated[list[GridApplyConnection], Field(max_length=MAX_APPLY_CONNECTIONS)] = omitted(
         description="Cables between declared modules; one source per target input.")
     namespace: str = omitted(min_length=1, max_length=1024, description="customName prefix (e.g. 'H: ') that prune may delete from.")
     prune: bool = omitted(description="Also disconnect unlisted inputs of declared modules inside the namespace and delete namespace modules absent from the spec. Inputs of declared modules outside the namespace are kept (warning names both ends) unless allowOutsideDisconnect.")
