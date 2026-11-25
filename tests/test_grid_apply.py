@@ -781,8 +781,6 @@ def test_seconds_dry_run_shows_the_converted_raw_value():
 
 
 @pytest.mark.parametrize("module,param,text", [
-    ("Long Delay", "TIME", "100 ms"),  # default 1.0 = "1.00 s" fits cbrt only by coincidence
-    ("Audio Out", "HOLD_TIME", "100 ms"),  # linear
     ("ADSR", "ATTACK", "1 kb"),
 ])
 def test_unverified_seconds_display_is_rejected_offline(module, param, text):
@@ -1027,6 +1025,42 @@ def test_dangling_modules_are_flagged_but_note_in_is_not():
     result = run(FakeGrid(), {"target": TARGET, "modules": mods, "connections": [{"from": "m.OUT", "to": "o.PITCH_IN"}]}, dryRun=True)
     assert messages(result, "lonely: has no connections") and not messages(result, "n: ")
     assert messages(result, "o: has connected inputs but none of its outputs")
+
+
+def one(module_type, params, extra=None, spec=None, **kw):
+    mods = [{"name": "X", "type": module_type, "x": 0, "y": 0, "params": params}] + (extra or [])
+    return run(FakeGrid(), {"target": TARGET, "modules": mods, **(spec or {})}, **kw)
+
+
+@pytest.mark.parametrize("dry", [True, False])
+def test_raw_write_to_nonlinear_scale_warns_with_effective_display(dry):
+    result = one("Amplify", {"VALUE": 0.5}, dryRun=dry)
+    [w] = messages(result, "VALUE raw 0.5")
+    assert "12.5 % (-18.1 dB)" in w and '{"display": "-6 dB"}' in w
+    assert not messages(one("Amplify", {"VALUE": {"display": "-6 dB"}}, dryRun=dry), "raw")
+    assert not messages(one("Amplify", {"VALUE": 1.0}, dryRun=dry), "raw")        # the default
+    assert not messages(one("Attenuate", {"VALUE": 0.5}, dryRun=dry), "raw")      # linear scale
+    assert messages(one("Mixer", {"LEVEL_1": 0.5}, dryRun=dry), "LEVEL_1 raw 0.5")
+
+
+@pytest.mark.parametrize("params,warns", [({"TIME": {"display": "300 ms"}}, True), ({"TIME": 0.5}, True),
+                                          ({"TIME": 0.5, "UNIT": {"label": "Seconds"}}, False), ({"UNIT": 1}, False)])
+@pytest.mark.parametrize("module", ["Mod Delay", "Long Delay"])
+def test_time_is_ignored_while_unit_is_a_note_value(module, params, warns):
+    result = one(module, params, dryRun=True)
+    found = messages(result, "TIME is ignored")
+    assert bool(found) == warns
+    if warns:
+        assert '"label":"Seconds"' in found[0] and "16th" in found[0]
+        assert not messages(result, "TIME raw")  # one warning, not two
+
+
+def test_oscillator_with_gate_in_but_retrigger_off_warns():
+    extra = [{"name": "g", "type": "Note In", "x": 0, "y": 8}]
+    spec = {"connections": [{"from": "g.GATE_OUT", "to": "X.GATE_IN"}]}
+    assert messages(one("Sine", {}, extra, spec, dryRun=True), "RETRIGGER is off")
+    assert not messages(one("Sine", {"RETRIGGER": True}, extra, spec, dryRun=True), "RETRIGGER")
+    assert not messages(one("Sine", {}, dryRun=True), "RETRIGGER")
 
 
 def test_dry_run_would_fail_reports_transport_and_stays_read_only():

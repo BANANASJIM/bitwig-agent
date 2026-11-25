@@ -235,15 +235,19 @@ class FakeProc:
 
 
 class FakeBridge:
-    def __init__(self):
+    def __init__(self, playing=()):
         self.calls = []
+        self.playing = playing
 
     async def call(self, method, params, timeout_ms=5000):
         self.calls.append((method, params))
+        if method == "context.get":
+            return {"tracks": [{"trackId": tid, "name": name, "launcherSlots": [{"slotIndex": 0, "playing": True}]} for tid, name in self.playing]
+                              + [{"trackId": "idle", "name": "Idle", "launcherSlots": [{"slotIndex": 0, "playing": False}]}]}
         return {}
 
 
-def capture(tmp_path, monkeypatch, **extra):
+def capture(tmp_path, monkeypatch, playing=(), **extra):
     spawned = []
 
     def spawn(args):
@@ -256,7 +260,7 @@ def capture(tmp_path, monkeypatch, **extra):
     monkeypatch.setattr(audio, "spawn", spawn)
     monkeypatch.setattr(audio, "sleep", no_sleep)
     params, timeout = validate_call("audio.capture", {"seconds": 1, "outPath": str(tmp_path / "out.wav"), **extra})
-    return FakeBridge(), spawned, params, timeout
+    return FakeBridge(playing), spawned, params, timeout
 
 
 def test_capture_requires_silent_route(tmp_path, monkeypatch, pw):
@@ -271,7 +275,7 @@ def test_capture_from_start_orders_transport_and_reports_levels(tmp_path, monkey
     bridge, spawned, params, timeout = capture(tmp_path, monkeypatch)
     result = asyncio.run(client_side.run("audio.capture", bridge, params, timeout))
     assert spawned[0][:3] == ["parec", "-d", "bwtest.monitor"]
-    assert bridge.calls == [("transport.set", {"playing": False}), ("transport.set", {"positionBeats": 0}),
+    assert bridge.calls == [("context.get", {}), ("transport.set", {"playing": False}), ("transport.set", {"positionBeats": 0}),
                             ("transport.set", {"playing": True}), ("transport.set", {"playing": False})]
     assert result["peak"] > 0.5 and result["clipping"] is False and result["silent"] is False
     assert result["durationSeconds"] == pytest.approx(0.6, abs=0.01)
@@ -286,13 +290,47 @@ def test_capture_overwrite_rules_and_no_transport(tmp_path, monkeypatch, pw):
     assert e.value.error["code"] == "file_exists"
     bridge, spawned, params, timeout = capture(tmp_path, monkeypatch, overwrite=True, fromStart=False)
     asyncio.run(client_side.run("audio.capture", bridge, params, timeout))
-    assert bridge.calls == []
+    assert [m for m, _ in bridge.calls] == ["context.get"]
 
 
 def test_capture_allow_audible_records_default_monitor(tmp_path, monkeypatch, pw):
     bridge, spawned, params, timeout = capture(tmp_path, monkeypatch, allowAudible=True)
     asyncio.run(client_side.run("audio.capture", bridge, params, timeout))
     assert "@DEFAULT_MONITOR@" in spawned[0]
+
+
+def test_capture_reports_other_playing_tracks(tmp_path, monkeypatch, pw):
+    route("silent")
+    bridge, _, params, timeout = capture(tmp_path, monkeypatch, playing=[("a", "Kick"), ("b", "Pad")])
+    result = asyncio.run(client_side.run("audio.capture", bridge, params, timeout))
+    assert result["otherTracksPlaying"] == ["Kick", "Pad"] and "mix" in result["warnings"][0]
+    bridge, _, params, timeout = capture(tmp_path, monkeypatch, playing=[("a", "Kick")], overwrite=True)
+    assert asyncio.run(client_side.run("audio.capture", bridge, params, timeout))["otherTracksPlaying"] == []
+
+
+def test_capture_solo_track_refuses_unless_only_playing(tmp_path, monkeypatch, pw):
+    route("silent")
+    solo = "00000000-0000-0000-0000-000000000001"
+    bridge, spawned, params, timeout = capture(tmp_path, monkeypatch, playing=[(solo, "Kick"), ("b", "Pad")], soloTrack=solo)
+    with pytest.raises(BridgeError) as e:
+        asyncio.run(client_side.run("audio.capture", bridge, params, timeout))
+    assert e.value.error["code"] == "not_isolated" and e.value.error["outcome"] == "not_applied" and not spawned
+    assert e.value.error["details"]["otherTracksPlaying"] == ["Pad"]
+    bridge, spawned, params, timeout = capture(tmp_path, monkeypatch, playing=[("b", "Pad")], soloTrack=solo)  # solo itself silent
+    with pytest.raises(BridgeError):
+        asyncio.run(client_side.run("audio.capture", bridge, params, timeout))
+    bridge, spawned, params, timeout = capture(tmp_path, monkeypatch, playing=[(solo, "Kick")], soloTrack=solo)
+    result = asyncio.run(client_side.run("audio.capture", bridge, params, timeout))
+    assert result["otherTracksPlaying"] == [] and "warnings" not in result
+
+
+def test_capture_stop_others_stops_then_records(tmp_path, monkeypatch, pw):
+    route("silent")
+    solo = "00000000-0000-0000-0000-000000000001"
+    bridge, spawned, params, timeout = capture(tmp_path, monkeypatch, playing=[(solo, "Kick"), ("b", "Pad")], soloTrack=solo, stopOthers=True)
+    result = asyncio.run(client_side.run("audio.capture", bridge, params, timeout))
+    assert ("launcher.stop", {"trackId": "b"}) in bridge.calls and ("launcher.stop", {"trackId": solo}) not in bridge.calls
+    assert result["stoppedTracks"] == ["Pad"] and result["otherTracksPlaying"] == [] and spawned
 
 
 def test_capture_validation():

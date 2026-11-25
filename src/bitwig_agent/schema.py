@@ -891,6 +891,8 @@ class AudioCaptureArgs(StatusArgs):
     overwrite: bool = omitted(description="Replace an existing file; refused by default.")
     fromStart: bool = omitted(description="Default true: stop transport, seek to 0, record, start transport, stop after seconds. false records without touching the transport.")
     allowAudible: bool = omitted(description="Record the default output monitor without silent routing (audible).")
+    soloTrack: TrackId = omitted(description="Refuse (not_applied) unless this track is the only one with a playing launcher clip; with stopOthers, the others are stopped first.")
+    stopOthers: bool = omitted(description="Stop the launcher clips of every other playing track (launcher.stop) before recording; the result lists them. Without soloTrack, nothing is spared: use it with soloTrack.")
 
     @field_validator("outPath")
     @classmethod

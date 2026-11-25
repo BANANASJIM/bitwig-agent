@@ -2,7 +2,7 @@
 
 `numericUnit` names the unit the host displays, not how the raw value maps to it. This table records the mapping per
 (module type, parameter) so display writes ("-12 st", "-6 dB", "4 Hz") can be converted to raw client-side and agents can read
-the scale in `grid.describe`. Seconds scales (cbrt/log10) live in grid_apply.SECONDS_PARAMS.
+the scale in `grid.describe`. Most other seconds scales (cbrt/log10) live in grid_apply.SECONDS_PARAMS.
 
 status: verified = a schema default raw/display pair fits this scale and not the obvious alternatives;
         measured = measured natively, but the schema default does not discriminate (zero or 1.0), so it only has to agree.
@@ -29,21 +29,27 @@ class Scale:
     to_raw: Callable[[float], float]
     from_raw: Callable[[float], float]
     client: bool = True                             # False: the host's own display write already matches this scale
+    example: str = ""                               # a display write to suggest when a raw value was written to this non-linear scale
 
 
 SCALES = {s.name: s for s in (
     Scale("linear_st", "raw = semitones", {"st": _ident}, _ident, _ident),
-    Scale("cbrt_st120", "raw = cbrt(st / 120)", {"st": _ident}, lambda v: math.cbrt(v / 120), lambda r: 120 * r ** 3),
+    Scale("cbrt_st120", "raw = cbrt(st / 120)", {"st": _ident}, lambda v: math.cbrt(v / 120), lambda r: 120 * r ** 3, example='{"display": "12 st"}'),
     Scale("linear_seconds", "raw = seconds", {"s": _ident, "ms": lambda n: n / 1000}, _ident, _ident),
+    Scale("cbrt_seconds", "raw = cbrt(seconds)", {"s": _ident, "ms": lambda n: n / 1000},
+          lambda v: math.cbrt(v) if v >= 0 else math.nan, lambda r: r ** 3, example='{"display": "250 ms"}'),
+    Scale("log10_seconds", "raw = log10(seconds)", {"s": _ident, "ms": lambda n: n / 1000},
+          lambda v: math.log10(v) if v > 0 else math.nan, lambda r: 10 ** r, example='{"display": "250 ms"}'),
+    Scale("linear_db", "raw = dB", {"db": _ident}, _ident, _ident),
     Scale("linear_hz", "raw = Hz", {"hz": _ident, "khz": lambda n: n * 1000}, _ident, _ident),
     Scale("linear_khz", "raw = kHz", {"hz": lambda n: n / 1000, "khz": _ident}, _ident, _ident),
     Scale("linear_fraction", "raw = percent / 100", {"%": lambda n: n / 100}, _ident, _ident),
     Scale("cbrt_gain", "raw = cbrt(linear gain); 100 % = 0 dB = raw 1", {"%": lambda n: n / 100, "db": lambda n: 10 ** (n / 20)},
-          lambda g: math.cbrt(g) if g >= 0 else math.nan, lambda r: r ** 3),
+          lambda g: math.cbrt(g) if g >= 0 else math.nan, lambda r: r ** 3, example='{"display": "-6 dB"}'),
     Scale("midi_pitch_hz", "raw = MIDI note; Hz = 440 * 2^((raw - 69) / 12)", {"hz": _ident, "khz": lambda n: n * 1000},
-          lambda f: 69 + 12 * math.log2(f / 440) if f > 0 else math.nan, lambda r: 440 * 2 ** ((r - 69) / 12), client=False),
+          lambda f: 69 + 12 * math.log2(f / 440) if f > 0 else math.nan, lambda r: 440 * 2 ** ((r - 69) / 12), client=False, example='{"display": "800 Hz"}'),
 )}
-BASE_UNIT = {"linear_st": "st", "cbrt_st120": "st", "linear_seconds": "s", "linear_hz": "Hz", "linear_khz": "kHz",
+BASE_UNIT = {"linear_st": "st", "cbrt_st120": "st", "linear_seconds": "s", "cbrt_seconds": "s", "log10_seconds": "s", "linear_db": "dB", "linear_hz": "Hz", "linear_khz": "kHz",
              "linear_fraction": "fraction", "cbrt_gain": "gain", "midi_pitch_hz": "Hz"}
 
 
@@ -79,6 +85,16 @@ _add(("Amplify",), "VALUE", Entry("cbrt_gain", "verified", ((1.0, "100 %"), (0.7
 for _n in range(1, 7):
     _add(("Mixer",), f"LEVEL_{_n}", Entry("cbrt_gain", "verified", ((1.0, "0.0 dB"), (0.6727, "-10.3 dB")), "accepts dB and %"))
 _add(("All-pass Delay",), "TIME", Entry("linear_seconds", "verified", ((0.033, "33.0 ms"),), "linear, unlike the cbrt delays"))
+_add(("Pitch Shift",), "PITCH", Entry("linear_st", "measured", ((0.0, "0.00 st"),), "raw = semitones"))
+_add(("Distortion", "Hard Clip", "Wavefolder", "Heat"), "DRIVE",
+     Entry("linear_db", "measured", ((0.0, "0.0 dB"), (6.0, "+6.0 dB"), (40.0, "+40.0 dB")), "raw = dB; the default 0 does not discriminate, the pairs do"))
+_add(("Attenuate",), "VALUE", Entry("linear_fraction", "measured", ((1.0, "100 %"), (0.25, "25.0 %")), "linear, unlike the cubic Amplify"))
+_add(("Value",), "VALUE", Entry("linear_fraction", "measured", ((0.0, "0.00 %"), (0.5, "50.0 %"))))
+_add(("Long Delay",), "TIME", Entry("cbrt_seconds", "measured", ((1.0, "1.00 s"), (0.025, "0.02 ms"), (0.1, "1.00 ms"), (0.5, "125 ms"), (2.0, "8.00 s")),
+                                    "the default 1.0 = 1 s is ambiguous; the pairs fix cbrt. Ignored while UNIT is a note value (default 16th): set UNIT Seconds"))
+_add(("Comb",), "DECAY", Entry("cbrt_seconds", "verified", ((0.1563, "3.82 ms"), (0.1, "1.00 ms"), (0.5, "125 ms"), (2.0, "8.00 s"))))
+_add(("Audio Out",), "HOLD_TIME", Entry("linear_seconds", "verified", ((0.05, "50.0 ms"), (0.1, "100 ms"))))
+_add(("Gate Repeat",), "RATE", Entry("log10_seconds", "verified", ((-1.301, "50.0 ms"), (-2.0, "10.0 ms"), (-1.5, "31.6 ms"), (-1.0, "100 ms"), (0.0, "1.00 s"))))
 _add(("Clock",), "RATE", Entry("linear_hz", "measured", ((1.0, "1.00 Hz"),), "raw = Hz"))
 _add(("LFO", "S/H LFO"), "RATE", Entry(_RATE_BY_TIMEBASE, "measured", (),
                                        "raw = Hz with TIMEBASE Hertz, kHz with Kilohertz; other timebases are not hertz and not converted"))
@@ -87,11 +103,7 @@ _add(("SVF",), "RESONANCE", Entry("linear_fraction", "verified", ((0.6, "60.0 %"
 _add(("Mod Delay",), "FEEDBACK", Entry("linear_fraction", "measured", ((0.0, "0.00 %"),), "default 0: the host cannot confirm a percent display write"))
 
 # (module, parameter) -> why no scale is recorded
-UNVERIFIED: dict[tuple[str, str], str] = {
-    ("Attenuate", "VALUE"): "default 1.0 = 100 % fits any power law and the neighbouring Amplify is cubic: not confirmed linear",
-    ("Long Delay", "TIME"): "default 1.0 = 1 s fits linear and cbrt; 0.025 shows '0.02 ms' (cbrt-like) but no confirmed pair",
-    ("Audio Out", "HOLD_TIME"): "default pair fits no recorded scale",
-}
+UNVERIFIED: dict[tuple[str, str], str] = {}
 
 
 def scale_for(type_name: str | None, pid: str, context: dict[str, Any] | None = None) -> tuple[Entry, Scale] | None:
@@ -105,6 +117,17 @@ def scale_for(type_name: str | None, pid: str, context: dict[str, Any] | None = 
         if name is None:
             return None
     return entry, SCALES[name]
+
+
+def effective(scale: Scale, raw: float) -> str:
+    """The display a raw value has on this scale, as text."""
+    base = scale.from_raw(raw)
+    unit = BASE_UNIT[scale.name]
+    if unit == "gain":
+        return f"{base * 100:.3g} % ({20 * math.log10(base):.1f} dB)" if base > 0 else "0 % (-inf dB)"
+    if unit == "s":
+        return f"{base * 1000:.3g} ms" if base < 1 else f"{base:.3g} s"
+    return f"{base:.4g} {unit}"
 
 
 def is_client(type_name: str | None, pid: str, context: dict[str, Any] | None = None) -> bool:

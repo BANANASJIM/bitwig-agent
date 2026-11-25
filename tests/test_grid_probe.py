@@ -34,6 +34,9 @@ class ProbeGrid(FakeGrid):
         if method == "transport.get":
             self.calls.append((method, params))
             return {"status": "observed", **self.transport}
+        if method == "context.get":  # audio.capture's isolation pre-check
+            self.calls.append((method, params))
+            return {"tracks": []}
         if method == "transport.set":
             self.calls.append((method, params))
             self.transport.update(params if "playing" in params else {})
