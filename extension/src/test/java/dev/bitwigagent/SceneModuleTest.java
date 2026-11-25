@@ -15,6 +15,7 @@ public final class SceneModuleTest {
         renameIsCompareAndSetAndObserved();
         duplicateVerifiesCountAndNeighbours();
         deleteIsGuardedAndVerifiedByNames();
+        positionalDefaultNamesShiftWithoutBreakingVerification();
         launchObservesClipsOnlyWhenThereAreSome();
         System.out.println("SceneModuleTest: " + assertions + " assertions passed (simulated host only)");
     }
@@ -24,7 +25,7 @@ public final class SceneModuleTest {
         final TransportMixFixture f = new TransportMixFixture();
         final List<String> names = new ArrayList<>();
         final SceneModule module;
-        boolean applyDuplicate = true, applyDelete = true;
+        boolean applyDuplicate = true, applyDelete = true, positional;
         Runnable guard = () -> {};
         Model(String... initial) { this(() -> {}, initial); }
         Model(Runnable guard, String... initial) {
@@ -60,6 +61,8 @@ public final class SceneModuleTest {
         }
         TransportMixFixture.Node slot(int track, int scene) { return f.tracks[track].child("clipLauncherSlotBank").item(scene); }
         void publish(TransportMixFixture.Node bank) {
+            // Bitwig labels an unnamed scene by its position, so every default label shifts after an insert or delete.
+            if (positional) for (int i = 0; i < names.size(); i++) if (names.get(i).startsWith("Scene ")) names.set(i, "Scene " + (i + 1));
             for (int i = 0; i < HostServices.SCENES; i++) bank.item(i).child("name").emit(i < names.size() ? names.get(i) : "");
             bank.child("itemCount").emit(names.size());
         }
@@ -159,6 +162,18 @@ public final class SceneModuleTest {
         Model silent = new Model("A", "B"); silent.applyDelete = false;
         JsonObject unknown = silent.startShort("scenes.delete", "{\"sceneIndex\":0,\"expectedName\":\"A\"}").result.join();
         check(unknown.get("status").getAsString().equals("dispatched") && unknown.get("completion").getAsString().equals("unknown"), "unobserved delete stays unknown");
+    }
+
+    private static void positionalDefaultNamesShiftWithoutBreakingVerification() {
+        Model m = new Model("Scene 1", "Scene 2", "Chorus", "Scene 4"); m.positional = true;
+        JsonObject out = m.call("scenes.duplicate", "{\"sceneIndex\":0,\"expectedName\":\"Scene 1\"}");
+        check(out.get("status").getAsString().equals("observed") && out.get("newSceneIndex").getAsInt() == 1, "duplicate of a positionally named scene is observed");
+        check(m.names.equals(List.of("Scene 1", "Scene 2", "Scene 3", "Chorus", "Scene 5")), "later default labels shifted");
+        out = m.call("scenes.delete", "{\"sceneIndex\":1,\"expectedName\":\"Scene 2\"}");
+        check(out.get("status").getAsString().equals("observed") && out.get("verification").getAsString().equals("scene_count_and_names"), "delete is observed despite shifted default labels");
+        check(m.names.equals(List.of("Scene 1", "Scene 2", "Chorus", "Scene 4")), "back to the original labels");
+        Model renamed = new Model("Scene 1", "Scene 2"); renamed.positional = true; renamed.applyDelete = false;
+        check(!renamed.startShort("scenes.delete", "{\"sceneIndex\":0,\"expectedName\":\"Scene 1\"}").result.join().get("status").getAsString().equals("observed"), "an unchanged list is still not observed");
     }
 
     private static void launchObservesClipsOnlyWhenThereAreSome() {

@@ -296,7 +296,7 @@ final class MixModule implements HostModule {
                 String key = FIELDS[i];
                 if (!changes.has(key)) continue;
                 guard(op, target);
-                if (target.state.fresh(i) && matches(value(target.state, i), changes.get(key))) { writes.put(key, -1L); continue; }
+                if (target.state.fresh(i) && matchesField(i, value(target.state, i), changes.get(key))) { writes.put(key, -1L); continue; }
                 long before = target.state.sequence[i];
                 guard(op, target);
                 writes.put(key, before); op.dispatched = true;
@@ -838,6 +838,10 @@ final class MixModule implements HostModule {
         options.add("monitorMode", EnumOptions.json(state.track.monitorMode()));
         options.add("crossFadeMode", EnumOptions.json(state.track.crossFadeMode()));
         result.add("options", options);
+        JsonArray outside = new JsonArray();
+        if (EnumOptions.outsideOptions(state.track.monitorMode())) outside.add("monitorMode");
+        if (EnumOptions.outsideOptions(state.track.crossFadeMode())) outside.add("crossFadeMode");
+        result.add("observedOutsideOptions", outside);
         for (String key : List.of("index", "type", "volumeDisplay", "panDisplay")) {
             JsonElement observed = state.meta(key);
             result.add(key, observed);
@@ -881,7 +885,16 @@ final class MixModule implements HostModule {
     }
 
     private static boolean verified(State state, int i, JsonElement expected, Long before) {
-        return before != null && (before == -1 || state.sequence[i] > before) && matches(value(state, i), expected);
+        return before != null && (before == -1 || state.sequence[i] > before) && matchesField(i, value(state, i), expected);
+    }
+    /** Colors are stored as floats, so the host's 8-bit readback can land one step off the requested hex. */
+    private static boolean matchesField(int i, JsonElement a, JsonElement b) {
+        if (i != 7 || a.isJsonNull() || !a.getAsJsonPrimitive().isString()) return matches(a, b);
+        String x = a.getAsString(), y = b.getAsString();
+        if (x.length() != 7 || y.length() != 7) return false;
+        for (int c = 1; c < 7; c += 2)
+            if (Math.abs(Integer.parseInt(x.substring(c, c + 2), 16) - Integer.parseInt(y.substring(c, c + 2), 16)) > 1) return false;
+        return true;
     }
     private static boolean matches(JsonElement a, JsonElement b) {
         if (a.isJsonNull()) return false;

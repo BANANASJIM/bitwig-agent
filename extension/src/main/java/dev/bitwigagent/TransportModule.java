@@ -222,6 +222,9 @@ final class TransportModule implements HostModule {
         JsonObject options = new JsonObject();
         for (Map.Entry<String, SettableEnumValue> entry : enums.entrySet()) options.add(entry.getKey(), EnumOptions.json(entry.getValue()));
         result.add("options", options);
+        JsonArray outside = new JsonArray();
+        for (Map.Entry<String, SettableEnumValue> entry : enums.entrySet()) if (EnumOptions.outsideOptions(entry.getValue())) outside.add(entry.getKey());
+        result.add("observedOutsideOptions", outside);
         JsonObject tempoRange = new JsonObject();
         tempoRange.addProperty("minimum", 20); tempoRange.addProperty("maximum", 666);
         tempoRange.addProperty("scope", "toolkit_supported_shipped_controller_range_not_api_raw_limit");

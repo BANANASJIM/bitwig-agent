@@ -22,6 +22,7 @@ public final class TransportModuleTest {
         sharedSafetyRequiresObservationsButAllowsStop();
         timeSignatureIsValidatedWrittenAndReadBack();
         guideSettingsAreReadWrittenAndVerified();
+        storedValueOutsideOptionsCanBeWrittenBack();
         System.out.println("TransportModuleTest: " + assertions + " assertions passed (simulated host only)");
     }
     private static void readsExposeActualValuesAndUnits() {
@@ -268,6 +269,20 @@ public final class TransportModuleTest {
         f.transport.child("isArrangerRecordEnabled").emit(true);
         HostOperation blocked = f.submit(module, "transport.set", TransportMixFixture.json("{\"punchOutEnabled\":false}")); f.next();
         check(TransportMixFixture.error(blocked, "unsafe_state").outcome.equals("not_applied"), "recording blocks punch edits like the other settings");
+    }
+    private static void storedValueOutsideOptionsCanBeWrittenBack() {
+        TransportMixFixture f = new TransportMixFixture(); TransportModule module = new TransportModule(f.services);
+        f.transport.child("defaultLaunchQuantization").emit("bar");
+        JsonObject read = f.call(module, "transport.get", new JsonObject());
+        check(read.get("defaultLaunchQuantization").getAsString().equals("bar") && read.getAsJsonArray("observedOutsideOptions").size() == 1
+            && read.getAsJsonArray("observedOutsideOptions").get(0).getAsString().equals("defaultLaunchQuantization"), "a stored value outside the host's option list is read and flagged");
+        JsonObject result = f.call(module, "transport.set", TransportMixFixture.json("{\"defaultLaunchQuantization\":\"bar\"}"));
+        check(result.getAsJsonObject("fields").getAsJsonObject("defaultLaunchQuantization").get("verification").getAsString().equals("already_at_value")
+            && f.transport.child("defaultLaunchQuantization").writes == 0, "writing the observed value back is already_at_value");
+        HostOperation refused = f.submit(module, "transport.set", TransportMixFixture.json("{\"defaultLaunchQuantization\":\"beat\"}")); f.next();
+        TransportMixFixture.error(refused, "invalid_params");
+        result = f.call(module, "transport.set", TransportMixFixture.json("{\"defaultLaunchQuantization\":\"1\"}"));
+        check(result.get("matchesRequested").getAsBoolean() && result.getAsJsonArray("observedOutsideOptions").size() == 0, "a listed value still writes and clears the flag");
     }
     private static void check(boolean condition, String message) { assertions++; if (!condition) throw new AssertionError(message); }
 }

@@ -181,8 +181,11 @@ final class SceneModule implements HostModule {
     private void awaitDuplicate(HostOperation op, int index, List<String> before, long[] sequenceBefore, long end) {
         List<String> now = snapshotNames();
         // The copy sits directly after its source: everything up to the source is unchanged and the old tail shifted by one.
-        boolean done = count == before.size() + 1 && now != null && now.subList(0, index + 1).equals(before.subList(0, index + 1))
-            && now.subList(index + 2, now.size()).equals(before.subList(index + 1, before.size()));
+        // Unnamed scenes read as their positional label ("Scene N"), which shifts with every insert: compare them as unnamed.
+        List<String> was = unnamed(before), is = unnamed(now);
+        boolean done = count == before.size() + 1 && is != null && is.subList(0, index + 1).equals(was.subList(0, index + 1))
+            && is.subList(index + 2, is.size()).equals(was.subList(index + 1, was.size()))
+            && occupied(index + 1).size() == occupied(index).size();
         if (done || System.nanoTime() >= end) {
             JsonObject out = result(done ? "observed" : "dispatched", done ? "observed" : "unknown", done ? "scene_count_and_neighbour_names" : "duplicate_not_observed", index);
             out.addProperty("sceneCountBefore", before.size());
@@ -215,10 +218,9 @@ final class SceneModule implements HostModule {
     }
 
     private void awaitDelete(HostOperation op, int index, List<String> before, int clipCount, long end) {
-        List<String> expected = new ArrayList<>(before);
+        List<String> expected = unnamed(before);
         expected.remove(index);
-        List<String> now = snapshotNames();
-        boolean done = count == before.size() - 1 && expected.equals(now);
+        boolean done = count == before.size() - 1 && expected.equals(unnamed(snapshotNames()));
         if (done || System.nanoTime() >= end) {
             JsonObject out = result(done ? "observed" : "dispatched", done ? "observed" : "unknown", done ? "scene_count_and_names" : "delete_not_observed", index);
             out.addProperty("sceneCountBefore", before.size());
@@ -226,6 +228,14 @@ final class SceneModule implements HostModule {
             out.addProperty("clipsDeleted", clipCount);
             op.result.complete(out);
         } else s.schedule(op, () -> awaitDelete(op, index, before, clipCount, end), 20);
+    }
+
+    /** Names with the positional default ("Scene N" at index N-1) blanked, so a shifted label is not mistaken for a rename; null stays null. */
+    static List<String> unnamed(List<String> names) {
+        if (names == null) return null;
+        List<String> out = new ArrayList<>(names.size());
+        for (int i = 0; i < names.size(); i++) out.add(names.get(i).equals("Scene " + (i + 1)) ? "" : names.get(i));
+        return out;
     }
 
     /** Names of all scenes in the window, or null while any is unobserved. */

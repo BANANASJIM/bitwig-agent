@@ -603,7 +603,7 @@ class ScenesAppendArgs(StatusArgs):
 
 class SceneTargetArgs(StatusArgs):
     sceneIndex: int = Field(ge=0, le=15, description="Zero-based scene index from scenes.list.")
-    expectedName: str = Field(max_length=256, description="Compare-and-set guard: the scene's exact current name from scenes.list; empty for an unnamed scene.")
+    expectedName: str = Field(max_length=256, description="Compare-and-set guard: the scene's exact current name from scenes.list; for an unnamed scene its current positional label (\"Scene N\"), which shifts after inserts/deletes.")
 
 
 class SceneRenameArgs(SceneTargetArgs):

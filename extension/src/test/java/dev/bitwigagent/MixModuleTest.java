@@ -11,6 +11,7 @@ public final class MixModuleTest {
         invalidRequestsNeverSchedule();
         writesOnlyExplicitUuidAndFields();
         colorActivatedMonitorAndCrossFadeAreReadAndWritten();
+        colorReadbackWithinOneStepAndOutOfListEnumsRoundTrip();
         selectionWithoutReplayedCallbackIsDispatchOnly();
         selectionUsesUuidNotCurrentUi();
         selectionRespectsOperationAndIdentityGuards();
@@ -133,6 +134,30 @@ public final class MixModuleTest {
         try { for (int i = 0; i < 400 && !op.result.isDone(); i++) { f.next(); Thread.sleep(2); } }
         catch (InterruptedException e) { throw new AssertionError(e); }
         check(!op.result.join().get("matchesRequested").getAsBoolean(), "an unobserved enum write is not reported as done");
+    }
+    private static void colorReadbackWithinOneStepAndOutOfListEnumsRoundTrip() {
+        TransportMixFixture f = new TransportMixFixture(); MixModule module = new MixModule(f.services);
+        TransportMixFixture.Node color = f.tracks[1].child("color");
+        color.afterWrite = () -> color.emit(new float[]{1f, 0x57 / 255f, 4 / 255f});
+        JsonObject p = TransportMixFixture.json("{\"color\":\"#ff5705\"}"); p.addProperty("trackId", TransportMixFixture.B);
+        JsonObject result = f.call(module, "tracks.set", p);
+        check(result.get("matchesRequested").getAsBoolean() && result.get("color").getAsString().equals("#ff5704"), "one 8-bit step of float rounding still matches and the observed hex is reported");
+        JsonObject far = TransportMixFixture.json("{\"color\":\"#ff5a05\"}"); far.addProperty("trackId", TransportMixFixture.B);
+        color.afterWrite = () -> color.emit(new float[]{1f, 0x57 / 255f, 4 / 255f});
+        HostOperation farOp = f.submit(module, "tracks.set", far, System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(300));
+        try { for (int i = 0; i < 400 && !farOp.result.isDone(); i++) { f.next(); Thread.sleep(2); } }
+        catch (InterruptedException e) { throw new AssertionError(e); }
+        check(!farOp.result.join().get("matchesRequested").getAsBoolean(), "a larger difference is a mismatch");
+        f.tracks[1].child("monitorMode").emit("STORED");
+        JsonObject read = f.call(module, "tracks.get", TransportMixFixture.target(TransportMixFixture.B));
+        check(read.getAsJsonArray("observedOutsideOptions").size() == 1 && read.getAsJsonArray("observedOutsideOptions").get(0).getAsString().equals("monitorMode"), "a host value outside the option list is flagged");
+        JsonObject back = TransportMixFixture.json("{\"monitorMode\":\"STORED\"}"); back.addProperty("trackId", TransportMixFixture.B);
+        JsonObject again = f.call(module, "tracks.set", back);
+        check(again.getAsJsonObject("fields").getAsJsonObject("monitorMode").get("verification").getAsString().equals("already_at_value")
+            && f.tracks[1].child("monitorMode").writes == 0, "the currently observed out-of-list value can be written back");
+        JsonObject bogus = TransportMixFixture.json("{\"monitorMode\":\"LOUD\"}"); bogus.addProperty("trackId", TransportMixFixture.B);
+        HostOperation refused = f.submit(module, "tracks.set", bogus); f.next();
+        TransportMixFixture.error(refused, "invalid_params");
     }
     private static void selectionUsesUuidNotCurrentUi() {
         TransportMixFixture f = new TransportMixFixture(); MixModule module = new MixModule(f.services);
