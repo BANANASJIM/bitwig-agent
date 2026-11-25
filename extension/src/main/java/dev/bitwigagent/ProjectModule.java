@@ -8,13 +8,16 @@ import java.util.Set;
 import static dev.bitwigagent.HostServices.*;
 
 /**
+ * project.activateEngine: the native activate-engine action, confirmed only by an observed hasActiveEngine true.
  * project.save: the native Save action, confirmed only by an observed Project.isModified() change to false.
  * project.saveAs: the native Save Project pipeline to an explicit path without the dialog, confirmed by its
  * completion callback plus the written file, isModified=false and the new project name.
  */
 final class ProjectModule implements HostModule {
     static final String SAVE = "project.save", SAVE_AS = "project.saveAs";
-    static final Set<String> METHODS = Set.of(SAVE, SAVE_AS);
+    static final String ACTIVATE = "project.activateEngine";
+    static final Set<String> METHODS = Set.of(SAVE, SAVE_AS, ACTIVATE);
+    static final String ACTIVATE_ACTION = "Activate Engine For Project";
     static final String SAVE_ACTION = "Save";
     static final String UNAVAILABLE = "project_save_as_unavailable";
 
@@ -41,7 +44,7 @@ final class ProjectModule implements HostModule {
     @Override public void validate(String method, JsonObject params) { validateParams(method, params); }
     static void validateParams(String method, JsonObject params) {
         if (!METHODS.contains(method)) throw failure("unknown_method", "Unknown project method.");
-        if (method.equals(SAVE)) { Params.fields(params, Set.of(), Set.of()); return; }
+        if (method.equals(SAVE) || method.equals(ACTIVATE)) { Params.fields(params, Set.of(), Set.of()); return; }
         Params.fields(params, Set.of("path"), Set.of("overwrite", "allowAnyPath"));
         ProjectSaveAsPlan.projectName(Params.absoluteFilePath(params, "path"));
         if (params.has("overwrite")) Params.bool(params, "overwrite");
@@ -55,6 +58,7 @@ final class ProjectModule implements HostModule {
         s.check(op);
         if (pending) throw failure("busy", "A project.saveAs is still running natively (" + pendingPath + "); no request was queued.");
         if (method.equals(SAVE_AS)) { saveAs(op, params); return; }
+        if (method.equals(ACTIVATE)) { activateEngine(op); return; }
         if (Boolean.FALSE.equals(s.projectModified())) {
             JsonObject done = observed();
             done.addProperty("saved", true);
@@ -71,6 +75,39 @@ final class ProjectModule implements HostModule {
         save.invoke();
         // Full request deadline, not observeUntil's 750 ms window: a real save can take longer. Shared margin keeps the last poll inside it.
         await(op, before, op.deadline - HostServices.DEADLINE_MARGIN_NANOS);
+    }
+
+    private void activateEngine(HostOperation op) {
+        if (s.engineActive()) {
+            JsonObject done = observed();
+            done.addProperty("engineActive", true);
+            done.addProperty("alreadyActive", true);
+            op.result.complete(done);
+            return;
+        }
+        Action activate = s.application.getAction(ACTIVATE_ACTION);
+        if (activate == null) throw failure("unknown_action", "\"" + ACTIVATE_ACTION + "\" is absent from the host catalog; use actions.list query=engine.");
+        s.check(op);
+        op.dispatched = true;
+        activate.invoke();
+        awaitEngine(op, op.deadline - HostServices.DEADLINE_MARGIN_NANOS);
+    }
+
+    private void awaitEngine(HostOperation op, long until) {
+        if (s.engineActive()) {
+            JsonObject done = observed();
+            done.addProperty("engineActive", true);
+            op.result.complete(done);
+        } else if (System.nanoTime() >= until) {
+            JsonObject result = new JsonObject();
+            result.addProperty("status", "dispatched");
+            result.addProperty("engineActive", false);
+            result.addProperty("completion", "not_observed");
+            result.addProperty("hint", "The action was dispatched once, not retried, but hasActiveEngine did not become true in time. A dialog may be blocking it, or the project may still be loading: check status.engineActive and projectReady before another attempt.");
+            op.result.complete(result);
+        } else {
+            s.schedule(op, () -> awaitEngine(op, until), 50);
+        }
     }
 
     private void await(HostOperation op, long before, long until) {

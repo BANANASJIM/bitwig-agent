@@ -3,6 +3,8 @@ package dev.bitwigagent;
 import com.bitwig.extension.controller.api.*;
 import com.bitwig.extension.callback.IntegerValueChangedCallback;
 import com.bitwig.extension.callback.BooleanValueChangedCallback;
+import com.bitwig.extension.callback.StringValueChangedCallback;
+import java.util.function.LongSupplier;
 import com.google.gson.*;
 
 /** One set of fixed host proxies, initialized once and shared by domain modules. */
@@ -22,17 +24,32 @@ final class HostServices implements AutoCloseable {
     private volatile boolean closed;
     private Bitwig614Runtime nativeRuntime;
     private Boolean playing, arrangerRecordEnabled, arrangerAutomationWriteEnabled, clipLauncherAutomationWriteEnabled;
+    /** A name change (extension start, project switch/recovery, Save As) opens a settle window in which writes may land in a transient project. */
+    static final long PROJECT_SETTLE_NANOS = java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(3000);
+    /** Test seam for the settle window. */
+    volatile LongSupplier clock;
+    private volatile boolean projectNameObserved;
+    private volatile String observedProjectName;
+    private volatile long projectChangedAt;
     private volatile Boolean projectModified;
     private volatile long projectModifiedSequence;
     private volatile SafetyObservation safety = new SafetyObservation(0, null, null, null, null);
 
-    HostServices(ControllerHost host) {
+    HostServices(ControllerHost host) { this(host, System::nanoTime); }
+
+    HostServices(ControllerHost host, LongSupplier clock) {
+        this.clock = clock;
         this.host = host;
         application = host.createApplication();
         transport = host.createTransport();
         project = host.getProject();
         project.isModified().addValueObserver((BooleanValueChangedCallback) value -> { projectModified = value; projectModifiedSequence++; });
         application.projectName().markInterested();
+        application.projectName().addValueObserver((StringValueChangedCallback) value -> {
+            String name = String.valueOf(value);
+            if (!projectNameObserved || !name.equals(observedProjectName)) projectChangedAt = clock.getAsLong();
+            observedProjectName = name; projectNameObserved = true;
+        });
         application.hasActiveEngine().markInterested();
         transport.isPlaying().addValueObserver((BooleanValueChangedCallback) value -> { playing = value; publishSafety(); });
         transport.isArrangerRecordEnabled().addValueObserver((BooleanValueChangedCallback) value -> { arrangerRecordEnabled = value; publishSafety(); });
@@ -121,6 +138,39 @@ final class HostServices implements AutoCloseable {
         if (System.nanoTime() >= operation.deadline)
             throw new RpcException("deadline_exceeded", "Deadline expired; inspect state before another write.",
                     operation.dispatched ? "unknown" : "not_applied");
+    }
+
+    /** projectReady true/false/null (null: project name never observed) with a reason. Heuristic: the public API has no project-loaded event,
+     *  so readiness is "name observed, track bank sized, no name change in the last PROJECT_SETTLE_NANOS". Controller thread only. */
+    JsonObject projectReadiness() {
+        JsonObject out = new JsonObject();
+        Boolean ready; String reason;
+        long sinceMs = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(clock.getAsLong() - projectChangedAt);
+        if (!projectNameObserved) { ready = null; reason = "project_name_unobserved"; }
+        else if (clock.getAsLong() - projectChangedAt < PROJECT_SETTLE_NANOS) { ready = false; reason = "project_changed_settling"; }
+        else if (!tracksObserved) { ready = false; reason = "track_bank_unobserved"; }
+        else { ready = true; reason = "settled"; }
+        if (ready == null) out.add("projectReady", JsonNull.INSTANCE); else out.addProperty("projectReady", ready);
+        out.addProperty("projectReadyReason", reason);
+        if (projectNameObserved) out.addProperty("projectChangedMsAgo", sinceMs);
+        return out;
+    }
+
+    /** Structure writes refuse while the project is observed not ready; unknown (null) does not block. */
+    void requireProjectReady() {
+        JsonObject r = projectReadiness();
+        if (r.get("projectReady").isJsonPrimitive() && !r.get("projectReady").getAsBoolean())
+            throw failure("project_not_ready", "Project is not ready (" + r.get("projectReadyReason").getAsString()
+                    + "): it was just opened, recovered or renamed, so this write could land in a transient project. Poll status until projectReady is true, then re-discover targets; nothing was written.");
+    }
+
+    boolean engineActive() { return application.hasActiveEngine().get(); }
+
+    /** Launching with an inactive audio engine silently produces no playback and silent captures. */
+    void requireEngineActive(String what) {
+        if (!engineActive())
+            throw failure("engine_inactive", "The audio engine is not active for this project, so " + what + " would not sound or be observed. "
+                    + "Run project.activateEngine (or the \"Activate Engine For Project\" action), confirm status.engineActive=true, then retry; nothing was dispatched.");
     }
 
     /** Observed Project.isModified(); null until the first callback, never a getter default. */

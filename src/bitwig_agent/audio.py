@@ -36,6 +36,14 @@ def fail(code: str, message: str, outcome: str = "not_dispatched", **details: An
     return BridgeError(error)
 
 
+async def require_engine(bridge: Any, timeout_ms: int) -> None:
+    """Fail fast when status observes the audio engine inactive: a capture would only record silence."""
+    status = await bridge.call("status", {}, min(timeout_ms, 5000))
+    if status.get("engineActive") is False:
+        raise fail("engine_inactive", "The audio engine is not active for this project (status.engineActive=false), so playback would be silent. "
+                   "Run project.activateEngine, confirm engineActive=true, then retry. Nothing was dispatched.", "not_applied")
+
+
 # Seams for tests: no real subprocess or sleeping there.
 def run(args: list[str], timeout: float = RUN_TIMEOUT) -> tuple[int, str, str]:
     try:
@@ -226,6 +234,7 @@ async def capture(bridge: Any, args: dict[str, Any], timeout_ms: int) -> dict[st
                        "first, or pass allowAudible:true to record the default output audibly", **state)
     else:
         source = "@DEFAULT_MONITOR@"
+    await require_engine(bridge, timeout_ms)
     isolation = await isolate(bridge, args, timeout_ms)
     from_start = args.get("fromStart", True)
     transport_started = False

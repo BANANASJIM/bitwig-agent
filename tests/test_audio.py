@@ -235,12 +235,15 @@ class FakeProc:
 
 
 class FakeBridge:
-    def __init__(self, playing=()):
+    def __init__(self, playing=(), engine=True):
         self.calls = []
         self.playing = playing
+        self.engine = engine
 
     async def call(self, method, params, timeout_ms=5000):
         self.calls.append((method, params))
+        if method == "status":
+            return {"engineActive": self.engine}
         if method == "context.get":
             return {"tracks": [{"trackId": tid, "name": name, "launcherSlots": [{"slotIndex": 0, "playing": True}]} for tid, name in self.playing]
                               + [{"trackId": "idle", "name": "Idle", "launcherSlots": [{"slotIndex": 0, "playing": False}]}]}
@@ -275,7 +278,7 @@ def test_capture_from_start_orders_transport_and_reports_levels(tmp_path, monkey
     bridge, spawned, params, timeout = capture(tmp_path, monkeypatch)
     result = asyncio.run(client_side.run("audio.capture", bridge, params, timeout))
     assert spawned[0][:3] == ["parec", "-d", "bwtest.monitor"]
-    assert bridge.calls == [("context.get", {}), ("transport.set", {"playing": False}), ("transport.set", {"positionBeats": 0}),
+    assert bridge.calls == [("status", {}), ("context.get", {}), ("transport.set", {"playing": False}), ("transport.set", {"positionBeats": 0}),
                             ("transport.set", {"playing": True}), ("transport.set", {"playing": False})]
     assert result["peak"] > 0.5 and result["clipping"] is False and result["silent"] is False
     assert result["durationSeconds"] == pytest.approx(0.6, abs=0.01)
@@ -290,7 +293,7 @@ def test_capture_overwrite_rules_and_no_transport(tmp_path, monkeypatch, pw):
     assert e.value.error["code"] == "file_exists"
     bridge, spawned, params, timeout = capture(tmp_path, monkeypatch, overwrite=True, fromStart=False)
     asyncio.run(client_side.run("audio.capture", bridge, params, timeout))
-    assert [m for m, _ in bridge.calls] == ["context.get"]
+    assert [m for m, _ in bridge.calls] == ["status", "context.get"]
 
 
 def test_capture_allow_audible_records_default_monitor(tmp_path, monkeypatch, pw):
@@ -369,3 +372,14 @@ def test_mono_pitch_default_follows_flux_on_overlaps(tmp_path):
     write_wav(p, overlapping(seq))
     r = run_analyze(p, mode="mono_pitch")
     assert [round(n["midi"]) for n in r["notes"]] == seq
+
+
+def test_capture_refuses_an_inactive_engine_before_touching_anything(tmp_path, monkeypatch, pw):
+    route("silent")
+    bridge, spawned, params, timeout = capture(tmp_path, monkeypatch)
+    bridge.engine = False
+    with pytest.raises(BridgeError) as e:
+        asyncio.run(client_side.run("audio.capture", bridge, params, timeout))
+    assert e.value.error["code"] == "engine_inactive" and e.value.error["outcome"] == "not_applied"
+    assert "project.activateEngine" in e.value.error["message"]
+    assert not spawned and bridge.calls == [("status", {})]

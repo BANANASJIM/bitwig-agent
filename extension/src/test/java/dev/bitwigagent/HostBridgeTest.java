@@ -30,6 +30,8 @@ public final class HostBridgeTest {
         invalidAndExpiredActionsNeverInvoke();
         projectModifiedIsObservedNeverGuessed();
         projectSaveIsObservedOnceAndNeverRetried();
+        engineActivationAndInactiveEngineGuards();
+        writesWaitForSettledProject();
         discardingActionsAreGuardedByUnsavedChanges();
         actionsListFiltersAndReportsTotals();
         capabilitiesDescribeBoundedImplementedSurfaces();
@@ -204,6 +206,68 @@ public final class HostBridgeTest {
         Fake bad = new Fake(); HostBridge b4 = bad.bridge();
         JsonObject extra = new JsonObject(); extra.addProperty("x", 1);
         expectError(b4.handle("project.save", extra, deadline()), "invalid_params");
+    }
+
+    private static final long SETTLE = HostServices.PROJECT_SETTLE_NANOS;
+
+    private static void engineActivationAndInactiveEngineGuards() {
+        Fake f = new Fake(); HostBridge bridge = f.bridge();
+        JsonObject launch = new JsonObject(); launch.addProperty("trackId", Fake.TRACK_ID); launch.addProperty("slotIndex", 0);
+        JsonObject play = new JsonObject(); play.addProperty("playing", true);
+        JsonObject already = call(f, bridge, "project.activateEngine", new JsonObject());
+        check(already.get("engineActive").getAsBoolean() && already.get("alreadyActive").getAsBoolean() && f.activateInvocations == 0,
+                "an active engine dispatches nothing");
+        check(call(f, bridge, "context.get", new JsonObject()).get("engineActive").getAsBoolean(), "context.get reports engineActive");
+        f.engine.value = false;
+        check(!call(f, bridge, "status", new JsonObject()).get("engineActive").getAsBoolean(), "status reports an inactive engine");
+        CompletableFuture<JsonObject> refused = bridge.handle("launcher.launch", launch, deadline()); f.next();
+        expectError(refused, "engine_inactive");
+        try { refused.join(); } catch (CompletionException e) { check(((RpcException) e.getCause()).outcome.equals("not_applied"), "inactive-engine refusal dispatched nothing"); }
+        check(bridge.preflight("transport.set", play), "playing=true on an inactive engine asks for a warning");
+        JsonObject stop = new JsonObject(); stop.addProperty("playing", false);
+        check(!bridge.preflight("transport.set", stop), "stopping needs no warning");
+        HostOperation op = new HostOperation(Long.MAX_VALUE);
+        op.decorate = r -> HostBridge.addWarning(r, "w");
+        JsonObject out = new JsonObject(); out.addProperty("status", "dispatched"); op.result.complete(out);
+        check(op.result.join().getAsJsonArray("warnings").size() == 1, "a decorated result carries the warning");
+        JsonObject activated = call(f, bridge, "project.activateEngine", new JsonObject());
+        check(f.activateInvocations == 1 && activated.get("status").getAsString().equals("observed") && activated.get("engineActive").getAsBoolean(),
+                "activation is invoked once and confirmed by an observed true");
+        check(!bridge.preflight("transport.set", play), "no warning once active");
+        // The action runs but the engine never reports active: bounded, not retried, never claimed.
+        Fake stuck = new Fake(); HostBridge b2 = stuck.bridge(); stuck.engine.value = false; stuck.activateWorks = false;
+        CompletableFuture<JsonObject> pending = b2.handle("project.activateEngine", new JsonObject(), System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(150));
+        int spins = 0;
+        while (!pending.isDone() && spins++ < 100000000) stuck.next();
+        JsonObject result = pending.join();
+        check(stuck.activateInvocations == 1 && result.get("status").getAsString().equals("dispatched") && !result.get("engineActive").getAsBoolean()
+                && result.get("completion").getAsString().equals("not_observed"), "unconfirmed activation is reported, not retried");
+    }
+
+    private static void writesWaitForSettledProject() {
+        Fake f = new Fake(); HostBridge bridge = f.bridge();
+        JsonObject create = new JsonObject(); create.addProperty("type", "audio"); create.addProperty("position", -1); create.addProperty("name", "x");
+        f.projectName.set("Fixture2");
+        JsonObject status = call(f, bridge, "status", new JsonObject());
+        check(!status.get("projectReady").getAsBoolean() && status.get("projectReadyReason").getAsString().equals("project_changed_settling"),
+                "a freshly observed project name opens the settle window");
+        check(!call(f, bridge, "context.get", new JsonObject()).get("projectReady").getAsBoolean(), "context.get carries projectReady");
+        CompletableFuture<JsonObject> refused = bridge.handle("tracks.create", create, deadline()); f.next();
+        expectError(refused, "project_not_ready");
+        try { refused.join(); } catch (CompletionException e) { check(((RpcException) e.getCause()).outcome.equals("not_applied"), "refused write is not_applied"); }
+        f.now += SETTLE - 1;
+        check(!call(f, bridge, "status", new JsonObject()).get("projectReady").getAsBoolean(), "still settling just before the window ends");
+        f.projectName.set("Fixture2");
+        f.now += 1;
+        JsonObject settled = call(f, bridge, "status", new JsonObject());
+        check(settled.get("projectReady").getAsBoolean() && settled.get("projectReadyReason").getAsString().equals("settled"), "a same-name callback does not restart the window ");
+        f.projectName.set("Recovered");
+        status = call(f, bridge, "status", new JsonObject());
+        check(!status.get("projectReady").getAsBoolean() && status.get("projectChangedMsAgo").getAsLong() == 0, "a project switch reopens the window");
+        refused = bridge.handle("grid.modules.insert", new JsonObject(), deadline());
+        expectError(refused, "invalid_params");
+        f.now += SETTLE;
+        check(call(f, bridge, "status", new JsonObject()).get("projectReady").getAsBoolean(), "ready again after the window");
     }
 
     private static void discardingActionsAreGuardedByUnsavedChanges() {
@@ -1053,7 +1117,7 @@ public final class HostBridgeTest {
         final double[] parameterValues = new double[16];
         final int[] deviceWrites = new int[16];
         int writes, idEmissions;
-        Val modified; int saveInvocations, quitInvocations, lifecycleInvocations; boolean saveClears = true;
+        Val modified, engine, projectName; int activateInvocations; boolean activateWorks = true; long now = 0; int saveInvocations, quitInvocations, lifecycleInvocations; boolean saveClears = true;
         final Node[] layerNodes = new Node[2], childBanks = new Node[2];
         final Node[][] childNodes = new Node[2][2];
         final StringArrayValueChangedCallback[][] childIds = new StringArrayValueChangedCallback[2][2];
@@ -1239,6 +1303,11 @@ public final class HostBridgeTest {
                         try { Thread.sleep(50); } catch (InterruptedException error) { throw new AssertionError(error); }
                     }
                     for (Action action : actions) if (action.getId().equals(args[0])) return action;
+                    if ("Activate Engine For Project".equals(args[0])) {
+                        Node act = new Node();
+                        act.custom = (m2, a2) -> { if (m2.equals("invoke")) { activateInvocations++; if (activateWorks) engine.set(true); } return null; };
+                        return act.proxy(Action.class);
+                    }
                     if ("Save".equals(args[0]) || "Quit".equals(args[0]) || Set.of("Close", "New", "Open", "new_from_template").contains(args[0])) {
                         Node extra = new Node();
                         extra.custom = (method2, args2) -> {
@@ -1254,6 +1323,7 @@ public final class HostBridgeTest {
                 }
                 return null;
             };
+            engine = app.value("hasActiveEngine"); projectName = app.value("projectName");
             Node transport = new Node(); transport.put("isPlaying", false);
             Node project = new Node(); project.put("isModified", false);
             modified = project.value("isModified"); modified.publishInitial = false;
@@ -1268,7 +1338,7 @@ public final class HostBridgeTest {
                 return null;
             };
             initializing = true;
-            try { return new HostBridge(host.proxy(ControllerHost.class)); }
+            try { HostBridge b = new HostBridge(host.proxy(ControllerHost.class), () -> now); now = 2 * HostServices.PROJECT_SETTLE_NANOS; return b; }
             finally { initializing = false; }
         }
         void emitIds(int index) { emitIds(index, new String[]{"gain"}); }
@@ -1336,6 +1406,7 @@ public final class HostBridgeTest {
         void notifyObserver(Object observer) {
             if (observer instanceof IntegerValueChangedCallback) ((IntegerValueChangedCallback) observer).valueChanged((Integer) current());
             else if (observer instanceof BooleanValueChangedCallback) ((BooleanValueChangedCallback) observer).valueChanged((Boolean) current());
+            else if (observer instanceof StringValueChangedCallback) ((StringValueChangedCallback) observer).valueChanged((String) current());
             else if (observer instanceof ObjectValueChangedCallback) ((ObjectValueChangedCallback) observer).valueChanged(current());
         }
         public Object invoke(Object proxy, Method method, Object[] args) {

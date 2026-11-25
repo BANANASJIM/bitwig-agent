@@ -34,6 +34,8 @@ final class ContextModule implements HostModule {
         JsonObject out = HostServices.observed();
         for (Map.Entry<String, JsonElement> e : transport.basics().entrySet()) out.add(e.getKey(), e.getValue());
         out.add("projectModified", s.projectModifiedJson());
+        out.addProperty("engineActive", s.engineActive());
+        for (Map.Entry<String, JsonElement> e : s.projectReadiness().entrySet()) out.add(e.getKey(), e.getValue());
         out.add("instance", HostServices.instance());
         for (Map.Entry<String, JsonElement> e : s.playbackSafety().entrySet()) out.add(e.getKey(), e.getValue());
         out.add("sceneCount", s.tracksObserved ? new JsonPrimitive(s.tracks.sceneBank().itemCount().get()) : JsonNull.INSTANCE);

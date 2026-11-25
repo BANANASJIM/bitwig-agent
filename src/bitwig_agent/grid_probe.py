@@ -94,6 +94,7 @@ async def probe(client: Any, args: dict[str, Any], timeout_ms: int) -> dict[str,
         if not state["silent"]:
             raise _fail("not_silent", "Bitwig output is not routed to the silent sink; call audio.route mode=silent first, "
                         "or pass allowAudible:true (the probed signal is then audible)", **state)
+    await audio.require_engine(client, timeout_ms)  # before any cable is touched
     # Grid writes need a stopped, non-recording transport; audio.capture stops it again afterwards, so this leaves it stopped too.
     short = min(timeout_ms, MAX_TIMEOUT_MS)  # only topology edits may wait longer
     transport = await client.call("transport.get", {}, short)

@@ -19,6 +19,7 @@ class ProbeGrid(FakeGrid):
     def __init__(self):
         super().__init__()
         self.transport = dict(SAFE)
+        self.engine = True
         self.set_calls = 0
         self.fail_on_set = None  # nth connections.set raises
         self.osc = self.add("Add", "P: osc", 0, 0)
@@ -34,6 +35,9 @@ class ProbeGrid(FakeGrid):
         if method == "transport.get":
             self.calls.append((method, params))
             return {"status": "observed", **self.transport}
+        if method == "status":  # engine pre-check
+            self.calls.append((method, params))
+            return {"status": "observed", "engineActive": self.engine}
         if method == "context.get":  # audio.capture's isolation pre-check
             self.calls.append((method, params))
             return {"tracks": []}
@@ -196,3 +200,12 @@ def test_partial_rewire_is_restored_from_the_real_state(rig):
     with pytest.raises(BridgeError) as e:
         probe(host)
     assert e.value.error["code"] == "not_applied" and host.conns == host.original
+
+
+def test_inactive_engine_refuses_before_any_cable_is_touched(rig):
+    host, _ = rig
+    host.engine = False
+    with pytest.raises(BridgeError) as e:
+        probe(host)
+    assert e.value.error["code"] == "engine_inactive" and e.value.error["outcome"] == "not_applied"
+    assert host.sets() == [] and host.conns == host.original
