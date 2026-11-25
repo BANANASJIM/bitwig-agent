@@ -445,3 +445,17 @@ def test_unknown_argument_names_closest_field():
     assert "did you mean targetModuleId?" in message
     assert "errors.pydantic.dev" not in message
     assert "timeoutMs" not in message.split("Accepted:")[1]
+
+
+def test_unknown_argument_synonyms_hint_but_never_alias():
+    from pydantic import ValidationError
+    import pytest
+    from bitwig_agent.catalog import invalid_params_message, validate_call
+    target = {"trackId": "12345678-1234-1234-1234-123456789abc", "deviceIndex": 0, "expectedDeviceName": "Poly Grid"}
+    for method, bad, want in (("grid.get", {**target, "offset": 0, "limit": 5}, ["moduleOffset", "moduleLimit"]),
+                              ("transport.set", {"tempo": 120}, ["tempoBpm"]),
+                              ("grid.connections.set", {**target, "instanceId": "x"}, ["targetModuleId"])):
+        with pytest.raises(ValidationError) as error:
+            validate_call(method, bad)
+        message = invalid_params_message(method, error.value)
+        assert "no alias is accepted" in message and all(w in message for w in want), message
