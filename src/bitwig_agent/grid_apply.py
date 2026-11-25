@@ -6,6 +6,7 @@ stopping at the first error/unknown/partial outcome and never retrying.
 
 from __future__ import annotations
 
+import copy
 import difflib
 import json
 import math
@@ -63,6 +64,76 @@ class Stop(Exception):
         super().__init__(method)
 
 
+# --- blocks -------------------------------------------------------------------------------------------------
+_PLACEHOLDER = re.compile(r"\$\{([A-Za-z0-9_]+)\}")
+INT_RANGE = range(-(2**31), 2**31)
+
+
+def _fill(value: Any, values: dict[str, Any], where: str, problems: list[str]) -> Any:
+    """Whole-value ${name} substitution (the value keeps its type) inside a params value, also within {display}/{label}."""
+    if isinstance(value, str) and (m := _PLACEHOLDER.fullmatch(value)):
+        if m.group(1) in values:
+            return values[m.group(1)]
+        problems.append(f"{where}: placeholder {value} is not a param of the block.{_near(m.group(1), values)}")
+    elif isinstance(value, dict):
+        return {k: _fill(v, values, where, problems) for k, v in value.items()}
+    return value
+
+
+def expand_blocks(args: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Replace blocks+instances by plain modules/connections (names prefixed, positions shifted); no nesting.
+
+    Returns the expanded args and, per instance, {block, prefix, modules}. Runs before any other validation."""
+    instances = args.get("instances") or []
+    out = {k: v for k, v in args.items() if k not in ("blocks", "instances")}
+    out["modules"] = list(args.get("modules") or [])
+    out["connections"] = list(args.get("connections") or [])
+    if not instances:
+        return out, []
+    blocks = args.get("blocks") or {}
+    problems: list[str] = []
+    mapping: list[dict[str, Any]] = []
+    for i, inst in enumerate(instances):
+        prefix, dx, dy = inst.get("prefix", ""), inst.get("dx", 0), inst.get("dy", 0)
+        where = f"instance {i} (block {inst['block']!r}, prefix {prefix!r})"
+        block = blocks.get(inst["block"])
+        if block is None:
+            problems.append(f"{where}: unknown block.{_near(inst['block'], blocks)} Blocks: {list(blocks)}")
+            continue
+        defaults, given = block.get("params") or {}, inst.get("args") or {}
+        unknown = [k for k in given if k not in defaults]
+        if unknown:
+            problems.append(f"{where}: unknown args {unknown}; block params {list(defaults)}")
+        values = {**defaults, **{k: v for k, v in given.items() if k in defaults}}
+        local = [m["name"] for m in block["modules"]]
+        names = []
+        for m in block["modules"]:
+            e = copy.deepcopy(m)
+            e["name"], e["x"], e["y"] = prefix + m["name"], m["x"] + dx, m["y"] + dy
+            if e["x"] not in INT_RANGE or e["y"] not in INT_RANGE:
+                problems.append(f"{where}: module {m['name']!r} lands outside the 32-bit grid after dx/dy")
+            if "params" in e:
+                e["params"] = {k: _fill(v, values, f"{where}, module {m['name']!r}, param {k}", problems) for k, v in e["params"].items()}
+            out["modules"].append(e)
+            names.append(e["name"])
+        for c in block.get("connections") or []:
+            ends = {}
+            for key in ("from", "to"):
+                name, dot, _port = c[key].rpartition(".")
+                if not dot or name not in local:
+                    problems.append(f"{where}: block connection {c[key]!r} must be '<local module name>.<PORT_KEY>'.{_near(name or c[key], local)}")
+                ends[key] = prefix + c[key]
+            out["connections"].append(ends)
+        mapping.append({"block": inst["block"], "prefix": prefix, "modules": names})
+    for label, items in (("module name", [m["name"] for m in out["modules"]]), ("connection target", [c["to"] for c in out["connections"]])):
+        dupes = sorted({n for n in items if items.count(n) > 1})
+        if dupes:
+            problems.append(f"expanded spec repeats {label}s {dupes}; give instances distinct prefixes")
+    if problems:
+        raise SpecError(problems)
+    return out, mapping
+
+
 def _pos(row: dict[str, Any]) -> tuple[int, int]:
     return row["x"], row["y"]
 
@@ -72,7 +143,50 @@ DISPLAY_UNITS = {
     "hertz": ({"hz": 1.0, "khz": 1000.0}, lambda f: 69 + 12 * math.log2(f / 440) if f > 0 else math.nan, lambda raw: 440 * 2 ** ((raw - 69) / 12)),
     "percent": ({"%": 1.0}, lambda p: p / 100, lambda raw: raw * 100),
     "decibel": ({"db": 1.0}, lambda d: d, lambda raw: raw),
+    "seconds": ({"s": 1.0, "ms": 0.001}, None, None),  # raw mapping differs per parameter: SECONDS_PARAMS
 }
+# Seconds parameters: the raw<->seconds mapping is not uniform, so only (module type, parameter) pairs whose default
+# raw/display pair fits one mapping exactly are writable by display. Natively measured on 6.1.4 (notes: grid_notes_6_1_4.json);
+# every row is (mapping, default raw, default display) and is re-checked against the bundled schema by a test.
+SECONDS_SCALES = {
+    "cbrt": (lambda s: math.cbrt(s) if s >= 0 else math.nan, lambda raw: raw ** 3),
+    "log10": (lambda s: math.log10(s) if s > 0 else math.nan, lambda raw: 10 ** raw),
+}
+SECONDS_PARAMS = {
+    ("AD", "ATTACK"): ("cbrt", 0.2717, "20.1 ms"),
+    ("AD", "DECAY"): ("cbrt", 0.694, "334 ms"),
+    ("ADSR", "ATTACK"): ("cbrt", 0.2217, "10.9 ms"),
+    ("ADSR", "DECAY"): ("cbrt", 0.944, "841 ms"),
+    ("ADSR", "RELEASE"): ("cbrt", 0.63, "250 ms"),
+    ("AR", "ATTACK"): ("cbrt", 0.2717, "20.1 ms"),
+    ("AR", "RELEASE"): ("cbrt", 0.63, "250 ms"),
+    ("Average", "TIME"): ("log10", -1.523, "30.0 ms"),
+    ("Comb", "DECAY"): ("cbrt", 0.1563, "3.82 ms"),
+    ("Curves", "TIME"): ("log10", -2.0, "10.0 ms"),
+    ("CV Out", "SMOOTH"): ("log10", -3.0, "1.00 ms"),
+    ("CV Pitch Out", "SMOOTH"): ("log10", -3.0, "1.00 ms"),
+    ("Delay", "TIME"): ("cbrt", 0.5, "125 ms"),
+    ("Follower", "TIME"): ("log10", -1.456, "35.0 ms"),
+    ("Follower RF", "ATTACK"): ("log10", -2.304, "4.97 ms"),
+    ("Follower RF", "DECAY"): ("log10", -0.376, "421 ms"),
+    ("Freq Shift+", "DELAYTIME"): ("cbrt", 0.5, "125 ms"),
+    ("Gate Length", "LENGTH"): ("log10", -1.301, "50.0 ms"),
+    ("Gate Repeat", "RATE"): ("log10", -1.301, "50.0 ms"),
+    ("Lag", "TIME"): ("log10", -1.301, "50.0 ms"),
+    ("Logic Delay", "DELAY"): ("log10", -0.921, "120 ms"),
+    ("Mod Delay", "TIME"): ("cbrt", 0.6694, "300 ms"),
+    ("Pluck", "ATTACK"): ("cbrt", 0.2217, "10.9 ms"),
+    ("Pluck", "DECAY"): ("cbrt", 0.794, "501 ms"),
+    ("Pluck", "RELEASE"): ("cbrt", 0.6251, "244 ms"),
+    ("Sampler", "GRAIN_SIZE"): ("log10", -0.87, "135 ms"),
+    ("Segments", "TIME"): ("log10", -2.0, "10.0 ms"),
+    ("Slope \u2197", "TIME"): ("log10", -2.825, "1.50 ms"),
+    ("Slope \u2198", "TIME"): ("log10", -1.0, "100 ms"),
+    ("Velo Mult", "TIME"): ("log10", -3.02, "0.95 ms"),
+    ("\u00d8 Lag", "RATE"): ("log10", -1.5229, "30.0 ms"),
+}
+# Seconds parameters deliberately absent (default pair fits neither mapping, or only by the raw 1.0 = 1 s coincidence):
+# All-pass Delay TIME, Audio Out HOLD_TIME, Long Delay TIME.
 _TEXT = re.compile(r"([+-]?(?:\d+(?:\.(\d*))?|\.(\d+)))\s*([A-Za-z%]+)", re.ASCII)
 _JAVA_TRIM = "".join(map(chr, range(33)))
 
@@ -103,27 +217,42 @@ def display_matches(wanted: str, live: str | None, unit: str | None = None) -> b
     return bool(a and b and _near_quantity(b, a[0]))
 
 
-def check_display(pid: str, text: str, unit: str | None, raw_default: Any, display_default: Any, lo: Any, hi: Any) -> None:
-    """Reject, from description data alone, display writes the host would refuse (unsupported_unit / invalid_params)."""
+def check_display(pid: str, text: str, unit: str | None, raw_default: Any, display_default: Any, lo: Any, hi: Any,
+                  type_name: str | None = None) -> float:
+    """Reject, from description data alone, display writes the host would refuse (unsupported_unit / invalid_params).
+
+    Returns the raw value of `text`; seconds parameters are written as that raw value (the host has no seconds display write)."""
     if unit not in DISPLAY_UNITS:
-        raise SpecError([f"{pid}: display writes support numericUnit hertz/percent/decibel, not {unit!r}; write the raw value instead"])
+        raise SpecError([f"{pid}: display writes support numericUnit hertz/percent/decibel/seconds, not {unit!r}; write the raw value instead"])
+    to_raw, from_raw = DISPLAY_UNITS[unit][1:]
+    if unit == "seconds":
+        scale = SECONDS_PARAMS.get((type_name, pid))
+        if scale is None:
+            raise SpecError([f"{pid}: no verified seconds scale for {type_name!r}; write the raw value instead"])
+        to_raw, from_raw = SECONDS_SCALES[scale[0]]
     wanted = parse_quantity(unit, text)
     if wanted is None:
         raise SpecError([f"{pid}: display {text!r} must be a number with a unit suffix {sorted(DISPLAY_UNITS[unit][0])}"])
     shown = parse_quantity(unit, display_default)
-    if shown is None or not _near_quantity(shown, DISPLAY_UNITS[unit][2](raw_default)):
+    if shown is None or not _near_quantity(shown, from_raw(raw_default)):
         raise SpecError([f"{pid}: its default raw/display pair does not fit the verified {unit} scale; write the raw value instead"])
     if abs(shown[0]) < shown[1]:
         raise SpecError([f"{pid}: the host cannot confirm the {unit} scale while the display reads zero (default {display_default!r}); write the raw value instead"])
-    raw = DISPLAY_UNITS[unit][1](wanted[0])
+    raw = to_raw(wanted[0])
     if not math.isfinite(raw) or (lo is not None and not lo <= raw <= hi):
         raise SpecError([f"{pid}: {text!r} converts to raw {raw:.4g}, outside {lo}..{hi}"])
+    return raw
 
 
-def check_display_live(pid: str, text: str, row_param: dict[str, Any]) -> None:
+def display_want(unit: str | None, text: str, raw: float) -> dict[str, Any]:
+    """The write for a checked display: hertz/percent/decibel go to the host as display text, seconds as a converted raw value."""
+    return {"value": raw, "shown": text} if unit == "seconds" else {"display": text}
+
+
+def check_display_live(pid: str, text: str, row_param: dict[str, Any], type_name: str | None = None) -> float:
     """The same checks against a live row (current raw/display pair)."""
-    check_display(pid, text, row_param.get("numericUnit"), row_param.get("value"), row_param.get("display"),
-                  row_param.get("minimum"), row_param.get("maximum"))
+    return check_display(pid, text, row_param.get("numericUnit"), row_param.get("value"), row_param.get("display"),
+                         row_param.get("minimum"), row_param.get("maximum"), type_name)
 
 
 # --- footprints ---------------------------------------------------------------------------------------------
@@ -217,8 +346,8 @@ def check_value(pid: str, raw: Any, p: dict[str, Any]) -> dict[str, Any]:
 
 
 def value_matches(kind: str, want: dict[str, Any], row_param: dict[str, Any]) -> bool:
-    if "display" in want:
-        return display_matches(want["display"], row_param.get("display"), row_param.get("numericUnit"))
+    if "display" in want or "shown" in want:
+        return display_matches(want.get("display", want.get("shown")), row_param.get("display"), row_param.get("numericUnit"))
     live, new = row_param.get("value"), want["value"]
     if kind == "boolean":
         return type(live) is bool and live == new
@@ -230,8 +359,9 @@ def value_matches(kind: str, want: dict[str, Any], row_param: dict[str, Any]) ->
 
 
 class Apply:
-    def __init__(self, client: Any, args: dict[str, Any], timeout_ms: int):
+    def __init__(self, client: Any, args: dict[str, Any], timeout_ms: int, instances: list[dict[str, Any]] | None = None):
         self.client, self.args, self.timeout_ms = client, args, timeout_ms
+        self.instances = instances or []
         self.target = args["target"]
         self.dry = bool(args.get("dryRun"))
         self.prune = bool(args.get("prune"))
@@ -239,7 +369,7 @@ class Apply:
         self.replaced_names: list[str] = []
         self.dropped: list[str] = []
         self.namespace = args.get("namespace")
-        self.modules: list[dict[str, Any]] = args["modules"]
+        self.modules: list[dict[str, Any]] = args.get("modules", [])
         self.names = [m["name"] for m in self.modules]
         self.applied = dict.fromkeys(("inserted", "renamed", "moved", "paramsWritten", "connections", "disconnected", "deleted"), 0)
         self.matched = dict.fromkeys(("modules", "positions", "params", "connections"), 0)
@@ -375,7 +505,9 @@ class Apply:
                     want = check_value(pid, raw, pinfo[pid])
                     if "display" in want:
                         q = pinfo[pid]
-                        check_display(pid, want["display"], q.get("numericUnit"), q.get("default"), q.get("defaultDisplay"), q.get("minimum"), q.get("maximum"))
+                        raw_value = check_display(pid, want["display"], q.get("numericUnit"), q.get("default"), q.get("defaultDisplay"),
+                                                  q.get("minimum"), q.get("maximum"), type_name)
+                        want = display_want(q.get("numericUnit"), want["display"], raw_value)
                     writes[pid] = {"raw": raw, "want": want}
                 except SpecError as exc:
                     problems += [f"{m['name']!r}: {p}" for p in exc.problems]
@@ -401,12 +533,17 @@ class Apply:
         live = {p["parameterId"]: p for p in (row or {}).get("parameters", []) if p.get("supported") and "parameterId" in p}
         for pid, spec in entry["params"].items():
             if row is None:
-                writes.append({"module": name, "parameterId": pid, "to": spec["raw"]})
+                writes.append({"module": name, "parameterId": pid, "to": spec["raw"], **({"rawValue": spec["want"]["value"]} if spec["want"] and "shown" in spec["want"] else {})})
                 continue
             if pid not in live:
                 raise SpecError([f"{name!r}: parameter {pid!r} is not a supported live parameter.{_near(pid, live)}"])
             lp = live[pid]
             want = spec["want"] or check_value(pid, spec["raw"], lp)
+            if "display" in want and lp.get("numericUnit") == "seconds":  # no bundled schema: convert against the live pair
+                try:
+                    want = display_want("seconds", want["display"], check_display_live(pid, want["display"], lp, entry["typeName"]))
+                except SpecError as exc:
+                    raise SpecError([f"{name!r}: {p}" for p in exc.problems]) from exc
             if entry["info"] is not None:
                 known = next(p for p in entry["info"]["parameters"] if p["parameterId"] == pid)
                 if known["kind"] != lp["kind"]:
@@ -414,14 +551,14 @@ class Apply:
             if value_matches(lp["kind"], want, lp):
                 matched += 1
                 continue
-            if "display" in want:
+            if "display" in want or "shown" in want:
                 try:
-                    check_display_live(pid, want["display"], lp)
+                    check_display_live(pid, want.get("display", want.get("shown")), lp, entry["typeName"])
                 except SpecError as exc:
                     raise SpecError([f"{name!r}: {p}" for p in exc.problems]) from exc
-            writes.append({"module": name, "parameterId": pid, "to": spec["raw"],
+            writes.append({"module": name, "parameterId": pid, "to": spec["raw"], **({"rawValue": want["value"]} if "shown" in want else {}),
                            "write": {"moduleId": row["instanceId"], "parameterId": pid, "expectedKind": lp["kind"],
-                                     "expectedValue": lp["value"], **want}})
+                                     "expectedValue": lp["value"], **{k: v for k, v in want.items() if k != "shown"}}})
         return writes, matched
 
     def plan_connections(self, rows: dict[str, dict], conns: list[dict]) -> list[dict]:
@@ -615,7 +752,7 @@ class Apply:
         if self.live_schema:
             notes.append("no bundled schema for this host version: ports, parameters and footprints of inserted modules are validated only after insertion")
         result = {"status": "dryRun", "planned": planned, "alreadyMatched": self.matched, "plan": plan, "steps": []}
-        return result | ({"warnings": self.warnings} if self.warnings else {}) | self.notes_field(notes)
+        return result | ({"instances": self.instances} if self.instances else {}) | ({"warnings": self.warnings} if self.warnings else {}) | self.notes_field(notes)
 
     def dropped_cables(self, replaced: list[dict], rows: list[dict], conns: list[dict]) -> list[str]:
         """Live cables on replaced modules that the spec does not re-declare (deleting the module removes them)."""
@@ -795,7 +932,7 @@ class Apply:
     # ---- reports ---------------------------------------------------------------------------------------------
     def report(self, status: str) -> dict[str, Any]:
         out = {"status": status, "applied": self.applied, "alreadyMatched": self.matched, "steps": self.steps, "moduleIds": self.ids}
-        return out | ({"warnings": self.warnings} if self.warnings else {}) | self.notes_field()
+        return out | ({"instances": self.instances} if self.instances else {}) | ({"warnings": self.warnings} if self.warnings else {}) | self.notes_field()
 
     def report_stop(self, stop: Stop, pending: dict[str, int]) -> dict[str, Any]:
         order = ["delete", "premove", "insert", "rename", "move", "params", "connections"]
@@ -818,7 +955,11 @@ def invalid_spec(problems: list[str]) -> BridgeError:
 
 async def apply(client: Any, args: dict[str, Any], timeout_ms: int = 5000) -> dict[str, Any]:
     """Run a validated grid.apply spec (dict from schema.GridApplyArgs) through `client.call(method, params, timeout_ms)`."""
-    run = Apply(client, args, timeout_ms)
+    try:
+        args, instances = expand_blocks(args)
+    except SpecError as exc:
+        raise invalid_spec(exc.problems) from exc
+    run = Apply(client, args, timeout_ms, instances)
     try:
         return await run.run()
     except SpecError as exc:

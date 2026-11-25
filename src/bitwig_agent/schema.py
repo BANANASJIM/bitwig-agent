@@ -666,6 +666,20 @@ class GridApplyConnection(StrictModel):
     to: str = Field(min_length=3, max_length=2048, description="Target input 'module name.PORT_KEY'.")
 
 
+class GridApplyBlock(StrictModel):
+    params: dict[str, bool | int | float | str] = omitted(description="Parameter name -> default; params values of the form '${name}' (whole value) take it, or the instance's args value.")
+    modules: Annotated[list[GridApplyModule], Field(min_length=1, max_length=1024, description="Modules with local names and positions relative to the instance (no nesting).")]
+    connections: Annotated[list[GridApplyConnection], Field(max_length=1024)] = omitted(description="Cables between the block's own modules, by local names.")
+
+
+class GridApplyInstance(StrictModel):
+    block: str = Field(min_length=1, max_length=1024, description="Key of a block in blocks.")
+    prefix: str = omitted(max_length=1024, description="Prepended to every local module name (e.g. 'D1: '); instances need distinct prefixes.")
+    dx: int = omitted(ge=-(2**31), le=2**31 - 1, description="Offset added to every module x (default 0).")
+    dy: int = omitted(ge=-(2**31), le=2**31 - 1, description="Offset added to every module y (default 0).")
+    args: dict[str, bool | int | float | str] = omitted(description="Values for the block's params.")
+
+
 class GridRenderArgs(ParameterArgs):
     outPath: Nonempty = Field(description="Absolute normalized path of the image to write; refused if it exists unless overwrite=true.")
     format: Literal["svg", "png"] = omitted(description="svg (default) or png (needs rsvg-convert or magick on PATH).")
@@ -682,7 +696,10 @@ class GridRenderArgs(ParameterArgs):
 
 class GridApplyArgs(StatusArgs):
     target: GridApplyTarget
-    modules: Annotated[list[GridApplyModule], Field(max_length=1024, description="Declared modules; [] only with prune=true and a namespace (empties the namespace).")]
+    modules: Annotated[list[GridApplyModule], Field(max_length=1024, description="Declared modules; [] only with prune=true and a namespace (empties the namespace), or with instances.")] = omitted()
+    blocks: dict[str, GridApplyBlock] = omitted(description="Reusable sub-patches: {name: {params?, modules, connections?}}; expanded by instances before validation.")
+    instances: Annotated[list[GridApplyInstance], Field(max_length=1024)] = omitted(
+        description="Copies of blocks: {block, prefix?, dx?, dy?, args?}. Module names become prefix+local name, positions shift by dx/dy; cables from/to an instance use the expanded names.")
     connections: Annotated[list[GridApplyConnection], Field(max_length=1024)] = omitted(
         description="Cables between declared modules; one source per target input.")
     namespace: str = omitted(min_length=1, max_length=1024, description="customName prefix (e.g. 'H: ') that prune may delete from.")
@@ -692,9 +709,11 @@ class GridApplyArgs(StatusArgs):
 
     @model_validator(mode="after")
     def validate_spec(self):
-        if not self.modules and not (self.prune and self.namespace):
-            raise ValueError("modules may be empty only with prune=true and a non-empty namespace")
-        names = [m.name for m in self.modules]
+        if not self.modules and not self.instances and not (self.prune and self.namespace):
+            raise ValueError("modules may be empty only with prune=true and a non-empty namespace, or with instances")
+        if self.instances and not self.blocks:
+            raise ValueError("instances need blocks")
+        names = [m.name for m in self.modules or []]
         dupes = sorted({n for n in names if names.count(n) > 1})
         if dupes:
             raise ValueError(f"module names must be unique: {dupes}")
