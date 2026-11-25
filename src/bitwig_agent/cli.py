@@ -47,6 +47,7 @@ def help_payload() -> dict[str, Any]:
                   "bitwig-agent-rpc audio.route mode=silent|restore|status   (Linux/PipeWire)",
                   "bitwig-agent-rpc audio.capture seconds=8 outPath=/abs/out.wav [fromStart=false] [overwrite=true]",
                   "bitwig-agent-rpc audio.analyze path=/abs/out.wav mode=level|onsets|mono_pitch|probe [bpm=120] [skipSeconds=2]",
+                  "bitwig-agent-rpc host.diagnostics [sinceSeconds=300 | sinceMarker=<marker>] [maxEvents=50]  (Bitwig log: grid_rejected, engine, extension errors)",
                   "bitwig-agent-rpc grid.describe type=\"Select In\" | query=\"random trigger\" [lang=de]  (offline Bitwig module docs)"],
         "discovery": "list, help and describe are offline. capabilities queries the running host.",
         "arguments": "Strings are unquoted values (shell-quote spaces); numbers/booleans/arrays/objects use strict JSON. Booleans are true/false. Explicit null is accepted only where the method schema allows it; required nullable fields must still be supplied. Duplicate/extra fields are rejected. Raw --params is equally strict.",

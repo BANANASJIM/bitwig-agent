@@ -141,3 +141,12 @@ bitwig-agent-rpc audio.route mode=restore                      # always: re-link
 ```
 
 `analyze` modes: `level` (peak/rms/silence), `onsets`, `mono_pitch` (monophonic only), `probe` (10 ms means: route a logic/CV signal to Audio Out to read it as a scope). `audio.route status` shows the current links; the previous targets live in `~/.cache/bitwig-agent/audio-route.json` until `restore`. Only Bitwig's own links are touched.
+
+## Host problems the API cannot show (`host.diagnostics`)
+
+```sh
+bitwig-agent-rpc host.diagnostics                       # last 300 s of this instance's Bitwig log, classified
+bitwig-agent-rpc host.diagnostics sinceMarker=<marker>  # only what happened since the previous call's `marker`
+```
+
+Client-side, read-only, reads `~/.BitwigStudio/log/BitwigStudio.log` (macOS `~/Library/Logs/Bitwig/`, Windows `%LOCALAPPDATA%\Bitwig Studio\log\`: documented, not verified; else `status:"unsupported"`; `BITWIG_LOG_PATH` overrides). Events are `grid_rejected` (a Grid device silently dropped from the audio network: it just goes silent), `engine` (`isEngineReady` flips), `extension`, `exception`, `dialog` (logged notifications only), `other`. After Grid topology writes, check `host.diagnostics` for `grid_rejected`. Modal dialogs (Dashboard, Save Project?, Recover Projects) are not in the log: use a screenshot. The log is shared by all instances: read `attribution.certain` and `uncertainty`.
