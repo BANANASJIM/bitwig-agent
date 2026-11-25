@@ -76,7 +76,7 @@ The maintainer builds the Python wheel, Python sdist and Java extension from one
 
 ## PyPI Trusted Publishing
 
-[`publish-pypi.yml`](https://github.com/BANANASJIM/bitwig-agent/blob/main/.github/workflows/publish-pypi.yml) is **manual**, not triggered by ordinary pushes. Its `publish` boolean defaults to **false**. It requires an exact `refs/tags/vX.Y.Z` ref and matching package versions. The default validation run downloads the published GitHub wheel, sdist, extension and manifest, verifies the three unambiguous checksum entries, and exercises installed wheel and sdist consumption outside the checkout. Only the Python artifacts are staged for PyPI.
+[`publish-pypi.yml`](https://github.com/BANANASJIM/bitwig-agent/blob/main/.github/workflows/publish-pypi.yml) runs automatically when a GitHub release is published, and publishes to PyPI (still behind the `pypi` environment and Trusted Publisher). It can also be dispatched manually; a manual run's `publish` boolean defaults to **false** (validation only). Ordinary pushes never trigger it. It requires an exact `refs/tags/vX.Y.Z` ref and matching package versions. The default validation run downloads the published GitHub wheel, sdist, extension and manifest, verifies the three unambiguous checksum entries, and exercises installed wheel and sdist consumption outside the checkout. Only the Python artifacts are staged for PyPI.
 
 A published non-draft GitHub release may retain its prerelease badge. The workflow still requires a stable-form `vX.Y.Z` tag and matching Python distribution metadata; a GitHub UI badge does not change the Python package version or the separate explicit publication approval.
 
