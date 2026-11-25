@@ -12,6 +12,7 @@ public final class RoutingModuleTest {
     public static void main(String[] args) {
         validation();
         helpers();
+        trackNamesAnnotateEntriesWithoutChangingThem();
         getIsReadOnlyAndAllowsPlayingTransport();
         setNeedsStoppedTransportAndObservedTargets();
         unknownWriteQuarantinesWritesButNotReads();
@@ -165,6 +166,20 @@ public final class RoutingModuleTest {
     static void bad(String m, JsonObject p) {
         try { RoutingModule.validateParams(m, p); throw new AssertionError("accepted invalid " + p); }
         catch (RpcException e) { check(e.code.equals("invalid_params"), "invalid params: " + p); }
+    }
+    static void trackNamesAnnotateEntriesWithoutChangingThem() {
+        JsonObject result = JsonParser.parseString("{\"output\":{\"entry\":{\"kind\":\"track_audio_input\",\"trackId\":\"m\"},\"choices\":["
+            + "{\"entry\":{\"kind\":\"post_fader\",\"trackId\":\"a\"},\"name\":\"Post-Fader\"},{\"entry\":{\"kind\":\"none\"},\"name\":null},"
+            + "{\"entry\":{\"kind\":\"track_notes\",\"trackId\":\"gone\"},\"name\":\"\"}]},"
+            + "\"components\":[{\"source\":{\"kind\":\"pre_fader\",\"trackId\":\"a\"}}]}").getAsJsonObject();
+        RoutingModule.annotateTrackNames(result, Map.of("m", "Master", "a", "Drums"));
+        JsonObject output = result.getAsJsonObject("output");
+        JsonArray choices = output.getAsJsonArray("choices");
+        check(output.get("trackName").getAsString().equals("Master"), "current entry gets its track name");
+        check(choices.get(0).getAsJsonObject().get("trackName").getAsString().equals("Drums"), "choice row gets the track name");
+        check(!choices.get(0).getAsJsonObject().getAsJsonObject("entry").has("trackName"), "entry stays verbatim for expected*");
+        check(!choices.get(1).getAsJsonObject().has("trackName") && !choices.get(2).getAsJsonObject().has("trackName"), "no name for none or unknown tracks");
+        check(result.getAsJsonArray("components").get(0).getAsJsonObject().get("sourceTrackName").getAsString().equals("Drums"), "sidechain source named");
     }
     static void check(boolean x, String text) { checks++; if (!x) throw new AssertionError(text); }
     static void expect(String code, HostOperation op) {

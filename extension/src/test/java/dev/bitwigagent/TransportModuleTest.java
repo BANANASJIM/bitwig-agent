@@ -23,6 +23,7 @@ public final class TransportModuleTest {
         timeSignatureIsValidatedWrittenAndReadBack();
         guideSettingsAreReadWrittenAndVerified();
         storedValueOutsideOptionsCanBeWrittenBack();
+        observedValueWinsWhenGetDisagrees();
         System.out.println("TransportModuleTest: " + assertions + " assertions passed (simulated host only)");
     }
     private static void readsExposeActualValuesAndUnits() {
@@ -269,6 +270,19 @@ public final class TransportModuleTest {
         f.transport.child("isArrangerRecordEnabled").emit(true);
         HostOperation blocked = f.submit(module, "transport.set", TransportMixFixture.json("{\"punchOutEnabled\":false}")); f.next();
         check(TransportMixFixture.error(blocked, "unsafe_state").outcome.equals("not_applied"), "recording blocks punch edits like the other settings");
+    }
+    private static void observedValueWinsWhenGetDisagrees() {
+        // Bitwig 6.1.4: the observer reported a stored project value ('bar') while EnumValue.get() returned a listed one.
+        TransportMixFixture f = new TransportMixFixture(); TransportModule module = new TransportModule(f.services);
+        TransportMixFixture.Node node = f.transport.child("defaultLaunchQuantization");
+        node.emit("bar");
+        node.custom = (name, args) -> name.equals("get") ? "1" : null;
+        JsonObject read = f.call(module, "transport.get", new JsonObject());
+        check(read.get("defaultLaunchQuantization").getAsString().equals("bar")
+            && read.getAsJsonArray("observedOutsideOptions").get(0).getAsString().equals("defaultLaunchQuantization"), "flag follows the reported (observed) value, not get()");
+        JsonObject result = f.call(module, "transport.set", TransportMixFixture.json("{\"defaultLaunchQuantization\":\"bar\"}"));
+        check(result.getAsJsonObject("fields").getAsJsonObject("defaultLaunchQuantization").get("verification").getAsString().equals("already_at_value")
+            && node.writes == 0, "the reported value can be written back even when get() disagrees");
     }
     private static void storedValueOutsideOptionsCanBeWrittenBack() {
         TransportMixFixture f = new TransportMixFixture(); TransportModule module = new TransportModule(f.services);

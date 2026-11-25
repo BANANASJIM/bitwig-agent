@@ -231,12 +231,40 @@ final class RoutingModule implements HostModule {
                         if (ticket != null) s.sources.guardRootRead(ticket);
                         if (write && !"unknown".equals(text(result, "completion"))) quarantined = false;
                         pending = false;
+                        annotateTrackNames(result, trackNames());
                         op.result.complete(result);
                     }, 0);
                 } catch (RuntimeException | Error error) { pending = false; op.fail(error); }
             });
         } catch (RuntimeException | Error error) { pending = false; throw error; }
         op.result.whenComplete((r, e) -> pending = false);
+    }
+
+    private Map<String, String> trackNames() {
+        Map<String, String> out = new HashMap<>();
+        for (int i = 0; i < HostServices.TRACKS; i++) {
+            Track track = (Track) s.tracks.getItemAt(i);
+            if (track.exists().get()) out.put(track.channelId().get(), track.name().get());
+        }
+        return out;
+    }
+
+    /** Native names of track buses are blank or generic ("Pre-Fader"): next to every {kind, trackId} entry put the track's public
+     *  name as a sibling (entry -> trackName, source -> sourceTrackName, ...). Entries themselves stay verbatim, copyable into expected*. */
+    static void annotateTrackNames(JsonElement element, Map<String, String> names) {
+        if (element == null) return;
+        if (element.isJsonArray()) { for (JsonElement item : element.getAsJsonArray()) annotateTrackNames(item, names); return; }
+        if (!element.isJsonObject()) return;
+        JsonObject object = element.getAsJsonObject();
+        Map<String, String> add = new LinkedHashMap<>();
+        for (Map.Entry<String, JsonElement> field : object.entrySet()) {
+            JsonElement value = field.getValue();
+            if (value.isJsonObject() && value.getAsJsonObject().has("kind") && value.getAsJsonObject().has("trackId")) {
+                String name = names.get(value.getAsJsonObject().get("trackId").getAsString());
+                if (name != null) add.put(field.getKey().equals("entry") ? "trackName" : field.getKey() + "TrackName", name);
+            } else annotateTrackNames(value, names);
+        }
+        for (Map.Entry<String, String> extra : add.entrySet()) if (!object.has(extra.getKey())) object.addProperty(extra.getKey(), extra.getValue());
     }
 
     private List<TrackRef> bank() {
