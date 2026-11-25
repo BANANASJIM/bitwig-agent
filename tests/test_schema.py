@@ -928,3 +928,40 @@ def test_clips_edit_requires_exact_target():
         validate_call("clips.edit", {**CLIP_EDIT, "op": "delete", "expectedClipName": "a" * 257})
     assert TOOLS["clips.edit"].read_only is False
     assert {e["op"] for e in TOOLS["clips.edit"].examples} == {"rename", "resize", "color", "transpose", "quantize", "duplicateContent", "delete", "copyTo"}
+
+
+@pytest.mark.parametrize("expected,value", [("", "x"), ("Pad\n\U0001F600 ", ""), ("a" * 1024, "b" * 1024), ("1", "true")])
+def test_grid_parameter_set_accepts_string_panel_text_verbatim(expected, value):
+    args = {**GRID_SET, "expectedKind": "string", "expectedValue": expected, "value": value}
+    params, _ = validate_call("grid.parameters.set", args)
+    assert params == args
+    batch = {**TARGET, "writes": [{**GRID_WRITE, "expectedKind": "string", "expectedValue": expected, "value": value}]}
+    assert validate_call("grid.parameters.set", batch)[0] == batch
+
+
+@pytest.mark.parametrize("changes", [
+    {"value": "a" * 1025},
+    {"expectedValue": "a" * 1025},
+    {"value": "\U0001F600" * 513},
+    {"value": 1},
+    {"expectedValue": True},
+])
+def test_grid_parameter_set_rejects_bad_string_panel_writes(changes):
+    args = {**GRID_SET, "expectedKind": "string", "expectedValue": "a", "value": "b", **changes}
+    with pytest.raises(ValidationError):
+        validate_call("grid.parameters.set", args)
+
+
+def test_grid_parameter_set_rejects_display_for_string_kind():
+    args = {key: value for key, value in GRID_SET.items() if key != "value"}
+    args.update(expectedKind="string", expectedValue="a", display="1 kHz")
+    with pytest.raises(ValidationError):
+        validate_call("grid.parameters.set", args)
+
+
+@pytest.mark.parametrize("kind,field", [("float", "value"), ("boolean", "expectedValue"), ("integer", "value")])
+def test_grid_parameter_set_rejects_text_for_scalar_kinds(kind, field):
+    base = {"float": (0.25, 0.5), "boolean": (False, True), "integer": (0, 1)}[kind]
+    args = {**GRID_SET, "expectedKind": kind, "expectedValue": base[0], "value": base[1], field: "text"}
+    with pytest.raises(ValidationError):
+        validate_call("grid.parameters.set", args)

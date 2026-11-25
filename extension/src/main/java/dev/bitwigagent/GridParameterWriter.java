@@ -18,17 +18,21 @@ final class GridParameterWriter {
     private final GridParameterContext contexts;
     private final Access nativeWriter;
     private final GridBooleanPanelWriter panels;
+    private final GridStringPanelWriter strings;
 
     GridParameterWriter(GridSnapshotReader values, GridParameterContext contexts, Access nativeWriter,
-            GridBooleanPanelWriter panels) {
+            GridBooleanPanelWriter panels, GridStringPanelWriter strings) {
         this.values = values; this.contexts = contexts; this.nativeWriter = nativeWriter; this.panels = panels;
+        this.strings = strings;
     }
 
     JsonObject set(Object proxy, UUID trackId, UUID moduleId, String parameterId,
             Request request, Runnable check, Runnable dispatch) {
         GridSnapshotReader.ParameterBinding binding = values.bindParameter(proxy, trackId, moduleId, parameterId, check);
-        if (binding.kind == GridSnapshotReader.Kind.PANEL_STRING)
-            throw failure("grid_unavailable", "String panels are read-only; no string write operation is supported.");
+        if (binding.kind == GridSnapshotReader.Kind.PANEL_STRING) {
+            if (strings == null) throw failure("grid_unavailable", "String panel write bindings are unavailable.");
+            return strings.set(binding, request, check, dispatch);
+        }
         if (binding.kind == GridSnapshotReader.Kind.PANEL_BOOLEAN) {
             if (panels == null) throw failure("grid_unavailable", "Boolean panel write bindings are unavailable.");
             return panels.set(binding, request, check, dispatch);
@@ -87,8 +91,11 @@ final class GridParameterWriter {
     /** Live CAS and range/option checks only; nothing is dispatched. */
     private void preflight(Object proxy, UUID trackId, Entry entry, Runnable check) {
         GridSnapshotReader.ParameterBinding binding = values.bindParameter(proxy, trackId, entry.moduleId, entry.parameterId, check);
-        if (binding.kind == GridSnapshotReader.Kind.PANEL_STRING)
-            throw failure("grid_unavailable", "String panels are read-only; no string write operation is supported.");
+        if (binding.kind == GridSnapshotReader.Kind.PANEL_STRING) {
+            if (strings == null) throw failure("grid_unavailable", "String panel write bindings are unavailable.");
+            strings.preflight(binding, entry.request, check);
+            return;
+        }
         if (binding.kind == GridSnapshotReader.Kind.PANEL_BOOLEAN) {
             if (panels == null) throw failure("grid_unavailable", "Boolean panel write bindings are unavailable.");
             panels.preflight(binding, entry.request, check);
@@ -173,12 +180,13 @@ final class GridParameterWriter {
         }
         private void setValue(JsonPrimitive value) {
             this.value = value;
-            rawValue = kind.equals("boolean") ? (value.getAsBoolean() ? 1.0 : 0.0) : value.getAsDouble();
+            if (!kind.equals("string")) rawValue = kind.equals("boolean") ? (value.getAsBoolean() ? 1.0 : 0.0) : value.getAsDouble();
         }
         static Request parse(JsonObject params) {
             String kind = Params.string(params, "expectedKind");
-            if (!kind.equals("float") && !kind.equals("integer") && !kind.equals("enum") && !kind.equals("boolean"))
-                throw failure("invalid_params", "expectedKind must be float, integer, enum or boolean.");
+            if (!kind.equals("float") && !kind.equals("integer") && !kind.equals("enum") && !kind.equals("boolean")
+                    && !kind.equals("string"))
+                throw failure("invalid_params", "expectedKind must be float, integer, enum, boolean or string.");
             JsonPrimitive expected = typed(params.get("expectedValue"), kind, "expectedValue");
             if (params.has("value") == params.has("display"))
                 throw failure("invalid_params", "Supply exactly one of value (raw) or display (text such as \"1.2 kHz\").");
@@ -194,6 +202,10 @@ final class GridParameterWriter {
         private static JsonPrimitive typed(JsonElement element, String kind, String field) {
             if (element == null || !element.isJsonPrimitive()) throw invalid(field, kind);
             JsonPrimitive value = element.getAsJsonPrimitive();
+            if (kind.equals("string")) {
+                if (!value.isString() || value.getAsString().length() > GridSnapshotReader.MAX_TEXT) throw invalid(field, kind);
+                return value;
+            }
             if (kind.equals("boolean")) {
                 if (!value.isBoolean()) throw invalid(field, kind);
                 return value;
@@ -215,7 +227,8 @@ final class GridParameterWriter {
             return value;
         }
         private static RpcException invalid(String field, String kind) {
-            return failure("invalid_params", field + " must be " + (kind.equals("boolean") ? "a JSON boolean."
+            return failure("invalid_params", field + " must be " + (kind.equals("string") ? "a JSON string of at most 1024 UTF-16 units."
+                    : kind.equals("boolean") ? "a JSON boolean."
                     : kind.equals("float") ? "a finite native-representable JSON number."
                     : "a signed 32-bit JSON integer token (not a boolean or fractional number)."));
         }
@@ -237,6 +250,7 @@ final class GridParameterWriter {
             }
         }
         boolean matches(JsonElement actual, JsonElement wanted) {
+            if (kind.equals("string")) return actual.getAsString().equals(wanted.getAsString());
             if (kind.equals("boolean")) return actual.getAsBoolean() == wanted.getAsBoolean();
             return actual.getAsDouble() == wanted.getAsDouble();
         }

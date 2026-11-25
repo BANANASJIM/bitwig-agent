@@ -241,6 +241,9 @@ DISPLAY_DESCRIPTION = ("Instead of value, for float parameters whose numericUnit
                        "The result reports displayMismatch from the post-write display; it never writes again to correct it.")
 
 
+StringValue = Annotated[str, Field(max_length=1024)]
+
+
 class GridRawWrite(StrictModel):
     moduleId: TrackId = Field(description="Current module instanceId from grid.get; reacquire after reopening the project.")
     parameterId: str = Field(max_length=1024, description="Exact native parameter ID from grid.get, not a name; empty is valid, at most 1024 UTF-16 code units.")
@@ -255,24 +258,28 @@ class GridRawWrite(StrictModel):
                 (["boolean"], {"type": "boolean"}),
                 (["integer", "enum"], {"type": "integer", "minimum": -(2**31), "maximum": 2**31 - 1}),
                 (["float"], {"type": "number"}),
+                (["string"], {"type": "string", "maxLength": 1024}),
             )
         ],
     })
 
-    expectedKind: Literal["float", "integer", "enum", "boolean"] = Field(
+    expectedKind: Literal["float", "integer", "enum", "boolean", "string"] = Field(
         description="Typed kind from a recent grid.get row (or grid.parameters.get); checked before any already-matching no-op.")
-    expectedValue: bool | int | float = Field(
+    expectedValue: bool | int | float | StringValue = Field(
         description="Exact current native raw value from a recent grid.get row (or grid.parameters.get), not normalized or display units; stale is rejected not_applied. Must match expectedKind; no tolerance or coercion.")
-    value: bool | int | float = omitted(
-        description="Requested native raw value: boolean JSON bool; integer/enum signed int32 JSON integer token; float finite JSON number. Enum uses an actual listed option value, never an ordinal. Native range/representability are checked before dispatch. Exactly one of value or display.")
+    value: bool | int | float | StringValue = omitted(
+        description="Requested native raw value: boolean JSON bool; integer/enum signed int32 JSON integer token; float finite JSON number; string (string panels, e.g. Comment text) any text of at most 1024 UTF-16 units, preserved verbatim, empty allowed. Enum uses an actual listed option value, never an ordinal. Native range/representability are checked before dispatch. Exactly one of value or display.")
     display: str = omitted(min_length=1, max_length=64, description=DISPLAY_DESCRIPTION)
 
     @field_validator("expectedValue", "value", mode="before")
     @classmethod
     def validate_raw_number(cls, value):
-        if type(value) not in (bool, int, float):
-            raise ValueError("raw value must be a JSON boolean or number, never null or a string")
-        if type(value) is not bool:
+        if type(value) not in (bool, int, float, str):
+            raise ValueError("raw value must be a JSON boolean, number or string, never null")
+        if type(value) is str:
+            if len(value.encode("utf-16-le", errors="surrogatepass")) > 2048:
+                raise ValueError("string value must be at most 1024 UTF-16 code units")
+        elif type(value) is not bool:
             try:
                 finite = math.isfinite(value)
             except OverflowError:
@@ -291,7 +298,12 @@ class GridRawWrite(StrictModel):
             if field not in self.model_fields_set:
                 continue
             value = getattr(self, field)
-            if self.expectedKind == "boolean":
+            if self.expectedKind == "string":
+                if type(value) is not str:
+                    raise ValueError(f"{field} must be a JSON string for string kind")
+            elif type(value) is str:
+                raise ValueError(f"{field} must not be a string for {self.expectedKind} kind")
+            elif self.expectedKind == "boolean":
                 if type(value) is not bool:
                     raise ValueError(f"{field} must be a JSON boolean for boolean kind")
             elif self.expectedKind in ("integer", "enum"):
@@ -313,9 +325,9 @@ class GridParameterSetArgs(ParameterArgs):
 
     moduleId: TrackId = omitted(description="Single form: current module instanceId from grid.get.")
     parameterId: str = omitted(max_length=1024, description="Single form: exact parameterId from grid.get; empty is valid.")
-    expectedKind: Literal["float", "integer", "enum", "boolean"] = omitted(description="Single form: kind from a recent grid.get row.")
-    expectedValue: bool | int | float = omitted(description="Single form: exact current raw value from a recent grid.get row.")
-    value: bool | int | float = omitted(description="Single form: requested native raw value (or give display instead).")
+    expectedKind: Literal["float", "integer", "enum", "boolean", "string"] = omitted(description="Single form: kind from a recent grid.get row.")
+    expectedValue: bool | int | float | StringValue = omitted(description="Single form: exact current raw value from a recent grid.get row.")
+    value: bool | int | float | StringValue = omitted(description="Single form: requested native raw value (or give display instead).")
     display: str = omitted(min_length=1, max_length=64, description="Single form: " + DISPLAY_DESCRIPTION)
     writes: Annotated[list[GridRawWrite], Field(min_length=1, max_length=64)] = omitted(
         description="Batch form: 1..64 writes on this device, each a full single write. All CAS checks run first; any failure writes nothing. Then writes dispatch in order and stop at the first failure.")

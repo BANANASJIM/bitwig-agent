@@ -80,7 +80,9 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
         else try {
             GridBooleanPanelWriter panels = booleanPanels == null ? null
                     : new GridBooleanPanelWriter(snapshots, parameterContexts, booleanPanels);
-            parameterWriter = new GridParameterWriter(snapshots, parameterContexts, new Bitwig614GridParameterWriter(bindings), panels);
+            GridStringPanelWriter strings = stringPanels == null || stringPanels.setterError() != null ? null
+                    : new GridStringPanelWriter(snapshots, parameterContexts, stringPanels);
+            parameterWriter = new GridParameterWriter(snapshots, parameterContexts, new Bitwig614GridParameterWriter(bindings), panels, strings);
         } catch (ReflectiveOperationException | RuntimeException | LinkageError error) { writeError = diagnostic(error); }
         GridTopologyContext topologyContexts = null;
         String topologyContextError = structureError == null ? null : "Required structure binding unavailable.";
@@ -231,9 +233,15 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
         panels.addProperty("engineAcknowledgement", false);
         result.add("booleanPanels", panels);
         JsonObject strings = capability(gateError == null ? stringPanelError : gateError,
-                "exact_xMn_native_string_read_only_no_scalar_labels_display_or_touch_license_flags");
+                "exact_xMn_native_string_panel_no_scalar_labels_display_or_touch_license_flags");
         strings.addProperty("inspectionAvailable", gateError == null && stringPanelError == null && inspectionError == null);
-        strings.addProperty("writeAvailable", false);
+        String stringWriteError = gateError != null ? gateError : stringPanelError != null ? stringPanelError
+                : stringPanels.setterError() != null ? stringPanels.setterError() : writeError;
+        strings.addProperty("writeAvailable", stringWriteError == null);
+        if (stringWriteError != null) strings.addProperty("writeReason", stringWriteError);
+        strings.addProperty("operation", "btw.hUR(String):void/native_string_panel_change");
+        strings.addProperty("nativeUndoAwareOperation", true); strings.addProperty("undoGroupingVerified", false);
+        strings.addProperty("engineAcknowledgement", false);
         result.add("stringPanels", strings);
         for (GridSnapshotReader.Metadata metadata : GridSnapshotReader.METADATA)
             result.add(metadata.key, capability(gateError == null ? metadataErrors.get(metadata) : gateError, metadata.coverage));

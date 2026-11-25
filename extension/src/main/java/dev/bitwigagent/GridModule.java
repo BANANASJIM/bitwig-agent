@@ -122,7 +122,7 @@ final class GridModule implements HostModule {
         }
     }
     private static final String[] READS = {"catalog", "structure", "typedParameters", "display", "parameterInspection"};
-    private static final String[] WRITERS = {"parameterWrite", "booleanPanels", "moduleMove", "moduleDelete", "moduleRename",
+    private static final String[] WRITERS = {"parameterWrite", "booleanPanels", "stringPanels", "moduleMove", "moduleDelete", "moduleRename",
             "moduleInsert", "connectionWrite"};
     /** Default grid.capabilities: availability booleans only (reasons for unavailable ones); detail:"full" has every binding. */
     static JsonObject compactCapabilities(JsonObject full) {
@@ -131,7 +131,7 @@ final class GridModule implements HostModule {
             if (full.has(key)) result.add(key, full.get(key));
         JsonObject reads = new JsonObject(), writers = new JsonObject(), unavailable = new JsonObject();
         for (String key : READS) summarize(full, key, "available", reads, unavailable);
-        for (String key : WRITERS) summarize(full, key, key.equals("booleanPanels") ? "writeAvailable" : "available", writers, unavailable);
+        for (String key : WRITERS) summarize(full, key, key.equals("booleanPanels") || key.equals("stringPanels") ? "writeAvailable" : "available", writers, unavailable);
         result.add("reads", reads); result.add("writers", writers);
         if (unavailable.size() > 0) result.add("unavailable", unavailable);
         result.addProperty("detail", "pass detail:\"full\" for per-binding coverage, operations and limits");
