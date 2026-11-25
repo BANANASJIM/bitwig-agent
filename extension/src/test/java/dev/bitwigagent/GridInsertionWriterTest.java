@@ -301,6 +301,9 @@ public final class GridInsertionWriterTest {
         check(error != null && error.code.equals("invalid_params") && error.outcome.equals("not_applied") && f.loads == 0
                 && error.getMessage().contains("Low-pass MG") && f.guard.blockedReason() == null,
                 "a partial name is not a match; candidates are listed and nothing is reserved or loaded");
+        check(GridNames.matches("\u2260", "\u2260") && !GridNames.matches("<", "\u2260") && !GridNames.matches("Oscillator", "<") && GridNames.matches("Oscillator", ""),
+                "a symbol-only catalog query matches that name only, not everything");
+        check(GridNames.nearest(List.of("<", "<=", "Oscillator"), "<=", 5).get(0).equals("<="), "symbol-only misses still get nearest candidates");
         f.catalogNames("Filter", "filter", "Oscillator");
         error = null;
         try { f.writer.insert(f.model.proxy, TRACK, new GridInsertionWriter.Request(null, "FILTER", 8, 3), () -> {}, () -> {}, v -> {}, e -> {}); }

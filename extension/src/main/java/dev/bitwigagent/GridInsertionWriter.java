@@ -141,7 +141,7 @@ final class GridInsertionWriter {
             if (exact.isEmpty()) {
                 List<String> names = new ArrayList<>();
                 for (Map.Entry<UUID, String> entry : catalog) {
-                    if (!GridNames.norm(request.typeName).isEmpty() && GridNames.matches(entry.getValue(), request.typeName) && candidates.size() < GridNames.SUGGESTIONS) candidates.add(entry.getValue());
+                    if (GridNames.matches(entry.getValue(), request.typeName) && candidates.size() < GridNames.SUGGESTIONS) candidates.add(entry.getValue());
                     names.add(entry.getValue());
                 }
                 if (candidates.isEmpty()) candidates = GridNames.nearest(names, request.typeName, GridNames.SUGGESTIONS);

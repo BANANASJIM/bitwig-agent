@@ -14,7 +14,7 @@ Native evidence remains bounded to exercised Linux / API 25 cases. Version `0.2.
 
 ## Isolated native runs
 
-Native tests can run on an isolated headless display (`weston --backend=headless --xwayland`, `DISPLAY=:1`) so the user's desktop is untouched. Before launching a second Bitwig, check that no other Bitwig is running (`ps`): the extension port 61172 is shared, so the test instance may silently talk to, or lose the port to, the user's desktop instance. `status.instance` (`pid`, `display`, `waylandDisplay`) tells you which process answered; compare it with the pid you launched and stop if it differs. Display isolation is not audio or profile isolation: audio devices and the Bitwig profile are still the user's.
+Native tests can run on an isolated headless display (`weston --backend=headless --xwayland`, `DISPLAY=:1`) so the user's desktop is untouched. Before launching a second Bitwig, check that no other Bitwig is running (`ps`): the extension port 61172 is shared, so the test instance may silently talk to, or lose the port to, the user's desktop instance. `status.instance` (`pid`, `parentPid`, `display`, `waylandDisplay`) tells you which process answered. The `bitwig-studio` launcher forks the `BitwigStudio` child that hosts the extension, so `pid` is the child: identify your instance by `display`/`waylandDisplay` and by `parentPid` equal to the launcher pid you started (or the process owning port 61172), and stop if it does not match. Display isolation is not audio or profile isolation: audio devices and the Bitwig profile are still the user's.
 
 ## Standard format validation
 

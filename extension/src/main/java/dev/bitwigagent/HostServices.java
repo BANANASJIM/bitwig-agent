@@ -189,6 +189,7 @@ final class HostServices implements AutoCloseable {
     static JsonObject instance() {
         JsonObject result = new JsonObject();
         result.addProperty("pid", ProcessHandle.current().pid());
+        ProcessHandle.current().parent().ifPresent(parent -> result.addProperty("parentPid", parent.pid()));
         result.addProperty("display", System.getenv("DISPLAY"));
         result.addProperty("waylandDisplay", System.getenv("WAYLAND_DISPLAY"));
         return result;

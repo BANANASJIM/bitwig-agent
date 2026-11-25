@@ -159,7 +159,7 @@ public final class HostBridgeTest {
         check(call(host, bridge, "context.get", new JsonObject()).get("projectModified").isJsonNull(), "context: unobserved projectModified is null");
         for (String method : List.of("status", "context.get")) {
             JsonObject instance = call(host, bridge, method, new JsonObject()).getAsJsonObject("instance");
-            check(instance.get("pid").getAsLong() == ProcessHandle.current().pid() && instance.has("display") && instance.has("waylandDisplay"), method + " reports which process answered");
+            check(instance.get("pid").getAsLong() == ProcessHandle.current().pid() && instance.has("parentPid") == ProcessHandle.current().parent().isPresent() && instance.has("display") && instance.has("waylandDisplay"), method + " reports which process answered");
         }
         host.modified.set(true);
         check(call(host, bridge, "status", new JsonObject()).get("projectModified").getAsBoolean(), "status reports unsaved");

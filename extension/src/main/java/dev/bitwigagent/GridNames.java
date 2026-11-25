@@ -15,6 +15,7 @@ final class GridNames {
 
     /** Every whitespace-separated query word must occur in the normalized name; an empty query matches everything. */
     static boolean matches(String name, String query) {
+        if (norm(query).isEmpty() && !query.trim().isEmpty()) return name.equalsIgnoreCase(query.trim()); // symbol-only query
         String haystack = norm(name);
         for (String word : query.split("\\s+")) {
             String needle = norm(word);
@@ -39,12 +40,18 @@ final class GridNames {
 
     static boolean same(String name, String query) { return norm(name).equals(norm(query)); }
 
+    /** Normalized form, or the lowercased raw text when it is all symbols. */
+    private static String key(String text) {
+        String n = norm(text);
+        return n.isEmpty() ? text.trim().toLowerCase() : n;
+    }
+
     /** Nearest names by edit-distance ratio on the normalized forms, best first; hopeless matches are dropped. */
     static List<String> nearest(Collection<String> names, String query, int limit) {
-        String q = norm(query);
+        String q = key(query);
         List<Map.Entry<Double, String>> scored = new ArrayList<>();
         for (String name : names) {
-            String n = norm(name);
+            String n = key(name);
             int longest = Math.max(q.length(), n.length());
             if (longest == 0) continue;
             double ratio = 1.0 - (double) distance(q, n) / longest;

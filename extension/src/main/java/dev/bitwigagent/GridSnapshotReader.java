@@ -71,7 +71,7 @@ final class GridSnapshotReader {
         }
         JsonObject result = HostServices.observed();
         result.add("entries", entries); result.add("window", window(offset, limit, matches.size()));
-        if (matches.isEmpty() && !GridNames.norm(query).isEmpty()) {
+        if (matches.isEmpty() && !query.trim().isEmpty()) {
             Map<String, CatalogEntry> byName = new LinkedHashMap<>();
             for (CatalogEntry row : everything) byName.putIfAbsent(row.name, row);
             JsonArray suggestions = new JsonArray();
