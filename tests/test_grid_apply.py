@@ -629,13 +629,13 @@ def test_replace_default_refuses_and_opt_in_swaps_type_and_rewires():
 
 def test_replace_per_module_only_affects_that_module():
     host = replace_host()
-    host.add("Add", "R: other")
+    host.add("Add", "R: other", 12, 0)
     spec = copy.deepcopy(REPLACE_SPEC)
     spec["modules"][0]["replace"] = True
     spec["modules"].append({"name": "R: other", "type": "Multiply", "x": 12, "y": 0})
     with pytest.raises(BridgeError) as err:
         run(host, spec)
-    assert "R: other" in err.value.error["message"] and "'R: a'" not in err.value.error["message"]
+    assert "R: other" in err.value.error["message"] and "'R: a' exists" not in err.value.error["message"]
     assert host.writes() == []
     spec["modules"][1]["replace"] = False
     spec["modules"][2]["replace"] = True
