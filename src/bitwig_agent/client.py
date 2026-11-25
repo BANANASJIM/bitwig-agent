@@ -9,7 +9,7 @@ import os
 import uuid
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any
-from bitwig_agent.catalog import CLIENT_SIDE, TOOLS, validate_call
+from bitwig_agent.catalog import CLIENT_SIDE, TOOLS, max_timeout_ms, validate_call
 
 MAX_BYTES = 1024 * 1024
 METHODS = frozenset(TOOLS) - CLIENT_SIDE
@@ -83,8 +83,9 @@ class BridgeClient:
     async def call(self, method: str, params: dict[str, Any], timeout_ms: int = 5000) -> dict[str, Any]:
         if method not in METHODS or not isinstance(params, dict):
             raise ValueError("A known method and object params are required")
-        if type(timeout_ms) is not int or not 100 <= timeout_ms <= 10000:
-            raise ValueError("timeoutMs must be an integer in 100..10000")
+        limit = max_timeout_ms(method)
+        if type(timeout_ms) is not int or not 100 <= timeout_ms <= limit:
+            raise ValueError(f"timeoutMs must be an integer in 100..{limit}")
         if "timeoutMs" in params:
             raise ValueError("Pass timeout_ms separately from host params")
         params, _ = validate_call(method, {**params, "timeoutMs": timeout_ms})

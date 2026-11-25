@@ -27,6 +27,10 @@ public final class GridInsertionWriterTest {
         batchValidatesEverythingBeforeLoadingAnything();
         batchStopsAtFirstFailureOrUnknown();
         batchReportsFinalPositionsAndStopsBeforeTheDeadline();
+        slowEntriesStopTheBatchEarlyAsPartial();
+        variableFootprintSettlesWithoutQuarantine();
+        settlementMismatchIsReleasedOnlyByConsistentReconcile();
+        lateCallbackSettlesAndReconcileRecoversItsMismatch();
         System.out.println("GridInsertionWriterTest: " + assertions + " assertions passed (semantic fake native lifecycle only)");
     }
     private static void processOwnersSurviveReplacementAndRejectMalformedMarkers() {
@@ -48,6 +52,17 @@ public final class GridInsertionWriterTest {
             expect("grid_unavailable", guard::requireAvailable);
             check(bad.get(GridTopologyQuarantine.KEY) == invalid && guard.quarantined(), "unknown/non-String state is never overwritten or admitted");
         }
+        Properties kinds = new Properties(); GridTopologyQuarantine kind = new GridTopologyQuarantine(kinds);
+        String mine = kind.reserve();
+        check(kind.mismatch(mine, "{}") && GridTopologyQuarantine.SETTLEMENT.equals(kind.origin()), "matching pending owner enters the recoverable state");
+        kind.poison();
+        check(GridTopologyQuarantine.NATIVE.equals(kind.origin()) && !kind.reconcile("{}"), "native failure after a mismatch is sticky and not reconcilable");
+        check(!kind.mismatch(mine, "{}") && GridTopologyQuarantine.NATIVE.equals(kind.origin()), "sticky is never downgraded to recoverable");
+        GridTopologyQuarantine other = new GridTopologyQuarantine(new Properties()); other.reserve();
+        check(!other.mismatch(UUID.randomUUID().toString(), "{}") && GridTopologyQuarantine.NATIVE.equals(other.origin()),
+                "a mismatch from a non-owner fails closed (sticky)");
+        GridTopologyQuarantine stale = new GridTopologyQuarantine(new Properties()); String own = stale.reserve(); stale.mismatch(own, "{\"a\":1}");
+        check(!stale.reconcile("{\"a\":2}") && stale.reconcile("{\"a\":1}") && stale.origin() == null, "reconcile releases only the verified detail");
         GridTopologyQuarantine denied = new GridTopologyQuarantine(() -> { throw new SecurityException("denied"); });
         expect("grid_unavailable", denied::requireAvailable);
         check(denied.quarantined() && denied.blockedReason() != null, "inaccessible process Properties cannot become availability");
@@ -238,8 +253,12 @@ public final class GridInsertionWriterTest {
                     && TransportMixFixture.error(op, "grid_unavailable").outcome.equals("unknown"),
                     "cleanup returns before outward unknown notification and ordinary native settlement scheduling");
             f.next();
-            check(new GridTopologyQuarantine(f.process).quarantined(),
+            check(new GridTopologyQuarantine(f.process).quarantined() && GridTopologyQuarantine.NATIVE.equals(f.guard.origin()),
                     "healthy later context cannot release translated native conversion failure quarantine");
+            JsonObject refused = f.writer.reconcile(f.model.proxy, TRACK, () -> {});
+            check(!refused.get("released").getAsBoolean() && f.guard.quarantined()
+                    && refused.getAsJsonObject("recorded").get("origin").getAsString().equals(GridTopologyQuarantine.NATIVE),
+                    "reconcile reports but never releases a native-failure quarantine");
         }
         for (String rejection : List.of("deadline_exceeded", "stale_context")) {
             Fixture f = new Fixture(); HostOperation op = f.start(); f.requestError = rejection; f.deliver();
@@ -379,7 +398,7 @@ public final class GridInsertionWriterTest {
         }
         RpcException named = null;
         try { f.writer.insertAll(f.model.proxy, TRACK, List.of(new GridInsertionWriter.Request(null, "alpha", 8, 3),
-                new GridInsertionWriter.Request(null, "gamma", 12, 3)), () -> true, () -> {}, () -> {}, v -> {}, e -> {}); }
+                new GridInsertionWriter.Request(null, "gamma", 12, 3)), () -> Long.MAX_VALUE, () -> {}, () -> {}, v -> {}, e -> {}); }
         catch (RpcException caught) { named = caught; }
         check(named != null && named.getMessage().contains("#1") && !named.getMessage().contains("#0"), "the failing entry is named");
         Fixture crowded = new Fixture(); crowded.population(1023); HostOperation op = crowded.startAll(batchOf(TYPE, TYPE));
@@ -436,13 +455,109 @@ public final class GridInsertionWriterTest {
                 && !first.get("matchesRequested").getAsBoolean(), "entry positions are refreshed from the final graph, matching the diff");
         Fixture late = new Fixture(); late.fresh = true;
         op = late.startAll(batchOf(TYPE, TYPE, TYPE));
-        late.deliver(); late.timeLeft = false; late.next();
+        late.deliver(); late.remaining = 0; late.next();
         result = op.result.join(); modules = result.getAsJsonArray("modules");
         check(late.loads == 1 && result.get("batchStatus").getAsString().equals("partial") && result.get("completion").getAsString().equals("observed")
                 && modules.get(1).getAsJsonObject().get("status").getAsString().equals("not_dispatched")
                 && modules.get(2).getAsJsonObject().get("status").getAsString().equals("not_dispatched") && result.has("graph"),
                 "with too little time left the batch stops cleanly, keeps its diff and dispatches nothing more");
         late.guard.requireAvailable();
+    }
+    private static void slowEntriesStopTheBatchEarlyAsPartial() {
+        long second = 1_000_000_000L;
+        Fixture f = new Fixture(); f.fresh = true; long[] now = {0};
+        f.writer.clock = () -> now[0];
+        f.remaining = 5 * second;
+        HostOperation op = f.startAll(batchOf(TYPE, TYPE, TYPE));
+        now[0] = 3 * second; f.deliver(); f.next(); // the first entry took 3 s; 5 s left is > 1.5 s but < 2 x 3 s
+        JsonObject result = op.result.join(); JsonArray modules = result.getAsJsonArray("modules");
+        check(f.loads == 1 && result.get("batchStatus").getAsString().equals("partial") && result.get("completion").getAsString().equals("observed")
+                && result.get("stopReason").getAsString().equals("deadline_margin") && result.get("slowestEntryMs").getAsLong() == 3000
+                && modules.get(1).getAsJsonObject().get("status").getAsString().equals("not_dispatched") && result.has("graph"),
+                "a slow entry stops the batch before the next one (partial with a diff), never running into the deadline as unknown");
+        f.guard.requireAvailable();
+        Fixture fast = new Fixture(); fast.fresh = true; long[] t = {0};
+        fast.writer.clock = () -> t[0]; fast.remaining = 5 * second;
+        op = fast.startAll(batchOf(TYPE, TYPE));
+        t[0] = second / 10; fast.deliver(); fast.next(); fast.deliver(); fast.next();
+        check(op.result.join().get("batchStatus").getAsString().equals("applied") && fast.loads == 2, "fast entries keep the fixed 1.5 s margin");
+    }
+    private static void variableFootprintSettlesWithoutQuarantine() {
+        Fixture f = new Fixture(); f.growOnPlace = 2; // Merge/Sum: detached 1x1, sized once attached
+        HostOperation op = f.start(); f.deliver(); f.next();
+        JsonObject result = op.result.join(); f.guard.requireAvailable();
+        int height = -1;
+        for (JsonElement row : result.getAsJsonObject("graph").getAsJsonArray("modules"))
+            if (row.getAsJsonObject().get("instanceId").getAsString().equals(result.get("moduleId").getAsString())) height = row.getAsJsonObject().get("height").getAsInt();
+        check(height == 2 && f.guard.origin() == null, "an inserted module that resizes on attach settles normally with its actual footprint");
+        Fixture survivor = new Fixture(); op = survivor.start(); survivor.deliver(); survivor.model.first.put(HEIGHT, 3); survivor.next();
+        check(op.result.isCompletedExceptionally() && GridTopologyQuarantine.SETTLEMENT.equals(survivor.guard.origin()),
+                "a survivor footprint change is still a settlement mismatch");
+    }
+    private static void settlementMismatchIsReleasedOnlyByConsistentReconcile() {
+        Fixture f = new Fixture(); HostOperation op = f.start(); f.deliver();
+        f.incoming.put(Y, 4); f.next(); // the native layout put the new module on another row
+        check(TransportMixFixture.error(op, "grid_verification_failed").outcome.equals("unknown") && f.guard.quarantined()
+                && GridTopologyQuarantine.SETTLEMENT.equals(f.guard.origin()), "settlement disagreement is unknown and quarantined, as before");
+        expect("grid_unavailable", f.guard::requireAvailable);
+        JsonObject state = Bitwig614GridAdapter.quarantineState(f.guard);
+        check(state.get("state").getAsString().equals("settlement_mismatch") && state.get("recoverable").getAsBoolean()
+                && state.getAsJsonObject("detail").getAsJsonObject("error").get("code").getAsString().equals("grid_verification_failed")
+                && state.getAsJsonObject("detail").get("moduleId").getAsString().equals(new UUID(1, 1025).toString()),
+                "capabilities expose origin, recoverability and the recorded error/module");
+        JsonObject wrong = f.writer.reconcile(f.model.proxy, new UUID(7, 7), () -> {});
+        check(!wrong.get("released").getAsBoolean() && f.guard.quarantined(), "reconcile must target the recorded track");
+        String recordedDetail = f.guard.detail();
+        JsonObject otherDevice = JsonParser.parseString(recordedDetail).getAsJsonObject(); otherDevice.addProperty("device", "0");
+        f.process.setProperty(GridTopologyQuarantine.DETAIL_KEY, otherDevice.toString());
+        JsonObject sibling = f.writer.reconcile(f.model.proxy, TRACK, () -> {});
+        check(!sibling.get("released").getAsBoolean() && sibling.get("reason").getAsString().contains("another Grid device")
+                && sibling.getAsJsonObject("found").get("consistent").getAsBoolean() && f.guard.quarantined(),
+                "another Grid on the recorded track is checked but never released");
+        f.process.setProperty(GridTopologyQuarantine.DETAIL_KEY, recordedDetail);
+        // Inconsistent state stays quarantined: a nonempty native placement list, then a busy undo manager.
+        f.placementReady = false;
+        JsonObject pending = f.writer.reconcile(f.model.proxy, TRACK, () -> {});
+        check(!pending.get("released").getAsBoolean() && !pending.getAsJsonObject("found").get("consistent").getAsBoolean()
+                && pending.getAsJsonObject("found").getAsJsonObject("inconsistency").get("code").getAsString().equals("unsafe_state")
+                && f.guard.quarantined(), "a nonempty native placement list stays quarantined");
+        f.placementReady = true;
+        f.context.values.put(GridTopologyContext.Field.UNDO_ACTIVE, true);
+        check(!f.writer.reconcile(f.model.proxy, TRACK, () -> {}).get("released").getAsBoolean() && f.guard.quarantined(),
+                "an active undo transaction stays quarantined");
+        f.context.values.put(GridTopologyContext.Field.UNDO_ACTIVE, false);
+        f.model.second.put(INSTANCE_ID, f.model.first.values.get(INSTANCE_ID));
+        check(!f.writer.reconcile(f.model.proxy, TRACK, () -> {}).get("released").getAsBoolean() && f.guard.quarantined(),
+                "duplicate module UUIDs stay quarantined");
+        f.model.second.put(INSTANCE_ID, new UUID(1, 2));
+        JsonObject released = f.writer.reconcile(f.model.proxy, TRACK, () -> {});
+        JsonObject module = released.getAsJsonObject("found").getAsJsonObject("module");
+        check(released.get("released").getAsBoolean() && module.get("inserted").getAsBoolean()
+                && module.getAsJsonObject("actualPosition").get("y").getAsInt() == 4
+                && released.getAsJsonObject("found").get("moduleCount").getAsInt() == 3
+                && released.getAsJsonObject("found").get("modulesBefore").getAsInt() == 2, "consistent graph releases and reports the late module");
+        f.guard.requireAvailable();
+        JsonObject idle = f.writer.reconcile(f.model.proxy, TRACK, () -> {});
+        check(!idle.get("released").getAsBoolean() && idle.getAsJsonObject("found").get("consistent").getAsBoolean()
+                && !idle.getAsJsonObject("found").has("module"), "when idle reconcile is a consistency check of the given device and releases nothing");
+    }
+    private static void lateCallbackSettlesAndReconcileRecoversItsMismatch() {
+        Fixture f = new Fixture(); HostOperation op = f.start(); op.result.cancel(false);
+        JsonObject waiting = f.writer.reconcile(f.model.proxy, TRACK, () -> {});
+        check(!waiting.get("released").getAsBoolean() && waiting.get("quarantineBefore").getAsString().equals("pending")
+                && f.guard.blockedReason() != null, "reconcile cannot release a pending native callback");
+        Object current = f.context.values.get(NativeReadContext.Field.CURRENT_DT);
+        f.requestError = "deadline_exceeded"; f.deliver(); // the late callback is rejected and cleaned
+        f.context.values.put(NativeReadContext.Field.CURRENT_DT, new Object()); f.next(); // and settles in another Dt
+        check(f.cleanups == 1 && f.placements == 0 && GridTopologyQuarantine.SETTLEMENT.equals(f.guard.origin()),
+                "a late callback whose settlement context disagreed is a recoverable mismatch, not sticky");
+        check(!f.writer.reconcile(f.model.proxy, TRACK, () -> {}).get("released").getAsBoolean(), "still another Dt: stays quarantined");
+        f.context.values.put(NativeReadContext.Field.CURRENT_DT, current);
+        JsonObject released = f.writer.reconcile(f.model.proxy, TRACK, () -> {});
+        check(released.get("released").getAsBoolean() && !released.getAsJsonObject("found").has("module"), "back in the default Dt, reconcile releases");
+        f.guard.requireAvailable();
+        Fixture plain = new Fixture(); HostOperation late = plain.start(); plain.requestError = "deadline_exceeded"; plain.deliver(); plain.next();
+        check(late.result.isCompletedExceptionally() && plain.guard.origin() == null, "an ordinary late callback settles and releases by itself");
     }
     private static void expect(String code, Runnable action) {
         try { action.run(); throw new AssertionError("Expected " + code); }
@@ -459,7 +574,7 @@ public final class GridInsertionWriterTest {
         Node incoming = model.module(1024, null); final Object result = new Object(), completion = new Object();
         boolean fresh; int created;
         List<?> loaded = List.of(incoming); GridInsertionBridge.Callback callback;
-        int loads, placements, cleanups, successes, normalization;
+        int loads, placements, cleanups, successes, normalization, growOnPlace;
         boolean reflow, deleted, parented, owned, placementReady = true;
         boolean failResolve, failPrepare, failLaunch, failConverted, failCleanup, failPlacement, failSuccess, failEnqueue, failDelivery, badMembership, failFailureNotification;
         String requestError;
@@ -486,9 +601,9 @@ public final class GridInsertionWriterTest {
             }, () -> op.dispatched = true, op.result::complete, op::fail); } catch (Throwable error) { op.fail(error); }
             return op;
         }
-        boolean timeLeft = true;
+        long remaining = Long.MAX_VALUE;
         void editAll(List<GridInsertionWriter.Request> requests, Runnable check, Runnable dispatch, Consumer<JsonObject> complete, Consumer<Throwable> fail) {
-            writer.insertAll(model.proxy, TRACK, requests, () -> timeLeft, check, dispatch, complete, fail);
+            writer.insertAll(model.proxy, TRACK, requests, () -> remaining, check, dispatch, complete, fail);
         }
         GridInsertionWriter.Request request() { return new GridInsertionWriter.Request(TYPE, 8, 3); }
         HostOperation start() { return start(request()); }
@@ -548,6 +663,7 @@ public final class GridInsertionWriterTest {
             List<Object> members = new ArrayList<>((List<?>) model.graph.values.get(MODULES));
             if (reflow) for (Object member : members) { Node node = (Node) member; node.put(X, ((Integer) node.values.get(X)) + 2); }
             incoming.put(X, x + normalization).put(Y, y).put(MODULE_GRAPH, graph); members.add(incoming); model.graph.put(MODULES, members);
+            if (growOnPlace > 0) incoming.put(HEIGHT, growOnPlace);
             context.override(incoming, NativeReadContext.Field.CONTEXT, context.context);
             context.override(incoming, NativeReadContext.Field.PROJECT, context.project);
         }

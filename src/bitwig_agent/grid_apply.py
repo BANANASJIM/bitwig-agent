@@ -12,11 +12,13 @@ import json
 import math
 import re
 import struct
+import time
 from importlib import resources
 from typing import Any
 
 from bitwig_agent import raw_scales
 from bitwig_agent.client import BridgeError
+from bitwig_agent.schema import TOPOLOGY_TIMEOUT_MS
 
 BUNDLED_HOST_VERSION = "6.1.4"
 INSERT_BATCH, PARAM_BATCH, CONNECTION_BATCH, READ_IDS, READ_PAGE = 16, 64, 32, 32, 128
@@ -24,6 +26,12 @@ INSERT_BATCH, PARAM_BATCH, CONNECTION_BATCH, READ_IDS, READ_PAGE = 16, 64, 32, 3
 MAX_DEVICE_MODULES = 1024
 MAX_STRING_UNITS = 1024
 WRITE_TIMEOUT_MS = 10000
+TOPOLOGY_WRITES = frozenset({"grid.modules.insert", "grid.modules.move", "grid.modules.delete", "grid.modules.rename", "grid.connections.set"})
+# Adaptive insert batches: size each call to take at most this share of the topology timeout at the measured
+# per-entry time, and start halved on graphs this large (each entry's verification reads the whole graph).
+INSERT_BATCH_BUDGET = 0.25
+LARGE_GRAPH_MODULES = 128
+monotonic = time.monotonic  # replaceable by tests
 CLEAN = ("applied", "already_matched")
 _schema_cache: dict[str, Any] = {}
 _notes_cache: dict[str, Any] = {}
@@ -466,10 +474,11 @@ class Apply:
         self.voicing_want: dict[str, Any] = args.get("voicing") or {}
         self.voicing_set: dict[str, Any] = {}
         self.voicing_expected: dict[str, Any] = {}
+        self.clock = monotonic
 
     # ---- transport -------------------------------------------------------------------------------------------
     async def call(self, method: str, params: dict[str, Any], *, write: bool = False) -> dict[str, Any]:
-        timeout = max(self.timeout_ms, WRITE_TIMEOUT_MS) if write else self.timeout_ms
+        timeout = TOPOLOGY_TIMEOUT_MS if method in TOPOLOGY_WRITES else max(self.timeout_ms, WRITE_TIMEOUT_MS) if write else self.timeout_ms
         if write:
             self.wrote = True
             self.topo_written |= method not in ("grid.parameters.set", "grid.connections.set", "grid.voicing.set")
@@ -1082,12 +1091,15 @@ class Apply:
         for name, at in self.pre_moves:
             await self.move_to(name, pos, at)
         queue = list(inserts)
+        size = INSERT_BATCH if len(self.rows0) < LARGE_GRAPH_MODULES else INSERT_BATCH // 2
         while queue:
             self.phase = "insert"
-            chunk = queue[:INSERT_BATCH]
+            chunk = queue[:size]
+            started = self.clock()
             result = await self.call("grid.modules.insert", {"modules": [
                 {"typeId": self.resolved[n]["typeId"], "x": self.by_spec[n]["x"], "y": self.by_spec[n]["y"]} for n in chunk]}, write=True)
             entries = result.get("modules", [])
+            size = next_insert_batch(size, self.clock() - started, result)
             added = {r["instanceId"]: r for r in result.get("modulesAdded", [])}
             fresh = []
             for n, e in zip(chunk, entries):
@@ -1211,9 +1223,19 @@ class Apply:
                                 "failedPhaseIncomplete": self.phase, **{k: v for k, v in pending.items() if v}}
         if self.unnamed:
             out["unnamedModules"] = dict(self.unnamed)
-        out["next"] = ("Outcome unknown: inspect with grid.get before any further write." if status == "unknown"
+        out["next"] = ("Outcome unknown: inspect with grid.get before any further write; if grid.capabilities shows a recoverable topologyQuarantine, grid.topology.reconcile on this device re-verifies and releases it." if status == "unknown"
                        else "Fix the cause and re-apply the same spec; applied work is reused." + (" Modules listed in unnamedModules are not renamed yet: rename them by hand (customName = value) or delete them first." if self.unnamed else ""))
         return out
+
+
+def next_insert_batch(size: int, elapsed_s: float, result: dict[str, Any]) -> int:
+    """Next insert batch size from the measured per-entry time; a host stop at its deadline margin also shrinks it."""
+    ran = max(1, sum(1 for e in result.get("modules", []) if e.get("status") != "not_dispatched"))
+    per_entry = max(elapsed_s / ran, result.get("slowestEntryMs", 0) / 1000)
+    fit = INSERT_BATCH if per_entry <= 0 else int(TOPOLOGY_TIMEOUT_MS / 1000 * INSERT_BATCH_BUDGET / per_entry)
+    if result.get("stopReason") == "deadline_margin":
+        fit = min(fit, size // 2 or 1)
+    return max(1, min(INSERT_BATCH, fit))
 
 
 def invalid_spec(problems: list[str]) -> BridgeError:

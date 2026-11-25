@@ -39,6 +39,9 @@ class FakeGrid:
         self.cut_status = "failed"  # status of the entry where a capped insert stops
         self.insert_caps: list[int] = []  # per insert call: apply only this many entries, then report partial
         self.voicing: dict | None = None  # Poly Grid voicing; None = Note/FX Grid
+        self.timeouts: list[tuple[str, int]] = []
+        self.now = 0.0  # fake monotonic clock (seconds), advanced by insert_seconds per inserted entry
+        self.insert_seconds = 0.0
 
     # state helpers
     def add(self, type_name, custom="", x=0, y=0):
@@ -86,6 +89,7 @@ class FakeGrid:
     # host
     async def call(self, method, params, timeout_ms=5000):
         self.calls.append((method, copy.deepcopy(params)))
+        self.timeouts.append((method, timeout_ms))
         if method in self.fail:
             outcome = self.fail[method]
             if isinstance(outcome, BridgeError):
@@ -117,6 +121,7 @@ class FakeGrid:
                 continue
             name = next(n for n, m in self.catalog.items() if m["typeId"] == spec["typeId"])
             iid = self.add(name, "", spec["x"] + self.shift, spec["y"])
+            self.now += self.insert_seconds
             entries.append({"typeId": spec["typeId"], "status": "applied", "moduleId": iid, "actualPosition": {"x": spec["x"] + self.shift, "y": spec["y"]}})
             added.append(self.row(self.mods[iid], False))
         batch = "applied" if cap >= len(p["modules"]) else "partial"
@@ -241,6 +246,44 @@ def test_insert_batches_of_sixteen():
     host = FakeGrid()
     assert run(host, spec)["applied"]["inserted"] == 20
     assert [len(c["modules"]) for m, c in host.calls if m == "grid.modules.insert"] == [16, 4]
+
+
+def test_topology_writes_get_the_long_timeout():
+    host = FakeGrid()
+    host.shift = 1
+    run(host, SPEC)
+    by_method = {}
+    for method, timeout in host.timeouts:
+        by_method.setdefault(method, set()).add(timeout)
+    for method in ("grid.modules.insert", "grid.modules.rename", "grid.modules.move", "grid.connections.set"):
+        assert by_method[method] == {60000}, method
+    assert by_method["grid.parameters.set"] == {10000} and by_method["grid.get"] == {5000}
+
+
+def test_insert_batches_shrink_when_entries_are_slow(monkeypatch):
+    host = FakeGrid()
+    monkeypatch.setattr(grid_apply, "monotonic", lambda: host.now)
+    host.insert_seconds = 2.0  # 16 entries x 2 s = 32 s > 25% of the 60 s timeout
+    spec = {"target": TARGET, "modules": [{"name": f"M{i}", "type": "Add", "x": i * 3, "y": 0} for i in range(30)]}
+    assert run(host, spec)["applied"]["inserted"] == 30
+    assert [len(c["modules"]) for m, c in host.calls if m == "grid.modules.insert"] == [16, 7, 7]
+
+
+def test_insert_batches_start_halved_on_a_large_graph():
+    host = FakeGrid()
+    for i in range(grid_apply.LARGE_GRAPH_MODULES):
+        host.add("Add", f"other {i}", x=i * 3, y=40)
+    spec = {"target": TARGET, "modules": [{"name": f"M{i}", "type": "Add", "x": i * 3, "y": 0} for i in range(20)]}
+    assert run(host, spec)["applied"]["inserted"] == 20
+    assert [len(c["modules"]) for m, c in host.calls if m == "grid.modules.insert"] == [8, 12]
+
+
+def test_next_insert_batch_uses_slowest_entry_and_host_time_stops():
+    applied = [{"status": "applied"}] * 4
+    assert grid_apply.next_insert_batch(16, 0.04, {"modules": applied}) == 16
+    assert grid_apply.next_insert_batch(16, 0.04, {"modules": applied, "slowestEntryMs": 5000}) == 3
+    cut = {"modules": applied + [{"status": "not_dispatched"}] * 4, "stopReason": "deadline_margin"}
+    assert grid_apply.next_insert_batch(8, 0.04, cut) == 4
 
 
 def test_param_change_only():

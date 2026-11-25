@@ -164,9 +164,13 @@ final class GridInsertionWriter {
      * Same-device batch: types and geometry first (any failure inserts nothing), then entries run in order through the
      * ordinary single path, each settling before the next starts; stops at the first failure or unknown.
      */
-    /** Time left before the RPC deadline must exceed this to start another batch entry (a load plus its delivery). */
+    /** Minimum time left before the RPC deadline to start another batch entry (a load plus its delivery). */
     static final long NEXT_ENTRY_MARGIN_NANOS = java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(1500);
-    void insertAll(Object proxy, UUID trackId, List<Request> given, java.util.function.BooleanSupplier timeLeft, Runnable check, Runnable dispatch,
+    /** The next entry also needs this many times the slowest entry so far: verification reads grow with the graph. */
+    static final int SLOWEST_ENTRY_FACTOR = 2;
+    /** Monotonic clock for entry durations; replaceable by host-free tests. */
+    java.util.function.LongSupplier clock = System::nanoTime;
+    void insertAll(Object proxy, UUID trackId, List<Request> given, java.util.function.LongSupplier timeLeft, Runnable check, Runnable dispatch,
             Consumer<JsonObject> complete, Consumer<Throwable> fail) {
         quarantine.requireAvailable(); values.documentThread(); check.run();
         List<Request> requests = resolveNames(given, check);
@@ -180,9 +184,10 @@ final class GridInsertionWriter {
         final Object proxy; final UUID trackId; final List<Request> requests; final JsonObject graphBefore;
         final Runnable check, dispatch; final Consumer<JsonObject> complete; final Consumer<Throwable> fail;
         final JsonArray items = new JsonArray();
-        JsonObject lastGraph; String status = "applied"; int written; boolean done;
-        final java.util.function.BooleanSupplier timeLeft;
-        Batch(Object proxy, UUID trackId, List<Request> requests, JsonObject graphBefore, java.util.function.BooleanSupplier timeLeft,
+        JsonObject lastGraph; String status = "applied"; int written; boolean done, timeStop;
+        long slowest;
+        final java.util.function.LongSupplier timeLeft;
+        Batch(Object proxy, UUID trackId, List<Request> requests, JsonObject graphBefore, java.util.function.LongSupplier timeLeft,
                 Runnable check, Runnable dispatch, Consumer<JsonObject> complete, Consumer<Throwable> fail) {
             this.timeLeft = timeLeft;
             this.proxy = proxy; this.trackId = trackId; this.requests = requests; this.graphBefore = graphBefore;
@@ -197,8 +202,9 @@ final class GridInsertionWriter {
         void next(int i) {
             if (done) return;
             if (i == requests.size()) { finish(); return; }
-            if (i > 0 && !timeLeft.getAsBoolean()) { // Stop cleanly while per-entry results can still be delivered.
-                status = "partial";
+            // Stop cleanly while per-entry results can still be delivered; slow entries (large graphs) stop earlier.
+            if (i > 0 && timeLeft.getAsLong() < Math.max(NEXT_ENTRY_MARGIN_NANOS, SLOWEST_ENTRY_FACTOR * slowest)) {
+                status = "partial"; timeStop = true;
                 for (int k = i; k < requests.size(); k++) {
                     JsonObject rest = item(requests.get(k)); rest.addProperty("status", "not_dispatched"); items.add(rest);
                 }
@@ -208,6 +214,7 @@ final class GridInsertionWriter {
             JsonObject item = item(request);
             items.add(item);
             boolean[] sent = {false};
+            long started = clock.getAsLong();
             try {
                 insert(proxy, trackId, request, check, () -> { dispatch.run(); sent[0] = true; },
                         one -> {
@@ -217,6 +224,7 @@ final class GridInsertionWriter {
                                 item.add("moduleId", one.get("moduleId")); item.add("actualPosition", one.get("actualPosition"));
                                 item.add("matchesRequested", one.get("matchesRequested"));
                                 lastGraph = one.getAsJsonObject("graph"); written++;
+                                slowest = Math.max(slowest, clock.getAsLong() - started);
                                 next(i + 1);
                             } catch (Throwable error) { failed(i, item, error, sent[0]); }
                         },
@@ -260,6 +268,8 @@ final class GridInsertionWriter {
                 JsonObject result = HostServices.observed();
                 result.addProperty("batchStatus", status); result.addProperty("completion", unknown ? "unknown" : "observed");
                 result.addProperty("written", written);
+                result.addProperty("slowestEntryMs", slowest / 1_000_000L);
+                if (timeStop) result.addProperty("stopReason", "deadline_margin");
                 result.add("modules", items);
                 result.addProperty("mutationDispatched", written > 0 || unknown);
                 result.addProperty("nativeMutation", written > 0 || unknown); result.addProperty("nativeUndo", written > 0 || unknown);
@@ -364,8 +374,33 @@ final class GridInsertionWriter {
         }
         private void poison(Throwable error) {
             lifecycleError = error;
-            try { quarantine.poison(); }
+            try { quarantine.poison(detail(GridTopologyQuarantine.NATIVE, error)); }
             catch (Throwable guardError) { lifecycleError = guardError; } // Guard itself retains inaccessible/fail-closed state.
+        }
+        /**
+         * The native callbacks returned normally; only the later graph check disagreed (which may include a pending
+         * placement list, busy undo or another Dt). Released only by grid.topology.reconcile observing all clear.
+         */
+        private void mismatch(Throwable error) {
+            try { if (!quarantine.mismatch(owner, detail(GridTopologyQuarantine.SETTLEMENT, error))) lifecycleError = error; }
+            catch (Throwable guardError) { lifecycleError = guardError; }
+            try { fail.accept(error); } catch (Throwable notificationError) { lifecycleError = notificationError; }
+        }
+        private String detail(String origin, Throwable error) {
+            JsonObject d = new JsonObject();
+            d.addProperty("origin", origin); d.addProperty("operation", "insert");
+            d.addProperty("trackId", trackId.toString()); d.addProperty("device", deviceToken(target.graph));
+            d.addProperty("typeId", request.typeId.toString());
+            d.add("requestedPosition", GridModuleWriter.position(request.x, request.y));
+            if (incoming != null) d.addProperty("moduleId", incoming.id.toString());
+            d.addProperty("modulesBefore", before.rows.size());
+            d.addProperty("loaderDispatched", loaderDispatched); d.addProperty("placementDispatched", placementDispatched);
+            JsonObject why = new JsonObject();
+            why.addProperty("code", error instanceof RpcException ? ((RpcException) error).code : error.getClass().getSimpleName());
+            String message = String.valueOf(error.getMessage());
+            why.addProperty("message", message.substring(0, Math.min(message.length(), 512)));
+            d.add("error", why);
+            return d.toString();
         }
         private void notifyFailure(Throwable error) {
             try { fail.accept(error); }
@@ -384,7 +419,10 @@ final class GridInsertionWriter {
                 contexts.capture(target.target, target.graph, after.modules, context, NATIVE_LIFETIME);
                 if (lifecycleError != null) return; // Early error/duplicate/cleanup failure is sticky, never normal settlement.
                 if (!quarantine.release(owner)) throw failure("grid_unavailable", "Native insertion settlement no longer owns the process reservation.");
-            } catch (Throwable error) { adapterFailure(error); return; }
+            } catch (Throwable error) {
+                if (lifecycleError == null && settlementMismatch(error)) mismatch(error); else adapterFailure(error);
+                return;
+            }
             // Native lifetime is now settled. Delivery-only failure must not put it back into pending/quarantine.
             try {
                 if (rejection != null) { fail.accept(rejection); return; }
@@ -418,6 +456,83 @@ final class GridInsertionWriter {
             }
         }
     }
+    /** Observed graph disagreements; anything else at settlement (reader/binding/thread failures) stays sticky. */
+    private static final Set<String> MISMATCH_CODES = Set.of("grid_verification_failed", "stale_context", "unsafe_state", "grid_bounds_exceeded");
+    /** JVM-lifetime identity of a native Grid graph, so reconcile re-reads the same device, not just the same track. */
+    static String deviceToken(Object graph) { return Integer.toHexString(System.identityHashCode(graph)); }
+    static boolean settlementMismatch(Throwable error) {
+        return error instanceof RpcException && !Bitwig614Runtime.isInvocationFailure(error) && MISMATCH_CODES.contains(((RpcException) error).code);
+    }
+
+    /**
+     * Releases a settlement-mismatch quarantine only after re-reading the recorded device: every module mapped with a
+     * unique UUID and valid footprint, a complete bounded graph, idle topology context and no pending native placement.
+     * Native-failure and pending states are reported, never released. Reads only; nothing native is invoked.
+     */
+    JsonObject reconcile(Object proxy, UUID trackId, Runnable check) {
+        values.documentThread(); check.run();
+        String origin = quarantine.origin(), detail = quarantine.detail();
+        JsonObject result = HostServices.observed();
+        result.addProperty("operation", "topology_reconcile");
+        result.addProperty("quarantineBefore", origin == null ? "idle" : origin);
+        JsonObject recorded = null;
+        try { if (detail != null) recorded = JsonParser.parseString(detail).getAsJsonObject(); }
+        catch (RuntimeException malformed) { recorded = null; }
+        if (recorded != null) result.add("recorded", recorded);
+        String refusal0 = origin == null ? "Topology admission is not quarantined; nothing to release."
+                : "pending".equals(origin) ? "A native insertion callback is still outstanding; it settles by itself, reconcile cannot cancel it."
+                : !GridTopologyQuarantine.SETTLEMENT.equals(origin) ? "Native-failure quarantine needs a full Bitwig restart; reconcile does not release it."
+                : recorded == null || !recorded.has("trackId") ? "Quarantine detail is missing or malformed; staying quarantined."
+                : !trackId.toString().equals(recorded.get("trackId").getAsString()) ? "Quarantine was recorded on track " + recorded.get("trackId").getAsString() + "; reconcile that device."
+                : null;
+        String refusal = refusal0;
+        boolean ours = refusal == null; // Otherwise still verify and report the given device, but never release.
+        JsonObject found = new JsonObject();
+        try {
+            GridSnapshotReader.NativeTarget target = snapshots.target(proxy, trackId);
+            if (ours && (!recorded.has("device") || !deviceToken(target.graph).equals(recorded.get("device").getAsString()))) {
+                ours = false; refusal = "Quarantine was recorded on another Grid device of this track; reconcile that device.";
+            }
+            Layout now = layout(target.graph, check);
+            contexts.capture(target.target, target.graph, now.modules, null, check);
+            nativeWriter.requirePlacementReady(target.graph);
+            JsonObject graph = snapshots.snapshot(proxy, trackId, 0, GridTopologyContext.MAX_MODULES, false, false, null, check);
+            now.same(layout(target.graph, check)); snapshots.guardTarget(target, proxy, trackId);
+            found.addProperty("moduleCount", now.rows.size());
+            if (ours && recorded.has("modulesBefore")) found.addProperty("modulesBefore", recorded.get("modulesBefore").getAsInt());
+            found.addProperty("connectionCount", graph.getAsJsonArray("connections").size());
+            if (ours && recorded.has("moduleId")) {
+                Row module = now.find(UUID.fromString(recorded.get("moduleId").getAsString()));
+                JsonObject late = new JsonObject();
+                late.addProperty("moduleId", recorded.get("moduleId").getAsString()); late.addProperty("inserted", module != null);
+                if (module != null) {
+                    if (!module.typeId.toString().equals(recorded.get("typeId").getAsString()))
+                        throw failure("grid_verification_failed", "Recorded module UUID now has a different type.");
+                    late.addProperty("typeId", module.typeId.toString());
+                    late.add("actualPosition", GridModuleWriter.position(module.x, module.y));
+                    late.addProperty("width", module.width); late.addProperty("height", module.height);
+                }
+                found.add("module", late);
+            }
+            found.addProperty("consistent", true);
+        } catch (RuntimeException error) {
+            if (!(error instanceof RpcException)) throw error;
+            JsonObject why = new JsonObject(); why.addProperty("code", ((RpcException) error).code); why.addProperty("message", error.getMessage());
+            found.addProperty("consistent", false); found.add("inconsistency", why);
+            result.add("found", found); result.addProperty("released", false);
+            result.addProperty("reason", ours ? "Graph is not consistent; staying quarantined." : refusal);
+            return result;
+        }
+        result.add("found", found);
+        if (!ours) { result.addProperty("released", false); result.addProperty("reason", refusal); return result; }
+        check.run();
+        boolean released = quarantine.reconcile(detail);
+        result.addProperty("released", released);
+        if (!released) result.addProperty("reason", "Quarantine state changed during reconcile; staying as it is.");
+        result.addProperty("next", released ? "Topology writes are admitted again; read with grid.get before the next write." : "Inspect grid.capabilities.");
+        return result;
+    }
+
     private Layout layout(Object graph, Runnable check) {
         List<Object> modules = snapshots.topologyModules(graph, check);
         List<Row> rows = new ArrayList<>(modules.size());
@@ -440,8 +555,10 @@ final class GridInsertionWriter {
         Row(Object module, UUID id, UUID typeId, int x, int y, int width, int height) {
             this.module = module; this.id = id; this.typeId = typeId; this.x = x; this.y = y; this.width = width; this.height = height;
         }
-        void identity(Row actual) {
-            if (actual == null || module != actual.module || !id.equals(actual.id) || !typeId.equals(actual.typeId) || width != actual.width || height != actual.height)
+        void identity(Row actual) { identity(actual, true); }
+        void identity(Row actual, boolean footprint) {
+            if (actual == null || module != actual.module || !id.equals(actual.id) || !typeId.equals(actual.typeId)
+                    || footprint && (width != actual.width || height != actual.height))
                 throw failure("stale_context", "Native insertion membership/type/footprint changed.");
         }
     }
@@ -478,11 +595,13 @@ final class GridInsertionWriter {
         }
         void inserted(Layout actual, Row incoming) {
             if (actual.rows.size() != rows.size() + 1) throw failure("grid_verification_failed", "Later graph did not contain exactly one additional module.");
-            for (Row row : rows) rightward(row, actual.find(row.id));
-            rightward(incoming, actual.find(incoming.id));
+            for (Row row : rows) rightward(row, actual.find(row.id), true);
+            // Variable-size modules (Merge, Sum, ...) size themselves once attached: the detached footprint is not an
+            // invariant. Survivors stay exact; the after layout re-checks every footprint and bound.
+            rightward(incoming, actual.find(incoming.id), false);
         }
-        private static void rightward(Row before, Row after) {
-            before.identity(after);
+        private static void rightward(Row before, Row after, boolean footprint) {
+            before.identity(after, footprint);
             if (after.y != before.y || after.x < before.x)
                 throw failure("grid_verification_failed", "Native insertion layout violates absolute-row/rightward-reflow invariants.");
         }

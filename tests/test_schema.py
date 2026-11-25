@@ -324,7 +324,7 @@ def test_grid_insert_accepts_int32_endpoints_for_host_geometry_validation(value)
     {"expectedDeviceName": ""}, {"expectedDeviceName": None},
     {"moduleId": TRACK}, {"path": "/tmp/module.bwmodule"},
     {"expectedX": 0}, {"relative": True}, {"selected": True},
-    {"timeoutMs": None}, {"timeoutMs": True}, {"timeoutMs": 99}, {"timeoutMs": 10001},
+    {"timeoutMs": None}, {"timeoutMs": True}, {"timeoutMs": 99}, {"timeoutMs": 60001},
 ])
 def test_grid_insert_rejects_invalid_targets_and_implicit_options(changes):
     with pytest.raises(ValidationError):
@@ -369,7 +369,7 @@ def test_grid_module_edits_require_each_explicit_field(method, args):
     {"expectedDeviceName": ""}, {"expectedDeviceName": False},
     {"selected": True}, {"moduleIndex": 0}, {"typeId": TRACK},
     {"relative": True}, {"copy": False}, {"parameterId": ""},
-    {"force": True}, {"timeoutMs": None}, {"timeoutMs": 99}, {"timeoutMs": 10001},
+    {"force": True}, {"timeoutMs": None}, {"timeoutMs": 99}, {"timeoutMs": 60001},
 ])
 def test_grid_module_edits_reject_invalid_targets_and_implicit_options(method, args, changes):
     with pytest.raises(ValidationError):
