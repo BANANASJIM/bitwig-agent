@@ -16,7 +16,7 @@ import tempfile
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-from bitwig_agent.catalog import TOOLS
+from bitwig_agent.catalog import CLIENT_SIDE, TOOLS
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("extension_build", ROOT / "scripts/build.py")
@@ -88,10 +88,10 @@ async def exercise(folder: Path, api: Path) -> None:
                 status = payload(response)
                 require(not response.is_error, f"Java status fixture failed: {status}")
                 java_names = set(status["result"]["supportedMethods"])
-                require(names == java_names == set(TOOLS),
+                require(names - CLIENT_SIDE == java_names == set(TOOLS) - CLIENT_SIDE and CLIENT_SIDE <= names,
                         f"Registry mismatch: MCP={sorted(names)}, Java={sorted(java_names)}")
                 calls = 0
-                for method in sorted(names):
+                for method in sorted(names - CLIENT_SIDE):
                     examples = TOOLS[method].examples
                     require(bool(examples), f"Missing executable example for {method}")
                     for example in examples:

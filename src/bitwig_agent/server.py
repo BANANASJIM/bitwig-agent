@@ -21,8 +21,9 @@ from mcp.types import (
     ToolAnnotations,
 )
 
-from bitwig_agent.catalog import TOOLS, invalid_params_message, validate_call
+from bitwig_agent.catalog import CLIENT_SIDE, TOOLS, invalid_params_message, validate_call
 from bitwig_agent.client import BridgeClient, BridgeError, configured_port
+from bitwig_agent.grid_apply import apply as grid_apply
 
 
 def create_server(client: BridgeClient | None = None) -> Server:
@@ -41,7 +42,10 @@ def create_server(client: BridgeClient | None = None) -> Server:
     async def call_tool(ctx: ServerRequestContext, params: CallToolRequestParams) -> CallToolResult:
         try:
             arguments, timeout_ms = validate_call(params.name, params.arguments or {})
-            payload = {"result": await bridge.call(params.name, arguments, timeout_ms)}
+            if params.name in CLIENT_SIDE:
+                payload = {"result": await grid_apply(bridge, arguments, timeout_ms)}
+            else:
+                payload = {"result": await bridge.call(params.name, arguments, timeout_ms)}
             failed = False
         except BridgeError as exc:
             payload = {"error": exc.error}

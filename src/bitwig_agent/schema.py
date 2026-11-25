@@ -628,3 +628,60 @@ class RemoteSetArgs(ParameterArgs):
     parameterIndex: int = Field(ge=0, le=7)
     expectedParameterName: Nonempty
     normalizedValue: UnitValue
+
+
+class GridApplyTarget(StrictModel):
+    trackId: TrackId
+    deviceIndex: int = Field(ge=0, le=15)
+    expectedDeviceName: Nonempty
+
+
+class GridApplyDisplay(StrictModel):
+    display: str = Field(min_length=1, max_length=64, description="Text with explicit unit, e.g. '1.2 kHz'; float parameters only.")
+
+
+class GridApplyLabel(StrictModel):
+    label: str = Field(min_length=1, max_length=1024, description="Enum option label, e.g. '16th'.")
+
+
+class GridApplyModule(StrictModel):
+    name: str = Field(min_length=1, max_length=1024, description="Identity: the module's customName, unique and non-empty within the device.")
+    type: str = omitted(min_length=1, max_length=128, description="Catalog module name (e.g. 'Multiply'); exactly one of type or typeId.")
+    typeId: TrackId = omitted(description=TYPE_ID_DESCRIPTION)
+    x: int = Field(ge=-(2**31), le=2**31 - 1)
+    y: int = Field(ge=-(2**31), le=2**31 - 1)
+    params: dict[str, bool | int | float | GridApplyDisplay | GridApplyLabel] = omitted(
+        description="parameterId -> raw value, {display:'1.2 kHz'} or {label:'16th'}.")
+
+    @model_validator(mode="after")
+    def validate_one_type(self):
+        if len({"type", "typeId"} & self.model_fields_set) != 1:
+            raise ValueError("supply exactly one of type or typeId")
+        return self
+
+
+class GridApplyConnection(StrictModel):
+    from_: str = Field(alias="from", min_length=3, max_length=2048, description="Source output 'module name.PORT_KEY' (split on the last '.').")
+    to: str = Field(min_length=3, max_length=2048, description="Target input 'module name.PORT_KEY'.")
+
+
+class GridApplyArgs(StatusArgs):
+    target: GridApplyTarget
+    modules: Annotated[list[GridApplyModule], Field(min_length=1, max_length=1024)]
+    connections: Annotated[list[GridApplyConnection], Field(max_length=1024)] = omitted(
+        description="Cables between declared modules; one source per target input.")
+    namespace: str = omitted(min_length=1, max_length=1024, description="customName prefix (e.g. 'H: ') that prune may delete from.")
+    prune: bool = omitted(description="Also disconnect unlisted inputs of declared modules and delete namespace modules absent from the spec.")
+    dryRun: bool = omitted(description="Return the plan without writing anything.")
+
+    @model_validator(mode="after")
+    def validate_spec(self):
+        names = [m.name for m in self.modules]
+        dupes = sorted({n for n in names if names.count(n) > 1})
+        if dupes:
+            raise ValueError(f"module names must be unique: {dupes}")
+        targets = [c.to for c in self.connections or []]
+        dupes = sorted({t for t in targets if targets.count(t) > 1})
+        if dupes:
+            raise ValueError(f"an input takes one source; repeated targets: {dupes}")
+        return self

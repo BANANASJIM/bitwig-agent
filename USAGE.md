@@ -70,6 +70,17 @@ Names, context tokens and module UUIDs are not persistent physical identities. M
 
 For New Project, Save As/Bounce or an unexposed control, use explicit Computer Use only when separately authorized and after confirming the actual target/dialog, then observe completion. Missing API support is not permission for GUI control. GUI-completed work is not structured API support; do not repeat an uncertain API write through the GUI. Native work requires one designated writer and a disposable fixture, not a stale process/window snapshot.
 
+## Apply a Grid patch from a spec
+
+`grid.apply` builds or updates one Grid device from a JSON spec (named modules, params, connections) and is safe to re-run: existing named modules are reused and only differences are written. Preview with `dryRun`, then apply:
+
+```sh
+bitwig-agent-rpc grid.apply spec=@patch.json dryRun=true
+bitwig-agent-rpc grid.apply spec=@patch.json        # or --params @patch.json
+```
+
+Keep one spec per Grid device (sections as name prefixes inside it); two specs sharing a namespace with `prune` delete each other's modules. Use a `namespace` prefix (e.g. `"H: "`) plus `prune=true` to also remove stale modules and cables you own. It stops at the first error or unknown outcome and reports what was and was not done; fix the cause and re-apply. See [PROTOCOL](PROTOCOL.md#gridapply-declarative-patch-client-side).
+
 ## Make Grid instruments without preset files
 
 The recipe runs from a source checkout with `uv sync --locked` (see [contributor setup](CONTRIBUTING.md#source-setup)); it is not installed as a tool by the wheel.
