@@ -1117,3 +1117,37 @@ def test_real_apply_returns_a_diagnostics_marker(tmp_path, monkeypatch):
     monkeypatch.setenv("BITWIG_LOG_PATH", str(log))
     result = run(FakeGrid(), {"target": TARGET, "modules": [{"name": "a", "type": "Add", "x": 0, "y": 0}]})
     assert isinstance(result.get("diagnosticsMarker"), str)
+
+
+def test_prune_all_converges_whole_device_across_prefixes():
+    host = populated_namespace_host()  # H: spec modules, H: old, X: keep, one unnamed, two undeclared cables
+    spec = {**SPEC}
+    spec.pop("namespace")
+    spec["modules"] = [*SPEC["modules"][:1], {**SPEC["modules"][1], "type": "Multiply"}, *SPEC["modules"][2:]]  # H: add retyped
+    spec["modules"].append({"name": "K: new", "type": "Add", "x": 20, "y": 12})  # lands on X: keep's footprint
+    plan = run(host, spec, pruneAll=True, dryRun=True)
+    assert plan["plan"]["replaces"] == ["H: add"] and host.writes() == []
+    assert {"H: add", "H: old", "X: keep"} <= set(plan["plan"]["deletes"]) and len(plan["plan"]["deletes"]) == 4
+    assert any("pruneAll: deleting" in w for w in plan["warnings"]) and any("pruneAll: replacing" in w for w in plan["warnings"])
+    result = run(host, spec, pruneAll=True)
+    assert result["status"] == "applied" and result["applied"]["deleted"] == 4
+    assert sorted(m["customName"] for m in host.mods.values()) == sorted(m["name"] for m in spec["modules"])
+    methods = [m for m, _ in host.calls]
+    assert methods.index("grid.modules.delete") < methods.index("grid.modules.insert")
+    host.calls.clear()
+    assert run(host, spec, pruneAll=True)["status"] == "unchanged" and host.writes() == []
+
+
+@pytest.mark.parametrize("extra", [{"namespace": "H: "}, {"allowOutsideDisconnect": True}])
+def test_prune_all_excludes_namespace(extra):
+    with pytest.raises(ValueError, match="pruneAll"):
+        run(FakeGrid(), {**SPEC, **extra, "pruneAll": True})
+
+
+def test_tiny_raw_detune_warns_but_display_and_larger_raw_do_not():
+    assert messages(one("Sawtooth", {"DETUNE": 0.25}, dryRun=True), "DETUNE raw 0.25")
+    assert messages(one("Sine", {"DETUNE": -0.3}, dryRun=True), "no detune")
+    assert not messages(one("Sine", {"DETUNE": 1.1}, dryRun=True), "DETUNE")
+    assert not messages(one("Sine", {"DETUNE": 0}, dryRun=True), "DETUNE")
+    assert not messages(one("Sine", {"DETUNE": {"display": "0.5 Hz"}}, dryRun=True), "DETUNE")
+    assert raw_scales.convert("Sine", "DETUNE", "1.331 Hz", -3, 3) == pytest.approx(1.1)

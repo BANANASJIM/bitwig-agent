@@ -147,3 +147,11 @@ async def test_extension_restart_params(host):
     for bad in ({"discardUnresolved": 1}, {"discardUnresolved": None}, {"x": 1}):
         with pytest.raises(ValidationError):
             validate_call("extension.restart", bad)
+
+
+async def test_oversized_grid_get_response_says_to_lower_module_limit(host):
+    host.reply = lambda request: b"x" * (MAX_BYTES + 1) + b"\n"
+    params = {"trackId": SET["trackId"], "deviceIndex": 0, "expectedDeviceName": "Grid", "moduleLimit": 256}
+    with pytest.raises(BridgeError) as caught:
+        await BridgeClient(host.port).call("grid.get", params)
+    assert "lower moduleLimit" in caught.value.error["message"] and "includeParameters=false" in caught.value.error["message"]

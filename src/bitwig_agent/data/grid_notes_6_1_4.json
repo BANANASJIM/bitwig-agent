@@ -37,6 +37,8 @@
     "unconnected": {"skipTypes": ["Note In"], "message": "has no connections"},
     "rawNonLinear": {"scales": ["cbrt_gain", "cbrt_seconds", "log10_seconds"],
                      "message": "{parameter} raw {raw} is on a non-linear scale and displays {effective}; write {example} to set a display value"},
+    "rawTiny": {"parameter": "DETUNE", "scale": "cbrt_hz", "below": 0.5,
+                "message": "{parameter} raw {raw} is on a cube-root Hz scale and displays {effective}, effectively no detune; write {example} or a raw of 0.5 or more"},
     "unitIgnoresTime": {"unitParameter": "UNIT", "timeParameter": "TIME", "secondsLabel": "Seconds",
                         "message": "TIME is ignored while UNIT is a note value ({unit}); set UNIT {{\"label\":\"Seconds\"}} to use a time in seconds"},
     "retriggerOff": {"gatePort": "GATE_IN", "parameter": "RETRIGGER", "types": ["Sine", "Sawtooth", "Pulse", "Triangle", "Phasor", "Sub", "Swarm", "Wavetable", "Scrawl", "Union", "Bite", "Phase-1"],

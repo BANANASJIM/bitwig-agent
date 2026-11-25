@@ -492,3 +492,49 @@ def test_capture_refuses_an_inactive_engine_before_touching_anything(tmp_path, m
     assert e.value.error["code"] == "engine_inactive" and e.value.error["outcome"] == "not_applied"
     assert "project.activateEngine" in e.value.error["message"]
     assert not spawned and bridge.calls == [("status", {})]
+
+def write_stereo(path, left, right, rate=RATE):
+    frames = b"".join(struct.pack("<hh", int(a * 32767), int(b * 32767)) for a, b in zip(left, right))
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(2), w.setsampwidth(2), w.setframerate(rate)
+        w.writeframes(frames)
+
+
+def tone(hz, seconds, amp=0.5, rate=RATE):
+    return [amp * math.sin(2 * math.pi * hz * i / rate) for i in range(int(seconds * rate))]
+
+
+def run_bands(args):
+    return asyncio.run(client_side.audio_analyze(None, validate_call("audio.analyze", args)[0], 5000))
+
+
+def test_bands_places_energy_and_reports_stereo_correlation(tmp_path):
+    low = tone(100, 2.5)
+    wav = tmp_path / "bands.wav"
+    write_stereo(wav, low, low)
+    out = run_bands({"path": str(wav), "mode": "bands", "windowSeconds": 1})
+    assert out["stereoCorrelation"] == 1.0 and len(out["windows"]) == 3
+    row = out["windows"][0]
+    assert row["bandsDb"]["low"] > -0.5 and row["bandsDb"]["air"] is None or row["bandsDb"]["air"] < -40
+    assert 90 < row["centroidHz"] < 120 and row["t"] == 0.0 and 0.3 < row["rms"] < 0.4
+    write_stereo(wav, low, [-v for v in low])
+    assert run_bands({"path": str(wav), "mode": "bands", "windowSeconds": 1})["stereoCorrelation"] == -1.0
+    write_stereo(wav, tone(8800, 1.5), tone(8800, 1.5))
+    assert run_bands({"path": str(wav), "mode": "bands"})["windows"][0]["bandsDb"]["air"] > -0.5
+
+
+def test_bands_key_chroma_and_spectrogram(tmp_path):
+    wav, png = tmp_path / "key.wav", tmp_path / "spec.png"
+    a3 = tone(220, 1.5)
+    write_stereo(wav, a3, a3)
+    out = run_bands({"path": str(wav), "mode": "bands", "key": "A:aeolian", "spectrogramPath": str(png)})
+    assert out["chroma"]["inKeyShare"] == 1.0 and out["chroma"]["topPitchClasses"][0]["name"] == "A"
+    assert out["windows"][0]["chroma"]["inKeyShare"] == 1.0
+    assert run_bands({"path": str(wav), "mode": "bands", "key": "C#:ionian"})["chroma"]["inKeyShare"] == 0.0
+    data = png.read_bytes()
+    width, height = struct.unpack(">II", data[16:24])
+    assert data[:8] == b"\x89PNG\r\n\x1a\n" and (width, height) == (out["spectrogram"]["width"], 256) and data.endswith(b"IEND\xaeB`\x82")
+    with pytest.raises(ValueError):
+        validate_call("audio.analyze", {"path": str(wav), "mode": "level", "key": "A:aeolian"})
+    with pytest.raises(ValueError):
+        validate_call("audio.analyze", {"path": str(wav), "mode": "bands", "key": "H:aeolian"})

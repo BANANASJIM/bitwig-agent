@@ -128,7 +128,10 @@ class BridgeClient:
         except (TimeoutError, OSError, ValueError, RecursionError, asyncio.IncompleteReadError, asyncio.LimitOverrunError) as exc:
             outcome = "unknown" if dispatched else "not_dispatched"
             code = "deadline_exceeded" if isinstance(exc, TimeoutError) else "transport_error"
-            raise BridgeError({"code": code, "message": f"{type(exc).__name__}: {exc}. Inspect host state before another write; request was not retried.", "outcome": outcome}) from exc
+            hint = ""
+            if method == "grid.get" and (isinstance(exc, asyncio.LimitOverrunError) or "exceeds 1 MiB" in str(exc)):
+                hint = " The grid.get response exceeded the 1 MiB client cap: lower moduleLimit (64 works with includeParameters) or set includeParameters=false."
+            raise BridgeError({"code": code, "message": f"{type(exc).__name__}: {exc}.{hint} Inspect host state before another write; request was not retried.", "outcome": outcome}) from exc
         finally:
             if writer is not None:
                 writer.close()

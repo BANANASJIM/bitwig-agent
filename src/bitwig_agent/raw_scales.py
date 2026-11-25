@@ -44,13 +44,15 @@ SCALES = {s.name: s for s in (
     Scale("linear_db", "raw = dB", {"db": _ident}, _ident, _ident),
     Scale("linear_hz", "raw = Hz", {"hz": _ident, "khz": lambda n: n * 1000}, _ident, _ident),
     Scale("linear_khz", "raw = kHz", {"hz": lambda n: n / 1000, "khz": _ident}, _ident, _ident),
+    Scale("cbrt_hz", "raw = cbrt(Hz); range +-3 = +-27 Hz", {"hz": _ident, "khz": lambda n: n * 1000},
+          lambda f: math.cbrt(f), lambda r: r ** 3, example='{"display": "1.5 Hz"}'),
     Scale("linear_fraction", "raw = percent / 100", {"%": lambda n: n / 100}, _ident, _ident),
     Scale("cbrt_gain", "raw = cbrt(linear gain); 100 % = 0 dB = raw 1", {"%": lambda n: n / 100, "db": lambda n: 10 ** (n / 20)},
           lambda g: math.cbrt(g) if g >= 0 else math.nan, lambda r: r ** 3, example='{"display": "-6 dB"}'),
     Scale("midi_pitch_hz", "raw = MIDI note; Hz = 440 * 2^((raw - 69) / 12)", {"hz": _ident, "khz": lambda n: n * 1000},
           lambda f: 69 + 12 * math.log2(f / 440) if f > 0 else math.nan, lambda r: 440 * 2 ** ((r - 69) / 12), client=False, example='{"display": "800 Hz"}'),
 )}
-BASE_UNIT = {"linear_st": "st", "cbrt_st120": "st", "linear_st120": "st", "linear_seconds": "s", "cbrt_seconds": "s", "log10_seconds": "s", "linear_db": "dB", "linear_hz": "Hz", "linear_khz": "kHz",
+BASE_UNIT = {"linear_st": "st", "cbrt_st120": "st", "linear_st120": "st", "linear_seconds": "s", "cbrt_seconds": "s", "log10_seconds": "s", "linear_db": "dB", "linear_hz": "Hz", "linear_khz": "kHz", "cbrt_hz": "Hz",
              "linear_fraction": "fraction", "cbrt_gain": "gain", "midi_pitch_hz": "Hz"}
 
 
@@ -73,6 +75,8 @@ def _add(types: tuple[str, ...] | list[str], pid: str, entry: Entry) -> None:
         RAW_SCALES[(t, pid)] = entry
 
 
+_add((*_OSCILLATORS, "Sub"), "DETUNE", Entry("cbrt_hz", "measured", ((1.1, "1.33 Hz"), (0.25, "0.02 Hz"), (0.0, "0.00 Hz")),
+                                           "raw is the cube root of the Hz display (range +-3); raw below 0.5 is under 0.13 Hz, effectively no detune"))
 _add(("Transpose",), "VALUE", Entry("linear_st", "measured", ((0.0, "0.00 st"),), "measured on Transpose: raw = semitones"))
 _add(_OSCILLATORS, "PITCH", Entry("linear_st", "measured", ((0.0, "0.00 st"),), "measured on Sine: raw = semitones"))
 _add(_OSCILLATORS, "PITCH_MOD", Entry("cbrt_st120", "measured", ((0.584, "23.9 st"), (1.0, "120 st"), (0.112, "0.17 st")),
