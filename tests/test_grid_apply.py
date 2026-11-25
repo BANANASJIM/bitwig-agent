@@ -16,7 +16,7 @@ from bitwig_agent.client import BridgeError
 TRACK = "12345678-1234-1234-1234-123456789abc"
 TARGET = {"trackId": TRACK, "deviceIndex": 0, "expectedDeviceName": "Poly Grid"}
 WRITES = {"grid.modules.insert", "grid.modules.rename", "grid.modules.move", "grid.modules.delete",
-          "grid.parameters.set", "grid.connections.set"}
+          "grid.parameters.set", "grid.connections.set", "grid.voicing.set"}
 
 
 def seconds_text(type_name, raw):
@@ -38,6 +38,7 @@ class FakeGrid:
         self.caps_extra: dict = {}
         self.cut_status = "failed"  # status of the entry where a capped insert stops
         self.insert_caps: list[int] = []  # per insert call: apply only this many entries, then report partial
+        self.voicing: dict | None = None  # Poly Grid voicing; None = Note/FX Grid
 
     # state helpers
     def add(self, type_name, custom="", x=0, y=0):
@@ -46,6 +47,8 @@ class FakeGrid:
         params = {}
         for p in info["parameters"]:
             params[p["parameterId"]] = {**p, "value": p["default"], "display": p.get("defaultDisplay")}
+        if type_name in grid_apply.STEP_TYPES:  # the bundled schema has no step arrays; the live row carries one
+            params["DATA"] = {"parameterId": "DATA", "kind": "steps", "value": [0.0] * 64, "display": None}
         self.mods[iid] = {"instanceId": iid, "customName": custom, "name": custom or type_name, "typeId": info["typeId"],
                           "typeName": type_name, "x": x, "y": y, "info": info, "params": params}
         return iid
@@ -63,7 +66,7 @@ class FakeGrid:
     def writes(self):
         return [m for m, _ in self.calls if m in WRITES]
 
-    def row(self, m, params):
+    def row(self, m, params, full=False):
         connected = {p for (t, p) in self.conns if t == m["instanceId"]}
         row = {"instanceId": m["instanceId"], "customName": m["customName"], "name": m["name"], "typeId": m["typeId"],
                "typeName": m["typeName"], "x": m["x"], "y": m["y"], "width": m["info"]["width"], "height": m["info"]["height"],
@@ -71,7 +74,13 @@ class FakeGrid:
                "outputs": [{"key": o["key"], "name": o["name"]} for o in m["info"]["outputs"]]}
         if params:
             row["parameters"] = [{"supported": True, "kind": p["kind"], "parameterId": pid, "value": p["value"], "display": p["display"],
-                                  **{k: p[k] for k in ("minimum", "maximum", "options", "numericUnit") if k in p}} for pid, p in m["params"].items()]
+                                  **{k: p[k] for k in ("minimum", "maximum", "options", "numericUnit") if k in p}}
+                                 for pid, p in m["params"].items() if p["kind"] != "steps"]
+            for pid, p in m["params"].items():
+                if p["kind"] == "steps":
+                    count = m["params"]["STEPS"]["value"]
+                    row["parameters"].append({"supported": True, "kind": "steps", "parameterId": pid, "arrayLength": 64, "stepCount": count,
+                                              "values": list(p["value"] if full else p["value"][:count])})
         return row
 
     # host
@@ -96,7 +105,7 @@ class FakeGrid:
         mods = [m for m in self.mods.values() if m["instanceId"] in p.get("moduleIds", self.mods)]
         page = mods[p["moduleOffset"]:p["moduleOffset"] + p["moduleLimit"]]
         conns = [{"targetModuleId": t, "targetPortKey": tp, "sourceModuleId": s, "sourcePortKey": sp} for (t, tp), (s, sp) in self.conns.items()]
-        return {"status": "observed", "modules": [self.row(m, p["includeParameters"]) for m in page], "connections": conns,
+        return {"status": "observed", "modules": [self.row(m, p["includeParameters"], p.get("full")) for m in page], "connections": conns,
                 "window": {"total": len(mods), "complete": True}}
 
     def h_modules_insert(self, p):
@@ -139,6 +148,14 @@ class FakeGrid:
         entries = []
         for w in p["writes"]:
             par = self.mods[w["moduleId"]]["params"][w["parameterId"]]
+            if w["expectedKind"] == "steps":
+                n = len(w["expectedValues"])
+                assert len(w["values"]) <= n <= 64
+                if [grid_apply.f32(x) for x in par["value"][:n]] != [grid_apply.f32(x) for x in w["expectedValues"]]:
+                    raise BridgeError({"code": "stale_context", "message": "stale", "outcome": "not_applied"})
+                par["value"][:len(w["values"])] = [grid_apply.f32(x) for x in w["values"]]
+                entries.append({"moduleId": w["moduleId"], "parameterId": w["parameterId"], "status": "applied"})
+                continue
             if (par["kind"], par["value"]) != (w["expectedKind"], w["expectedValue"]):
                 raise BridgeError({"code": "stale_context", "message": "stale", "outcome": "not_applied"})
             if "display" in w:
@@ -149,6 +166,17 @@ class FakeGrid:
                 par["value"], par["display"] = w["value"], str(w["value"])
             entries.append({"moduleId": w["moduleId"], "parameterId": w["parameterId"], "status": "applied"})
         return {"status": "observed", "batchStatus": "applied", "completion": "complete", "writes": entries}
+
+    def h_voicing_get(self, p):
+        if self.voicing is None:
+            return {"status": "observed", "supported": False, "reason": "no_voicing_model: only Poly Grid has device voicing"}
+        return {"status": "observed", "supported": True, "voicing": dict(self.voicing), "mode": "poly" if self.voicing["voices"] > 1 else self.voicing["monoMode"]}
+
+    def h_voicing_set(self, p):
+        if any(self.voicing[k] != v for k, v in p["expected"].items()):
+            raise BridgeError({"code": "stale_context", "message": "stale voicing", "outcome": "not_applied"})
+        self.voicing.update(p["set"])
+        return {"status": "observed", "supported": True, "voicing": dict(self.voicing), "changedUnrequested": []}
 
     def h_connections_set(self, p):
         entries = []
@@ -492,7 +520,7 @@ def test_null_names_fail_closed_and_unexpected_errors_keep_the_report():
     run(host, SPEC)
     host.calls.clear()
     real = host.row
-    host.row = lambda m, params: {**real(m, params), "customName": None}
+    host.row = lambda m, params, full=False: {**real(m, params, full), "customName": None}
     with pytest.raises(BridgeError) as err:
         run(host, SPEC)
     assert err.value.error["code"] == "invalid_spec" and host.writes() == []
@@ -817,3 +845,104 @@ def test_blocks_schema_surface():
         validate_call("grid.apply", {**BLOCK_SPEC, "blocks": {"b": {"modules": [{"name": "a", "type": "Add", "x": 0, "y": 0}], "instances": []}}})
     args, _ = validate_call("grid.apply", {"target": TARGET, "namespace": "V: ", "prune": True})
     assert "modules" not in args
+
+
+# --- step arrays and voicing ----------------------------------------------------------------------------------
+POLY = {"voices": 1, "voiceStacking": 1, "monoMode": "true_mono", "retriggerMode": "on_note_on", "notePriority": "last",
+        "legatoGlide": False, "stealSameKey": False, "allowOverlappingNotes": False}
+
+
+def steps_spec(steps, count=8, type_name="Pitches"):
+    return {"target": TARGET, "modules": [{"name": "S", "type": type_name, "x": 0, "y": 0, "params": {"STEPS": count, "DATA": {"steps": steps}}}]}
+
+
+def test_steps_are_written_with_prefix_cas_and_idempotent():
+    host = FakeGrid()
+    spec = steps_spec([1, 0, 0.5, 0.1])
+    result = run(host, spec)
+    assert result["status"] == "applied"
+    assert host.param("S", "DATA")[:5] == [1.0, 0.0, 0.5, grid_apply.f32(0.1), 0.0]
+    sent = [c for m, c in host.calls if m == "grid.parameters.set"]
+    entry = [w for c in sent for w in c["writes"] if w["expectedKind"] == "steps"][0]
+    assert entry["expectedValues"] == [0.0] * 4 and entry["values"] == [1, 0, 0.5, 0.1] and "expectedValue" not in entry
+    host.calls.clear()
+    again = run(host, spec)
+    assert again["status"] == "unchanged" and host.writes() == []  # float32 rounding of 0.1 compares equal
+
+
+def test_steps_change_writes_only_the_differing_array_and_reads_full_for_long_lists():
+    host = FakeGrid()
+    run(host, steps_spec([1, 1, 1], count=4))
+    host.calls.clear()
+    result = run(host, steps_spec([1, 1, 0] + [0.25] * 7, count=4))  # 10 entries > STEPS 4
+    assert result["applied"]["paramsWritten"] == 1
+    entry = [w for m, c in host.calls if m == "grid.parameters.set" for w in c["writes"]][0]
+    assert entry["full"] is True and entry["expectedValues"] == [1.0, 1.0, 1.0] + [0.0] * 7
+    assert host.param("S", "DATA")[:10] == [1, 1, 0] + [0.25] * 7
+    assert any(c.get("full") for m, c in host.calls if m == "grid.get")
+
+
+def test_steps_dry_run_and_offline_validation_write_nothing():
+    host = FakeGrid()
+    assert run(host, steps_spec([1, 2]), dryRun=True)["status"] == "dryRun" and host.writes() == []
+    for spec in (steps_spec([1, 2], type_name="Add"), steps_spec([0] * 257), steps_spec([500]), steps_spec([])):
+        with pytest.raises(Exception):
+            run(host, spec)
+    assert host.writes() == []
+
+
+def test_steps_longer_than_live_array_rejects_before_writing_on_existing_module():
+    host = FakeGrid()
+    host.add("Pitches", "S", 0, 0)
+    with pytest.raises(BridgeError) as err:
+        run(host, steps_spec([0.5] * 65))
+    assert "array holds 64" in err.value.error["message"] and host.writes() == []
+
+
+def test_steps_block_placeholder_is_a_whole_list():
+    host = FakeGrid()
+    spec = {"target": TARGET,
+            "blocks": {"seq": {"params": {"row": [0.0]}, "modules": [{"name": "g", "type": "Gates", "x": 0, "y": 0, "params": {"DATA": {"steps": "${row}"}}}]}},
+            "instances": [{"block": "seq", "prefix": "A: ", "args": {"row": [1, 0, 1, 1]}}, {"block": "seq", "prefix": "B: ", "dy": 6}]}
+    result = run(host, spec)
+    assert result["status"] == "applied"
+    assert host.param("A: g", "DATA")[:4] == [1, 0, 1, 1] and host.param("B: g", "DATA")[:2] == [0, 0]
+    host.calls.clear()
+    assert run(host, spec)["status"] == "unchanged" and host.writes() == []
+
+
+def test_voicing_is_written_when_different_and_idempotent():
+    host = FakeGrid()
+    host.voicing = dict(POLY)
+    spec = {"target": TARGET, "modules": [{"name": "A", "type": "Add", "x": 0, "y": 0}],
+            "voicing": {"voices": 8, "voiceStacking": 1, "monoMode": "true_mono"}}
+    result = run(host, spec)
+    assert result["applied"]["voicingFields"] == 1 and result["alreadyMatched"]["voicingFields"] == 2
+    sent = [c for m, c in host.calls if m == "grid.voicing.set"]
+    assert sent[0]["expected"] == {"voices": 1} and sent[0]["set"] == {"voices": 8} and host.voicing["voices"] == 8
+    host.calls.clear()
+    again = run(host, spec)
+    assert again["status"] == "unchanged" and host.writes() == []
+    plan = run(host, {**spec, "voicing": {"voices": 2}}, dryRun=True)
+    assert plan["plan"]["voicing"] == {"set": {"voices": 2}, "from": {"voices": 8}} and host.voicing["voices"] == 8
+
+
+def test_voicing_only_spec_and_stale_voicing_is_not_retried():
+    host = FakeGrid()
+    host.voicing = dict(POLY)
+    spec = {"target": TARGET, "modules": [], "prune": True, "namespace": "H: ", "voicing": {"monoMode": "digi_mono"}}
+    assert run(host, spec)["applied"]["voicingFields"] == 1 and host.voicing["monoMode"] == "digi_mono"
+
+
+def test_voicing_on_non_poly_grid_is_refused_before_any_write():
+    host = FakeGrid()
+    with pytest.raises(BridgeError) as err:
+        run(host, {**SPEC, "voicing": {"voices": 4}})
+    assert err.value.error["code"] == "invalid_spec" and "no voicing model" in err.value.error["message"] and host.writes() == []
+
+
+def test_voicing_schema_surface():
+    with pytest.raises(Exception):
+        validate_call("grid.apply", {"target": TARGET, "modules": [{"name": "A", "type": "Add", "x": 0, "y": 0}], "voicing": {}})
+    with pytest.raises(Exception):
+        validate_call("grid.apply", {"target": TARGET, "modules": [{"name": "A", "type": "Add", "x": 0, "y": 0}], "voicing": {"voices": 65}})

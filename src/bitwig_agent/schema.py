@@ -698,6 +698,11 @@ class GridApplyDisplay(StrictModel):
     display: str = Field(min_length=1, max_length=64, description="Text with explicit unit, e.g. '1.2 kHz'; float parameters only.")
 
 
+class GridApplySteps(StrictModel):
+    steps: list[float] | Annotated[str, Field(pattern=r"^\$\{[A-Za-z0-9_]+\}$")] = Field(
+        description="Step-array parameter (Steps/Pitches/Gates/Probabilities/Accents): entries from step 0, 1..256 finite numbers within -128..128, at most the live arrayLength; or a whole-value '${name}' block placeholder for such a list.")
+
+
 class GridApplyLabel(StrictModel):
     label: str = Field(min_length=1, max_length=1024, description="Enum option label, e.g. '16th'.")
 
@@ -708,8 +713,8 @@ class GridApplyModule(StrictModel):
     typeId: TrackId = omitted(description=TYPE_ID_DESCRIPTION)
     x: int = Field(ge=-(2**31), le=2**31 - 1)
     y: int = Field(ge=-(2**31), le=2**31 - 1)
-    params: dict[str, bool | int | float | str | GridApplyDisplay | GridApplyLabel] = omitted(
-        description="parameterId -> raw value, {display:'1.2 kHz'}, {label:'16th'} or a string (string panels, e.g. Comment TEXT; at most 1024 UTF-16 units, multi-line ok).")
+    params: dict[str, bool | int | float | str | GridApplyDisplay | GridApplyLabel | GridApplySteps] = omitted(
+        description="parameterId -> raw value, {display:'1.2 kHz'}, {label:'16th'}, {steps:[1,0,0.5]} (step arrays: first entries written, rest unchanged) or a string (string panels, e.g. Comment TEXT; at most 1024 UTF-16 units, multi-line ok).")
     replace: bool = omitted(description="If a module with this name exists with another type, delete it and insert this type under the same name (default: refuse).")
 
     @model_validator(mode="after")
@@ -725,7 +730,7 @@ class GridApplyConnection(StrictModel):
 
 
 class GridApplyBlock(StrictModel):
-    params: dict[str, bool | int | float | str] = omitted(description="Parameter name -> default; params values of the form '${name}' (whole value) take it, or the instance's args value.")
+    params: dict[str, bool | int | float | str | list[float]] = omitted(description="Parameter name -> default (a list for step arrays); params values of the form '${name}' (whole value) take it, or the instance's args value.")
     modules: Annotated[list[GridApplyModule], Field(min_length=1, max_length=1024, description="Modules with local names and positions relative to the instance (no nesting).")]
     connections: Annotated[list[GridApplyConnection], Field(max_length=1024)] = omitted(description="Cables between the block's own modules, by local names.")
 
@@ -735,7 +740,7 @@ class GridApplyInstance(StrictModel):
     prefix: str = omitted(max_length=1024, description="Prepended to every local module name (e.g. 'D1: '); instances need distinct prefixes.")
     dx: int = omitted(ge=-(2**31), le=2**31 - 1, description="Offset added to every module x (default 0).")
     dy: int = omitted(ge=-(2**31), le=2**31 - 1, description="Offset added to every module y (default 0).")
-    args: dict[str, bool | int | float | str] = omitted(description="Values for the block's params.")
+    args: dict[str, bool | int | float | str | list[float]] = omitted(description="Values for the block's params.")
 
 
 class GridRenderArgs(ParameterArgs):
@@ -764,9 +769,12 @@ class GridApplyArgs(StatusArgs):
     prune: bool = omitted(description="Also disconnect unlisted inputs of declared modules and delete namespace modules absent from the spec.")
     dryRun: bool = omitted(description="Return the plan without writing anything.")
     replace: bool = omitted(description="Default for every module: replace an existing same-named module of another type instead of refusing.")
+    voicing: GridVoicingFields = omitted(description="Poly Grid device voicing to converge to (voices, voiceStacking, monoMode, ...); only differing fields are written; refused before any write on Note/FX Grid.")
 
     @model_validator(mode="after")
     def validate_spec(self):
+        if "voicing" in self.model_fields_set and not self.voicing.model_fields_set:
+            raise ValueError("voicing must name at least one field")
         if not self.modules and not self.instances and not (self.prune and self.namespace):
             raise ValueError("modules may be empty only with prune=true and a non-empty namespace, or with instances")
         if self.instances and not self.blocks:
