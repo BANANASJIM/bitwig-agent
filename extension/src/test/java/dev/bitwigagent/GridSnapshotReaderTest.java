@@ -2070,7 +2070,7 @@ public final class GridSnapshotReaderTest {
         }
     }
 
-    private static final class ContextFixture implements GridParameterContext.Access {
+    static final class ContextFixture implements GridParameterContext.Access {
         final GridParameterContext reader = new GridParameterContext(this);
         final Map<Enum<?>, Object> values = new HashMap<>();
         final IdentityHashMap<Object, Map<Enum<?>, Object>> perObject = new IdentityHashMap<>();

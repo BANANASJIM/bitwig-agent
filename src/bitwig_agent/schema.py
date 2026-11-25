@@ -120,6 +120,7 @@ class GridGetArgs(ParameterArgs):
     diagnostics: bool = Field(default=False, description="Add obfuscated native modelClass/path and constant coverage notes; no write needs them.")
     moduleIds: Annotated[list[TrackId], Field(min_length=1, max_length=256)] = omitted(
         description="Return only these module instanceIds (e.g. one module's parameters without paging); absent ids are listed in missingModuleIds and the read is never complete.")
+    full: bool = omitted(description="Step-array parameters (kind steps) return all 256 entries instead of the first STEPS ones.")
 
 
 class GridWriteArgs(ParameterArgs):
@@ -234,6 +235,7 @@ class GridModuleMoveArgs(GridModuleEditArgs):
 
 class GridParameterGetArgs(GridModuleArgs):
     parameterId: str = Field(max_length=1024, description="Exact native parameter ID from grid.get, not a name; empty is valid, at most 1024 UTF-16 code units.")
+    full: bool = omitted(description="A step-array parameter (kind steps) returns all 256 entries instead of the first STEPS ones.")
 
 
 DISPLAY_DESCRIPTION = ("Instead of value, for float parameters whose numericUnit has a verified conversion (hertz: raw is a MIDI note, e.g. '1.2 kHz', '440 Hz'; percent: '50 %'; decibel: '-12 dB'). "
@@ -242,6 +244,14 @@ DISPLAY_DESCRIPTION = ("Instead of value, for float parameters whose numericUnit
 
 
 StringValue = Annotated[str, Field(max_length=1024)]
+STEP_MIN, STEP_MAX, STEP_ENTRIES = -1.0, 1.0, 256
+
+
+FULL_DESCRIPTION = "steps parameters only: expose (and, on a write, compare-and-set) up to 256 step-array entries instead of the first STEPS ones. Default: the STEPS prefix."
+STEPS_EXPECTED_DESCRIPTION = ("kind steps: the exact current exposed prefix from grid.get (the first STEPS entries, or all with full:true), "
+                              "numbers as read (32-bit floats); compared after rounding to float.")
+STEPS_VALUES_DESCRIPTION = ("kind steps: the entries to write from step 0, 1..256 numbers within -1..1 (the model domain; how each module maps it is not verified), "
+                            "stored as 32-bit floats. Not longer than expectedValues; later entries and everything beyond the prefix stay unchanged. Nothing is clamped.")
 
 
 class GridRawWrite(StrictModel):
@@ -260,20 +270,25 @@ class GridRawWrite(StrictModel):
                 (["float"], {"type": "number"}),
                 (["string"], {"type": "string", "maxLength": 1024}),
             )
-        ],
+        ] + [{"properties": {"expectedKind": {"enum": ["steps"]}}}],
     })
 
-    expectedKind: Literal["float", "integer", "enum", "boolean", "string"] = Field(
+    expectedKind: Literal["float", "integer", "enum", "boolean", "string", "steps"] = Field(
         description="Typed kind from a recent grid.get row (or grid.parameters.get); checked before any already-matching no-op.")
-    expectedValue: bool | int | float | StringValue = Field(
-        description="Exact current native raw value from a recent grid.get row (or grid.parameters.get), not normalized or display units; stale is rejected not_applied. Must match expectedKind; no tolerance or coercion.")
+    expectedValue: bool | int | float | StringValue = omitted(
+        description="Exact current native raw value from a recent grid.get row (or grid.parameters.get), not normalized or display units; stale is rejected not_applied. Must match expectedKind; no tolerance or coercion. Required except for kind steps.")
+    expectedValues: Annotated[list[float], Field(min_length=1, max_length=STEP_ENTRIES)] = omitted(description=STEPS_EXPECTED_DESCRIPTION)
+    values: Annotated[list[Annotated[float, Field(ge=STEP_MIN, le=STEP_MAX)]], Field(min_length=1, max_length=STEP_ENTRIES)] = omitted(description=STEPS_VALUES_DESCRIPTION)
+    full: bool = omitted(description=FULL_DESCRIPTION)
     value: bool | int | float | StringValue = omitted(
         description="Requested native raw value: boolean JSON bool; integer/enum signed int32 JSON integer token; float finite JSON number; string (string panels, e.g. Comment text) any text of at most 1024 UTF-16 units, preserved verbatim, empty allowed. Enum uses an actual listed option value, never an ordinal. Native range/representability are checked before dispatch. Exactly one of value or display.")
     display: str = omitted(min_length=1, max_length=64, description=DISPLAY_DESCRIPTION)
 
-    @field_validator("expectedValue", "value", mode="before")
+    @field_validator("expectedValue", "value", "expectedValues", "values", mode="before")
     @classmethod
     def validate_raw_number(cls, value):
+        if type(value) is list:
+            return value  # steps arrays: items are validated as finite floats by the field type
         if type(value) not in (bool, int, float, str):
             raise ValueError("raw value must be a JSON boolean, number or string, never null")
         if type(value) is str:
@@ -290,6 +305,15 @@ class GridRawWrite(StrictModel):
 
     @model_validator(mode="after")
     def validate_raw_kind(self):
+        given = self.model_fields_set
+        if self.expectedKind == "steps":
+            if {"expectedValue", "value", "display"} & given or not {"expectedValues", "values"} <= given:
+                raise ValueError("kind steps takes expectedValues and values (and optional full), not expectedValue, value or display")
+            return self
+        if {"expectedValues", "values", "full"} & given:
+            raise ValueError("expectedValues, values and full need expectedKind steps")
+        if "expectedValue" not in given:
+            raise ValueError("expectedValue is required")
         if len({"value", "display"} & self.model_fields_set) != 1:
             raise ValueError("supply exactly one of value (raw) or display (text such as '1.2 kHz')")
         if "display" in self.model_fields_set and self.expectedKind != "float":
@@ -314,7 +338,10 @@ class GridRawWrite(StrictModel):
         return self
 
 
-GRID_WRITE_FIELDS = {"moduleId", "parameterId", "expectedKind", "expectedValue"}
+GRID_WRITE_FIELDS = {"moduleId", "parameterId", "expectedKind"}
+
+
+WRITE_DETAILS = {"expectedValue", "value", "display", "expectedValues", "values", "full"}
 
 
 class GridParameterSetArgs(ParameterArgs):
@@ -325,8 +352,11 @@ class GridParameterSetArgs(ParameterArgs):
 
     moduleId: TrackId = omitted(description="Single form: current module instanceId from grid.get.")
     parameterId: str = omitted(max_length=1024, description="Single form: exact parameterId from grid.get; empty is valid.")
-    expectedKind: Literal["float", "integer", "enum", "boolean", "string"] = omitted(description="Single form: kind from a recent grid.get row.")
-    expectedValue: bool | int | float | StringValue = omitted(description="Single form: exact current raw value from a recent grid.get row.")
+    expectedKind: Literal["float", "integer", "enum", "boolean", "string", "steps"] = omitted(description="Single form: kind from a recent grid.get row.")
+    expectedValue: bool | int | float | StringValue = omitted(description="Single form: exact current raw value from a recent grid.get row (not for kind steps).")
+    expectedValues: Annotated[list[float], Field(min_length=1, max_length=STEP_ENTRIES)] = omitted(description="Single form, kind steps: " + STEPS_EXPECTED_DESCRIPTION)
+    values: Annotated[list[Annotated[float, Field(ge=STEP_MIN, le=STEP_MAX)]], Field(min_length=1, max_length=STEP_ENTRIES)] = omitted(description="Single form, kind steps: " + STEPS_VALUES_DESCRIPTION)
+    full: bool = omitted(description="Single form, kind steps: " + FULL_DESCRIPTION)
     value: bool | int | float | StringValue = omitted(description="Single form: requested native raw value (or give display instead).")
     display: str = omitted(min_length=1, max_length=64, description="Single form: " + DISPLAY_DESCRIPTION)
     writes: Annotated[list[GridRawWrite], Field(min_length=1, max_length=64)] = omitted(
@@ -336,15 +366,41 @@ class GridParameterSetArgs(ParameterArgs):
     def validate_one_form(self):
         supplied = GRID_WRITE_FIELDS & self.model_fields_set
         if "writes" in self.model_fields_set:
-            if supplied or {"value", "display"} & self.model_fields_set:
+            if supplied or WRITE_DETAILS & self.model_fields_set:
                 raise ValueError("supply either writes or the single-write fields, not both")
             keys = [(item.moduleId.lower(), item.parameterId) for item in self.writes]
             if len(set(keys)) != len(keys):
                 raise ValueError("writes must not repeat a moduleId/parameterId pair")
         elif supplied != GRID_WRITE_FIELDS:
-            raise ValueError("supply writes, or moduleId, parameterId, expectedKind, expectedValue and one of value or display")
+            raise ValueError("supply writes, or moduleId, parameterId, expectedKind, expectedValue and one of value or display (kind steps: expectedValues and values)")
         else:
-            GridRawWrite.model_validate({key: getattr(self, key) for key in GRID_WRITE_FIELDS | {"value", "display"} & self.model_fields_set})
+            GridRawWrite.model_validate({key: getattr(self, key) for key in GRID_WRITE_FIELDS | WRITE_DETAILS & self.model_fields_set})
+        return self
+
+
+class GridVoicingFields(StrictModel):
+    """Poly Grid device voicing fields; every one optional."""
+    voices: int = omitted(ge=1, le=64, description="Voice count 1..64.")
+    voiceStacking: int = omitted(ge=1, le=16, description="Voice stacking 1..16.")
+    monoMode: Literal["true_mono", "digi_mono"] = omitted(description="Stored mono mode: true_mono, or digi_mono (alternating voices). It is what plays when voices is 1.")
+    retriggerMode: Literal["never", "on_note_on", "always"] = omitted(description="Retrigger: never, on_note_on or always.")
+    notePriority: Literal["last", "high", "low"] = omitted(description="Note priority: last, high or low.")
+    legatoGlide: bool = omitted(description="Legato glide.")
+    stealSameKey: bool = omitted(description="Steal voices on the same key.")
+    allowOverlappingNotes: bool = omitted(description="Allow overlapping notes.")
+
+
+class GridVoicingSetArgs(ParameterArgs):
+    expected: GridVoicingFields = Field(description="Exact current values from a recent grid.voicing.get, at least for every field in set; stale is rejected not_applied. Extra fields are additional preconditions.")
+    set: GridVoicingFields = Field(description="New values; at least one field. Unnamed fields stay unchanged (a native change may still move them: see changedUnrequested).")
+
+    @model_validator(mode="after")
+    def validate_voicing(self):
+        want = self.set.model_fields_set
+        if not want:
+            raise ValueError("set must name at least one voicing field")
+        if not want <= self.expected.model_fields_set:
+            raise ValueError("expected must also give the current value of every field in set")
         return self
 
 

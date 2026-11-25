@@ -9,8 +9,16 @@ import static dev.bitwigagent.HostServices.failure;
 final class GridSnapshotReader {
     static final int MAX_MODULES = 4096, MAX_CHILDREN = 256, MAX_OPTIONS = 256, MAX_CATALOG = 16384;
     static final int MAX_ITEMS = 131072, MAX_TEXT = 1024;
-    enum Kind { MODULE, INPUT, OUTPUT, PARAMETER, FLOAT, BOOLEAN, INTEGER, ENUM, PANEL_BOOLEAN, PANEL_STRING, BIPOLAR_FLOAT, ENTRY, OPTION }
-    private static final Kind[] PARAMETER_KINDS = {Kind.FLOAT, Kind.BOOLEAN, Kind.INTEGER, Kind.ENUM, Kind.PANEL_BOOLEAN, Kind.PANEL_STRING};
+    /** Step arrays: default exposure when STEPS is unreadable, the full-array cap, and the model-level value domain. */
+    static final int STEP_FALLBACK = 64, STEP_FULL = 256;
+    static final double STEP_MIN = -1.0, STEP_MAX = 1.0;
+    /**
+     * Child models of the 6.1.4 module classes that carry no user data (engine feeds, indicators, display state);
+     * classified internal, never counted as unsupported. By simple class name, valid under the 6.1.4 JAR gate only.
+     */
+    static final Set<String> INTERNAL_MODELS = Set.of("BgP", "Kiy", "HQh", "L1", "uUS", "fwH", "qzH", "Znu");
+    enum Kind { MODULE, INPUT, OUTPUT, PARAMETER, FLOAT, BOOLEAN, INTEGER, ENUM, PANEL_BOOLEAN, PANEL_STRING, STEP_ARRAY, VOICING, BIPOLAR_FLOAT, ENTRY, OPTION }
+    private static final Kind[] PARAMETER_KINDS = {Kind.FLOAT, Kind.BOOLEAN, Kind.INTEGER, Kind.ENUM, Kind.PANEL_BOOLEAN, Kind.PANEL_STRING, Kind.STEP_ARRAY};
     enum Field {
         GRAPH, MODULES, INSTANCE_ID, LOCAL_KEY, X, Y, WIDTH, HEIGHT, DESCRIPTOR, TYPE_ID,
         INPUTS, OUTPUTS, CHILDREN, MODULE_GRAPH, OWNER_MODULE, INPUT_SOURCE, INPUT_KEY, OUTPUT_KEY,
@@ -18,7 +26,7 @@ final class GridSnapshotReader {
         INTEGER_VALUE, INTEGER_DEFINITION, INTEGER_MIN, INTEGER_MAX, ENUM_VALUE, ENUM_DEFINITION,
         OPTIONS, OPTION_VALUE, OPTION_LABEL, DISPLAY, CATALOG, ENTRY_ID, ENTRY_NAME, ENTRY_KIND,
         MODULE_NAME, CUSTOM_NAME, TYPE_ENTRY, TYPE_NAME, PARAMETER_ID, PARAMETER_NAME, SHORT_NAME,
-        INPUT_NAME, OUTPUT_NAME, FLOAT_UNIT, UNIT_TOKEN, INTEGER_PREFIX, INTEGER_SUFFIX
+        INPUT_NAME, OUTPUT_NAME, FLOAT_UNIT, UNIT_TOKEN, INTEGER_PREFIX, INTEGER_SUFFIX, STEP_VALUES, STEP_LENGTH
     }
     enum Metadata {
         FOOTPRINT("moduleFootprint", "native_primitive_width_height_grid_coordinates_not_pixels"),
@@ -93,10 +101,16 @@ final class GridSnapshotReader {
     /** diagnostics adds native modelClass/path and constant coverage prose; moduleIds (lowercase UUIDs) selects rows. */
     JsonObject snapshot(Object proxy, UUID expectedTrackId, int offset, int limit, boolean parameters,
             boolean diagnostics, Set<String> moduleIds, Runnable check) {
+        return snapshot(proxy, expectedTrackId, offset, limit, parameters, diagnostics, moduleIds, false, check);
+    }
+
+    /** fullSteps exposes up to 256 step-array entries instead of the first STEPS ones. */
+    JsonObject snapshot(Object proxy, UUID expectedTrackId, int offset, int limit, boolean parameters,
+            boolean diagnostics, Set<String> moduleIds, boolean fullSteps, Runnable check) {
         a.documentThread(); check.run();
         NativeTarget binding = target(proxy, expectedTrackId);
         Object graph = binding.graph;
-        State state = new State(check);
+        State state = new State(check); state.full = fullSteps;
         List<Object> all = collect(Field.MODULES, graph, MAX_MODULES, state);
         IdentityHashMap<Object, String> ids = new IdentityHashMap<>();
         Set<String> seenIds = new HashSet<>();
@@ -147,14 +161,20 @@ final class GridSnapshotReader {
             item.add("outputs", ports(module, graph, ids, false, connections, enumeratedPorts, diagnostics, state));
             JsonArray values = new JsonArray();
             if (parameters && a.parametersAvailable()) {
+                int internal = 0;
                 for (Object child : collect(Field.CHILDREN, module, MAX_CHILDREN, state)) {
                     state.check();
                     if (a.is(Kind.INPUT, child) || a.is(Kind.OUTPUT, child)) {
                         if (!enumeratedPorts.contains(child)) state.unsupported("port_child_not_enumerated");
                         continue;
                     }
+                    if (isInternal(child)) {
+                        internal++;
+                        if (!diagnostics) continue;
+                    }
                     values.add(parameter(child, module, diagnostics, state));
                 }
+                if (internal > 0) item.addProperty("internalChildren", internal);
             } else state.unsupported(parameters ? "typed_parameter_binding_unavailable" : "parameters_not_requested");
             item.add("parameters", values); modules.add(item);
         }
@@ -194,8 +214,13 @@ final class GridSnapshotReader {
 
     JsonObject parameter(Object proxy, UUID expectedTrackId, UUID moduleId, String parameterId,
             GridParameterContext contexts, Runnable check) {
+        return parameter(proxy, expectedTrackId, moduleId, parameterId, contexts, false, check);
+    }
+
+    JsonObject parameter(Object proxy, UUID expectedTrackId, UUID moduleId, String parameterId,
+            GridParameterContext contexts, boolean fullSteps, Runnable check) {
         if (contexts == null) throw failure("grid_unavailable", "Required parameter inspection bindings are unavailable.");
-        ParameterBinding binding = bindParameter(proxy, expectedTrackId, moduleId, parameterId, check);
+        ParameterBinding binding = bindParameter(proxy, expectedTrackId, moduleId, parameterId, fullSteps, check);
         GridParameterContext.Capture context = contexts.capture(binding.device, binding.graph, binding.module,
                 binding.parameter, binding.kind, check);
         ParameterBinding coupled = binding.kind == Kind.PANEL_BOOLEAN ? bindBipolarParameter(binding) : null;
@@ -222,10 +247,15 @@ final class GridSnapshotReader {
     }
 
     ParameterBinding bindParameter(Object proxy, UUID expectedTrackId, UUID moduleId, String parameterId, Runnable check) {
+        return bindParameter(proxy, expectedTrackId, moduleId, parameterId, false, check);
+    }
+
+    ParameterBinding bindParameter(Object proxy, UUID expectedTrackId, UUID moduleId, String parameterId,
+            boolean fullSteps, Runnable check) {
         a.documentThread(); check.run();
         if (!a.parametersAvailable()) throw failure("grid_unavailable", "Required typed parameter bindings are unavailable.");
         NativeTarget target = target(proxy, expectedTrackId);
-        State state = new State(check);
+        State state = new State(check); state.full = fullSteps;
         Object module = findModule(target.graph, moduleId, state);
         Object child = findParameter(module, parameterId, state);
         Kind kind = parameterKind(child);
@@ -330,7 +360,8 @@ final class GridSnapshotReader {
         Object found = null;
         for (Object child : collect(Field.CHILDREN, module, MAX_CHILDREN, state)) {
             state.check();
-            if (!a.is(Kind.PARAMETER, child) && !a.is(Kind.PANEL_BOOLEAN, child) && !a.is(Kind.PANEL_STRING, child)) continue;
+            if (!a.is(Kind.PARAMETER, child) && !a.is(Kind.PANEL_BOOLEAN, child) && !a.is(Kind.PANEL_STRING, child)
+                    && !a.is(Kind.STEP_ARRAY, child)) continue;
             a.requireModelThread(child);
             if (!id.equals(text(a.read(Field.PARAMETER_ID, child)))) continue;
             if (found != null) throw failure("stale_context", "Requested parameter ID is ambiguous.");
@@ -362,6 +393,13 @@ final class GridSnapshotReader {
         }
         return modules;
     }
+
+    /** Document-thread-checked device target for device-level (non-module) operations such as voicing. */
+    NativeTarget bindTarget(Object proxy, UUID expectedTrackId, Runnable check) {
+        a.documentThread(); check.run();
+        return target(proxy, expectedTrackId);
+    }
+    void requireModelThread(Object model) { a.requireModelThread(model); }
 
     NativeTarget target(Object proxy, UUID expectedTrackId) {
         NativeDeviceTarget.Capture capture;
@@ -442,6 +480,11 @@ final class GridSnapshotReader {
     private JsonObject parameter(Object child, Object module, boolean diagnostics, State state) {
         JsonObject result = new JsonObject();
         Kind kind = parameterKind(child);
+        if (kind == null && isInternal(child)) {
+            result.addProperty("supported", false); result.addProperty("reason", "internal_child_model");
+            result.addProperty("internal", true); result.addProperty("modelClass", child.getClass().getName());
+            return result;
+        }
         if (kind == null) {
             result.addProperty("supported", false); result.addProperty("reason", "unknown_child_model");
             result.addProperty("modelClass", child == null ? "null" : child.getClass().getName());
@@ -449,6 +492,7 @@ final class GridSnapshotReader {
         }
         a.requireModelThread(child);
         if (a.read(Field.OWNER_MODULE, child) != module) throw failure("stale_context", "Parameter belongs to a different module.");
+        if (kind == Kind.STEP_ARRAY) return stepArray(child, module, diagnostics, state);
         boolean panel = kind == Kind.PANEL_BOOLEAN || kind == Kind.PANEL_STRING;
         String panelFamily = kind == Kind.PANEL_STRING ? "string_panel" : "boolean_panel";
         result.addProperty("supported", true);
@@ -515,6 +559,66 @@ final class GridSnapshotReader {
         else if (a.displayAvailable()) result.addProperty("display", text(a.read(Field.DISPLAY, child)));
         else { result.add("display", JsonNull.INSTANCE); state.unsupported("parameter_display_unavailable"); }
         return result;
+    }
+
+    private static boolean isInternal(Object child) {
+        if (child == null) return false;
+        String name = child.getClass().getName();
+        return INTERNAL_MODELS.contains(name.substring(Math.max(name.lastIndexOf('.'), name.lastIndexOf('$')) + 1));
+    }
+
+    /** Entries exposed for a step array: the STEPS prefix by default, up to 256 with full. */
+    static int exposedSteps(int arrayLength, Integer stepCount, boolean full) {
+        return Math.min(arrayLength, full ? STEP_FULL : stepCount != null ? stepCount : STEP_FALLBACK);
+    }
+
+    /** The native array as the model sees it: padded with zeros or truncated to its declared length. */
+    static float[] effectiveSteps(Object raw, int length) {
+        if (!(raw instanceof float[])) throw failure("grid_unavailable", "Native step array is not a float array.");
+        if (length < 0 || length > 65536) throw failure("grid_unavailable", "Native step array length is out of range.");
+        return java.util.Arrays.copyOf((float[]) raw, length);
+    }
+
+    private JsonObject stepArray(Object child, Object module, boolean diagnostics, State state) {
+        JsonObject result = new JsonObject();
+        result.addProperty("supported", true); result.addProperty("kind", "steps");
+        if (diagnostics) result.addProperty("path", text(a.read(Field.PATH, child)));
+        result.addProperty("controlFamily", "step_array");
+        result.addProperty("parameterId", text(a.read(Field.PARAMETER_ID, child)));
+        result.add("name", JsonNull.INSTANCE); result.add("shortName", JsonNull.INSTANCE);
+        int length = integer(a.read(Field.STEP_LENGTH, child));
+        float[] steps = effectiveSteps(a.read(Field.STEP_VALUES, child), length);
+        Integer count = stepCount(module, state);
+        if (count == null) state.unsupported("step_count_unavailable");
+        int exposed = exposedSteps(length, count, state.full);
+        JsonArray values = new JsonArray();
+        for (int i = 0; i < exposed; i++) {
+            if (!Float.isFinite(steps[i])) throw failure("grid_unavailable", "Native step value is nonfinite.");
+            values.add(new JsonPrimitive(new java.math.BigDecimal(Float.toString(steps[i]))));
+        }
+        if (state.full && length > STEP_FULL) state.unsupported("step_array_longer_than_full_window");
+        result.addProperty("arrayLength", length);
+        if (count == null) result.add("stepCount", JsonNull.INSTANCE); else result.addProperty("stepCount", count);
+        result.add("values", values);
+        result.addProperty("valuesComplete", exposed == length);
+        result.addProperty("minimum", STEP_MIN); result.addProperty("maximum", STEP_MAX);
+        result.addProperty("valueDomain", "model_domain_minus1_to_1_per_module_mapping_not_verified");
+        result.add("display", JsonNull.INSTANCE);
+        return result;
+    }
+
+    /** The unique same-module STEPS integer, or null when absent or ambiguous. */
+    private Integer stepCount(Object module, State state) {
+        Integer found = null;
+        for (Object sibling : collect(Field.CHILDREN, module, MAX_CHILDREN, state)) {
+            state.check();
+            if (parameterKind(sibling) != Kind.INTEGER) continue;
+            a.requireModelThread(sibling);
+            if (!"STEPS".equals(a.read(Field.PARAMETER_ID, sibling))) continue;
+            if (found != null) return null;
+            found = integer(a.read(Field.INTEGER_VALUE, sibling));
+        }
+        return found;
     }
 
     private Object metadataValue(Field field, Object owner, Metadata metadata, State state, String reason) {
@@ -593,7 +697,7 @@ final class GridSnapshotReader {
         CatalogEntry(String id, String name) { this.id = id; this.name = name; }
     }
     static final class State {
-        final Runnable guard; final Set<String> unsupported = new LinkedHashSet<>(); int work;
+        final Runnable guard; final Set<String> unsupported = new LinkedHashSet<>(); int work; boolean full;
         State(Runnable guard) { this.guard = guard; }
         void check() {
             guard.run();

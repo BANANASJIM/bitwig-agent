@@ -10,8 +10,10 @@ interface GridAdapter {
     void execute(Runnable operation);
     JsonObject catalog(String query, int offset, int limit, Runnable check);
     JsonObject snapshot(Object deviceProxy, UUID expectedTrackId, int offset, int limit, boolean parameters,
-            boolean diagnostics, java.util.Set<String> moduleIds, Runnable check);
-    JsonObject parameter(Object deviceProxy, UUID expectedTrackId, UUID moduleId, String parameterId, Runnable check);
+            boolean diagnostics, java.util.Set<String> moduleIds, boolean fullSteps, Runnable check);
+    JsonObject parameter(Object deviceProxy, UUID expectedTrackId, UUID moduleId, String parameterId, boolean fullSteps, Runnable check);
+    JsonObject voicing(Object deviceProxy, UUID expectedTrackId, Runnable check);
+    JsonObject setVoicing(Object deviceProxy, UUID expectedTrackId, GridVoicingWriter.Request request, Runnable check, Runnable dispatch);
     JsonObject setParameter(Object deviceProxy, UUID expectedTrackId, UUID moduleId, String parameterId,
             GridParameterWriter.Request request, Runnable check, Runnable dispatch);
     JsonObject setParameters(Object deviceProxy, UUID expectedTrackId, java.util.List<GridParameterWriter.Entry> writes,
