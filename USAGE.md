@@ -117,3 +117,16 @@ Standard output is a compact JSON summary with owned track IDs, `reportPath`/`ca
 
 For explicit GUI follow-up, select the actual owned Launcher clip and verify its inspector before choosing its context-menu **Bounce...**; selection/Action dispatch alone does not establish that context. Observe the dialog and result separately. For looping bounces, inspect the full audio-event/file extent as well as the repeating loop region: they need not match. See [coverage limits](VERIFICATION.md#coverage-limits-and-unresolved-results); this is not an automatic rendering/fallback promise.
 
+
+## Verify output silently (Linux/PipeWire)
+
+Hear nothing, still observe what Bitwig plays. Grid writes need a stopped transport; `audio.capture` leaves it stopped.
+
+```sh
+bitwig-agent-rpc audio.route mode=silent                       # Bitwig out1/out2 -> null sink "bwtest"
+bitwig-agent-rpc audio.capture seconds=8 outPath=/tmp/take.wav # stop, seek 0, record, play, stop
+bitwig-agent-rpc audio.analyze path=/tmp/take.wav mode=mono_pitch bpm=120 skipSeconds=2
+bitwig-agent-rpc audio.route mode=restore                      # always: re-link the speakers
+```
+
+`analyze` modes: `level` (peak/rms/silence), `onsets`, `mono_pitch` (monophonic only), `probe` (10 ms means: route a logic/CV signal to Audio Out to read it as a scope). `audio.route status` shows the current links; the previous targets live in `~/.cache/bitwig-agent/audio-route.json` until `restore`. Only Bitwig's own links are touched.

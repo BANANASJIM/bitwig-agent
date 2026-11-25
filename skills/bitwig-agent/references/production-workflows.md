@@ -128,6 +128,8 @@ In 6.0, audio clips on a group lane override the group's summed output for their
 
 Sources: [Mixer, sends and crossfader](https://www.bitwig.com/userguide/latest/the_mix_view), [track I/O](https://www.bitwig.com/userguide/latest/recording_clips#track_io_settings), [6.0 Group Track changes](https://downloads.bitwig.com/6.0/Release-Notes-6.0.html).
 
+**Silent verification (Linux/PipeWire):** to check what Bitwig actually outputs without the user hearing it: `audio.route mode=silent` -> build/edit (Grid writes need a stopped transport) -> `audio.capture seconds=N outPath=/abs/x.wav` (stops, seeks to 0, records, stops) -> `audio.analyze` (`level` for silence/clipping, `onsets` for timing, `mono_pitch bpm=` for notes/intervals/16th positions, `probe` to scope a logic/CV signal sent to Audio Out) -> `audio.route mode=restore` when finished, or Bitwig stays muted for the user. Skip the first seconds (`skipSeconds`) for warm-up. Pitch analysis is for monophonic, fundamental-dominant material only; an empty `silent:true` result usually means the route or the signal path, not the analysis.
+
 ## 8. Arrange, render and preserve the work
 
 **Arrange:** copy/place chosen clips into a clear song structure, or capture an authorized Launcher performance using Global Record and transport. Check the recording start, existing Arranger material, record arms, automation writing and alias-capture option first. Afterwards inspect the actual Arranger clips/automation and return the relevant tracks to Arranger control before evaluating the linear arrangement. Section markers help make the intended form and export range explicit.
