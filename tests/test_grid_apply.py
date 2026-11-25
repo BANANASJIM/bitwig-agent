@@ -1151,3 +1151,15 @@ def test_tiny_raw_detune_warns_but_display_and_larger_raw_do_not():
     assert not messages(one("Sine", {"DETUNE": 0}, dryRun=True), "DETUNE")
     assert not messages(one("Sine", {"DETUNE": {"display": "0.5 Hz"}}, dryRun=True), "DETUNE")
     assert raw_scales.convert("Sine", "DETUNE", "1.331 Hz", -3, 3) == pytest.approx(1.1)
+
+
+def test_unnamed_module_declared_by_generated_name_keeps_identity_across_a_move():
+    host = FakeGrid()
+    iid = host.add("Add", "", 20, 16)
+    spec = {"target": TARGET, "modules": [{"name": "_Add_20_16", "type": "Add", "x": 24, "y": 16}]}
+    first = run(host, spec, pruneAll=True)
+    assert first["status"] == "applied" and first["applied"]["renamed"] == 1 and first["applied"]["deleted"] == 0
+    assert host.mods[iid]["customName"] == "_Add_20_16" and (host.mods[iid]["x"], host.mods[iid]["y"]) == (24, 16)
+    host.calls.clear()
+    second = run(host, spec, pruneAll=True)
+    assert second["status"] == "unchanged" and host.writes() == [] and list(host.mods) == [iid]

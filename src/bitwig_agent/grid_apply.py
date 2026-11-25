@@ -472,6 +472,7 @@ class Apply:
         self.wrote = False
         self.topo_written = False
         self.unnamed: dict[str, str] = {}
+        self.name_existing: list[str] = []
         self.phase = "validate"
         self.live_schema = False
         self.has_steps = any(is_steps(v) for m in self.modules for v in (m.get("params") or {}).values())
@@ -900,6 +901,8 @@ class Apply:
         if problems:
             raise SpecError(problems)
         self.ids = {n: r["instanceId"] for n, r in existing.items()}
+        # An unnamed live module matched by its generated name that has to move is named first, or the move would change that name and the next run would see a stranger.
+        self.name_existing = [n for n, r in existing.items() if not r["customName"] and _pos(r) != (self.by_spec[n]["x"], self.by_spec[n]["y"])]
         self.matched["modules"] = len(existing)
         if self.live_schema:
             self.live_checks({**existing, **self.ext_rows})
@@ -951,10 +954,10 @@ class Apply:
         plan = {"deletes": [label_of(r) for r in deletes], **({"replaces": self.replaced_names} if self.replaced_names else {}),
                 **({"droppedConnections": self.dropped} if self.dropped else {}),
                 "inserts": [{"name": n, "type": self.resolved[n]["typeName"], "x": self.by_spec[n]["x"], "y": self.by_spec[n]["y"]} for n in inserts],
-                "renames": list(inserts), "moves": moves, "params": param_plan,
+                "renames": [*self.name_existing, *inserts], "moves": moves, "params": param_plan,
                 "connections": [{k: v for k, v in e.items() if k != "write"} for e in edits],
                 **({"voicing": {"set": self.voicing_set, "from": self.voicing_expected}} if self.voicing_want else {})}
-        planned = {"inserted": len(inserts), "renamed": len(inserts), "moved": len(moves), "paramsWritten": planned_params,
+        planned = {"inserted": len(inserts), "renamed": len(inserts) + len(self.name_existing), "moved": len(moves), "paramsWritten": planned_params,
                    "connections": sum(1 for e in edits if e["from"]), "disconnected": sum(1 for e in edits if not e["from"]), "deleted": len(deletes),
                    **({"voicingFields": len(self.voicing_set)} if self.voicing_want else {})}
         notes = ["modules already in the device are moved before inserting; inserted modules are only moved if the host reflows them"] if inserts else []
@@ -1093,7 +1096,7 @@ class Apply:
         """What a real apply would be refused for, knowable now without writing."""
         out: list[dict[str, str]] = []
         kept = self.matched["connections"]
-        writes = bool(inserts or deletes or self.pre_moves or self.voicing_set or self.plan_connections(existing, conns)
+        writes = bool(inserts or deletes or self.name_existing or self.pre_moves or self.voicing_set or self.plan_connections(existing, conns)
                       or any(self.pre_params[n][0] for n in self.names))
         self.matched["connections"] = kept  # planning is repeated by dry_run
         if writes:
@@ -1147,6 +1150,12 @@ class Apply:
             self.applied["deleted"] += 1
             pending["deleted"] -= 1
             self.steps.append({"op": "delete", "name": label_of(row), **({"replace": True} if label_of(row) in self.replaced_names else {})})
+        self.phase = "rename"
+        for n in self.name_existing:
+            renamed = await self.call("grid.modules.rename", {"moduleId": self.ids[n], "expectedCustomName": "", "customName": n}, write=True)
+            self.verify("grid.modules.rename", renamed)
+            self.applied["renamed"] += 1
+            self.steps.append({"op": "rename", "name": n})
         self.phase = "premove"
         pos = {self.ids[n]: p for n, p in current.items()}
         for name, at in self.pre_moves:
