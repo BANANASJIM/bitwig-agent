@@ -20,6 +20,13 @@ public final class MixModuleTest {
         ambiguousCreationStaysUnknownAndIncompleteBaselineDoesNotDispatch();
         groupedBaselineRejectsWithoutMutationOrQuarantine();
         concurrentGroupAppearanceRemainsUnknownAndQuarantined();
+        groupedCreationAttributesTopLevelIndex();
+        groupedCreationInsideAGroupIsNeverNamed();
+        trackTreeResolvesParentsAndRejectsInconsistentOrder();
+        groupValidationRejectsBeforeScheduling();
+        groupVerifiesMembershipAndNamesTheGroup();
+        groupRefusesMixedParentsEffectTracksAndRecording();
+        unobservedGroupQuarantinesCreationAndGrouping();
         wrongTypeOrPositionCannotBeNamed();
         creationNeverNamesAfterCancellation();
         replacementDoesNotReuseReadiness();
@@ -258,7 +265,7 @@ public final class MixModuleTest {
         check(op.dispatched && f.application.actions == 1, "concurrent grouping occurs after one factory dispatch");
         check(result.get("status").getAsString().equals("dispatched")
                         && result.get("completion").getAsString().equals("unknown")
-                        && result.get("reason").getAsString().equals("grouped_insertion_position_not_observable"),
+                        && result.get("reason").getAsString().equals("group_appeared_during_creation"),
                 "group appearing after dispatch retains structural unknown attribution");
         check(!result.get("nameApplied").getAsBoolean() && result.get("trackId").isJsonNull()
                         && f.tracks[2].child("name").writes == 0,
@@ -501,6 +508,163 @@ public final class MixModuleTest {
                 "same-UUID rebind plus matching callback cannot acknowledge an old-generation write");
         check(!result.getAsJsonObject("fields").getAsJsonObject("volumeNormalized").get("matchesRequested").getAsBoolean(),
                 "reopened source never validates stale write evidence");
+    }
+
+    static final String ROOT = "00000000-0000-0000-0000-0000000000ff", G = "00000000-0000-0000-0000-000000000004";
+    private static void parent(TransportMixFixture f, int slot, String id) {
+        TransportMixFixture.Node parent = f.tracks[slot].child("createParentTrack");
+        parent.child("exists").data = id != null;
+        parent.child("channelId").data = id == null ? "" : id;
+    }
+    private static void group(TransportMixFixture f, int slot, String id, int position) {
+        TransportMixFixture.Node track = f.tracks[slot];
+        track.child("channelId").emit(id); track.child("exists").emit(true);
+        track.child("trackType").emit("Group"); track.child("isGroup").data = true;
+        track.child("position").emit(position);
+    }
+    private static void groupedCreationAttributesTopLevelIndex() {
+        for (int position : new int[]{-1, 1}) {
+            TransportMixFixture f = new TransportMixFixture(); MixModule module = new MixModule(f.services);
+            f.tracks[0].child("trackType").emit("Group"); f.tracks[0].child("isGroup").data = true;
+            parent(f, 0, ROOT); parent(f, 1, TransportMixFixture.A);
+            f.create = factory -> { f.addTrack(2, TransportMixFixture.C, "Audio"); parent(f, 2, ROOT); };
+            HostOperation op = f.submit(module, "tracks.create", create("audio", position)); f.next(); f.next();
+            JsonObject result = op.result.join();
+            check(result.get("matchesRequested").getAsBoolean() && result.get("trackId").getAsString().equals(TransportMixFixture.C),
+                    "grouped project: the top-level index counts the group, not its child");
+            check(result.getAsJsonObject("creation").get("parentScope").getAsString().equals("top_level_of_grouped_project"),
+                    "grouped creation declares its top-level scope");
+            check(f.tracks[2].child("name").writes == 1 && f.application.actions == 1, "only the observed top-level addition is named");
+        }
+        TransportMixFixture f = new TransportMixFixture(); MixModule module = new MixModule(f.services);
+        f.tracks[0].child("trackType").emit("Group"); f.tracks[0].child("isGroup").data = true;
+        parent(f, 0, ROOT); parent(f, 1, TransportMixFixture.A);
+        f.create = factory -> { f.addTrack(2, TransportMixFixture.C, "Audio"); parent(f, 2, ROOT); };
+        HostOperation op = f.submit(module, "tracks.create", create("audio", 0)); f.next(); f.next(); f.next();
+        check(!op.result.isDone() && f.tracks[2].child("name").writes == 0, "a top-level track at the wrong index is never named");
+        f.services.close(); f.next();
+        check(TransportMixFixture.error(op, "unavailable").outcome.equals("unknown"), "unattributed grouped creation stays unknown");
+    }
+    private static void groupedCreationInsideAGroupIsNeverNamed() {
+        TransportMixFixture f = new TransportMixFixture(); MixModule module = new MixModule(f.services);
+        f.tracks[0].child("trackType").emit("Group"); f.tracks[0].child("isGroup").data = true;
+        parent(f, 0, ROOT); parent(f, 1, ROOT);
+        f.create = factory -> { f.addTrack(2, TransportMixFixture.C, "Audio"); parent(f, 2, TransportMixFixture.A); };
+        HostOperation op = f.submit(module, "tracks.create", create("audio", -1)); f.next(); f.next(); f.next();
+        check(!op.result.isDone() && f.tracks[2].child("name").writes == 0, "a new track observed inside a group is not the requested top-level track");
+        f.services.close(); f.next();
+        check(TransportMixFixture.error(op, "unavailable").outcome.equals("unknown"), "it remains an unknown creation");
+    }
+    private static void trackTreeResolvesParentsAndRejectsInconsistentOrder() {
+        TransportMixFixture f = new TransportMixFixture();
+        TrackTree flat = TrackTree.capture(f.services);
+        check(flat.complete && !flat.groups && flat.byId.get(TransportMixFixture.B).topLevel && flat.byId.get(TransportMixFixture.B).depth == 0,
+                "without groups every track is top-level and no parent observation is needed");
+        f.tracks[0].child("trackType").emit("Group"); f.tracks[0].child("isGroup").data = true;
+        TrackTree unobserved = TrackTree.capture(f.services);
+        check(!unobserved.complete && "parent_observation_missing".equals(unobserved.reason), "groups without parent observations are incomplete");
+        parent(f, 0, ROOT); parent(f, 1, TransportMixFixture.A);
+        TrackTree tree = TrackTree.capture(f.services);
+        TrackTree.Node child = tree.byId.get(TransportMixFixture.B);
+        check(tree.complete && TransportMixFixture.A.equals(child.parentId) && child.depth == 1 && !child.topLevel, "child resolves to its group");
+        JsonObject row = new JsonObject(); tree.describe(row, child);
+        check(row.get("parentId").getAsString().equals(TransportMixFixture.A) && row.get("depth").getAsInt() == 1, "tracks.list row carries parentId/depth");
+        JsonObject groupRow = new JsonObject(); tree.describe(groupRow, tree.byId.get(TransportMixFixture.A));
+        check(groupRow.get("isGroup").getAsBoolean() && groupRow.get("parentId").isJsonNull() && groupRow.get("depth").getAsInt() == 0, "group row is top-level");
+        f.addTrack(2, TransportMixFixture.C, "Audio"); parent(f, 2, TransportMixFixture.B);
+        TrackTree bad = TrackTree.capture(f.services);
+        check(!bad.complete && "parent_not_a_group_in_window".equals(bad.reason), "a parent that is not a group in the window fails closed");
+        parent(f, 2, ROOT); f.tracks[2].child("position").emit(1); f.tracks[1].child("position").emit(2);
+        TrackTree order = TrackTree.capture(f.services);
+        check(!order.complete && "parent_order_inconsistent".equals(order.reason), "a top-level track between a group and its child breaks pre-order");
+    }
+    private static JsonObject groupRequest(String... ids) {
+        JsonObject p = new JsonObject(); JsonArray a = new JsonArray(); for (String id : ids) a.add(id); p.add("trackIds", a); return p;
+    }
+    private static void groupValidationRejectsBeforeScheduling() {
+        TransportMixFixture f = new TransportMixFixture(); MixModule module = new MixModule(f.services);
+        List<JsonObject> invalid = new java.util.ArrayList<>(List.of(groupRequest(), groupRequest("not-a-uuid"),
+                groupRequest(TransportMixFixture.A, TransportMixFixture.A), groupRequest(TransportMixFixture.A, TransportMixFixture.A.toUpperCase())));
+        JsonObject many = groupRequest(); for (int i = 0; i < 17; i++) many.getAsJsonArray("trackIds").add(String.format("00000000-0000-0000-0000-%012d", i)); invalid.add(many);
+        JsonObject named = groupRequest(TransportMixFixture.A); named.addProperty("name", ""); invalid.add(named);
+        JsonObject extra = groupRequest(TransportMixFixture.A); extra.addProperty("position", 0); invalid.add(extra);
+        for (JsonObject p : invalid) {
+            TransportMixFixture.error(f.submit(module, "tracks.group", p), "invalid_params");
+            check(f.tasks.isEmpty(), "invalid tracks.group rejected before scheduling: " + p);
+        }
+        MixModule.validateParams("tracks.group", groupRequest(TransportMixFixture.A, TransportMixFixture.B));
+    }
+    static final class FakeGroup implements MixModule.GroupAccess {
+        Runnable effect = () -> {};
+        int calls;
+        List<String> ids;
+        public void execute(Runnable work) { work.run(); }
+        public JsonObject group(List<Object> proxies, List<String> ids, Runnable check, Runnable before) {
+            calls++; this.ids = ids; check.run(); before.run(); effect.run();
+            JsonObject out = new JsonObject(); out.addProperty("nativeOperation", "track_group.group_tracks"); return out;
+        }
+    }
+    private static void groupVerifiesMembershipAndNamesTheGroup() {
+        TransportMixFixture f = new TransportMixFixture(); FakeGroup access = new FakeGroup(); MixModule module = new MixModule(f.services, access);
+        access.effect = () -> {
+            group(f, 2, G, 0); f.tracks[0].child("position").emit(1); f.tracks[1].child("position").emit(2);
+            f.bank.child("itemCount").emit(3);
+            parent(f, 2, ROOT); parent(f, 0, G); parent(f, 1, G);
+        };
+        JsonObject p = groupRequest(TransportMixFixture.B, TransportMixFixture.A); p.addProperty("name", "Drums");
+        HostOperation op = f.submit(module, "tracks.group", p); f.next(); f.next();
+        check(!op.result.isDone(), "one membership observation is not enough");
+        f.next();
+        JsonObject result = op.result.join();
+        check(access.ids.equals(List.of(TransportMixFixture.A, TransportMixFixture.B)), "tracks are passed in flat order, not request order");
+        check(result.get("trackId").getAsString().equals(G) && result.get("matchesRequested").getAsBoolean(), "the new group is identified and named");
+        JsonObject info = result.getAsJsonObject("group");
+        check(info.get("verification").getAsString().startsWith("unique_added_group_uuid") && info.getAsJsonArray("children").size() == 2
+                && info.get("parentId").isJsonNull(), "group evidence lists children and parent");
+        check(f.tracks[2].child("name").data.equals("Drums") && f.tracks[0].child("name").writes == 0, "only the group is renamed");
+        check(module.unresolved().isEmpty(), "observed grouping releases its quarantine");
+        TransportMixFixture plain = new TransportMixFixture(); FakeGroup quiet = new FakeGroup(); MixModule unnamed = new MixModule(plain.services, quiet);
+        quiet.effect = () -> {
+            group(plain, 2, G, 0); plain.tracks[0].child("position").emit(1); plain.tracks[1].child("position").emit(2);
+            plain.bank.child("itemCount").emit(3); parent(plain, 2, ROOT); parent(plain, 0, G); parent(plain, 1, ROOT);
+        };
+        HostOperation one = plain.submit(unnamed, "tracks.group", groupRequest(TransportMixFixture.A)); plain.next(); plain.next(); plain.next();
+        JsonObject single = one.result.join();
+        check(single.get("completion").getAsString().equals("observed") && !single.has("fields") && plain.tracks[2].child("name").writes == 0,
+                "without name the observed group is returned unnamed");
+    }
+    private static void groupRefusesMixedParentsEffectTracksAndRecording() {
+        TransportMixFixture f = new TransportMixFixture(); FakeGroup access = new FakeGroup(); MixModule module = new MixModule(f.services, access);
+        f.tracks[0].child("trackType").emit("Group"); f.tracks[0].child("isGroup").data = true;
+        f.addTrack(2, TransportMixFixture.C, "Audio");
+        parent(f, 0, ROOT); parent(f, 1, TransportMixFixture.A); parent(f, 2, ROOT);
+        HostOperation mixed = f.submit(module, "tracks.group", groupRequest(TransportMixFixture.B, TransportMixFixture.C)); f.next();
+        check(TransportMixFixture.error(mixed, "unsupported_scope").outcome.equals("not_applied") && access.calls == 0, "different parents are refused before native access");
+        f.tracks[2].child("trackType").emit("Effect");
+        HostOperation effect = f.submit(module, "tracks.group", groupRequest(TransportMixFixture.C)); f.next();
+        check(TransportMixFixture.error(effect, "unsupported_scope").outcome.equals("not_applied") && access.calls == 0, "effect tracks are refused");
+        HostOperation outside = f.submit(module, "tracks.group", groupRequest("00000000-0000-0000-0000-0000000000aa")); f.next();
+        check(TransportMixFixture.error(outside, "outside_window").outcome.equals("not_applied"), "unknown track is outside the window");
+        f.services.selectionOwner = new HostOperation(Long.MAX_VALUE);
+        HostOperation leased = f.submit(module, "tracks.group", groupRequest(TransportMixFixture.B)); f.next();
+        check(TransportMixFixture.error(leased, "busy").outcome.equals("not_applied") && access.calls == 0, "a held selection lease blocks grouping");
+        f.services.selectionOwner = null;
+        f.transport.child("isArrangerRecordEnabled").emit(true);
+        HostOperation recording = f.submit(module, "tracks.group", groupRequest(TransportMixFixture.B)); f.next();
+        check(TransportMixFixture.error(recording, "unsafe_state").outcome.equals("not_applied") && access.calls == 0, "recording blocks grouping");
+    }
+    private static void unobservedGroupQuarantinesCreationAndGrouping() {
+        TransportMixFixture f = new TransportMixFixture(); FakeGroup access = new FakeGroup(); MixModule module = new MixModule(f.services, access);
+        HostOperation op = f.submit(module, "tracks.group", groupRequest(TransportMixFixture.A), System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(400));
+        while (!op.result.isDone() && !f.tasks.isEmpty()) f.next();
+        JsonObject result = op.result.join();
+        check(result.get("completion").getAsString().equals("unknown") && result.get("reason").getAsString().equals("group_membership_not_observed"),
+                "an unobserved native grouping is unknown, never success");
+        check(!module.unresolved().isEmpty(), "unknown grouping is listed for extension.restart");
+        HostOperation create = f.submit(module, "tracks.create", create("audio", -1)); f.next();
+        check(TransportMixFixture.error(create, "unresolved_creation").outcome.equals("not_applied") && f.application.actions == 0, "creation is quarantined after unknown grouping");
+        HostOperation again = f.submit(module, "tracks.group", groupRequest(TransportMixFixture.A)); f.next();
+        check(TransportMixFixture.error(again, "unresolved_creation").outcome.equals("not_applied") && access.calls == 1, "grouping is never retried");
     }
     private static JsonObject create(String type, int position) {
         JsonObject p = new JsonObject(); p.addProperty("type", type); p.addProperty("position", position); p.addProperty("name", "Created"); return p;

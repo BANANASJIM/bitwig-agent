@@ -620,7 +620,7 @@ def check_note_spans(notes) -> None:
         if (beat, note.pitch) in seen:
             raise ValueError("duplicate edit cell")
         seen.add((beat, note.pitch))
-        if note.op == "clear":
+        if getattr(note, "op", "set") == "clear":
             continue
         end = beat + Decimal(str(note.durationBeats))
         if Decimal(str(note.durationBeats)) / Decimal("0.0078125") % 1:
@@ -688,6 +688,62 @@ class ClipEditArgs(ClipSettingsArgs):
             raise ValueError("semitones must be nonzero")
         if payload != CLIP_EDIT_OPS[self.op]:
             raise ValueError(f"op {self.op} takes exactly {sorted(CLIP_EDIT_OPS[self.op]) or 'no extra fields'}")
+        return self
+
+
+class ArrangerNote(StrictModel):
+    beat: float = Field(ge=0, le=4194304, description="Onset in beats from the clip start (not the arrangement), on a 1/128-beat grid.")
+    pitch: int = Field(ge=0, le=127)
+    velocity: int = Field(ge=1, le=127)
+    durationBeats: float = Field(ge=1 / 128, le=4096)
+
+
+class ArrangerClipListArgs(DeviceArgs):
+    pass
+
+
+class ArrangerClipCreateArgs(DeviceArgs):
+    startBeats: float = Field(ge=0, le=4194304, description="Arrangement position in beats.")
+    lengthBeats: float = Field(ge=1 / 128, le=65536)
+    name: str = Field(min_length=1, max_length=128)
+    notes: Annotated[list[ArrangerNote], Field(min_length=1, max_length=256)] = omitted()
+    channel: Annotated[int, Field(ge=0, le=15)] = omitted()
+
+    @model_validator(mode="after")
+    def validate_notes(self):
+        if "notes" not in self.model_fields_set:
+            if "channel" in self.model_fields_set:
+                raise ValueError("channel is only valid together with notes")
+            return self
+        check_note_spans(self.notes)
+        if any(Decimal(str(n.beat)) + Decimal(str(n.durationBeats)) > Decimal(str(self.lengthBeats)) for n in self.notes):
+            raise ValueError("notes must fit inside lengthBeats")
+        return self
+
+
+class ArrangerCopyArgs(DeviceArgs):
+    slotIndex: int = Field(ge=0, le=15)
+    expectedClipName: str = Field(min_length=1, max_length=256)
+    startBeats: float = Field(ge=0, le=4194304)
+
+
+ARRANGER_EDIT_OPS = {"move": {"startBeats"}, "resize": {"lengthBeats"}, "rename": {"name"}, "delete": set()}
+
+
+class ArrangerClipEditArgs(DeviceArgs):
+    clipIndex: int = Field(ge=0, le=4095, description="Index from a fresh arranger.clips.list (clips are ordered by start).")
+    expectedStartBeats: float = Field(ge=0, le=4194304, description="Exact startBeats from arranger.clips.list (guard, compared within 1e-6).")
+    expectedName: str = Field(max_length=256, description="Exact current name from arranger.clips.list; may be empty.")
+    op: Literal["move", "resize", "rename", "delete"]
+    startBeats: Annotated[float, Field(ge=0, le=4194304)] = omitted()
+    lengthBeats: Annotated[float, Field(ge=1 / 128, le=65536)] = omitted()
+    name: Annotated[str, Field(min_length=1, max_length=128)] = omitted()
+
+    @model_validator(mode="after")
+    def validate_op_fields(self):
+        payload = self.model_fields_set & set().union(*ARRANGER_EDIT_OPS.values())
+        if payload != ARRANGER_EDIT_OPS[self.op]:
+            raise ValueError(f"op {self.op} takes exactly {sorted(ARRANGER_EDIT_OPS[self.op]) or 'no extra fields'}")
         return self
 
 
@@ -910,6 +966,18 @@ class TrackCreateArgs(StatusArgs):
     type: Literal["audio", "instrument", "effect"]
     position: int = Field(ge=-1, le=2147483647)
     name: Nonempty
+
+
+class TrackGroupArgs(StatusArgs):
+    trackIds: Annotated[list[TrackId], Field(min_length=1, max_length=16)] = Field(
+        description="Tracks to put into one new group, all with the same parent (top level or one group); not effect or master tracks.")
+    name: Nonempty = omitted()
+
+    @model_validator(mode="after")
+    def validate_distinct(self):
+        if len({value.lower() for value in self.trackIds}) != len(self.trackIds):
+            raise ValueError("trackIds must be distinct")
+        return self
 
 
 class RemotePageArgs(ParameterArgs):
