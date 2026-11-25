@@ -699,3 +699,41 @@ class GridApplyArgs(StatusArgs):
         if dupes:
             raise ValueError(f"an input takes one source; repeated targets: {dupes}")
         return self
+
+
+class AudioRouteArgs(StatusArgs):
+    mode: Literal["silent", "restore", "status"]
+
+
+def _wav_path(value: str) -> str:
+    validate_local_path(value)
+    if not value.lower().endswith(".wav"):
+        raise ValueError("path must end in .wav")
+    return value
+
+
+class AudioCaptureArgs(StatusArgs):
+    seconds: float = Field(ge=0.5, le=120)
+    outPath: Nonempty
+    overwrite: bool = omitted(description="Replace an existing file; refused by default.")
+    fromStart: bool = omitted(description="Default true: stop transport, seek to 0, record, start transport, stop after seconds. false records without touching the transport.")
+    allowAudible: bool = omitted(description="Record the default output monitor without silent routing (audible).")
+
+    @field_validator("outPath")
+    @classmethod
+    def validate_out_path(cls, value: str) -> str:
+        return _wav_path(value)
+
+
+class AudioAnalyzeArgs(StatusArgs):
+    path: Nonempty
+    mode: Literal["level", "onsets", "mono_pitch", "probe"]
+    bpm: Annotated[float, Field(ge=20, le=666)] = omitted(description="mono_pitch: adds 16th-grid positions.")
+    skipSeconds: Annotated[float, Field(ge=0, le=3600)] = omitted(description="Ignore audio before this time; reported times stay relative to the file start.")
+    threshold: Annotated[float, Field(ge=0.01, le=0.9)] = omitted(description="onsets/mono_pitch: fraction of the peak envelope that counts as an onset (default 0.15).")
+    windowSeconds: Annotated[float, Field(ge=0.01, le=60)] = omitted(description="level: window length (default 0.5).")
+
+    @field_validator("path")
+    @classmethod
+    def validate_path(cls, value: str) -> str:
+        return _wav_path(value)
