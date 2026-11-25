@@ -234,3 +234,17 @@ def test_probe_keeps_the_wav_only_with_outpath(rig, tmp_path):
         validate_call("grid.probe", {**TARGET, "port": "P: osc.OUT", "seconds": 1, "mode": "level", "overwrite": True})
     with pytest.raises(ValueError):
         validate_call("grid.probe", {**TARGET, "port": "P: osc.OUT", "seconds": 1, "mode": "level", "key": "C:ionian"})
+
+
+def test_spectral_peaks_flag_low_notes_finer_than_one_bin_as_approximate():
+    import math
+    from bitwig_agent.audio_analysis import FFT_SIZE, spectral_peaks
+    rate = 48000
+    power = [0.0] * (FFT_SIZE // 2 + 1)
+    for hz in (55.0, 880.0):
+        k = round(hz * FFT_SIZE / rate)
+        power[k - 1], power[k], power[k + 1] = 0.5, 1.0, 0.5
+    peaks = {round(p["hz"]): p for p in spectral_peaks(power, rate)}
+    low = min(peaks.values(), key=lambda p: p["hz"])
+    high = max(peaks.values(), key=lambda p: p["hz"])
+    assert low.get("approximate") is True and "approximate" not in high and not math.isnan(high["midi"])

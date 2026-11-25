@@ -405,8 +405,11 @@ def spectral_peaks(power: list[float], rate: int) -> list[dict[str, Any]]:
     for level, freq in sorted(found, reverse=True)[:PEAK_COUNT]:
         midi = 69 + 12 * math.log2(freq / 440)
         nearest = round(midi)
-        out.append({"hz": round(freq, 1), "db": round(level, 1), "midi": round(midi, 2),
-                    "note": f"{NAMES[nearest % 12]}{nearest // 12 - 1}", "cents": round((midi - nearest) * 100)})
+        row = {"hz": round(freq, 1), "db": round(level, 1), "midi": round(midi, 2),
+               "note": f"{NAMES[nearest % 12]}{nearest // 12 - 1}", "cents": round((midi - nearest) * 100)}
+        if 1200 * math.log2((freq + rate / FFT_SIZE) / freq) > 100:  # one bin is wider than a semitone here: the note name is a guess
+            row["approximate"] = True
+        out.append(row)
     return out
 
 
@@ -449,7 +452,7 @@ def bands(x: array, rate: int, window_seconds: float, key: str | None, shift: fl
         rows.append(row)
     out: dict[str, Any] = {"windowSeconds": round(window_seconds, 3), "windows": rows,
                            "bandEdgesHz": {n: [lo, None if hi == math.inf else hi] for n, lo, hi in BAND_EDGES if lo < nyquist},
-                           "peaks": spectral_peaks(all_power, rate),
+                           "peaks": spectral_peaks(all_power, rate), "peakResolutionHz": round(rate / FFT_SIZE, 1),
                            "note": f"each window samples up to {FRAMES_PER_WINDOW} Hann frames of {FFT_SIZE} samples; bandsDb are relative to the window's total power; "
                                    "peaks = strongest spectral maxima of the whole analyzed range (dB re the strongest), the way to pitch steady or noisy sources"}
     if scale is not None:
