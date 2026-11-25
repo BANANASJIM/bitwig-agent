@@ -11,6 +11,7 @@ This is the implementation reference, not a tutorial or a host-acceptance report
 - [MIDI windows and edits](#midi-window-and-edits)
 - [Track tree and grouping](#track-tree-and-grouping)
 - [Arranger clips](#arranger-clips-version-gated)
+- [Arranger automation points](#arranger-automation-points-version-gated)
 - [Read-only primary modulators](#read-only-primary-modulators)
 - [Device modulators: insert, set, map](#device-modulators-insert-set-map)
 - [Grid controls](#version-gated-grid-controls)
@@ -279,6 +280,31 @@ The public controller API has no arranger-clip enumeration or creation. `Control
 - **Aliases:** renaming an alias clip renames the shared content (the name lives on the clip content).
 
 **Not covered:** automation clips, take/comp lanes, other clip lanes, group-track (meta) clips, effect/master tracks, splitting, fades, looping or other clip properties, audio file placement, cross-track copies, and arranger note editing after creation. Offline, every binding resolved against the inspected 6.1.4 JAR. Native behavior is established only by the native tests listed in VERIFICATION.
+
+### Arranger automation points (version-gated)
+
+The guide draws arranger automation in a track's Automation Lane section: "double-click any area of the automation lane" creates a point, and ALT-double-clicking a transition resets it "to linear interpolation" ([automation, ch. 9: The Arranger's Automation Lane Section; Drawing and Editing Automation](https://www.bitwig.com/userguide/latest/automation)). The public controller API cannot read or write points (only `hasAutomation`, `deleteAllAutomation` and touch), so these methods use exact native bindings behind the 6.1.4 version/JAR-hash gate (`automation_unavailable` otherwise). Paths follow Bitwig's own model tests and lane seeding:
+
+- player track `ynF.mvz()` → lane set `euS`; parameter reference `eD.cfM(bDH)`; find lane `LEn.Hnt(z2y)`;
+- create lane `YW.MRY(z2y, false, false, false)` ("Add Automation Lane" without the seed point at the current value or the UI reveal);
+- `lkr.LaE().tSS()` → point timeline `PQT`; points `qIe.cfM()` (`hMP`, ordered by beat): beat `SMz.x3t()`, value `vcm.cfM(point)` through the lane range `PQT.wGc()` (an `aL`, normalized 0..1), interpolation `dfo.FzB()` (`jRs` HOLD/LINEAR), curve `hMP.dU_()`;
+- new point `bU.MRY(beat, value, jRs, 0.0)`, insert `PQT.cfM(point, index)`, delete `PSn.MRY(point)`.
+
+Targets: `{kind:"volume"}` (`FNX.tSS()`, class `A` "Volume"), `{kind:"pan"}` (`FNX.nfq()`, `mAq` "Pan") of the track's mixer channel `ynF.TbN()`, or `{kind:"grid", deviceIndex, expectedDeviceName, moduleId, parameterId}`: a float (`Opy`) Grid module parameter on a top-level device of the same track, resolved like `grid.parameters.get`. The parameter's owning track must be the target track.
+
+| Method | Parameters / operation |
+|---|---|
+| `automation.points.get` | `T`, `target`, optional `range:{startBeat, endBeat}` (inclusive). Read-only, no stopped transport needed. `laneExists`, `count` and `pointsHash` (SHA-256 over every point's beat, value, interpolation and curve; an empty or missing lane is `e3b0c442…b855`) cover the whole lane; `points:[{beat, value, interpolation:"linear"|"hold", curve}]` lists those in range, at most 1024 (`pointsInRange`, `truncated`) |
+| `automation.points.set` | `T`, `target`, `expectedCount` (0–65536) and `expectedHash` from a fresh get (CAS; mismatch `stale_target/not_applied`), `points` (0–1024 `{beat 0–4194304, value 0–1, interpolation}`, strictly increasing, inside `range`), optional `range`. Every point with `startBeat <= beat <= endBeat` (the whole lane without `range`) is deleted and the requested points inserted, curve 0, inside one project transaction (`g2L.cfM("Set Automation Points", false)` … `g2L.cfM(false)`). A missing lane is created in that transaction; an empty request on a missing lane creates nothing. An equal lane is not rewritten (`verification:"already_matched"`) |
+
+**Safety and evidence:**
+
+- **Writes:** need observed stopped transport with recording and both automation-write modes off. Track proxy, UUID, lane set, parameter (Grid binding re-guarded), lane and timeline identity, owning project/context lifecycle and model thread are checked before and after the native call. Only continuous (`aL`) lanes are supported.
+- **Readback:** the whole lane is read back: points outside the range are the same native objects, the replaced ones are gone, and the lane equals the expected list (beat and value within 1e-9, interpolation, curve). Results add `previous:{count, pointsHash}`, `removed`, `inserted`, `laneCreated`, `verification:"native_lane_readback"`, `nativeUndo:true`, `undoGroupingVerified:false`.
+- **Unknown outcomes:** a mismatch is `automation_verification_failed`; it and any other post-dispatch failure have outcome `unknown` and quarantine further automation writes (`unresolved_mutation`) until `extension.restart`. Reads stay available. Never retry.
+- **Values** are normalized through the lane's own range; whether they equal the public normalized volume/pan values of `tracks.get` is not yet observed natively.
+
+**Not covered:** clip-launcher automation, automation clips, group/effect/master tracks, device remote controls and non-Grid device parameters, non-float Grid controls, curve (tension) writes, and automation mode/override state. Offline, every binding resolved against the inspected 6.1.4 JAR; native behavior is not yet observed.
 
 ### Read-only primary modulators
 
