@@ -16,13 +16,11 @@ final class Bitwig614GridParameterContext implements GridParameterContext.Access
     private final Bitwig614StringPanelAccess strings;
     private final Bitwig614StepArrayAccess steps;
     private final Bitwig614VoicingAccess voicing;
-    private final Class<?> parameterOwner;
 
     Bitwig614GridParameterContext(Bitwig614Runtime.Access bindings, Bitwig614GridBooleanPanelAccess panels,
             Bitwig614StringPanelAccess strings, Bitwig614StepArrayAccess steps, Bitwig614VoicingAccess voicing)
             throws ReflectiveOperationException {
         this.bindings = bindings; this.panels = panels; this.strings = strings; this.steps = steps; this.voicing = voicing;
-        parameterOwner = bindings.type("K2G");
         readContext = new Bitwig614ReadContextAccess(bindings);
         Class<?> model = bindings.type(R + "AVL");
         Class<?> dt = bindings.type(R + "XKG"), undo = bindings.type("dfI"), lock = bindings.type(R + "IOJ");
@@ -63,8 +61,6 @@ final class Bitwig614GridParameterContext implements GridParameterContext.Access
             if (voicing == null) throw failure("grid_unavailable", "Voicing property binding unavailable.");
             return voicing.property(object);
         }
-        if (field == PARAMETER_PROJECT && !parameterOwner.isInstance(object))
-            return readContext.read(NativeReadContext.Field.PROJECT, object);
         if (field == GUI_PANEL_STRING) {
             if (strings == null) throw failure("grid_unavailable", "String panel property binding unavailable.");
             return strings.property(object);

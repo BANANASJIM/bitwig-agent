@@ -9,14 +9,16 @@ import static dev.bitwigagent.HostServices.failure;
 final class GridSnapshotReader {
     static final int MAX_MODULES = 4096, MAX_CHILDREN = 256, MAX_OPTIONS = 256, MAX_CATALOG = 16384;
     static final int MAX_ITEMS = 131072, MAX_TEXT = 1024;
-    /** Step arrays: default exposure when STEPS is unreadable, the full-array cap, and the model-level value domain. */
+    /** Step arrays: default exposure when STEPS is unreadable, the full-array cap, and the finite sanity bound for step values (not a per-module range: Pitches are in Grid pitch units, the rest 0..1). */
     static final int STEP_FALLBACK = 64, STEP_FULL = 256;
-    static final double STEP_MIN = -1.0, STEP_MAX = 1.0;
+    static final double STEP_MIN = -128.0, STEP_MAX = 128.0;
     /**
      * Child models of the 6.1.4 module classes that carry no user data (engine feeds, indicators, display state);
      * classified internal, never counted as unsupported. By simple class name, valid under the 6.1.4 JAR gate only.
      */
-    static final Set<String> INTERNAL_MODELS = Set.of("BgP", "Kiy", "HQh", "L1", "uUS", "fwH", "qzH", "Znu");
+    static final Set<String> INTERNAL_MODELS = Set.of("BgP", "HQh", "L1", "uUS", "fwH", "qzH", "Znu");
+    /** Kiy also names another class, so it is matched by its fully qualified name. */
+    static final String INTERNAL_KIY = "com.bitwig.flt.document.core.master.device.Kiy";
     enum Kind { MODULE, INPUT, OUTPUT, PARAMETER, FLOAT, BOOLEAN, INTEGER, ENUM, PANEL_BOOLEAN, PANEL_STRING, STEP_ARRAY, VOICING, BIPOLAR_FLOAT, ENTRY, OPTION }
     private static final Kind[] PARAMETER_KINDS = {Kind.FLOAT, Kind.BOOLEAN, Kind.INTEGER, Kind.ENUM, Kind.PANEL_BOOLEAN, Kind.PANEL_STRING, Kind.STEP_ARRAY};
     enum Field {
@@ -564,7 +566,7 @@ final class GridSnapshotReader {
     private static boolean isInternal(Object child) {
         if (child == null) return false;
         String name = child.getClass().getName();
-        return INTERNAL_MODELS.contains(name.substring(Math.max(name.lastIndexOf('.'), name.lastIndexOf('$')) + 1));
+        return name.equals(INTERNAL_KIY) || INTERNAL_MODELS.contains(name.substring(Math.max(name.lastIndexOf('.'), name.lastIndexOf('$')) + 1));
     }
 
     /** Entries exposed for a step array: the STEPS prefix by default, up to 256 with full. */
@@ -602,7 +604,7 @@ final class GridSnapshotReader {
         result.add("values", values);
         result.addProperty("valuesComplete", exposed == length);
         result.addProperty("minimum", STEP_MIN); result.addProperty("maximum", STEP_MAX);
-        result.addProperty("valueDomain", "model_domain_minus1_to_1_per_module_mapping_not_verified");
+        result.addProperty("valueDomain", "finite_sanity_bound_not_a_module_range");
         result.add("display", JsonNull.INSTANCE);
         return result;
     }

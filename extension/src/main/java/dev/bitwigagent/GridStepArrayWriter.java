@@ -24,7 +24,7 @@ final class GridStepArrayWriter {
     /** Every pre-dispatch check of set(); nothing is written. */
     void preflight(GridSnapshotReader.ParameterBinding binding, GridParameterWriter.Request request, Runnable check) {
         nativeWriter.requireSupported(binding.parameter);
-        validate(values.parameterValue(binding), request);
+        validate(values.parameterValue(binding), nativeWriter.current(binding.parameter), request);
         contexts.requireWritable(binding, null, check);
     }
 
@@ -32,10 +32,10 @@ final class GridStepArrayWriter {
             Runnable check, Runnable dispatch) {
         nativeWriter.requireSupported(binding.parameter);
         JsonObject before = values.parameterValue(binding);
-        validate(before, request);
+        validate(before, nativeWriter.current(binding.parameter), request);
         GridParameterContext.Capture context = contexts.requireWritable(binding, null, check);
         before = values.parameterValue(binding);
-        validate(before, request);
+        validate(before, nativeWriter.current(binding.parameter), request);
         contexts.requireWritable(binding, context, check);
         check.run();
         float[] live = nativeWriter.current(binding.parameter);
@@ -57,7 +57,7 @@ final class GridStepArrayWriter {
                     changed ? "unknown" : "not_applied");
         check.run();
         JsonObject result = values.parameterResult(binding, current);
-        result.add("previousValues", before.get("values")); result.add("requestedValues", request.values);
+        result.add("previousValues", request.expectedValues); result.add("requestedValues", request.values);
         result.addProperty("mutationDispatched", changed);
         result.addProperty("verification", changed ? "exact_native_step_array_readback" : "already_matched");
         result.addProperty("nativeMutation", changed); result.addProperty("nativeUndo", changed);
@@ -67,19 +67,21 @@ final class GridStepArrayWriter {
         return result;
     }
 
-    /** Kind, exact CAS on the exposed prefix, and the prefix write bounds; stale before anything else. */
-    private static void validate(JsonObject current, GridParameterWriter.Request request) {
+    /**
+     * Kind, then exact CAS on the first expectedValues.size() live entries (independent of the live STEPS value, so a
+     * batch that also changes STEPS keeps its promise), then the prefix write bounds; stale before anything else.
+     */
+    private static void validate(JsonObject current, float[] live, GridParameterWriter.Request request) {
         if (!"steps".equals(request.kind) || !"steps".equals(current.get("kind").getAsString()))
             throw HostServices.failure("stale_context", "Parameter kind differs from the expected precondition; reacquire grid.parameters.get.");
-        JsonArray now = current.getAsJsonArray("values"), expected = request.expectedValues;
-        if (now.size() != expected.size())
-            throw HostServices.failure("stale_context", "expectedValues must cover exactly the exposed prefix ("
-                    + now.size() + " entries: STEPS, or the full array with full:true); reacquire grid.get.");
-        for (int i = 0; i < now.size(); i++)
-            if ((float) expected.get(i).getAsDouble() != (float) now.get(i).getAsDouble())
+        JsonArray expected = request.expectedValues;
+        if (expected.size() > live.length)
+            throw HostServices.failure("stale_context", "expectedValues is longer than the native array (" + live.length + "); reacquire grid.get.");
+        for (int i = 0; i < expected.size(); i++)
+            if ((float) expected.get(i).getAsDouble() != live[i])
                 throw HostServices.failure("stale_context", "Step values differ from the expected precondition; reacquire grid.get.");
-        if (request.values.size() > now.size())
-            throw HostServices.failure("invalid_params", "values must not be longer than the exposed prefix (" + now.size() + ").");
+        if (request.values.size() > expected.size())
+            throw HostServices.failure("invalid_params", "values must not be longer than expectedValues (" + expected.size() + ").");
     }
 
     /** Element-wise float equality (so -0.0 equals 0.0), same length. */

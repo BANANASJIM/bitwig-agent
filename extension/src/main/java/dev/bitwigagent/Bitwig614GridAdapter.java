@@ -85,6 +85,9 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
             Class<?> parameter = kind(GridSnapshotReader.Kind.PARAMETER, "rBL");
             bind(PARAMETER_ID, parameter, "aA_", String.class);
             parameterContexts = new GridParameterContext(new Bitwig614GridParameterContext(bindings, booleanPanels, stringPanels, stepArrays, voicingAccess));
+            // Voicing reads depend only on inspection bindings, never on write-side ones.
+            if (voicingAccess != null)
+                voicingWriter = new GridVoicingWriter(snapshots, parameterContexts, voicingAccess, voicingAccess.setterError() == null);
         } catch (ReflectiveOperationException | RuntimeException | LinkageError error) { inspectionError = diagnostic(error); }
         if (inspectionError != null) writeError = "Required parameter inspection bindings unavailable.";
         else try {
@@ -95,8 +98,6 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
             GridStepArrayWriter steps = stepArrays == null || stepArrays.setterError() != null ? null
                     : new GridStepArrayWriter(snapshots, parameterContexts, stepArrays);
             parameterWriter = new GridParameterWriter(snapshots, parameterContexts, new Bitwig614GridParameterWriter(bindings), panels, strings, steps);
-            if (voicingAccess != null)
-                voicingWriter = new GridVoicingWriter(snapshots, parameterContexts, voicingAccess, voicingAccess.setterError() == null);
         } catch (ReflectiveOperationException | RuntimeException | LinkageError error) { writeError = diagnostic(error); }
         GridTopologyContext topologyContexts = null;
         String topologyContextError = structureError == null ? null : "Required structure binding unavailable.";
@@ -265,7 +266,7 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
         steps.addProperty("writeAvailable", stepsWriteError == null);
         if (stepsWriteError != null) steps.addProperty("writeReason", stepsWriteError);
         steps.addProperty("operation", "FDM.FzB(float[]):void/native_recorded_array_change");
-        steps.addProperty("valueDomain", "model_domain_minus1_to_1_per_module_mapping_not_verified");
+        steps.addProperty("valueDomain", "finite_sanity_bound_not_a_module_range");
         steps.addProperty("nativeUndoAwareOperation", true); steps.addProperty("undoGroupingVerified", false);
         steps.addProperty("engineAcknowledgement", false);
         result.add("stepArrays", steps);
@@ -357,7 +358,7 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
     @Override public JsonObject voicing(Object proxy, UUID expectedTrackId, Runnable check) {
         require(gateError, "gate"); require(identityError, "native owning-track identity"); require(structureError, "structure");
         require(inspectionError, "parameter inspection context"); require(voicingError, "voicing");
-        if (voicingWriter == null) throw failure("grid_unavailable", "Grid voicing unavailable: write-side bindings unresolved.");
+        if (voicingWriter == null) throw failure("grid_unavailable", "Grid voicing unavailable: no voicing binding.");
         return voicingWriter.get(proxy, expectedTrackId, check);
     }
     @Override public JsonObject setVoicing(Object proxy, UUID expectedTrackId, GridVoicingWriter.Request request,

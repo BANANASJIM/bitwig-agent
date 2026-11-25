@@ -977,12 +977,12 @@ def test_grid_steps_write_is_a_prefix_cas_in_single_and_batch_form():
     assert validate_call("grid.parameters.set", {**GRID_STEPS, "full": True})
     entry = {key: GRID_STEPS[key] for key in ("moduleId", "parameterId", "expectedKind", "expectedValues", "values")}
     assert validate_call("grid.parameters.set", {**TARGET, "writes": [entry, {**entry, "parameterId": "B", "full": False}]})
-    assert validate_call("grid.parameters.set", {**GRID_STEPS, "expectedValues": [0.0] * 256, "values": [-1, 1.0] * 128, "full": True})
+    assert validate_call("grid.parameters.set", {**GRID_STEPS, "expectedValues": [0.0] * 256, "values": [-128, 128.0] * 128, "full": True})
 
 
 @pytest.mark.parametrize("changes", [
     {"expectedValues": []}, {"values": []}, {"expectedValues": [0.0] * 257}, {"values": [0.0] * 257},
-    {"values": [1.0000001]}, {"values": [-1.0000001]}, {"values": [float("nan")]}, {"expectedValues": [float("inf")]},
+    {"values": [0.0] * 5}, {"values": [128.0000001]}, {"values": [-128.0000001]}, {"values": [float("nan")]}, {"expectedValues": [float("inf")]},
     {"values": ["0.5"]}, {"values": [True]}, {"expectedValues": [None]}, {"values": 0.5}, {"full": 1},
     {"value": 0.5}, {"expectedValue": 0.0}, {"display": "1 kHz"},
 ])

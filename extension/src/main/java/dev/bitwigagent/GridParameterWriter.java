@@ -237,6 +237,8 @@ final class GridParameterWriter {
                 throw failure("invalid_params", "Step arrays take expectedValues and values, not expectedValue, value or display.");
             JsonArray expected = steps(params.get("expectedValues"), "expectedValues", false);
             JsonArray written = steps(params.get("values"), "values", true);
+            if (written.size() > expected.size())
+                throw failure("invalid_params", "values must not be longer than expectedValues.");
             boolean full = false;
             if (params.has("full")) {
                 JsonElement flag = params.get("full");
@@ -257,7 +259,7 @@ final class GridParameterWriter {
                 if (!Double.isFinite(number))
                     throw failure("invalid_params", field + " must be an array of 1.." + MAX_STEPS + " finite numbers.");
                 if (bounded && (number < GridSnapshotReader.STEP_MIN || number > GridSnapshotReader.STEP_MAX))
-                    throw failure("invalid_params", field + " entries must be within the step domain -1..1; no clamping is performed.");
+                    throw failure("invalid_params", field + " entries must be within the sanity bound -128..128; no clamping is performed.");
             }
             return element.getAsJsonArray();
         }

@@ -244,13 +244,13 @@ DISPLAY_DESCRIPTION = ("Instead of value, for float parameters whose numericUnit
 
 
 StringValue = Annotated[str, Field(max_length=1024)]
-STEP_MIN, STEP_MAX, STEP_ENTRIES = -1.0, 1.0, 256
+STEP_MIN, STEP_MAX, STEP_ENTRIES = -128.0, 128.0, 256
 
 
 FULL_DESCRIPTION = "steps parameters only: expose (and, on a write, compare-and-set) up to 256 step-array entries instead of the first STEPS ones. Default: the STEPS prefix."
-STEPS_EXPECTED_DESCRIPTION = ("kind steps: the exact current exposed prefix from grid.get (the first STEPS entries, or all with full:true), "
+STEPS_EXPECTED_DESCRIPTION = ("kind steps: the exact current entries from step 0 as read by grid.get (normally the first STEPS, or all with full:true); its length is the CAS window, "
                               "numbers as read (32-bit floats); compared after rounding to float.")
-STEPS_VALUES_DESCRIPTION = ("kind steps: the entries to write from step 0, 1..256 numbers within -1..1 (the model domain; how each module maps it is not verified), "
+STEPS_VALUES_DESCRIPTION = ("kind steps: the entries to write from step 0, 1..256 numbers within -128..128 (a finite sanity bound, not a per-module range: Pitches take Grid pitch units, Gates 1/0, Accents 0/0.5/1, Probabilities 0..1 as observed natively), "
                             "stored as 32-bit floats. Not longer than expectedValues; later entries and everything beyond the prefix stay unchanged. Nothing is clamped.")
 
 
@@ -309,6 +309,8 @@ class GridRawWrite(StrictModel):
         if self.expectedKind == "steps":
             if {"expectedValue", "value", "display"} & given or not {"expectedValues", "values"} <= given:
                 raise ValueError("kind steps takes expectedValues and values (and optional full), not expectedValue, value or display")
+            if len(self.values) > len(self.expectedValues):
+                raise ValueError("values must not be longer than expectedValues")
             return self
         if {"expectedValues", "values", "full"} & given:
             raise ValueError("expectedValues, values and full need expectedKind steps")

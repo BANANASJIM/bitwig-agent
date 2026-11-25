@@ -80,7 +80,7 @@ public final class GridStepsVoicingTest {
                 "only the first STEPS entries are exposed, the array length stays visible");
         check(row.getAsJsonArray("values").get(0).getAsDouble() == 0.1 && row.getAsJsonArray("values").get(1).getAsDouble() == 0.125,
                 "float entries use their shortest decimal form, not a widened double");
-        check(row.get("minimum").getAsDouble() == -1 && row.get("maximum").getAsDouble() == 1 && !row.has("options") && !row.has("value"),
+        check(row.get("minimum").getAsDouble() == -128 && row.get("maximum").getAsDouble() == 128 && !row.has("options") && !row.has("value"),
                 "model value domain is reported, no scalar value or options are invented");
         JsonObject full = inspect(f, context, "DATA", true).getAsJsonObject("parameter");
         check(full.getAsJsonArray("values").size() == 256 && full.get("valuesComplete").getAsBoolean(), "full exposes all 256 entries");
@@ -123,7 +123,7 @@ public final class GridStepsVoicingTest {
 
     private static void internalChildModelsAreNotUnsupported() {
         Fixture f = new Fixture();
-        f.first.put(CHILDREN, List.of(new BgP(), new Kiy(), new BgP()));
+        f.first.put(CHILDREN, List.of(new BgP(), new BgP(), new BgP()));
         JsonObject read = f.reader.snapshot(f.proxy, TRACK_ID, 0, 64, true, false, null, () -> {});
         JsonObject module = read.getAsJsonArray("modules").get(0).getAsJsonObject();
         check(module.getAsJsonArray("parameters").size() == 0 && module.get("internalChildren").getAsInt() == 3
@@ -135,11 +135,11 @@ public final class GridStepsVoicingTest {
                 && row.get("internal").getAsBoolean() && !has(detailed, "unknown_child_model"),
                 "diagnostics lists internal rows, still not as unsupported");
         Fixture mixed = new Fixture();
-        mixed.first.put(CHILDREN, List.of(new BgP(), new Mystery()));
+        mixed.first.put(CHILDREN, List.of(new BgP(), new Kiy(), new Mystery()));
         JsonObject result = mixed.reader.snapshot(mixed.proxy, TRACK_ID, 0, 64, true, false, null, () -> {});
         check(has(result, "unknown_child_model") && !result.get("complete").getAsBoolean()
-                && result.getAsJsonArray("modules").get(0).getAsJsonObject().getAsJsonArray("parameters").size() == 1,
-                "an unclassified child model stays unsupported");
+                && result.getAsJsonArray("modules").get(0).getAsJsonObject().getAsJsonArray("parameters").size() == 2,
+                "an unclassified child model stays unsupported, and Kiy is internal only by its fully qualified name");
     }
 
     private static final class StepFixture implements GridStepArrayWriter.Access {
@@ -232,13 +232,12 @@ public final class GridStepsVoicingTest {
         RpcException error = f.failure(steps("[0.9,0.9,0.9,0.9]", "[0.5]", false));
         check(error.code.equals("stale_context") && error.outcome.equals("not_applied") && f.calls == 0 && !f.op.dispatched,
                 "a stale expectation is rejected before dispatch, even for a no-op");
-        error = f.failure(steps(f.json(0, 3), "[0.5]", false));
-        check(error.code.equals("stale_context") && f.calls == 0, "expectedValues must cover exactly the exposed prefix");
-        error = f.failure(steps(f.json(0, 4), "[0.1,0.1,0.1,0.1,0.1]", false));
-        check(error.code.equals("invalid_params") && error.outcome.equals("not_applied") && f.calls == 0,
-                "values longer than the exposed prefix are rejected");
-        error = f.failure(steps(f.json(0, 4), "[0.5]", true));
-        check(error.code.equals("stale_context") && f.calls == 0, "full changes the exposed prefix the CAS must cover");
+        StepFixture shortArray = new StepFixture(4, 4);
+        error = shortArray.failure(steps("[0,0,0,0,0]", "[0.5]", false));
+        check(error.code.equals("stale_context") && shortArray.calls == 0, "expectedValues longer than the native array is stale");
+        StepFixture window = new StepFixture(256, 4);
+        window.set(steps(window.json(0, 6), "[0.5,0.5,0.5,0.5,0.5,0.5]", false));
+        check(window.calls == 1 && window.live()[5] == 0.5f, "the CAS window is expectedValues, not the live STEPS value");
         GridParameterWriter.Request scalar = GridParameterWriter.Request.parse(TransportMixFixture.json(
                 "{\"expectedKind\":\"float\",\"expectedValue\":0.0,\"value\":0.5}"));
         error = f.failure(scalar);
@@ -318,14 +317,15 @@ public final class GridStepsVoicingTest {
     private static void stepRequestBounds() {
         String max = "[" + "0.5,".repeat(255) + "0.5]";
         steps(max, max, true);
-        steps("[0]", "[-1]", false);
-        steps("[0]", "[1]", false);
+        steps("[0]", "[-128]", false);
+        steps("[0]", "[128]", false);
         steps("[7.5e3,-9]", "[0]", false);
         for (String bad : List.of("[]", "[" + "0.5,".repeat(256) + "0.5]", "[\"a\"]", "[true]", "[null]", "5", "{}", "[[0]]"))
             expectInvalid(() -> steps("[0]", bad, false));
         for (String bad : List.of("[]", "[" + "0.5,".repeat(256) + "0.5]", "[\"a\"]", "[null]", "5"))
             expectInvalid(() -> steps(bad, "[0]", false));
-        for (String bad : List.of("[1.0000001]", "[-1.0000001]", "[2]", "[1e999]"))
+        expectInvalid(() -> steps("[0]", "[0,0]", false));
+        for (String bad : List.of("[128.0000001]", "[-128.0000001]", "[129]", "[1e999]"))
             expectInvalid(() -> steps("[0]", bad, false));
         for (String extra : List.of("\"value\":0.5", "\"expectedValue\":0.5", "\"display\":\"1 kHz\""))
             expectInvalid(() -> GridParameterWriter.Request.parse(TransportMixFixture.json(
@@ -356,7 +356,6 @@ public final class GridStepsVoicingTest {
             context.values.put(GridParameterContext.Field.GUI_VOICING, (Supplier<Object>) Object::new);
             context.values.put(GridParameterContext.Field.LOCK_OWNER, context.dt);
             Supplier<Object> forbidden = () -> { throw new AssertionError("Voicing used the scalar parameter's K2G predicates"); };
-            context.override(voicing, GridParameterContext.Field.CIU, forbidden);
             context.override(voicing, GridParameterContext.Field.LICENSED, forbidden);
             context.override(voicing, GridParameterContext.Field.TOUCHED, forbidden);
             writer = new GridVoicingWriter(model.reader, context.reader, this, writable);
@@ -387,7 +386,7 @@ public final class GridStepsVoicingTest {
         check(result.get("supported").getAsBoolean() && result.getAsJsonObject("voicing").get("voices").getAsInt() == 1
                 && result.get("mode").getAsString().equals("true_mono") && !result.get("nativeMutation").getAsBoolean()
                 && result.getAsJsonObject("editContext").get("effectivelyLicensed").isJsonNull()
-                && result.getAsJsonObject("editContext").get("nativeCIu").isJsonNull(),
+                && !result.getAsJsonObject("editContext").get("nativeCIu").getAsBoolean(),
                 "one voice plays the stored mono mode; voicing has no scalar license or touch state");
         f.state.addProperty("voices", 8);
         check(f.get().get("mode").getAsString().equals("poly"), "several voices are poly");
@@ -457,6 +456,10 @@ public final class GridStepsVoicingTest {
         undo.context.values.put(GridParameterContext.Field.UNDO_ACTIVE, true);
         check(undo.failure("{\"expected\":{\"voices\":1},\"set\":{\"voices\":4}}").code.equals("unsafe_state") && undo.calls.isEmpty(),
                 "an active undo change gates voicing writes");
+        VoicingFixture skipped = new VoicingFixture();
+        skipped.context.override(skipped.voicing, GridParameterContext.Field.CIU, true);
+        check(skipped.failure("{\"expected\":{\"voices\":1},\"set\":{\"voices\":4}}").code.equals("unsafe_state") && skipped.calls.isEmpty(),
+                "the skip predicate gates voicing writes");
         VoicingFixture project = new VoicingFixture();
         project.context.override(project.voicing, NativeReadContext.Field.PROJECT, new Object());
         check(project.failure("{\"expected\":{\"voices\":1},\"set\":{\"voices\":4}}").code.equals("stale_context") && project.calls.isEmpty(),

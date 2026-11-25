@@ -32,7 +32,7 @@ final class GridParameterContext {
         check.run();
         boolean panel = kind == GridSnapshotReader.Kind.PANEL_BOOLEAN || kind == GridSnapshotReader.Kind.PANEL_STRING
                 || kind == GridSnapshotReader.Kind.STEP_ARRAY || kind == GridSnapshotReader.Kind.VOICING;
-        // The device voicing model is owned by the device itself: no module level, and not a K2G skip-predicate holder.
+        // The device voicing model is owned by the device itself: no module level (jBG is a K2G, so the skip predicate applies).
         boolean voicing = kind == GridSnapshotReader.Kind.VOICING;
         Object project = required(a.read(Field.PARAMETER_PROJECT, parameter), "Owning project");
         NativeReadContext.Capture common = readContexts.capture(project,
@@ -73,7 +73,7 @@ final class GridParameterContext {
                 throw failure("unsafe_state", "Native parameter effective licensing is false.");
             if (!bool(Field.SETTABLE, wrapper))
                 throw failure("unsafe_state", "Native GUI property is not settable.");
-            if ((!voicing && bool(Field.CIU, parameter)) || (!panel && bool(Field.TOUCHED, parameter)))
+            if (bool(Field.CIU, parameter) || (!panel && bool(Field.TOUCHED, parameter)))
                 throw failure("unsafe_state", "Native parameter skip or active touch state blocks the write.");
             required(undo, "Ancestor undo manager");
             if (bool(Field.UNDO_EXECUTING, undo) || bool(Field.UNDO_ACTIVE, undo) || bool(Field.UNDO_ICL, undo))
@@ -101,7 +101,7 @@ final class GridParameterContext {
         property.addProperty("isSettable", bool(Field.SETTABLE, wrapper));
         property.addProperty("scope", "gui_property_descriptor_flag_only");
         result.add("guiProperty", property);
-        nullable(result, "nativeCIu", voicing ? null : bool(Field.CIU, parameter));
+        result.addProperty("nativeCIu", bool(Field.CIU, parameter));
         nullable(result, "parameterTouched", panel ? null : bool(Field.TOUCHED, parameter));
         JsonObject undoState = new JsonObject(); undoState.addProperty("present", undo != null);
         undoState.addProperty("modelClass", undo == null ? null : GridSnapshotReader.text(undo.getClass().getName()));
