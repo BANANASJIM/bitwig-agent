@@ -523,6 +523,17 @@ def test_bands_places_energy_and_reports_stereo_correlation(tmp_path):
     assert run_bands({"path": str(wav), "mode": "bands"})["windows"][0]["bandsDb"]["air"] > -0.5
 
 
+def test_bands_chroma_resolves_a_low_register_chord(tmp_path):
+    rate, seconds = 48000, 4
+    freqs = [(hz * h, 1 / h) for hz in (73.416, 87.307, 110.0) for h in (1, 2, 3, 4)]  # D2 F2 A2 with harmonics
+    mix = [sum(a * math.sin(2 * math.pi * f * i / rate) for f, a in freqs) / 6 for i in range(rate * seconds)]
+    wav = tmp_path / "chord.wav"
+    write_stereo(wav, mix, mix, rate=rate)
+    chroma = run_bands({"path": str(wav), "mode": "bands", "key": "D:aeolian", "windowSeconds": 4})["chroma"]
+    assert {p["name"] for p in chroma["topPitchClasses"]} == {"D", "F", "A"}
+    assert chroma["inKeyShare"] > 0.95
+
+
 def test_bands_key_chroma_and_spectrogram(tmp_path):
     wav, png = tmp_path / "key.wav", tmp_path / "spec.png"
     a3 = tone(220, 1.5)
