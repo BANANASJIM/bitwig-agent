@@ -1070,3 +1070,42 @@ def test_remote_page_define_rejects_bad_requests(changes):
 def test_remote_page_delete_rejects_extra_fields():
     with pytest.raises(ValidationError):
         validate_call("devices.remote.deletePage", {**TARGET, "pageName": "Macros", "mode": "replace"})
+
+
+@pytest.mark.parametrize("fields", [
+    {"position": "start"}, {"position": "end"},
+    {"position": "before", "deviceIndex": 1, "expectedDeviceName": "EQ-5"},
+    {"position": "after", "deviceIndex": 0, "expectedDeviceName": "Polymer"},
+])
+def test_insert_position_round_trips(fields):
+    args = {"trackId": TRACK, "expectedDeviceCount": 2, "kind": "bitwig", "id": "11111111-2222-4333-8444-555555555555", **fields}
+    params, _ = validate_call("devices.insert", args)
+    assert params == args
+
+
+@pytest.mark.parametrize("fields", [
+    {"position": "before"}, {"position": "after", "deviceIndex": 1},
+    {"position": "before", "expectedDeviceName": "EQ-5"},
+    {"position": "end", "deviceIndex": 1, "expectedDeviceName": "EQ-5"},
+    {"deviceIndex": 1, "expectedDeviceName": "EQ-5"},
+    {"position": "middle"}, {"position": "before", "deviceIndex": 16, "expectedDeviceName": "EQ-5"},
+])
+def test_insert_position_anchor_rules(fields):
+    with pytest.raises(ValidationError):
+        validate_call("devices.insert", {"trackId": TRACK, "expectedDeviceCount": 2, "kind": "clap", "id": "x.y", **fields})
+
+
+def test_delete_move_and_layer_insert_shapes():
+    assert validate_call("devices.delete", TARGET)[0] == TARGET
+    move = {**TARGET, "toIndex": 3}
+    assert validate_call("devices.move", move)[0] == move
+    for bad in ({**TARGET, "toIndex": 0}, {**TARGET, "toIndex": 16}, TARGET, {**TARGET, "toIndex": 1, "extra": 1}):
+        with pytest.raises(ValidationError):
+            validate_call("devices.move", bad)
+    layer = {"parent": LAYER_PARENT, "layerId": LAYER_TARGET["layerId"], "expectedChildCount": 0,
+             "kind": "file", "path": "/tmp/FX.bwdevice", "position": "start"}
+    assert validate_call("devices.layers.insert", layer)[0] == layer
+    for bad in ({**layer, "position": "before"}, {**layer, "expectedChildCount": -1}, {**layer, "id": "x"},
+                {**layer, "layerId": "not-a-uuid"}, {k: v for k, v in layer.items() if k != "parent"}):
+        with pytest.raises(ValidationError):
+            validate_call("devices.layers.insert", bad)

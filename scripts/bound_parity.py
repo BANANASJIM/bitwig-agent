@@ -26,6 +26,7 @@ SAMPLE_UUID = "12345678-1234-1234-1234-123456789abc"
 # for cross-field rules the two sides legitimately express differently.
 SKIPS: dict[tuple[str, str, str], str] = {
     ("devices.insert", "id", "accept"): "per-kind id caps (clap 256, vst3 32) make the shared 4096 unreachable; rejects still run",
+    ("devices.layers.insert", "id", "accept"): "per-kind id caps (clap 256, vst3 32) make the shared 4096 unreachable; rejects still run",
     ("launcher.create", "notes.0.beat", "accept"): "a note must fit lengthBeats (max 4096), so beat 4194304 is unreachable here",
     ("notes.edit", "edits.0.beat", "accept"): "no explicit window: the host derives a grid of <=128 steps (step<=4 beats, startStep<=1048576) and rejects extremes the schema allows; error names the fix",
     ("launcher.create", "notes.0.durationBeats", "accept"): "same derived-grid limit (a 4096-beat note needs >128 steps)",
@@ -91,6 +92,7 @@ FIXUPS = {
     ("grid.modules.insert", "modules.0.typeName"): drop("modules.0.typeId"),
     ("grid.parameters.set", "display"): drop("value"),
     ("devices.insert", "path"): file_insert,
+    ("devices.layers.insert", "path"): file_insert,
     ("launcher.import", "path"): lambda p, v: p.__setitem__("path", as_path(v)),
     **{(m, f): window_fix(f) for m in ("notes.read", "notes.edit")
        for f in ("stepSizeBeats", "startStep", "steps", "pitchStart", "pitchCount")},

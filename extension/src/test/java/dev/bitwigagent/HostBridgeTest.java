@@ -47,6 +47,7 @@ public final class HostBridgeTest {
         layerValidationPrecedesScheduling();
         layerMissingIdsAndUnreadableValuesStayExplicit();
         layerRebindDuringWriteHasUnknownOutcome();
+        layerInsertionObservesTheChildWindow();
         System.out.println("HostBridgeTest: " + assertions + " assertions passed (simulated host only)");
     }
 
@@ -927,6 +928,69 @@ public final class HostBridgeTest {
     private static double parameterValue(JsonObject listing) {
         return listing.getAsJsonArray("parameters").get(0).getAsJsonObject().get("normalizedValue").getAsDouble();
     }
+
+    private static JsonObject layerInsert(int layer, int count, String position) {
+        JsonObject p = new JsonObject(); p.add("parent", target()); p.addProperty("layerId", layerId(layer));
+        p.addProperty("expectedChildCount", count); p.addProperty("kind", "bitwig");
+        p.addProperty("id", "11111111-2222-4333-8444-555555555555");
+        if (position != null) p.addProperty("position", position);
+        return p;
+    }
+
+    private static void layerInsertionObservesTheChildWindow() {
+        Fake full = new Fake(); HostBridge bridge = full.bridge();
+        JsonObject beyond = call(full, bridge, "devices.layers.insert", layerInsert(0, 2, null));
+        check(full.layerCalls.equals(List.of("0:end:insertBitwigDevice")), "layer end uses that layer's chain: " + full.layerCalls);
+        check(beyond.get("status").getAsString().equals("observed")
+                && beyond.get("verification").getAsString().equals("observed_count_increment_beyond_window")
+                && beyond.get("inserted").isJsonNull() && beyond.get("afterCount").getAsInt() == 3
+                && beyond.get("layerId").getAsString().equals(layerId(0)),
+                "a full two-child window can only observe the count delta");
+
+        Fake f = new Fake(); bridge = f.bridge();
+        f.setLayer(1, "Solo");
+        JsonObject start = call(f, bridge, "devices.layers.insert", layerInsert(1, 1, "start"));
+        check(f.layerCalls.equals(List.of("1:start:insertBitwigDevice")) && f.layerNames.get(1).equals(List.of("Inserted", "Solo")),
+                "layer start inserts before the first child: " + f.layerNames);
+        check(start.get("status").getAsString().equals("observed")
+                && start.get("verification").getAsString().equals("observed_count_increment_shifted_suffix")
+                && start.getAsJsonObject("inserted").get("deviceIndex").getAsInt() == 0
+                && start.getAsJsonArray("before").size() == 1 && start.getAsJsonArray("after").size() == 2,
+                "start identifies the new child and the shifted old one");
+
+        Fake g = new Fake(); bridge = g.bridge();
+        g.setLayer(1, "Solo");
+        JsonObject end = call(g, bridge, "devices.layers.insert", layerInsert(1, 1, "end"));
+        check(end.get("verification").getAsString().equals("observed_count_increment_and_unchanged_prefix")
+                && end.getAsJsonObject("inserted").get("deviceIndex").getAsInt() == 1
+                && g.layerNames.get(1).equals(List.of("Solo", "Inserted")), "layer end appends after the observed child");
+
+        Fake guards = new Fake(); bridge = guards.bridge();
+        CompletableFuture<JsonObject> wrongCount = bridge.handle("devices.layers.insert", layerInsert(0, 1, null), deadline());
+        guards.next(); expectError(wrongCount, "stale_context");
+        JsonObject unknown = layerInsert(0, 2, null); unknown.addProperty("layerId", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+        CompletableFuture<JsonObject> missing = bridge.handle("devices.layers.insert", unknown, deadline());
+        guards.next(); expectError(missing, "stale_context");
+        JsonObject badParent = layerInsert(0, 2, null); badParent.getAsJsonObject("parent").addProperty("expectedDeviceName", "Nope");
+        CompletableFuture<JsonObject> stale = bridge.handle("devices.layers.insert", badParent, deadline());
+        guards.next(); expectError(stale, "stale_target");
+        check(guards.layerCalls.isEmpty(), "rejected layer inserts never reach the host");
+        for (JsonObject bad : List.of(layerInsert(0, 2, "before"), layerInsert(0, -1, null))) {
+            CompletableFuture<JsonObject> rejected = bridge.handle("devices.layers.insert", bad, deadline());
+            expectError(rejected, "invalid_params");
+        }
+        JsonObject badId = layerInsert(0, 2, null); badId.addProperty("layerId", "not-a-uuid");
+        expectError(bridge.handle("devices.layers.insert", badId, deadline()), "invalid_params");
+
+        Fake silent = new Fake(); bridge = silent.bridge(); silent.layerMode = "none";
+        CompletableFuture<JsonObject> pending = bridge.handle("devices.layers.insert", layerInsert(0, 2, null),
+                System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(20));
+        silent.next();
+        JsonObject unobserved = pending.join();
+        check(unobserved.get("verification").getAsString().equals("insertion_not_observed")
+                && silent.layerCalls.size() == 1, "an unobserved layer insert is reported, never retried");
+    }
+
     private static String layerId(int index) { return index == 0 ? "11111111-2222-4333-8444-555555555555" : "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"; }
     private static JsonObject layerDiscovery() { JsonObject p = new JsonObject(); p.add("parent", target()); return p; }
     private static JsonObject layerTarget(Fake f, HostBridge bridge, int layer, int child) {
@@ -996,6 +1060,9 @@ public final class HostBridgeTest {
         final double[][] childParameterValues = {{.15, .35}, {.55, .75}};
         final int[][] childWrites = new int[2][2];
         Node layerBank;
+        final List<List<String>> layerNames = List.of(new ArrayList<>(List.of("Twin", "Twin")), new ArrayList<>(List.of("Twin", "Twin")));
+        final List<String> layerCalls = new ArrayList<>();
+        String layerMode = "one";
         int childIdEmissions;
         int actionReads, actionLookups, actionInvocations;
         boolean runningHostTask, slowActionLookup, initializing;
@@ -1060,6 +1127,10 @@ public final class HostBridgeTest {
                 final int layer = l;
                 Node node = new Node(); node.put("exists", populated); node.put("channelId", populated ? layerId(l) : "");
                 node.put("channelIndex", 10 + l); node.put("name", "Same Layer");
+                if (populated) {
+                    node.objects.put("startOfDeviceChainInsertionPoint", layerPoint(layer, "start").proxy(InsertionPoint.class));
+                    node.objects.put("endOfDeviceChainInsertionPoint", layerPoint(layer, "end").proxy(InsertionPoint.class));
+                }
                 Node children = new Node(); children.put("exists", populated);
                 children.put("itemCount", populated ? 2 : 0); children.put("scrollPosition", 0);
                 Device[] devices = new Device[2];
@@ -1108,6 +1179,32 @@ public final class HostBridgeTest {
             }
             bank.custom = (method, args) -> method.equals("getItemAt") ? layers[(Integer) args[0]] : null;
             root.objects.put("createLayerBank", bank.proxy(DeviceLayerBank.class));
+        }
+        Node layerPoint(int layer, String mode) {
+            Node node = new Node();
+            node.custom = (method, args) -> {
+                if (!method.startsWith("insert")) return null;
+                if (!runningHostTask) throw new AssertionError("layer insertion outside host callback");
+                layerCalls.add(layer + ":" + mode + ":" + method);
+                if (layerMode.equals("none")) return null;
+                List<String> names = new ArrayList<>(layerNames.get(layer));
+                names.add(mode.equals("start") ? 0 : names.size(), "Inserted");
+                setLayer(layer, names.toArray(new String[0]));
+                return null;
+            };
+            return node;
+        }
+        /** Make layer `layer` hold exactly these children, emitting observer traffic as the host would. */
+        void setLayer(int layer, String... names) {
+            for (int c = 0; c < 2; c++) {
+                Node leaf = childNodes[layer][c];
+                if (c < names.length) {
+                    if (!names[c].equals(leaf.value("name").current())) leaf.value("name").set(names[c]);
+                    if (!Boolean.TRUE.equals(leaf.value("exists").current())) leaf.value("exists").set(true);
+                } else if (!Boolean.FALSE.equals(leaf.value("exists").current())) leaf.value("exists").set(false);
+            }
+            layerNames.get(layer).clear(); layerNames.get(layer).addAll(Arrays.asList(names));
+            childBanks[layer].value("itemCount").set(names.length);
         }
         void emitChildIds(int layer, int child, String[] ids) {
             if (childIds[layer][child] != null) { childIdEmissions++; childIds[layer][child].valueChanged(ids); }

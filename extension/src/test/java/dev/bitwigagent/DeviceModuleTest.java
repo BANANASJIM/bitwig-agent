@@ -22,6 +22,9 @@ public final class DeviceModuleTest {
         insertionGuardsAndObservedDelta();
         insertionKindsPassExactArguments();
         insertionAmbiguityAndNoopStayUncertain();
+        positionedInsertionShiftsTheSuffix();
+        deletionNeedsExactNameAndObservesShift();
+        moveObservesTheExpectedArrangement();
         remotesAreSourceBoundAndTokenGuarded();
         remotePageSelectionIsIndependentAndObserved();
         remoteWritesNeedFreshUnchangedSource();
@@ -344,6 +347,147 @@ public final class DeviceModuleTest {
         check(shifted.insertions == 0, "shifted window cannot silently append without observing prefix");
     }
 
+
+
+    private static void positionedInsertionShiftsTheSuffix() {
+        Fake f = chain("A", "B", "C");
+        JsonObject before = insert("bitwig", NATIVE); before.addProperty("expectedDeviceCount", 3);
+        before.addProperty("position", "before"); before.addProperty("deviceIndex", 1);
+        before.addProperty("expectedDeviceName", "B");
+        JsonObject result = f.call("devices.insert", before);
+        check(f.points.equals(List.of("before:1:insertBitwigDevice")), "before anchors on the named device only: " + f.points);
+        check(names(f).equals(List.of("A", "Inserted", "B", "C")), "chain after before-insert: " + names(f));
+        check(result.getAsJsonObject("inserted").get("deviceIndex").getAsInt() == 1
+                && result.get("verification").getAsString().equals("observed_count_increment_shifted_suffix")
+                && result.getAsJsonObject("position").get("index").getAsInt() == 1,
+                "mid-chain insertion is identified at its final slot");
+        check(result.getAsJsonArray("after").size() == 4 && result.get("status").getAsString().equals("observed"),
+                "mid-chain insertion reports the whole shifted chain");
+
+        for (String[] c : new String[][]{{"start", "start:-1", "0"}, {"after", "after:2", "3"}}) {
+            Fake g = chain("A", "B", "C");
+            JsonObject p = insert("clap", "org.example.fx"); p.addProperty("expectedDeviceCount", 3);
+            p.addProperty("position", c[0]);
+            if (c[0].equals("after")) { p.addProperty("deviceIndex", 2); p.addProperty("expectedDeviceName", "C"); }
+            JsonObject r = g.call("devices.insert", p);
+            check(g.points.size() == 1 && g.points.get(0).startsWith(c[1] + ":insertCLAPDevice"),
+                    c[0] + " uses its public insertion point once: " + g.points);
+            check(r.getAsJsonObject("inserted").get("deviceIndex").getAsInt() == Integer.parseInt(c[2]), c[0] + " final slot");
+        }
+        Fake end = chain("A", "B");
+        JsonObject explicitEnd = insert("bitwig", NATIVE); explicitEnd.addProperty("position", "end");
+        check(end.call("devices.insert", explicitEnd).get("verification").getAsString()
+                .equals("observed_count_increment_and_unchanged_prefix") && end.insertions == 1,
+                "explicit end is the existing append path");
+
+        Fake guards = chain("A", "B", "C");
+        JsonObject wrong = insert("bitwig", NATIVE); wrong.addProperty("expectedDeviceCount", 3);
+        wrong.addProperty("position", "before"); wrong.addProperty("deviceIndex", 1);
+        wrong.addProperty("expectedDeviceName", "A");
+        error(guards.run("devices.insert", wrong), "stale_target");
+        wrong.addProperty("deviceIndex", 3);
+        error(guards.run("devices.insert", wrong), "target_not_found");
+        check(guards.points.isEmpty(), "a wrong anchor never reaches the host");
+        for (String[] bad : new String[][]{{"before", ""}, {"end", "deviceIndex"}, {"sideways", ""}}) {
+            JsonObject p = insert("bitwig", NATIVE); p.addProperty("position", bad[0]);
+            if (bad[1].equals("deviceIndex")) { p.addProperty("deviceIndex", 0); p.addProperty("expectedDeviceName", "A"); }
+            Fake v = chain("A", "B");
+            error(v.request("devices.insert", p), "invalid_params");
+        }
+        Fake none = chain("A", "B"); none.insertMode = "none";
+        JsonObject p = insert("bitwig", NATIVE); p.addProperty("position", "start");
+        JsonObject missed = none.run("devices.insert", p, System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(20)).join();
+        check(missed.get("verification").getAsString().equals("insertion_not_observed")
+                && missed.get("inserted").isJsonNull() && none.points.size() == 1, "an unobserved positioned insert is not retried");
+    }
+
+    private static void deletionNeedsExactNameAndObservesShift() {
+        Fake f = chain("A", "B", "C");
+        JsonObject p = named(1, "B");
+        JsonObject result = f.call("devices.delete", p);
+        check(f.deletions == 1 && names(f).equals(List.of("A", "C")), "delete removes exactly the named device: " + names(f));
+        check(result.get("status").getAsString().equals("observed")
+                && result.get("verification").getAsString().equals("observed_count_decrement_and_shifted_suffix")
+                && result.get("beforeCount").getAsInt() == 3 && result.get("afterCount").getAsInt() == 2
+                && result.getAsJsonObject("deleted").get("name").getAsString().equals("B")
+                && result.getAsJsonArray("after").size() == 2, "delete reports the count delta and shifted chain");
+        error(f.run("devices.delete", named(1, "B")), "stale_target");
+        error(f.run("devices.delete", named(5, "B")), "target_not_found");
+        check(f.deletions == 1, "a stale name or absent index never deletes");
+
+        Fake last = chain("A", "B");
+        check(last.call("devices.delete", named(1, "B")).get("status").getAsString().equals("observed")
+                && names(last).equals(List.of("A")), "deleting the last device observes the empty tail");
+
+        Fake wide = chain("A", "B"); wide.bank.value("itemCount").emit(17);
+        error(wide.run("devices.delete", named(0, "A")), "outside_window");
+        check(wide.deletions == 0, "a chain beyond the 16-device window is never edited blind");
+
+        Fake unsafe = chain("A", "B");
+        unsafe.transport.value("isArrangerRecordEnabled").emit(true);
+        error(unsafe.run("devices.delete", named(0, "A")), "unsafe_state");
+        check(unsafe.deletions == 0, "recording blocks deletion");
+
+        Fake silent = chain("A", "B"); silent.deleteMode = "none";
+        JsonObject r = silent.run("devices.delete", named(0, "A"),
+                System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(20)).join();
+        check(r.get("status").getAsString().equals("dispatched") && r.get("verification").getAsString().equals("deletion_not_observed")
+                && silent.deletions == 1, "an unobserved deletion is honest and never retried");
+        Fake changed = chain("A", "B", "C"); changed.deleteMode = "prefix";
+        check(changed.call("devices.delete", named(2, "C")).get("verification").getAsString().equals("ambiguous_chain_change"),
+                "a changed prefix during deletion is ambiguous");
+    }
+
+    private static void moveObservesTheExpectedArrangement() {
+        Fake f = chain("A", "B", "C", "D");
+        JsonObject up = named(0, "A"); up.addProperty("toIndex", 2);
+        JsonObject result = f.call("devices.move", up);
+        check(f.points.equals(List.of("after:2:moveDevices")) && names(f).equals(List.of("B", "C", "A", "D")),
+                "moving to a later index lands after that device: " + f.points + names(f));
+        check(result.get("verification").getAsString().equals("observed_expected_arrangement")
+                && result.getAsJsonObject("moved").get("toIndex").getAsInt() == 2
+                && result.get("beforeCount").getAsInt() == 4 && result.get("afterCount").getAsInt() == 4, "move observed");
+        JsonObject down = named(3, "D"); down.addProperty("toIndex", 1);
+        f.call("devices.move", down);
+        check(f.points.get(1).equals("before:1:moveDevices") && names(f).equals(List.of("B", "D", "C", "A")),
+                "moving to an earlier index lands before that device: " + names(f));
+        JsonObject beyond = named(0, "B"); beyond.addProperty("toIndex", 4);
+        error(f.run("devices.move", beyond), "target_not_found");
+        JsonObject same = named(0, "B"); same.addProperty("toIndex", 0);
+        error(f.request("devices.move", same), "invalid_params");
+        JsonObject wrongName = named(0, "Z"); wrongName.addProperty("toIndex", 1);
+        error(f.run("devices.move", wrongName), "stale_target");
+        check(f.points.size() == 2, "rejected moves never reach the host");
+
+        Fake twins = new Fake();
+        JsonObject swap = target(0); swap.addProperty("toIndex", 1);
+        JsonObject r = twins.call("devices.move", swap);
+        check(r.get("status").getAsString().equals("dispatched")
+                && r.get("verification").getAsString().equals("move_indistinguishable_by_name_and_type")
+                && twins.points.size() == 1, "identically named neighbours cannot prove a move");
+
+        Fake silent = chain("A", "B", "C"); silent.moveMode = "none";
+        JsonObject p = named(0, "A"); p.addProperty("toIndex", 1);
+        JsonObject missed = silent.run("devices.move", p, System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(20)).join();
+        check(missed.get("verification").getAsString().equals("move_not_observed") && silent.points.size() == 1,
+                "an unobserved move is reported and not retried");
+    }
+
+    private static Fake chain(String... names) {
+        Fake f = new Fake();
+        List<String[]> next = new ArrayList<>();
+        for (String name : names) next.add(new String[]{name, "audio-effect"});
+        f.render(next);
+        return f;
+    }
+    private static List<String> names(Fake f) {
+        List<String> result = new ArrayList<>();
+        for (String[] entry : f.chain) result.add(entry[0]);
+        return result;
+    }
+    private static JsonObject named(int index, String name) {
+        JsonObject p = target(index); p.addProperty("expectedDeviceName", name); return p;
+    }
 
     private static void remotesAreSourceBoundAndTokenGuarded() {
         Fake f = new Fake();
@@ -790,7 +934,11 @@ public final class DeviceModuleTest {
         final HostServices services;
         final DeviceModule module;
         int insertions, flushRequests, selected = -1;
-        String insertMode = "one", lastInsertion;
+        String insertMode = "one", deleteMode = "one", moveMode = "one", lastInsertion;
+        final List<String[]> chain = new ArrayList<>(List.of(new String[]{"Twin", "audio-effect"}, new String[]{"Twin", "audio-effect"}));
+        final List<String> points = new ArrayList<>();
+        final Device[] deviceProxies = new Device[16];
+        int deletions;
         Object lastArgument;
         Node firstTrack;
         boolean initialized, running;
@@ -851,9 +999,20 @@ public final class DeviceModuleTest {
                             return page.proxy(CursorRemoteControlsPage.class);
                         }
                         if (name.equals("selectInEditor")) { assertHostTask(); selected = deviceIndex; }
+                        if (name.equals("deleteObject")) {
+                            assertHostTask(); check(trackIndex == 0, "deletion uses the explicit track"); deletions++;
+                            if (!deleteMode.equals("none") && deviceIndex < chain.size()) {
+                                List<String[]> next = new ArrayList<>(chain); next.remove(deviceIndex);
+                                if (deleteMode.equals("prefix") && !next.isEmpty()) next.set(0, new String[]{"Changed prefix", "audio-effect"});
+                                render(next);
+                            }
+                        }
                         return null;
                     };
+                    device.objects.put("beforeDeviceInsertionPoint", point("before", deviceIndex, trackIndex).proxy(InsertionPoint.class));
+                    device.objects.put("afterDeviceInsertionPoint", point("after", deviceIndex, trackIndex).proxy(InsertionPoint.class));
                     objects[d] = device.proxy(Device.class);
+                    if (t == 0) deviceProxies[d] = objects[d];
                     if (t == 0) { devices[d] = device; pages[d] = page; }
                 }
                 track.objects.put("createDeviceBank", deviceBank.proxy(DeviceBank.class));
@@ -870,6 +1029,7 @@ public final class DeviceModuleTest {
                     return null;
                 };
                 track.objects.put("endOfDeviceChainInsertionPoint", end.proxy(InsertionPoint.class));
+                track.objects.put("startOfDeviceChainInsertionPoint", point("start", -1, trackIndex).proxy(InsertionPoint.class));
                 tracks[t] = track.proxy(Track.class);
             }
             Node app = new Node(); app.put("projectName", "Fixture"); app.put("hasActiveEngine", true);
@@ -888,6 +1048,49 @@ public final class DeviceModuleTest {
                 return null;
             };
             services = new HostServices(host.proxy(ControllerHost.class)); module = new DeviceModule(services); initialized = true;
+        }
+        /** Public insertion-point model: inserts or moves relative to an anchor slot of the track-0 chain. */
+        Node point(String mode, int anchor, int trackIndex) {
+            Node node = new Node();
+            node.custom = (name, args) -> {
+                boolean insert = name.startsWith("insert"), move = name.equals("moveDevices");
+                if (!insert && !move) return null;
+                assertHostTask(); check(trackIndex == 0, "positioned edit uses the explicit track");
+                points.add(mode + ":" + anchor + ":" + name);
+                if (insert ? insertMode.equals("none") : moveMode.equals("none")) return null;
+                List<String[]> next = new ArrayList<>(chain);
+                if (insert) {
+                    int index = mode.equals("start") ? 0 : mode.equals("before") ? anchor : anchor + 1;
+                    next.add(index, new String[]{"Inserted", "audio-effect"});
+                } else {
+                    Device moving = ((Device[]) args[0])[0];
+                    int from = Arrays.asList(deviceProxies).indexOf(moving);
+                    String[] entry = next.remove(from);
+                    int adjusted = anchor > from ? anchor - 1 : anchor;
+                    next.add(mode.equals("before") ? adjusted : adjusted + 1, entry);
+                }
+                render(next);
+                return null;
+            };
+            return node;
+        }
+        /** Emit the observer traffic of the chain becoming `next`, in the order the host reports it. */
+        void render(List<String[]> next) {
+            int old = chain.size();
+            for (int i = 0; i < 16; i++) {
+                if (i < next.size()) {
+                    String[] entry = next.get(i);
+                    boolean fresh = i >= old;
+                    if (fresh || !chain.get(i)[1].equals(entry[1])) devices[i].value("deviceType").emit(entry[1]);
+                    if (fresh || !chain.get(i)[0].equals(entry[0])) devices[i].value("name").emit(entry[0]);
+                    if (fresh) devices[i].value("exists").emit(true);
+                } else if (i < old) {
+                    devices[i].value("exists").emit(false);
+                }
+            }
+            List<String[]> copy = new ArrayList<>(next);
+            chain.clear(); chain.addAll(copy);
+            if (next.size() != old) bank.value("itemCount").emit(next.size());
         }
         void assertHostTask() { if (!running) throw new AssertionError("mutation outside scheduled host task"); }
         void flush() {
