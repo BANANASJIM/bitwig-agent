@@ -83,7 +83,7 @@ final class TransportModule implements HostModule {
         for (String key : p.keySet()) require(key);
         for (String key : p.keySet()) guard(key, p.get(key));
         for (Map.Entry<String, SettableEnumValue> entry : enums.entrySet())
-            if (p.has(entry.getKey())) EnumOptions.require(entry.getKey(), entry.getValue(), p.get(entry.getKey()).getAsString());
+            if (p.has(entry.getKey())) EnumOptions.require(entry.getKey(), entry.getValue(), p.get(entry.getKey()).getAsString(), observedString(entry.getKey()));
         double start = p.has("loopStartBeats") ? p.get("loopStartBeats").getAsDouble() : values.get("loopStartBeats").value.getAsDouble();
         double duration = p.has("loopDurationBeats") ? p.get("loopDurationBeats").getAsDouble() : values.get("loopDurationBeats").value.getAsDouble();
         if (!Double.isFinite(start + duration)) throw HostServices.failure("invalid_params", "Loop end must be finite.");
@@ -223,7 +223,7 @@ final class TransportModule implements HostModule {
         for (Map.Entry<String, SettableEnumValue> entry : enums.entrySet()) options.add(entry.getKey(), EnumOptions.json(entry.getValue()));
         result.add("options", options);
         JsonArray outside = new JsonArray();
-        for (Map.Entry<String, SettableEnumValue> entry : enums.entrySet()) if (EnumOptions.outsideOptions(entry.getValue())) outside.add(entry.getKey());
+        for (Map.Entry<String, SettableEnumValue> entry : enums.entrySet()) if (EnumOptions.outsideOptions(entry.getValue(), observedString(entry.getKey()))) outside.add(entry.getKey());
         result.add("observedOutsideOptions", outside);
         JsonObject tempoRange = new JsonObject();
         tempoRange.addProperty("minimum", 20); tempoRange.addProperty("maximum", 666);
@@ -235,6 +235,10 @@ final class TransportModule implements HostModule {
 
     private void require(String key) {
         if (values.get(key).value.isJsonNull()) throw HostServices.failure("not_ready", "Transport field not observed: " + key);
+    }
+    private String observedString(String key) {
+        Sample sample = values.get(key);
+        return sample != null && sample.value.isJsonPrimitive() ? sample.value.getAsString() : null;
     }
     private Sample sample(String key) { Sample value = new Sample(); values.put(key, value); return value; }
     private void observe(String key, BooleanValue source) {

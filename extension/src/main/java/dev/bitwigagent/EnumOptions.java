@@ -25,17 +25,21 @@ final class EnumOptions {
     }
 
     /** True when the host currently reports a value its own option list does not contain (e.g. a stored project value). */
-    static boolean outsideOptions(EnumValue value) {
+    static boolean outsideOptions(EnumValue value) { return outsideOptions(value, value.get()); }
+
+    /** observed: the value the module reports (its observer's last callback), which can differ from EnumValue.get() for stored project values. */
+    static boolean outsideOptions(EnumValue value, String current) {
         List<String> options = ids(value);
-        String current = value.get();
         return !options.isEmpty() && current != null && !current.isEmpty() && !options.contains(current);
     }
 
     /** Rejects (not_applied) a value the host does not list, except the value it currently reports (so a read can be written back); an unreadable list is not_ready, not permission. */
-    static void require(String field, EnumValue value, String requested) {
+    static void require(String field, EnumValue value, String requested) { require(field, value, requested, value.get()); }
+
+    static void require(String field, EnumValue value, String requested, String observed) {
         List<String> options = ids(value);
         if (options.isEmpty()) throw HostServices.failure("not_ready", field + " options are not readable from the host yet.");
-        if (!options.contains(requested) && !requested.equals(value.get()))
+        if (!options.contains(requested) && !requested.equals(observed) && !requested.equals(value.get()))
             throw HostServices.failure("invalid_params", field + " must be one of the host's options " + options + ", not " + requested + ".");
     }
 }
