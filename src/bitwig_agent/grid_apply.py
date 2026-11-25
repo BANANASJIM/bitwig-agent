@@ -192,7 +192,6 @@ SECONDS_PARAMS = {
     ("AR", "ATTACK"): ("cbrt", 0.2717, "20.1 ms"),
     ("AR", "RELEASE"): ("cbrt", 0.63, "250 ms"),
     ("Average", "TIME"): ("log10", -1.523, "30.0 ms"),
-    ("Comb", "DECAY"): ("cbrt", 0.1563, "3.82 ms"),
     ("Curves", "TIME"): ("log10", -2.0, "10.0 ms"),
     ("CV Out", "SMOOTH"): ("log10", -3.0, "1.00 ms"),
     ("CV Pitch Out", "SMOOTH"): ("log10", -3.0, "1.00 ms"),
@@ -202,7 +201,6 @@ SECONDS_PARAMS = {
     ("Follower RF", "DECAY"): ("log10", -0.376, "421 ms"),
     ("Freq Shift+", "DELAYTIME"): ("cbrt", 0.5, "125 ms"),
     ("Gate Length", "LENGTH"): ("log10", -1.301, "50.0 ms"),
-    ("Gate Repeat", "RATE"): ("log10", -1.301, "50.0 ms"),
     ("Lag", "TIME"): ("log10", -1.301, "50.0 ms"),
     ("Logic Delay", "DELAY"): ("log10", -0.921, "120 ms"),
     ("Mod Delay", "TIME"): ("cbrt", 0.6694, "300 ms"),
@@ -217,7 +215,7 @@ SECONDS_PARAMS = {
     ("\u00d8 Lag", "RATE"): ("log10", -1.5229, "30.0 ms"),
 }
 # Seconds parameters deliberately absent (default pair fits neither mapping, or only by the raw 1.0 = 1 s coincidence):
-# Audio Out HOLD_TIME, Long Delay TIME (raw_scales.UNVERIFIED); All-pass Delay TIME is linear (raw_scales).
+# none; Comb DECAY, Gate Repeat RATE, Long Delay TIME, Audio Out HOLD_TIME and the linear All-pass Delay TIME are in raw_scales.
 _TEXT = re.compile(r"([+-]?(?:\d+(?:\.(\d*))?|\.(\d+)))\s*([A-Za-z%]+)", re.ASCII)
 _JAVA_TRIM = "".join(map(chr, range(33)))
 
@@ -977,6 +975,9 @@ class Apply:
         """Value of a parameter after the apply when certain: given in the spec, or the default of a module not inserted yet."""
         given = self.resolved[name]["params"].get(pid)
         if given is not None:
+            want = given["want"]
+            if isinstance(want, dict) and "shown" not in want and type(want.get("value")) in (int, float, bool):  # a label resolves to its value
+                return want["value"]
             return given["raw"] if type(given["raw"]) in (int, float, bool) else None
         info = self.resolved[name]["info"]
         p = next((p for p in info["parameters"] if p["parameterId"] == pid), None) if info else None
@@ -1019,6 +1020,39 @@ class Apply:
             rule = rules.get("deadEnd")
             if rule and type_name in rule["types"] and wired_in and not wired_out:
                 self.warnings.append(f"{name}: {rule['message']}")
+            rule = rules.get("retriggerOff")
+            if (rule and type_name in rule["types"] and (name, rule["gatePort"]) in ins and rule["parameter"] in ids
+                    and self.known_value(name, rule["parameter"], existing) is False):
+                self.warnings.append(f"{name}: {rule['message']}")
+            ignored = self.unit_ignores_time(name, ids, existing, rules.get("unitIgnoresTime"))
+            self.raw_scale_warnings(name, type_name, ids, ignored, rules.get("rawNonLinear"))
+
+    def unit_ignores_time(self, name: str, ids: dict[str, Any], existing: dict[str, dict], rule: dict[str, Any] | None) -> bool:
+        """Warn when TIME is written while UNIT is a note value; True when the TIME is covered by that warning."""
+        if not rule or rule["timeParameter"] not in ids or rule["unitParameter"] not in ids or rule["timeParameter"] not in self.resolved[name]["params"]:
+            return False
+        options = {o["value"]: o["label"] for o in ids[rule["unitParameter"]].get("options") or []}
+        value = self.known_value(name, rule["unitParameter"], existing)
+        label = options.get(value)
+        if label is None or label.casefold() == rule["secondsLabel"].casefold():
+            return False
+        self.warnings.append(f"{name}: {rule['message'].format(unit=label)}")
+        return True
+
+    def raw_scale_warnings(self, name: str, type_name: str, ids: dict[str, Any], skip_time: bool, rule: dict[str, Any] | None) -> None:
+        """A raw number written to a non-linear scale rarely means what its display shows."""
+        if not rule:
+            return
+        params = self.resolved[name]["params"]
+        ctx = enum_context(self.by_spec[name].get("params") or {}, self.resolved[name]["info"])
+        for pid, spec in params.items():
+            want, raw = spec["want"], spec["raw"]
+            if skip_time and pid == "TIME" or type(raw) not in (int, float) or not want or "shown" in want or "display" in want:
+                continue
+            found = raw_scales.scale_for(type_name, pid, ctx)
+            if found is None or found[1].name not in rule["scales"] or raw == ids[pid].get("default"):
+                continue
+            self.warnings.append(f"{name}: " + rule["message"].format(parameter=pid, raw=raw, effective=raw_scales.effective(found[1], raw), example=found[1].example))
 
     async def transport_blocks(self) -> list[dict[str, str]]:
         try:

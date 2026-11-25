@@ -173,6 +173,42 @@ def route(args: dict[str, Any]) -> dict[str, Any]:
     return {"mode": "restore", "restored": restored, **describe(current_links())}
 
 
+async def playing_tracks(bridge: Any, timeout_ms: int) -> list[dict[str, str]] | None:
+    """Tracks with a playing launcher clip as [{trackId, name}] (one context.get), or None when it cannot be read."""
+    try:
+        ctx = await bridge.call("context.get", {}, timeout_ms)
+    except BridgeError:
+        return None
+    return [{"trackId": t.get("trackId", ""), "name": t.get("name", "")} for t in ctx.get("tracks") or []
+            if any(s.get("playing") for s in t.get("launcherSlots") or [])]
+
+
+async def isolate(bridge: Any, args: dict[str, Any], timeout_ms: int) -> dict[str, Any]:
+    """Which other tracks would end up in the recording; optionally refuse or stop them first. Raises not_applied before any recording."""
+    solo, stop_others = args.get("soloTrack"), args.get("stopOthers", False)
+    playing = await playing_tracks(bridge, timeout_ms)
+    if playing is None:
+        return {"warnings": ["could not read which tracks are playing (context.get failed): the recording may mix several tracks"]}
+    others = [t for t in playing if t["trackId"] != solo]
+    stopped: list[str] = []
+    if stop_others and solo:
+        for t in others:
+            await bridge.call("launcher.stop", {"trackId": t["trackId"]}, timeout_ms)
+            stopped.append(t["name"])
+        others = []
+    if solo and (others or solo not in {t["trackId"] for t in playing}):
+        why = f"other tracks are playing: {[t['name'] for t in others]}" if others else "that track has no playing launcher clip"
+        raise fail("not_isolated", f"soloTrack {solo} is not the only playing track ({why}); stop the others or pass stopOthers:true",
+                   "not_applied", otherTracksPlaying=[t["name"] for t in others])
+    out: dict[str, Any] = {"otherTracksPlaying": [t["name"] for t in others] if solo or len(others) > 1 else []}
+    if stopped:
+        out["stoppedTracks"] = stopped
+    if out["otherTracksPlaying"]:
+        out["warnings"] = [f"launcher clips are playing on {out['otherTracksPlaying']}: the recording is a mix, not one patch; "
+                           "pass soloTrack (and stopOthers) to isolate it"]
+    return out
+
+
 async def capture(bridge: Any, args: dict[str, Any], timeout_ms: int) -> dict[str, Any]:
     check_platform()
     seconds = args["seconds"]
@@ -190,6 +226,7 @@ async def capture(bridge: Any, args: dict[str, Any], timeout_ms: int) -> dict[st
                        "first, or pass allowAudible:true to record the default output audibly", **state)
     else:
         source = "@DEFAULT_MONITOR@"
+    isolation = await isolate(bridge, args, timeout_ms)
     from_start = args.get("fromStart", True)
     transport_started = False
     proc = spawn(["parec", "-d", source, "--file-format=wav", f"--rate={RATE}", "--channels=2", path])
@@ -224,7 +261,7 @@ async def capture(bridge: Any, args: dict[str, Any], timeout_ms: int) -> dict[st
             "durationSeconds": stats["durationSeconds"], "sampleRate": stats["sampleRate"], "channels": stats["channels"],
             "peak": stats["peak"], "peakDb": stats["peakDb"], "rms": stats["rms"], "rmsDb": stats["rmsDb"],
             "clipping": stats["clipping"], "silent": stats["peak"] < audio_analysis.SILENT_PEAK,
-            "fromStart": from_start, "audible": allow_audible, "transportStopped": transport_started}
+            "fromStart": from_start, "audible": allow_audible, "transportStopped": transport_started, **isolation}
 
 
 async def analyze(args: dict[str, Any]) -> dict[str, Any]:

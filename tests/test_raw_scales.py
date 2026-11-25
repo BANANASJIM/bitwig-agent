@@ -1,5 +1,7 @@
 """Raw scales: every recorded scale fits its evidence and the bundled schema; display writes convert client-side."""
 
+import math
+
 import pytest
 
 from bitwig_agent import grid_apply, grid_docs, raw_scales
@@ -61,6 +63,17 @@ def test_unverified_and_recorded_scales_do_not_overlap_and_alternatives_do_not_f
     ("Chance", "PROBABILITY", "25 %", 0.25),
     ("Mod Delay", "FEEDBACK", "30 %", 0.3),  # zero default: no live pair needed
     ("SVF", "RESONANCE", "80 %", 0.8),
+    ("Distortion", "DRIVE", "+6 dB", 6.0),
+    ("Heat", "DRIVE", "40 dB", 40.0),
+    ("Attenuate", "VALUE", "25 %", 0.25),
+    ("Value", "VALUE", "50 %", 0.5),
+    ("Long Delay", "TIME", "125 ms", 0.5),
+    ("Long Delay", "TIME", "8 s", 2.0),
+    ("Comb", "DECAY", "1 ms", 0.1),
+    ("Audio Out", "HOLD_TIME", "100 ms", 0.1),
+    ("Gate Repeat", "RATE", "31.6 ms", math.log10(0.0316)),
+    ("Gate Repeat", "RATE", "1 s", 0.0),
+    ("Pitch Shift", "PITCH", "-7 st", -7.0),
 ])
 def test_display_writes_convert_to_raw_and_are_idempotent(module, pid, text, raw):
     host = FakeGrid()
@@ -79,7 +92,8 @@ def test_display_writes_convert_to_raw_and_are_idempotent(module, pid, text, raw
     ("Amplify", "VALUE", "900 %"),         # raw 2.08 > 2
     ("Clock", "RATE", "40 Hz"),
     ("Sine", "PITCH", "12 hz"),            # wrong unit
-    ("Long Delay", "TIME", "100 ms"),
+    ("Long Delay", "TIME", "10 s"),       # cbrt 2.15 > 2
+    ("Distortion", "DRIVE", "50 dB"),
 ])
 def test_unwritable_display_is_rejected(module, pid, text):
     host = FakeGrid()
@@ -126,7 +140,7 @@ def test_describe_exposes_schema_facts_scales_footprint_and_category():
     lag = grid_docs.describe({"type": "Lag"})
     assert next(p for p in lag["parameters"] if p["id"] == "TIME")["rawScale"]["scale"] == "log10_seconds"
     attenuate = grid_docs.describe({"type": "Attenuate"})
-    assert next(p for p in attenuate["parameters"] if p["id"] == "VALUE")["rawScale"]["status"] == "unverified"
+    assert next(p for p in attenuate["parameters"] if p["id"] == "VALUE")["rawScale"]["scale"] == "linear_fraction"
 
 
 def test_query_returns_category_and_finds_filters_by_category():
