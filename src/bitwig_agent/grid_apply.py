@@ -139,6 +139,11 @@ def _pos(row: dict[str, Any]) -> tuple[int, int]:
     return row["x"], row["y"]
 
 
+def generated_name(row: dict[str, Any]) -> str:
+    """Stable stand-in name of an unnamed live module (grid.export writes it, grid.apply matches unnamed modules by it)."""
+    return f"_{row.get('typeName') or row.get('typeId')}_{row['x']}_{row['y']}"
+
+
 # Mirror of GridDisplayUnits.java: natural = what the display text measures (Hz, percent points, dB).
 DISPLAY_UNITS = {
     "hertz": ({"hz": 1.0, "khz": 1000.0}, lambda f: 69 + 12 * math.log2(f / 440) if f > 0 else math.nan, lambda raw: 440 * 2 ** ((raw - 69) / 12)),
@@ -399,6 +404,9 @@ class Apply:
         self.prune = bool(args.get("prune"))
         self.replace_default = bool(args.get("replace"))
         self.replaced_names: list[str] = []
+        self.external: list[str] = args.get("external") or []  # live modules the spec only references
+        self.outside_ok = bool(args.get("allowOutsideDisconnect"))
+        self.ext_rows: dict[str, dict[str, Any]] = {}
         self.dropped: list[str] = []
         self.namespace = args.get("namespace")
         self.modules: list[dict[str, Any]] = args.get("modules", [])
@@ -516,14 +524,15 @@ class Apply:
 
     def split_endpoint(self, endpoint: str, problems: list[str]) -> tuple[str, str] | None:
         name, dot, port = endpoint.rpartition(".")
-        if not dot or not name or name not in self.by_spec:
-            problems.append(f"connection endpoint {endpoint!r}: expected '<declared module name>.<PORT_KEY>'.{_near(name or endpoint, self.names)}")
+        if not dot or not name or (name not in self.by_spec and name not in self.external):
+            problems.append(f"connection endpoint {endpoint!r}: expected '<declared or external module name>.<PORT_KEY>'.{_near(name or endpoint, self.names + self.external)}")
             return None
         return name, port
 
     def validate_spec(self) -> None:
         problems: list[str] = []
         self.by_spec = {m["name"]: m for m in self.modules}
+        problems += [f"external {n!r} is also declared in modules; declare it once" for n in self.external if n in self.by_spec]
         self.resolved: dict[str, dict[str, Any]] = {}
         for m in self.modules:
             try:
@@ -642,7 +651,7 @@ class Apply:
     def plan_connections(self, rows: dict[str, dict], conns: list[dict]) -> list[dict]:
         """Edits (as host entries + readable fields) for rows keyed by module name; modules absent from rows are new."""
         incoming = {(c["targetModuleId"], c["targetPortKey"]): (c["sourceModuleId"], c["sourcePortKey"]) for c in conns}
-        name_of = {r["instanceId"]: r.get("customName") or r.get("name") for r in rows.values()}
+        name_of = {r["instanceId"]: r.get("customName") or generated_name(r) for r in [*self.rows0, *rows.values()]}
         edits, wanted = [], set()
         for src, sport, dst, dport in self.edges:
             drow, srow = rows.get(dst), rows.get(src)
@@ -661,15 +670,29 @@ class Apply:
                                  "source": {"moduleId": srow["instanceId"], "portKey": sport}}
             edits.append(edit)
         if self.prune:
+            held, cut = [], []
             for name, row in rows.items():
+                if name in self.external:  # referenced only: never pruned
+                    continue
+                outside = bool(self.namespace) and not name.startswith(self.namespace)
                 for port in row.get("inputs", []):
                     key = (row["instanceId"], port["key"])
                     if key in incoming and key not in wanted:
                         cur = incoming[key]
+                        end = f"{name}.{port['key']} (from {name_of.get(cur[0], cur[0])}.{cur[1]})"
+                        if outside and not self.outside_ok:
+                            held.append(end)
+                            continue
+                        if outside:
+                            cut.append(end)
                         edits.append({"from": None, "to": f"{name}.{port['key']}",
                                       "previous": f"{name_of.get(cur[0], cur[0])}.{cur[1]}",
                                       "write": {"targetModuleId": row["instanceId"], "targetPortKey": port["key"],
                                                 "expectedSource": {"moduleId": cur[0], "portKey": cur[1]}, "source": None}})
+            for items, text in ((held, "prune kept {n} cable(s) into modules outside namespace {ns!r}; allowOutsideDisconnect:true cuts them: {l}"),
+                                (cut, "allowOutsideDisconnect: disconnecting {n} input(s) of modules outside namespace {ns!r}: {l}")):
+                if items:
+                    self.warnings.append(text.format(n=len(items), ns=self.namespace, l="; ".join(items[:10]) + (" ..." if len(items) > 10 else "")))
         return edits
 
     def live_checks(self, rows: dict[str, dict]) -> None:
@@ -751,8 +774,7 @@ class Apply:
             raise SpecError(problems)
         by_custom: dict[str, list[dict]] = {}
         for r in rows:
-            if r["customName"]:
-                by_custom.setdefault(r["customName"], []).append(r)
+            by_custom.setdefault(r["customName"] or generated_name(r), []).append(r)  # unnamed: matched by its generated name
         existing = {}
         replaced: list[dict] = []
         for name in self.names:
@@ -768,9 +790,16 @@ class Apply:
                     problems.append(f"{name!r} exists as {found[0].get('typeName') or live_type} but the spec wants {self.resolved[name]['typeName']}")
                 else:
                     existing[name] = found[0]
+        for name in self.external:
+            found = by_custom.get(name, [])
+            if len(found) == 1:
+                self.ext_rows[name] = found[0]
+            else:
+                problems.append(f"external module {name!r} " + (f"matches {len(found)} modules; names must be unique" if found else f"is not in the device.{_near(name, by_custom)}"))
         deletes = list(replaced)
         if self.prune and self.namespace:
-            deletes += [r for r in rows if r["customName"].startswith(self.namespace) and r["customName"] not in self.by_spec]
+            deletes += [r for r in rows if r["customName"].startswith(self.namespace) and r["customName"] not in self.by_spec
+                        and r["customName"] not in self.external]
         self.replaced_names = [r["customName"] for r in replaced]
         self.dropped = self.dropped_cables(replaced, rows, conns)
         if self.dropped:
@@ -789,7 +818,7 @@ class Apply:
         self.ids = {n: r["instanceId"] for n, r in existing.items()}
         self.matched["modules"] = len(existing)
         if self.live_schema:
-            self.live_checks(existing)
+            self.live_checks({**existing, **self.ext_rows})
         current = {n: _pos(r) for n, r in existing.items()}
         target = {n: (self.by_spec[n]["x"], self.by_spec[n]["y"]) for n in existing}
         self.matched["positions"] = sum(1 for n in existing if current[n] == target[n])
@@ -833,7 +862,7 @@ class Apply:
         for name, at in self.pre_moves:
             moves.append({"name": name, "from": list(pos[name]), "to": list(at)})
             pos[name] = at
-        edits = self.plan_connections(existing, conns)
+        edits = self.plan_connections({**existing, **self.ext_rows}, conns)
         plan = {"deletes": [r["customName"] for r in deletes], **({"replaces": self.replaced_names} if self.replaced_names else {}),
                 **({"droppedConnections": self.dropped} if self.dropped else {}),
                 "inserts": [{"name": n, "type": self.resolved[n]["typeName"], "x": self.by_spec[n]["x"], "y": self.by_spec[n]["y"]} for n in inserts],
@@ -865,7 +894,7 @@ class Apply:
     def measured_warnings(self, existing: dict[str, dict]) -> None:
         """Cheap checks against measured behaviour: an oscillator PITCH_IN is inert while PITCH_MOD is 0."""
         for _src, _sport, dst, dport in self.edges:
-            info = self.resolved[dst]["info"]
+            info = self.resolved.get(dst, {}).get("info")
             if dport != "PITCH_IN" or info is None:
                 continue
             mod = next((p for p in info["parameters"] if p["parameterId"] == "PITCH_MOD"), None)
@@ -1011,12 +1040,15 @@ class Apply:
         by_name = {n: by_id[self.ids[n]] for n in self.names if self.ids[n] in by_id}
         if len(by_name) != len(self.names):
             raise Stop("grid.get", {"error": {"code": "stale_context", "message": "a declared module vanished before wiring"}}, "not_applied")
+        ext = {n: by_id[r["instanceId"]] for n, r in self.ext_rows.items() if r["instanceId"] in by_id}
+        if len(ext) != len(self.ext_rows):
+            raise Stop("grid.get", {"error": {"code": "stale_context", "message": "an external module vanished before wiring"}}, "not_applied")
         try:
             if self.live_schema:
-                self.live_checks(by_name)
+                self.live_checks({**by_name, **ext})
         except SpecError as exc:
             raise Stop("grid.get", {"error": {"code": "invalid_spec", "message": "; ".join(exc.problems)}}, "not_applied") from exc
-        edits = self.plan_connections(by_name, conns)
+        edits = self.plan_connections({**by_name, **ext}, conns)
         for n in self.names:
             want = (self.by_spec[n]["x"], self.by_spec[n]["y"])
             if _pos(by_name[n]) != want:

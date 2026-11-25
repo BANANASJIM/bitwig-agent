@@ -757,6 +757,24 @@ class GridRenderArgs(ParameterArgs):
         return self
 
 
+class GridExportArgs(ParameterArgs):
+    namespace: str = omitted(min_length=1, max_length=1024, description="Export only modules whose customName starts with this; cables to/from other modules become `external` names.")
+    includeParams: Literal["changed", "all", "none"] = omitted(description="changed (default): params differing from the bundled 6.1.4 defaults; all; none.")
+    outPath: Nonempty = omitted(description="Absolute path to write the spec JSON to (then the result omits the spec); refused if it exists unless overwrite=true.")
+    overwrite: bool = omitted(description="Replace an existing file at outPath.")
+
+    @model_validator(mode="after")
+    def validate_path(self):
+        if self.outPath is not None:
+            validate_local_path(self.outPath)
+        return self
+
+
+class GridGraphArgs(ParameterArgs):
+    namespace: str = omitted(min_length=1, max_length=1024, description="Only modules whose customName starts with this (plus cables touching them).")
+    includeParams: Literal["changed", "all", "none"] = omitted(description="none (default), changed (differing from bundled 6.1.4 defaults) or all.")
+
+
 class GridApplyArgs(StatusArgs):
     target: GridApplyTarget
     modules: Annotated[list[GridApplyModule], Field(max_length=1024, description="Declared modules; [] only with prune=true and a namespace (empties the namespace), or with instances.")] = omitted()
@@ -766,7 +784,10 @@ class GridApplyArgs(StatusArgs):
     connections: Annotated[list[GridApplyConnection], Field(max_length=1024)] = omitted(
         description="Cables between declared modules; one source per target input.")
     namespace: str = omitted(min_length=1, max_length=1024, description="customName prefix (e.g. 'H: ') that prune may delete from.")
-    prune: bool = omitted(description="Also disconnect unlisted inputs of declared modules and delete namespace modules absent from the spec.")
+    prune: bool = omitted(description="Also disconnect unlisted inputs of declared modules inside the namespace and delete namespace modules absent from the spec. Inputs of declared modules outside the namespace are kept (warning names both ends) unless allowOutsideDisconnect.")
+    allowOutsideDisconnect: bool = omitted(description="With prune and a namespace: also disconnect unlisted inputs of declared modules outside the namespace (listed by name in warnings and the dryRun plan).")
+    external: Annotated[list[Annotated[str, Field(min_length=1, max_length=1024)]], Field(max_length=1024)] = omitted(
+        description="Names of live modules this spec only wires to or from (e.g. 'X: sum'); they must exist, are used in connections like declared modules, and their type, position and params are never touched; never pruned.")
     dryRun: bool = omitted(description="Return the plan without writing anything.")
     replace: bool = omitted(description="Default for every module: replace an existing same-named module of another type instead of refusing.")
     voicing: GridVoicingFields = omitted(description="Poly Grid device voicing to converge to (voices, voiceStacking, monoMode, ...); only differing fields are written; refused before any write on Note/FX Grid.")
@@ -783,6 +804,10 @@ class GridApplyArgs(StatusArgs):
         dupes = sorted({n for n in names if names.count(n) > 1})
         if dupes:
             raise ValueError(f"module names must be unique: {dupes}")
+        ext = self.external or []
+        dupes = sorted({n for n in ext if ext.count(n) > 1})
+        if dupes:
+            raise ValueError(f"external names must be unique: {dupes}")
         targets = [c.to for c in self.connections or []]
         dupes = sorted({t for t in targets if targets.count(t) > 1})
         if dupes:
