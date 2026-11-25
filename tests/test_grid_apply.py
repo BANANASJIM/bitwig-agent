@@ -618,8 +618,11 @@ def test_replace_default_refuses_and_opt_in_swaps_type_and_rewires():
         run(host, REPLACE_SPEC)
     assert "exists as" in err.value.error["message"] and host.writes() == []
     spec = copy.deepcopy(REPLACE_SPEC)
+    other = host.add("Add", "Z: out", 30, 0)
+    host.conns[(other, "IN")] = (host.named("R: a")["instanceId"], "OUT")
     plan = run(host, spec, replace=True, dryRun=True)
     assert plan["plan"]["replaces"] == ["R: a"] and host.writes() == []
+    assert plan["plan"]["droppedConnections"] == ["R: a.OUT -> Z: out.IN"] and "R: a.OUT -> Z: out.IN" in plan["warnings"][0]
     result = run(host, spec, replace=True)
     assert result["status"] == "applied" and result["applied"]["deleted"] == 1 and result["applied"]["inserted"] == 1
     assert host.named("R: a")["typeName"] == "Multiply" and host.source("R: a", "IN") == ("R: src", "OUT")

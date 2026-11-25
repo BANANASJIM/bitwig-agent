@@ -237,6 +237,7 @@ class Apply:
         self.prune = bool(args.get("prune"))
         self.replace_default = bool(args.get("replace"))
         self.replaced_names: list[str] = []
+        self.dropped: list[str] = []
         self.namespace = args.get("namespace")
         self.modules: list[dict[str, Any]] = args["modules"]
         self.names = [m["name"] for m in self.modules]
@@ -554,6 +555,9 @@ class Apply:
         if self.prune and self.namespace:
             deletes += [r for r in rows if r["customName"].startswith(self.namespace) and r["customName"] not in self.by_spec]
         self.replaced_names = [r["customName"] for r in replaced]
+        self.dropped = self.dropped_cables(replaced, rows, conns)
+        if self.dropped:
+            self.warnings.append(f"replace drops {len(self.dropped)} cable(s) the spec does not declare: {'; '.join(self.dropped[:10])}" + (" ..." if len(self.dropped) > 10 else ""))
         self.measured_warnings(existing)
         inserts = [n for n in self.names if n not in existing]
         total = len(rows) - len(deletes) + len(inserts)
@@ -601,6 +605,7 @@ class Apply:
             pos[name] = at
         edits = self.plan_connections(existing, conns)
         plan = {"deletes": [r["customName"] for r in deletes], **({"replaces": self.replaced_names} if self.replaced_names else {}),
+                **({"droppedConnections": self.dropped} if self.dropped else {}),
                 "inserts": [{"name": n, "type": self.resolved[n]["typeName"], "x": self.by_spec[n]["x"], "y": self.by_spec[n]["y"]} for n in inserts],
                 "renames": list(inserts), "moves": moves, "params": param_plan,
                 "connections": [{k: v for k, v in e.items() if k != "write"} for e in edits]}
@@ -611,6 +616,19 @@ class Apply:
             notes.append("no bundled schema for this host version: ports, parameters and footprints of inserted modules are validated only after insertion")
         result = {"status": "dryRun", "planned": planned, "alreadyMatched": self.matched, "plan": plan, "steps": []}
         return result | ({"warnings": self.warnings} if self.warnings else {}) | self.notes_field(notes)
+
+    def dropped_cables(self, replaced: list[dict], rows: list[dict], conns: list[dict]) -> list[str]:
+        """Live cables on replaced modules that the spec does not re-declare (deleting the module removes them)."""
+        gone = {r["instanceId"] for r in replaced}
+        label = {r["instanceId"]: r.get("customName") or r.get("name") for r in rows}
+        declared = {(a, ap, b, bp) for a, ap, b, bp in self.edges}
+        out = []
+        for c in conns:
+            if c["sourceModuleId"] in gone or c["targetModuleId"] in gone:
+                s, t = label.get(c["sourceModuleId"]), label.get(c["targetModuleId"])
+                if (s, c["sourcePortKey"], t, c["targetPortKey"]) not in declared:
+                    out.append(f"{s}.{c['sourcePortKey']} -> {t}.{c['targetPortKey']}")
+        return out
 
     def measured_warnings(self, existing: dict[str, dict]) -> None:
         """Cheap checks against measured behaviour: an oscillator PITCH_IN is inert while PITCH_MOD is 0."""
