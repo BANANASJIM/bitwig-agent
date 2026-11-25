@@ -79,7 +79,7 @@ bitwig-agent-rpc grid.apply spec=@patch.json dryRun=true
 bitwig-agent-rpc grid.apply spec=@patch.json        # or --params @patch.json
 ```
 
-Use a `namespace` prefix (e.g. `"H: "`) plus `prune=true` to also remove stale modules and cables you own. It stops at the first error or unknown outcome and reports what was and was not done; fix the cause and re-apply. See [PROTOCOL](PROTOCOL.md#gridapply-declarative-patch-client-side).
+Keep one spec per Grid device (sections as name prefixes inside it); two specs sharing a namespace with `prune` delete each other's modules. Use a `namespace` prefix (e.g. `"H: "`) plus `prune=true` to also remove stale modules and cables you own. It stops at the first error or unknown outcome and reports what was and was not done; fix the cause and re-apply. See [PROTOCOL](PROTOCOL.md#gridapply-declarative-patch-client-side).
 
 ## Make Grid instruments without preset files
 

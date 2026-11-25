@@ -672,7 +672,7 @@ class GridApplyConnection(StrictModel):
 
 class GridApplyArgs(StatusArgs):
     target: GridApplyTarget
-    modules: Annotated[list[GridApplyModule], Field(min_length=1, max_length=128)]
+    modules: Annotated[list[GridApplyModule], Field(min_length=1, max_length=1024)]
     connections: Annotated[list[GridApplyConnection], Field(max_length=1024)] = omitted(
         description="Cables between declared modules; one source per target input.")
     namespace: str = omitted(min_length=1, max_length=1024, description="customName prefix (e.g. 'H: ') that prune may delete from.")

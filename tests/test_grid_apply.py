@@ -27,6 +27,7 @@ class FakeGrid:
         self.calls: list[tuple[str, dict]] = []
         self.shift = 0  # insert lands this far right of the request, like native reflow
         self.fail: dict[str, object] = {}
+        self.insert_caps: list[int] = []  # per insert call: apply only this many entries, then report partial
 
     # state helpers
     def add(self, type_name, custom="", x=0, y=0):
@@ -56,12 +57,12 @@ class FakeGrid:
     def row(self, m, params):
         connected = {p for (t, p) in self.conns if t == m["instanceId"]}
         row = {"instanceId": m["instanceId"], "customName": m["customName"], "name": m["name"], "typeId": m["typeId"],
-               "typeName": m["typeName"], "x": m["x"], "y": m["y"],
+               "typeName": m["typeName"], "x": m["x"], "y": m["y"], "width": m["info"]["width"], "height": m["info"]["height"],
                "inputs": [{"key": i["key"], "name": i["name"], "connected": i["key"] in connected} for i in m["info"]["inputs"]],
                "outputs": [{"key": o["key"], "name": o["name"]} for o in m["info"]["outputs"]]}
         if params:
             row["parameters"] = [{"supported": True, "kind": p["kind"], "parameterId": pid, "value": p["value"], "display": p["display"],
-                                  **{k: p[k] for k in ("minimum", "maximum", "options") if k in p}} for pid, p in m["params"].items()]
+                                  **{k: p[k] for k in ("minimum", "maximum", "options", "numericUnit") if k in p}} for pid, p in m["params"].items()]
         return row
 
     # host
@@ -91,12 +92,17 @@ class FakeGrid:
 
     def h_modules_insert(self, p):
         entries, added = [], []
-        for spec in p["modules"]:
+        cap = self.insert_caps.pop(0) if self.insert_caps else len(p["modules"])
+        for k, spec in enumerate(p["modules"]):
+            if k >= cap:
+                entries.append({"typeId": spec["typeId"], "status": "not_dispatched" if k > cap else "failed"})
+                continue
             name = next(n for n, m in self.catalog.items() if m["typeId"] == spec["typeId"])
             iid = self.add(name, "", spec["x"] + self.shift, spec["y"])
             entries.append({"typeId": spec["typeId"], "status": "applied", "moduleId": iid, "actualPosition": {"x": spec["x"] + self.shift, "y": spec["y"]}})
             added.append(self.row(self.mods[iid], False))
-        return {"status": "observed", "batchStatus": "applied", "completion": "complete", "modules": entries, "modulesAdded": added}
+        batch = "applied" if cap >= len(p["modules"]) else "partial"
+        return {"status": "observed", "batchStatus": batch, "completion": "complete", "modules": entries, "modulesAdded": added}
 
     def h_modules_rename(self, p):
         m = self.mods[p["moduleId"]]
@@ -109,6 +115,9 @@ class FakeGrid:
         m = self.mods[p["moduleId"]]
         if (m["x"], m["y"]) != (p["expectedX"], p["expectedY"]):
             raise BridgeError({"code": "stale_context", "message": "moved", "outcome": "not_applied"})
+        for o in self.mods.values():  # host rule: the anchor may not lie inside another module's footprint
+            if o is not m and o["x"] <= p["x"] < o["x"] + o["info"]["width"] and o["y"] <= p["y"] < o["y"] + o["info"]["height"]:
+                raise BridgeError({"code": "invalid_params", "message": "occupied anchor", "outcome": "not_applied"})
         m["x"], m["y"] = p["x"], p["y"]
         return {"status": "observed", "operation": "move", "actualPosition": {"x": p["x"], "y": p["y"]}, "matchesRequested": True}
 
@@ -373,5 +382,108 @@ def test_schema_and_cli_surface(tmp_path):
 
 
 def test_display_comparison_uses_live_precision():
-    assert grid_apply.display_matches("1.2 kHz", "1.20 kHz") and grid_apply.display_matches("1200 Hz", "1.20 kHz")
-    assert not grid_apply.display_matches("1.2 kHz", "1.19 kHz") and not grid_apply.display_matches("50 %", None)
+    assert grid_apply.display_matches("1.2 kHz", "1.20 kHz", "hertz") and grid_apply.display_matches("1200 Hz", "1.20 kHz", "hertz")
+    assert not grid_apply.display_matches("1.2 kHz", "1.19 kHz", "hertz") and not grid_apply.display_matches("50 %", None, "percent")
+
+
+def test_partial_insert_batch_still_names_what_landed_and_reapply_converges():
+    spec = {"target": TARGET, "namespace": "G: ", "modules": [{"name": f"G: m{i}", "type": "Add", "x": i * 3, "y": 0} for i in range(20)]}
+    host = FakeGrid()
+    host.insert_caps = [16, 2]
+    result = run(host, spec)
+    assert result["status"] == "partial" and result["applied"]["inserted"] == 18 and result["applied"]["renamed"] == 18
+    assert sorted(m["customName"] for m in host.mods.values() if m["customName"]) == sorted(f"G: m{i}" for i in range(18))
+    assert not [m for m in host.mods.values() if not m["customName"]] and "unnamedModules" not in result
+    assert result["notDispatched"]["inserted"] == 2
+    again = run(host, spec, prune=True)
+    assert again["status"] == "applied" and again["applied"]["inserted"] == 2 and again["applied"]["deleted"] == 0
+    assert len(host.mods) == 20
+
+
+def test_unsettled_insert_reports_unnamed_modules():
+    host = FakeGrid()
+    host.fail["grid.modules.insert"] = {"status": "observed", "batchStatus": "unknown", "completion": "unknown",
+                                        "modules": [{"status": "applied", "moduleId": host.add("Add", "", 50, 50)}, {"status": "unknown"}]}
+    result = run(host, {"target": TARGET, "modules": [{"name": "A", "type": "Add", "x": 0, "y": 0}, {"name": "B", "type": "Add", "x": 3, "y": 0}]})
+    assert result["status"] == "unknown" and list(result["unnamedModules"].values()) == ["A"]
+    assert "grid.modules.rename" not in [m for m, _ in host.calls]
+
+
+@pytest.mark.parametrize("params", [
+    {"ATTACK": {"display": "10 ms"}},  # seconds: no verified conversion
+    {"SUSTAIN": {"display": "banana"}},
+    {"SUSTAIN": {"display": "500 %"}},  # raw outside range
+])
+def test_unwritable_display_is_rejected_offline(params):
+    host = FakeGrid()
+    with pytest.raises(BridgeError) as err:
+        run(host, {"target": TARGET, "modules": [{"name": "E", "type": "ADSR", "x": 0, "y": 0, "params": params}]})
+    assert err.value.error["code"] == "invalid_spec" and host.writes() == []
+
+
+def test_zero_default_display_is_rejected_offline_but_raw_value_works():
+    host = FakeGrid()
+    bad = {"target": TARGET, "modules": [{"name": "B", "type": "Bias", "x": 0, "y": 0, "params": {"VALUE": {"display": "50 %"}}}]}
+    with pytest.raises(BridgeError) as err:
+        run(host, bad)
+    assert "zero" in err.value.error["message"] and host.writes() == []
+    bad["modules"][0]["params"] = {"VALUE": 0.5}
+    assert run(host, bad)["applied"]["paramsWritten"] == 1
+
+
+def test_display_parser_accepts_sign_unicode_minus_and_leading_dot():
+    q = grid_apply.parse_quantity
+    assert q("decibel", "+6.2 dB")[0] == 6.2 and q("decibel", "−6 dB")[0] == -6
+    assert q("percent", ".5 %")[0] == 0.5 and q("hertz", "1.2 kHz")[0] == 1200
+    assert grid_apply.display_matches("+6.2 dB", "6.20 dB", "decibel")
+
+
+def test_overlapping_spec_layout_is_rejected_offline():
+    host = FakeGrid()
+    with pytest.raises(BridgeError) as err:
+        run(host, {"target": TARGET, "modules": [{"name": "A", "type": "ADSR", "x": 0, "y": 0}, {"name": "B", "type": "Add", "x": 1, "y": 1}]})
+    assert "overlap" in err.value.error["message"] and host.writes() == []
+    host.add("Add", "other", 0, 0)
+    with pytest.raises(BridgeError) as err:
+        run(host, {"target": TARGET, "modules": [{"name": "A", "type": "Add", "x": 0, "y": 0}]})
+    assert "other" in err.value.error["message"] and host.writes() == []
+
+
+def test_swap_is_ordered_through_a_free_anchor_and_terminates():
+    host = FakeGrid()
+    spec = {"target": TARGET, "modules": [{"name": "A", "type": "Add", "x": 0, "y": 0}, {"name": "B", "type": "Add", "x": 3, "y": 0},
+                                          {"name": "C", "type": "Add", "x": 6, "y": 0}]}
+    run(host, spec)
+    swapped = {"target": TARGET, "modules": [{**spec["modules"][0], "x": 3}, {**spec["modules"][1], "x": 0}, spec["modules"][2]]}
+    result = run(host, swapped)  # the fake host rejects any move onto an occupied anchor
+    assert result["status"] == "applied" and result["applied"]["moved"] == 3
+    assert (host.named("A")["x"], host.named("B")["x"], host.named("C")["x"]) == (3, 0, 6)
+    chain = {"target": TARGET, "modules": [{**spec["modules"][2], "x": 9}, {**spec["modules"][1], "x": 6}, {**spec["modules"][0], "x": 3}]}
+    assert run(host, chain)["applied"]["moved"] == 2  # A already sits at 3; C and B vacate first, no parking
+
+
+def test_already_matched_writes_are_reported_unchanged():
+    host = FakeGrid()
+    run(host, SPEC)
+    host.calls.clear()
+    spec = copy.deepcopy(SPEC)
+    spec["modules"][2]["params"]["ATTACK"] = 0.9
+    host.fail["grid.parameters.set"] = {"status": "observed", "batchStatus": "applied", "completion": "complete",
+                                        "writes": [{"parameterId": "ATTACK", "status": "already_matched"}]}
+    result = run(host, spec)
+    assert result["status"] == "unchanged" and result["applied"]["paramsWritten"] == 0
+
+
+def test_null_names_fail_closed_and_unexpected_errors_keep_the_report():
+    host = FakeGrid()
+    run(host, SPEC)
+    host.calls.clear()
+    real = host.row
+    host.row = lambda m, params: {**real(m, params), "customName": None}
+    with pytest.raises(BridgeError) as err:
+        run(host, SPEC)
+    assert err.value.error["code"] == "invalid_spec" and host.writes() == []
+    host = FakeGrid()
+    host.fail["grid.connections.set"] = {"status": "observed", "batchStatus": "applied", "connections": [None]}
+    result = run(host, SPEC)
+    assert result["status"] == "unknown" and result["failure"]["method"] == "internal" and result["applied"]["inserted"] == 5
