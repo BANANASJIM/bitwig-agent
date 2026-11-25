@@ -1,0 +1,47 @@
+package dev.bitwigagent;
+
+/** Host-free reading of mixer display text; no claim about what Bitwig really prints beyond these shapes. */
+public final class DisplayScaleTest {
+    private static int assertions;
+    public static void main(String[] args) {
+        db();
+        pan();
+        tolerance();
+        System.out.println("DisplayScaleTest: " + assertions + " assertions passed (text parsing only)");
+    }
+    private static void db() {
+        eq(DisplayScale.parse(DisplayScale.Kind.DB, "-6.0 dB"), -6.0, "plain dB");
+        eq(DisplayScale.parse(DisplayScale.Kind.DB, "-12 dB"), -12, "integer dB");
+        eq(DisplayScale.parse(DisplayScale.Kind.DB, "+3.5dB"), 3.5, "explicit plus, no space");
+        eq(DisplayScale.parse(DisplayScale.Kind.DB, "-0,5 dB"), -0.5, "decimal comma");
+        eq(DisplayScale.parse(DisplayScale.Kind.DB, "−6.0 dB"), -6.0, "unicode minus");
+        eq(DisplayScale.parse(DisplayScale.Kind.DB, "-inf dB"), DisplayScale.MINUS_INF, "minus infinity");
+        eq(DisplayScale.parse(DisplayScale.Kind.DB, "-∞ dB"), DisplayScale.MINUS_INF, "minus infinity symbol");
+        nan(DisplayScale.parse(DisplayScale.Kind.DB, "-6.0"), "no unit is not dB");
+        nan(DisplayScale.parse(DisplayScale.Kind.DB, "loud"), "text is not understood");
+        nan(DisplayScale.parse(DisplayScale.Kind.DB, ""), "empty");
+        nan(DisplayScale.parse(DisplayScale.Kind.DB, null), "null");
+    }
+    private static void pan() {
+        eq(DisplayScale.parse(DisplayScale.Kind.PERCENT, "25% L"), -25, "left suffix");
+        eq(DisplayScale.parse(DisplayScale.Kind.PERCENT, "L 25%"), -25, "left prefix");
+        eq(DisplayScale.parse(DisplayScale.Kind.PERCENT, "40% R"), 40, "right");
+        eq(DisplayScale.parse(DisplayScale.Kind.PERCENT, "50% left"), -50, "word left");
+        eq(DisplayScale.parse(DisplayScale.Kind.PERCENT, "Center"), 0, "center");
+        eq(DisplayScale.parse(DisplayScale.Kind.PERCENT, "C"), 0, "C");
+        eq(DisplayScale.parse(DisplayScale.Kind.PERCENT, "-30%"), -30, "signed percent");
+        eq(DisplayScale.parse(DisplayScale.Kind.PERCENT, "100% R"), 100, "full right");
+        nan(DisplayScale.parse(DisplayScale.Kind.PERCENT, "25"), "bare number is ambiguous");
+        nan(DisplayScale.parse(DisplayScale.Kind.PERCENT, "25% L R"), "both sides");
+        nan(DisplayScale.parse(DisplayScale.Kind.PERCENT, "left-ish"), "unknown words");
+    }
+    private static void tolerance() {
+        near(DisplayScale.tolerance("-6.0 dB"), 0.05, "one decimal is a 0.05 half step");
+        near(DisplayScale.tolerance("-6 dB"), 0.5, "integer display is a 0.5 half step");
+        near(DisplayScale.tolerance("-6.25 dB"), 0.005, "two decimals");
+        near(DisplayScale.tolerance("Center"), 0.5, "no digits falls back to 0.5");
+    }
+    private static void eq(double a, double b, String m) { assertions++; if (Math.abs(a - b) > 1e-9) throw new AssertionError(m + ": " + a + " != " + b); }
+    private static void near(double a, double b, String m) { assertions++; if (Math.abs(a - b) > 1e-6) throw new AssertionError(m + ": " + a + " != " + b); }
+    private static void nan(double a, String m) { assertions++; if (!Double.isNaN(a)) throw new AssertionError(m + ": expected NaN, got " + a); }
+}

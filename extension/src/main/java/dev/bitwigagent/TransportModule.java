@@ -2,6 +2,7 @@ package dev.bitwigagent;
 
 import com.bitwig.extension.callback.BooleanValueChangedCallback;
 import com.bitwig.extension.callback.DoubleValueChangedCallback;
+import com.bitwig.extension.callback.StringValueChangedCallback;
 import com.bitwig.extension.controller.api.*;
 import com.google.gson.*;
 import java.util.*;
@@ -10,7 +11,7 @@ import java.util.concurrent.TimeUnit;
 /** Absolute transport controls; recording and automation modes are read-only safety inputs. */
 final class TransportModule implements HostModule {
     static final Set<String> METHODS = Set.of("transport.get", "transport.set");
-    private static final String[] ORDER = {"tempoBpm", "positionBeats", "metronome", "loopStartBeats", "loopDurationBeats", "loopEnabled", "playing"};
+    private static final String[] ORDER = {"tempoBpm", "timeSignature", "positionBeats", "metronome", "loopStartBeats", "loopDurationBeats", "loopEnabled", "playing"};
     private static final Set<String> FIELDS = Set.of(ORDER);
     private final HostServices s;
     private final Map<String, Sample> values = new LinkedHashMap<>();
@@ -20,6 +21,9 @@ final class TransportModule implements HostModule {
         observe("playing", s.transport.isPlaying());
         Sample tempo = sample("tempoBpm");
         s.transport.tempo().value().addRawValueObserver((DoubleValueChangedCallback) v -> tempo.number(v));
+        Sample signature = sample("timeSignature");
+        s.transport.timeSignature().markInterested();
+        s.transport.timeSignature().addValueObserver((StringValueChangedCallback) v -> signature.set(new JsonPrimitive((String) v)));
         observe("positionBeats", s.transport.playPosition());
         observe("metronome", s.transport.isMetronomeEnabled());
         observe("loopEnabled", s.transport.isArrangerLoopEnabled());
@@ -42,11 +46,18 @@ final class TransportModule implements HostModule {
         for (String key : List.of("positionBeats", "loopStartBeats", "loopDurationBeats")) {
             if (p.has(key)) Params.number(p, key, 0, Double.MAX_VALUE);
         }
+        if (p.has("timeSignature") && !validSignature(Params.string(p, "timeSignature")))
+            throw HostServices.failure("invalid_params", "timeSignature must be numerator/denominator: numerator 1..32, denominator 1, 2, 4, 8, 16 or 32.");
         if (p.has("loopDurationBeats") && p.get("loopDurationBeats").getAsDouble() == 0)
             throw HostServices.failure("invalid_params", "loopDurationBeats must be positive.");
         if (p.has("loopStartBeats") && p.has("loopDurationBeats")
                 && !Double.isFinite(p.get("loopStartBeats").getAsDouble() + p.get("loopDurationBeats").getAsDouble()))
             throw HostServices.failure("invalid_params", "Loop end must be finite.");
+    }
+
+    static boolean validSignature(String text) {
+        if (!text.matches("[1-9][0-9]?/(1|2|4|8|16|32)")) return false;
+        return Integer.parseInt(text.substring(0, text.indexOf('/'))) <= 32;
     }
 
     @Override public void dispatch(HostOperation op, String method, JsonObject p) {
@@ -107,6 +118,7 @@ final class TransportModule implements HostModule {
         switch (key) {
             case "playing": if (value.getAsBoolean()) s.transport.play(); else s.transport.stop(); break;
             case "tempoBpm": s.transport.tempo().value().setRaw(value.getAsDouble()); break;
+            case "timeSignature": s.transport.timeSignature().set(value.getAsString()); break;
             case "positionBeats": s.transport.setPosition(value.getAsDouble()); break;
             case "metronome": s.transport.isMetronomeEnabled().set(value.getAsBoolean()); break;
             case "loopEnabled": s.transport.isArrangerLoopEnabled().set(value.getAsBoolean()); break;
@@ -177,6 +189,7 @@ final class TransportModule implements HostModule {
         }
         JsonObject units = new JsonObject();
         units.addProperty("tempoBpm", "bpm_raw");
+        units.addProperty("timeSignature", "numerator/denominator as the host reports it; time-signature change markers are not in the public API");
         units.addProperty("positionBeats", "quarter_note_beats_current_play_position");
         units.addProperty("loopStartBeats", "quarter_note_beats");
         units.addProperty("loopDurationBeats", "quarter_note_beats");

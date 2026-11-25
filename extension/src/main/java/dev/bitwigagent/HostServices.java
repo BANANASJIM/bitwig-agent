@@ -128,6 +128,15 @@ final class HostServices implements AutoCloseable {
             throw failure("unsafe_state", "Recording or automation write is enabled; playback mutations are blocked.");
     }
 
+    /** Insert-type edits need an observed stopped transport on top of the recording/automation guard. */
+    void requireStopped() {
+        requirePlaybackSafe();
+        if (playing == null) throw failure("not_ready", "Transport playing state has not been observed.");
+        if (playing) throw failure("unsafe_state", "Transport is playing; stop it first.");
+    }
+
+    Boolean playing() { return playing; }
+
     JsonObject playbackSafety() {
         JsonObject result = new JsonObject();
         result.addProperty("arrangerRecordEnabled", arrangerRecordEnabled);

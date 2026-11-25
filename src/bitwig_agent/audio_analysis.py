@@ -10,6 +10,8 @@ from array import array
 from statistics import median
 from typing import Any
 
+from bitwig_agent import loudness
+
 MAX_BYTES = 256 * 1024 * 1024
 FFT_SIZE = 4096
 HOP_SECONDS = 0.005
@@ -24,8 +26,9 @@ class WavError(ValueError):
     pass
 
 
-def read_wav(path: str) -> tuple[int, int, array]:
-    """Return (sampleRate, channels, first-channel samples as floats in -1..1). Tolerates streamed headers."""
+def read_wav(path: str, all_channels: bool = False):
+    """Return (sampleRate, channels, first-channel samples as floats in -1..1), or a list of every channel's samples
+    with all_channels=True. Tolerates streamed headers."""
     try:
         with open(path, "rb") as handle:
             data = handle.read(MAX_BYTES + 1)
@@ -76,6 +79,8 @@ def read_wav(path: str) -> tuple[int, int, array]:
         raise WavError(f"Unsupported WAV encoding (format {tag}, {bits}-bit); use 16/24/32-bit PCM or float")
     if tag == 1 and bits in (16, 32) and sys.byteorder == "big":
         samples.byteswap()
+    if all_channels:
+        return rate, channels, [array("d", (v * scale for v in samples[c::channels])) for c in range(channels)]
     channel = samples[::channels]
     return rate, channels, array("d", (v * scale for v in channel))
 
@@ -293,6 +298,8 @@ def probe(x: array, rate: int, skip: float) -> dict[str, Any]:
 
 
 def analyze(args: dict[str, Any]) -> dict[str, Any]:
+    if args["mode"] == "loudness":
+        return loudness_mode(args)
     rate, channels, x = read_wav(args["path"])
     skip = args.get("skipSeconds", 0.0)
     mode = args["mode"]
@@ -315,3 +322,20 @@ def analyze(args: dict[str, Any]) -> dict[str, Any]:
         return {**base, **info, "count": len(times), "onsets": times[:MAX_ONSETS], "truncated": len(times) > MAX_ONSETS,
                 "intervals": [round(b - a, 4) for a, b in zip(times, times[1:])][:MAX_ONSETS]}
     return {**base, **mono_pitch(x, rate, threshold, skip, args.get("bpm"), args.get("method", "flux"))}
+
+
+def loudness_mode(args: dict[str, Any]) -> dict[str, Any]:
+    """BS.1770 loudness over every channel (the other modes read channel 0 only)."""
+    rate, count, data = read_wav(args["path"], all_channels=True)
+    skip = args.get("skipSeconds", 0.0)
+    frames = len(data[0])
+    if skip >= frames / rate:
+        raise WavError("skipSeconds is beyond the end of the file")
+    begin = int(skip * rate)
+    body = [ch[begin:] for ch in data]
+    try:
+        measured = loudness.analyze(body, rate)
+    except ValueError as exc:
+        raise WavError(str(exc)) from exc
+    return {"path": args["path"], "mode": "loudness", "sampleRate": rate, "channels": count,
+            "durationSeconds": round(frames / rate, 3), "analyzedChannel": "all", "startSeconds": round(begin / rate, 3), **measured}

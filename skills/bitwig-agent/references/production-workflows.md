@@ -124,6 +124,8 @@ Start with conservative source/instrument levels, especially layered oscillators
 
 In 6.0, audio clips on a group lane override the group's summed output for their duration. Group meta-clips summarize child material, and editing them can act on children. Treat group selection as a wider target, not another ordinary clip.
 
+**Tools:** `tracks.sends.set` (send level or `display:"-12 dB"`, `enabled`; a level write turns a disabled send on and reports `autoEnabled`), `tracks.set volumeDb/panPercent` (matched against the host's displayed text, restored on failure), `tracks.meters` (VU peak/RMS steps over a window while playing; no dB claim) and, for numbers, `audio.capture` + `audio.analyze mode=loudness` (BS.1770 LUFS, true-peak estimate, LRA; a file measurement, not Bitwig's meter). Pre/post send mode is not exposed.
+
 **Expected observation:** the intended channels and master show plausible activity without unintended overload, and the monitored destination is correct. Peak/RMS displays are useful observations, not proof of perceived loudness, tonal balance or hearing safety. Gain-match A/B where practical.
 
 Sources: [Mixer, sends and crossfader](https://www.bitwig.com/userguide/latest/the_mix_view), [track I/O](https://www.bitwig.com/userguide/latest/recording_clips#track_io_settings), [6.0 Group Track changes](https://downloads.bitwig.com/6.0/Release-Notes-6.0.html).

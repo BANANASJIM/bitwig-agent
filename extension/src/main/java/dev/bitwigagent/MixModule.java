@@ -8,9 +8,12 @@ import java.util.concurrent.TimeUnit;
 
 /** UUID-targeted mix operations over the single shared, bounded track bank. */
 final class MixModule implements HostModule {
-    static final Set<String> METHODS = Set.of("tracks.get", "tracks.set", "tracks.create", "tracks.select");
+    static final Set<String> METHODS = Set.of("tracks.get", "tracks.set", "tracks.create", "tracks.select", "tracks.sends.set");
     private static final String[] FIELDS = {"name", "volumeNormalized", "panNormalized", "mute", "solo", "arm", "selected"};
     private static final Set<String> WRITABLE = Set.of("name", "volumeNormalized", "panNormalized", "mute", "solo", "arm");
+    // Display-addressed alternatives to volumeNormalized/panNormalized, resolved against the host's own display text.
+    private static final Set<String> DISPLAY_WRITABLE = Set.of("volumeDb", "volumeDisplay", "panPercent", "panDisplay");
+    private static final Set<String> SEND_OPTIONAL = Set.of("sendIndex", "sendName", "expectedSendName", "valueNormalized", "display", "enabled");
     private final HostServices s;
     private final State[] states = new State[HostServices.TRACKS];
     private HostOperation creation;
@@ -64,11 +67,27 @@ final class MixModule implements HostModule {
             case "tracks.get": case "tracks.select":
                 Params.fields(p, Set.of("trackId"), Set.of()); Params.string(p, "trackId"); return;
             case "tracks.set":
-                Params.fields(p, Set.of("trackId"), WRITABLE); Params.string(p, "trackId");
+                Params.fields(p, Set.of("trackId"), union(WRITABLE, DISPLAY_WRITABLE)); Params.string(p, "trackId");
                 if (p.size() == 1) throw HostServices.failure("invalid_params", "At least one track field is required.");
                 if (p.has("name")) Params.string(p, "name");
                 for (String key : List.of("volumeNormalized", "panNormalized")) if (p.has(key)) Params.number(p, key, 0, 1);
                 for (String key : List.of("mute", "solo", "arm")) if (p.has(key)) Params.bool(p, key);
+                if (p.has("volumeDb")) Params.number(p, "volumeDb", -150, 24);
+                if (p.has("panPercent")) Params.number(p, "panPercent", -100, 100);
+                for (String key : List.of("volumeDisplay", "panDisplay")) if (p.has(key)) Params.string(p, key);
+                atMostOne(p, "volumeNormalized", "volumeDb", "volumeDisplay");
+                atMostOne(p, "panNormalized", "panPercent", "panDisplay");
+                return;
+            case "tracks.sends.set":
+                Params.fields(p, Set.of("trackId"), SEND_OPTIONAL); Params.string(p, "trackId");
+                if (p.has("sendIndex") == p.has("sendName")) throw HostServices.failure("invalid_params", "Supply exactly one of sendIndex or sendName.");
+                if (p.has("sendIndex")) Params.integer(p, "sendIndex", 0, 127);
+                for (String key : List.of("sendName", "expectedSendName", "display")) if (p.has(key)) Params.string(p, key);
+                if (p.has("valueNormalized")) Params.number(p, "valueNormalized", 0, 1);
+                if (p.has("enabled")) Params.bool(p, "enabled");
+                atMostOne(p, "valueNormalized", "display");
+                if (!p.has("valueNormalized") && !p.has("display") && !p.has("enabled"))
+                    throw HostServices.failure("invalid_params", "At least one of valueNormalized, display or enabled is required.");
                 return;
             case "tracks.create":
                 Params.fields(p, Set.of("type", "position", "name"), Set.of());
@@ -79,6 +98,13 @@ final class MixModule implements HostModule {
         }
     }
 
+    private static Set<String> union(Set<String> a, Set<String> b) { Set<String> out = new HashSet<>(a); out.addAll(b); return out; }
+    private static void atMostOne(JsonObject p, String... keys) {
+        int n = 0;
+        for (String key : keys) if (p.has(key)) n++;
+        if (n > 1) throw HostServices.failure("invalid_params", "Supply at most one of " + String.join(", ", keys) + ".");
+    }
+
     @Override public void dispatch(HostOperation op, String method, JsonObject p) {
         s.check(op);
         if (method.equals("tracks.create")) { create(op, p); return; }
@@ -86,6 +112,7 @@ final class MixModule implements HostModule {
         State state = states[s.trackSlot(id)];
         Target target = new Target(id, state);
         if (method.equals("tracks.get")) { op.result.complete(snapshot(target)); return; }
+        if (method.equals("tracks.sends.set")) { sendSet(op, target, p); return; }
         if (method.equals("tracks.select")) {
             guard(op, target);
             s.requireSelectionFree();
@@ -101,7 +128,72 @@ final class MixModule implements HostModule {
         }
         JsonObject changes = new JsonObject();
         for (String key : WRITABLE) if (p.has(key)) changes.add(key, p.get(key));
-        set(op, target, changes, null);
+        List<Solve> solves = new ArrayList<>();
+        if (p.has("volumeDb") || p.has("volumeDisplay"))
+            solves.add(new Solve("volumeNormalized", 1, "volumeDisplay", DisplayScale.Kind.DB, p.get(p.has("volumeDb") ? "volumeDb" : "volumeDisplay"), p.has("volumeDb")));
+        if (p.has("panPercent") || p.has("panDisplay"))
+            solves.add(new Solve("panNormalized", 2, "panDisplay", DisplayScale.Kind.PERCENT, p.get(p.has("panPercent") ? "panPercent" : "panDisplay"), p.has("panPercent")));
+        if (solves.isEmpty()) { set(op, target, changes, null); return; }
+        // Parse every display target before the first probe write: a bad string must never reach the host.
+        for (Solve solve : solves) solve.parse();
+        solveNext(op, target, changes, solves, 0);
+    }
+
+    /** One display-addressed mixer value, resolved to a normalized value by DisplaySolver before the ordinary set flow. */
+    private static final class Solve {
+        final String key, displayKey; final int field; final DisplayScale.Kind kind; final JsonElement request; final boolean numeric;
+        double target; String text;
+        Solve(String key, int field, String displayKey, DisplayScale.Kind kind, JsonElement request, boolean numeric) {
+            this.key = key; this.field = field; this.displayKey = displayKey; this.kind = kind; this.request = request; this.numeric = numeric;
+        }
+        void parse() {
+            if (numeric) {
+                target = request.getAsDouble();
+                text = kind == DisplayScale.Kind.DB ? target + " dB" : target + " %";
+            } else {
+                text = request.getAsString();
+                target = DisplayScale.parse(kind, text);
+                if (Double.isNaN(target))
+                    throw HostServices.failure("invalid_params", "Display text not understood for " + kind + ": " + text);
+            }
+        }
+    }
+
+    private void solveNext(HostOperation op, Target target, JsonObject changes, List<Solve> solves, int index) {
+        if (index == solves.size()) { set(op, target, changes, null); return; }
+        Solve solve = solves.get(index);
+        State state = target.state;
+        DisplaySolver.Port port = new DisplaySolver.Port() {
+            @Override public long valueSeq() { return state.sequence[solve.field]; }
+            @Override public JsonElement value() { return MixModule.value(state, solve.field); }
+            @Override public JsonElement display() { return state.meta(solve.displayKey); }
+            @Override public void write(double x) {
+                if (solve.field == 1) state.track.volume().value().setImmediately(x); else state.track.pan().value().setImmediately(x);
+            }
+            @Override public void guard() { MixModule.this.guard(op, target); }
+        };
+        new DisplaySolver(s, op, port, solve.kind, solve.target, result -> {
+            target.extra.add(solve.displayKey.replace("Display", "DisplayWrite"), result.json(solve.text, solve.target));
+            if (!result.ok) { solverFailure(op, target, result); return; }
+            changes.addProperty(solve.key, result.normalized);
+            target.solved.add(solve.key);
+            solveNext(op, target, changes, solves, index + 1);
+        }).start();
+    }
+
+    /** A failed display write applied nothing else; it either put the original back (observed) or leaves the outcome unknown. */
+    private void solverFailure(HostOperation op, Target target, DisplaySolver.Result result) {
+        boolean current = target.matches(s);
+        JsonObject out = current ? snapshot(target) : scope();
+        out.addProperty("trackId", target.id);
+        boolean restored = !result.dispatched || result.restored;
+        out.addProperty("status", "dispatched");
+        out.addProperty("completion", restored && current ? "observed" : "unknown");
+        out.addProperty("matchesRequested", false);
+        out.addProperty("otherFieldsApplied", false);
+        out.addProperty("reason", result.reason);
+        for (Map.Entry<String, JsonElement> entry : target.extra.entrySet()) out.add(entry.getKey(), entry.getValue());
+        op.result.complete(out);
     }
 
     private void set(HostOperation op, Target target, JsonObject changes, JsonObject created) {
@@ -136,6 +228,171 @@ final class MixModule implements HostModule {
                 HostServices.observeUntil(op));
     }
 
+    /** Compare-and-set of one send, addressed by index or exact name; levels are verified by observed readback. */
+    private void sendSet(HostOperation op, Target target, JsonObject p) {
+        guard(op, target);
+        State state = target.state;
+        JsonElement offset = state.meta("sendOffset");
+        if (offset.isJsonNull() || state.meta("sendCount").isJsonNull())
+            throw HostServices.failure("not_ready", "Send window is not observed yet.");
+        int slot = -1;
+        if (p.has("sendIndex")) {
+            slot = p.get("sendIndex").getAsInt() - offset.getAsInt();
+            if (slot < 0 || slot >= HostServices.SENDS)
+                throw HostServices.failure("outside_window", "sendIndex is outside the observed send window.");
+        } else {
+            String wanted = p.get("sendName").getAsString();
+            for (int j = 0; j < HostServices.SENDS; j++) {
+                JsonElement exists = state.meta("send" + j + ".exists"), name = state.meta("send" + j + ".name");
+                if (exists.isJsonNull() || name.isJsonNull()) throw HostServices.failure("not_ready", "Send names are not all observed yet.");
+                if (exists.getAsBoolean() && name.getAsString().equals(wanted)) {
+                    if (slot >= 0) throw HostServices.failure("ambiguous_send", "More than one send is named " + wanted + "; use sendIndex.");
+                    slot = j;
+                }
+            }
+            if (slot < 0) throw HostServices.failure("unknown_send", "No send is named " + wanted + ".");
+        }
+        String prefix = "send" + slot + ".";
+        JsonElement exists = state.meta(prefix + "exists"), name = state.meta(prefix + "name");
+        if (exists.isJsonNull() || name.isJsonNull()) throw HostServices.failure("not_ready", "Send is not observed yet.");
+        if (!exists.getAsBoolean()) throw HostServices.failure("unknown_send", "No send exists at that index.");
+        if (p.has("expectedSendName") && !p.get("expectedSendName").getAsString().equals(name.getAsString()))
+            throw HostServices.failure("stale_target", "Send name is " + name.getAsString() + ", not the expected " + p.get("expectedSendName").getAsString() + ".");
+        double displayTarget = Double.NaN;
+        if (p.has("display")) {
+            displayTarget = DisplayScale.parse(DisplayScale.Kind.DB, p.get("display").getAsString());
+            if (Double.isNaN(displayTarget))
+                throw HostServices.failure("invalid_params", "Send display must read like \"-12 dB\" or \"-inf dB\": " + p.get("display").getAsString());
+        }
+        new SendWrite(op, target, slot, name.getAsString(), (Send) state.track.sendBank().getItemAt(slot), p, displayTarget).start();
+    }
+
+    private final class SendWrite {
+        final HostOperation op; final Target target; final State state; final int slot; final String prefix, name;
+        final Send send; final JsonObject p; final double displayTarget;
+        final Map<String, Long> writes = new LinkedHashMap<>();
+        final Map<String, JsonElement> requested = new LinkedHashMap<>();
+        JsonElement enabledBefore = JsonNull.INSTANCE;
+        boolean solvedValue;
+        SendWrite(HostOperation op, Target target, int slot, String name, Send send, JsonObject p, double displayTarget) {
+            this.op = op; this.target = target; this.state = target.state; this.slot = slot; this.prefix = "send" + slot + ".";
+            this.name = name; this.send = send; this.p = p; this.displayTarget = displayTarget;
+        }
+
+        void guardSend() {
+            guard(op, target);
+            JsonElement now = state.meta(prefix + "name");
+            if (!state.meta(prefix + "exists").equals(new JsonPrimitive(true)) || now.isJsonNull() || !now.getAsString().equals(name))
+                throw HostServices.failure("stale_target", "Send changed during operation.");
+        }
+
+        void start() {
+            enabledBefore = state.meta(prefix + "enabled");
+            if (!p.has("display")) { writeFields(); return; }
+            DisplaySolver.Port port = new DisplaySolver.Port() {
+                @Override public long valueSeq() { return state.metaSeq(prefix + "valueNormalized"); }
+                @Override public JsonElement value() { return state.meta(prefix + "valueNormalized"); }
+                @Override public JsonElement display() { return state.meta(prefix + "display"); }
+                @Override public void write(double x) { send.value().setImmediately(x); }
+                @Override public void guard() { guardSend(); }
+            };
+            String text = p.get("display").getAsString();
+            new DisplaySolver(s, op, port, DisplayScale.Kind.DB, displayTarget, result -> {
+                target.extra.add("displayWrite", result.json(text, displayTarget));
+                if (!result.ok) { solverFailure(op, target, result); return; }
+                requested.put("valueNormalized", new JsonPrimitive(result.normalized));
+                writes.put("valueNormalized", -1L);
+                solvedValue = true;
+                writeFields();
+            }).start();
+        }
+
+        void writeFields() {
+            try {
+                if (p.has("valueNormalized")) write("valueNormalized", p.get("valueNormalized"));
+                // Last: a level write can auto-enable the send, so an explicit enabled=false must follow it.
+                if (p.has("enabled")) write("enabled", p.get("enabled"));
+            } catch (RpcException error) {
+                if (!op.dispatched) throw error;
+                finish(error.code); return;
+            }
+            await(HostServices.observeUntil(op));
+        }
+
+        void write(String key, JsonElement value) {
+            guardSend();
+            requested.put(key, value);
+            if (matches(state.meta(prefix + key), value)) { writes.put(key, -1L); return; }
+            writes.put(key, state.metaSeq(prefix + key));
+            guardSend();
+            op.dispatched = true;
+            if (key.equals("enabled")) send.isEnabled().set(value.getAsBoolean()); else send.value().setImmediately(value.getAsDouble());
+        }
+
+        boolean verified(String key) {
+            Long before = writes.get(key);
+            return before != null && (before == -1 || state.metaSeq(prefix + key) > before)
+                    && matches(state.meta(prefix + key), requested.get(key));
+        }
+
+        void await(long until) {
+            boolean all = true;
+            for (String key : requested.keySet()) all &= verified(key);
+            if (all || System.nanoTime() >= until) { finish(null); return; }
+            s.schedule(op, () -> await(until), 20);
+        }
+
+        void finish(String reason) {
+            boolean current = target.matches(s);
+            JsonObject result = current ? snapshot(target) : scope();
+            result.addProperty("trackId", target.id);
+            result.addProperty("sendIndex", state.meta("sendOffset").isJsonNull() ? -1 : state.meta("sendOffset").getAsInt() + slot);
+            result.addProperty("sendName", name);
+            boolean all = current && reason == null;
+            JsonObject fields = new JsonObject();
+            for (Map.Entry<String, JsonElement> entry : requested.entrySet()) {
+                String key = entry.getKey();
+                Long before = writes.get(key);
+                boolean matched = current && verified(key);
+                all &= matched;
+                JsonObject field = new JsonObject();
+                field.add("requested", entry.getValue());
+                field.add("observed", current ? state.meta(prefix + key) : JsonNull.INSTANCE);
+                field.addProperty("matchesRequested", matched);
+                field.addProperty("verification", !current ? "target_changed" : before == null ? "not_dispatched"
+                        : key.equals("valueNormalized") && solvedValue && matched ? "display_readback"
+                        : before == -1 ? "already_at_value" : state.metaSeq(prefix + key) <= before ? "not_observed"
+                        : matched ? "observer_after_write" : "readback_mismatch");
+                fields.add(key, field);
+            }
+            result.addProperty("status", all ? "observed" : "dispatched");
+            result.addProperty("completion", all ? "observed" : "unknown");
+            result.addProperty("matchesRequested", all);
+            result.add("fields", fields);
+            // Guide 7.1.6: moving a send level turns the send on; say so rather than leaving it implicit.
+            JsonElement now = state.meta(prefix + "enabled");
+            boolean auto = !p.has("enabled") && !enabledBefore.isJsonNull() && !now.isJsonNull()
+                    && !enabledBefore.getAsBoolean() && now.getAsBoolean();
+            result.addProperty("autoEnabled", auto);
+            if (reason != null) result.addProperty("reason", reason);
+            for (Map.Entry<String, JsonElement> entry : target.extra.entrySet()) result.add(entry.getKey(), entry.getValue());
+            op.result.complete(result);
+        }
+    }
+
+    /** The effect (FX) track a send feeds: sends follow effect-track order. Null when that track is not in the observed window. */
+    private JsonObject effectTrack(int sendIndex) {
+        for (State state : states) {
+            Track track = state.track;
+            if (!track.exists().get() || !"Effect".equals(track.trackType().get()) || ordinal(track, true) != sendIndex) continue;
+            JsonObject out = new JsonObject();
+            out.addProperty("trackId", track.channelId().get());
+            out.addProperty("name", track.name().get());
+            return out;
+        }
+        return null;
+    }
+
     private void guard(HostOperation op, Target target) {
         if (!target.matches(s)) throw HostServices.failure("stale_target", "Track UUID/proxy changed during operation.");
         if (target.state.rebindPending) throw HostServices.failure("not_ready", "Track proxy rebind awaits a host flush.");
@@ -168,6 +425,7 @@ final class MixModule implements HostModule {
             field.addProperty("matchesRequested", matched);
             field.addProperty("verification", !current ? "target_changed" : before == null ? "not_dispatched" : before == -1 ? "already_at_value"
                     : target.state.sequence[i] <= before ? "not_observed" : matched ? "observer_after_write" : "readback_mismatch");
+            if (target.solved.contains(key) && matched) field.addProperty("verification", "display_readback");
             fields.add(key, field);
         }
         result.addProperty("status", all ? "observed" : "dispatched");
@@ -176,6 +434,7 @@ final class MixModule implements HostModule {
         result.add("fields", fields);
         if (reason != null) result.addProperty("reason", reason);
         if (created != null) result.add("creation", created);
+        for (Map.Entry<String, JsonElement> entry : target.extra.entrySet()) result.add(entry.getKey(), entry.getValue());
         op.result.complete(result);
     }
 
@@ -330,6 +589,12 @@ final class MixModule implements HostModule {
                 sendsComplete &= !observed.isJsonNull();
             }
             item.addProperty("unit", "normalized_0_1_not_db");
+            JsonElement sendIndex = item.get("sendIndex");
+            JsonObject effect = sendIndex.isJsonNull() ? null : effectTrack(sendIndex.getAsInt());
+            item.add("effectTrack", effect == null ? JsonNull.INSTANCE : effect);
+            JsonElement sendName = item.get("name");
+            item.add("nameMatchesEffectTrack", effect == null || sendName.isJsonNull() ? JsonNull.INSTANCE
+                    : new JsonPrimitive(effect.get("name").getAsString().equals(sendName.getAsString())));
             sends.add(item);
         }
         result.add("sends", sends);
@@ -366,19 +631,19 @@ final class MixModule implements HostModule {
     }
     private static void observe(State state, String key, StringValue source) {
         state.metadataSources.put(key, source);
-        source.addValueObserver((StringValueChangedCallback) v -> state.metadata.put(key, new JsonPrimitive((String) v)));
+        source.addValueObserver((StringValueChangedCallback) v -> { state.metadata.put(key, new JsonPrimitive((String) v)); state.metaSeq.merge(key, 1L, Long::sum); });
     }
     private static void observe(State state, String key, BooleanValue source) {
         state.metadataSources.put(key, source);
-        source.addValueObserver((BooleanValueChangedCallback) v -> state.metadata.put(key, new JsonPrimitive(v)));
+        source.addValueObserver((BooleanValueChangedCallback) v -> { state.metadata.put(key, new JsonPrimitive(v)); state.metaSeq.merge(key, 1L, Long::sum); });
     }
     private static void observe(State state, String key, IntegerValue source) {
         state.metadataSources.put(key, source);
-        source.addValueObserver((IntegerValueChangedCallback) v -> state.metadata.put(key, new JsonPrimitive(v)));
+        source.addValueObserver((IntegerValueChangedCallback) v -> { state.metadata.put(key, new JsonPrimitive(v)); state.metaSeq.merge(key, 1L, Long::sum); });
     }
     private static void observe(State state, String key, RangedValue source) {
         state.metadataSources.put(key, source);
-        source.addValueObserver((DoubleValueChangedCallback) v -> state.metadata.put(key, finite(v)));
+        source.addValueObserver((DoubleValueChangedCallback) v -> { state.metadata.put(key, finite(v)); state.metaSeq.merge(key, 1L, Long::sum); });
     }
     private static JsonElement current(Value source) {
         if (source instanceof StringValue) return new JsonPrimitive(((StringValue) source).get());
@@ -394,6 +659,8 @@ final class MixModule implements HostModule {
         final long[] fieldGeneration = new long[FIELDS.length];
         final Map<String, JsonElement> metadata = new HashMap<>();
         final Map<String, Value> metadataSources = new HashMap<>();
+        final Map<String, Long> metaSeq = new HashMap<>();
+        long metaSeq(String key) { return metaSeq.getOrDefault(key, 0L); }
         String identity;
         Boolean exists;
         boolean established, rebindPending;
@@ -440,6 +707,8 @@ final class MixModule implements HostModule {
         final String id;
         final State state;
         final long generation;
+        final JsonObject extra = new JsonObject();
+        final Set<String> solved = new HashSet<>();
         Target(String id, State state) { this.id = id; this.state = state; generation = state.generation; }
         boolean matches(HostServices s) {
             return generation == state.generation && state.sourceMatches() && s.trackMatches(id, state.track);

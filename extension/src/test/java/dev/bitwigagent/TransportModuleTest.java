@@ -20,6 +20,7 @@ public final class TransportModuleTest {
         shortTimeoutYieldsBoundedNotObservedNotDeadlineExceeded();
         safetyChangeWhileStoppingPreventsSeek();
         sharedSafetyRequiresObservationsButAllowsStop();
+        timeSignatureIsValidatedWrittenAndReadBack();
         System.out.println("TransportModuleTest: " + assertions + " assertions passed (simulated host only)");
     }
     private static void readsExposeActualValuesAndUnits() {
@@ -201,6 +202,34 @@ public final class TransportModuleTest {
             f.transport.child(key).emit(false);
         JsonObject start = f.call(module, "transport.set", TransportMixFixture.json("{\"playing\":true}"));
         check(start.get("matchesRequested").getAsBoolean(), "shared observed safe flags allow explicit start");
+    }
+    private static void timeSignatureIsValidatedWrittenAndReadBack() {
+        TransportMixFixture f = new TransportMixFixture(); TransportModule module = new TransportModule(f.services);
+        check(f.call(module, "transport.get", new JsonObject()).get("timeSignature").getAsString().equals("4/4"), "time signature read as the host reports it");
+        for (String bad : List.of("7", "0/4", "33/4", "4/3", "4/64", "4/0", "a/b", "4/4/4", " 4/4", "04/4", "4 / 4")) {
+            JsonObject p = new JsonObject(); p.addProperty("timeSignature", bad);
+            TransportMixFixture.error(f.submit(module, "transport.set", p), "invalid_params");
+            check(f.tasks.isEmpty(), "invalid time signature not scheduled: " + bad);
+        }
+        TransportMixFixture.error(f.submit(module, "transport.set", TransportMixFixture.json("{\"timeSignature\":4}")), "invalid_params");
+        JsonObject result = f.call(module, "transport.set", TransportMixFixture.json("{\"timeSignature\":\"7/8\"}"));
+        check(result.get("matchesRequested").getAsBoolean() && result.get("timeSignature").getAsString().equals("7/8"), "write observed");
+        check(result.getAsJsonObject("fields").getAsJsonObject("timeSignature").get("verification").getAsString().equals("observer_after_write"), "verified by observer after the write");
+        check(f.transport.child("timeSignature").writes == 1, "one write");
+        result = f.call(module, "transport.set", TransportMixFixture.json("{\"timeSignature\":\"7/8\"}"));
+        check(result.getAsJsonObject("fields").getAsJsonObject("timeSignature").get("verification").getAsString().equals("already_at_value")
+                && f.transport.child("timeSignature").writes == 1, "same signature not rewritten");
+        f.transport.child("timeSignature").emitWrites = false;
+        HostOperation silent = f.submit(module, "transport.set", TransportMixFixture.json("{\"timeSignature\":\"3/4\"}"),
+                System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(300));
+        try {
+            for (int i = 0; i < 400 && !silent.result.isDone(); i++) { f.next(); Thread.sleep(2); }
+        } catch (InterruptedException e) { throw new AssertionError(e); }
+        result = silent.result.join();
+        check(!result.get("matchesRequested").getAsBoolean() && result.get("completion").getAsString().equals("unknown"), "unobserved change stays unknown");
+        f.transport.child("isArrangerRecordEnabled").emit(true);
+        HostOperation blocked = f.submit(module, "transport.set", TransportMixFixture.json("{\"timeSignature\":\"5/4\"}")); f.next();
+        TransportMixFixture.error(blocked, "unsafe_state");
     }
     private static void check(boolean condition, String message) { assertions++; if (!condition) throw new AssertionError(message); }
 }

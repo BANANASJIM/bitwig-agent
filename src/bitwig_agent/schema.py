@@ -788,6 +788,14 @@ class TransportSetArgs(StatusArgs):
     loopEnabled: bool = omitted()
     loopStartBeats: Annotated[float, Field(ge=0)] = omitted()
     loopDurationBeats: Annotated[float, Field(gt=0)] = omitted()
+    timeSignature: str = omitted(description="numerator/denominator, e.g. 7/8: numerator 1..32, denominator 1, 2, 4, 8, 16 or 32.")
+
+    @field_validator("timeSignature")
+    @classmethod
+    def validate_signature(cls, value: str) -> str:
+        if not re.fullmatch(r"[1-9][0-9]?/(1|2|4|8|16|32)", value, re.ASCII) or int(value.split("/")[0]) > 32:
+            raise ValueError("timeSignature must be numerator/denominator: numerator 1..32, denominator 1, 2, 4, 8, 16 or 32")
+        return value
 
     @model_validator(mode="after")
     def require_change(self):
@@ -806,12 +814,68 @@ class TrackSetArgs(DeviceArgs):
     mute: bool = omitted()
     solo: bool = omitted()
     arm: bool = omitted()
+    volumeDb: Annotated[float, Field(ge=-150, le=24)] = omitted(description="Fader level in dB, reached by matching the host's own displayed value (not a computed curve). Alternative to volumeNormalized/volumeDisplay.")
+    volumeDisplay: Nonempty = omitted(description='Fader level as the host shows it, e.g. "-6 dB" or "-inf dB".')
+    panPercent: Annotated[float, Field(ge=-100, le=100)] = omitted(description="Pan in percent, negative = left, reached by matching the host's displayed value. Alternative to panNormalized/panDisplay.")
+    panDisplay: Nonempty = omitted(description='Pan as the host shows it, e.g. "25% L", "40% R" or "Center".')
 
     @model_validator(mode="after")
     def require_change(self):
         if not self.model_fields_set - {"timeoutMs", "trackId"}:
             raise ValueError("tracks.set requires at least one changed field")
+        for group in (("volumeNormalized", "volumeDb", "volumeDisplay"), ("panNormalized", "panPercent", "panDisplay")):
+            if len(set(group) & self.model_fields_set) > 1:
+                raise ValueError("supply at most one of " + ", ".join(group))
         return self
+
+
+class TrackSendSetArgs(DeviceArgs):
+    sendIndex: int = omitted(ge=0, le=127, description="Zero-based send index from tracks.get; exactly one of sendIndex or sendName.")
+    sendName: Nonempty = omitted(description="Exact send name from tracks.get (the FX track it feeds); must be unique on the track.")
+    expectedSendName: Nonempty = omitted(description="Compare-and-set guard: the write is refused with stale_target if the send has another name.")
+    valueNormalized: UnitValue = omitted(description="Send level 0..1 (not dB). Exactly one of valueNormalized or display, unless only enabled is changed.")
+    display: Nonempty = omitted(description='Send level as the host shows it, e.g. "-12 dB" or "-inf dB".')
+    enabled: bool = omitted(description="Turn the send on or off. A level write already turns it on (autoEnabled in the result).")
+
+    @model_validator(mode="after")
+    def validate_send(self):
+        fields = self.model_fields_set
+        if ("sendIndex" in fields) == ("sendName" in fields):
+            raise ValueError("supply exactly one of sendIndex or sendName")
+        if {"valueNormalized", "display"} <= fields:
+            raise ValueError("supply at most one of valueNormalized, display")
+        if not fields & {"valueNormalized", "display", "enabled"}:
+            raise ValueError("at least one of valueNormalized, display or enabled is required")
+        return self
+
+
+class TrackMetersArgs(StatusArgs):
+    trackIds: list[TrackId] = Field(min_length=1, max_length=16)
+    windowMs: int = Field(ge=50, le=5000)
+
+    @model_validator(mode="after")
+    def unique_tracks(self):
+        if len({t.lower() for t in self.trackIds}) != len(self.trackIds):
+            raise ValueError("trackIds must be unique")
+        return self
+
+
+class MarkerInsertArgs(StatusArgs):
+    beat: float = Field(ge=0, le=1e7, description="Quarter-note beats from the project start.")
+    name: Nonempty = omitted(description="Marker name; omitted keeps the name the host assigns.")
+
+
+class MarkerRenameArgs(StatusArgs):
+    markerIndex: int = Field(ge=0, le=63, description="Rank in the beat-sorted markers.list result.")
+    expectedName: Nonempty
+    name: Nonempty
+    expectedBeat: float = omitted(ge=0, le=1e7, description="Optional second guard: the marker must be at this beat.")
+
+
+class MarkerDeleteArgs(StatusArgs):
+    markerIndex: int = Field(ge=0, le=63, description="Rank in the beat-sorted markers.list result.")
+    expectedName: Nonempty
+    expectedBeat: float = omitted(ge=0, le=1e7, description="Optional second guard: the marker must be at this beat.")
 
 
 class ExtensionRestartArgs(StatusArgs):
@@ -1038,7 +1102,7 @@ class AudioCaptureArgs(StatusArgs):
 
 class AudioAnalyzeArgs(StatusArgs):
     path: Nonempty
-    mode: Literal["level", "onsets", "mono_pitch", "probe"]
+    mode: Literal["level", "onsets", "mono_pitch", "probe", "loudness"]
     bpm: Annotated[float, Field(ge=20, le=666)] = omitted(description="mono_pitch: adds 16th-grid positions.")
     skipSeconds: Annotated[float, Field(ge=0, le=3600)] = omitted(description="Ignore audio before this time; reported times stay relative to the file start.")
     method: Literal["flux", "envelope"] = omitted(description="onsets/mono_pitch: flux (default) = spectral flux, counts overlapping notes with long decays; envelope = rising crossings of a 5 ms peak envelope.")

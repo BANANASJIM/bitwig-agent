@@ -29,6 +29,8 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
         LauncherModule launcher = new LauncherModule(services);
         register(launcher);
         register(new LauncherSettingsModule(services, launcher));
+        register(new MarkerModule(services));
+        register(new MeterModule(services));
         register(new ContextModule(services, transport, mix, launcher));
         register(new GridModule(services));
         ModulatorEditModule modulatorEdits = new ModulatorEditModule(services);
@@ -55,6 +57,8 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
         registerValidator(methods, ProjectModule.METHODS, ProjectModule::validateParams);
         registerValidator(methods, TransportModule.METHODS, TransportModule::validateParams);
         registerValidator(methods, MixModule.METHODS, MixModule::validateParams);
+        registerValidator(methods, MarkerModule.METHODS, MarkerModule::validateParams);
+        registerValidator(methods, MeterModule.METHODS, MeterModule::validateParams);
         registerValidator(methods, DeviceModule.METHODS, DeviceModule::validateParams);
         registerValidator(methods, LauncherModule.METHODS, LauncherModule::validateParams);
         registerValidator(methods, LauncherSettingsModule.METHODS, LauncherSettingsModule::validateParams);
