@@ -147,6 +147,10 @@ class FakePW:
             for a, targets in ports.items():
                 text += a + "\n" + "".join(f"  |-> {t}\n" for t in targets)
             return 0, text, ""
+        if args[:2] == ["pw-link", "-o"]:
+            return 0, "Bitwig Studio:out1\nBitwig Studio:out2\nFirefox:output_FL\nFirefox:output_FR\n", ""
+        if args[:2] == ["pw-link", "-i"]:
+            return 0, "".join(f"{n}:input_{c}\n" for n in NODES for c in ("FL", "FR")) + "alsa_output.pci:playback_FL\n", ""
         if args[:2] == ["pw-link", "-d"]:
             self.links.discard((args[2], args[3]))
             return 0, "", ""
@@ -163,6 +167,7 @@ class FakePW:
         raise AssertionError(args)
 
 
+NODES = []  # capture nodes the fake pw-record has "created"
 SINK_LINKS = {("Bitwig Studio:out1", "bwtest:playback_FL"), ("Bitwig Studio:out2", "bwtest:playback_FR")}
 
 
@@ -235,10 +240,12 @@ class FakeProc:
 
 
 class FakeBridge:
-    def __init__(self, playing=(), engine=True):
+    def __init__(self, playing=(), engine=True, solo=None):
         self.calls = []
         self.playing = playing
         self.engine = engine
+        self.solo = dict(solo or {})
+        self.fail_set = None
 
     async def call(self, method, params, timeout_ms=5000):
         self.calls.append((method, params))
@@ -247,14 +254,25 @@ class FakeBridge:
         if method == "context.get":
             return {"tracks": [{"trackId": tid, "name": name, "launcherSlots": [{"slotIndex": 0, "playing": True}]} for tid, name in self.playing]
                               + [{"trackId": "idle", "name": "Idle", "launcherSlots": [{"slotIndex": 0, "playing": False}]}]}
+        if method == "tracks.list":
+            return {"tracks": [{"trackId": t, "index": i, "name": t} for i, t in enumerate(self.solo)]}
+        if method == "tracks.get":
+            return {"trackId": params["trackId"], "solo": self.solo[params["trackId"]]}
+        if method == "tracks.set":
+            if params["trackId"] == self.fail_set and params["solo"] is False:
+                raise BridgeError({"code": "host_error", "message": "boom", "outcome": "unknown"})
+            self.solo[params["trackId"]] = params["solo"]
+            return {}
         return {}
 
 
-def capture(tmp_path, monkeypatch, playing=(), **extra):
+def capture(tmp_path, monkeypatch, playing=(), solo=None, **extra):
     spawned = []
+    NODES.clear()
 
     def spawn(args):
         spawned.append(args)
+        NODES.append(args[2].split("node.name=")[1].split()[0])
         return FakeProc(args[-1])
 
     async def no_sleep(_):
@@ -263,7 +281,7 @@ def capture(tmp_path, monkeypatch, playing=(), **extra):
     monkeypatch.setattr(audio, "spawn", spawn)
     monkeypatch.setattr(audio, "sleep", no_sleep)
     params, timeout = validate_call("audio.capture", {"seconds": 1, "outPath": str(tmp_path / "out.wav"), **extra})
-    return FakeBridge(playing), spawned, params, timeout
+    return FakeBridge(playing, solo=solo), spawned, params, timeout
 
 
 def test_capture_requires_silent_route(tmp_path, monkeypatch, pw):
@@ -277,7 +295,9 @@ def test_capture_from_start_orders_transport_and_reports_levels(tmp_path, monkey
     route("silent")
     bridge, spawned, params, timeout = capture(tmp_path, monkeypatch)
     result = asyncio.run(client_side.run("audio.capture", bridge, params, timeout))
-    assert spawned[0][:3] == ["parec", "-d", "bwtest.monitor"]
+    assert spawned[0][0] == "pw-record" and "node.autoconnect=false" in spawned[0][2] and "node.name=bwagent-capture-" in spawned[0][2]
+    assert "bwtest.monitor" not in spawned[0] and "@DEFAULT_MONITOR@" not in spawned[0]
+    assert result["source"]["ports"] == ["Bitwig Studio:out1", "Bitwig Studio:out2"]
     assert bridge.calls == [("status", {}), ("context.get", {}), ("transport.set", {"playing": False}), ("transport.set", {"positionBeats": 0}),
                             ("transport.set", {"playing": True}), ("transport.set", {"playing": False})]
     assert result["peak"] > 0.5 and result["clipping"] is False and result["silent"] is False
@@ -296,10 +316,42 @@ def test_capture_overwrite_rules_and_no_transport(tmp_path, monkeypatch, pw):
     assert [m for m, _ in bridge.calls] == ["status", "context.get"]
 
 
-def test_capture_allow_audible_records_default_monitor(tmp_path, monkeypatch, pw):
+def test_capture_allow_audible_records_bitwig_ports_not_the_default_monitor(tmp_path, monkeypatch, pw):
     bridge, spawned, params, timeout = capture(tmp_path, monkeypatch, allowAudible=True)
-    asyncio.run(client_side.run("audio.capture", bridge, params, timeout))
-    assert "@DEFAULT_MONITOR@" in spawned[0]
+    before = set(pw.links)
+    result = asyncio.run(client_side.run("audio.capture", bridge, params, timeout))
+    assert result["audible"] is True and "@DEFAULT_MONITOR@" not in spawned[0]
+    node = result["source"]["node"]
+    assert ["pw-link", "Bitwig Studio:out1", f"{node}:input_FL"] in pw.calls
+    assert ["pw-link", "Bitwig Studio:out2", f"{node}:input_FR"] in pw.calls
+    assert pw.links == before  # exactly the links it created are gone, nothing else changed
+    assert [c for c in pw.calls if c[:2] == ["pw-link", "-d"]] == [["pw-link", "-d", "Bitwig Studio:out1", f"{node}:input_FL"],
+                                                                  ["pw-link", "-d", "Bitwig Studio:out2", f"{node}:input_FR"]]
+
+
+def test_capture_unlinks_its_own_links_when_it_fails(tmp_path, monkeypatch, pw):
+    route("silent")
+    bridge, spawned, params, timeout = capture(tmp_path, monkeypatch)
+    before = set(pw.links)
+
+    async def broken(method, params, timeout_ms=5000, _call=bridge.call):
+        if method == "transport.set" and params.get("positionBeats") == 0:
+            raise BridgeError({"code": "host_error", "message": "x", "outcome": "unknown"})
+        return await _call(method, params, timeout_ms)
+
+    bridge.call = broken
+    with pytest.raises(BridgeError):
+        asyncio.run(client_side.run("audio.capture", bridge, params, timeout))
+    assert pw.links == before
+
+
+def test_capture_needs_bitwig_output_ports(tmp_path, monkeypatch, pw):
+    route("silent")
+    bridge, spawned, params, timeout = capture(tmp_path, monkeypatch)
+    monkeypatch.setattr(audio, "bitwig_outputs", lambda: (_ for _ in ()).throw(audio.fail("bitwig_not_found", "x")))
+    with pytest.raises(BridgeError) as e:
+        asyncio.run(client_side.run("audio.capture", bridge, params, timeout))
+    assert e.value.error["code"] == "bitwig_not_found" and not spawned
 
 
 def test_capture_reports_other_playing_tracks(tmp_path, monkeypatch, pw):
@@ -311,26 +363,83 @@ def test_capture_reports_other_playing_tracks(tmp_path, monkeypatch, pw):
     assert asyncio.run(client_side.run("audio.capture", bridge, params, timeout))["otherTracksPlaying"] == []
 
 
-def test_capture_solo_track_refuses_unless_only_playing(tmp_path, monkeypatch, pw):
+def test_capture_solo_track_refuses_while_others_play(tmp_path, monkeypatch, pw):
     route("silent")
     solo = "00000000-0000-0000-0000-000000000001"
-    bridge, spawned, params, timeout = capture(tmp_path, monkeypatch, playing=[(solo, "Kick"), ("b", "Pad")], soloTrack=solo)
+    bridge, spawned, params, timeout = capture(tmp_path, monkeypatch, playing=[(solo, "Kick"), ("b", "Pad")], solo={solo: False, "b": False}, soloTrack=solo)
     with pytest.raises(BridgeError) as e:
         asyncio.run(client_side.run("audio.capture", bridge, params, timeout))
     assert e.value.error["code"] == "not_isolated" and e.value.error["outcome"] == "not_applied" and not spawned
     assert e.value.error["details"]["otherTracksPlaying"] == ["Pad"]
-    bridge, spawned, params, timeout = capture(tmp_path, monkeypatch, playing=[("b", "Pad")], soloTrack=solo)  # solo itself silent
+    assert not [m for m, _ in bridge.calls if m == "tracks.set"]
+    # the solo track needs no playing launcher clip (a Poly Grid sounds without one)
+    bridge, spawned, params, timeout = capture(tmp_path, monkeypatch, solo={solo: False}, soloTrack=solo)
+    result = asyncio.run(client_side.run("audio.capture", bridge, params, timeout))
+    assert result["otherTracksPlaying"] == [] and "warnings" not in result and spawned
+
+
+def test_capture_solo_really_solos_and_restores(tmp_path, monkeypatch, pw):
+    route("silent")
+    solo = "00000000-0000-0000-0000-000000000001"
+    states = {solo: False, "b": True, "c": False}
+    bridge, spawned, params, timeout = capture(tmp_path, monkeypatch, solo=states, soloTrack=solo)
+    seen = []
+    inner = bridge.call
+
+    async def spy(method, p, t=5000):
+        out = await inner(method, p, t)
+        if method == "transport.set" and p.get("playing") is True:
+            seen.append(dict(bridge.solo))  # state while recording
+        return out
+
+    bridge.call = spy
+    result = asyncio.run(client_side.run("audio.capture", bridge, params, timeout))
+    assert seen == [{solo: True, "b": False, "c": False}]
+    assert bridge.solo == states  # restored
+    assert result["soloed"] == solo and result["previousSolo"] == ["b"] and result["unsoloed"] == ["b"]
+    assert result["restored"] == [{"trackId": "b", "solo": True}, {"trackId": solo, "solo": False}]
+    assert "restoreFailed" not in result
+
+
+def test_capture_solo_restores_on_failure_and_reports_restore_errors(tmp_path, monkeypatch, pw):
+    route("silent")
+    solo = "00000000-0000-0000-0000-000000000001"
+    states = {solo: False, "b": True}
+    bridge, spawned, params, timeout = capture(tmp_path, monkeypatch, solo=states, soloTrack=solo)
+    inner = bridge.call
+
+    async def broken(method, p, t=5000):
+        if method == "transport.set" and p.get("positionBeats") == 0:
+            raise BridgeError({"code": "host_error", "message": "x", "outcome": "unknown"})
+        return await inner(method, p, t)
+
+    bridge.call = broken
     with pytest.raises(BridgeError):
         asyncio.run(client_side.run("audio.capture", bridge, params, timeout))
-    bridge, spawned, params, timeout = capture(tmp_path, monkeypatch, playing=[(solo, "Kick")], soloTrack=solo)
+    assert bridge.solo == states
+    bridge, spawned, params, timeout = capture(tmp_path, monkeypatch, solo=states, soloTrack=solo, overwrite=True)
+    bridge.fail_set = solo  # restoring the target (solo off) fails
     result = asyncio.run(client_side.run("audio.capture", bridge, params, timeout))
-    assert result["otherTracksPlaying"] == [] and "warnings" not in result
+    assert result["restoreFailed"][0]["trackId"] == solo
+
+
+def test_capture_solo_refuses_unreadable_or_unknown_tracks(tmp_path, monkeypatch, pw):
+    route("silent")
+    solo = "00000000-0000-0000-0000-000000000001"
+    bridge, spawned, params, timeout = capture(tmp_path, monkeypatch, solo={"b": False}, soloTrack=solo)
+    with pytest.raises(BridgeError) as e:
+        asyncio.run(client_side.run("audio.capture", bridge, params, timeout))
+    assert e.value.error["code"] == "unknown_track" and not spawned
+    bridge, spawned, params, timeout = capture(tmp_path, monkeypatch, solo={solo: None}, soloTrack=solo)
+    with pytest.raises(BridgeError) as e:
+        asyncio.run(client_side.run("audio.capture", bridge, params, timeout))
+    assert e.value.error["code"] == "solo_unreadable" and not spawned
 
 
 def test_capture_stop_others_stops_then_records(tmp_path, monkeypatch, pw):
     route("silent")
     solo = "00000000-0000-0000-0000-000000000001"
-    bridge, spawned, params, timeout = capture(tmp_path, monkeypatch, playing=[(solo, "Kick"), ("b", "Pad")], soloTrack=solo, stopOthers=True)
+    bridge, spawned, params, timeout = capture(tmp_path, monkeypatch, playing=[(solo, "Kick"), ("b", "Pad")], solo={solo: False, "b": False}, soloTrack=solo, stopOthers=True)
     result = asyncio.run(client_side.run("audio.capture", bridge, params, timeout))
     assert ("launcher.stop", {"trackId": "b"}) in bridge.calls and ("launcher.stop", {"trackId": solo}) not in bridge.calls
     assert result["stoppedTracks"] == ["Pad"] and result["otherTracksPlaying"] == [] and spawned

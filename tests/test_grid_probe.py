@@ -1,4 +1,4 @@
-"""grid.probe against the fake Grid host and a fake PipeWire/parec (no Bitwig, no subprocess)."""
+"""grid.probe against the fake Grid host and a fake PipeWire/pw-record (no Bitwig, no subprocess)."""
 
 import asyncio
 
@@ -7,7 +7,7 @@ import pytest
 from bitwig_agent import audio, grid_probe
 from bitwig_agent.catalog import CLIENT_SIDE, validate_call
 from bitwig_agent.client import BridgeError
-from test_audio import SINK_LINKS, FakePW, FakeProc
+from test_audio import NODES, SINK_LINKS, FakePW, FakeProc
 from test_grid_apply import TARGET, FakeGrid
 
 SAFE = {"playing": True, "arrangerRecordEnabled": False, "arrangerAutomationWriteEnabled": False, "clipLauncherAutomationWriteEnabled": False}
@@ -67,6 +67,7 @@ def rig(tmp_path, monkeypatch):
 
     def spawn(args):
         host.wires_during_capture = dict(host.conns)
+        NODES[:] = [args[2].split("node.name=")[1].split()[0]]
         if host.after_spawn:
             host.after_spawn()
         return FakeProc(args[-1])
@@ -154,7 +155,7 @@ def test_no_audio_out_is_refused(rig):
 
 def test_capture_failure_still_restores_and_reports_the_capture_error(rig, monkeypatch):
     host, _ = rig
-    monkeypatch.setattr(audio, "spawn", lambda args: type("Dead", (FakeProc,), {"poll": lambda self: 1})(args[-1]))
+    monkeypatch.setattr(audio, "spawn", lambda args: (NODES.append(args[2].split("node.name=")[1].split()[0]), type("Dead", (FakeProc,), {"poll": lambda self: 1})(args[-1]))[1])
     with pytest.raises(BridgeError) as e:
         probe(host)
     assert e.value.error["code"] == "audio_tool_failed" and host.conns == host.original

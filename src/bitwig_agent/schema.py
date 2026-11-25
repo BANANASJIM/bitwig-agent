@@ -1182,8 +1182,8 @@ class AudioCaptureArgs(StatusArgs):
     outPath: Nonempty
     overwrite: bool = omitted(description="Replace an existing file; refused by default.")
     fromStart: bool = omitted(description="Default true: stop transport, seek to 0, record, start transport, stop after seconds. false records without touching the transport.")
-    allowAudible: bool = omitted(description="Record the default output monitor without silent routing (audible).")
-    soloTrack: TrackId = omitted(description="Refuse (not_applied) unless this track is the only one with a playing launcher clip; with stopOthers, the others are stopped first.")
+    allowAudible: bool = omitted(description="Do not require audio.route silent (the signal stays audible). Capture always records Bitwig's own out1/out2, never the default output monitor, so other applications are not in the file.")
+    soloTrack: TrackId = omitted(description="Really solo this track for the recording: its solo is set and every other soloed track cleared, then every changed solo is restored afterwards (also on failure); the result reports soloed/unsoloed/restored. Refuses (not_applied) while other tracks have playing launcher clips unless stopOthers.")
     stopOthers: bool = omitted(description="Stop the launcher clips of every other playing track (launcher.stop) before recording; the result lists them. Without soloTrack, nothing is spared: use it with soloTrack.")
 
     @field_validator("outPath")
