@@ -183,6 +183,13 @@ final class GridParameterContext {
         if (before != null) sameIdentities(before, current);
         return current;
     }
+    /** The same write prerequisites for a scalar whose lifecycle owners are not a Grid graph/module (device modulators). */
+    Capture requireWritable(Object device, Object container, Object owner, Object parameter,
+            GridSnapshotReader.Kind kind, Capture before, Runnable check) {
+        Capture current = capture(device, container, owner, parameter, kind, check, false, true);
+        if (before != null) sameIdentities(before, current);
+        return current;
+    }
     private static void sameIdentities(Capture before, Capture after) {
         for (int i = 0; i < before.identities.length; i++)
             if (before.identities[i] != after.identities[i])

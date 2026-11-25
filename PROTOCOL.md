@@ -10,6 +10,7 @@ This is the implementation reference, not a tutorial or a host-acceptance report
 - [Domain controls](#domain-controls)
 - [MIDI windows and edits](#midi-window-and-edits)
 - [Read-only primary modulators](#read-only-primary-modulators)
+- [Device modulators: insert, set, map](#device-modulators-insert-set-map)
 - [Grid controls](#version-gated-grid-controls)
 - [Architecture and evidence boundary](#architecture-and-evidence-boundary)
 
@@ -217,9 +218,32 @@ The single-parameter result returns current `modulatorId`, `typeId`, exact `para
 
 Limits apply to work, not just emitted page size:4096total primary members,256direct children per inspected materialized contents,16384direct-child visits **including capture and revalidation**,1024UTF-16 units per inspected native text/parameter ID, and240000serialized result characters. Narrowing a page may reduce inspected child work but cannot bypass the total-primary bound. Overflow returns `modulator_bounds_exceeded`, never clipped data. Unknown model/identity/ownership and duplicate identities fail closed rather than being skipped. Unavailable exact bindings, unmaterialized selected contents or invalid native text types return `modulator_unavailable`; an existing selected non-string-panel family returns `unsupported_scope`. Missing current modulator/exact child IDs return `target_not_found`; changed target, current identity, membership, context or selected value returns `stale_context`. Public root readiness/window failures retain `not_ready`/`outside_window` and existing target errors; deadlines/cancellation retain transport outcomes, not write acknowledgement.
 
-Both data methods report `nativeMutation:false`, `nativeUndo:false`, `nativeRevisionAvailable:false`. Root targeting uses public observed index/name and native owning-track corroboration, not persistent physical-device identity. Owning project/context checks are not application's active-project identity; unobserved same-metadata replacements, native ABA, atomic model snapshots and cross-page consistency are not guaranteed. There are no modulator setters, creation, mappings, destinations or automatic GUI fallback.
+Both data methods report `nativeMutation:false`, `nativeUndo:false`, `nativeRevisionAvailable:false`. Root targeting uses public observed index/name and native owning-track corroboration, not persistent physical-device identity. Owning project/context checks are not application's active-project identity; unobserved same-metadata replacements, native ABA, atomic model snapshots and cross-page consistency are not guaranteed. These two methods never mutate; edits are the separate methods below.
 
 Prior 6.1.3 native coverage was limited to materialized primary Macro string panels. Those observations do not establish 6.1.4 instance coverage, unmaterialized contents, DSP/Undo/MIDI/write or whole-toolkit acceptance. Macro panels cannot establish Grid-module string-panel reachability. See the current [verification record](VERIFICATION.md).
+
+### Device modulators: insert, set, map
+
+Device modulators (the 43 types of a device's Modulators browser: LFO, Random, Steps, ADSR, Macro, …) on one explicit root device, typically a Poly Grid. The main use is modulating Grid module controls that have no input port (envelope times, step counts, drive, pulse width). Same 6.1.4 loaded-JAR gate; `parent` is the `DeviceParent` above. Availability is `modulators.capabilities` → `edit` (`available`, `reason`); binding availability is not native acceptance.
+
+| Method | Params | Native operation |
+|---|---|---|
+| `modulators.catalog` | optional `query`, `lang`, `installationRoot` | client-side, offline: names from `<root>/Library/modulators`, category and description from Bitwig's own help files |
+| `modulators.describe` | exactly one of `type`, `query`; optional `lang`, `installationRoot` | client-side, offline: per-control help (`docKey`, `title`, `description`, `documentedValues` marked unverified) |
+| `modulators.get` | `parent`, optional `modulatorId` | read: every modulator (at most 64) with typed `parameters`, `outputs` and each output's `mappings` |
+| `modulators.insert` | `parent`, `expectedCount`, one of `typeName`/`typeId` | the modulator browser's insertion point (`ModulatorGridInsertionPoint`, as Bitwig's own test harness uses), appended below the existing modulators |
+| `modulators.delete` | `parent`, `modulatorId`, `expectedCount` | the auxiliary device grid's undoable delete (shared with `grid.modules.delete`) |
+| `modulators.parameters.set` | `parent`, `modulatorId`, `parameterId`, `expectedKind` (float/integer/enum/boolean), `expectedValue`, one of `value`/`display` | the same external-controller raw write as `grid.parameters.set` |
+| `modulators.map` | `parent`, `modulatorId`, optional `outputId`, `target`, `expectedAmount` (number or explicit null), `amount`, optional `transfer`, `enabled` | the public modulation add, wrapped by Bitwig in a named undo transaction |
+| `modulators.unmap` | `parent`, `modulatorId`, optional `outputId`, `target`, `expectedAmount` | Bitwig's "Clear modulation" undo transaction |
+
+`target` is `{moduleId, parameterId}` (a Grid module control from `grid.get`) or `{modulatorId, parameterId}` (another modulator's control); both must be on the same device. `outputId` may be omitted only when the modulator has exactly one output. `amount` and `expectedAmount` are in −1..1 and are never clamped: an amount beyond the target's modulation range rejects. `expectedAmount: null` means "no mapping between this output and target now" and creates one (`transfer` default `linear`, `enabled` default true); a number must equal the existing amount and changes only the amount. Changing `transfer`/`enabled` of an existing mapping rejects (unmap, then map). `transfer` is one of `linear`, `rectify_pos`, `rectify_neg`, `abs_linear`, `inv_abs_linear`, `cubic`, `inv_cubic`. Polarity is not a mapping property: it is a modulator parameter (for example an LFO's bipolar switch). Bitwig refusing a pair (for example a modulator modulating itself) rejects `unsupported_scope` before dispatch.
+
+`modulators.get` rows carry `index`, `modulatorId`, `name`, `typeId`, `x`, `y`, `contentsAvailable`, `parameters` (the `grid.get` row shape: `parameterId`, `name`, `kind`, `value`, `minimum`, `maximum`, `options`, `display`) and `outputs: [{outputId, mappings: [{target, amount, transfer, enabled, polyphonic, scaledByAnotherSource}]}]`. A mapping `target.kind` is `grid_module` (`moduleId`, `parameterId`), `modulator` (`modulatorId`, `parameterId`), `device` or `external` (`path`, `parameterId`). Controls of other families are listed in `unsupported` and `complete` is false.
+
+Every write needs a stopped, nonrecording, nonautomation transport and the write-context prerequisites of Grid parameter writes (undo manager idle, device lock owned by the default document context, control settable and untouched). Order: CAS (`expectedCount`, `expectedAmount`, `expectedValue`) and range checks, prepare, re-read and re-check, then one native call; nothing is retried or rolled back. Insert, delete, map and unmap verify in a later document event: exact mapping readback (amount, transfer, enabled), or membership equal to the previous list plus exactly one modulator of the requested type (insert) or minus the deleted one. A disagreement after dispatch returns `modulator_verification_failed` (or `modulator_insert_rejected` when the native insertion reported failure) with `outcome:"unknown"`; inspect `modulators.get`, never retry blindly. Results report `mutationDispatched`, `verification`, `nativeUndo`, `nativeUndoScope` and `undoGroupingVerified:false`.
+
+Unmaterialized contents (a modulator whose device was never opened) return `modulator_unavailable` for edits. Missing modulator, output or control ids return `target_not_found`; a changed count, amount, value, membership or identity returns `stale_context`.
 
 ### Version-gated Grid controls
 

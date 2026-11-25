@@ -38,7 +38,7 @@ The skill supports screenshot-only guidance, delegated production and troublesho
 | Devices and parameters | Bypass, selection, native/plug-in/preset insertion, eight Remote Controls with page/context guards, named Grid macro pages (`devices.remote.define`/`deletePage`); source-bound normalized direct parameters on roots and fixed layer children |
 | Launcher/MIDI | Empty-slot clip creation (optionally with notes), scene append, local audio/clip-file import, launch/stop, note reads and bounded edits |
 | Grid | Native catalog, bounded graph/metadata/footprint and parameter-context reads; guarded raw scalar and coupled boolean-panel writes; known-catalog insertion, move/delete, raw custom-name CAS and single-input cable CAS |
-| Modulators | Read-only primary inventory on an explicit root device and exact native string-panel reads; no loading, mappings or writes |
+| Modulators | Primary inventory and string-panel reads; `modulators.catalog`/`describe` (offline help), `modulators.get` (parameters, outputs, mappings), insert, delete, raw parameter set, and map/unmap an output to Grid module or modulator controls on the same device |
 
 The registry's methods are not comprehensively native-accepted tools. Track, root-device and launcher windows are 16 each; sends are eight per track. Layers are one hop: two layers per root and two children per layer. Deeper hierarchy, named slots/drum pads, project paging, arranger clip editing, automation curves and dedicated master/cue tools are outside the structured surface. Bounded reads are not lossless whole-project exports.
 

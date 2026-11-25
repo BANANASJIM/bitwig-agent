@@ -107,6 +107,97 @@ class ModulatorParameterGetArgs(StatusArgs):
     parameterId: str = Field(max_length=1024, description="Exact addressable parameterId from modulators.list, not a display name; empty is valid when unique, at most 1024 UTF-16 code units.")
 
 
+MODULATOR_ID = "Current modulator UUID from modulators.get (or modulators.list), not its typeId, name or index."
+TransferFunction = Literal["linear", "rectify_pos", "rectify_neg", "abs_linear", "inv_abs_linear", "cubic", "inv_cubic"]
+ModulationAmount = Annotated[float, Field(ge=-1, le=1)]
+MODULATOR_COUNT = 4096
+
+
+class ModulatorGetArgs(StatusArgs):
+    parent: DeviceParent
+    modulatorId: TrackId = omitted(description="Only this modulator; absent returns every modulator on the device (at most 64).")
+
+
+class ModulatorInsertArgs(StatusArgs):
+    parent: DeviceParent
+    expectedCount: int = Field(ge=0, le=MODULATOR_COUNT, description="Current modulator count from modulators.get; a different count rejects not_applied.")
+    typeName: str = omitted(min_length=1, max_length=128, description="Modulator type name from modulators.catalog, e.g. 'Random' or 'Beat LFO'; exactly one of typeName or typeId.")
+    typeId: TrackId = omitted(description="Native modulator type UUID (the typeId of a modulators.get row); exactly one of typeName or typeId.")
+
+    @model_validator(mode="after")
+    def validate_one_type(self):
+        if len({"typeName", "typeId"} & self.model_fields_set) != 1:
+            raise ValueError("supply exactly one of typeName or typeId")
+        return self
+
+
+class ModulatorDeleteArgs(StatusArgs):
+    parent: DeviceParent
+    modulatorId: TrackId = Field(description=MODULATOR_ID)
+    expectedCount: int = Field(ge=1, le=MODULATOR_COUNT, description="Current modulator count from modulators.get.")
+
+
+class ModulatorParameterSetArgs(StatusArgs):
+    parent: DeviceParent
+    modulatorId: TrackId = Field(description=MODULATOR_ID)
+    parameterId: str = Field(max_length=1024, description="Exact parameterId of a modulators.get parameters row (not an outputId).")
+    expectedKind: Literal["float", "integer", "enum", "boolean"] = Field(description="kind from that row.")
+    expectedValue: bool | int | float = Field(description="Exact current raw value from that row; stale rejects not_applied.")
+    value: bool | int | float = omitted(description="Requested raw value in the row's minimum..maximum (enum: a listed option value). Exactly one of value or display.")
+    display: str = omitted(min_length=1, max_length=64, description="Float only, instead of value: text with a unit such as '2 Hz' or '50 %'.")
+
+    @model_validator(mode="after")
+    def validate_raw(self):
+        details = {key: getattr(self, key) for key in ("expectedValue", "value", "display") if key in self.model_fields_set}
+        GridRawWrite.model_validate({"moduleId": self.modulatorId, "parameterId": self.parameterId,
+                                     "expectedKind": self.expectedKind, **details})
+        return self
+
+
+class GridControlTarget(StrictModel):
+    moduleId: TrackId = Field(description="Grid module instanceId from grid.get on this same device.")
+    parameterId: str = Field(max_length=1024, description="Exact parameterId of that module's control (e.g. DECAY), from grid.get.")
+
+
+class ModulatorControlTarget(StrictModel):
+    modulatorId: TrackId = Field(description="Another modulator on this same device (modulators.get).")
+    parameterId: str = Field(max_length=1024, description="Exact parameterId of that modulator's control.")
+
+
+MAP_TARGET = "The control to modulate: {moduleId, parameterId} for a Grid module control, or {modulatorId, parameterId} for another modulator's control, both on this device."
+
+
+class ModulatorUnmapArgs(StatusArgs):
+    parent: DeviceParent
+    modulatorId: TrackId = Field(description="Source modulator. " + MODULATOR_ID)
+    outputId: str = omitted(max_length=1024, description="Source output id from modulators.get outputs; may be omitted when the modulator has exactly one output.")
+    target: GridControlTarget | ModulatorControlTarget = Field(description=MAP_TARGET)
+    expectedAmount: ModulationAmount = Field(description="Exact current amount of the mapping, from modulators.get.")
+
+
+class ModulatorMapArgs(ModulatorUnmapArgs):
+    expectedAmount: ModulationAmount | None = Field(description="null when this output does not map to target yet (creates it); else the exact current amount (changes it).")
+    amount: ModulationAmount = Field(description="Modulation amount -1..1 (negative inverts). Not clamped: beyond the target's range rejects.")
+    transfer: TransferFunction = omitted(description="New mappings only (default linear): linear, rectify_pos/rectify_neg (keep one half), abs_linear, inv_abs_linear, cubic, inv_cubic. Polarity itself is a modulator parameter (e.g. LFO bipolar).")
+    enabled: bool = omitted(description="New mappings only (default true).")
+
+
+class ModulatorCatalogArgs(StatusArgs):
+    query: str = omitted(min_length=1, max_length=256, description="Keywords ranked against names, categories, descriptions and keywords; absent lists all.")
+    lang: Literal["en", "de", "es", "fr", "ja", "ko", "zh"] = omitted(description="Documentation language (default en).")
+    installationRoot: str = omitted(min_length=1, max_length=4096, description="Bitwig install directory; default $BITWIG_INSTALLATION_ROOT, the install of $BITWIG_API_JAR, then /opt/bitwig-studio.")
+
+
+class ModulatorDescribeArgs(ModulatorCatalogArgs):
+    type: str = omitted(min_length=1, max_length=128, description="Modulator type name, e.g. 'Beat LFO'; exactly one of type or query.")
+
+    @model_validator(mode="after")
+    def validate_one_selector(self):
+        if len({"type", "query"} & self.model_fields_set) != 1:
+            raise ValueError("supply exactly one of type or query")
+        return self
+
+
 class GridCapabilitiesArgs(StatusArgs):
     detail: Literal["summary", "full"] = omitted(
         description="summary (default): availability booleans only. full: every binding's coverage, operation and limits.")

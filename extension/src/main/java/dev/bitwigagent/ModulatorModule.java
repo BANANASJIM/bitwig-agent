@@ -11,9 +11,13 @@ final class ModulatorModule implements HostModule {
     static final int MAX_RESPONSE_CHARS = 240000;
     private final HostServices s;
     private ModulatorAdapter adapter;
+    private final ModulatorEditModule edits;
 
     ModulatorModule(HostServices services) { this(services, null); }
-    ModulatorModule(HostServices services, ModulatorAdapter injected) { s = services; adapter = injected; }
+    ModulatorModule(HostServices services, ModulatorAdapter injected) { this(services, injected, null); }
+    ModulatorModule(HostServices services, ModulatorAdapter injected, ModulatorEditModule edits) {
+        s = services; adapter = injected; this.edits = edits;
+    }
     @Override public Set<String> methods() { return METHODS; }
     @Override public void validate(String method, JsonObject params) { validateParams(method, params); }
 
@@ -50,7 +54,14 @@ final class ModulatorModule implements HostModule {
         s.check(op);
         if (adapter == null) adapter = new Bitwig614ModulatorAdapter(s.nativeRuntime(op).access("modulator_unavailable"));
         if (method.equals("modulators.capabilities")) {
-            String serialized = serialize(adapter.capabilities());
+            JsonObject capabilities = adapter.capabilities();
+            // Read-only fields above describe modulators.list/parameters.get; edit methods report separately here.
+            if (edits != null) {
+                JsonObject edit = edits.capabilities(op);
+                capabilities.add("edit", edit);
+                capabilities.add("writeAvailable", edit.get("available"));
+            }
+            String serialized = serialize(capabilities);
             s.check(op); op.result.complete(JsonParser.parseString(serialized).getAsJsonObject()); return;
         }
         final DeviceSources.RootReadTicket target = s.sources.rootRead(p.getAsJsonObject("parent"));
