@@ -19,9 +19,11 @@ BUNDLED_HOST_VERSION = "6.1.4"
 INSERT_BATCH, PARAM_BATCH, CONNECTION_BATCH, READ_IDS, READ_PAGE = 16, 64, 32, 32, 128
 # Upper bound only to fail early; the host enforces its own (version-dependent) device module cap.
 MAX_DEVICE_MODULES = 1024
+MAX_STRING_UNITS = 1024
 WRITE_TIMEOUT_MS = 10000
 CLEAN = ("applied", "already_matched")
 _schema_cache: dict[str, Any] = {}
+_notes_cache: dict[str, Any] = {}
 
 
 def bundled_schema() -> dict[str, Any]:
@@ -29,6 +31,13 @@ def bundled_schema() -> dict[str, Any]:
         text = resources.files("bitwig_agent").joinpath("data/grid_schema_6_1_4.json").read_text(encoding="utf-8")
         _schema_cache.update(json.loads(text))
     return _schema_cache
+
+
+def measured_notes() -> dict[str, Any]:
+    if not _notes_cache:
+        text = resources.files("bitwig_agent").joinpath("data/grid_notes_6_1_4.json").read_text(encoding="utf-8")
+        _notes_cache.update(json.loads(text))
+    return _notes_cache
 
 
 def _norm(text: str) -> str:
@@ -192,6 +201,11 @@ def check_value(pid: str, raw: Any, p: dict[str, Any]) -> dict[str, Any]:
             raise SpecError([f"{pid}: {kind} parameter needs an integer, got {raw!r}"])
         if kind == "enum" and p.get("options") is not None and raw not in {o["value"] for o in p["options"]}:
             raise SpecError([f"{pid}: {raw} is not an option value; options {[(o['value'], o['label']) for o in p['options']]}"])
+    elif kind == "string":
+        if type(raw) is not str:
+            raise SpecError([f"{pid}: string parameter needs a string, got {raw!r}"])
+        if len(raw.encode("utf-16-le", "surrogatepass")) // 2 > MAX_STRING_UNITS:
+            raise SpecError([f"{pid}: string longer than {MAX_STRING_UNITS} UTF-16 units"])
     elif kind == "float":
         if type(raw) not in (int, float):
             raise SpecError([f"{pid}: float parameter needs a number, got {raw!r}"])
@@ -208,6 +222,8 @@ def value_matches(kind: str, want: dict[str, Any], row_param: dict[str, Any]) ->
     live, new = row_param.get("value"), want["value"]
     if kind == "boolean":
         return type(live) is bool and live == new
+    if kind == "string":
+        return type(live) is str and live == new
     if kind == "float":
         return type(live) in (int, float) and math.isclose(live, new, rel_tol=1e-9, abs_tol=1e-12)
     return type(live) is int and live == new
@@ -219,6 +235,9 @@ class Apply:
         self.target = args["target"]
         self.dry = bool(args.get("dryRun"))
         self.prune = bool(args.get("prune"))
+        self.replace_default = bool(args.get("replace"))
+        self.replaced_names: list[str] = []
+        self.dropped: list[str] = []
         self.namespace = args.get("namespace")
         self.modules: list[dict[str, Any]] = args["modules"]
         self.names = [m["name"] for m in self.modules]
@@ -518,6 +537,7 @@ class Apply:
             if r["customName"]:
                 by_custom.setdefault(r["customName"], []).append(r)
         existing = {}
+        replaced: list[dict] = []
         for name in self.names:
             found = by_custom.get(name, [])
             if len(found) > 1:
@@ -525,12 +545,20 @@ class Apply:
             elif found:
                 live_type = found[0].get("typeId")
                 if not isinstance(live_type, str) or live_type.lower() != self.resolved[name]["typeId"]:
+                    if self.by_spec[name].get("replace", self.replace_default):
+                        replaced.append(found[0])
+                        continue
                     problems.append(f"{name!r} exists as {found[0].get('typeName') or live_type} but the spec wants {self.resolved[name]['typeName']}")
                 else:
                     existing[name] = found[0]
-        deletes = []
+        deletes = list(replaced)
         if self.prune and self.namespace:
-            deletes = [r for r in rows if r["customName"].startswith(self.namespace) and r["customName"] not in self.by_spec]
+            deletes += [r for r in rows if r["customName"].startswith(self.namespace) and r["customName"] not in self.by_spec]
+        self.replaced_names = [r["customName"] for r in replaced]
+        self.dropped = self.dropped_cables(replaced, rows, conns)
+        if self.dropped:
+            self.warnings.append(f"replace drops {len(self.dropped)} cable(s) the spec does not declare: {'; '.join(self.dropped[:10])}" + (" ..." if len(self.dropped) > 10 else ""))
+        self.measured_warnings(existing)
         inserts = [n for n in self.names if n not in existing]
         total = len(rows) - len(deletes) + len(inserts)
         limit = self.module_limit()
@@ -576,7 +604,8 @@ class Apply:
             moves.append({"name": name, "from": list(pos[name]), "to": list(at)})
             pos[name] = at
         edits = self.plan_connections(existing, conns)
-        plan = {"deletes": [r["customName"] for r in deletes],
+        plan = {"deletes": [r["customName"] for r in deletes], **({"replaces": self.replaced_names} if self.replaced_names else {}),
+                **({"droppedConnections": self.dropped} if self.dropped else {}),
                 "inserts": [{"name": n, "type": self.resolved[n]["typeName"], "x": self.by_spec[n]["x"], "y": self.by_spec[n]["y"]} for n in inserts],
                 "renames": list(inserts), "moves": moves, "params": param_plan,
                 "connections": [{k: v for k, v in e.items() if k != "write"} for e in edits]}
@@ -586,7 +615,45 @@ class Apply:
         if self.live_schema:
             notes.append("no bundled schema for this host version: ports, parameters and footprints of inserted modules are validated only after insertion")
         result = {"status": "dryRun", "planned": planned, "alreadyMatched": self.matched, "plan": plan, "steps": []}
-        return result | ({"notes": notes} if notes else {})
+        return result | ({"warnings": self.warnings} if self.warnings else {}) | self.notes_field(notes)
+
+    def dropped_cables(self, replaced: list[dict], rows: list[dict], conns: list[dict]) -> list[str]:
+        """Live cables on replaced modules that the spec does not re-declare (deleting the module removes them)."""
+        gone = {r["instanceId"] for r in replaced}
+        label = {r["instanceId"]: r.get("customName") or r.get("name") for r in rows}
+        declared = {(a, ap, b, bp) for a, ap, b, bp in self.edges}
+        out = []
+        for c in conns:
+            if c["sourceModuleId"] in gone or c["targetModuleId"] in gone:
+                s, t = label.get(c["sourceModuleId"]), label.get(c["targetModuleId"])
+                if (s, c["sourcePortKey"], t, c["targetPortKey"]) not in declared:
+                    out.append(f"{s}.{c['sourcePortKey']} -> {t}.{c['targetPortKey']}")
+        return out
+
+    def measured_warnings(self, existing: dict[str, dict]) -> None:
+        """Cheap checks against measured behaviour: an oscillator PITCH_IN is inert while PITCH_MOD is 0."""
+        for _src, _sport, dst, dport in self.edges:
+            info = self.resolved[dst]["info"]
+            if dport != "PITCH_IN" or info is None:
+                continue
+            mod = next((p for p in info["parameters"] if p["parameterId"] == "PITCH_MOD"), None)
+            if mod is None:
+                continue
+            given = self.resolved[dst]["params"].get("PITCH_MOD")
+            if given is not None:
+                value = given["raw"] if type(given["raw"]) in (int, float) else None
+            else:  # an existing module may have been set earlier: only the default of a new one is certain
+                value = None if dst in existing else mod.get("default")
+            if value == 0:
+                self.warnings.append(f"{dst}: PITCH_IN is connected but PITCH_MOD is 0, so it has no effect (raw 1.0 = 120 semitones)")
+
+    def notes_field(self, extra: list[str] | None = None) -> dict[str, list[str]]:
+        data = measured_notes()
+        notes = list(extra or [])
+        if self.names:
+            used = dict.fromkeys(self.resolved[n]["typeName"] for n in self.names)
+            notes += [f"{t}: {x}" for t in used for x in data["modules"].get(t, [])] + data["general"]
+        return {"notes": notes} if notes else {}
 
     async def move_to(self, name: str, pos: dict[str, tuple[int, int]], at: tuple[int, int]) -> None:
         mid = self.ids[name]
@@ -607,7 +674,7 @@ class Apply:
             self.verify("grid.modules.delete", result)
             self.applied["deleted"] += 1
             pending["deleted"] -= 1
-            self.steps.append({"op": "delete", "name": row["customName"]})
+            self.steps.append({"op": "delete", "name": row["customName"], **({"replace": True} if row["customName"] in self.replaced_names else {})})
         self.phase = "premove"
         pos = {self.ids[n]: p for n, p in current.items()}
         for name, at in self.pre_moves:
@@ -728,7 +795,7 @@ class Apply:
     # ---- reports ---------------------------------------------------------------------------------------------
     def report(self, status: str) -> dict[str, Any]:
         out = {"status": status, "applied": self.applied, "alreadyMatched": self.matched, "steps": self.steps, "moduleIds": self.ids}
-        return out | ({"warnings": self.warnings} if self.warnings else {})
+        return out | ({"warnings": self.warnings} if self.warnings else {}) | self.notes_field()
 
     def report_stop(self, stop: Stop, pending: dict[str, int]) -> dict[str, Any]:
         order = ["delete", "premove", "insert", "rename", "move", "params", "connections"]

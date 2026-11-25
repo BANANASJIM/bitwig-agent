@@ -1,0 +1,25 @@
+{
+  "hostVersion": "6.1.4",
+  "source": "measured natively on Bitwig 6.1.4; no parameter values",
+  "general": [
+    "Grid pitch signal: 0 = MIDI 60, 0.1 per octave (1 semitone = 1/120).",
+    "A Poly Grid voice ends immediately unless something affects voice lifetime (Note In with Affect Voice Lifetime, or an envelope with lifetime on).",
+    "Grid writes need the transport stopped.",
+    "A Grid with a module whose required inputs are unsatisfied can be dropped from the audio network silently (Bitwig log: 'component nitro should be rejected from the network')."
+  ],
+  "modules": {
+    "Sine": ["PITCH_IN is scaled by PITCH_MOD (default 0 = no effect; raw 1.0 = 120 semitones)."],
+    "Sawtooth": ["PITCH_IN is scaled by PITCH_MOD (default 0 = no effect; raw 1.0 = 120 semitones)."],
+    "Pulse": ["PITCH_IN is scaled by PITCH_MOD (default 0 = no effect; raw 1.0 = 120 semitones)."],
+    "Triangle": ["PITCH_IN is scaled by PITCH_MOD (default 0 = no effect; raw 1.0 = 120 semitones)."],
+    "Phasor": ["PITCH_IN is scaled by PITCH_MOD (default 0 = no effect; raw 1.0 = 120 semitones)."],
+    "Note In": ["Affect Voice Lifetime keeps a Poly Grid voice alive."],
+    "AD": ["With GATE on it does not retrigger from short trigger pulses: use GATE off for trigger-driven envelopes.", "ATTACK/DECAY raw = cbrt(seconds)."],
+    "ADSR": ["With GATE on it does not retrigger from short trigger pulses: use GATE off for trigger-driven envelopes."],
+    "Chance": ["Outputs short triggers."],
+    "Triggers": ["STEPS=N fed by a phase produced 2N rising edges per cycle."],
+    "Logic Delay": ["DELAY raw = log10(seconds)."],
+    "Gate Length": ["LENGTH raw = log10(seconds)."],
+    "Long Delay": ["TIME 0.025 = shortest (usable as a 1-sample feedback delay)."]
+  }
+}

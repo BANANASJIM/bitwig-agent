@@ -53,7 +53,8 @@ def build_properties(classes):
         git = lambda *args: subprocess.run(["git", "-C", str(ROOT), *args], check=True,
                                            capture_output=True, text=True).stdout.strip()
         build = git("rev-parse", "--short", "HEAD")
-        if git("status", "--porcelain"):
+        # Untracked .claude/ (agent worktrees) is local tooling, not source: it must not mark the build dirty.
+        if git("status", "--porcelain", "--", ".", ":(exclude).claude"):
             build += "-dirty"
     except (OSError, subprocess.CalledProcessError):
         build = "unknown"

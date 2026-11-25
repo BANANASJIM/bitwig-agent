@@ -650,8 +650,9 @@ class GridApplyModule(StrictModel):
     typeId: TrackId = omitted(description=TYPE_ID_DESCRIPTION)
     x: int = Field(ge=-(2**31), le=2**31 - 1)
     y: int = Field(ge=-(2**31), le=2**31 - 1)
-    params: dict[str, bool | int | float | GridApplyDisplay | GridApplyLabel] = omitted(
-        description="parameterId -> raw value, {display:'1.2 kHz'} or {label:'16th'}.")
+    params: dict[str, bool | int | float | str | GridApplyDisplay | GridApplyLabel] = omitted(
+        description="parameterId -> raw value, {display:'1.2 kHz'}, {label:'16th'} or a string (string panels, e.g. Comment TEXT; at most 1024 UTF-16 units, multi-line ok).")
+    replace: bool = omitted(description="If a module with this name exists with another type, delete it and insert this type under the same name (default: refuse).")
 
     @model_validator(mode="after")
     def validate_one_type(self):
@@ -681,15 +682,18 @@ class GridRenderArgs(ParameterArgs):
 
 class GridApplyArgs(StatusArgs):
     target: GridApplyTarget
-    modules: Annotated[list[GridApplyModule], Field(min_length=1, max_length=1024)]
+    modules: Annotated[list[GridApplyModule], Field(max_length=1024, description="Declared modules; [] only with prune=true and a namespace (empties the namespace).")]
     connections: Annotated[list[GridApplyConnection], Field(max_length=1024)] = omitted(
         description="Cables between declared modules; one source per target input.")
     namespace: str = omitted(min_length=1, max_length=1024, description="customName prefix (e.g. 'H: ') that prune may delete from.")
     prune: bool = omitted(description="Also disconnect unlisted inputs of declared modules and delete namespace modules absent from the spec.")
     dryRun: bool = omitted(description="Return the plan without writing anything.")
+    replace: bool = omitted(description="Default for every module: replace an existing same-named module of another type instead of refusing.")
 
     @model_validator(mode="after")
     def validate_spec(self):
+        if not self.modules and not (self.prune and self.namespace):
+            raise ValueError("modules may be empty only with prune=true and a non-empty namespace")
         names = [m.name for m in self.modules]
         dupes = sorted({n for n in names if names.count(n) > 1})
         if dupes:
