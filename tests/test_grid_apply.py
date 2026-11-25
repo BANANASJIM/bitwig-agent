@@ -37,8 +37,7 @@ class FakeGrid:
         iid = str(uuid.uuid4())
         params = {}
         for p in info["parameters"]:
-            if p["kind"] != "string":
-                params[p["parameterId"]] = {**p, "value": p["default"], "display": p.get("defaultDisplay")}
+            params[p["parameterId"]] = {**p, "value": p["default"], "display": p.get("defaultDisplay")}
         self.mods[iid] = {"instanceId": iid, "customName": custom, "name": custom or type_name, "typeId": info["typeId"],
                           "typeName": type_name, "x": x, "y": y, "info": info, "params": params}
         return iid
@@ -554,3 +553,111 @@ def test_unchanged_spec_reads_only_what_it_needs():
 def test_display_grammar_matches_the_host_trim_and_ascii_digits():
     q = grid_apply.parse_quantity
     assert q("decibel", " 6 dB") is None and q("decibel", "٣ dB") is None and q("decibel", " 6 dB\t")[0] == 6
+
+
+def test_string_panel_params_are_written_with_cas_and_idempotent():
+    host = FakeGrid()
+    text = "line 1\nline 2 \u00e9\U0001f600"
+    spec = {"target": TARGET, "modules": [{"name": "C", "type": "Comment", "x": 0, "y": 0, "params": {"TEXT": text}}]}
+    assert run(host, spec)["applied"]["paramsWritten"] == 1
+    assert host.param("C", "TEXT") == text
+    host.calls.clear()
+    assert run(host, spec)["status"] == "unchanged" and host.writes() == []
+    run(host, {**spec, "modules": [{**spec["modules"][0], "params": {"TEXT": ""}}]})
+    sent = [c for m, c in host.calls if m == "grid.parameters.set"][0]["writes"][0]
+    assert sent["expectedKind"] == "string" and sent["expectedValue"] == text and sent["value"] == "" and host.param("C", "TEXT") == ""
+
+
+def test_string_param_validation():
+    host = FakeGrid()
+    mod = {"name": "C", "type": "Comment", "x": 0, "y": 0}
+    for bad in (5, "x" * 1025, "\U0001f600" * 513):
+        with pytest.raises(BridgeError) as err:
+            run(host, {"target": TARGET, "modules": [{**mod, "params": {"TEXT": bad}}]})
+        assert err.value.error["code"] == "invalid_spec"
+    run(host, {"target": TARGET, "modules": [{**mod, "params": {"TEXT": "\U0001f600" * 512}}]}, dryRun=True)
+    with pytest.raises(BridgeError):
+        run(host, {"target": TARGET, "modules": [{"name": "A", "type": "Add", "x": 0, "y": 0, "params": {"X": "s"}}]})
+    assert host.writes() == []
+
+
+def test_empty_modules_prunes_namespace_only():
+    host = populated_namespace_host()
+    before = {m["customName"] for m in host.mods.values()}
+    result = run(host, {"target": TARGET, "namespace": "H: ", "prune": True, "modules": []})
+    assert result["status"] == "applied" and result["applied"]["deleted"] == 6
+    left = {m["customName"] for m in host.mods.values()}
+    assert left == {"X: keep", ""} and before - left == {n for n in before if n.startswith("H: ")}
+    assert run(host, {"target": TARGET, "namespace": "H: ", "prune": True, "modules": []})["status"] == "unchanged"
+
+
+@pytest.mark.parametrize("extra", [{}, {"prune": True}, {"namespace": "H: "}])
+def test_empty_modules_needs_prune_and_namespace(extra):
+    host = FakeGrid()
+    with pytest.raises(ValueError, match="modules may be empty"):
+        run(host, {"target": TARGET, "modules": [], **extra})
+    assert host.writes() == []
+
+
+def replace_host():
+    host = FakeGrid()
+    host.add("Add", "R: a", 0, 0)
+    host.add("Add", "R: src", 6, 0)
+    host.conns[(host.named("R: a")["instanceId"], "IN")] = (host.named("R: src")["instanceId"], "OUT")
+    return host
+
+
+REPLACE_SPEC = {"target": TARGET, "modules": [
+    {"name": "R: a", "type": "Multiply", "x": 0, "y": 0}, {"name": "R: src", "type": "Add", "x": 6, "y": 0}],
+    "connections": [{"from": "R: src.OUT", "to": "R: a.IN"}]}
+
+
+def test_replace_default_refuses_and_opt_in_swaps_type_and_rewires():
+    host = replace_host()
+    with pytest.raises(BridgeError) as err:
+        run(host, REPLACE_SPEC)
+    assert "exists as" in err.value.error["message"] and host.writes() == []
+    spec = copy.deepcopy(REPLACE_SPEC)
+    plan = run(host, spec, replace=True, dryRun=True)
+    assert plan["plan"]["replaces"] == ["R: a"] and host.writes() == []
+    result = run(host, spec, replace=True)
+    assert result["status"] == "applied" and result["applied"]["deleted"] == 1 and result["applied"]["inserted"] == 1
+    assert host.named("R: a")["typeName"] == "Multiply" and host.source("R: a", "IN") == ("R: src", "OUT")
+    host.calls.clear()
+    assert run(host, spec, replace=True)["status"] == "unchanged" and host.writes() == []
+
+
+def test_replace_per_module_only_affects_that_module():
+    host = replace_host()
+    host.add("Add", "R: other")
+    spec = copy.deepcopy(REPLACE_SPEC)
+    spec["modules"][0]["replace"] = True
+    spec["modules"].append({"name": "R: other", "type": "Multiply", "x": 12, "y": 0})
+    with pytest.raises(BridgeError) as err:
+        run(host, spec)
+    assert "R: other" in err.value.error["message"] and "'R: a'" not in err.value.error["message"]
+    assert host.writes() == []
+    spec["modules"][1]["replace"] = False
+    spec["modules"][2]["replace"] = True
+    assert run(host, spec)["applied"]["deleted"] == 2
+
+
+def test_notes_and_pitch_mod_warning():
+    spec = {"target": TARGET, "modules": [
+        {"name": "o", "type": "Sine", "x": 0, "y": 0}, {"name": "o2", "type": "Sine", "x": 6, "y": 0, "params": {"PITCH_MOD": 0.5}},
+        {"name": "n", "type": "Add", "x": 12, "y": 0}],
+        "connections": [{"from": "n.OUT", "to": "o.PITCH_IN"}, {"from": "n.OUT", "to": "o2.PITCH_IN"}]}
+    host = FakeGrid()
+    result = run(host, spec, dryRun=True)
+    assert [w for w in result["warnings"] if "PITCH_MOD" in w] == ["o: PITCH_IN is connected but PITCH_MOD is 0, so it has no effect (raw 1.0 = 120 semitones)"]
+    result = run(host, spec)
+    assert len(result["warnings"]) == 1 and result["warnings"][0].startswith("o:")
+    assert any(n.startswith("Sine: PITCH_IN is scaled by PITCH_MOD") for n in result["notes"])
+    assert not any(n.startswith("Chance:") for n in result["notes"]) and any("voice lifetime" in n for n in result["notes"])
+    assert len(result["notes"]) < 8
+
+
+def test_notes_file_is_value_free_and_covers_catalog_types():
+    notes = grid_apply.measured_notes()
+    assert notes["hostVersion"] == "6.1.4"
+    assert set(notes["modules"]) <= set(grid_apply.bundled_schema()["modules"])
