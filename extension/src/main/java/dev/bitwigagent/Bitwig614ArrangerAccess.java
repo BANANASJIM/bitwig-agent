@@ -18,8 +18,8 @@ final class Bitwig614ArrangerAccess implements ArrangerModule.Access {
     private final NativeReadContext context;
     private final Class<?> player, clipType, slotType, projectType, instrumentClip, audioClip, number, bool;
     private final Method target, slotTarget, slotClip, trackUuid, lane, timeline, events, start, length, name, rename;
-    private final Method project, setStart, setLength, insert, delete, newClip, newNote, addNote, noteTimeline, noteRow;
-    private final Method noteCount, velocity, copy, arrangeLength, slotLane, slotOwner, clipSlot, begin, end;
+    private final Method project, setStart, setLength, insert, delete, newClip, newNote, addNote, noteTimeline, noteRows;
+    private final Method rowChannel, rowKey, velocity, copy, arrangeLength, slotLane, slotOwner, clipSlot, begin, end;
     private final Method timing, playStart, playStop, loop, loopEnabled, position, duration, doubleGet, boolGet;
     private final Object copyMode;
 
@@ -51,10 +51,12 @@ final class Bitwig614ArrangerAccess implements ArrangerModule.Access {
         delete = a.exactMethod(timelineType, "cfM", void.class, false, Collection.class);
         newClip = a.exactMethod(g1d, "cfM", g1d, true, double.class, double.class);
         newNote = a.exactMethod(note, "cfM", note, true, double.class, double.class, double.class);
+        // (note, channel, key, selection): the row factory YeP.TMF(channel, key, create) asserts channel 0..15.
         addNote = a.exactMethod(a.type("AGr"), "MRY", void.class, false, note, int.class, int.class, selection);
         noteTimeline = a.exactMethod(noteClip, "MLK", poly, false);
-        noteRow = a.exactMethod(poly, "TMF", row, false, int.class, int.class, boolean.class);
-        noteCount = a.exactMethod(poly, "E1b", int.class, false);
+        noteRows = a.exactMethod(poly, "wGc", List.class, false);
+        rowChannel = a.exactMethod(row, "hUR", int.class, false);
+        rowKey = a.exactMethod(row, "TMF", int.class, false);
         velocity = a.exactMethod(a.type("Roz"), "UNj", double.class, false);
         copy = a.exactMethod(laneType, "cfM", void.class, false, List.class, slotType, double.class, mode, boolean.class, selection, async);
         arrangeLength = a.exactMethod(clipType, "Mb2", double.class, false);
@@ -222,8 +224,7 @@ final class Bitwig614ArrangerAccess implements ArrangerModule.Access {
             created[0] = clip;
             a.invoke(insert, lane.timeline, clip, false, false, null);
             a.invoke(rename, clip, clipName);
-            for (double[] n : notes)
-                a.invoke(addNote, clip, a.invoke(newNote, null, n[0], n[3], n[2] / 127.0), (int) n[1], channel, null);
+            ArrangerNotes.write(noteHost, clip, notes, channel);
         });
         lane.guard(check);
         Object clip = added(before, lane.clips());
@@ -231,40 +232,32 @@ final class Bitwig614ArrangerAccess implements ArrangerModule.Access {
         if (!near((Double) a.invoke(start, clip), startBeats)) throw mismatch("startBeats");
         if (!near((Double) a.invoke(length, clip), lengthBeats)) throw mismatch("lengthBeats");
         if (!clipName.equals(a.invoke(name, clip))) throw mismatch("name");
+        ArrangerNotes.Readback readback = notes.isEmpty() ? null : ArrangerNotes.verify(noteHost, clip, notes, channel);
+        if (readback != null && readback.invalidRows > 0) {
+            // Rows outside channel 0..15 / key 0..127 crash Bitwig's note editor when drawn: remove the clip now.
+            a.invoke(delete, lane.timeline, new ArrayList<>(List.of(clip)));
+            throw new RpcException("arranger_verification_failed", readback.invalidRows + " native note rows have a channel outside 0..15 or a key"
+                    + " outside 0..127; the created clip was deleted again. Inspect arranger.clips.list before another write.", "unknown");
+        }
+        if (readback != null && !readback.complete)
+            throw new RpcException("arranger_verification_failed", "Clip was created but " + (notes.size() - readback.json.get("verified").getAsInt())
+                    + " requested notes were not read back (clip holds " + readback.json.get("notesInClip").getAsInt() + "); inspect before another write.", "unknown");
         JsonObject out = written(lane, "create", clip, null);
-        if (!notes.isEmpty()) out.add("noteWrite", verifyNotes(clip, notes, channel));
+        if (readback != null) out.add("noteWrite", readback.json);
         return out;
     }
 
-    private JsonObject verifyNotes(Object clip, List<double[]> notes, int channel) {
-        Object poly = a.invoke(noteTimeline, clip);
-        int count = (Integer) a.invoke(noteCount, poly);
-        int verified = 0;
-        JsonArray missing = new JsonArray();
-        for (double[] n : notes) {
-            Object row = a.invoke(noteRow, poly, (int) n[1], channel, false);
-            boolean ok = false;
-            if (row != null) for (Object note : (List<?>) a.invoke(events, row))
-                ok |= near((Double) a.invoke(start, note), n[0]) && near((Double) a.invoke(length, note), n[3])
-                        && Math.abs((Double) a.invoke(velocity, note) * 127.0 - n[2]) < 0.5;
-            if (ok) verified++;
-            else {
-                JsonObject m = new JsonObject();
-                m.addProperty("beat", n[0]); m.addProperty("pitch", (int) n[1]);
-                missing.add(m);
-            }
-        }
-        JsonObject out = new JsonObject();
-        out.addProperty("requested", notes.size());
-        out.addProperty("verified", verified);
-        out.addProperty("notesInClip", count);
-        out.add("unverifiedNotes", missing);
-        out.addProperty("verification", "native_note_rows_readback_beat_duration_velocity");
-        if (verified != notes.size() || count != notes.size())
-            throw new RpcException("arranger_verification_failed", "Clip was created but " + (notes.size() - verified)
-                    + " requested notes were not read back (clip holds " + count + "); inspect before another write.", "unknown");
-        return out;
-    }
+    private final ArrangerNotes.Host noteHost = new ArrangerNotes.Host() {
+        @Override public Object newNote(double beat, double durationBeats, double velocity01) { return a.invoke(newNote, null, beat, durationBeats, velocity01); }
+        @Override public void addNote(Object clip, Object note, int channel, int key) { a.invoke(Bitwig614ArrangerAccess.this.addNote, clip, note, channel, key, null); }
+        @Override public List<?> rows(Object clip) { return new ArrayList<>((List<?>) a.invoke(noteRows, a.invoke(noteTimeline, clip))); }
+        @Override public int channel(Object row) { return (Integer) a.invoke(rowChannel, row); }
+        @Override public int key(Object row) { return (Integer) a.invoke(rowKey, row); }
+        @Override public List<?> notes(Object row) { return (List<?>) a.invoke(events, row); }
+        @Override public double start(Object note) { return (Double) a.invoke(start, note); }
+        @Override public double length(Object note) { return (Double) a.invoke(length, note); }
+        @Override public double velocity01(Object note) { return (Double) a.invoke(velocity, note); }
+    };
 
     @Override public JsonObject copyFromLauncher(Object trackProxy, Object slotProxy, String trackId, String expectedClipName,
                                                  double startBeats, Runnable check, Runnable beforeWrite) {

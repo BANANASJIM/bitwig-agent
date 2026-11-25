@@ -23,8 +23,10 @@ public final class MixModuleTest {
         groupedCreationAttributesTopLevelIndex();
         groupedCreationInsideAGroupIsNeverNamed();
         trackTreeResolvesParentsAndRejectsInconsistentOrder();
+        trackTreeInfersGroupWhoseParentProxyIsUninformative();
         groupValidationRejectsBeforeScheduling();
         groupVerifiesMembershipAndNamesTheGroup();
+        groupObservedWhenTheGroupParentProxyNamesItself();
         groupRefusesMixedParentsEffectTracksAndRecording();
         unobservedGroupQuarantinesCreationAndGrouping();
         wrongTypeOrPositionCannotBeNamed();
@@ -207,7 +209,11 @@ public final class MixModuleTest {
         f.tracks[1].child("trackType").emit("Master");
         HostOperation master = f.submit(module, "tracks.delete", delete(TransportMixFixture.B, "Track 1")); f.next();
         check(TransportMixFixture.error(master, "unsupported_scope").outcome.equals("not_applied") && f.tracks[1].actions == 0, "master refused");
-        f.tracks[1].child("trackType").emit("Audio");
+        f.tracks[1].child("trackType").emit("Group");
+        HostOperation group = f.submit(module, "tracks.delete", delete(TransportMixFixture.B, "Track 1")); f.next();
+        check(TransportMixFixture.error(group, "unsupported_scope").outcome.equals("not_applied") && f.tracks[1].actions == 0, "group refused");
+        // An instrument track that bounce.inPlace turned Hybrid stays deletable.
+        f.tracks[1].child("trackType").emit("Hybrid");
         f.transport.child("isPlaying").emit(true);
         HostOperation playing = f.submit(module, "tracks.delete", delete(TransportMixFixture.B, "Track 1")); f.next();
         check(TransportMixFixture.error(playing, "unsafe_state").outcome.equals("not_applied") && f.tracks[1].actions == 0, "playing refused");
@@ -605,6 +611,75 @@ public final class MixModuleTest {
         parent(f, 2, ROOT); f.tracks[2].child("position").emit(1); f.tracks[1].child("position").emit(2);
         TrackTree order = TrackTree.capture(f.services);
         check(!order.complete && "parent_order_inconsistent".equals(order.reason), "a top-level track between a group and its child breaks pre-order");
+    }
+    static final String D = "00000000-0000-0000-0000-000000000005", E = "00000000-0000-0000-0000-000000000006",
+            FX = "00000000-0000-0000-0000-000000000007", MASTER = "00000000-0000-0000-0000-000000000008",
+            ELSEWHERE = "00000000-0000-0000-0000-0000000000ee";
+    /**
+     * The 6.1.4 native observation after tracks.group (0fcbad3): three top-level tracks, the new group, its two
+     * children (parent proxy = the group), an effect track and Master. Only the group's own parent proxy is odd.
+     */
+    private static TransportMixFixture observedGroupLayout(String groupParent) {
+        TransportMixFixture f = new TransportMixFixture();
+        f.tracks[0].child("trackType").emit("Instrument"); parent(f, 0, ROOT); parent(f, 1, ROOT);
+        f.addTrack(2, TransportMixFixture.C, "Instrument"); parent(f, 2, ROOT);
+        group(f, 3, G, 3); parent(f, 3, groupParent);
+        f.addTrack(4, D, "Audio"); parent(f, 4, G);
+        f.addTrack(5, E, "Audio"); parent(f, 5, G);
+        f.addTrack(6, FX, "Effect"); parent(f, 6, ROOT);
+        f.addTrack(7, MASTER, "Master"); parent(f, 7, null);
+        return f;
+    }
+    private static void trackTreeInfersGroupWhoseParentProxyIsUninformative() {
+        for (String raw : new String[]{G, ELSEWHERE}) {
+            TrackTree tree = TrackTree.capture(observedGroupLayout(raw).services);
+            TrackTree.Node group = tree.byId.get(G);
+            check(tree.complete && group.topLevel && group.depth == 0 && group.parentInferred, "top-level group resolves from pre-order: " + raw);
+            check(tree.byId.get(D).depth == 1 && G.equals(tree.byId.get(E).parentId) && tree.byId.get(FX).depth == 0, "children and effect track resolve");
+            JsonObject row = new JsonObject(); tree.describe(row, group);
+            check(row.get("parentId").isJsonNull() && row.get("depth").getAsInt() == 0 && row.get("parentResolved").getAsBoolean()
+                    && row.get("parentSource").getAsString().equals("preorder_inference") && row.get("parentObserved").getAsString().equals(raw),
+                    "tracks.list row shows depth 0, the inference and the raw proxy value");
+            JsonObject child = new JsonObject(); tree.describe(child, tree.byId.get(D));
+            check(!child.has("parentSource") && !child.has("parentObserved"), "observed parents carry no inference fields");
+        }
+        // Group first in the window and naming itself: the root comes from the first top-level non-group track.
+        TransportMixFixture first = new TransportMixFixture();
+        group(first, 0, G, 0); parent(first, 0, G);
+        first.addTrack(1, D, "Audio"); parent(first, 1, G); first.tracks[1].child("position").emit(1);
+        first.addTrack(2, TransportMixFixture.C, "Audio"); parent(first, 2, ROOT);
+        TrackTree leading = TrackTree.capture(first.services);
+        check(leading.complete && leading.byId.get(G).topLevel && G.equals(leading.byId.get(D).parentId) && leading.byId.get(TransportMixFixture.C).topLevel,
+                "a leading self-reporting group never becomes the root of its own children");
+        // After another group's child, the group could be that child's sibling or top-level: never guessed.
+        TransportMixFixture nested = observedGroupLayout(G);
+        group(nested, 2, TransportMixFixture.C, 2); parent(nested, 2, ROOT);
+        nested.tracks[3].child("position").emit(4); nested.tracks[4].child("position").emit(3); parent(nested, 4, TransportMixFixture.C);
+        TrackTree ambiguous = TrackTree.capture(nested.services);
+        check(!ambiguous.complete && "group_parent_ambiguous".equals(ambiguous.reason) && ambiguous.byId.get(G).depth < 0, "ambiguous group parent fails closed");
+        // A group naming a non-group track in the window is inconsistent, not inferred.
+        TrackTree wrong = TrackTree.capture(observedGroupLayout(TransportMixFixture.C).services);
+        check(!wrong.complete && "parent_not_a_group_in_window".equals(wrong.reason), "a group whose parent is a plain track fails closed");
+        TrackTree missing = TrackTree.capture(observedGroupLayout(null).services);
+        check(!missing.complete && "parent_observation_missing".equals(missing.reason), "a missing group parent observation fails closed");
+    }
+    private static void groupObservedWhenTheGroupParentProxyNamesItself() {
+        TransportMixFixture f = new TransportMixFixture(); FakeGroup access = new FakeGroup(); MixModule module = new MixModule(f.services, access);
+        f.tracks[0].child("trackType").emit("Instrument");
+        f.addTrack(2, D, "Audio"); f.addTrack(3, E, "Audio"); f.addTrack(4, FX, "Effect"); f.addTrack(5, MASTER, "Master");
+        access.effect = () -> {
+            // Native shape: the group takes the first child's slot, the children shift down, Master moves out of slot 5.
+            group(f, 2, G, 2); parent(f, 2, G);
+            f.addTrack(3, D, "Audio"); f.addTrack(4, E, "Audio"); f.addTrack(5, FX, "Effect"); f.addTrack(6, MASTER, "Master");
+            parent(f, 0, ROOT); parent(f, 1, ROOT); parent(f, 3, G); parent(f, 4, G); parent(f, 5, ROOT); parent(f, 6, null);
+        };
+        JsonObject p = groupRequest(D, E); p.addProperty("name", "T: Grp");
+        HostOperation op = f.submit(module, "tracks.group", p);
+        while (!op.result.isDone() && !f.tasks.isEmpty()) { module.flush(); f.next(); }
+        JsonObject result = op.result.join();
+        check(result.get("status").getAsString().equals("observed") && result.get("trackId").getAsString().equals(G)
+                && f.tracks[2].child("name").data.equals("T: Grp"), "observed native grouping succeeds and names the group");
+        check(module.unresolved().isEmpty(), "no quarantine after the observed grouping");
     }
     private static JsonObject groupRequest(String... ids) {
         JsonObject p = new JsonObject(); JsonArray a = new JsonArray(); for (String id : ids) a.add(id); p.add("trackIds", a); return p;

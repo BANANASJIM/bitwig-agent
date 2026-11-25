@@ -731,7 +731,7 @@ ARRANGER_EDIT_OPS = {"move": {"startBeats"}, "resize": {"lengthBeats"}, "rename"
 
 
 class ArrangerClipEditArgs(DeviceArgs):
-    clipIndex: int = Field(ge=0, le=4095, description="Index from a fresh arranger.clips.list (clips are ordered by start).")
+    clipIndex: int = Field(ge=0, le=4095, description="Index from a fresh arranger.clips.list (event order: creation order on 6.1.4, not start order).")
     expectedStartBeats: float = Field(ge=0, le=4194304, description="Exact startBeats from arranger.clips.list (guard, compared within 1e-6).")
     expectedName: str = Field(max_length=256, description="Exact current name from arranger.clips.list; may be empty.")
     op: Literal["move", "resize", "rename", "delete"]

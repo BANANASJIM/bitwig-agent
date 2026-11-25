@@ -653,15 +653,15 @@ final class MixModule implements HostModule {
         op.result.complete(result);
     }
 
-    /** Delete one audio/instrument/effect track by Track.deleteObject (DeleteableObject), verified by bank UUID set and count. */
+    /** Delete one audio/instrument/hybrid/effect track by Track.deleteObject (DeleteableObject), verified by bank UUID set and count. */
     private void delete(HostOperation op, Target target, String expectedName) {
         HostServices.SafetyObservation safety = s.stoppedSafety(op);
         if (!s.tracksObserved) throw HostServices.failure("not_ready", "Track bank has not reported its size yet.");
         guard(op, target);
         JsonElement type = target.state.meta("type"), name = value(target.state, 0), index = target.state.meta("index");
         if (type.isJsonNull() || name.isJsonNull()) throw HostServices.failure("not_ready", "Track type/name have not been observed.");
-        if (!Set.of("Audio", "Instrument", "Effect").contains(type.getAsString()))
-            throw HostServices.failure("unsupported_scope", "Only Audio, Instrument and Effect tracks can be deleted; this track is " + type.getAsString() + " (hybrid, group and master are refused); nothing was dispatched.");
+        if (!Set.of("Audio", "Instrument", "Hybrid", "Effect").contains(type.getAsString()))
+            throw HostServices.failure("unsupported_scope", "Only Audio, Instrument, Hybrid and Effect tracks can be deleted; this track is " + type.getAsString() + " (group and master are refused); nothing was dispatched.");
         if (!name.getAsString().equals(expectedName))
             throw HostServices.failure("stale_target", "Track name differs from expectedName; no delete was dispatched.");
         Creation before = capture();

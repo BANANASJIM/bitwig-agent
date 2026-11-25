@@ -8,6 +8,9 @@ import java.util.*;
  * Parent/child structure of the flat track window from public observations only: each bank slot's
  * {@code createParentTrack} proxy, {@code isGroup}, type and flat position. The flat bank lists tracks in
  * tree pre-order, so the first non-master track is top-level and its parent is the root group.
+ * On 6.1.4 a group's own parent proxy was observed reporting neither the root nor a group in the window (a group's
+ * public channelId is its channel alias); such a group's parent is taken from pre-order only where that is
+ * unambiguous, else the tree stays incomplete.
  */
 final class TrackTree {
     final List<Node> nodes = new ArrayList<>();
@@ -27,7 +30,7 @@ final class TrackTree {
         final String parentRaw;
         String parentId;
         int depth = -1;
-        boolean topLevel, parentResolved;
+        boolean topLevel, parentResolved, parentInferred;
         Node(int slot, String id, String type, int position, Boolean isGroup, Boolean expanded, String parentRaw) {
             this.slot = slot; this.id = id; this.type = type; this.position = position;
             this.isGroup = isGroup; this.expanded = expanded; this.parentRaw = parentRaw;
@@ -63,22 +66,33 @@ final class TrackTree {
         for (Node node : nodes) if (!node.master()) ordered.add(node);
         if (!windowComplete) { reason = "track_window_incomplete"; markFlat(ordered); return; }
         if (ordered.isEmpty()) { complete = true; return; }
-        rootParentId = ordered.get(0).parentRaw;
+        rootParentId = rootParent(ordered);
         if (!groups) {
             // Without a Group in the window every track is top-level; parent observations are not required.
             markFlat(ordered); complete = true; return;
         }
-        boolean ok = rootParentId != null;
-        if (!ok) reason = "parent_observation_missing";
+        boolean ok = true;
+        List<Node> unobservable = new ArrayList<>();
         for (Node node : ordered) {
             if (node.parentRaw == null) { ok = false; reason = "parent_observation_missing"; continue; }
             if (node.parentRaw.equals(rootParentId)) { node.topLevel = true; node.parentResolved = true; continue; }
             Node parent = byId.get(node.parentRaw);
-            node.parentId = node.parentRaw;
-            if (parent == null || !parent.group() || parent.master() || parent.position >= node.position) {
-                ok = false; reason = "parent_not_a_group_in_window"; continue;
+            if (parent != null && parent.group() && !parent.master() && parent.position < node.position) {
+                node.parentId = node.parentRaw; node.parentResolved = true; continue;
             }
-            node.parentResolved = true;
+            // A group reporting itself or an id outside the window: its parent proxy says nothing about its parent.
+            if (node.group() && (parent == null || parent == node)) { unobservable.add(node); continue; }
+            node.parentId = node.parentRaw;
+            ok = false; reason = "parent_not_a_group_in_window";
+        }
+        for (Node node : unobservable) {
+            // Pre-order: the parent is the previous track or one of its ancestors. It is the root without doubt
+            // only when the group comes first or follows a top-level track that is not a group.
+            int i = ordered.indexOf(node);
+            Node previous = i == 0 ? null : ordered.get(i - 1);
+            if (previous == null || (previous.topLevel && !previous.group())) {
+                node.topLevel = true; node.parentResolved = true; node.parentInferred = true;
+            } else { ok = false; reason = "group_parent_ambiguous"; }
         }
         if (ok) for (Node node : ordered) if (depth(node, 0) < 0) { ok = false; reason = "parent_cycle"; }
         // Pre-order: every track strictly between a group and its child descends from that group.
@@ -92,6 +106,19 @@ final class TrackTree {
         complete = ok;
         if (!ok) for (Node node : ordered) node.depth = -1;
     }
+
+    /**
+     * The first track is top-level, so its parent is the root, unless it is a group whose parent observation names
+     * a track in the window; then the root is the parent of the first non-group track not inside a group.
+     */
+    private String rootParent(List<Node> ordered) {
+        Node first = ordered.get(0);
+        if (!first.group() || first.parentRaw == null || !inWindow(first.parentRaw)) return first.parentRaw;
+        for (Node node : ordered) if (!node.group() && node.parentRaw != null && !inWindow(node.parentRaw)) return node.parentRaw;
+        return null;
+    }
+
+    private boolean inWindow(String id) { Node node = byId.get(id); return node != null && !node.master(); }
 
     private void markFlat(List<Node> ordered) {
         if (groups) return;
@@ -139,6 +166,10 @@ final class TrackTree {
         row.add("parentId", node.parentResolved && !node.topLevel ? new JsonPrimitive(node.parentId) : JsonNull.INSTANCE);
         row.add("depth", node.depth >= 0 ? new JsonPrimitive(node.depth) : JsonNull.INSTANCE);
         row.addProperty("parentResolved", node.parentResolved);
+        if (node.parentInferred) row.addProperty("parentSource", "preorder_inference");
+        // The raw proxy value when it did not decide the parent, for diagnosing host behaviour.
+        if (groups && (node.parentInferred || !node.parentResolved))
+            row.add("parentObserved", node.parentRaw == null ? JsonNull.INSTANCE : new JsonPrimitive(node.parentRaw));
     }
 
     JsonObject summary() {

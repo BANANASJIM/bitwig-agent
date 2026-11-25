@@ -184,11 +184,18 @@ public final class RenderModuleTest {
         Sim sim = new Sim();
         JsonObject tail = clip(32, 4, "Tail", "instrument");
         sim.clips.put(A, lanes(clip(0, 8, "Verse", "instrument"), tail));
-        sim.afterBounce = before -> lanes(clip(0, 16, "Bounce", "audio"), tail);
+        sim.fixture.tracks[0].child("trackType").emit("Instrument");
+        sim.afterBounce = before -> {
+            sim.fixture.tracks[0].child("trackType").emit("Hybrid");
+            return lanes(clip(0, 16, "Bounce", "audio"), tail);
+        };
         HostOperation op = sim.start("bounce.inPlace", bounce(A), 5000);
         sim.drainUntil(op);
         JsonObject result = op.result.join();
         check(sim.dispatches == 1 && sim.tap.equals("pre_fader"), "one bounce dispatch with the requested tap");
+        JsonObject typed = result.getAsJsonArray("tracks").get(0).getAsJsonObject();
+        check(typed.get("trackTypeBefore").getAsString().equals("Instrument") && typed.get("trackTypeAfter").getAsString().equals("Hybrid")
+                && typed.has("warning"), "an instrument track turned Hybrid by the bounce is reported");
         JsonObject track = result.getAsJsonArray("tracks").get(0).getAsJsonObject();
         check(result.get("bounced").getAsBoolean() && result.get("nativeUndo").getAsBoolean()
                 && track.getAsJsonObject("clip").get("kind").getAsString().equals("audio") && track.get("clipsBefore").getAsInt() == 2,

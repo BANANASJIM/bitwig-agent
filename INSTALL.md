@@ -133,6 +133,10 @@ Use that JSON rather than a bare executable name: GUI clients may not inherit th
 
 `extension.restart` replaces toggling the controller in Settings for clearing this per-instance quarantine: it refuses while unresolved mutations exist unless `discardUnresolved:true`, and lists them so you can inspect the project afterwards. Poll `status` until it answers again, then re-discover targets. Observed on 6.1.4: `restart()` does not load a replaced `.bwextension` file (`status.extension.build` stays the same); restart Bitwig to run a new build. The process-wide Grid topology quarantine still needs a full Bitwig restart.
 
+### `project.save` stays `dispatched` with `saved:false`
+
+An open modal dialog in Bitwig, such as **Recover Projects** after a crash, keeps the save from completing, and the extension cannot see the dialog. Close it in Bitwig, check `projectModified`, then save again.
+
 ### Controller missing or connection refused
 
 1. Confirm the extension is installed in the directory Bitwig scans, then restart Bitwig if necessary.
