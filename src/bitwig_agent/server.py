@@ -55,7 +55,7 @@ def create_server(client: BridgeClient | None = None) -> Server:
             failed = True
         return CallToolResult(content=[TextContent(type="text", text=json.dumps(payload, allow_nan=False, separators=(",", ":")))], structured_content=payload, is_error=failed)
 
-    return Server("Bitwig Agent", version="0.3.0", instructions="Discover capabilities and tracks.list first. Our indices are zero-based. Use exact discovered targets and inspect bounded windows and verification. Timeouts are not cancellation; reconcile unknown outcomes before another write. No automatic retries. The agent may use Computer Use for API gaps; never blindly repeat an uncertain write through the GUI.",
+    return Server("Bitwig Agent", version="0.4.0", instructions="Discover capabilities and tracks.list first. Our indices are zero-based. Use exact discovered targets and inspect bounded windows and verification. Timeouts are not cancellation; reconcile unknown outcomes before another write. No automatic retries. The agent may use Computer Use for API gaps; never blindly repeat an uncertain write through the GUI.",
                   on_list_tools=list_tools, on_call_tool=call_tool)
 
 
