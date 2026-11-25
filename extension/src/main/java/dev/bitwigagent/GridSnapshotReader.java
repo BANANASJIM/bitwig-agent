@@ -8,7 +8,7 @@ import static dev.bitwigagent.HostServices.failure;
 /** Document-thread traversal, independent of version-specific symbol resolution and RPC targeting. */
 final class GridSnapshotReader {
     static final int MAX_MODULES = 4096, MAX_CHILDREN = 256, MAX_OPTIONS = 256, MAX_CATALOG = 16384;
-    static final int MAX_ITEMS = 16384, MAX_TEXT = 1024;
+    static final int MAX_ITEMS = 131072, MAX_TEXT = 1024;
     enum Kind { MODULE, INPUT, OUTPUT, PARAMETER, FLOAT, BOOLEAN, INTEGER, ENUM, PANEL_BOOLEAN, PANEL_STRING, BIPOLAR_FLOAT, ENTRY, OPTION }
     private static final Kind[] PARAMETER_KINDS = {Kind.FLOAT, Kind.BOOLEAN, Kind.INTEGER, Kind.ENUM, Kind.PANEL_BOOLEAN, Kind.PANEL_STRING};
     enum Field {

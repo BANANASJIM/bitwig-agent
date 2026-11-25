@@ -5,7 +5,7 @@ import static dev.bitwigagent.HostServices.failure;
 
 /** Conservative topology prerequisites, deliberately independent of scalar licensing/touch wrappers. */
 final class GridTopologyContext {
-    static final int MAX_MODULES = 128;
+    static final int MAX_MODULES = 1024;
     enum Field {
         GRAPH_PROJECT, CIU, PROJECT_ADM, PROJECT_OOK,
         UNDO, UNDO_EXECUTING, UNDO_ACTIVE, UNDO_ICL, LOCK, LOCK_OWNER

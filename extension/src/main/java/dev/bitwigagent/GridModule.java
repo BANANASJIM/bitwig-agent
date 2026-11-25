@@ -113,7 +113,7 @@ final class GridModule implements HostModule {
                     throw failure("invalid_params", "trackId must be a canonical UUID.");
                 Params.integer(p, "deviceIndex", 0, HostServices.DEVICES - 1); Params.string(p, "expectedDeviceName");
                 if (p.has("moduleOffset")) Params.integer(p, "moduleOffset", 0, 100000);
-                if (p.has("moduleLimit")) Params.integer(p, "moduleLimit", 1, 128);
+                if (p.has("moduleLimit")) Params.integer(p, "moduleLimit", 1, 256);
                 if (p.has("includeParameters")) Params.bool(p, "includeParameters");
                 if (p.has("diagnostics")) Params.bool(p, "diagnostics");
                 if (p.has("moduleIds")) moduleIds(p);
@@ -156,12 +156,12 @@ final class GridModule implements HostModule {
     }
     private static Set<String> moduleIds(JsonObject p) {
         JsonElement value = p.get("moduleIds");
-        if (!value.isJsonArray() || value.getAsJsonArray().size() < 1 || value.getAsJsonArray().size() > 128)
-            throw failure("invalid_params", "moduleIds must be an array of 1..128 canonical UUIDs.");
+        if (!value.isJsonArray() || value.getAsJsonArray().size() < 1 || value.getAsJsonArray().size() > 256)
+            throw failure("invalid_params", "moduleIds must be an array of 1..256 canonical UUIDs.");
         Set<String> ids = new java.util.HashSet<>();
         for (JsonElement item : value.getAsJsonArray()) {
             if (!item.isJsonPrimitive() || !item.getAsJsonPrimitive().isString() || !item.getAsString().matches(UUID_PATTERN))
-                throw failure("invalid_params", "moduleIds must be an array of 1..128 canonical UUIDs.");
+                throw failure("invalid_params", "moduleIds must be an array of 1..256 canonical UUIDs.");
             ids.add(item.getAsString().toLowerCase(java.util.Locale.ROOT));
         }
         return ids;

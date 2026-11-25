@@ -162,7 +162,7 @@ def test_grid_catalog_rejects_unbounded_or_coerced_queries(field, values):
 
 @pytest.mark.parametrize("field,values", [
     ("moduleOffset", [-1, 100001, 0.0, "0", True, None]),
-    ("moduleLimit", [0, 129, 1.0, "1", False, None]),
+    ("moduleLimit", [0, 257, 1.0, "1", False, None]),
     ("includeParameters", [0, 1, "true", None, []]),
     ("trackId", ["selected", "", None, 1]),
     ("deviceIndex", [-1, 16, 0.0, "0", True, None]),
@@ -198,7 +198,7 @@ def test_grid_accepts_explicit_false_and_unicode_window_boundaries():
     for query in ("", "x" * 128, "𝄞" * 64):
         args = {"query": query, "offset": 100000, "limit": 256}
         assert validate_call("grid.catalog", args)[0] == args
-    for offset, limit, device in ((0, 1, 0), (100000, 128, 15)):
+    for offset, limit, device in ((0, 1, 0), (100000, 256, 15)):
         args = {**TARGET, "deviceIndex": device, "moduleOffset": offset,
                 "moduleLimit": limit, "includeParameters": False, "timeoutMs": 10000}
         params, timeout = validate_call("grid.get", args)
@@ -748,8 +748,8 @@ def test_grid_parameter_set_rejects_a_partial_single_form_and_an_empty_call():
 def test_grid_get_accepts_module_filter_and_diagnostics_and_rejects_bad_ones():
     params, _ = validate_call("grid.get", {**TARGET, "moduleIds": [TRACK], "diagnostics": True})
     assert params == {**TARGET, "moduleIds": [TRACK], "diagnostics": True}
-    assert validate_call("grid.get", {**TARGET, "moduleIds": [TRACK] * 128})
-    for bad in ([], [TRACK] * 129, ["not-a-uuid"], [None], None, TRACK):
+    assert validate_call("grid.get", {**TARGET, "moduleIds": [TRACK] * 256})
+    for bad in ([], [TRACK] * 257, ["not-a-uuid"], [None], None, TRACK):
         with pytest.raises(ValidationError):
             validate_call("grid.get", {**TARGET, "moduleIds": bad})
     for bad in (0, 1, "true", None):

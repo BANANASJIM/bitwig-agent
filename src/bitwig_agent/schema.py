@@ -115,10 +115,10 @@ class GridCatalogArgs(StatusArgs):
 
 class GridGetArgs(ParameterArgs):
     moduleOffset: int = Field(default=0, ge=0, le=100000)
-    moduleLimit: int = Field(default=64, ge=1, le=128)
+    moduleLimit: int = Field(default=64, ge=1, le=256)
     includeParameters: bool = True
     diagnostics: bool = Field(default=False, description="Add obfuscated native modelClass/path and constant coverage notes; no write needs them.")
-    moduleIds: Annotated[list[TrackId], Field(min_length=1, max_length=128)] = omitted(
+    moduleIds: Annotated[list[TrackId], Field(min_length=1, max_length=256)] = omitted(
         description="Return only these module instanceIds (e.g. one module's parameters without paging); absent ids are listed in missingModuleIds and the read is never complete.")
 
 

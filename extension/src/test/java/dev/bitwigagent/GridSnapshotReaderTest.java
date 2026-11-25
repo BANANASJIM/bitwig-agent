@@ -1778,7 +1778,7 @@ public final class GridSnapshotReaderTest {
                 f.model.first.put(OUTPUTS, ports);
             } else {
                 List<Node> modules = new ArrayList<>();
-                for (int i = 0; i < 100; i++) {
+                for (int i = 0; i < 700; i++) {
                     Node module = f.model.module(i, f.model.graph); List<Node> ports = new ArrayList<>();
                     for (int j = 0; j < 200; j++) ports.add(f.model.port(OUTPUT, module, "o" + j));
                     module.put(OUTPUTS, ports); modules.add(module);
