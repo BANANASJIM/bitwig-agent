@@ -39,6 +39,17 @@ Native context, license/property and undo observations do not constitute user pe
 - `typeName` must match exactly one catalog name (case/space/hyphen-insensitive); zero or several reject with candidates. Batch insert stops at the first failure or before the deadline (partial); later inserts can push earlier modules right, so use the reported final positions.
 - `display` writes (`Hz`/`kHz`, `%`, `dB`) work only after per-parameter calibration, else `unsupported_unit` (a Drive with dB display but linear raw was refused natively). Pitch-like parameters are MIDI-note raw (84 = 1.05 kHz). `displayMismatch` is reported, never corrected.
 
+## Device modulators for controls without ports
+
+Many Grid controls have no input port (envelope times, Gates STEPS, Chance PROBABILITY, oscillator TIMBRE, Distortion DRIVE, pulse width). Vary them with a device modulator instead of more modules:
+
+1. `modulators.catalog query="random"` (offline) picks a type; `modulators.describe type=Random` explains its controls.
+2. `modulators.get parent=…` gives the current `count`; `modulators.insert expectedCount=<count> typeName=Random` returns the new `modulatorId` with its `outputs` and `parameters`.
+3. `modulators.map modulatorId=… target={moduleId: <AD from grid.get>, parameterId: DECAY} expectedAmount=null amount=0.5`; the result's `mapping` is the readback. Change the amount later with `expectedAmount=0.5 amount=0.3`; remove it with `modulators.unmap`.
+4. Shape the modulator with `modulators.parameters.set` (raw CAS, like `grid.parameters.set`). Polarity is a modulator parameter, not a mapping option.
+
+All edits need a stopped transport. An `unknown` outcome means inspect `modulators.get`, never repeat. Native acceptance of these edits is not yet recorded in VERIFICATION.
+
 ## Scratch recipe: explicit agent workflow
 
 The public [usage guide](https://github.com/BANANASJIM/bitwig-agent/blob/main/USAGE.md#make-grid-instruments-without-preset-files) and [recipe source](https://github.com/BANANASJIM/bitwig-agent/blob/main/examples/grid_music.py) contain the complete source-checkout commands. The wheel does not install the recipe as a tool, and this copied skill does not bundle it. Do not invent a missing executable or download/run it without permission.

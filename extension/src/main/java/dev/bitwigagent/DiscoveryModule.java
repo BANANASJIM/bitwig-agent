@@ -114,10 +114,11 @@ final class DiscoveryModule implements HostModule {
         modulators.addProperty("scope", "primary_modulators_on_root_device");
         modulators.addProperty("capabilitiesMethod", "modulators.capabilities");
         modulators.addProperty("readAvailability", "query_modulators.capabilities_independent_discovery_and_string_panel_bindings");
-        modulators.addProperty("writeAvailable", false);
+        modulators.addProperty("writeAvailability", "query_modulators.capabilities_edit");
         modulators.addProperty("nativeVerification", "not_established_by_binding");
-        modulators.addProperty("coverage", "excludes_secondary_nested_modulators_mappings_destinations_and_materialization");
+        modulators.addProperty("coverage", "primary_modulators_and_their_mappings_on_one_root_device_excludes_secondary_nested_modulators_and_materialization");
         modulators.addProperty("pagination", "independent_observations_not_revision_consistent");
+        modulators.addProperty("edits", "modulators.get/insert/delete/parameters.set/map/unmap; availability in modulators.capabilities edit");
         result.add("privateModulatorReads", modulators);
         result.addProperty("evidence", "Runtime implementation discovery only; not per-method host verification or full interface coverage.");
         return result;

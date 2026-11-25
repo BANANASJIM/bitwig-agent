@@ -12,7 +12,7 @@ Use the installed MCP tool schemas or `bitwig-agent-rpc describe METHOD` for exa
 | Remote Control | Use the currently observed page/name/parameter and its own context token; do not reuse a direct-parameter token |
 | MIDI | Track and slot from `context.get` (`cursorClip`, occupied `launcherSlots`) or `launcher.list`; slot below `sceneCount`; channel and window default sensibly. Inspect coverage and selection/auto-arm side effects before calling |
 | Grid | Use current graph instance/port/control IDs, target ownership and the typed raw `kind`/`value` of a recent `grid.get` row as `expectedKind`/`expectedValue`; stale expectations reject `not_applied` |
-| Modulator | Use explicit root parent and current modulator/control IDs; this surface is read-only, not loader/mapping/write support |
+| Modulator | Use explicit root parent and current modulator/output/control IDs from `modulators.get`; edits need `expectedCount`/`expectedAmount`/`expectedValue` from a fresh read |
 | Host Action | Discover the actual host Action ID and confirm its current UI context; dispatch does not establish enablement or completion |
 
 Switching direct-parameter targets invalidates the previous shared binding. Names, tokens and native module/modulator UUIDs are not permanent identity: reacquire after reopening or changing targets. Do not assume project-name equality proves which full path is loaded. Example IDs are placeholders, not targets.

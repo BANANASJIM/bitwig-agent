@@ -338,7 +338,9 @@ async def test_modulator_generated_help_and_parse_work_offline(monkeypatch, meth
     listing, code = await execute(["list", "modulators"])
     assert code == 0
     assert set(listing["result"]["methods"]) == {
-        "modulators.capabilities", "modulators.list", "modulators.parameters.get"}
+        "modulators.capabilities", "modulators.list", "modulators.parameters.get", "modulators.get", "modulators.insert",
+        "modulators.delete", "modulators.parameters.set", "modulators.map", "modulators.unmap", "modulators.catalog",
+        "modulators.describe"}
 
 
 @pytest.mark.parametrize("raw", [False, True])

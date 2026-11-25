@@ -1,0 +1,168 @@
+package dev.bitwigagent;
+
+import com.google.gson.*;
+import java.util.Set;
+import java.util.UUID;
+import java.util.function.Consumer;
+import static dev.bitwigagent.HostServices.failure;
+
+/** Device-modulator reads/edits: strict RPC boundary, stopped-transport safety, one native operation per call. */
+final class ModulatorEditModule implements HostModule {
+    static final Set<String> METHODS = Set.of("modulators.get", "modulators.insert", "modulators.delete",
+            "modulators.parameters.set", "modulators.map", "modulators.unmap");
+    static final Set<String> WRITES = Set.of("modulators.insert", "modulators.delete", "modulators.parameters.set",
+            "modulators.map", "modulators.unmap");
+    static final int MAX_RESPONSE_CHARS = 240000;
+    private final HostServices s;
+    private ModulatorEditor editor;
+    private String unavailable;
+
+    ModulatorEditModule(HostServices services) { this(services, null); }
+    ModulatorEditModule(HostServices services, ModulatorEditor injected) { s = services; editor = injected; }
+    @Override public Set<String> methods() { return METHODS; }
+    @Override public void validate(String method, JsonObject params) { validateParams(method, params); }
+
+    static void validateParams(String method, JsonObject p) {
+        switch (method) {
+            case "modulators.get":
+                Params.fields(p, Set.of("parent"), Set.of("modulatorId"));
+                ModulatorEditor.validateParent(p);
+                if (p.has("modulatorId")) ModulatorEditor.uuid(p, "modulatorId");
+                return;
+            case "modulators.insert":
+                Params.fields(p, Set.of("parent", "expectedCount"), Set.of("typeId", "typeName"));
+                ModulatorEditor.validateParent(p);
+                ModulatorEditor.count(p, "expectedCount", 0);
+                if (p.has("typeId") == p.has("typeName")) throw failure("invalid_params", "Supply exactly one of typeId or typeName.");
+                if (p.has("typeId")) ModulatorEditor.uuid(p, "typeId");
+                else {
+                    String name = Params.string(p, "typeName");
+                    if (name.length() > 128) throw failure("invalid_params", "typeName must be 1..128 UTF-16 units.");
+                }
+                return;
+            case "modulators.delete":
+                Params.fields(p, Set.of("parent", "modulatorId", "expectedCount"), Set.of());
+                ModulatorEditor.validateParent(p);
+                ModulatorEditor.uuid(p, "modulatorId");
+                ModulatorEditor.count(p, "expectedCount", 1);
+                return;
+            case "modulators.parameters.set": {
+                Params.fields(p, Set.of("parent", "modulatorId", "parameterId", "expectedKind", "expectedValue"), Set.of("value", "display"));
+                ModulatorEditor.validateParent(p);
+                ModulatorEditor.uuid(p, "modulatorId");
+                ModulatorEditor.text(p, "parameterId");
+                String kind = Params.string(p, "expectedKind");
+                if (!Set.of("float", "integer", "enum", "boolean").contains(kind))
+                    throw failure("invalid_params", "expectedKind must be float, integer, enum or boolean.");
+                GridParameterWriter.Request.parse(p);
+                return;
+            }
+            case "modulators.map":
+            case "modulators.unmap":
+                ModulatorEditor.MapRequest.parse(p, method.equals("modulators.unmap"));
+                return;
+            default: throw failure("unknown_method", "Unknown modulator edit.");
+        }
+    }
+
+    /** Lazily bound, so a binding failure surfaces as modulator_unavailable on use and in capabilities. */
+    private ModulatorEditor editor(HostOperation op) {
+        if (editor != null) return editor;
+        if (unavailable != null) throw failure("modulator_unavailable", unavailable);
+        Bitwig614Runtime.Access bindings = s.nativeRuntime(op).access("modulator_unavailable");
+        if (bindings.gateError() != null) throw failure("modulator_unavailable", "Exact runtime gate is unavailable: " + bindings.gateError());
+        try {
+            // The Grid reader keeps its own error code: it downgrades optional metadata failures only for grid_unavailable.
+            Bitwig614GridAdapter grid = new Bitwig614GridAdapter(s.nativeRuntime(op).access("grid_unavailable"));
+            editor = new ModulatorEditor(new Bitwig614ModulatorEditAccess(bindings, grid));
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError error) {
+            unavailable = "Device-modulator edit bindings unavailable: " + Bitwig614Runtime.diagnostic(error);
+            throw failure("modulator_unavailable", unavailable);
+        }
+        return editor;
+    }
+
+    /** Merged into modulators.capabilities; binding availability is not native acceptance. */
+    JsonObject capabilities(HostOperation op) {
+        JsonObject result = new JsonObject();
+        String reason = null;
+        try { editor(op); } catch (RpcException error) { reason = error.getMessage(); }
+        result.addProperty("available", reason == null);
+        result.addProperty("reason", reason);
+        JsonArray methods = new JsonArray(); METHODS.stream().sorted().forEach(methods::add);
+        result.add("methods", methods);
+        result.addProperty("mappingTargets", "grid_module_controls_and_other_modulator_controls_on_the_same_device");
+        result.addProperty("insertion", "native_modulator_browser_insertion_point_appends_below_existing");
+        result.addProperty("nativeUndo", "native_undo_transactions_not_verified_grouping");
+        result.addProperty("nativeVerification", "not_established_by_binding");
+        result.addProperty("requiresStoppedTransport", true);
+        return result;
+    }
+
+    @Override public void dispatch(HostOperation op, String method, JsonObject p) {
+        s.check(op);
+        ModulatorEditor edits = editor(op);
+        final boolean writing = WRITES.contains(method);
+        final HostServices.SafetyObservation safety = writing ? s.stoppedSafety(op) : null;
+        final DeviceSources.RootReadTicket target = s.sources.rootRead(p.getAsJsonObject("parent"));
+        final UUID trackId = UUID.fromString(target.trackId);
+        final UUID modulatorId = p.has("modulatorId") ? UUID.fromString(p.get("modulatorId").getAsString()) : null;
+        final ModulatorEditor.MapRequest mapping = method.equals("modulators.map") || method.equals("modulators.unmap")
+                ? ModulatorEditor.MapRequest.parse(p, method.equals("modulators.unmap")) : null;
+        final GridParameterWriter.Request request = method.equals("modulators.parameters.set") ? GridParameterWriter.Request.parse(p) : null;
+        final int expectedCount = p.has("expectedCount") ? p.get("expectedCount").getAsInt() : -1;
+        final UUID typeId = p.has("typeId") ? UUID.fromString(p.get("typeId").getAsString()) : null;
+        final String typeName = p.has("typeName") ? p.get("typeName").getAsString() : null;
+        guard(op, target);
+        edits.execute(() -> {
+            try {
+                Runnable check = () -> {
+                    s.check(op); target.check();
+                    if (writing) s.guardStoppedSafety(safety);
+                };
+                check.run();
+                Runnable dispatch = () -> { check.run(); op.dispatched = true; };
+                Consumer<JsonObject> complete = value -> deliver(op, target, safety, check, value);
+                Consumer<Throwable> fail = error -> op.fail(error instanceof RpcException ? error
+                        : failure("modulator_unavailable", "Modulator operation failed: " + error.getClass().getSimpleName()));
+                switch (method) {
+                    case "modulators.get": complete.accept(edits.get(target.device, trackId, modulatorId, check)); break;
+                    case "modulators.parameters.set":
+                        complete.accept(edits.setParameter(target.device, trackId, modulatorId, p.get("parameterId").getAsString(),
+                                request, check, dispatch));
+                        break;
+                    case "modulators.map": case "modulators.unmap":
+                        edits.map(target.device, trackId, mapping, check, dispatch, complete, fail); break;
+                    case "modulators.delete":
+                        edits.delete(target.device, trackId, modulatorId, expectedCount, check, dispatch, complete, fail); break;
+                    case "modulators.insert":
+                        edits.insert(target.device, trackId, typeId, typeName, expectedCount, check, dispatch, complete, fail); break;
+                    default: throw failure("unknown_method", "Unknown modulator edit.");
+                }
+            } catch (RuntimeException error) {
+                op.fail(error instanceof RpcException ? error
+                        : failure("modulator_unavailable", "Modulator operation failed: " + error.getClass().getSimpleName() + "; inspect the exact host binding."));
+            } catch (Error error) {
+                op.fail(failure("modulator_unavailable", "Native modulator operation failed; inspect the loaded host binding and current state."));
+            }
+        });
+    }
+    private void deliver(HostOperation op, DeviceSources.RootReadTicket target, HostServices.SafetyObservation safety,
+            Runnable check, JsonObject value) {
+        check.run();
+        final String serialized = BoundedJson.serialize(value, MAX_RESPONSE_CHARS, "modulator_bounds_exceeded",
+                "Modulator response exceeds bounded transport size; pass modulatorId. Values are never truncated.");
+        s.schedule(op, () -> {
+            guard(op, target);
+            if (safety != null) s.guardStoppedSafety(safety);
+            JsonObject result = JsonParser.parseString(serialized).getAsJsonObject();
+            result.add("parent", target.parent());
+            result.addProperty("scope", "primary_modulators_on_root_device");
+            op.result.complete(result);
+        }, 0);
+    }
+    private void guard(HostOperation op, DeviceSources.RootReadTicket target) {
+        s.check(op);
+        s.sources.guardRootRead(target);
+    }
+}

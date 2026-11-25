@@ -315,6 +315,25 @@ final class GridSnapshotReader {
         return parameter(binding.parameter, binding.module, true, binding.state);
     }
 
+    /** A scalar control outside any Grid module (a device modulator's own parameter); the caller checks ownership. */
+    Kind detachedKind(Object child) {
+        Kind kind = parameterKind(child);
+        return kind == Kind.FLOAT || kind == Kind.INTEGER || kind == Kind.ENUM || kind == Kind.BOOLEAN ? kind : null;
+    }
+    JsonObject detachedParameter(Object child, Runnable check, Collection<String> unsupported) {
+        if (detachedKind(child) == null) throw failure("unsupported_scope", "Only float, integer, enum and boolean controls are supported here.");
+        if (a.read(Field.OWNER_MODULE, child) != null) throw failure("stale_context", "Control belongs to a Grid module, not a modulator.");
+        State state = new State(check);
+        JsonObject result = parameter(child, null, false, state);
+        unsupported.addAll(state.unsupported);
+        return result;
+    }
+    /** Module instance UUID and parameter id of a control inside a Grid module, or null when it is not in one. */
+    Object ownerModule(Object child) { return a.read(Field.OWNER_MODULE, child); }
+    String moduleId(Object module) { return uuid(a.read(Field.INSTANCE_ID, module)); }
+    String parameterId(Object child) { return text(a.read(Field.PARAMETER_ID, child)); }
+    Object moduleGraph(Object module) { return a.read(Field.MODULE_GRAPH, module); }
+
     JsonObject parameterResult(ParameterBinding binding, JsonObject value) {
         JsonObject result = HostServices.observed();
         result.addProperty("moduleId", binding.moduleId.toString());

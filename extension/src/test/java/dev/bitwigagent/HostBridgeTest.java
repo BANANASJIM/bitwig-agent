@@ -464,12 +464,13 @@ public final class HostBridgeTest {
         check(!result.getAsJsonObject("windows").getAsJsonObject("tracks").get("complete").getAsBoolean(),
                 "capabilities cannot promise a full project beyond the bounded bank");
         JsonObject modulators = result.getAsJsonObject("privateModulatorReads");
-        check(!modulators.get("writeAvailable").getAsBoolean()
+        check(modulators.get("writeAvailability").getAsString().equals("query_modulators.capabilities_edit")
                 && modulators.get("nativeVerification").getAsString().equals("not_established_by_binding"),
-                "modulator domain is read-only and implementation discovery is not native acceptance");
+                "modulator write availability is delegated to capabilities and discovery is not native acceptance");
         Set<String> reads = new HashSet<>();
         for (JsonElement method : result.getAsJsonObject("domains").getAsJsonArray("modulators")) reads.add(method.getAsString());
-        check(reads.equals(ModulatorModule.METHODS), "discovery derives the separate modulator domain from registered read methods");
+        Set<String> registered = new HashSet<>(ModulatorModule.METHODS); registered.addAll(ModulatorEditModule.METHODS);
+        check(reads.equals(registered), "discovery derives the modulator domain from registered read and edit methods");
     }
 
     private static void strictValidationPrecedesAllDomainScheduling() {
@@ -490,7 +491,8 @@ public final class HostBridgeTest {
         expectError(bridge.handle("modulators.list", modulators, deadline()), "invalid_params");
         modulators.remove("offset"); modulators.addProperty("modulatorId", "1-1-1-1-1"); modulators.addProperty("parameterId", "");
         expectError(bridge.handle("modulators.parameters.get", modulators, deadline()), "invalid_params");
-        expectError(bridge.handle("modulators.parameters.set", modulators, deadline()), "unknown_method");
+        expectError(bridge.handle("modulators.parameters.set", modulators, deadline()), "invalid_params");
+        expectError(bridge.handle("modulators.parameters.reset", modulators, deadline()), "unknown_method");
         check(host.tasks.isEmpty(), "strict validation rejects every invalid domain request before scheduling");
     }
 
