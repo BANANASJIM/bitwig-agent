@@ -157,14 +157,23 @@ TOOLS: dict[str, ToolSpec] = {
 }
 
 
+# Names an agent tends to guess (often the output-side name) -> the accepted input field(s). Hint only, never an alias:
+# one spelling per field keeps the strict contract identical for MCP, CLI, TCP and Java, and a wrong guess costs a
+# retry instead of a mis-dispatched write (offset/limit are also real fields of other tools).
+SYNONYMS = {"offset": ("moduleOffset",), "limit": ("moduleLimit",), "tempo": ("tempoBpm",), "bpm": ("tempoBpm",),
+            "instanceId": ("moduleId", "targetModuleId", "sourceModuleId"), "moduleInstanceId": ("moduleId",),
+            "instanceIds": ("moduleIds",), "outputPath": ("outPath",), "path": ("outPath",)}
+
+
 def unknown_arguments_message(method: str, keys: list[str]) -> str:
     """Name the accepted fields and the closest match, so a mistyped field is fixable in one retry."""
     fields = [name for name in TOOLS[method].model.model_fields if name != "timeoutMs"]
     hints = []
     for key in keys:
-        close = difflib.get_close_matches(key, fields, n=1, cutoff=0.5)
+        close = [name for name in SYNONYMS.get(key, ()) if name in fields]
+        close = close or difflib.get_close_matches(key, fields, n=1, cutoff=0.5)
         close = close or [name for name in fields if key.lower() in name.lower()][:1]
-        hints.append(f"{key} (did you mean {close[0]}?)" if close else key)
+        hints.append(f"{key} (use {' or '.join(close)}; no alias is accepted)" if close and key in SYNONYMS else f"{key} (did you mean {close[0]}?)" if close else key)
     return f"Unknown argument for {method}: {', '.join(hints)}. Accepted: {', '.join(fields)}"
 
 
