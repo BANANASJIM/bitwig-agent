@@ -20,6 +20,7 @@ final class TransportMixFixture {
     boolean onHost;
     int bankCreations;
     Consumer<String> create = type -> {};
+    Runnable addMarker = () -> {};
 
     TransportMixFixture() { this(true); }
     TransportMixFixture(boolean observeSafetyInitially) {
@@ -91,12 +92,14 @@ final class TransportMixFixture {
             transport.child(key).initial = observeSafetyInitially;
         transport.child("tempo").child("value").data = 120.0;
         transport.child("playPosition").data = 0.0;
+        transport.child("timeSignature").data = "4/4";
         transport.child("arrangerLoopStart").data = 0.0;
         transport.child("arrangerLoopDuration").data = 4.0;
         transport.custom = (name, args) -> {
             if (name.equals("play") || name.equals("stop")) {
                 mutation(); transport.actions++; transport.child("isPlaying").emit(name.equals("play"));
             }
+            if (name.equals("addCueMarkerAtPlaybackPosition")) { mutation(); transport.actions++; addMarker.run(); }
             if (name.equals("setPosition")) {
                 mutation(); transport.actions++; transport.child("playPosition").emit(args[0]);
             }

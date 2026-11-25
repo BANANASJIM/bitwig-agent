@@ -91,6 +91,7 @@ FIXUPS = {
     ("grid.modules.insert", "typeId"): drop("typeName"),
     ("grid.modules.insert", "modules.0.typeName"): drop("modules.0.typeId"),
     ("grid.parameters.set", "display"): drop("value"),
+    ("transport.set", "timeSignature"): lambda p, v: p.__setitem__("timeSignature", "3/4"),
     ("devices.insert", "path"): file_insert,
     ("devices.layers.insert", "path"): file_insert,
     ("launcher.import", "path"): lambda p, v: p.__setitem__("path", as_path(v)),

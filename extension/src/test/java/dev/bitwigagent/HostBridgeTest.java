@@ -1306,6 +1306,8 @@ public final class HostBridgeTest {
                 String key = "item:" + args[0];
                 if (proxy instanceof SendBank)
                     return objects.computeIfAbsent(key, ignored -> new Node().proxy(Send.class));
+                if (proxy instanceof CueMarkerBank)
+                    return objects.computeIfAbsent(key, ignored -> new Node().proxy(CueMarker.class));
                 if (proxy instanceof ClipLauncherSlotBank)
                     return objects.computeIfAbsent(key, ignored -> new Node().proxy(ClipLauncherSlot.class));
             }
