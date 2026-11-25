@@ -8,6 +8,7 @@ import struct
 import sys
 import zlib
 from array import array
+from itertools import accumulate
 from statistics import median
 from typing import Any
 
@@ -302,6 +303,9 @@ def probe(x: array, rate: int, skip: float) -> dict[str, Any]:
 BAND_EDGES = (("sub", 0, 60), ("low", 60, 250), ("mid", 250, 2000), ("high", 2000, 8000), ("air", 8000, math.inf))
 FRAMES_PER_WINDOW = 16      # frames sampled evenly across a window (FFT_SIZE samples each), not every sample
 CHROMA_LOW, CHROMA_HIGH = 50.0, 1500.0
+CHROMA_RATE = 4000            # chroma works on audio decimated to about this rate
+CHROMA_MAX_SAMPLES = 65536    # longest single chroma FFT (about 16 s at CHROMA_RATE); longer windows are split
+CHROMA_MIN_SAMPLES = 4000     # a leftover shorter than this (1 s) is dropped
 MODES = {"ionian": (0, 2, 4, 5, 7, 9, 11), "dorian": (0, 2, 3, 5, 7, 9, 10), "phrygian": (0, 1, 3, 5, 7, 8, 10),
          "lydian": (0, 2, 4, 6, 7, 9, 11), "mixolydian": (0, 2, 4, 5, 7, 9, 10), "aeolian": (0, 2, 3, 5, 7, 8, 10),
          "locrian": (0, 1, 3, 5, 6, 8, 10), "harmonic_minor": (0, 2, 3, 5, 7, 8, 11)}
@@ -325,20 +329,44 @@ def _frame(x: array, start: int) -> tuple[list[float], list[float]]:
     return [m * m for m in mags], mags
 
 
-def _chroma(mags: list[float], rate: int) -> list[float]:
-    """Pitch-class weights from spectral peaks in CHROMA_LOW..CHROMA_HIGH (parabolic frequency, magnitude-squared weight)."""
+def _lowpass_decimate(x: array, factor: int) -> array:
+    """Two cascaded boxcar averages (sinc^2 low-pass), then keep every factor-th sample."""
+    if factor == 1:
+        return x
+    acc = list(accumulate(x, initial=0.0))
+    once = [(acc[i + factor] - acc[i]) / factor for i in range(len(x) - factor + 1)]
+    acc = list(accumulate(once, initial=0.0))
+    return array("d", [(acc[i + factor] - acc[i]) / factor for i in range(0, len(once) - factor + 1, factor)])
+
+
+_PITCH_CLASS_MAPS: dict[tuple[int, int], tuple[int, list[int]]] = {}
+
+
+def _pitch_class_map(n: int, rate: int) -> tuple[int, list[int]]:
+    key = (n, rate)
+    if key not in _PITCH_CLASS_MAPS:
+        lo, hi = max(1, math.ceil(CHROMA_LOW * n / rate)), min(n // 2, int(CHROMA_HIGH * n / rate))
+        _PITCH_CLASS_MAPS[key] = (lo, [round(69 + 12 * math.log2(k * rate / n / 440)) % 12 for k in range(lo, hi + 1)])
+    return _PITCH_CLASS_MAPS[key]
+
+
+def _chroma(x: array, rate: int) -> list[float]:
+    """Pitch-class power of one window: decimate to ~CHROMA_RATE, one Hann FFT over the whole window
+    (resolution 1/window seconds, enough to separate semitones at 50 Hz), fold every bin's power in CHROMA_LOW..CHROMA_HIGH."""
+    factor = max(1, rate // CHROMA_RATE)
+    y, yrate = _lowpass_decimate(x, factor), rate / factor
     out = [0.0] * 12
-    lo, hi = max(1, int(CHROMA_LOW * FFT_SIZE / rate)), int(CHROMA_HIGH * FFT_SIZE / rate) + 1
-    floor = max(mags[lo:hi], default=0.0) ** 2 * 1e-4
-    for k in range(lo, min(hi, len(mags) - 1)):
-        a, b, c = mags[k - 1], mags[k], mags[k + 1]
-        if b <= a or b < c or b * b <= floor:
-            continue
-        la, lb, lc = (math.log(max(v, 1e-12)) for v in (a, b, c))
-        denom = la - 2 * lb + lc
-        hz = (k + (0.5 * (la - lc) / denom if denom else 0.0)) * rate / FFT_SIZE
-        if CHROMA_LOW <= hz <= CHROMA_HIGH:
-            out[round(69 + 12 * math.log2(hz / 440)) % 12] += b * b
+    for begin in range(0, len(y) - CHROMA_MIN_SAMPLES + 1, CHROMA_MAX_SAMPLES):
+        seg = y[begin:begin + CHROMA_MAX_SAMPLES]
+        n = len(seg)
+        size = 1 << (n - 1).bit_length()
+        mean = sum(seg) / n
+        w = [0.5 - 0.5 * math.cos(2 * math.pi * i / n) for i in range(n)]
+        spectrum = _fft([complex((v - mean) * c) for v, c in zip(seg, w)] + [0j] * (size - n))
+        lo, classes = _pitch_class_map(size, yrate)
+        for k, pc in enumerate(classes, lo):
+            c = spectrum[k]
+            out[pc] += c.real * c.real + c.imag * c.imag
     return out
 
 
@@ -373,12 +401,10 @@ def bands(x: array, rate: int, window_seconds: float, key: str | None, shift: fl
         if end - begin < FFT_SIZE:
             break
         hop = max(FFT_SIZE, (end - begin - FFT_SIZE) // (FRAMES_PER_WINDOW - 1))
-        power, weighted, chroma = [0.0] * (FFT_SIZE // 2 + 1), 0.0, [0.0] * 12
+        power, weighted = [0.0] * (FFT_SIZE // 2 + 1), 0.0
         for start in range(begin, end - FFT_SIZE + 1, hop):
             p, mags = _frame(x, start)
             power = [a + b for a, b in zip(power, p)]
-            if scale is not None:
-                chroma = [a + b for a, b in zip(chroma, _chroma(mags, rate))]
         total = sum(power[1:])
         row: dict[str, Any] = {"t": round(begin / rate + shift, 3), "rms": round(_rms(x[begin:end]), 4)}
         if total > 0:
@@ -388,6 +414,7 @@ def bands(x: array, rate: int, window_seconds: float, key: str | None, shift: fl
         else:
             row["bandsDb"], row["centroidHz"] = {n: None for n, _, _ in edges}, None
         if scale is not None:
+            chroma = _chroma(x[begin:end], rate)
             all_chroma = [a + b for a, b in zip(all_chroma, chroma)]
             row["chroma"] = _chroma_report(chroma, scale)
         rows.append(row)
@@ -397,7 +424,7 @@ def bands(x: array, rate: int, window_seconds: float, key: str | None, shift: fl
     if scale is not None:
         out["key"] = key
         out["chroma"] = {**_chroma_report(all_chroma, scale), "rangeHz": [CHROMA_LOW, CHROMA_HIGH],
-                         "note": "spectral peaks folded to pitch classes; drums, noise and inharmonic partials pollute it, so use it on pitched stems"}
+                         "note": "power of every FFT bin in the range folded to pitch classes (one long Hann FFT per window on audio decimated to ~4 kHz); drums, noise and inharmonic partials pollute it, so use it on pitched stems"}
     return out
 
 
