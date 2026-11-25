@@ -32,6 +32,8 @@ SKIPS: dict[tuple[str, str, str], str] = {
     ("launcher.create", "notes.0.durationBeats", "accept"): "same derived-grid limit (a 4096-beat note needs >128 steps)",
     ("arranger.clips.create", "notes.0.beat", "accept"): "a note must fit lengthBeats (max 65536), so beat 4194304 is unreachable here",
     ("notes.edit", "edits.0.durationBeats", "accept"): "same derived-grid limit as edits.0.beat (duration 4096 beats needs >128 steps)",
+    **{(m, f, "accept"): "endBeats must exceed startBeats by at most 65536, so a bound on one side is reachable only with a matching partner; rejects still run"
+       for m in ("export.audio", "bounce.inPlace") for f in ("startBeats", "endBeats")},
 }
 
 
@@ -128,6 +130,7 @@ FIXUPS = {
     ("devices.layers.insert", "path"): file_insert,
     ("launcher.import", "path"): lambda p, v: p.__setitem__("path", as_path(v)),
     ("project.saveAs", "path"): project_path,
+    ("export.audio", "directory"): lambda p, v: p.__setitem__("directory", as_path(v)),
     **{(m, f): window_fix(f) for m in ("notes.read", "notes.edit")
        for f in ("stepSizeBeats", "startStep", "steps", "pitchStart", "pitchCount")},
 }

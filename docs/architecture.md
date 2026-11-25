@@ -45,6 +45,7 @@ The main sources are under [`extension/src/main/java/dev/bitwigagent`](https://g
 - Discovery, Actions, transport, mix, devices and Launcher/MIDI have separate domain modules and observations. Their result semantics differ: a dispatch-only Action is not equivalent to an acknowledged parameter change.
 - `GridModule` separates target/RPC guards from bounded graph serialization and scalar, boolean-panel and topology writers. `GridTopologyQuarantine` shares native lifetime admission across topology editors.
 - `ProjectModule` owns `project.save` (public Save action) and `project.saveAs`; `ProjectSaveAsPlan` mirrors the native folder rules host-free and `Bitwig614ProjectSaveAsAccess` calls the dialog-free save pipeline with a completion callback.
+- `RenderModule` owns `export.audio`, `bounce.inPlace` and `render.status`; `RenderPlan` names the output files and checks their headers host-free, and `Bitwig614RenderAccess` starts the native render jobs and exposes their completion latch (bounce readback reuses `Bitwig614ArrangerAccess`).
 - `ModulatorModule` and `ModulatorSnapshotReader` own bounded, nonloading primary-modulator reads. They share root target/read-context machinery, not Grid write authority.
 - `ModulatorEditModule` (RPC boundary), `ModulatorEditor` (CAS, dispatch, readback) and `Bitwig614ModulatorEditAccess` (descriptors) own device-modulator edits. They reuse the Grid parameter reader for typed values and Grid targets, and the Grid parameter/topology context checks, but not Grid write authority or topology quarantine.
 

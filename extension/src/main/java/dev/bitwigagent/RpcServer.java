@@ -148,7 +148,7 @@ public final class RpcServer implements AutoCloseable {
 
     static final int MAX_TIMEOUT_MS = 10000, SOCKET_EXPIRY_MS = 15000, SOCKET_GRACE_MS = 5000;
     static int maxTimeoutMs(String method) {
-        return GridModule.LONG_TIMEOUT_METHODS.contains(method) || ProjectModule.SAVE_AS.equals(method) ? GridModule.MAX_TOPOLOGY_TIMEOUT_MS : MAX_TIMEOUT_MS;
+        return GridModule.LONG_TIMEOUT_METHODS.contains(method) || ProjectModule.SAVE_AS.equals(method) || RenderModule.LONG.contains(method) ? GridModule.MAX_TOPOLOGY_TIMEOUT_MS : MAX_TIMEOUT_MS;
     }
 
     private static JsonObject envelope(String id) {

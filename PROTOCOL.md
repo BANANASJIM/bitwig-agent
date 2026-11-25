@@ -12,6 +12,7 @@ This is the implementation reference, not a tutorial or a host-acceptance report
 - [Track tree and grouping](#track-tree-and-grouping)
 - [Arranger clips](#arranger-clips-version-gated)
 - [Arranger automation points](#arranger-automation-points-version-gated)
+- [Export audio and bounce in place](#export-audio-and-bounce-in-place-version-gated)
 - [Read-only primary modulators](#read-only-primary-modulators)
 - [Device modulators: insert, set, map](#device-modulators-insert-set-map)
 - [Grid controls](#version-gated-grid-controls)
@@ -27,7 +28,7 @@ Request:
 {"id":"client-generated-unique-id","method":"status","params":{},"timeoutMs":5000}
 ```
 
-`id` is a nonempty string (maximum 128 characters), `method` a known method, `params` an object, `timeoutMs` an integer from 100 through 10000 (through 60000 for `grid.modules.insert/move/delete/rename`, `grid.connections.set` and `grid.topology.reconcile`, whose per-entry verification reads the whole graph). Missing timeout defaults to 5000. Reject invalid input before scheduling work. The host adapter checks the monotonic deadline immediately before each mutation, including deferred callbacks. A dispatched host action cannot necessarily be cancelled.
+`id` is a nonempty string (maximum 128 characters), `method` a known method, `params` an object, `timeoutMs` an integer from 100 through 10000 (through 60000 for `grid.modules.insert/move/delete/rename`, `grid.connections.set` and `grid.topology.reconcile`, whose per-entry verification reads the whole graph, and for `project.saveAs`, `export.audio` and `bounce.inPlace`, which wait for a native job). Missing timeout defaults to 5000. Reject invalid input before scheduling work. The host adapter checks the monotonic deadline immediately before each mutation, including deferred callbacks. A dispatched host action cannot necessarily be cancelled.
 
 Response:
 
@@ -112,7 +113,7 @@ Layer discovery and parameter observations do not establish native write isolati
 
 | Method | Parameters / operation |
 |---|---|
-| `capabilities` | `{}`; method/domain discovery, units, windows and unsupported interfaces; query `grid.capabilities` for actual independent private Grid binding availability. `projectSaveAs:{method,available,reason?,binding,verification}` reports the separate `project.saveAs` binding (binds on first query, never dispatches) |
+| `capabilities` | `{}`; method/domain discovery, units, windows and unsupported interfaces; query `grid.capabilities` for actual independent private Grid binding availability. `projectSaveAs:{method,available,reason?,binding,verification}` reports the separate `project.saveAs` binding and `render:{methods,available,reason?,binding,verification}` the `export.audio`/`bounce.inPlace` bindings (both bind on first query, never dispatch) |
 | `extension.restart` | Optional `discardUnresolved` (bool). Calls `ControllerHost.restart()` about 250 ms after replying `{status:"dispatched",completion:"not_observed",unresolvedDiscarded:[...],next}`; the RPC connection then drops, so poll `status` until it answers and re-discover targets. Refused with `unresolved_mutation`, `outcome:"not_applied"`, listing the unresolved descriptions, while create/import/note/launcher-settings/track-creation mutations are unresolved, unless `discardUnresolved:true`. The Grid topology quarantine is process-wide and is not cleared. Observed on 6.1.4: a replaced `.bwextension` is not loaded; restart Bitwig for a new build. |
 | `project.activateEngine` | `{}`; dispatches the native `Activate Engine For Project` action once (never retried) when `hasActiveEngine` is false. Observed true within the deadline: `{status:"observed",engineActive:true}` (`alreadyActive:true`, nothing dispatched, if already active); otherwise `{status:"dispatched",engineActive:false,completion:"not_observed",hint}` |
 | `project.save` | `{}`; dispatches the native `Save` action once. Observed `Project.isModified()` false afterwards: `{status:"observed",saved:true,projectModified:false}`; already observed false: same with `alreadySaved:true`, nothing dispatched. Otherwise `{status:"dispatched",saved:false,completion:"not_observed",projectModified,hint}` within the deadline, never re-invoked (an untitled project opens a Save As dialog needing GUI/user completion) |
@@ -305,6 +306,32 @@ Targets: `{kind:"volume"}` (`FNX.tSS()`, class `A` "Volume"), `{kind:"pan"}` (`F
 - **Values** are normalized through the lane's own range; whether they equal the public normalized volume/pan values of `tracks.get` is not yet observed natively.
 
 **Not covered:** clip-launcher automation, automation clips, group/effect/master tracks, device remote controls and non-Grid device parameters, non-float Grid controls, curve (tension) writes, and automation mode/override state. Offline, every binding resolved against the inspected 6.1.4 JAR; native behavior is not yet observed.
+
+### Export audio and bounce in place (version-gated)
+
+The guide exports with the Export Audio dialog ([exporting audio](https://www.bitwig.com/userguide/latest/exporting_audio)); Bounce in Place "presents no dialog box" ([bouncing to audio](https://www.bitwig.com/userguide/latest/bouncing_to_audio)). The public API has neither. Both methods start Bitwig's own render job (a `DLy`) where its UI does, behind the 6.1.4 version/JAR-hash gate (`render_unavailable` otherwise):
+
+- **Export:** `xlG.cfM(tracks, basePaths, wav, flac, flacDepth, mp3, …, vorbis, …, opus, …, start, end, tap, wavDepth, dither, realtime, sampleRate)`, the call the dialog makes after building its paths (flags matched to the `export_wav/flac/mp3/vorbis/opus`, `dither` and `real_time` preferences it reads). Paths are extensionless: the WAV writer appends `.wav`, the encoder `.<format>`. mp3/vorbis/opus and realtime are passed off.
+- **Bounce:** static `SUv.MRY(project, tracks, start, end, tap)`, which builds an `x2r` job that replaces the range on each track's main lane with one audio clip in one undoable action. The audio goes to the project's managed audio folder.
+
+| Method | Parameters / operation |
+|---|---|
+| `export.audio` | `sources` (1–16 distinct: `"master"` and/or trackIds; groups render their own master channel), `directory` (existing absolute folder), `baseName` (1–128, no `/`, `\`, control characters, leading dot or surrounding whitespace), `startBeats`, `endBeats` (after start, at most 65536 beats later), `format` (`wav`/`flac`), optional `bitDepth` (16/24, 32 = float for wav; default 24), `sampleRate` (44100/48000; omitted = current), `tap` (`post_fader` default, `pre_fader`), `dither`, `overwrite`. Files: `<baseName>.<format>`, or `<baseName>-01`, `-02`, … in `sources` order. `{status:"observed", exported:true, files:[{source, file, bytes, written, format, encoding?, channels, sampleRate, bitDepth, frames?, durationSeconds?, valid}], mayOpenFileManager:true, …}` |
+| `bounce.inPlace` | `trackIds` (1–16 distinct audio/instrument tracks), `startBeats`, `endBeats`, `tap` (`pre_fx`, `pre_fader`, `post_fader`). `{status:"observed", bounced:true, tracks:[{trackId, clip, clipsBefore, clipsAfter}], nativeUndo:true, …}` |
+| `render.status` | `{}`; the last job: `job:null` or `{method, state:"dispatching"\|"running"\|"completed"\|"unknown", …}`; a completed job is re-verified now (`verified`, `changed`, `files`/`tracks`) |
+
+**Before dispatch (`not_applied`):** observed stopped transport with recording and automation write off; existing output files (`target_exists`, unless `overwrite`) or a missing directory (`invalid_target`); a job of ours or Bitwig's already running (`busy`); a remote-session project (`unsupported_scope`); Bitwig's own refusals (`render_refused`: `g2L.FXc()` — project not open, engine not connected, recording, no project directory — or an inactive project engine, where the native call would return silently); missing files or plugins (`render_needs_confirmation`: the job would ask in a dialog). Bounce refuses group tracks (`unsupported_scope`).
+
+**Completion and verification:** dispatched once, never retried. The job registers as `g2L.oQj()` synchronously; none observed is `render_not_started` (`unknown`). Completion is the job's `DLy.LaE()` latch, which also counts down on failure, so success is read back:
+
+- export: every file new or changed, nonempty, a valid RIFF/WAVE (PCM or float) or FLAC STREAMINFO header with the requested bit depth and sample rate, and at least one frame. Otherwise `export_failed`: `not_applied` when nothing was written, else `unknown`.
+- bounce: the lane is read before and after (the `arranger.clips.list` readback, diffed by native clip identity). Each track must have exactly one new audio clip at `[startBeats, endBeats]` and nothing else overlapping the range; clips cut at the range edges may come back as new objects outside it. No lane changed is `bounce_failed` (`not_applied`); any other difference is `bounce_verification_failed` (`unknown`) and quarantines further bounces (`unresolved_mutation`) until `extension.restart`. Only a job's first verification can quarantine; later `render.status` reads just report.
+
+A job without its latch by the deadline returns `{status:"dispatched", completion:"not_observed", outcome:"unknown", nativeCompletion:"pending", poll:"render.status"}`; further renders are `busy` and `extension.restart` lists it until it completes; a bounce that completed after its request returned must be verified with `render.status` before the next render (`unresolved_mutation`). A job Bitwig never completes stays busy until `extension.restart`.
+
+**Side effects:** on a successful export Bitwig opens the folder in the file manager (`kd.FzB()` is constant true in 6.1.4; not suppressed). A playing transport is refused rather than stopped by the job.
+
+**Not covered:** mp3/vorbis/opus, realtime rendering, custom taps, loop/selection-derived ranges, launcher-clip bounce, bounce without replacement, and normalization. Offline every binding resolved against the inspected 6.1.4 JAR; native behavior is not yet established.
 
 ### Read-only primary modulators
 
