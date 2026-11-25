@@ -11,6 +11,7 @@ import difflib
 import json
 import math
 import re
+import struct
 from importlib import resources
 from typing import Any
 
@@ -304,9 +305,40 @@ def order_moves(current: dict[str, tuple[int, int]], target: dict[str, tuple[int
     return plan
 
 
+STEP_TYPES = ("Steps", "Pitches", "Gates", "Probabilities", "Accents")
+STEP_ENTRIES, STEP_BOUND = 256, 128
+
+
+def f32(x: float) -> float:
+    return struct.unpack("f", struct.pack("f", x))[0]
+
+
+def is_steps(raw: Any) -> bool:
+    return isinstance(raw, dict) and "steps" in raw
+
+
+def check_steps(pid: str, raw: Any) -> dict[str, Any]:
+    """Validate a {steps:[...]} spec value offline; return the write fields {steps: [...]}."""
+    values = raw["steps"] if is_steps(raw) else raw
+    if not isinstance(values, list):
+        raise SpecError([f"{pid}: steps must be a list of numbers (a '${{name}}' placeholder needs a block arg that is a list), got {values!r}"])
+    if not 1 <= len(values) <= STEP_ENTRIES:
+        raise SpecError([f"{pid}: steps takes 1..{STEP_ENTRIES} entries, got {len(values)}"])
+    for i, v in enumerate(values):
+        if type(v) not in (int, float) or not math.isfinite(v) or not -STEP_BOUND <= v <= STEP_BOUND:
+            raise SpecError([f"{pid}: steps[{i}] = {v!r} must be a finite number within -{STEP_BOUND}..{STEP_BOUND}"])
+    return {"steps": list(values)}
+
+
 def check_value(pid: str, raw: Any, p: dict[str, Any]) -> dict[str, Any]:
     """Validate one spec value against a parameter description {kind, options?, minimum?, maximum?}; return the write fields."""
     kind = p.get("kind")
+    if kind == "steps" or is_steps(raw):
+        if kind != "steps":
+            raise SpecError([f"{pid}: steps need a step-array parameter, this is {kind}"])
+        if not is_steps(raw) and not isinstance(raw, list):
+            raise SpecError([f"{pid}: step-array parameter needs {{steps:[...]}}, got {raw!r}"])
+        return check_steps(pid, raw)
     if isinstance(raw, dict) and "display" in raw:
         if kind != "float":
             raise SpecError([f"{pid}: display needs a float parameter, this is {kind}"])
@@ -373,6 +405,8 @@ class Apply:
         self.names = [m["name"] for m in self.modules]
         self.applied = dict.fromkeys(("inserted", "renamed", "moved", "paramsWritten", "connections", "disconnected", "deleted"), 0)
         self.matched = dict.fromkeys(("modules", "positions", "params", "connections"), 0)
+        if args.get("voicing"):
+            self.applied["voicingFields"] = 0
         self.steps: list[dict[str, Any]] = []
         self.ids: dict[str, str] = {}
         self.warnings: list[str] = []
@@ -381,13 +415,17 @@ class Apply:
         self.unnamed: dict[str, str] = {}
         self.phase = "validate"
         self.live_schema = False
+        self.has_steps = any(is_steps(v) for m in self.modules for v in (m.get("params") or {}).values())
+        self.voicing_want: dict[str, Any] = args.get("voicing") or {}
+        self.voicing_set: dict[str, Any] = {}
+        self.voicing_expected: dict[str, Any] = {}
 
     # ---- transport -------------------------------------------------------------------------------------------
     async def call(self, method: str, params: dict[str, Any], *, write: bool = False) -> dict[str, Any]:
         timeout = max(self.timeout_ms, WRITE_TIMEOUT_MS) if write else self.timeout_ms
         if write:
             self.wrote = True
-            self.topo_written |= method not in ("grid.parameters.set", "grid.connections.set")
+            self.topo_written |= method not in ("grid.parameters.set", "grid.connections.set", "grid.voicing.set")
         try:
             host_params = params if method in ("grid.capabilities", "grid.catalog") else {**self.target, **params}
             result = await self.client.call(method, host_params, timeout)
@@ -412,6 +450,8 @@ class Apply:
         offset = 0
         while True:
             req: dict[str, Any] = {"moduleOffset": offset, "moduleLimit": READ_PAGE, "includeParameters": params}
+            if params and self.has_steps:
+                req["full"] = True
             if ids:
                 req["moduleIds"] = ids
             result = await self.call("grid.get", req)
@@ -494,6 +534,20 @@ class Apply:
             info = self.info[type_name] if self.info else None
             writes: dict[str, dict] = {}
             for pid, raw in (m.get("params") or {}).items():
+                if is_steps(raw):  # the bundled schema has no step-array parameters: the id is matched against the live row
+                    try:
+                        want = check_steps(pid, raw)
+                    except SpecError as exc:
+                        problems += [f"{m['name']!r}: {p}" for p in exc.problems]
+                        continue
+                    if info is not None and type_name not in STEP_TYPES:
+                        problems.append(f"{m['name']!r} ({type_name}): has no step array; steps work on {', '.join(STEP_TYPES)}")
+                        continue
+                    if info is not None and any(p["parameterId"] == pid for p in info["parameters"]):
+                        problems.append(f"{m['name']!r} ({type_name}): {pid} is not a step array")
+                        continue
+                    writes[pid] = {"raw": raw, "want": want}
+                    continue
                 if info is None:
                     writes[pid] = {"raw": raw, "want": None}
                     continue
@@ -544,6 +598,13 @@ class Apply:
                     want = display_want("seconds", want["display"], check_display_live(pid, want["display"], lp, entry["typeName"]))
                 except SpecError as exc:
                     raise SpecError([f"{name!r}: {p}" for p in exc.problems]) from exc
+            if "steps" in want:
+                write = self.plan_steps(name, row, pid, lp, want["steps"])
+                if write is None:
+                    matched += 1
+                else:
+                    writes.append({"module": name, "parameterId": pid, "to": spec["raw"], "write": write})
+                continue
             if entry["info"] is not None:
                 known = next(p for p in entry["info"]["parameters"] if p["parameterId"] == pid)
                 if known["kind"] != lp["kind"]:
@@ -560,6 +621,23 @@ class Apply:
                            "write": {"moduleId": row["instanceId"], "parameterId": pid, "expectedKind": lp["kind"],
                                      "expectedValue": lp["value"], **{k: v for k, v in want.items() if k != "shown"}}})
         return writes, matched
+
+    @staticmethod
+    def plan_steps(name: str, row: dict, pid: str, lp: dict, wanted: list[float]) -> dict | None:
+        """CAS write for a step array against the live row, or None when the live prefix already holds the values (float32 compare)."""
+        if lp.get("kind") != "steps":
+            raise SpecError([f"{name!r}: {pid} is {lp.get('kind')} live, not a step array"])
+        n = len(wanted)
+        if lp.get("arrayLength") is not None and n > lp["arrayLength"]:
+            raise SpecError([f"{name!r}: {pid} has {n} steps but the array holds {lp['arrayLength']}"])
+        live = lp.get("values") or []
+        if len(live) < n:
+            raise SpecError([f"{name!r}: the live row of {pid} returned {len(live)} entries, fewer than the {n} wanted"])
+        if all(f32(a) == f32(b) for a, b in zip(live, wanted)):
+            return None
+        count = lp.get("stepCount")
+        return {"moduleId": row["instanceId"], "parameterId": pid, "expectedKind": "steps", "expectedValues": list(live[:n]),
+                "values": list(wanted), **({"full": True} if count is None or n > count else {})}
 
     def plan_connections(self, rows: dict[str, dict], conns: list[dict]) -> list[dict]:
         """Edits (as host entries + readable fields) for rows keyed by module name; modules absent from rows are new."""
@@ -663,6 +741,8 @@ class Apply:
     async def run(self) -> dict[str, Any]:
         await self.load_types()
         self.validate_spec()
+        if self.voicing_want:
+            await self.plan_voicing()
         self.phase = "read"
         rows, conns = await self.read_graph()
         self.rows0, self.conns0 = rows, conns
@@ -729,6 +809,19 @@ class Apply:
             return self.report_stop(Stop("internal", raw, "unknown"), pending)
         return self.report("applied" if any(self.applied.values()) else "unchanged")
 
+    async def plan_voicing(self) -> None:
+        """Read the device voicing (read-only) before anything is written: refuse a device without one, plan only the differing fields."""
+        got = await self.call("grid.voicing.get", {})
+        if not got.get("supported") or not isinstance(got.get("voicing"), dict):
+            raise SpecError([f"voicing: this Grid device has no voicing model (only Poly Grid does): {got.get('reason') or 'unsupported'}"])
+        live = got["voicing"]
+        problems = [f"voicing.{k}: the host did not report this field" for k in self.voicing_want if k not in live]
+        if problems:
+            raise SpecError(problems)
+        self.voicing_set = {k: v for k, v in self.voicing_want.items() if live[k] != v}
+        self.voicing_expected = {k: live[k] for k in self.voicing_set}
+        self.matched["voicingFields"] = len(self.voicing_want) - len(self.voicing_set)
+
     def dry_run(self, existing, conns, deletes, inserts, current) -> dict[str, Any]:
         param_plan, planned_params = [], 0
         for name in self.names:
@@ -745,9 +838,11 @@ class Apply:
                 **({"droppedConnections": self.dropped} if self.dropped else {}),
                 "inserts": [{"name": n, "type": self.resolved[n]["typeName"], "x": self.by_spec[n]["x"], "y": self.by_spec[n]["y"]} for n in inserts],
                 "renames": list(inserts), "moves": moves, "params": param_plan,
-                "connections": [{k: v for k, v in e.items() if k != "write"} for e in edits]}
+                "connections": [{k: v for k, v in e.items() if k != "write"} for e in edits],
+                **({"voicing": {"set": self.voicing_set, "from": self.voicing_expected}} if self.voicing_want else {})}
         planned = {"inserted": len(inserts), "renamed": len(inserts), "moved": len(moves), "paramsWritten": planned_params,
-                   "connections": sum(1 for e in edits if e["from"]), "disconnected": sum(1 for e in edits if not e["from"]), "deleted": len(deletes)}
+                   "connections": sum(1 for e in edits if e["from"]), "disconnected": sum(1 for e in edits if not e["from"]), "deleted": len(deletes),
+                   **({"voicingFields": len(self.voicing_set)} if self.voicing_want else {})}
         notes = ["modules already in the device are moved before inserting; inserted modules are only moved if the host reflows them"] if inserts else []
         if self.live_schema:
             notes.append("no bundled schema for this host version: ports, parameters and footprints of inserted modules are validated only after insertion")
@@ -805,6 +900,14 @@ class Apply:
         self.steps.append({"op": "move", "name": name, "to": list(pos[mid])})
 
     async def execute(self, deletes, inserts, current, pending) -> None:
+        self.phase = "voicing"
+        if self.voicing_set:
+            result = await self.call("grid.voicing.set", {"expected": self.voicing_expected, "set": self.voicing_set}, write=True)
+            self.verify("grid.voicing.set", result)
+            self.applied["voicingFields"] += len(self.voicing_set)
+            self.steps.append({"op": "voicing", "fields": sorted(self.voicing_set)})
+            if result.get("changedUnrequested"):
+                self.warnings.append(f"voicing: the native change also moved {result['changedUnrequested']}")
         self.phase = "delete"
         for row in deletes:
             result = await self.call("grid.modules.delete", {"moduleId": row["instanceId"]}, write=True)
@@ -935,7 +1038,7 @@ class Apply:
         return out | ({"instances": self.instances} if self.instances else {}) | ({"warnings": self.warnings} if self.warnings else {}) | self.notes_field()
 
     def report_stop(self, stop: Stop, pending: dict[str, int]) -> dict[str, Any]:
-        order = ["delete", "premove", "insert", "rename", "move", "params", "connections"]
+        order = ["voicing", "delete", "premove", "insert", "rename", "move", "params", "connections"]
         status = "unknown" if stop.outcome == "unknown" else ("partial" if any(self.applied.values()) else "failed")
         out = self.report(status)
         out["failure"] = {"phase": self.phase, "method": stop.method, "response": stop.raw}
