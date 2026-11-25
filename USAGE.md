@@ -142,6 +142,8 @@ bitwig-agent-rpc audio.route mode=restore                      # always: re-link
 
 `analyze` modes: `level` (peak/rms/silence), `onsets` and `mono_pitch` (spectral-flux onsets by default, which count overlapping notes with long decays; `method=envelope` is the old amplitude-envelope detector) (monophonic only), `probe` (10 ms means: route a logic/CV signal to Audio Out to read it as a scope). `audio.route status` shows the current links; the previous targets live in `~/.cache/bitwig-agent/audio-route.json` until `restore`. Only Bitwig's own links are touched.
 
+`grid.probe` does the capture step for one Grid port (`audio.route mode=silent` first): it reroutes `"<module>.<OUT>"` into an Audio Out of the device, records, puts every cable back and returns the analysis, e.g. `grid.probe trackId=... deviceIndex=0 expectedDeviceName="Poly Grid" port="H: lead.OUT" seconds=4 mode=mono_pitch`. If the restore fails it says exactly which inputs are still changed.
+
 ## Host problems the API cannot show (`host.diagnostics`)
 
 ```sh

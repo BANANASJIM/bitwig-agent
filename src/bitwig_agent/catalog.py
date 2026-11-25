@@ -38,7 +38,7 @@ UNK = 'Never retry an unknown outcome: inspect with grid.get. A native setter/ca
 
 
 # Composed in Python from host methods; never sent to the host as one request.
-CLIENT_SIDE = frozenset({"grid.apply", "grid.export", "grid.graph", "grid.render", "grid.describe", "audio.route", "audio.capture", "audio.analyze", "host.diagnostics"})
+CLIENT_SIDE = frozenset({"grid.apply", "grid.export", "grid.graph", "grid.probe", "grid.render", "grid.describe", "audio.route", "audio.capture", "audio.analyze", "host.diagnostics"})
 
 
 def tool(model, description, read_only, *examples):
@@ -120,6 +120,7 @@ TOOLS: dict[str, ToolSpec] = {
         {"target": TARGET, "modules": [{"name": "H: mul", "type": "Multiply", "x": 0, "y": 0},
                                        {"name": "H: out", "type": "Audio Out", "x": 3, "y": 0}],
          "connections": [{"from": "H: mul.OUT", "to": "H: out.IN"}], "dryRun": True}),
+    "grid.probe": tool(schema.GridProbeArgs, "Listen to one Grid output port (client-side, Linux/PipeWire; composed from grid.get, grid.connections.set, audio.capture and audio.analyze). Snapshots the cables into every Audio Out of the device, rewires the probe port '<module name>.<OUT port>' to one existing Audio Out (others are disconnected), records seconds (0.2..20) from the start of the arrangement, restores every cable by compare-and-set and returns audio.analyze of mode probe|mono_pitch|onsets|level. Needs audio.route silent unless allowAudible, recording and automation write off (a playing transport is stopped; it stays stopped). A restore that cannot finish fails probe_restore_failed with the inputs still changed; never retried. Read the Grid first (grid.graph) for names.", False, {**TARGET, "port": "H: osc.OUT", "seconds": 4, "mode": "mono_pitch"}),
     "grid.export": tool(schema.GridExportArgs, "Read ONE Grid device (all pages) and return a grid.apply spec of it, composed client-side from grid.get/grid.voicing.get (not a host method; read-only toward Bitwig, writes only outPath). Use it to work on an existing patch: edit the spec, apply it back. Modules by customName (unnamed ones get a stable generated name '_<type>_<x>_<y>', listed in `unnamed`; grid.apply matches unnamed modules by it), type, x, y, params (raw values, enum as {label}, string and step arrays included), cables as 'name.PORT' pairs, voicing on Poly Grid. includeParams: changed (default; differs from the bundled 6.1.4 defaults) | all | none. namespace exports only that prefix; cables to/from other modules turn into `external` names (grid.apply references them without declaring them). Applying the export to the same device is `unchanged`. outPath writes the spec JSON instead of returning it.", True,
         {**TARGET, "includeParams": "changed"}),
     "grid.graph": tool(schema.GridGraphArgs, "Read ONE Grid device as names, no UUID joins (client-side over grid.get, read-only): modules [{name, type, x, y, size, params?}] and connections [{from:'name.OUT', to:'name.IN'}]; unnamed modules carry a generated name and unnamed:true. Optional namespace prefix filter (cables to outside modules listed in `external`), includeParams none (default) | changed | all. Pages internally; fails with graph_incomplete rather than return part of a device.", True,

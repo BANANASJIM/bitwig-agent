@@ -821,6 +821,19 @@ class GridGraphArgs(ParameterArgs):
     includeParams: Literal["changed", "all", "none"] = omitted(description="none (default), changed (differing from bundled 6.1.4 defaults) or all.")
 
 
+class GridProbeArgs(ParameterArgs):
+    timeoutMs: int = Field(default=5000, ge=100, le=TOPOLOGY_TIMEOUT_MS)
+    port: Annotated[str, Field(min_length=3, max_length=1024)] = Field(description="'<module name>.<OUT port key>' of a module in this device, e.g. 'H: lead.OUT'; the name is the customName (or generated name) from grid.graph.")
+    seconds: float = Field(ge=0.2, le=20, description="Recording length.")
+    mode: Literal["probe", "mono_pitch", "onsets", "level"] = Field(description="audio.analyze mode run on the recording.")
+    allowAudible: bool = omitted(description="Record without audio.route silent (the probed signal is audible).")
+    bpm: Annotated[float, Field(ge=20, le=666)] = omitted(description="mono_pitch: adds 16th-grid positions.")
+    skipSeconds: Annotated[float, Field(ge=0, le=3600)] = omitted(description="Ignore audio before this time.")
+    method: Literal["flux", "envelope"] = omitted(description="onsets/mono_pitch onset detector (default flux).")
+    threshold: Annotated[float, Field(ge=0.01, le=0.9)] = omitted(description="onsets/mono_pitch sensitivity.")
+    windowSeconds: Annotated[float, Field(ge=0.01, le=60)] = omitted(description="level: window length.")
+
+
 class GridApplyArgs(StatusArgs):
     target: GridApplyTarget
     modules: Annotated[list[GridApplyModule], Field(max_length=1024, description="Declared modules; [] only with prune=true and a namespace (empties the namespace), or with instances.")] = omitted()
