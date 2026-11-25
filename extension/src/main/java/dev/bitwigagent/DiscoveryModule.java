@@ -11,7 +11,8 @@ final class DiscoveryModule implements HostModule {
     private static final BuildInfo BUILD = BuildInfo.load();
     private final HostServices s;
     private final ParameterModule parameters;
-    DiscoveryModule(HostServices s, ParameterModule parameters) { this.s = s; this.parameters = parameters; }
+    private final ProjectModule project;
+    DiscoveryModule(HostServices s, ParameterModule parameters, ProjectModule project) { this.s = s; this.parameters = parameters; this.project = project; }
     @Override public Set<String> methods() { return METHODS; }
     @Override public void validate(String method, JsonObject params) { validateParams(method, params); }
     static void validateParams(String method, JsonObject params) {
@@ -26,7 +27,7 @@ final class DiscoveryModule implements HostModule {
             case "tracks.list": operation.result.complete(listTracks()); return;
             case "devices.list": operation.result.complete(listDevices(params.get("trackId").getAsString())); return;
             case "devices.layers.list": operation.result.complete(s.sources.listLayers(params)); return;
-            case "capabilities": operation.result.complete(capabilities()); return;
+            case "capabilities": operation.result.complete(capabilities(operation)); return;
             default: throw failure("unknown_method", "Unsupported discovery method: " + method);
         }
     }
@@ -47,7 +48,7 @@ final class DiscoveryModule implements HostModule {
         return result;
     }
 
-    private JsonObject capabilities() {
+    private JsonObject capabilities(HostOperation operation) {
         JsonObject result = observed();
         result.addProperty("scope", "implemented_toolkit_interfaces");
         result.addProperty("apiVersion", 25);
@@ -120,6 +121,7 @@ final class DiscoveryModule implements HostModule {
         modulators.addProperty("pagination", "independent_observations_not_revision_consistent");
         modulators.addProperty("edits", "modulators.get/insert/delete/parameters.set/map/unmap; availability in modulators.capabilities edit");
         result.add("privateModulatorReads", modulators);
+        result.add("projectSaveAs", project.saveAsCapability(operation));
         result.addProperty("evidence", "Runtime implementation discovery only; not per-method host verification or full interface coverage.");
         return result;
     }

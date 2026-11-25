@@ -44,6 +44,7 @@ The main sources are under [`extension/src/main/java/dev/bitwigagent`](https://g
 - `DeviceSources` owns fixed root/layer/child addresses and continuity observations. `ParameterModule` owns continuously observed source-specific parameter data and the single shared active binding/request. Switching flat or nested targets invalidates the prior binding.
 - Discovery, Actions, transport, mix, devices and Launcher/MIDI have separate domain modules and observations. Their result semantics differ: a dispatch-only Action is not equivalent to an acknowledged parameter change.
 - `GridModule` separates target/RPC guards from bounded graph serialization and scalar, boolean-panel and topology writers. `GridTopologyQuarantine` shares native lifetime admission across topology editors.
+- `ProjectModule` owns `project.save` (public Save action) and `project.saveAs`; `ProjectSaveAsPlan` mirrors the native folder rules host-free and `Bitwig614ProjectSaveAsAccess` calls the dialog-free save pipeline with a completion callback.
 - `ModulatorModule` and `ModulatorSnapshotReader` own bounded, nonloading primary-modulator reads. They share root target/read-context machinery, not Grid write authority.
 - `ModulatorEditModule` (RPC boundary), `ModulatorEditor` (CAS, dispatch, readback) and `Bitwig614ModulatorEditAccess` (descriptors) own device-modulator edits. They reuse the Grid parameter reader for typed values and Grid targets, and the Grid parameter/topology context checks, but not Grid write authority or topology quarantine.
 

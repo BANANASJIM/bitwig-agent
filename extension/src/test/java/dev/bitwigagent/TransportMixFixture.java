@@ -14,7 +14,7 @@ final class TransportMixFixture {
     static final String B = "00000000-0000-0000-0000-000000000002";
     static final String C = "00000000-0000-0000-0000-000000000003";
     final Deque<Runnable> tasks = new ArrayDeque<>();
-    final Node transport = new Node(), application = new Node(), bank = new Node(), host = new Node();
+    final Node transport = new Node(), application = new Node(), bank = new Node(), host = new Node(), project = new Node();
     final Node[] tracks = new Node[HostServices.TRACKS];
     final HostServices services;
     boolean onHost;
@@ -114,7 +114,7 @@ final class TransportMixFixture {
         host.custom = (name, args) -> {
             if (name.equals("createApplication")) return application.proxy(Application.class);
             if (name.equals("createTransport")) return transport.proxy(Transport.class);
-            if (name.equals("getProject")) return new Node().proxy(Project.class);
+            if (name.equals("getProject")) return project.proxy(Project.class);
             if (name.equals("createTrackBank")) { bankCreations++; return bank.proxy(TrackBank.class); }
             if (name.equals("scheduleTask")) tasks.add((Runnable) args[0]);
             return null;

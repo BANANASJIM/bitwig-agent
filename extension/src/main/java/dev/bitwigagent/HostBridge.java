@@ -18,9 +18,10 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
         services = new HostServices(host);
         ParameterModule parameters = new ParameterModule(services);
         register(parameters);
-        register(new DiscoveryModule(services, parameters));
+        ProjectModule project = new ProjectModule(services);
+        register(new DiscoveryModule(services, parameters, project));
         register(new ActionModule(services));
-        register(new ProjectModule(services));
+        register(project);
         TransportModule transport = new TransportModule(services);
         register(transport);
         MixModule mix = new MixModule(services);
