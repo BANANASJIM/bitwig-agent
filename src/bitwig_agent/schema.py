@@ -820,6 +820,95 @@ class AutomationPointsSetArgs(DeviceArgs):
         return self
 
 
+ROUTING_TRACK_KINDS = frozenset({"track_audio_input", "track_note_input", "pre_fader", "post_fader", "track_notes"})
+OutputKind = Literal["none", "track_audio_input", "track_note_input"]
+SourceKind = Literal["none", "pre_fader", "post_fader", "track_notes", "all_ins", "computer_keyboard", "onscreen_keyboard"]
+ROUTING_TRACK_ID = "A track of the current 16-track window (tracks.list); for a group, its trackId."
+
+
+class RoutingEntry(StrictModel):
+    trackId: TrackId = omitted(description=ROUTING_TRACK_ID)
+
+    @model_validator(mode="after")
+    def validate_track(self):
+        if ("trackId" in self.model_fields_set) != (self.kind in ROUTING_TRACK_KINDS):
+            raise ValueError(f"trackId is required for {sorted(ROUTING_TRACK_KINDS)} and not allowed otherwise")
+        return self
+
+
+class OutputEntry(RoutingEntry):
+    kind: OutputKind = Field(description="none, or the audio/note input of another track (a group, an effect track or master by its trackId).")
+
+
+class SourceEntry(RoutingEntry):
+    kind: SourceKind = Field(description="none; pre_fader/post_fader (audio) or track_notes of another track; all_ins, computer_keyboard, onscreen_keyboard (notes).")
+
+
+class ObservedEntry(RoutingEntry):
+    """An entry exactly as a fresh get reported it; kind other (hardware, device output, ...) is matched by its exact name and nativeType."""
+    name: str = omitted(max_length=4096, description="Exact (possibly empty) name of a kind other entry from the get; only with kind other.")
+    nativeType: Nonempty = omitted(description="nativeType of a kind other entry from the get; optional, only with kind other.")
+
+    @model_validator(mode="after")
+    def validate_name(self):
+        if ("name" in self.model_fields_set) != (self.kind == "other"):
+            raise ValueError("name is required for kind other and not allowed otherwise")
+        if "nativeType" in self.model_fields_set and self.kind != "other":
+            raise ValueError("nativeType is only allowed with kind other")
+        return self
+
+
+class ExpectedOutputEntry(ObservedEntry):
+    kind: Literal["none", "track_audio_input", "track_note_input", "other"]
+
+
+class ExpectedSourceEntry(ObservedEntry):
+    kind: Literal["none", "pre_fader", "post_fader", "track_notes", "all_ins", "computer_keyboard", "onscreen_keyboard", "other"]
+
+
+class TrackRoutingGetArgs(DeviceArgs):
+    includeChoices: bool = omitted(description="Also list every v1 entry with accepted (Bitwig's own cycle check).")
+
+
+class TrackRoutingSetArgs(DeviceArgs):
+    output: OutputEntry = omitted()
+    expectedOutput: ExpectedOutputEntry = omitted(description="output.entry from a fresh tracks.routing.get (compare-and-set).")
+    input: SourceEntry = omitted()
+    expectedInput: ExpectedSourceEntry = omitted(description="input.entry from a fresh tracks.routing.get (compare-and-set).")
+
+    @model_validator(mode="after")
+    def validate_pairs(self):
+        given = self.model_fields_set
+        if not given & {"output", "input"}:
+            raise ValueError("supply output, input or both")
+        for field, expected in (("output", "expectedOutput"), ("input", "expectedInput")):
+            if (field in given) != (expected in given):
+                raise ValueError(f"{field} and {expected} must be supplied together")
+        return self
+
+
+class SidechainGetArgs(ParameterArgs):
+    includeChoices: bool = omitted(description="Also list every v1 source with accepted (Bitwig's own cycle check) per writable component.")
+
+
+class SidechainSetArgs(ParameterArgs):
+    componentIndex: int = omitted(ge=0, le=255, description="componentIndex from a fresh devices.sidechain.get; exactly one of componentIndex or componentId.")
+    expectedComponentId: Nonempty = omitted(description="That row's componentId; required with componentIndex (guards against shifted components).")
+    componentId: Nonempty = omitted(description="componentId from devices.sidechain.get when it is unique on the device.")
+    expectedModulatorId: TrackId = omitted(description="Required when the component's host is modulator: its modulatorId from the get.")
+    source: SourceEntry
+    expectedSource: ExpectedSourceEntry = Field(description="The component's source from a fresh devices.sidechain.get (compare-and-set).")
+
+    @model_validator(mode="after")
+    def validate_component(self):
+        given = self.model_fields_set
+        if ("componentIndex" in given) == ("componentId" in given):
+            raise ValueError("supply exactly one of componentIndex or componentId")
+        if ("componentIndex" in given) != ("expectedComponentId" in given):
+            raise ValueError("componentIndex needs expectedComponentId, and only it")
+        return self
+
+
 class ClipImportArgs(ClipArgs):
     path: Nonempty
 
