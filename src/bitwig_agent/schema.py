@@ -737,3 +737,18 @@ class AudioAnalyzeArgs(StatusArgs):
     @classmethod
     def validate_path(cls, value: str) -> str:
         return _wav_path(value)
+
+class GridDescribeArgs(StatusArgs):
+    type: str = omitted(min_length=1, max_length=128, description="Module display name (e.g. 'Select In') or typeId; exactly one of type or query.")
+    query: str = omitted(min_length=1, max_length=256, description="Keywords ranked against module names, descriptions and keywords.")
+    lang: Literal["en", "de", "es", "fr", "ja", "ko", "zh"] = omitted(description="Documentation language (default en).")
+    limit: int = omitted(ge=1, le=50, description="Maximum query matches (default 10).")
+    installationRoot: str = omitted(min_length=1, max_length=4096, description="Bitwig install directory containing resources/localization; default $BITWIG_INSTALLATION_ROOT, the install of $BITWIG_API_JAR, then /opt/bitwig-studio.")
+
+    @model_validator(mode="after")
+    def validate_one_selector(self):
+        if len({"type", "query"} & self.model_fields_set) != 1:
+            raise ValueError("supply exactly one of type or query")
+        if "limit" in self.model_fields_set and "query" not in self.model_fields_set:
+            raise ValueError("limit applies only to query")
+        return self
