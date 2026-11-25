@@ -8,6 +8,7 @@ Nothing is retried; a restore that cannot finish is reported cable by cable.
 from __future__ import annotations
 
 import asyncio
+import os
 import shutil
 import tempfile
 from pathlib import Path
@@ -21,7 +22,7 @@ from bitwig_agent.schema import MAX_TIMEOUT_MS
 AUDIO_OUT = "Audio Out"
 MAX_EDITS = 32  # one grid.connections.set batch: all expectedSource checks first, then in order
 UNSAFE_FLAGS = ("arrangerRecordEnabled", "arrangerAutomationWriteEnabled", "clipLauncherAutomationWriteEnabled")
-PASS_THROUGH = ("bpm", "skipSeconds", "threshold", "method", "windowSeconds")
+PASS_THROUGH = ("bpm", "skipSeconds", "threshold", "method", "windowSeconds", "key")
 
 
 def _fail(code: str, message: str, outcome: str = "not_dispatched", **details: Any) -> BridgeError:
@@ -94,6 +95,12 @@ async def probe(client: Any, args: dict[str, Any], timeout_ms: int) -> dict[str,
         if not state["silent"]:
             raise _fail("not_silent", "Bitwig output is not routed to the silent sink; call audio.route mode=silent first, "
                         "or pass allowAudible:true (the probed signal is then audible)", **state)
+    keep = args.get("outPath")
+    if keep:  # refuse before any cable is touched
+        if os.path.exists(keep) and not args.get("overwrite", False):
+            raise _fail("file_exists", f"{keep} exists; pass overwrite:true to replace it")
+        if not os.path.isdir(os.path.dirname(keep)):
+            raise _fail("invalid_params", f"Directory does not exist: {os.path.dirname(keep)}")
     await audio.require_engine(client, timeout_ms)  # before any cable is touched
     # Grid writes need a stopped, non-recording transport; audio.capture stops it again afterwards, so this leaves it stopped too.
     short = min(timeout_ms, MAX_TIMEOUT_MS)  # only topology edits may wait longer
@@ -126,7 +133,7 @@ async def probe(client: Any, args: dict[str, Any], timeout_ms: int) -> dict[str,
         raise _fail("invalid_params", f"{len(edits)} Audio Out inputs would change; at most {MAX_EDITS} are supported")
     seconds = args["seconds"]
     workdir = Path(tempfile.mkdtemp(prefix="bitwig-probe-"))
-    wav = str(workdir / "probe.wav")
+    wav = keep or str(workdir / "probe.wav")
     captured: dict[str, Any] | None = None
     capture_error: BaseException | None = None
     rewired = False
@@ -135,7 +142,7 @@ async def probe(client: Any, args: dict[str, Any], timeout_ms: int) -> dict[str,
             if edits:
                 rewired = True  # even a failed batch may have applied entries: restore reads the real state
                 await _set(client, target, edits, timeout_ms)
-            captured = await audio.capture(client, {"seconds": seconds, "outPath": wav, "allowAudible": allow_audible, "fromStart": True}, short)
+            captured = await audio.capture(client, {"seconds": seconds, "outPath": wav, "allowAudible": allow_audible, "fromStart": True, "overwrite": bool(keep)}, short)
         except (BridgeError, asyncio.CancelledError) as exc:
             capture_error = exc
         restored = await asyncio.shield(_restore(client, target, original, probing, names, timeout_ms)) if rewired else {"restored": True, "left": [], "changedMeanwhile": []}
@@ -154,7 +161,7 @@ async def probe(client: Any, args: dict[str, Any], timeout_ms: int) -> dict[str,
     for key in ("path",):
         analysis.pop(key, None)
     return {"status": "probed", "port": args["port"], "mode": args["mode"], "audioOut": names[chosen["instanceId"]],
-            "cablesChanged": len(edits), "restored": True,
+            "cablesChanged": len(edits), "restored": True, **({"wavPath": keep} if keep else {}),
             **({"changedMeanwhile": restored["changedMeanwhile"]} if restored["changedMeanwhile"] else {}),
             "capture": {k: captured[k] for k in ("durationSeconds", "peak", "peakDb", "rms", "rmsDb", "clipping", "silent", "audible", "transportStopped")},
             "analysis": analysis, "transportStopped": True}

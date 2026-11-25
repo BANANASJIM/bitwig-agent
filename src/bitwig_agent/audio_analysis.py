@@ -383,6 +383,33 @@ def _chroma_report(weights: list[float], scale: set[int]) -> dict[str, Any]:
             "topPitchClasses": [{"name": NAMES[p], "share": round(weights[p] / total, 3)} for p in top if weights[p] > 0]}
 
 
+PEAK_COUNT = 8
+PEAK_MIN_DB = -40.0   # peaks weaker than this relative to the strongest are ignored
+
+
+def spectral_peaks(power: list[float], rate: int) -> list[dict[str, Any]]:
+    """Strongest local maxima of a power spectrum (bins 0..N/2 of an FFT_SIZE frame), parabolic-interpolated in dB,
+    with note name and cents. Resolution is rate/FFT_SIZE (about 12 Hz at 48 kHz): low notes are only approximate."""
+    top = max(power[2:], default=0.0)
+    if top <= 0:
+        return []
+    db = [10 * math.log10(v / top) if v > 0 else -200.0 for v in power]
+    found = []
+    for k in range(2, len(power) - 1):
+        if db[k] > PEAK_MIN_DB and db[k] >= db[k - 1] and db[k] > db[k + 1]:
+            a, b, c = db[k - 1], db[k], db[k + 1]
+            denom = a - 2 * b + c
+            shift = 0.5 * (a - c) / denom if denom else 0.0
+            found.append((b - 0.25 * (a - c) * shift, (k + shift) * rate / FFT_SIZE))
+    out = []
+    for level, freq in sorted(found, reverse=True)[:PEAK_COUNT]:
+        midi = 69 + 12 * math.log2(freq / 440)
+        nearest = round(midi)
+        out.append({"hz": round(freq, 1), "db": round(level, 1), "midi": round(midi, 2),
+                    "note": f"{NAMES[nearest % 12]}{nearest // 12 - 1}", "cents": round((midi - nearest) * 100)})
+    return out
+
+
 def bands(x: array, rate: int, window_seconds: float, key: str | None, shift: float) -> dict[str, Any]:
     """Per-window band energy relative to the window's total power (dB), spectral centroid and RMS; optional in-key chroma."""
     nyquist = rate / 2
@@ -396,6 +423,7 @@ def bands(x: array, rate: int, window_seconds: float, key: str | None, shift: fl
     size = max(FFT_SIZE, int(window_seconds * rate))
     freqs = [k * rate / FFT_SIZE for k in range(FFT_SIZE // 2 + 1)]
     rows, all_chroma = [], [0.0] * 12
+    all_power = [0.0] * (FFT_SIZE // 2 + 1)
     for begin in range(0, len(x), size):
         end = min(len(x), begin + size)
         if end - begin < FFT_SIZE:
@@ -405,6 +433,7 @@ def bands(x: array, rate: int, window_seconds: float, key: str | None, shift: fl
         for start in range(begin, end - FFT_SIZE + 1, hop):
             p, mags = _frame(x, start)
             power = [a + b for a, b in zip(power, p)]
+        all_power = [a + b for a, b in zip(all_power, power)]
         total = sum(power[1:])
         row: dict[str, Any] = {"t": round(begin / rate + shift, 3), "rms": round(_rms(x[begin:end]), 4)}
         if total > 0:
@@ -420,7 +449,9 @@ def bands(x: array, rate: int, window_seconds: float, key: str | None, shift: fl
         rows.append(row)
     out: dict[str, Any] = {"windowSeconds": round(window_seconds, 3), "windows": rows,
                            "bandEdgesHz": {n: [lo, None if hi == math.inf else hi] for n, lo, hi in BAND_EDGES if lo < nyquist},
-                           "note": f"each window samples up to {FRAMES_PER_WINDOW} Hann frames of {FFT_SIZE} samples; bandsDb are relative to the window's total power"}
+                           "peaks": spectral_peaks(all_power, rate),
+                           "note": f"each window samples up to {FRAMES_PER_WINDOW} Hann frames of {FFT_SIZE} samples; bandsDb are relative to the window's total power; "
+                                   "peaks = strongest spectral maxima of the whole analyzed range (dB re the strongest), the way to pitch steady or noisy sources"}
     if scale is not None:
         out["key"] = key
         out["chroma"] = {**_chroma_report(all_chroma, scale), "rangeHz": [CHROMA_LOW, CHROMA_HIGH],

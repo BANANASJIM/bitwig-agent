@@ -210,3 +210,27 @@ def test_inactive_engine_refuses_before_any_cable_is_touched(rig):
         probe(host)
     assert e.value.error["code"] == "engine_inactive" and e.value.error["outcome"] == "not_applied"
     assert host.sets() == [] and host.conns == host.original
+
+
+def test_probe_bands_mode_reports_balance_and_spectral_peaks(rig):
+    host, _ = rig
+    out = probe(host, mode="bands", windowSeconds=0.5)
+    analysis = out["analysis"]
+    assert analysis["mode"] == "bands" and "bandsDb" in analysis["windows"][0]
+    assert {"C4", "D4"} <= {p["note"] for p in analysis["peaks"]} and "wavPath" not in out
+    assert host.conns == host.original
+
+
+def test_probe_keeps_the_wav_only_with_outpath(rig, tmp_path):
+    host, _ = rig
+    wav = tmp_path / "kept.wav"
+    out = probe(host, outPath=str(wav))
+    assert wav.is_file() and out["wavPath"] == str(wav)
+    with pytest.raises(BridgeError) as e:  # refused before any cable moves
+        probe(host, outPath=str(wav))
+    assert e.value.error["code"] == "file_exists" and e.value.error["outcome"] == "not_dispatched" and host.conns == host.original
+    assert probe(host, outPath=str(wav), overwrite=True)["wavPath"] == str(wav)
+    with pytest.raises(ValueError):
+        validate_call("grid.probe", {**TARGET, "port": "P: osc.OUT", "seconds": 1, "mode": "level", "overwrite": True})
+    with pytest.raises(ValueError):
+        validate_call("grid.probe", {**TARGET, "port": "P: osc.OUT", "seconds": 1, "mode": "level", "key": "C:ionian"})

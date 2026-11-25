@@ -760,6 +760,16 @@ class Apply:
                 self.warn(f"pruneAll: disconnecting {len(undeclared)} input(s) the spec does not declare: " + "; ".join(undeclared[:10]) + (" ..." if len(undeclared) > 10 else ""))
         return edits
 
+    def external_port_problems(self) -> list[str]:
+        problems = []
+        for src, sport, dst, dport in self.edges:
+            for name, port, want in ((src, sport, "outputs"), (dst, dport, "inputs")):
+                row = self.ext_rows.get(name)
+                keys = [p["key"] for p in (row or {}).get(want, [])]
+                if row is not None and port not in keys:
+                    problems.append(f"external module {name!r} ({row.get('typeName') or row.get('typeId')}) has no {want[:-1]} port {port!r}; valid {want}: {', '.join(keys) or 'none'}")
+        return problems
+
     def live_checks(self, rows: dict[str, dict]) -> None:
         """Port validation against live rows, needed when no bundled schema covers the host version."""
         problems = []
@@ -871,7 +881,11 @@ class Apply:
             if len(found) == 1:
                 self.ext_rows[name] = found[0]
             else:
-                problems.append(f"external module {name!r} " + (f"matches {len(found)} modules; names must be unique" if found else f"is not in the device.{_near(name, by_custom)}"))
+                generated = [label_of(r) for r in rows if not r["customName"] and name.casefold() in (str(r.get("typeName") or "").casefold(), str(r.get("name") or "").casefold())]
+                point = (f" Unnamed {name!r} modules are referenced by their generated name (the grid.graph/grid.export name): {', '.join(map(repr, generated[:5]))}."
+                         if generated else _near(name, by_custom))
+                problems.append(f"external module {name!r} " + (f"matches {len(found)} modules; names must be unique" if found else f"is not in the device.{point}"))
+        problems += self.external_port_problems()  # ports of externals are known only from the live rows: refuse a bad one before any write
         deletes = list(replaced)
         if self.prune_all:
             stale = [r for r in rows if label_of(r) not in self.by_spec and label_of(r) not in self.external]
