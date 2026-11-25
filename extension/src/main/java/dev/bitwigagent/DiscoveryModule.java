@@ -38,6 +38,7 @@ final class DiscoveryModule implements HostModule {
         result.addProperty("projectName", s.application.projectName().get());
         result.addProperty("engineActive", s.application.hasActiveEngine().get());
         result.addProperty("playing", s.transport.isPlaying().get());
+        for (Map.Entry<String, JsonElement> e : s.projectReadiness().entrySet()) result.add(e.getKey(), e.getValue());
         result.add("projectModified", s.projectModifiedJson());
         result.addProperty("apiVersion", 25);
         result.add("extension", BUILD.toJson());

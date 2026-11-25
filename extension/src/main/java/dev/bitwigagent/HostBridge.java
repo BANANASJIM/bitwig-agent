@@ -9,6 +9,9 @@ import static dev.bitwigagent.HostServices.failure;
 
 /** Composition and the single network-to-host boundary; domain state belongs to modules. */
 public final class HostBridge implements RpcServer.Handler, AutoCloseable {
+    static final Set<String> PROJECT_WRITES = Set.of("tracks.create", "devices.insert", "launcher.create", "launcher.import", "scenes.append",
+            "devices.delete", "devices.move", "devices.layers.insert",
+            "grid.modules.insert", "grid.modules.move", "grid.modules.delete", "grid.modules.rename", "grid.connections.set", "grid.parameters.set");
     private static final Map<String, BiConsumer<String, JsonObject>> VALIDATORS = validators();
     private final HostServices services;
     private final Map<String, HostModule> modules = new HashMap<>();
@@ -42,6 +45,9 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
         if (!modules.keySet().equals(VALIDATORS.keySet()))
             throw new IllegalStateException("Module dispatch and validation registries differ");
     }
+
+    /** Test seam. */
+    HostServices services() { return services; }
 
     private void register(HostModule module) {
         domains.add(module);
@@ -96,11 +102,27 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
             validate(method, params);
             JsonObject copy = params.deepCopy();
             HostModule module = modules.get(method);
-            services.schedule(operation, () -> module.dispatch(operation, method, copy), 0);
+            services.schedule(operation, () -> {
+                if (preflight(method, copy))
+                    operation.decorate = result -> addWarning(result, "Playback was started with an inactive audio engine: nothing will sound and captures will be silent. Run project.activateEngine and confirm status.engineActive=true.");
+                module.dispatch(operation, method, copy);
+            }, 0);
         } catch (RuntimeException | Error error) {
             operation.fail(error);
         }
         return operation.result;
+    }
+
+    /** Structure writes need a settled project; launches need an active engine. Returns whether to warn (playback start with inactive engine). */
+    boolean preflight(String method, JsonObject params) {
+        if (PROJECT_WRITES.contains(method)) services.requireProjectReady();
+        if (method.equals("launcher.launch")) services.requireEngineActive("the clip launch");
+        return method.equals("transport.set") && params.has("playing") && params.get("playing").getAsBoolean() && !services.engineActive();
+    }
+
+    static void addWarning(JsonObject result, String text) {
+        if (!result.has("warnings") || !result.get("warnings").isJsonArray()) result.add("warnings", new com.google.gson.JsonArray());
+        result.getAsJsonArray("warnings").add(text);
     }
 
     /** Forward the host's output-update boundary once per domain, not once per RPC method. */

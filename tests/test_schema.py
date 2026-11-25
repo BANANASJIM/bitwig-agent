@@ -1124,3 +1124,10 @@ def test_delete_move_and_layer_insert_shapes():
                 {**layer, "layerId": "not-a-uuid"}, {k: v for k, v in layer.items() if k != "parent"}):
         with pytest.raises(ValidationError):
             validate_call("devices.layers.insert", bad)
+
+
+def test_activate_engine_is_a_write_tool_without_arguments():
+    assert TOOLS["project.activateEngine"].read_only is False
+    assert validate_call("project.activateEngine", {})[0] == {}
+    with pytest.raises(ValidationError):
+        validate_call("project.activateEngine", {"force": True})
