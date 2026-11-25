@@ -3,6 +3,7 @@
 import asyncio
 import copy
 import json
+import math
 import uuid
 
 import pytest
@@ -16,6 +17,13 @@ TRACK = "12345678-1234-1234-1234-123456789abc"
 TARGET = {"trackId": TRACK, "deviceIndex": 0, "expectedDeviceName": "Poly Grid"}
 WRITES = {"grid.modules.insert", "grid.modules.rename", "grid.modules.move", "grid.modules.delete",
           "grid.parameters.set", "grid.connections.set"}
+
+
+def seconds_text(type_name, raw):
+    """Host-style display of a seconds parameter (3 significant digits) from the natively measured mappings."""
+    seconds = raw ** 3 if type_name in ("AD", "ADSR") else 10 ** raw
+    ms = seconds * 1000
+    return f"{seconds:.2f} s" if ms >= 1000 else f"{ms:.{max(0, 2 - math.floor(math.log10(ms)))}f} ms"
 
 
 class FakeGrid:
@@ -135,6 +143,8 @@ class FakeGrid:
                 raise BridgeError({"code": "stale_context", "message": "stale", "outcome": "not_applied"})
             if "display" in w:
                 par["value"], par["display"] = 99.0, w["display"]
+            elif par.get("numericUnit") == "seconds":
+                par["value"], par["display"] = w["value"], seconds_text(self.mods[w["moduleId"]]["typeName"], w["value"])
             else:
                 par["value"], par["display"] = w["value"], str(w["value"])
             entries.append({"moduleId": w["moduleId"], "parameterId": w["parameterId"], "status": "applied"})
@@ -411,7 +421,9 @@ def test_unsettled_insert_reports_unnamed_modules():
 
 
 @pytest.mark.parametrize("params", [
-    {"ATTACK": {"display": "10 ms"}},  # seconds: no verified conversion
+    {"ATTACK": {"display": "10 hz"}},  # wrong unit for seconds
+    {"ATTACK": {"display": "10 s"}},  # raw 2.154 outside 0..2
+    {"ATTACK": {"display": "-1 ms"}},
     {"SUSTAIN": {"display": "banana"}},
     {"SUSTAIN": {"display": "500 %"}},  # raw outside range
 ])
@@ -664,3 +676,144 @@ def test_notes_file_is_value_free_and_covers_catalog_types():
     notes = grid_apply.measured_notes()
     assert notes["hostVersion"] == "6.1.4"
     assert set(notes["modules"]) <= set(grid_apply.bundled_schema()["modules"])
+
+
+# --- seconds display writes ----------------------------------------------------------------------------------
+def seconds_spec(params_env, params_gate=None):
+    return {"target": TARGET, "modules": [{"name": "E", "type": "ADSR", "x": 0, "y": 0, "params": params_env},
+                                          {"name": "G", "type": "Gate Length", "x": 0, "y": 8, "params": params_gate or {}}]}
+
+
+def test_seconds_display_writes_converted_raw_and_is_idempotent():
+    host = FakeGrid()
+    spec = seconds_spec({"ATTACK": {"display": "3 ms"}, "DECAY": {"display": "0.5 s"}}, {"LENGTH": {"display": "120 ms"}})
+    result = run(host, spec)
+    assert result["applied"]["paramsWritten"] == 3
+    writes = [w for m, c in host.calls if m == "grid.parameters.set" for w in c["writes"]]
+    assert all("display" not in w and "shown" not in w for w in writes)  # the host only sees raw values
+    assert host.param("E", "ATTACK") == pytest.approx(0.003 ** (1 / 3)) and host.param("E", "DECAY") == pytest.approx(0.5 ** (1 / 3))
+    assert host.param("G", "LENGTH") == pytest.approx(math.log10(0.12))
+    host.calls.clear()
+    again = run(host, spec)
+    assert again["status"] == "unchanged" and host.writes() == [] and again["alreadyMatched"]["params"] == 3
+    host.named("E")["params"]["ATTACK"].update(value=0.144, display="2.99 ms")  # native pair one step off: 3 ms is a change
+    assert run(host, spec)["applied"]["paramsWritten"] == 1
+
+
+def test_seconds_dry_run_shows_the_converted_raw_value():
+    result = run(FakeGrid(), seconds_spec({"ATTACK": {"display": "8 ms"}}), dryRun=True)
+    entry = next(p for p in result["plan"]["params"] if p["parameterId"] == "ATTACK")
+    assert entry["rawValue"] == pytest.approx(0.2) and entry["to"] == {"display": "8 ms"}
+
+
+@pytest.mark.parametrize("module,param,text", [
+    ("Long Delay", "TIME", "100 ms"),  # default 1.0 = "1.00 s" fits cbrt only by coincidence
+    ("Audio Out", "HOLD_TIME", "100 ms"),  # linear
+    ("All-pass Delay", "TIME", "10 ms"),  # linear
+    ("ADSR", "ATTACK", "1 kb"),
+])
+def test_unverified_seconds_display_is_rejected_offline(module, param, text):
+    host = FakeGrid()
+    with pytest.raises(BridgeError) as err:
+        run(host, {"target": TARGET, "modules": [{"name": "X", "type": module, "x": 0, "y": 0, "params": {param: {"display": text}}}]})
+    assert err.value.error["code"] == "invalid_spec" and host.writes() == []
+
+
+def test_seconds_table_matches_bundled_schema_and_nothing_else_fits():
+    schema = grid_apply.bundled_schema()["modules"]
+    seen = set()
+    for name, info in schema.items():
+        for p in info["parameters"]:
+            if p.get("numericUnit") != "seconds":
+                continue
+            key = (name, p["parameterId"])
+            shown = grid_apply.parse_quantity("seconds", p["defaultDisplay"])
+            fits = [k for k, (_, from_raw) in grid_apply.SECONDS_SCALES.items() if abs(from_raw(p["default"]) - shown[0]) <= shown[1] * 1.000001]
+            args = (key[1], p["defaultDisplay"], "seconds", p["default"], p["defaultDisplay"], p["minimum"], p["maximum"], name)
+            if key in grid_apply.SECONDS_PARAMS:
+                mapping, raw, display = grid_apply.SECONDS_PARAMS[key]
+                seen.add(key)
+                assert fits == [mapping] and display == p["defaultDisplay"] and abs(raw - p["default"]) < 1e-4
+                assert grid_apply.check_display(*args) == pytest.approx(p["default"], abs=0.01)
+            else:  # not writable by display: no mapping fits, or the only fit is the ambiguous raw 1.0
+                assert fits == [] or p["default"] == 1.0, key
+                with pytest.raises(grid_apply.SpecError):
+                    grid_apply.check_display(*args)
+    assert seen == set(grid_apply.SECONDS_PARAMS)
+    assert {"AD", "ADSR", "Logic Delay", "Gate Length"} <= {n for n, _ in seen}
+
+
+def test_seconds_live_schema_converts_against_the_live_pair():
+    host = FakeGrid(version="9.9.9")
+    spec = seconds_spec({"ATTACK": {"display": "3 ms"}})
+    result = run(host, spec)
+    assert result["status"] == "applied" and host.param("E", "ATTACK") == pytest.approx(0.003 ** (1 / 3))
+    host.calls.clear()
+    assert run(host, spec)["status"] == "unchanged" and host.writes() == []
+
+
+# --- blocks ---------------------------------------------------------------------------------------------------
+BLOCKS = {"voice": {
+    "params": {"atk": 0.5, "gain": 0.25, "rel": "20 ms"},
+    "modules": [{"name": "mul", "type": "Bias", "x": 0, "y": 0, "params": {"VALUE": "${gain}"}},
+                {"name": "env", "type": "ADSR", "x": 4, "y": 0, "params": {"ATTACK": "${atk}", "RELEASE": {"display": "${rel}"}}}],
+    "connections": [{"from": "mul.OUT", "to": "env.IN"}]}}
+BLOCK_SPEC = {
+    "target": TARGET, "blocks": BLOCKS, "namespace": "V: ",
+    "modules": [{"name": "V: sum", "type": "Add", "x": 20, "y": 0}],
+    "instances": [{"block": "voice", "prefix": "V1: "},
+                  {"block": "voice", "prefix": "V2: ", "dy": 12, "args": {"atk": 0.1, "gain": 0.75}}],
+    "connections": [{"from": "V1: env.OUT", "to": "V: sum.IN"}, {"from": "V2: env.OUT", "to": "V: sum.IN2"}],
+}
+
+
+def test_blocks_expand_with_prefix_offset_and_typed_placeholders():
+    host = FakeGrid()
+    result = run(host, BLOCK_SPEC, dryRun=True)
+    assert [i["modules"] for i in result["instances"]] == [["V1: mul", "V1: env"], ["V2: mul", "V2: env"]]
+    assert {(i["name"], i["x"], i["y"]) for i in result["plan"]["inserts"]} >= {("V1: mul", 0, 0), ("V2: env", 4, 12), ("V: sum", 20, 0)}
+    assert len(result["plan"]["inserts"]) == 5 and host.writes() == []
+    result = run(host, BLOCK_SPEC)
+    assert result["status"] == "applied" and result["instances"][1]["prefix"] == "V2: "
+    assert result["applied"]["inserted"] == 5 and result["applied"]["connections"] == 4
+    assert host.param("V1: env", "ATTACK") == 0.5 and host.param("V2: env", "ATTACK") == 0.1  # default vs arg, still numbers
+    assert host.param("V2: mul", "VALUE") == 0.75 and host.param("V1: mul", "VALUE") == 0.25
+    assert host.param("V1: env", "RELEASE") == pytest.approx(0.02 ** (1 / 3))  # {display} placeholder reaches the seconds conversion
+    assert (host.named("V2: env")["x"], host.named("V2: env")["y"]) == (4, 12)
+    assert host.source("V1: env", "IN") == ("V1: mul", "OUT") and host.source("V: sum", "IN2") == ("V2: env", "OUT")
+    host.calls.clear()
+    assert run(host, BLOCK_SPEC)["status"] == "unchanged" and host.writes() == []
+
+
+def test_blocks_are_checked_after_expansion():
+    host = FakeGrid()
+
+    def fails(spec, text):
+        with pytest.raises(BridgeError) as err:
+            run(host, spec)
+        assert err.value.error["code"] == "invalid_spec" and text in err.value.error["message"]
+        assert host.writes() == []
+
+    fails({**BLOCK_SPEC, "instances": [{"block": "voic", "prefix": "V1: "}]}, "unknown block")
+    fails({**BLOCK_SPEC, "instances": [{"block": "voice", "prefix": "V1: ", "args": {"atack": 1}}]}, "unknown args")
+    fails({**BLOCK_SPEC, "instances": [{"block": "voice", "prefix": "V1: "}, {"block": "voice", "prefix": "V1: ", "dy": 12}]}, "distinct prefixes")
+    fails({**BLOCK_SPEC, "instances": [{"block": "voice", "prefix": "V1: "}, {"block": "voice", "prefix": "V2: "}]}, "overlap")  # same dx/dy
+    fails({**BLOCK_SPEC, "instances": [{"block": "voice", "prefix": "V1: ", "args": {"atk": 9}}, {"block": "voice", "prefix": "V2: ", "dy": 12}]}, "outside")
+    bad = {"voice": {**BLOCKS["voice"], "connections": [{"from": "V1: mul.OUT", "to": "env.IN"}]}}
+    fails({**BLOCK_SPEC, "blocks": bad}, "local module name")
+    typo = {"voice": {**BLOCKS["voice"], "modules": [{**BLOCKS["voice"]["modules"][0], "params": {"VALUE": "${gian}"}}, BLOCKS["voice"]["modules"][1]]}}
+    fails({**BLOCK_SPEC, "blocks": typo}, "placeholder")
+    wrong_type = {"voice": {**BLOCKS["voice"], "modules": [{**BLOCKS["voice"]["modules"][0], "params": {"VALUE": "${rel}"}}, BLOCKS["voice"]["modules"][1]]}}
+    fails({**BLOCK_SPEC, "blocks": wrong_type}, "needs a number")
+    fails({**BLOCK_SPEC, "connections": BLOCK_SPEC["connections"] + [{"from": "V: sum.OUT", "to": "V1: env.IN"}]}, "repeats connection target")
+
+
+def test_blocks_schema_surface():
+    with pytest.raises(ValueError):
+        validate_call("grid.apply", {"target": TARGET, "instances": [{"block": "x"}]})  # instances without blocks
+    with pytest.raises(ValueError):
+        validate_call("grid.apply", {"target": TARGET})  # nothing to apply
+    with pytest.raises(ValueError):  # blocks do not nest
+        validate_call("grid.apply", {**BLOCK_SPEC, "blocks": {"b": {"modules": [{"name": "a", "type": "Add", "x": 0, "y": 0}], "instances": []}}})
+    args, _ = validate_call("grid.apply", {"target": TARGET, "namespace": "V: ", "prune": True})
+    assert "modules" not in args
