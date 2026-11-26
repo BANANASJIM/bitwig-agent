@@ -72,7 +72,8 @@ def unknown_arguments_message(method: str, keys: Sequence[str | tuple[Any, ...]]
             else:
                 close = _suggest(loc[0], top)
                 hints.append(f"{loc[0]} (did you mean {close[0]}?)" if close else loc[0])
-            accepted.append(f"Accepted: {', '.join(top)}")
+            if top:
+                accepted.append(f"Accepted: {', '.join(top)}")
             continue
         siblings = _fields_at(method, loc[:-1])
         close = _suggest(str(loc[-1]), siblings)
@@ -80,7 +81,8 @@ def unknown_arguments_message(method: str, keys: Sequence[str | tuple[Any, ...]]
         level = _path(tuple(p for p in loc[:-1]))
         level = re.sub(r"\[\d+\]", "[]", level)
         accepted.append(f"Accepted at {level}: {', '.join(siblings)}")
-    return f"Unknown argument for {method}: {', '.join(hints)}. " + "; ".join(dict.fromkeys(accepted))
+    tail = "; ".join(dict.fromkeys(accepted))
+    return f"Unknown argument for {method}: {', '.join(hints)}." + (f" {tail}" if tail else "")
 
 
 def invalid_params_message(method: str, exc: Exception) -> str:

@@ -1152,3 +1152,10 @@ async def test_the_generated_mcp_config_starts_the_mcp_server_not_the_cli():
     assert process.returncode == 0, stderr.decode()
     server = json.loads(stdout)["mcpServers"]["bitwig-agent"]
     assert server["args"] == ["-m", "bitwig_agent.frontends.mcp"]
+
+
+async def test_a_method_without_fields_names_no_empty_accepted_list():
+    message = json.loads((await cli.execute(["tracks", "list", "--formt=csv"])).stderr)["message"]
+    assert "Accepted:" not in message
+    assert ".." not in message
+    assert message.endswith("Also accepted: --timeoutMs, --format, --fields (did you mean --format?)")

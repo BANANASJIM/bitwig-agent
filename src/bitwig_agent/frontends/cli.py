@@ -275,7 +275,7 @@ def unknown_flag(method: str, name: str) -> str:
     extras = ["--timeoutMs", *(["--format", "--fields"] if views.records(method) else [])]
     close = difflib.get_close_matches(f"--{name}", extras, n=1, cutoff=0.6)
     hint = f" (did you mean {close[0]}?)" if close else ""
-    return f"{views.unknown_field_message(method, name)}. Also accepted: {', '.join(extras)}{hint}"
+    return f"{views.unknown_field_message(method, name).rstrip('.')}. Also accepted: {', '.join(extras)}{hint}"
 
 
 def parse_options(method: str, rest: list[str], inputs: Inputs) -> Parsed:
