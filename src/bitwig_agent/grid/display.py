@@ -8,61 +8,38 @@ from collections.abc import Callable
 from typing import Any, NamedTuple, cast
 
 from bitwig_agent import raw_scales
+from bitwig_agent.grid.bundled import shared
 from bitwig_agent.grid.problems import SpecError
 
-# Mirror of GridDisplayUnits.java: natural = what the display text measures (Hz, percent points, dB).
+_DATA = shared("display")
 Converter = Callable[[float], float]
-DISPLAY_UNITS: dict[str, tuple[dict[str, float], Converter | None, Converter | None]] = {
-    "hertz": (
-        {"hz": 1.0, "khz": 1000.0},
+FORMULAS: dict[str, Callable[[float], tuple[Converter, Converter]]] = {
+    "midi_note_hz": lambda _: (
         lambda f: 69 + 12 * math.log2(f / 440) if f > 0 else math.nan,
         lambda raw: 440 * 2 ** ((raw - 69) / 12),
     ),
-    "percent": ({"%": 1.0}, lambda p: p / 100, lambda raw: raw * 100),
-    "decibel": ({"db": 1.0}, lambda d: d, lambda raw: raw),
-    "seconds": ({"s": 1.0, "ms": 0.001}, None, None),  # raw mapping differs per parameter: SECONDS_PARAMS
+    "scale": lambda factor: (lambda p: p / factor, lambda raw: raw * factor),
+    "identity": lambda _: (lambda d: d, lambda raw: raw),
+    "cbrt": lambda _: (lambda s: math.cbrt(s) if s >= 0 else math.nan, lambda raw: raw**3),
+    "log10": lambda _: (lambda s: math.log10(s) if s > 0 else math.nan, lambda raw: 10**raw),
 }
-# Seconds parameters: the raw<->seconds mapping is not uniform, so only (module type, parameter) pairs whose default
-# raw/display pair fits one mapping exactly are writable by display. Natively measured on 6.1.4 (notes: grid_notes_6_1_4.json);
-# every row is (mapping, default raw, default display) and is re-checked against the bundled schema by a test.
-SECONDS_SCALES: dict[str, tuple[Converter, Converter]] = {
-    "cbrt": (lambda s: math.cbrt(s) if s >= 0 else math.nan, lambda raw: raw**3),
-    "log10": (lambda s: math.log10(s) if s > 0 else math.nan, lambda raw: 10**raw),
+# natural = what the display text measures (Hz, percent points, dB); seconds has no uniform raw mapping: SECONDS_PARAMS.
+DISPLAY_UNITS: dict[str, tuple[dict[str, float], Converter | None, Converter | None]] = {
+    name: (unit["suffixes"], *FORMULAS[unit["formula"]](unit.get("factor", 1.0)))
+    for name, unit in _DATA["units"].items()
 }
+DISPLAY_UNITS["seconds"] = (_DATA["seconds"]["suffixes"], None, None)
+# Only (module type, parameter) pairs whose default raw/display pair fits one mapping exactly are writable by display,
+# natively measured on 6.1.4 and re-checked against the bundled schema by a test: (mapping, default raw, default display).
 SECONDS_PARAMS: dict[tuple[str | None, str], tuple[str, float, str]] = {
-    ("AD", "ATTACK"): ("cbrt", 0.2717, "20.1 ms"),
-    ("AD", "DECAY"): ("cbrt", 0.694, "334 ms"),
-    ("ADSR", "ATTACK"): ("cbrt", 0.2217, "10.9 ms"),
-    ("ADSR", "DECAY"): ("cbrt", 0.944, "841 ms"),
-    ("ADSR", "RELEASE"): ("cbrt", 0.63, "250 ms"),
-    ("AR", "ATTACK"): ("cbrt", 0.2717, "20.1 ms"),
-    ("AR", "RELEASE"): ("cbrt", 0.63, "250 ms"),
-    ("Average", "TIME"): ("log10", -1.523, "30.0 ms"),
-    ("Curves", "TIME"): ("log10", -2.0, "10.0 ms"),
-    ("CV Out", "SMOOTH"): ("log10", -3.0, "1.00 ms"),
-    ("CV Pitch Out", "SMOOTH"): ("log10", -3.0, "1.00 ms"),
-    ("Delay", "TIME"): ("cbrt", 0.5, "125 ms"),
-    ("Follower", "TIME"): ("log10", -1.456, "35.0 ms"),
-    ("Follower RF", "ATTACK"): ("log10", -2.304, "4.97 ms"),
-    ("Follower RF", "DECAY"): ("log10", -0.376, "421 ms"),
-    ("Freq Shift+", "DELAYTIME"): ("cbrt", 0.5, "125 ms"),
-    ("Gate Length", "LENGTH"): ("log10", -1.301, "50.0 ms"),
-    ("Lag", "TIME"): ("log10", -1.301, "50.0 ms"),
-    ("Logic Delay", "DELAY"): ("log10", -0.921, "120 ms"),
-    ("Mod Delay", "TIME"): ("cbrt", 0.6694, "300 ms"),
-    ("Pluck", "ATTACK"): ("cbrt", 0.2217, "10.9 ms"),
-    ("Pluck", "DECAY"): ("cbrt", 0.794, "501 ms"),
-    ("Pluck", "RELEASE"): ("cbrt", 0.6251, "244 ms"),
-    ("Sampler", "GRAIN_SIZE"): ("log10", -0.87, "135 ms"),
-    ("Segments", "TIME"): ("log10", -2.0, "10.0 ms"),
-    ("Slope ↗", "TIME"): ("log10", -2.825, "1.50 ms"),
-    ("Slope ↘", "TIME"): ("log10", -1.0, "100 ms"),
-    ("Velo Mult", "TIME"): ("log10", -3.02, "0.95 ms"),
-    ("Ø Lag", "RATE"): ("log10", -1.5229, "30.0 ms"),
+    (row["type"], row["parameter"]): (row["formula"], row["raw"], row["display"]) for row in _DATA["seconds"]["params"]
 }
-# Seconds parameters deliberately absent (default pair fits neither mapping, or only by the raw 1.0 = 1 s coincidence):
-# none; Comb DECAY, Gate Repeat RATE, Long Delay TIME, Audio Out HOLD_TIME and the linear All-pass Delay TIME are in raw_scales.
-_TEXT = re.compile(r"([+-]?(?:\d+(?:\.(\d*))?|\.(\d+)))\s*([A-Za-z%]+)", re.ASCII)
+SECONDS_SCALES: dict[str, tuple[Converter, Converter]] = {
+    formula: FORMULAS[formula](1.0) for formula, _, _ in SECONDS_PARAMS.values()
+}
+_TEXT = re.compile(_DATA["quantity"]["pattern"], re.ASCII)
+_TOLERANCE_RELATIVE: float = _DATA["quantity"]["toleranceRelative"]
+_TOLERANCE_ABSOLUTE: float = _DATA["quantity"]["toleranceAbsolute"]
 _JAVA_TRIM = "".join(map(chr, range(33)))
 
 
@@ -99,7 +76,7 @@ def parse_quantity(unit: str, text: str | None) -> tuple[float, float] | None:
 
 
 def _near_quantity(shown: tuple[float, float], natural: float) -> bool:
-    return abs(shown[0] - natural) <= shown[1] * 1.000001 + 1e-12
+    return abs(shown[0] - natural) <= shown[1] * _TOLERANCE_RELATIVE + _TOLERANCE_ABSOLUTE
 
 
 def display_matches(wanted: str, live: str | None, unit: str | None = None) -> bool:

@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "build"
 SOURCES = ROOT / "extension/src/main/java"
 DEPS_TABLE = ROOT / "extension/deps.toml"
+SHARED = ROOT / "src/bitwig_agent/shared"
 LINUX_HOST_JAR = "/opt/bitwig-studio/bin/bitwig.jar"
 
 
@@ -98,11 +99,14 @@ def compile_java(sources, target, classpath, lint="-Xlint:all"):
     )
 
 
-def write_protocol_bundle(directory):
-    """Generated from the Python protocol into a classes directory; never committed."""
+def write_resources(directory):
+    """The generated protocol bundle and the shared data files, into a classes directory; never committed."""
     subprocess.run(
         [sys.executable, "-m", "bitwig_agent.protocol", "export", "--out", str(directory / "protocol.json")], check=True
     )
+    (directory / "shared").mkdir(parents=True, exist_ok=True)
+    for path in sorted(SHARED.glob("*.json")):
+        shutil.copyfile(path, directory / "shared" / path.name)
 
 
 def build():
@@ -115,7 +119,7 @@ def build():
     if classes.exists():
         shutil.rmtree(classes)
     compile_java(sorted(SOURCES.rglob("*.java")), classes, [api, dependency])
-    write_protocol_bundle(classes)
+    write_resources(classes)
     resources = ROOT / "extension/src/main/resources"
     service = resources / "META-INF/services/com.bitwig.extension.ExtensionDefinition"
     if not service.is_file():

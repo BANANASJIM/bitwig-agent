@@ -83,7 +83,7 @@ async def exercise(folder: Path, api: Path) -> None:  # noqa: PLR0915
         [gson, api],
         build.lint_flag(api),
     )
-    build.write_protocol_bundle(folder)
+    build.write_resources(folder)
     process = await asyncio.create_subprocess_exec(
         "java",
         "-cp",

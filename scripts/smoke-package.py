@@ -17,6 +17,8 @@ from pathlib import Path
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+from bitwig_agent.grid.bundled import bundled_schema, host_version, shared
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -25,6 +27,8 @@ def main() -> None:
     installed_version = version("bitwig-agent")
     if args.expected_version is not None and installed_version != args.expected_version:
         raise RuntimeError(f"Expected {args.expected_version}, installed {installed_version}")
+    if bundled_schema()["hostVersion"] != host_version() or not shared("display")["units"]:
+        raise RuntimeError("Bundled shared data does not match the host target")
     executables = Path(sys.executable).parent
     installer = executables / "bitwig-agent-install"
 

@@ -1,5 +1,7 @@
 package dev.bitwigagent;
 
+import com.google.gson.JsonObject;
+import dev.bitwigagent.core.SharedData;
 import java.io.InputStream;
 import java.lang.reflect.*;
 import java.nio.file.*;
@@ -7,8 +9,9 @@ import java.security.MessageDigest;
 
 /** One loaded-binary gate and document dispatcher; domain bindings remain independent. */
 final class Bitwig614Runtime {
-    static final String VERSION = "6.1.4";
-    static final String SHA256 = "77a50264156a9f79c925fa85e0456720ce157bfa10e2503d6049e2f733af4ba6";
+    private static final JsonObject TARGET = SharedData.read("host");
+    static final String VERSION = TARGET.get("version").getAsString();
+    static final String SHA256 = TARGET.get("jarSha256").getAsString();
     private final ClassLoader loader;
     private final String hostVersion;
     private Path hostJar;

@@ -391,19 +391,20 @@ final class Bitwig614ModulatorEditAccess implements ModulatorEditor.Access {
         if (!(value instanceof List<?>))
             throw Errors.notApplied(ErrorCode.MODULATOR_UNAVAILABLE, "Native catalog is not a list.");
         Map<String, ModulatorEditor.Type> byName = new LinkedHashMap<>();
-        List<ModulatorEditor.Type> exact = new ArrayList<>(), loose = new ArrayList<>();
+        List<ModulatorEditor.Type> types = new ArrayList<>();
         for (Object entry : (List<?>) value) {
             if (!"MODULATOR".equals(String.valueOf(bindings.invoke(entryKind, entry)))) continue;
             ModulatorEditor.Type type = new ModulatorEditor.Type(
                     (UUID) bindings.invoke(entryId, entry), text(bindings.invoke(entryName, entry)));
-            if (wantedId != null ? wantedId.equals(type.id) : wantedName.equals(type.name)) exact.add(type);
-            if (wantedName != null && GridNames.same(type.name, wantedName)) loose.add(type);
+            types.add(type);
             byName.putIfAbsent(type.name, type);
         }
-        if (exact.size() == 1) return exact.get(0);
-        if (exact.size() > 1 || loose.size() > 1)
+        List<ModulatorEditor.Type> hits = wantedId != null
+                ? types.stream().filter(type -> wantedId.equals(type.id)).collect(java.util.stream.Collectors.toList())
+                : GridNames.resolve(types, type -> type.name, wantedName);
+        if (hits.size() == 1) return hits.get(0);
+        if (hits.size() > 1)
             throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "Modulator type name is ambiguous; pass typeId.");
-        if (loose.size() == 1) return loose.get(0);
         throw Errors.notApplied(
                 ErrorCode.TARGET_NOT_FOUND,
                 "No modulator type " + (wantedId != null ? wantedId : "'" + wantedName + "'")

@@ -24,10 +24,6 @@ def invalid_spec(problems: list[str]) -> BridgeError:
     )
 
 
-def norm(text: str) -> str:
-    return "".join(ch for ch in text.casefold() if ch.isalnum())
-
-
 def near(word: str, choices: Iterable[str]) -> str:
     close = difflib.get_close_matches(word, list(choices), n=4, cutoff=0.5)
     return f" Did you mean: {', '.join(map(repr, close))}?" if close else ""
