@@ -2,7 +2,8 @@ package dev.bitwigagent;
 
 /** Launcher cursor operations bind the global editor selection for their whole life. */
 final class SelectionLease {
-    private HostOperation owner;
+    /** Volatile: a native select checks it again on the document thread right before it moves the selection. */
+    private volatile HostOperation owner;
 
     boolean held() {
         return owner != null && !owner.result.isDone();

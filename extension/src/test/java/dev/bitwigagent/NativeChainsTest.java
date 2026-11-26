@@ -163,6 +163,22 @@ public final class NativeChainsTest {
     }
 
     @Test
+    void deletingAChainsOnlyDeviceLeavesTheEmptyChainListed() {
+        Fixture x = new Fixture();
+        JsonObject deleted = x.call(x.f.chains(), "devices.delete", params("target", x.rack.deviceRef(1, 0)));
+        assertEquals("applied", deleted.get("outcome").getAsString(), "a pad keeps its chain once emptied");
+        assertEquals(0, deleted.get("afterCount").getAsInt());
+        JsonObject listed = x.call(x.f.chains(), "chains.list", params("parent", x.rack.ref()));
+        assertEquals(
+                0,
+                listed.getAsJsonArray("chains")
+                        .get(1)
+                        .getAsJsonObject()
+                        .get("deviceCount")
+                        .getAsInt());
+    }
+
+    @Test
     void aBrokenBindingIsNativeUnavailableBeforeDispatchAndUnknownAfter() {
         Fixture x = new Fixture();
         x.f.natives.broken = new IllegalStateException("descriptor drift");

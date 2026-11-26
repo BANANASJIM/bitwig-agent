@@ -239,7 +239,13 @@ final class NativeChains {
 
         /** Right before the native call that changes the document: from here on a failure is an unknown outcome. */
         void dispatch() {
+            dispatch(() -> {});
+        }
+
+        /** {@link #dispatch()} after {@code guard}, the method's own safety check, runs once more right here. */
+        void dispatch(Runnable guard) {
             check.run();
+            guard.run();
             op.markDispatched();
         }
     }

@@ -111,7 +111,7 @@ final class DeviceModule implements HostModule {
             selection.requireFree();
             chains.run(op, target, walk -> {
                 NativeChains.Device device = walk.device(target, true);
-                walk.dispatch();
+                walk.dispatch(selection::requireFree);
                 walk.a.select(device.device);
                 JsonObject result = Results.outcome(Outcome.SENT);
                 result.add("ref", device.ref);

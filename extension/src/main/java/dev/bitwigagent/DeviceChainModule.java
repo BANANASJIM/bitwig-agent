@@ -119,13 +119,17 @@ final class DeviceChainModule implements HostModule {
             case "devices.delete":
                 if (inChain) {
                     transportSafety.requirePlaybackSafe();
-                    nested.delete(op, p.getAsJsonObject("target"));
+                    nested.delete(op, p.getAsJsonObject("target"), transportSafety::requirePlaybackSafe);
                 } else delete(op, p.getAsJsonObject("target"));
                 return;
             default:
                 if (inChain) {
                     transportSafety.requirePlaybackSafe();
-                    nested.move(op, p.getAsJsonObject("target"), p.getAsJsonObject("to"));
+                    nested.move(
+                            op,
+                            p.getAsJsonObject("target"),
+                            p.getAsJsonObject("to"),
+                            transportSafety::requirePlaybackSafe);
                 } else move(op, p.getAsJsonObject("target"), p.getAsJsonObject("to"));
         }
     }

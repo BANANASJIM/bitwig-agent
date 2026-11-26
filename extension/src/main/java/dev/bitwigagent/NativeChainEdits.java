@@ -111,14 +111,14 @@ final class NativeChainEdits {
 
     // ---------------------------------------------------------------- delete
 
-    void delete(HostOperation op, JsonObject target) {
+    void delete(HostOperation op, JsonObject target, Runnable safety) {
         chains.edit(op, target, walk -> {
             NativeChains.Device device = walk.device(target, true);
             List<Object> before = device.chain.devices;
             JsonArray listed = summaries(walk, before);
             JsonObject deleted = listed.get(device.index).getAsJsonObject();
             JsonObject parent = device.chain.ref;
-            walk.dispatch();
+            walk.dispatch(safety);
             walk.a.delete(device.device);
             return new NativeChains.Verify() {
                 @Override
@@ -143,7 +143,7 @@ final class NativeChainEdits {
 
     // ---------------------------------------------------------------- move
 
-    void move(HostOperation op, JsonObject target, JsonObject to) {
+    void move(HostOperation op, JsonObject target, JsonObject to, Runnable safety) {
         chains.edit(op, target, walk -> {
             NativeChains.Device device = walk.device(target, true);
             NativeChains.Chain chain = device.chain;
@@ -162,7 +162,7 @@ final class NativeChainEdits {
             JsonArray listed = summaries(walk, before);
             JsonObject moved = listed.get(from).getAsJsonObject().deepCopy();
             moved.addProperty("toIndex", dest);
-            walk.dispatch();
+            walk.dispatch(safety);
             walk.a.move(device.device, chain.chain, insertion);
             return new NativeChains.Verify() {
                 @Override

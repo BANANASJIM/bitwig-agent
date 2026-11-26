@@ -130,7 +130,7 @@ Argument names are strict: there are no aliases. An unknown field gets a hint (c
 
 ### Chains and the devices inside them
 
-A chain ref names one chain of a layer device (Instrument Layer, FX Layer, the Selectors, a Drum Machine pad that holds devices) by its layer UUID, so it survives reordering of the layers; the chain `name` is compared only when the chain itself is the target. A device inside a chain is addressed by `{kind:"device", chain, index, name}`; its `chain` may itself belong to a device inside a chain.
+A chain ref names one chain of a layer device (Instrument Layer, FX Layer, the Selectors, a Drum Machine pad that holds devices) by its layer UUID, so it survives reordering of the layers. The UUID names the host's chain object, not what is in it: loading another preset onto the layer device keeps the existing chains and their UUIDs, so a ref read before the load still resolves to the new content (a device ref inside it is still compared by index and name); the chain `name` is compared only when the chain itself is the target. A device inside a chain is addressed by `{kind:"device", chain, index, name}`; its `chain` may itself belong to a device inside a chain.
 
 | Method | Exact params |
 |---|---|

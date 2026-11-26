@@ -578,7 +578,6 @@ final class ParameterModule implements HostModule, ParameterResolver.DirectParam
 
     private boolean acceptParameterObservation(ParameterSource source) {
         // Registration identifies a fixed proxy, not the originating physical device.
-        // Nested sources that physically rebound stay closed; a callback is not a barrier.
         return source.identity.acceptDirectObservation();
     }
 
