@@ -61,11 +61,11 @@ assert_test_instance() {
   # A just-started host answers status before the project settles; writes are refused until projectReady (0.4 has no flag).
   for tries in $(seq 1 60); do
     status="$(rd "$dialect" status '{}' 2>/dev/null)" || status=
-    [[ -n "$status" ]] && [[ "$(jq -r '.projectReady // true' <<<"$status")" == true ]] && break
+    [[ -n "$status" ]] && [[ "$(jq -r 'if .projectReady == false then false else true end' <<<"$status")" == true ]] && break
     sleep 2
   done
   [[ -n "$status" ]] || die "status failed: is the test Bitwig up on :1?"
-  [[ "$(jq -r '.projectReady // true' <<<"$status")" == true ]] || die "project never became ready"
+  [[ "$(jq -r 'if .projectReady == false then false else true end' <<<"$status")" == true ]] || die "project never became ready"
   [[ "$(jq -r '.instance.display' <<<"$status")" == ":1" ]] || die "status.instance.display is not :1: refusing to touch this instance"
   [[ "$(jq -r '.projectName' <<<"$status")" == "BWA Test" ]] || die "status.projectName is not 'BWA Test': refusing"
 }
