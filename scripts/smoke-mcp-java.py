@@ -17,6 +17,7 @@ from pathlib import Path
 import bound_parity
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from tooling import host_paths
 
 from bitwig_agent.protocol import CLIENT_SIDE, TOOLS
 
@@ -114,7 +115,7 @@ async def exercise(folder: Path, api: Path) -> None:  # noqa: PLR0915
                 examples = TOOLS[method].examples
                 require(bool(examples), f"Missing executable example for {method}")
                 for example in examples:
-                    params = dict(example)
+                    params = host_paths(example)
                     if "expectedDeviceName" in params:
                         params["expectedDeviceName"] = "音色 \u03b1"
                     # Preserve omitted optional fields; the real JVM independently

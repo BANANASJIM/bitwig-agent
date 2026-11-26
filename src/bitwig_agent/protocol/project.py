@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from pathlib import PurePosixPath
 from typing import Self
 
 from pydantic import Field, model_validator
@@ -40,8 +39,7 @@ class ProjectSaveAsArgs(StrictModel):
 
     @model_validator(mode="after")
     def validate_path(self) -> Self:
-        validate_local_path(self.path)
-        path = PurePosixPath(self.path)
+        path = validate_local_path(self.path)
         if len(path.parts) < MIN_PROJECT_PATH_PARTS or not path.name.endswith(PROJECT_EXTENSION):
             raise ValueError(f"path must name a {PROJECT_EXTENSION} file inside a folder")
         name = path.name[: -len(PROJECT_EXTENSION)]

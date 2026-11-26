@@ -3,12 +3,16 @@
 import asyncio
 import importlib.util
 import json
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from mcp.types import CallToolResult, TextContent
+
+if sys.platform != "linux":
+    pytest.skip("smoke-native.py needs Linux /proc and xprop", allow_module_level=True)
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts/smoke-native.py"
 spec = importlib.util.spec_from_file_location("native_smoke", SCRIPT)

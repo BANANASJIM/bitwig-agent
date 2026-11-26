@@ -299,7 +299,7 @@ public final class DeviceModuleTest {
             p = file(path);
             assertRpcError("invalid_params", f.request("devices.insert", p));
         }
-        p = file("/tmp/device.bwpreset");
+        p = file(TestPaths.absolute("/tmp/device.bwpreset"));
         p.addProperty("id", NATIVE);
         assertRpcError("invalid_params", f.request("devices.insert", p));
         p = new JsonObject();
@@ -457,7 +457,7 @@ public final class DeviceModuleTest {
             assertTrue(f.lastArgument.toString().equals(item[1]), "identifier passed without guessing or expansion");
         }
         Fake f = new Fake();
-        String literal = "/tmp/Device $(not-a-command).bwpreset";
+        String literal = TestPaths.absolute("/tmp/Device $(not-a-command).bwpreset");
         f.call("devices.insert", file(literal));
         assertTrue(
                 f.lastInsertion.equals("insertFile") && f.lastArgument.equals(literal),

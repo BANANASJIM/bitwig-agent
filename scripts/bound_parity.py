@@ -12,10 +12,12 @@ import asyncio
 import copy
 import json
 import math
+import os
 import re
 from typing import Any
 
 from pydantic import ValidationError
+from tooling import host_paths
 
 from bitwig_agent.protocol import CLIENT_SIDE, TOOLS
 from bitwig_agent.protocol.base import MAX_BEAT
@@ -80,11 +82,20 @@ MAX_BMP_CODEPOINT = 0xFFFF
 ASTRAL_UTF16_UNITS = 2
 
 
+ROOT = os.path.abspath(os.sep)
+
+
+def utf16_units(char):
+    return ASTRAL_UTF16_UNITS if ord(char) > MAX_BMP_CODEPOINT else 1
+
+
 def as_path(value):
     """Make a vector string an absolute path of the same UTF-16 length."""
-    if not value:
-        return value
-    return "/a" + value[1:] if ord(value[0]) > MAX_BMP_CODEPOINT else "/" + value[1:]
+    skipped = replaced = 0
+    while replaced < len(ROOT) and skipped < len(value):
+        replaced += utf16_units(value[skipped])
+        skipped += 1
+    return ROOT + "a" * (replaced - len(ROOT)) + value[skipped:] if value else value
 
 
 def file_insert(params, value):
@@ -95,15 +106,15 @@ def file_insert(params, value):
 
 def project_path(params, value):
     """A final <dir>/S/S.bwproject path of the vector's UTF-16 length (same astral-character mix)."""
-    tail = "/S/S.bwproject"
-    body = len(value.encode("utf-16-le", errors="surrogatepass")) // 2 - len(tail) - 1
+    tail = f"{os.sep}S{os.sep}S.bwproject"
+    body = len(value.encode("utf-16-le", errors="surrogatepass")) // 2 - len(tail) - len(ROOT)
     if body > 0:
         filler = (
             "\U0001f600" * (body // 2) + "a" * (body % 2)
             if any(ord(c) > MAX_BMP_CODEPOINT for c in value)
             else "a" * body
         )
-        params["path"] = "/" + filler + tail
+        params["path"] = ROOT + filler + tail
 
 
 def window_fix(field):
@@ -366,7 +377,7 @@ def cases(method):
     schema = spec.model.model_json_schema()
     defs = schema.get("$defs", {})
     sent = {key for example in spec.examples for key in example}
-    for example in spec.examples:
+    for example in map(host_paths, spec.examples):
         for path, node in leaves(schema, defs):
             name = ".".join(map(str, path))
             top_level_gap = len(path) == 1 and path[0] not in example

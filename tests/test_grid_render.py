@@ -160,7 +160,7 @@ def test_validation_and_exposure(tmp_path):
             f"trackId={TRACK}",
             "deviceIndex=0",
             "expectedDeviceName=Poly Grid",
-            f"outPath={tmp_path}/a.svg",
+            f"outPath={tmp_path / 'a.svg'}",
             "overwrite=true",
         ],
         None,

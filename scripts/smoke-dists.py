@@ -7,8 +7,8 @@ Defaults to every wheel and sdist in dist/. Run through the pixi environment who
 
 import argparse
 import subprocess
-import sys
 import tempfile
+import venv
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -30,8 +30,10 @@ def main() -> None:
         smoke += ["--expected-version", args.expected_version]
     for dist in dists:
         with tempfile.TemporaryDirectory(prefix="package-consumer-") as consumer:
-            python = Path(consumer) / "venv" / "bin" / "python"
-            subprocess.run([sys.executable, "-m", "venv", str(Path(consumer) / "venv")], check=True)
+            builder = venv.EnvBuilder(with_pip=True)
+            environment = Path(consumer) / "venv"
+            builder.create(environment)
+            python = builder.ensure_directories(environment).env_exe
             # No cache: an sdist must really build, not reuse a wheel.
             requirements = [str(dist), *([f"mcp=={args.mcp}"] if args.mcp else [])]
             subprocess.run([str(python), "-m", "pip", "install", "--no-cache-dir", *requirements], check=True)

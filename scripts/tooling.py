@@ -1,6 +1,7 @@
 """Checksum-verified downloads of pinned build and lint tools into build/deps."""
 
 import hashlib
+import os
 import tempfile
 import urllib.request
 from pathlib import Path
@@ -28,3 +29,14 @@ def download_verified(url: str, sha256: str, target: Path, limit: int) -> Path:
     finally:
         temporary.unlink(missing_ok=True)
     return target
+
+
+def host_paths(value):
+    """Examples spell absolute paths POSIX-style; the host accepts only its own absolute spelling."""
+    if isinstance(value, str) and value.startswith("/"):
+        return os.path.abspath(value)
+    if isinstance(value, dict):
+        return {key: host_paths(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [host_paths(item) for item in value]
+    return value

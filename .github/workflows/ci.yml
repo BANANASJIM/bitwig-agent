@@ -76,6 +76,30 @@ jobs:
       - name: Run the Python/Java fixture
         run: pixi run fixture
 
+  check:
+    name: Check / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm, windows-latest, macos-latest, macos-15-intel]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: prefix-dev/setup-pixi@9936258fee697aff89b3fed6ca1f80a382ef694e # v0.11.3
+        with:
+          pixi-version: v0.84.2
+          environments: default
+          locked: true
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: build/deps
+          key: check-deps-${{ matrix.os }}-${{ hashFiles('scripts/lint.py', 'extension/deps.toml') }}
+      - name: Run lint, offline tests, Java tests and fixture
+        run: pixi run check
+
   package:
     name: Package / Python ${{ matrix.python }} / MCP ${{ matrix.mcp }}
     runs-on: ubuntu-24.04
