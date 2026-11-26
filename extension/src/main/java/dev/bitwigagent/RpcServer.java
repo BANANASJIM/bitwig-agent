@@ -16,7 +16,8 @@ public final class RpcServer implements AutoCloseable {
         CompletableFuture<JsonObject> handle(String method, JsonObject params, long deadlineNanos);
     }
 
-    public static final int MAX_BYTES = 1024 * 1024;
+    public static final int MAX_REQUEST_BYTES = 1024 * 1024;
+    public static final int MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
     private static final Set<String> METHODS = HostBridge.supportedMethods();
     private static final Set<String> FIELDS =
             Collections.unmodifiableSet(new HashSet<>(Arrays.asList("id", "method", "params", "timeoutMs")));
@@ -225,7 +226,7 @@ public final class RpcServer implements AutoCloseable {
             int b = input.read();
             if (b == -1) throw invalid("Request must end with newline");
             if (b == '\n') break;
-            if (bytes.size() >= MAX_BYTES) throw invalid("Request exceeds 1 MiB");
+            if (bytes.size() >= MAX_REQUEST_BYTES) throw invalid("Request exceeds " + mebibytes(MAX_REQUEST_BYTES));
             bytes.write(b);
         }
         String text = StandardCharsets.UTF_8
@@ -277,18 +278,24 @@ public final class RpcServer implements AutoCloseable {
         }
     }
 
+    private static String mebibytes(int bytes) {
+        return (bytes >> 20) + " MiB";
+    }
+
     private static void send(Socket socket, JsonObject response) throws IOException {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         OutputStream bounded = new FilterOutputStream(bytes) {
             @Override
             public void write(int b) throws IOException {
-                if (bytes.size() >= MAX_BYTES) throw new IOException("Response exceeds 1 MiB");
+                if (bytes.size() >= MAX_RESPONSE_BYTES)
+                    throw new IOException("Response exceeds " + mebibytes(MAX_RESPONSE_BYTES));
                 out.write(b);
             }
 
             @Override
             public void write(byte[] b, int off, int len) throws IOException {
-                if ((long) bytes.size() + len > MAX_BYTES) throw new IOException("Response exceeds 1 MiB");
+                if ((long) bytes.size() + len > MAX_RESPONSE_BYTES)
+                    throw new IOException("Response exceeds " + mebibytes(MAX_RESPONSE_BYTES));
                 out.write(b, off, len);
             }
         };

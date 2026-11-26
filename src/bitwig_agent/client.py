@@ -14,7 +14,9 @@ from typing import Any
 from bitwig_agent.errors import BridgeError, bridge_error
 from bitwig_agent.protocol import CLIENT_SIDE, TOOLS, validate_call
 
-MAX_BYTES = 1024 * 1024
+MAX_REQUEST_BYTES = 1024 * 1024
+MAX_RESPONSE_BYTES = 16 * 1024 * 1024
+RESPONSE_TOO_LARGE = f"Response exceeds {MAX_RESPONSE_BYTES >> 20} MiB"
 METHODS = frozenset(TOOLS) - CLIENT_SIDE
 
 
@@ -95,8 +97,8 @@ class BridgeClient:
         request_id = uuid.uuid4().hex
         request = {"id": request_id, "method": method, "params": params, "timeoutMs": timeout_ms}
         payload = (json.dumps(request, allow_nan=False, separators=(",", ":")) + "\n").encode("utf-8")
-        if len(payload) > MAX_BYTES:
-            raise ValueError("Request exceeds 1 MiB")
+        if len(payload) > MAX_REQUEST_BYTES:
+            raise ValueError(f"Request exceeds {MAX_REQUEST_BYTES >> 20} MiB")
 
         writer = None
         dispatched = False
@@ -104,13 +106,13 @@ class BridgeClient:
             # The host deadline bounds mutations. The extra second only lets its
             # final response reach us; it never extends or replays the request.
             async with asyncio.timeout(timeout_ms / 1000 + self.response_grace_seconds):
-                reader, writer = await asyncio.open_connection("127.0.0.1", self.port, limit=MAX_BYTES)
+                reader, writer = await asyncio.open_connection("127.0.0.1", self.port, limit=MAX_RESPONSE_BYTES)
                 dispatched = True
                 writer.write(payload)
                 await writer.drain()
                 raw = await reader.readuntil(b"\n")
-                if len(raw) > MAX_BYTES:
-                    raise ValueError("Response exceeds 1 MiB")
+                if len(raw) > MAX_RESPONSE_BYTES:
+                    raise ValueError(RESPONSE_TOO_LARGE)
                 response = load_json(raw.decode("utf-8"))
                 if not isinstance(response, dict) or response.get("id") != request_id:
                     raise ValueError("Response id does not match request")
@@ -144,8 +146,8 @@ class BridgeClient:
             outcome = "unknown" if dispatched else "not_dispatched"
             code = "deadline_exceeded" if isinstance(exc, TimeoutError) else "transport_error"
             hint = ""
-            if method == "grid.get" and (isinstance(exc, asyncio.LimitOverrunError) or "exceeds 1 MiB" in str(exc)):
-                hint = " The grid.get response exceeded the 1 MiB client cap: lower moduleLimit (64 works with includeParameters) or set includeParameters=false."
+            if method == "grid.get" and (isinstance(exc, asyncio.LimitOverrunError) or RESPONSE_TOO_LARGE in str(exc)):
+                hint = f" The grid.get response exceeded the {MAX_RESPONSE_BYTES >> 20} MiB client cap: lower moduleLimit (64 works with includeParameters) or set includeParameters=false."
             raise bridge_error(
                 code,
                 f"{type(exc).__name__}: {exc}.{hint} Inspect host state before another write; request was not retried.",

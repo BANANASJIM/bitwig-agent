@@ -29,7 +29,6 @@ final class GridInsertionWriter {
         void execute(Runnable event);
     }
 
-    static final int MAX_BATCH = 16;
     /** Exactly one of typeId or typeName; typeName is resolved against the native catalog before anything is loaded. */
     static final class Request {
         final UUID typeId;
@@ -66,11 +65,8 @@ final class GridInsertionWriter {
 
         static List<Request> parseBatch(JsonObject p) {
             JsonElement modules = p.get("modules");
-            if (!modules.isJsonArray()
-                    || modules.getAsJsonArray().size() < 1
-                    || modules.getAsJsonArray().size() > MAX_BATCH)
-                throw Errors.notApplied(
-                        ErrorCode.INVALID_PARAMS, "modules must be an array of 1.." + MAX_BATCH + " insertions.");
+            if (!modules.isJsonArray() || modules.getAsJsonArray().size() < 1)
+                throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "modules must be a non-empty array of insertions.");
             List<Request> out = new ArrayList<>();
             for (JsonElement element : modules.getAsJsonArray()) {
                 if (!element.isJsonObject())
