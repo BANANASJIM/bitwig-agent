@@ -62,16 +62,13 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
         targets = new NativeDeviceTarget(new Bitwig614DeviceTargetAccess(a));
         a.requireModelThreadAvailable();
         resolver = new Bitwig614TrackResolver(a);
-        Class<?> trackType = a.type(M + "zwV"), groupIface = a.type(I + "kWY");
+        Class<?> trackType = a.type(M + "zwV");
         channelType = a.type("xJo");
         projectType = a.type(M + "g2L");
         portsType = a.type(I + "pHd");
         destinationSelector = a.type("j2s");
         sourceSelector = a.type("lbA");
-        Class<?> destinationBus = a.type("twn"),
-                bus = a.type("w3i"),
-                named = a.type("bCo"),
-                identity = a.type(I + "RYd");
+        Class<?> destinationBus = a.type("twn"), bus = a.type("w3i"), named = a.type("bCo");
         sourceBus = a.type("qy");
         audioDestination = a.type("DfX");
         noteDestination = a.type("WIv");
@@ -89,10 +86,7 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
         Class<?> node = a.type(R + "oDc"), component = a.type("GjM"), labelled = a.type("PBl");
         // Ancestry the readback and kind mapping rely on (inspected 6.1.4 hierarchy).
         ancestry(channelType, trackType);
-        ancestry(channelType, a.type("ynF"));
-        ancestry(channelType, identity);
-        ancestry(a.type(M + "ruS"), groupIface);
-        ancestry(a.type(M + "ruS"), trackType);
+        ancestry(channelType, resolver.channelType());
         ancestry(audioDestination, destinationBus);
         ancestry(noteDestination, destinationBus);
         ancestry(destinationBus, bus);
@@ -174,25 +168,22 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
 
     // ---- shared resolution ----
 
-    /** A bank track resolved to its native track model and channel; UUID and model thread corroborated. */
+    /** A bank track resolved to its native track model and its channel: the track itself or a group's alias. */
     private final class Channel {
         final RoutingModule.TrackRef ref;
         final Object track, channel;
 
         Channel(RoutingModule.TrackRef ref) {
             this.ref = ref;
-            track = resolver.track(ref.proxy, ref.id);
+            track = resolver.resolve(
+                    ref.proxy, ref.id, Bitwig614TrackResolver.Kind.CHANNEL, Bitwig614TrackResolver.Kind.GROUP);
+            Object expected = resolver.kind(track) == Bitwig614TrackResolver.Kind.GROUP ? resolver.alias(track) : track;
             Object found = a.invoke(Bitwig614RoutingAccess.this.channel, track);
-            if (!channelType.isInstance(found))
-                throw Errors.notApplied(a.unavailableCode(), "Native track has no mapped channel: " + ref.id);
-            if (resolver.isGroup(track) && resolver.alias(track) != found)
+            if (!channelType.isInstance(found) || found != expected)
                 throw Errors.notApplied(
-                        a.unavailableCode(), "Native group channel alias differs from its channel: " + ref.id);
+                        a.unavailableCode(),
+                        "Native track channel is neither the track nor its group alias: " + ref.id);
             a.requireModelThread(found);
-            if (!UUID.fromString(ref.id).equals(resolver.uuid(found)))
-                throw Errors.notApplied(
-                        ErrorCode.STALE_CONTEXT,
-                        "Native channel UUID differs from the requested trackId " + ref.id + ".");
             channel = found;
         }
 
@@ -202,8 +193,7 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
 
         String role() {
             if (track == channel) return "track";
-            if (resolver.isGroup(track)) return resolver.parent(track) == null ? "root_group" : "group";
-            return "other";
+            return resolver.parent(track) == null ? "root_group" : "group";
         }
 
         String nativeKind() {
@@ -264,7 +254,7 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
         JsonObject out = new JsonObject();
         out.addProperty("kind", kind);
         if (channelModel != null)
-            out.addProperty("trackId", resolver.uuid(channelModel).toString());
+            out.addProperty("trackId", resolver.identity(channelModel).toString());
         return out;
     }
 

@@ -1,5 +1,7 @@
 package dev.bitwigagent;
 
+import static dev.bitwigagent.Bitwig614TrackResolver.Kind.*;
+import static dev.bitwigagent.RpcAssert.assertNotApplied;
 import static org.junit.jupiter.api.Assertions.*;
 
 import java.net.URL;
@@ -9,12 +11,14 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
 /**
  * Binds the track resolver and every access class built on it against the classpath host jar. With the inspected
  * 6.1.4 jar each exact descriptor must resolve offline; with any other jar the bindings must fail closed with the
- * calling domain code. No native host runs and no bound method is invoked.
+ * calling domain code. No native host runs and no bound method is invoked. The kind and identity checks every
+ * access class shares are exercised directly.
  */
 public final class Bitwig614TrackResolverTest {
     // Any host class works as the runtime's host object: only its loader and CodeSource are read.
@@ -48,6 +52,41 @@ public final class Bitwig614TrackResolverTest {
         bind(runtime, ErrorCode.ROUTING_UNAVAILABLE, Bitwig614RoutingAccess::new);
         bind(runtime, RenderModule.UNAVAILABLE, Bitwig614RenderAccess::new);
         bind(runtime, ErrorCode.LAUNCHER_SETTINGS_UNAVAILABLE, Bitwig614LauncherSettingsAccess::new);
+    }
+
+    @Test
+    void identityMismatchOrAbsenceIsTheOneStaleError() {
+        String expected = "Track " + HostFixture.A + " no longer resolves to its native track; re-read tracks.list.";
+        for (UUID identity : new UUID[] {UUID.fromString(HostFixture.B), null}) {
+            RpcException error = assertNotApplied(
+                    ErrorCode.STALE_CONTEXT.wire(),
+                    () -> Bitwig614TrackResolver.requireIdentity(HostFixture.A, identity));
+            assertEquals(expected, error.getMessage());
+        }
+        assertEquals(expected, Bitwig614TrackResolver.stale(HostFixture.A).getMessage());
+        assertDoesNotThrow(() ->
+                Bitwig614TrackResolver.requireIdentity(HostFixture.A.toUpperCase(), UUID.fromString(HostFixture.A)));
+    }
+
+    @Test
+    void disallowedKindsShareOneUnsupportedWording() {
+        RpcException group = assertNotApplied(
+                ErrorCode.UNSUPPORTED_SCOPE.wire(),
+                () -> Bitwig614TrackResolver.requireKind(HostFixture.A, GROUP, CHANNEL));
+        assertEquals(
+                "Track " + HostFixture.A
+                        + " is a group track; this method supports audio/instrument/hybrid/effect/master tracks only.",
+                group.getMessage());
+        RpcException transport = assertNotApplied(
+                ErrorCode.UNSUPPORTED_SCOPE.wire(),
+                () -> Bitwig614TrackResolver.requireKind(HostFixture.B, OTHER, CHANNEL, GROUP));
+        assertEquals(
+                "Track " + HostFixture.B
+                        + " is a transport track; this method supports audio/instrument/hybrid/effect/master/group"
+                        + " tracks only.",
+                transport.getMessage());
+        assertDoesNotThrow(() -> Bitwig614TrackResolver.requireKind(HostFixture.A, GROUP, CHANNEL, GROUP));
+        assertDoesNotThrow(() -> Bitwig614TrackResolver.requireKind(HostFixture.A, CHANNEL, CHANNEL));
     }
 
     /** A host object from its own loader over the host jar and its sibling jars, which descriptor linking needs. */

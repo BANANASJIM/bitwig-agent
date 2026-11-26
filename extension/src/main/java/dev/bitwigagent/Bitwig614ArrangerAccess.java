@@ -16,10 +16,10 @@ final class Bitwig614ArrangerAccess implements ArrangerModule.Access {
     private final Bitwig614Runtime.Access a;
     private final NativeReadContext context;
     private final Bitwig614TrackResolver resolver;
-    private final Class<?> player, clipType, slotType, projectType, instrumentClip, audioClip, number, bool;
+    private final Class<?> clipType, slotType, projectType, instrumentClip, audioClip, number, bool;
     private final Method slotTarget, slotClip, lane, timeline, events, start, length, name, rename;
     private final Method setStart, setLength, insert, delete, newClip, newNote, addNote, noteTimeline, noteRows;
-    private final Method rowChannel, rowKey, velocity, copy, arrangeLength, slotLane, slotOwner, clipSlot, begin, end;
+    private final Method rowChannel, rowKey, velocity, copy, arrangeLength, slotLane, clipSlot, begin, end;
     private final Method timing, playStart, playStop, loop, loopEnabled, position, duration, doubleGet, boolGet;
     private final Object copyMode;
 
@@ -28,7 +28,7 @@ final class Bitwig614ArrangerAccess implements ArrangerModule.Access {
         context = new NativeReadContext(new Bitwig614ReadContextAccess(a));
         resolver = new Bitwig614TrackResolver(a);
         String proxy = "com.bitwig.flt.control_surface.proxy.", master = "com.bitwig.flt.document.core.master.";
-        player = a.type("ynF");
+        Class<?> player = resolver.channelType();
         clipType = a.type("zZi");
         slotType = a.type("TGq");
         projectType = a.type(master + "g2L");
@@ -83,7 +83,6 @@ final class Bitwig614ArrangerAccess implements ArrangerModule.Access {
                 async);
         arrangeLength = a.exactMethod(clipType, "Mb2", double.class, false);
         slotLane = a.exactMethod(slotType, "z3I", laneType, false);
-        slotOwner = a.exactMethod(a.type("PAJ"), "Z1C", a.type("com.bitwig.flt.document.core.iface.WSA"), false);
         clipSlot = a.exactMethod(clip, "kFU", a.type("Us"), false);
         begin = a.exactMethod(projectType, "cfM", void.class, false, String.class, boolean.class);
         end = a.exactMethod(projectType, "cfM", void.class, false, boolean.class);
@@ -123,10 +122,7 @@ final class Bitwig614ArrangerAccess implements ArrangerModule.Access {
             check.run();
             this.proxy = proxy;
             this.trackId = trackId;
-            track = resolver.player(
-                    proxy,
-                    trackId,
-                    "Arranger clips are supported on audio/instrument/hybrid tracks only (not group, effect or master tracks).");
+            track = resolver.resolve(proxy, trackId, Bitwig614TrackResolver.Kind.CHANNEL);
             lane = a.invoke(Bitwig614ArrangerAccess.this.lane, track);
             timeline = lane == null ? null : a.invoke(Bitwig614ArrangerAccess.this.timeline, lane);
             if (timeline == null)
@@ -391,7 +387,7 @@ final class Bitwig614ArrangerAccess implements ArrangerModule.Access {
         if (!slotType.isInstance(slot) || !clipType.isInstance(source) || a.invoke(clipSlot, source) != slot)
             throw Errors.notApplied(
                     ErrorCode.STALE_CONTEXT, "Launcher proxy does not resolve to one attached native clip slot.");
-        if (a.invoke(slotOwner, slot) != lane.track)
+        if (resolver.slotTrack(slot) != lane.track)
             throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Launcher slot belongs to another native track.");
         if (a.invoke(slotLane, slot) != lane.lane)
             throw Errors.notApplied(ErrorCode.UNSUPPORTED_SCOPE, "Launcher slot is not on the track's main clip lane.");

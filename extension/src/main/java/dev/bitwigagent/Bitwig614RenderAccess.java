@@ -21,24 +21,9 @@ import java.util.concurrent.CountDownLatch;
 final class Bitwig614RenderAccess implements RenderModule.Access {
     private final Bitwig614Runtime.Access a;
     private final Bitwig614TrackResolver resolver;
-    private final Class<?> projectType,
-            projectProxyType,
-            playerTrack,
-            groupTrack,
-            jobType,
-            exportJob,
-            bounceJob,
-            hostedDevice;
+    private final Class<?> projectType, projectProxyType, jobType, exportJob, bounceJob, hostedDevice;
     private final Method target, exportCall, bounceCall, current, engineActive, remote, blocked;
-    private final Method missingFiles,
-            missingCount,
-            devices,
-            chains,
-            chainDevices,
-            deviceState,
-            root,
-            groupMaster,
-            latch;
+    private final Method missingFiles, missingCount, devices, chains, chainDevices, deviceState, root, latch;
     private final Object pluginMissing;
     private final Map<String, Object> taps = new HashMap<>(), wavDepths = new HashMap<>(), flacDepths = new HashMap<>();
     private final Object mp3, vorbis, opus;
@@ -52,8 +37,6 @@ final class Bitwig614RenderAccess implements RenderModule.Access {
                 proxy = "com.bitwig.flt.control_surface.proxy.";
         projectType = a.type(master + "g2L");
         projectProxyType = a.type(proxy + "ProjectProxy");
-        playerTrack = a.type("xJo");
-        groupTrack = a.type(master + "SC");
         jobType = a.type("DLy");
         exportJob = a.type("kd");
         bounceJob = a.type("x2r");
@@ -109,8 +92,10 @@ final class Bitwig614RenderAccess implements RenderModule.Access {
         chainDevices = a.exactMethod(a.type(master + "kGc"), "qoU", List.class, false);
         Class<?> state = a.type("Lbl");
         deviceState = a.exactMethod(hostedDevice, "MIO", state, false);
-        root = a.exactMethod(projectType, "spd", a.type(master + "ruS"), false);
-        groupMaster = a.exactMethod(groupTrack, "Lqt", playerTrack, false);
+        Class<?> rootGroup = a.type(master + "ruS");
+        if (!resolver.groupType().isAssignableFrom(rootGroup))
+            throw new NoSuchMethodException("Inspected root track is not a group: " + rootGroup.getName());
+        root = a.exactMethod(projectType, "spd", rootGroup, false);
         latch = a.exactMethod(jobType, "LaE", CountDownLatch.class, false);
         pluginMissing = constant(state, "PLUGIN_MISSING");
         taps.put("pre_fx", constant(tap, "PRE_FX"));
@@ -179,34 +164,20 @@ final class Bitwig614RenderAccess implements RenderModule.Access {
                             + " missing plugin(s); Bitwig would ask for confirmation in a dialog. Fix them first.");
     }
 
-    /** Proxy to the rendered channel: a player track itself, a group's own master channel, or the project master (null). */
-    private Object channel(Object project, Object proxy, String id) {
+    /** Proxy to the rendered channel: a channel track itself, a group's master channel, or the project master (null). */
+    private Object channel(Object project, Object proxy, String id, Bitwig614TrackResolver.Kind... allowed) {
         Object channel;
-        if (proxy == null) channel = a.invoke(groupMaster, a.invoke(root, project));
-        else channel = trackChannel(proxy, id);
-        if (!playerTrack.isInstance(channel))
+        if (proxy == null) channel = resolver.alias(a.invoke(root, project));
+        else {
+            Object track = resolver.resolve(proxy, id, allowed);
+            channel = resolver.kind(track) == Bitwig614TrackResolver.Kind.GROUP ? resolver.alias(track) : track;
+        }
+        if (resolver.kind(channel) != Bitwig614TrackResolver.Kind.CHANNEL)
             throw Errors.notApplied(
                     ErrorCode.STALE_CONTEXT, "No native channel for " + (proxy == null ? "the master" : id) + ".");
         a.requireModelThread(channel);
         if (resolver.owner(channel, projectType) != project)
             throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Source " + id + " belongs to another project.");
-        return channel;
-    }
-
-    private Object trackChannel(Object proxy, String id) {
-        Object track = resolver.target(proxy);
-        UUID expected = UUID.fromString(id);
-        Object channel;
-        if (playerTrack.isInstance(track)) {
-            if (!expected.equals(resolver.uuid(track)))
-                throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Native track UUID differs from " + id + ".");
-            channel = track;
-        } else if (groupTrack.isInstance(track)) {
-            channel = a.invoke(groupMaster, track);
-            if (!playerTrack.isInstance(channel)
-                    || !(expected.equals(resolver.uuid(track)) || expected.equals(resolver.aliasUuid(channel))))
-                throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Native group track does not match " + id + ".");
-        } else throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Track proxy has no attached native track: " + id);
         return channel;
     }
 
@@ -236,7 +207,12 @@ final class Bitwig614RenderAccess implements RenderModule.Access {
         preflight(project);
         List<Object> channels = new ArrayList<>();
         for (int i = 0; i < sources.size(); i++) {
-            Object channel = channel(project, sources.get(i), ids.get(i));
+            Object channel = channel(
+                    project,
+                    sources.get(i),
+                    ids.get(i),
+                    Bitwig614TrackResolver.Kind.CHANNEL,
+                    Bitwig614TrackResolver.Kind.GROUP);
             if (channels.contains(channel))
                 throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "Two sources resolve to the same native channel.");
             channels.add(channel);
@@ -286,13 +262,7 @@ final class Bitwig614RenderAccess implements RenderModule.Access {
         preflight(project);
         List<Object> channels = new ArrayList<>();
         for (int i = 0; i < tracks.size(); i++) {
-            Object channel = channel(project, tracks.get(i), ids.get(i));
-            if (!resolver.same(tracks.get(i), channel))
-                throw Errors.notApplied(
-                        ErrorCode.UNSUPPORTED_SCOPE,
-                        "bounce.inPlace needs audio/instrument tracks with a main clip lane, not group tracks: "
-                                + ids.get(i));
-            channels.add(channel);
+            channels.add(channel(project, tracks.get(i), ids.get(i), Bitwig614TrackResolver.Kind.CHANNEL));
         }
         beforeDispatch.run();
         a.invoke(bounceCall, null, project, channels, start, end, taps.get(tap));

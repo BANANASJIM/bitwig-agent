@@ -15,13 +15,12 @@ final class Bitwig614DeviceTargetAccess implements NativeDeviceTarget.Access {
     Bitwig614DeviceTargetAccess(Bitwig614Runtime.Access bindings) throws ReflectiveOperationException {
         this.bindings = bindings;
         Bitwig614TrackResolver resolver = new Bitwig614TrackResolver(bindings);
-        String iface = "com.bitwig.flt.document.core.iface.";
         kinds.put(NativeDeviceTarget.Kind.DEVICE, bindings.type("com.bitwig.flt.document.core.master.device.xlG"));
-        kinds.put(NativeDeviceTarget.Kind.TRACK, bindings.type(iface + "WSA"));
-        kinds.put(NativeDeviceTarget.Kind.ALIASED_TRACK, bindings.type(iface + "kWY"));
-        kinds.put(NativeDeviceTarget.Kind.CHANNEL_ALIAS, bindings.type("iKU"));
+        kinds.put(NativeDeviceTarget.Kind.TRACK, resolver.trackType());
+        kinds.put(NativeDeviceTarget.Kind.ALIASED_TRACK, resolver.groupType());
+        kinds.put(NativeDeviceTarget.Kind.CHANNEL_ALIAS, resolver.aliasType());
         readers.put(TARGET, resolver::target);
-        readers.put(OWNER_TRACK, device -> resolver.owner(device, kinds.get(NativeDeviceTarget.Kind.TRACK)));
+        readers.put(OWNER_TRACK, device -> resolver.owner(device, resolver.trackType()));
         readers.put(TRACK_ALIAS, resolver::alias);
         readers.put(TRACK_UUID, resolver::uuid);
         readers.put(ALIAS_UUID, resolver::aliasUuid);
