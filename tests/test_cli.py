@@ -1112,17 +1112,26 @@ async def test_a_repeated_row_flag_is_an_error(flag):
     assert "Duplicate argument" in json.loads(out.stderr)["message"]
 
 
-async def test_partial_uses_the_window_key_when_it_exists_and_else_the_top_level_key(host, monkeypatch):
-    partial_at_top = {"modulators": [{"modulatorId": "m"}], "window": {"total": 3}, "complete": False}
-    out = await stdout_of(
-        [*["modulators", "list"], *flags("modulators.list", {"parent": TARGET})], host, monkeypatch, partial_at_top
-    )
-    assert out.code == 0
-    assert out.stderr == ""
+@pytest.mark.parametrize(
+    ("result", "warns"),
+    [
+        ({"modulators": [{"m": 1}] * 3, "window": {"offset": 0, "total": 3}, "complete": False}, False),
+        ({"modulators": [{"m": 1}] * 2, "window": {"offset": 0, "total": 3}}, True),
+        ({"modulators": [{"m": 1}] * 2, "window": {"offset": 2, "total": 4}}, False),
+        ({"modulators": [], "window": {"complete": True}, "complete": False}, False),
+        ({"modulators": [{"m": 1}], "window": {"complete": False}}, True),
+        ({"modulators": [{"m": 1}], "complete": False}, True),
+        ({"modulators": [{"m": 1}], "complete": True}, False),
+        ({"modulators": [{"m": 1}], "window": {"total": "?"}}, False),
+    ],
+)
+async def test_partial_is_decided_by_the_window_alone_when_there_is_one(host, monkeypatch, result, warns):
     argv = [*["modulators", "list"], *flags("modulators.list", {"parent": TARGET}), "--format=jsonl"]
-    assert json.loads((await stdout_of(argv, host, monkeypatch, partial_at_top)).stderr)["warning"] == "partial"
-    window_wins = {"modulators": [], "window": {"complete": True}, "complete": False}
-    assert (await stdout_of(argv, host, monkeypatch, window_wins)).stderr == ""
+    out = await stdout_of(argv, host, monkeypatch, result)
+    assert out.code == 0
+    assert (json.loads(out.stderr)["warning"] == "partial") if warns else out.stderr == ""
+    plain = [*["modulators", "list"], *flags("modulators.list", {"parent": TARGET})]
+    assert (await stdout_of(plain, host, monkeypatch, result)).stderr == ""
 
 
 async def test_python_dash_m_bitwig_agent_is_the_cli():

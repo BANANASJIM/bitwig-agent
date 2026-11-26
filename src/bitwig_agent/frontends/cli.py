@@ -326,15 +326,24 @@ def merge_operand(arguments: dict[str, Any], operands: list[str], inputs: Inputs
     arguments.update(values)
 
 
-def partial_notice(method: str, result: dict[str, Any]) -> str:
-    """One stderr line when a record list covers only part of what exists."""
+def is_partial(result: dict[str, Any], returned: int) -> bool:
+    """A window decides alone: its complete flag, else offset + returned < total; top-level complete only without one."""
     window = result.get("window")
-    complete = window["complete"] if isinstance(window, dict) and "complete" in window else result.get("complete")
-    if complete is not False:
+    if not isinstance(window, dict):
+        return result.get("complete") is False
+    if "complete" in window:
+        return window["complete"] is False
+    offset, total = window.get("offset", 0), window.get("total")
+    return isinstance(offset, int) and isinstance(total, int) and offset + returned < total
+
+
+def partial_notice(method: str, result: dict[str, Any], returned: int) -> str:
+    """One stderr line when a record list covers only part of what exists."""
+    if not is_partial(result, returned):
         return ""
     paging = [f"--{f['name']}" for f in views.fields(method) if PAGING.search(f["name"])]
     how = f"page with {' / '.join(paging)}" if paging else "this method has no paging fields: narrow the request"
-    return text_line({"warning": "partial", "message": f"The list is incomplete (complete is false); {how}"})
+    return text_line({"warning": "partial", "message": f"The list is incomplete; {how}"})
 
 
 def render_result(method: str, key: str | None, result: dict[str, Any], view: View, pretty: bool) -> Output:
@@ -349,7 +358,7 @@ def render_result(method: str, key: str | None, result: dict[str, Any], view: Vi
     if view.format == "json":
         return Output(stdout=text_line({**result, key: records}, pretty), stderr=warning)
     text = rows.lines(records) if view.format == "jsonl" else rows.table(view.format, records, view.fields)
-    return Output(stdout=text, stderr=warning + partial_notice(method, result))
+    return Output(stdout=text, stderr=warning + partial_notice(method, result, len(records)))
 
 
 def respond(method: str, envelope: Envelope, view: View, pretty: bool) -> Output:
