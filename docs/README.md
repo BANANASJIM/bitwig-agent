@@ -12,6 +12,7 @@ These guides describe the public implementation and supported user workflows. Th
 | Operate tracks/devices/MIDI/Grid safely | [Usage and safety](../USAGE.md) |
 | Get production guidance, screenshot help, diagnosis and controlled A/B | [Portable agent skill](https://github.com/BANANASJIM/bitwig-agent/tree/main/skills/bitwig-agent) |
 | Understand interfaces, state ownership and failure boundaries | [Architecture](architecture.md) |
+| Follow the approved refactor target and PR slices | [Target architecture](target-architecture.md) |
 | Look up exact schemas, bounds and side effects | [Protocol](../PROTOCOL.md) |
 | Understand package contents, AUR maintenance and PyPI promotion | [Packaging and releases](packaging.md) |
 | Build from source or contribute | [Contributing](../CONTRIBUTING.md) |
