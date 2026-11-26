@@ -54,3 +54,10 @@ def host_paths(value):
     if isinstance(value, list):
         return [host_paths(item) for item in value]
     return value
+
+
+if __name__ == "__main__":
+    import sys
+
+    for name in sys.argv[1:]:
+        print(dependency(name).name)

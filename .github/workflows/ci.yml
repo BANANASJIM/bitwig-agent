@@ -72,6 +72,8 @@ jobs:
         with:
           path: build/deps
           key: java-deps-${{ hashFiles('extension/deps.toml') }}
+      - name: Fetch the coverage jars so the saved cache holds them on every event
+        run: pixi run python scripts/tooling.py jacoco-agent jacoco-cli
       - name: Compile and run Java tests
         run: pixi run test-java
       - name: Run the Python/Java fixture
