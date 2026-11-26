@@ -266,6 +266,10 @@ public final class RenderModuleTest {
                         && job.get("outcome").getAsString().equals("applied")
                         && job.getAsJsonArray("files").size() == 2,
                 "jobs.get re-verifies a completed job");
+        long elapsed = job.get("elapsedMs").getAsLong();
+        sim.fixture.tasks.advance(10_000_000_000L);
+        assertEquals(
+                elapsed, sim.job("render:1").get("elapsedMs").getAsLong(), "a completed job's elapsedMs is frozen");
         HostOperation again = sim.start("export.audio", export(sim.dir.toString(), "master", A), 5000);
         sim.drainUntil(again);
         assertRpcError("target_exists", again);

@@ -669,7 +669,9 @@ final class RenderModule implements HostModule, JobsModule.Source {
                     current.export.sampleRate == 0 ? "current" : String.valueOf(current.export.sampleRate));
             result.addProperty("directory", current.plan.directory.toString());
         }
-        result.addProperty("elapsedMs", TimeUnit.NANOSECONDS.toMillis(scheduler.now() - current.started));
+        current.done();
+        long end = current.handle != null && current.settled ? current.doneAt : scheduler.now();
+        result.addProperty("elapsedMs", TimeUnit.NANOSECONDS.toMillis(end - current.started));
         result.addProperty("nativeVersion", Bitwig614Runtime.VERSION);
         result.addProperty("nativeJarSha256", bridge.nativeJarSha256());
     }
