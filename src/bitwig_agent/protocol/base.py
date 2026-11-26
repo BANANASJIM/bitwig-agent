@@ -35,18 +35,14 @@ def omitted(**kwargs: Any) -> Any:
     return Field(default=None, json_schema_extra=drop_default, **kwargs)
 
 
-def is_normalized_absolute(value: str, flavour: type[PurePath]) -> bool:
-    path = flavour(value)
-    return path.is_absolute() and str(path) == value and ".." not in path.parts
-
-
-def validate_local_path(value: str) -> None:
-    if (
-        value.startswith("//")
-        or has_control_character(value)
-        or not any(is_normalized_absolute(value, flavour) for flavour in (PurePosixPath, PureWindowsPath))
-    ):
-        raise ValueError("path must be an absolute normalized path without control characters")
+def validate_local_path(value: str) -> PurePath:
+    """The parsed path, in the POSIX or Windows spelling it is a normalized absolute path in."""
+    if not value.startswith("//") and not has_control_character(value):
+        for flavour in (PurePosixPath, PureWindowsPath):
+            path = flavour(value)
+            if path.is_absolute() and str(path) == value and ".." not in path.parts:
+                return path
+    raise ValueError("path must be an absolute normalized path without control characters")
 
 
 class StrictModel(BaseModel):
