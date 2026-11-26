@@ -553,12 +553,21 @@ def test_host_capabilities_bound_the_spec_and_block_quarantined_topology():
         apply_grid(host, spec)
     assert "host limit is 3" in err.value.error["message"]
     assert host.writes() == []
-    host.caps_extra = {"moduleInsert": {"available": True, "maximumModules": 8, "topologyQuarantined": True}}
+    quarantined = {"origin": "native_failure", "trackId": TARGET["trackId"], "device": TARGET["trackId"] + "/1"}
+    host.caps_extra = {"topologyQuarantine": {"state": "quarantined", "devices": [quarantined]}}
     with pytest.raises(BridgeError) as err:
         apply_grid(host, spec)
-    assert "topologyQuarantined" in err.value.error["message"]
+    assert "grid.topology.reconcile" in err.value.error["message"]
     assert host.writes() == []
     assert apply_grid(host, spec, dryRun=True)["status"] == "dryRun"
+    other = {**quarantined, "trackId": "22222222-2222-2222-2222-222222222222"}
+    host.caps_extra = {"topologyQuarantine": {"state": "quarantined", "devices": [other]}}
+    assert apply_grid(host, spec)["status"] == "applied"
+    host = FakeGrid()
+    host.caps_extra = {"topologyAdmissionBlocked": True}
+    with pytest.raises(BridgeError) as err:
+        apply_grid(host, spec)
+    assert "pending" in err.value.error["message"]
     host.caps_extra = {"moduleInsert": {"available": False}}
     with pytest.raises(BridgeError):
         apply_grid(host, spec)

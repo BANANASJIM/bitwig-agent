@@ -3027,6 +3027,21 @@ public final class GridSnapshotReaderTest {
         ModuleWriterFixture modules = new ModuleWriterFixture();
         GridModuleWriter blocked = new GridModuleWriter(
                 modules.model.reader, modules.model, modules.context.reader, modules, cable.quarantine);
+        boolean[] otherDeviceDispatched = {false};
+        ModuleWriterFixture spare = new ModuleWriterFixture();
+        new GridModuleWriter(spare.model.reader, spare.model, spare.context.reader, spare, cable.quarantine)
+                .delete(
+                        spare.model.proxy,
+                        TRACK_ID,
+                        spare.moduleId,
+                        () -> {},
+                        () -> otherDeviceDispatched[0] = true,
+                        value -> {},
+                        error -> {});
+        check(otherDeviceDispatched[0], "another device is not blocked by the failed device's quarantine");
+        String owner = cable.quarantine.reserve(GridInsertionWriterTest.ANY);
+        cable.quarantine.poison(
+                owner, GridTopologyQuarantine.device(TRACK_ID, modules.model.graph), new com.google.gson.JsonObject());
         expect(
                 "grid_unavailable",
                 () -> blocked.delete(
@@ -3040,25 +3055,17 @@ public final class GridSnapshotReaderTest {
                         value -> {},
                         error -> {}));
         ConnectionFixture recreated = new ConnectionFixture(cable.quarantine);
+        recreated.start(recreated.request(null, recreated.output()));
         check(
-                TransportMixFixture.error(
-                                        recreated.start(recreated.request(null, recreated.output())),
-                                        "grid_unavailable")
-                                .outcome
-                                .equals("not_applied")
-                        && recreated.calls == 0,
-                "recreation cannot reset connection quarantine");
+                recreated.calls == 1 && cable.quarantine.quarantined(),
+                "a recreated writer on another device is admitted and cannot reset the failed device's quarantine");
         modules.afterMutation = () -> {
             throw new AssertionError("native module failure");
         };
         TransportMixFixture.error(modules.start(null), "grid_unavailable");
         ConnectionFixture reverse = new ConnectionFixture(modules.quarantine);
-        check(
-                TransportMixFixture.error(reverse.start(reverse.request(null, reverse.output())), "grid_unavailable")
-                                .outcome
-                                .equals("not_applied")
-                        && reverse.calls == 0,
-                "module failure also blocks cable setter");
+        reverse.start(reverse.request(null, reverse.output()));
+        check(reverse.calls == 1, "a module failure does not block the cable setter on another device");
         check(cable.model.read(0, 64, false).has("modules"), "read-only graph remains independently available");
         ConnectionFixture unsupported = new ConnectionFixture();
         unsupported.supported = false;

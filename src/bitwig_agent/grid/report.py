@@ -81,7 +81,7 @@ class Ledger:
         if self.unnamed:
             out["unnamedModules"] = dict(self.unnamed)
         out["next"] = (
-            "Outcome unknown: inspect with grid.get before any further write; if grid.capabilities shows a recoverable topologyQuarantine, grid.topology.reconcile on this device re-verifies and releases it."
+            "Outcome unknown: inspect with grid.get before any further write; this device may now be quarantined (grid.capabilities topologyQuarantine.devices): grid.topology.reconcile on it re-verifies and releases it, no restart."
             if status == "unknown"
             else "Fix the cause and re-apply the same spec; applied work is reused."
             + (

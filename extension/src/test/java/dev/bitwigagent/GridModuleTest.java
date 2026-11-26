@@ -1230,7 +1230,7 @@ public final class GridModuleTest {
                 "second entry starts only after the first settled");
         f.adapter.insertion.deliver();
         f.adapter.next();
-        f.adapter.insertion.guard.requireAvailable();
+        f.adapter.insertion.guard.requireAvailable(GridInsertionWriterTest.ANY);
         f.host.next();
         JsonObject result = op.result.join();
         check(
@@ -1296,8 +1296,14 @@ public final class GridModuleTest {
                 "settlement mismatch quarantines with an unknown request");
         JsonObject compact = GridModule.compactCapabilities(capabilitiesWith(f.adapter.insertion.guard));
         check(
-                compact.getAsJsonObject("topologyQuarantine").get("recoverable").getAsBoolean(),
-                "compact capabilities keep quarantine origin");
+                compact.getAsJsonObject("topologyQuarantine")
+                        .getAsJsonArray("devices")
+                        .get(0)
+                        .getAsJsonObject()
+                        .get("origin")
+                        .getAsString()
+                        .equals("settlement_mismatch"),
+                "compact capabilities keep the quarantined device and its origin");
         TransportMixFixture.error(
                 f.host.submit(f.module, "grid.topology.reconcile", insertionTarget()), "invalid_params");
         HostOperation reconcile = f.host.submit(f.module, "grid.topology.reconcile", target());
@@ -1317,7 +1323,7 @@ public final class GridModuleTest {
                                 .equals(TransportMixFixture.A)
                         && !reconcile.dispatched,
                 "reconcile is a document-queue read that releases a consistent mismatch");
-        f.adapter.insertion.guard.requireAvailable();
+        f.adapter.insertion.guard.requireAvailable(GridInsertionWriterTest.ANY);
     }
 
     private static JsonObject capabilitiesWith(GridTopologyQuarantine guard) {
@@ -1350,7 +1356,7 @@ public final class GridModuleTest {
                 f.adapter.insertion.placements == 1 && !op.result.isDone(),
                 "preplacement callback uses published safety only");
         f.adapter.next();
-        f.adapter.insertion.guard.requireAvailable();
+        f.adapter.insertion.guard.requireAvailable(GridInsertionWriterTest.ANY);
         check(
                 !op.result.isDone() && f.host.tasks.size() == 1,
                 "healthy native settlement releases independently before controller delivery");
@@ -1413,7 +1419,7 @@ public final class GridModuleTest {
                     f.adapter.insertion.cleanups == 1 && f.adapter.insertion.placements == 0,
                     "late public epoch/cancel/close rejects via delivered cleanup");
             f.adapter.next();
-            f.adapter.insertion.guard.requireAvailable();
+            f.adapter.insertion.guard.requireAvailable(GridInsertionWriterTest.ANY);
             check(
                     op.result.isCompletedExceptionally() && f.host.tasks.isEmpty(),
                     "native settlement is not skipped by controller schedule/future/extension close");
@@ -1430,7 +1436,7 @@ public final class GridModuleTest {
         late.adapter.next();
         late.device.child("position").emit(1);
         late.host.next();
-        late.adapter.insertion.guard.requireAvailable();
+        late.adapter.insertion.guard.requireAvailable(GridInsertionWriterTest.ANY);
         check(
                 TransportMixFixture.error(op, "stale_context").outcome.equals("unknown")
                         && late.adapter.insertion.placements == 1,

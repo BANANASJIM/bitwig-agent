@@ -535,32 +535,28 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
         result.add("topologyQuarantine", quarantineState(TOPOLOGY_QUARANTINE));
         result.addProperty(
                 "topologyQuarantineScope",
-                "versioned_String_only_process_marker_shared_across_extension_classloaders_native_failure_needs_JVM_restart_settlement_mismatch_needs_reconcile");
+                "versioned_String_only_process_marker_shared_across_extension_classloaders_one_record_per_device_released_only_by_grid_topology_reconcile");
         result.addProperty("nativeRevisionAvailable", false);
         return result;
     }
-    /** state idle|pending|native_failure|settlement_mismatch, recoverable, the recorded detail and what to do. */
+    /** state idle|pending|quarantined, one entry per quarantined device (origin, trackId, detail, next) and what to do. */
     static JsonObject quarantineState(GridTopologyQuarantine guard) {
         JsonObject state = new JsonObject();
-        String origin = guard.origin();
-        state.addProperty("state", origin == null ? "idle" : origin);
-        state.addProperty("recoverable", GridTopologyQuarantine.SETTLEMENT.equals(origin));
-        String detail = origin == null ? null : guard.detail();
-        if (detail != null) {
-            try {
-                state.add("detail", com.google.gson.JsonParser.parseString(detail));
-            } catch (RuntimeException malformed) {
-                state.addProperty("detail", "malformed");
-            }
-        }
-        if (origin != null)
-            state.addProperty(
+        com.google.gson.JsonArray devices = new com.google.gson.JsonArray();
+        for (JsonObject device : guard.quarantinedDevices()) {
+            device.addProperty(
                     "next",
-                    GridTopologyQuarantine.SETTLEMENT.equals(origin)
-                            ? "grid.topology.reconcile on the recorded device (detail.trackId; another Grid on that track is refused) re-verifies the graph and releases it"
-                            : "pending".equals(origin)
-                                    ? "wait for the native callback; a missing one needs a full Bitwig restart"
-                                    : "full Bitwig restart");
+                    "grid.get this device, then grid.topology.reconcile on it re-verifies the graph and releases it; no Bitwig restart");
+            devices.add(device);
+        }
+        boolean pending = guard.pending();
+        state.addProperty("state", pending ? "pending" : devices.size() == 0 ? "idle" : "quarantined");
+        state.add("devices", devices);
+        if (pending)
+            state.addProperty("next", "wait for the native callback; a missing one needs a full Bitwig restart");
+        else if (devices.size() > 0)
+            state.addProperty(
+                    "next", "only the listed devices are blocked; other devices and project.save keep working");
         return state;
     }
 
