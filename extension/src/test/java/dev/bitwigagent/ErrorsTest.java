@@ -1,154 +1,109 @@
 package dev.bitwigagent;
 
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.*;
 
-import java.util.LinkedHashMap;
-import java.util.Map;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import dev.bitwigagent.core.MethodSpecs;
+import java.io.StringReader;
+import java.util.concurrent.CompletionException;
 import org.junit.jupiter.api.Test;
 
+/** The wire vocabulary and the one place failures become errors or unknown results. */
 public final class ErrorsTest {
-    private static final Map<ErrorCode, String> WIRE = wire();
-    private static final Map<Outcome, String> OUTCOMES = Map.of(
-            Outcome.NOT_APPLIED, "not_applied",
-            Outcome.UNKNOWN, "unknown",
-            Outcome.NOT_DISPATCHED, "not_dispatched");
-
-    private static Map<ErrorCode, String> wire() {
-        Map<ErrorCode, String> m = new LinkedHashMap<>();
-        String[] names = {
-            "ambiguous_send",
-            "ambiguous_target",
-            "arranger_overlap",
-            "arranger_unavailable",
-            "arranger_verification_failed",
-            "automation_bounds_exceeded",
-            "automation_unavailable",
-            "automation_verification_failed",
-            "bounce_failed",
-            "bounce_verification_failed",
-            "busy",
-            "cancelled",
-            "clip_not_found",
-            "copy_not_observed",
-            "deadline_exceeded",
-            "delete_not_observed",
-            "duplicateContent_not_observed",
-            "empty_midi_file",
-            "engine_inactive",
-            "export_failed",
-            "file_unavailable",
-            "grid_bounds_exceeded",
-            "grid_unavailable",
-            "grid_verification_failed",
-            "import_not_observed",
-            "internal_error",
-            "invalid_midi_file",
-            "invalid_params",
-            "invalid_request",
-            "invalid_target",
-            "kind_mismatch",
-            "last_scene",
-            "launcher_settings_unavailable",
-            "launcher_unavailable",
-            "marker_exists_at_beat",
-            "method_not_found",
-            "missing_target",
-            "modulator_bounds_exceeded",
-            "modulator_insert_rejected",
-            "modulator_unavailable",
-            "modulator_verification_failed",
-            "native_unavailable",
-            "no_notes",
-            "not_grid",
-            "not_ready",
-            "note_collision",
-            "outside_window",
-            "page_exists",
-            "path_not_allowed",
-            "project_not_ready",
-            "project_save_as_unavailable",
-            "quantize_invariants_violated",
-            "quantize_not_observed",
-            "rejected_cycle",
-            "render_needs_confirmation",
-            "render_not_started",
-            "render_refused",
-            "render_unavailable",
-            "routing_bounds_exceeded",
-            "routing_unavailable",
-            "save_failed",
-            "save_refused",
-            "scene_count_not_observed",
-            "scene_limit",
-            "scene_out_of_range",
-            "slot_occupied",
-            "slot_out_of_range",
-            "stale_context",
-            "stale_target",
-            "target_exists",
-            "target_not_found",
-            "target_not_observed",
-            "track_group_unavailable",
-            "transpose_not_observed",
-            "unavailable",
-            "unexpected_side_effect",
-            "unknown_action",
-            "unknown_marker",
-            "unknown_method",
-            "unknown_parameter",
-            "unknown_send",
-            "unresolved_creation",
-            "unresolved_mutation",
-            "unsafe_state",
-            "unsaved_changes",
-            "unsupported_scope",
-            "unsupported_unit",
-            "unverifiable_clip",
-            "write_not_observed",
-            "write_quarantined"
-        };
-        ErrorCode[] codes = ErrorCode.values();
-        if (codes.length != names.length)
-            throw new AssertionError("ErrorCode has " + codes.length + " entries, expected " + names.length);
-        for (String name : names) m.put(byWire(name), name);
-        return m;
-    }
-
-    private static ErrorCode byWire(String name) {
-        for (ErrorCode code : ErrorCode.values()) if (code.wire().equals(name)) return code;
-        throw new AssertionError("No ErrorCode with wire name " + name);
+    @Test
+    void javaVocabularyEqualsTheBundle() {
+        MethodSpecs.Vocabulary vocabulary = MethodSpecs.load().vocabulary();
+        assertEquals(Reason.values().length, Reason.check(vocabulary).size());
+        assertEquals(ErrorCode.STALE, Reason.STALE_TARGET.code());
+        assertEquals(ErrorCode.PENDING, Reason.UNRESOLVED.code());
+        assertEquals(ErrorCode.INCOMPATIBLE, Reason.PROTOCOL_MISMATCH.code());
     }
 
     @Test
-    void errorCodeWireNames() {
-        for (Map.Entry<ErrorCode, String> e : WIRE.entrySet())
-            assertTrue(e.getKey().wire().equals(e.getValue()), "wire name of " + e.getKey());
+    void aBundleThatDisagreesFailsTheCheck() {
+        JsonObject bundle = bundleJson();
+        bundle.getAsJsonObject("reasons").remove("busy");
+        assertThrows(IllegalStateException.class, () -> Reason.check(parse(bundle)), "a missing reason");
+        bundle.getAsJsonObject("reasons").addProperty("idle", "pending");
+        assertThrows(IllegalStateException.class, () -> Reason.check(parse(bundle)), "a renamed reason");
+        JsonObject reordered = bundleJson();
+        reordered.add(
+                "outcomes",
+                JsonParser.parseString("[\"applied\",\"already_matched\",\"sent\",\"not_applied\",\"unknown\"]"));
+        assertThrows(IllegalStateException.class, () -> Reason.check(parse(reordered)), "severity order matters");
+    }
+
+    private static JsonObject bundleJson() {
+        try (java.io.InputStream in = MethodSpecs.class.getResourceAsStream(MethodSpecs.RESOURCE)) {
+            return JsonParser.parseReader(new java.io.InputStreamReader(in, java.nio.charset.StandardCharsets.UTF_8))
+                    .getAsJsonObject();
+        } catch (java.io.IOException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    private static MethodSpecs.Vocabulary parse(JsonObject bundle) {
+        return MethodSpecs.parse(new StringReader(bundle.toString())).vocabulary();
     }
 
     @Test
-    void outcomeWireNames() {
-        for (Map.Entry<Outcome, String> e : OUTCOMES.entrySet())
-            assertTrue(e.getKey().wire().equals(e.getValue()), "outcome wire name of " + e.getKey());
-        assertTrue(Outcome.values().length == OUTCOMES.size(), "no unlisted outcome");
+    void outcomesRiseInSeverity() {
+        assertEquals(Outcome.UNKNOWN, Outcome.APPLIED.worst(Outcome.UNKNOWN));
+        assertEquals(Outcome.APPLIED, Outcome.ALREADY_MATCHED.worst(Outcome.APPLIED));
+        assertEquals(Outcome.NOT_APPLIED, Outcome.NOT_APPLIED.worst(Outcome.SENT));
+        assertTrue(Outcome.SENT.succeeded() && Outcome.ALREADY_MATCHED.succeeded());
+        assertFalse(Outcome.NOT_APPLIED.succeeded() || Outcome.UNKNOWN.succeeded());
+        assertEquals("already_matched", Outcome.ALREADY_MATCHED.wire());
     }
 
     @Test
-    void factoriesBuildStructuredErrors() {
-        RpcException notApplied = Errors.notApplied(ErrorCode.BUSY, "m");
-        assertTrue(notApplied.code.equals("busy") && notApplied.outcome.equals("not_applied"), "notApplied");
-        RpcException unknown = Errors.unknown(ErrorCode.STALE_CONTEXT, "m");
-        assertTrue(unknown.code.equals("stale_context") && unknown.outcome.equals("unknown"), "unknown");
+    void errorsSerializeCodeReasonMessageAndNext() {
+        JsonObject plain = Errors.error(Errors.notApplied(Reason.BUSY, "m"));
+        assertEquals("{\"code\":\"pending\",\"reason\":\"busy\",\"message\":\"m\"}", plain.toString());
+        JsonObject next = Errors.error(Errors.notApplied(Reason.UNRESOLVED, "m", "ack x"));
+        assertEquals("ack x", next.get("next").getAsString());
         RpcException invalid = Errors.invalid("bad");
-        assertTrue(
-                invalid.code.equals("invalid_params")
-                        && invalid.outcome.equals("not_applied")
-                        && invalid.getMessage().equals("bad"),
-                "invalid");
-        RpcException rewritten = Errors.withOutcome(Errors.notApplied(ErrorCode.BUSY, "m"), Outcome.UNKNOWN);
-        assertTrue(
-                rewritten.is(ErrorCode.BUSY)
-                        && rewritten.is(Outcome.UNKNOWN)
-                        && rewritten.getMessage().equals("m"),
-                "withOutcome");
+        assertTrue(invalid.is(Reason.INVALID_PARAMS)
+                && !invalid.unknown
+                && invalid.code().equals("invalid_params"));
+    }
+
+    @Test
+    void unknownFailuresSerializeAsResults() {
+        RpcException unknown = Errors.unknown(Reason.NOT_OBSERVED, "m");
+        assertTrue(unknown.unknown && Errors.of(Reason.DEADLINE, "m", true).unknown);
+        assertFalse(Errors.of(Reason.DEADLINE, "m", false).unknown);
+        RpcException promoted = Errors.asUnknown(Errors.notApplied(Reason.BUSY, "m", "n"));
+        assertTrue(promoted.unknown && promoted.is(Reason.BUSY) && promoted.next.equals("n"));
+        assertSame(unknown, Errors.asUnknown(unknown));
+        assertEquals(
+                "{\"outcome\":\"unknown\",\"reason\":\"busy\",\"message\":\"m\",\"next\":\"n\"}",
+                Errors.unknownResult(promoted).toString());
+    }
+
+    @Test
+    void aFailureBeforeDispatchIsAnErrorAndAfterItAnUnknownResult() {
+        HostOperation before = new HostOperation(Long.MAX_VALUE);
+        before.fail(Errors.notApplied(Reason.STALE_TARGET, "moved"));
+        CompletionException error = assertThrows(CompletionException.class, before.result::join);
+        assertTrue(((RpcException) error.getCause()).is(Reason.STALE_TARGET));
+
+        HostOperation internal = new HostOperation(Long.MAX_VALUE);
+        internal.fail(new IllegalStateException("boom"));
+        assertTrue(((RpcException) assertThrows(CompletionException.class, internal.result::join)
+                        .getCause())
+                .is(Reason.INTERNAL));
+
+        HostOperation after = new HostOperation(Long.MAX_VALUE);
+        after.dispatched = true;
+        after.fail(new IllegalStateException("boom"));
+        JsonObject result = after.result.join();
+        assertEquals("unknown", result.get("outcome").getAsString());
+        assertEquals("internal", result.get("reason").getAsString());
+
+        HostOperation flagged = new HostOperation(Long.MAX_VALUE);
+        flagged.fail(Errors.unknown(Reason.READBACK_MISMATCH, "differs"));
+        assertEquals("readback_mismatch", flagged.result.join().get("reason").getAsString());
     }
 }

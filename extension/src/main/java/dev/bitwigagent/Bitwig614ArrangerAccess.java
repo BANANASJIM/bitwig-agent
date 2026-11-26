@@ -23,6 +23,17 @@ final class Bitwig614ArrangerAccess implements ArrangerModule.Access {
     private final Bitwig614ClipTiming clipTiming;
     private final Object copyMode;
 
+    /** The exact bindings, or native_unavailable when a descriptor does not match the loaded host. */
+    static Bitwig614ArrangerAccess bind(Bitwig614Runtime.Access a) {
+        try {
+            return new Bitwig614ArrangerAccess(a);
+        } catch (ReflectiveOperationException | LinkageError error) {
+            throw Errors.notApplied(
+                    Reason.NATIVE_UNAVAILABLE,
+                    "Exact arranger bindings unavailable: " + Bitwig614Runtime.diagnostic(error));
+        }
+    }
+
     Bitwig614ArrangerAccess(Bitwig614Runtime.Access a) throws ReflectiveOperationException {
         this.a = a;
         context = new NativeReadContext(new Bitwig614ReadContextAccess(a));
@@ -116,7 +127,7 @@ final class Bitwig614ArrangerAccess implements ArrangerModule.Access {
             lane = a.invoke(Bitwig614ArrangerAccess.this.lane, track);
             timeline = lane == null ? null : a.invoke(Bitwig614ArrangerAccess.this.timeline, lane);
             if (timeline == null)
-                throw Errors.notApplied(ErrorCode.ARRANGER_UNAVAILABLE, "Track has no main arranger clip lane.");
+                throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Track has no main arranger clip lane.");
             project = resolver.owner(track, projectType);
             models = new Object[] {timeline, lane, track};
             capture = context.capture(project, models, labels, check, false);
@@ -130,7 +141,7 @@ final class Bitwig614ArrangerAccess implements ArrangerModule.Access {
             if (!resolver.same(proxy, track)
                     || a.invoke(Bitwig614ArrangerAccess.this.lane, track) != lane
                     || a.invoke(Bitwig614ArrangerAccess.this.timeline, lane) != timeline)
-                throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Arranger lane changed during the native operation.");
+                throw Errors.notApplied(Reason.STALE_CONTEXT, "Arranger lane changed during the native operation.");
         }
 
         List<Object> clips() {
@@ -175,8 +186,7 @@ final class Bitwig614ArrangerAccess implements ArrangerModule.Access {
         return (Double) a.invoke(clipTiming.doubleGet, nativeNumber);
     }
 
-    private JsonObject result(Lane lane, List<Object> clips) {
-        JsonObject out = Results.observed();
+    private JsonObject result(JsonObject out, Lane lane, List<Object> clips) {
         out.addProperty("trackId", lane.trackId);
         out.addProperty("lane", "main_clip_lane");
         JsonArray rows = new JsonArray();
@@ -193,7 +203,7 @@ final class Bitwig614ArrangerAccess implements ArrangerModule.Access {
         Lane lane = new Lane(trackProxy, trackId, check);
         List<Object> clips = lane.clips();
         lane.guard(check);
-        return result(lane, clips);
+        return result(new JsonObject(), lane, clips);
     }
 
     /** Native clip objects (identity) with their list rows, for callers that diff a lane across a native job. */
@@ -213,7 +223,7 @@ final class Bitwig614ArrangerAccess implements ArrangerModule.Access {
             double s = (Double) a.invoke(start, clip), e = s + (Double) a.invoke(length, clip);
             if (from < e - EPS && s < to - EPS)
                 throw Errors.notApplied(
-                        ErrorCode.ARRANGER_OVERLAP,
+                        Reason.OVERLAP,
                         "Range " + from + ".." + to + " overlaps arranger clip " + i + " (" + s + ".." + e
                                 + "); overlapping edits are refused, move or delete that clip first.");
         }
@@ -224,22 +234,23 @@ final class Bitwig614ArrangerAccess implements ArrangerModule.Access {
         for (Object clip : after)
             if (!before.contains(clip)) {
                 if (found != null)
-                    throw Errors.unknown(
-                            ErrorCode.ARRANGER_VERIFICATION_FAILED, "More than one new arranger clip appeared.");
+                    throw Errors.unknown(Reason.READBACK_MISMATCH, "More than one new arranger clip appeared.");
                 found = clip;
             }
         if (found == null)
-            throw Errors.unknown(
-                    ErrorCode.ARRANGER_VERIFICATION_FAILED, "No new arranger clip was observed after dispatch.");
+            throw Errors.unknown(Reason.READBACK_MISMATCH, "No new arranger clip was observed after dispatch.");
         if (after.size() != before.size() + 1)
-            throw Errors.unknown(
-                    ErrorCode.ARRANGER_VERIFICATION_FAILED, "Existing arranger clips changed during the write.");
+            throw Errors.unknown(Reason.READBACK_MISMATCH, "Existing arranger clips changed during the write.");
         return found;
     }
 
     private JsonObject written(Lane lane, String op, Object clip, JsonObject previous) {
+        return written(Outcome.APPLIED, lane, op, clip, previous);
+    }
+
+    private JsonObject written(Outcome outcome, Lane lane, String op, Object clip, JsonObject previous) {
         List<Object> after = lane.clips();
-        JsonObject out = result(lane, after);
+        JsonObject out = result(Results.outcome(outcome), lane, after);
         out.addProperty("op", op);
         int index = clip == null ? -1 : after.indexOf(clip);
         out.add("clip", index < 0 ? JsonNull.INSTANCE : describe(clip, index));
@@ -255,8 +266,7 @@ final class Bitwig614ArrangerAccess implements ArrangerModule.Access {
     }
 
     private static RpcException mismatch(String what) {
-        return Errors.unknown(
-                ErrorCode.ARRANGER_VERIFICATION_FAILED, "Native readback differs after dispatch: " + what);
+        return Errors.unknown(Reason.READBACK_MISMATCH, "Native readback differs after dispatch: " + what);
     }
 
     @Override
@@ -302,13 +312,13 @@ final class Bitwig614ArrangerAccess implements ArrangerModule.Access {
                 cleanup = "deleting the created clip failed: " + error.getMessage();
             }
             throw Errors.unknown(
-                    ErrorCode.ARRANGER_VERIFICATION_FAILED,
+                    Reason.READBACK_MISMATCH,
                     readback.invalidRows + " native note rows have a channel outside 0..15 or a key"
                             + " outside 0..127; " + cleanup + ". Inspect arranger.clips.list before another write.");
         }
         if (readback != null && !readback.complete)
             throw Errors.unknown(
-                    ErrorCode.ARRANGER_VERIFICATION_FAILED,
+                    Reason.READBACK_MISMATCH,
                     "Clip was created but "
                             + (notes.size() - readback.json.get("verified").getAsInt())
                             + " requested notes were not read back (clip holds "
@@ -378,19 +388,19 @@ final class Bitwig614ArrangerAccess implements ArrangerModule.Access {
         Object slot = a.invoke(slotTarget, slotProxy), source = a.invoke(slotClip, slotProxy);
         if (!slotType.isInstance(slot) || !clipType.isInstance(source) || a.invoke(clipSlot, source) != slot)
             throw Errors.notApplied(
-                    ErrorCode.STALE_CONTEXT, "Launcher proxy does not resolve to one attached native clip slot.");
+                    Reason.STALE_CONTEXT, "Launcher proxy does not resolve to one attached native clip slot.");
         if (resolver.slotTrack(slot) != lane.track)
-            throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Launcher slot belongs to another native track.");
+            throw Errors.notApplied(Reason.STALE_CONTEXT, "Launcher slot belongs to another native track.");
         if (a.invoke(slotLane, slot) != lane.lane)
-            throw Errors.notApplied(ErrorCode.UNSUPPORTED_SCOPE, "Launcher slot is not on the track's main clip lane.");
+            throw Errors.notApplied(Reason.UNSUPPORTED_SCOPE, "Launcher slot is not on the track's main clip lane.");
         if (!expectedClipName.equals(a.invoke(name, source)))
-            throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Native clip name differs from expectedClipName.");
+            throw Errors.notApplied(Reason.STALE_CONTEXT, "Native clip name differs from expectedClipName.");
         double expectedLength = (Double) a.invoke(arrangeLength, source);
         List<Object> before = lane.clips();
         requireFree(lane, before, null, startBeats, startBeats + expectedLength);
         lane.guard(check);
         if (a.invoke(slotClip, slotProxy) != source)
-            throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Launcher clip changed before the copy.");
+            throw Errors.notApplied(Reason.STALE_CONTEXT, "Launcher clip changed before the copy.");
         beforeWrite.run();
         a.invoke(copy, lane.lane, new ArrayList<>(List.of(slot)), slot, startBeats, copyMode, false, null, null);
         lane.guard(check);
@@ -420,13 +430,13 @@ final class Bitwig614ArrangerAccess implements ArrangerModule.Access {
         List<Object> before = lane.clips();
         if (clipIndex >= before.size())
             throw Errors.notApplied(
-                    ErrorCode.TARGET_NOT_FOUND,
+                    Reason.TARGET_NOT_FOUND,
                     "clipIndex " + clipIndex + " is outside the " + before.size() + " arranger clips.");
         Object clip = before.get(clipIndex);
         double s = (Double) a.invoke(start, clip), l = (Double) a.invoke(length, clip);
         if (!near(s, expectedStart) || !expectedName.equals(a.invoke(name, clip)))
             throw Errors.notApplied(
-                    ErrorCode.STALE_TARGET,
+                    Reason.STALE_TARGET,
                     "Arranger clip " + clipIndex + " is \"" + a.invoke(name, clip) + "\" at " + s
                             + ", not expectedName at expectedStartBeats; re-read arranger.clips.list.");
         JsonObject previous = describe(clip, clipIndex);
@@ -480,13 +490,12 @@ final class Bitwig614ArrangerAccess implements ArrangerModule.Access {
                 return out;
             }
             default:
-                throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "Unknown arranger op.");
+                throw Errors.notApplied(Reason.INVALID_PARAMS, "Unknown arranger op.");
         }
     }
 
     private JsonObject already(Lane lane, String op, Object clip, JsonObject previous) {
-        JsonObject out = written(lane, op, clip, previous);
-        out.addProperty("verification", "already_matched");
+        JsonObject out = written(Outcome.ALREADY_MATCHED, lane, op, clip, previous);
         out.addProperty("nativeUndo", false);
         return out;
     }

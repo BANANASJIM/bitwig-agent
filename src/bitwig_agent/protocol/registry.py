@@ -14,6 +14,7 @@ from bitwig_agent.protocol import (
     parameters,
     presets,
     project,
+    recovery,
     render,
     routing,
     tracks,
@@ -23,6 +24,7 @@ from bitwig_agent.protocol.base import ToolSpec
 
 _DOMAINS = (
     project,
+    recovery,
     tracks,
     markers,
     routing,

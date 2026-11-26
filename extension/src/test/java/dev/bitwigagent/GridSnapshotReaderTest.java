@@ -243,7 +243,7 @@ public final class GridSnapshotReaderTest {
                         && value.get("numericUnit").getAsString().equals("seconds"),
                 "numeric-unit metadata does not depend on formatted display availability");
         f.display = true;
-        f.failures.put(UNIT_TOKEN, Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "unit token unavailable"));
+        f.failures.put(UNIT_TOKEN, Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "unit token unavailable"));
         result = f.read(0, 64, true);
         value = result.getAsJsonArray("modules")
                 .get(0)
@@ -304,7 +304,7 @@ public final class GridSnapshotReaderTest {
                         .equals("unsupported"),
                 "binding availability stays explicit");
         f.unavailable.clear();
-        f.failures.put(MODULE_NAME, Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "native getter failed"));
+        f.failures.put(MODULE_NAME, Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "native getter failed"));
         result = f.read(0, 64, true);
         module = result.getAsJsonArray("modules").get(0).getAsJsonObject();
         assertTrue(
@@ -312,21 +312,25 @@ public final class GridSnapshotReaderTest {
                         && module.get("customName").getAsString().isEmpty()
                         && has(result, "module_name_read_failed"),
                 "failed optional name read retains independent metadata without fabrication");
+        f.failures.put(MODULE_NAME, Errors.notApplied(Reason.HOST_MISMATCH, "native gate closed"));
+        assertTrue(
+                has(f.read(0, 64, true), "module_name_read_failed"),
+                "a closed native gate on an optional read is partial coverage, not a failed read");
     }
 
     @Test
     void metadataPreservesBoundsAndCancellation() {
         Fixture large = new Fixture();
         large.first.put(MODULE_NAME, "x".repeat(GridSnapshotReader.MAX_TEXT + 1));
-        assertNotApplied("grid_bounds_exceeded", () -> large.read(0, 64, true));
+        assertRpcError("out_of_bounds", () -> large.read(0, 64, true));
         Fixture cancelled = new Fixture();
-        cancelled.failures.put(PARAMETER_NAME, Errors.notApplied(ErrorCode.CANCELLED, "cancelled during metadata"));
+        cancelled.failures.put(PARAMETER_NAME, Errors.notApplied(Reason.CANCELLED, "cancelled during metadata"));
         cancelled.first.put(
                 CHILDREN, List.of(cancelled.parameter(BOOLEAN, cancelled.first).put(BOOLEAN_VALUE, true)));
-        assertNotApplied("cancelled", () -> cancelled.read(0, 64, true));
+        assertRpcError("cancelled", () -> cancelled.read(0, 64, true));
         Fixture identity = new Fixture();
         identity.first.put(DESCRIPTOR, new Node().put(TYPE_ID, null));
-        assertNotApplied("grid_unavailable", () -> identity.read(0, 64, true));
+        assertRpcError("native_unavailable", () -> identity.read(0, 64, true));
     }
 
     @Test
@@ -421,19 +425,19 @@ public final class GridSnapshotReaderTest {
     void rejectsMissingWrongAndStaleTargets() {
         Fixture f = new Fixture();
         f.proxy.put(TARGET, null);
-        assertNotApplied("missing_target", () -> f.read(0, 64, true));
+        assertRpcError("invalid_target", () -> f.read(0, 64, true));
         f.proxy.put(TARGET, new Node());
-        assertNotApplied("not_grid", () -> f.read(0, 64, true));
+        assertRpcError("kind_mismatch", () -> f.read(0, 64, true));
         f.proxy.put(TARGET, f.device);
         f.device.put(GRAPH, null);
-        assertNotApplied("not_grid", () -> f.read(0, 64, true));
+        assertRpcError("kind_mismatch", () -> f.read(0, 64, true));
         f.device.put(GRAPH, f.graph);
         f.afterModules = () -> f.proxy.put(TARGET, new Node(DEVICE));
-        assertNotApplied("stale_context", () -> f.read(0, 64, true));
+        assertRpcError("stale_context", () -> f.read(0, 64, true));
         assertTrue(f.closed > 0, "stale read still closes streams");
         Fixture other = new Fixture();
         other.document = false;
-        assertNotApplied("grid_unavailable", () -> other.read(0, 64, true));
+        assertRpcError("native_unavailable", () -> other.read(0, 64, true));
     }
 
     @Test
@@ -441,7 +445,7 @@ public final class GridSnapshotReaderTest {
         Fixture f = new Fixture();
         // The requested/public-observed ID is still TRACK_ID; the already-bound device has moved.
         f.owner.put(TRACK_UUID, new UUID(3, 2));
-        assertNotApplied("stale_context", () -> f.read(0, 64, true));
+        assertRpcError("stale_context", () -> f.read(0, 64, true));
         assertTrue(
                 f.graphReads == 0 && f.closed == 0,
                 "native rebound owner rejected before graph accessor or enumeration");
@@ -458,13 +462,13 @@ public final class GridSnapshotReaderTest {
         Fixture f = new Fixture();
         f.alias();
         f.owner.put(TRACK_UUID, new UUID(3, 9));
-        f.failures.put(TRACK_UUID, Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "raw SCA UUID must not be read"));
+        f.failures.put(TRACK_UUID, Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "raw SCA UUID must not be read"));
         assertTrue(
                 f.read(0, 64, true).getAsJsonArray("modules").size() == 2,
                 "SCA uses alias UUID even when raw owner UUID differs");
         Fixture mismatch = new Fixture();
         mismatch.alias().put(ALIAS_UUID, new UUID(3, 9));
-        assertNotApplied("stale_context", () -> mismatch.read(0, 64, true));
+        assertRpcError("stale_context", () -> mismatch.read(0, 64, true));
         assertTrue(mismatch.graphReads == 0, "matching raw owner UUID cannot rescue mismatched alias UUID");
     }
 
@@ -473,29 +477,29 @@ public final class GridSnapshotReaderTest {
         for (Object owner : Arrays.asList(null, new Node(), "not a native owner")) {
             Fixture f = new Fixture();
             f.device.put(OWNER_TRACK, owner);
-            assertNotApplied("grid_unavailable", () -> f.read(0, 64, true));
+            assertRpcError("native_unavailable", () -> f.read(0, 64, true));
             assertTrue(f.graphReads == 0, "absent or wrong-type owning track blocks graph access");
         }
         for (Object alias : Arrays.asList(null, new Node(TRACK), "not a native alias")) {
             Fixture f = new Fixture();
             f.alias();
             f.owner.put(TRACK_ALIAS, alias);
-            assertNotApplied("grid_unavailable", () -> f.read(0, 64, true));
+            assertRpcError("native_unavailable", () -> f.read(0, 64, true));
             assertTrue(f.graphReads == 0, "absent or wrong-type channel alias blocks graph access");
         }
         for (Object uuid : Arrays.asList(null, TRACK_ID.toString(), new Node())) {
             Fixture ordinary = new Fixture();
             ordinary.owner.put(TRACK_UUID, uuid);
-            assertNotApplied("grid_unavailable", () -> ordinary.read(0, 64, true));
+            assertRpcError("native_unavailable", () -> ordinary.read(0, 64, true));
             assertTrue(ordinary.graphReads == 0, "ordinary UUID must be a native UUID value");
             Fixture aliased = new Fixture();
             aliased.alias().put(ALIAS_UUID, uuid);
-            assertNotApplied("grid_unavailable", () -> aliased.read(0, 64, true));
+            assertRpcError("native_unavailable", () -> aliased.read(0, 64, true));
             assertTrue(aliased.graphReads == 0, "alias UUID cannot fall back to ordinary UUID");
         }
         Fixture unavailable = new Fixture();
-        unavailable.failures.put(OWNER_TRACK, Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "unbound identity"));
-        assertNotApplied("grid_unavailable", () -> unavailable.read(0, 64, true));
+        unavailable.failures.put(OWNER_TRACK, Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "unbound identity"));
+        assertRpcError("native_unavailable", () -> unavailable.read(0, 64, true));
         assertTrue(
                 unavailable.graphReads == 0, "unavailable required identity never degrades into structure-only read");
         assertTrue(
@@ -506,8 +510,8 @@ public final class GridSnapshotReaderTest {
                         .isEmpty(),
                 "catalog is independent of native device ownership");
         Fixture absentRequest = new Fixture();
-        assertNotApplied(
-                "grid_unavailable",
+        assertRpcError(
+                "native_unavailable",
                 () -> absentRequest.reader.snapshot(absentRequest.proxy, null, 0, 64, true, () -> {}));
         assertTrue(absentRequest.targetReads == 0, "missing expected UUID fails before native target resolution");
     }
@@ -516,20 +520,20 @@ public final class GridSnapshotReaderTest {
     void nativeIdentityRequiresThreadOwnership() {
         Fixture wrongThread = new Fixture();
         wrongThread.document = false;
-        assertNotApplied("grid_unavailable", () -> wrongThread.read(0, 64, true));
+        assertRpcError("native_unavailable", () -> wrongThread.read(0, 64, true));
         assertTrue(wrongThread.targetReads == 0, "application thread checked before native proxy resolution");
         for (int kind = 0; kind < 3; kind++) {
             Fixture f = new Fixture();
             Node inaccessible = kind == 0 ? f.device : kind == 1 ? f.owner : f.alias();
             inaccessible.threadAllowed = false;
-            assertNotApplied("grid_unavailable", () -> f.read(0, 64, true));
+            assertRpcError("native_unavailable", () -> f.read(0, 64, true));
             assertTrue(
                     f.graphReads == 0 && f.uuidReads == 0,
                     "device, owner and alias require a valid thread predicate before UUID/graph access");
         }
         Fixture finalThread = new Fixture();
         finalThread.afterModules = () -> finalThread.document = false;
-        assertNotApplied("grid_unavailable", () -> finalThread.read(0, 64, true));
+        assertRpcError("native_unavailable", () -> finalThread.read(0, 64, true));
         assertTrue(finalThread.targetReads == 1, "completion rechecks application thread before native proxy access");
     }
 
@@ -537,29 +541,29 @@ public final class GridSnapshotReaderTest {
     void nativeIdentityChangesAtFinalGuardAreRejected() {
         Fixture owner = new Fixture();
         owner.afterModules = () -> owner.device.put(OWNER_TRACK, new Node(TRACK).put(TRACK_UUID, TRACK_ID));
-        assertNotApplied("stale_context", () -> owner.read(0, 64, true));
+        assertRpcError("stale_context", () -> owner.read(0, 64, true));
         Fixture alias = new Fixture();
         alias.alias();
         alias.afterModules = () -> alias.owner.put(TRACK_ALIAS, new Node(CHANNEL_ALIAS).put(ALIAS_UUID, TRACK_ID));
-        assertNotApplied("stale_context", () -> alias.read(0, 64, true));
+        assertRpcError("stale_context", () -> alias.read(0, 64, true));
         Fixture uuid = new Fixture();
         uuid.afterModules = () -> uuid.owner.put(TRACK_UUID, new UUID(3, 9));
-        assertNotApplied("stale_context", () -> uuid.read(0, 64, true));
+        assertRpcError("stale_context", () -> uuid.read(0, 64, true));
         Fixture aliasUuid = new Fixture();
         Node identity = aliasUuid.alias();
         aliasUuid.afterModules = () -> identity.put(ALIAS_UUID, new UUID(3, 9));
-        assertNotApplied("stale_context", () -> aliasUuid.read(0, 64, true));
+        assertRpcError("stale_context", () -> aliasUuid.read(0, 64, true));
         Fixture missing = new Fixture();
         missing.afterModules = () -> missing.device.put(OWNER_TRACK, null);
-        assertNotApplied("grid_unavailable", () -> missing.read(0, 64, true));
+        assertRpcError("native_unavailable", () -> missing.read(0, 64, true));
         Fixture missingAlias = new Fixture();
         missingAlias.alias();
         missingAlias.afterModules = () -> missingAlias.owner.put(TRACK_ALIAS, null);
-        assertNotApplied("grid_unavailable", () -> missingAlias.read(0, 64, true));
+        assertRpcError("native_unavailable", () -> missingAlias.read(0, 64, true));
         Fixture wrongContext = new Fixture();
         Node finalAlias = wrongContext.alias();
         wrongContext.afterModules = () -> finalAlias.threadAllowed = false;
-        assertNotApplied("grid_unavailable", () -> wrongContext.read(0, 64, true));
+        assertRpcError("native_unavailable", () -> wrongContext.read(0, 64, true));
     }
 
     @Test
@@ -567,24 +571,24 @@ public final class GridSnapshotReaderTest {
         Fixture f = new Fixture();
         f.graph.put(MODULES, (Supplier<Stream<?>>)
                 () -> Stream.generate(() -> f.first).onClose(() -> f.closed++));
-        assertNotApplied("grid_bounds_exceeded", () -> f.read(0, 64, true));
+        assertRpcError("out_of_bounds", () -> f.read(0, 64, true));
         assertTrue(f.closed == 1, "infinite stream bounded and closed");
         Fixture cancelled = new Fixture();
         int[] calls = {0};
-        assertNotApplied(
+        assertRpcError(
                 "cancelled",
                 () -> cancelled.reader.snapshot(cancelled.proxy, TRACK_ID, 0, 64, true, () -> {
-                    if (++calls[0] == 3) throw Errors.notApplied(ErrorCode.CANCELLED, "cancelled mid-traversal");
+                    if (++calls[0] == 3) throw Errors.notApplied(Reason.CANCELLED, "cancelled mid-traversal");
                 }));
         assertTrue(cancelled.closed == 1, "cancellation closes active stream");
         Fixture children = new Fixture();
         children.first.put(CHILDREN, Collections.nCopies(257, new Node()));
-        assertNotApplied("grid_bounds_exceeded", () -> children.read(0, 64, true));
+        assertRpcError("out_of_bounds", () -> children.read(0, 64, true));
         Fixture choices = new Fixture();
         Node indexed = choices.parameter(ENUM, choices.first).put(ENUM_VALUE, 0);
         indexed.put(ENUM_DEFINITION, new Node().put(OPTIONS, Collections.nCopies(257, option(0, "x"))));
         choices.first.put(CHILDREN, List.of(indexed));
-        assertNotApplied("grid_bounds_exceeded", () -> choices.read(0, 64, true));
+        assertRpcError("out_of_bounds", () -> choices.read(0, 64, true));
     }
 
     @Test
@@ -697,29 +701,29 @@ public final class GridSnapshotReaderTest {
                 bad.set(displayRequest(bad.child.values.get(FLOAT_VALUE).toString(), "1 Hz"));
             });
             assertTrue(
-                    error.code.equals("unsupported_unit")
-                            && error.outcome.equals("not_applied")
+                    error.reason.wire().equals("unsupported_unit")
+                            && !error.unknown
                             && bad.calls == 0
                             && !bad.op.dispatched,
                     "unverified unit or a row that does not reproduce the model is unsupported_unit before any write");
         }
         WriterFixture suffix = unitFixture("hertz", 84.0, "1.05 kHz", 0.0, 127.0);
         for (String text : List.of("1.2", "1.2 %", "abc Hz", "-5 Hz", "0 Hz", "1.2 kHz extra"))
-            assertNotApplied("invalid_params", () -> suffix.set(displayRequest("84", text)));
+            assertRpcError("invalid_params", () -> suffix.set(displayRequest("84", text)));
         assertTrue(suffix.calls == 0, "display text needs a number with a matching explicit unit suffix");
-        assertNotApplied(
+        assertRpcError(
                 "invalid_params",
                 () -> GridParameterWriter.Request.parse(
                         HostFixture.json("{\"expectedKind\":\"float\",\"expectedValue\":1}")));
-        assertNotApplied(
+        assertRpcError(
                 "invalid_params",
                 () -> GridParameterWriter.Request.parse(HostFixture.json(
                         "{\"expectedKind\":\"float\",\"expectedValue\":1,\"value\":2,\"display\":\"1 Hz\"}")));
-        assertNotApplied(
+        assertRpcError(
                 "invalid_params",
                 () -> GridParameterWriter.Request.parse(
                         HostFixture.json("{\"expectedKind\":\"integer\",\"expectedValue\":1,\"display\":\"1 Hz\"}")));
-        assertNotApplied(
+        assertRpcError(
                 "stale_context",
                 () -> unitFixture("hertz", 84.0, "1.05 kHz", 0.0, 127.0).set(displayRequest("83", "1.2 kHz")));
         // Batch entries carry the same fields and the same CAS.
@@ -734,7 +738,7 @@ public final class GridSnapshotReaderTest {
                 (Double) batch.child.values.get(FLOAT_VALUE) == 69.0
                         && item.get("requestedDisplay").getAsString().equals("440 Hz")
                         && !item.get("displayMismatch").getAsBoolean()
-                        && item.get("status").getAsString().equals("applied"),
+                        && item.get("outcome").getAsString().equals("applied"),
                 "batch entry accepts display and reports displayMismatch");
     }
 
@@ -777,7 +781,7 @@ public final class GridSnapshotReaderTest {
                 result.getAsJsonObject("window").get("complete").getAsBoolean(),
                 "genuine empty catalog match is complete");
         f.catalog = Collections.nCopies(GridSnapshotReader.MAX_CATALOG + 1, entry("MODULE", "x", 1));
-        assertNotApplied("grid_bounds_exceeded", () -> f.reader.catalog("", 0, 64, () -> {}));
+        assertRpcError("out_of_bounds", () -> f.reader.catalog("", 0, 64, () -> {}));
     }
 
     @Test
@@ -785,19 +789,19 @@ public final class GridSnapshotReaderTest {
         Fixture f = new Fixture();
         Node floating = f.parameter(FLOAT, f.first).put(FLOAT_VALUE, Double.NaN);
         f.first.put(CHILDREN, List.of(floating));
-        assertNotApplied("grid_unavailable", () -> f.read(0, 64, true));
+        assertRpcError("native_unavailable", () -> f.read(0, 64, true));
         floating.put(FLOAT_VALUE, 1.0)
                 .put(FLOAT_DEFINITION, new Node().put(FLOAT_MIN, 4.0).put(FLOAT_MAX, 2.0));
-        assertNotApplied("grid_unavailable", () -> f.read(0, 64, true));
+        assertRpcError("native_unavailable", () -> f.read(0, 64, true));
         Fixture owners = new Fixture();
         owners.input.put(OWNER_MODULE, owners.second);
-        assertNotApplied("stale_context", () -> owners.read(0, 64, true));
+        assertRpcError("stale_context", () -> owners.read(0, 64, true));
         Fixture executor = new Fixture();
         executor.first.threadAllowed = false;
-        assertNotApplied("grid_unavailable", () -> executor.read(0, 64, true));
+        assertRpcError("native_unavailable", () -> executor.read(0, 64, true));
         Fixture identity = new Fixture();
         identity.second.put(INSTANCE_ID, identity.first.values.get(INSTANCE_ID));
-        assertNotApplied("grid_unavailable", () -> identity.read(0, 64, true));
+        assertRpcError("native_unavailable", () -> identity.read(0, 64, true));
         Fixture enums = new Fixture();
         Node indexed = enums.parameter(ENUM, enums.first).put(ENUM_VALUE, 99);
         indexed.put(ENUM_DEFINITION, new Node().put(OPTIONS, List.of(option(2, "Two"))));
@@ -852,9 +856,9 @@ public final class GridSnapshotReaderTest {
                                 .getAsInt()
                         == 42,
                 "inspection resolves one exact parameter, not an entire graph serialization");
-        assertNotApplied("stale_context", () -> inspect(f, context, "enum"));
-        assertNotApplied("stale_context", () -> inspect(f, context, "Native control"));
-        assertNotApplied("stale_context", () -> inspect(f, context, "parameter/ENUM"));
+        assertRpcError("stale_context", () -> inspect(f, context, "enum"));
+        assertRpcError("stale_context", () -> inspect(f, context, "Native control"));
+        assertRpcError("stale_context", () -> inspect(f, context, "parameter/ENUM"));
     }
 
     @Test
@@ -862,23 +866,23 @@ public final class GridSnapshotReaderTest {
         Fixture f = inspectionFixture();
         ContextFixture context = new ContextFixture();
         f.second.put(INSTANCE_ID, f.first.values.get(INSTANCE_ID));
-        assertNotApplied("stale_context", () -> inspect(f, context, "LOCAL_ID"));
+        assertRpcError("stale_context", () -> inspect(f, context, "LOCAL_ID"));
         f.second.put(INSTANCE_ID, new UUID(1, 2));
         Node child = (Node) ((List<?>) f.first.values.get(CHILDREN)).get(0);
         f.first.put(CHILDREN, List.of(child, f.parameter(BOOLEAN, f.first).put(BOOLEAN_VALUE, false)));
-        assertNotApplied("stale_context", () -> inspect(f, context, "LOCAL_ID"));
+        assertRpcError("stale_context", () -> inspect(f, context, "LOCAL_ID"));
         f.first.put(CHILDREN, List.of(child));
         child.put(OWNER_MODULE, f.second);
-        assertNotApplied("stale_context", () -> inspect(f, context, "LOCAL_ID"));
+        assertRpcError("stale_context", () -> inspect(f, context, "LOCAL_ID"));
         child.put(OWNER_MODULE, f.first);
         f.first.put(MODULE_GRAPH, new Node());
-        assertNotApplied("stale_context", () -> inspect(f, context, "LOCAL_ID"));
+        assertRpcError("stale_context", () -> inspect(f, context, "LOCAL_ID"));
         f.first.put(MODULE_GRAPH, f.graph);
         child.kinds.remove(BOOLEAN);
-        assertNotApplied("grid_unavailable", () -> inspect(f, context, "LOCAL_ID"));
+        assertRpcError("native_unavailable", () -> inspect(f, context, "LOCAL_ID"));
         child.kinds.add(BOOLEAN);
         f.first.put(CHILDREN, Collections.nCopies(257, child));
-        assertNotApplied("grid_bounds_exceeded", () -> inspect(f, context, "LOCAL_ID"));
+        assertRpcError("out_of_bounds", () -> inspect(f, context, "LOCAL_ID"));
         for (int change = 0; change < 5; change++) {
             Fixture moved = inspectionFixture();
             ContextFixture c = new ContextFixture();
@@ -893,15 +897,15 @@ public final class GridSnapshotReaderTest {
                 if (mode == 3) moved.first.put(INSTANCE_ID, new UUID(7, 8));
                 if (mode == 4) moved.device.put(OWNER_TRACK, new Node(TRACK).put(TRACK_UUID, new UUID(8, 9)));
             };
-            assertNotApplied("stale_context", () -> inspect(moved, c, "LOCAL_ID"));
+            assertRpcError("stale_context", () -> inspect(moved, c, "LOCAL_ID"));
         }
         Fixture cancelled = inspectionFixture();
         int[] calls = {0};
-        assertNotApplied(
+        assertRpcError(
                 "cancelled",
                 () -> cancelled.reader.parameter(
                         cancelled.proxy, TRACK_ID, new UUID(1, 1), "LOCAL_ID", context.reader, () -> {
-                            if (++calls[0] == 5) throw Errors.notApplied(ErrorCode.CANCELLED, "cancelled");
+                            if (++calls[0] == 5) throw Errors.notApplied(Reason.CANCELLED, "cancelled");
                         }));
         assertTrue(cancelled.closed > 0, "cancelled exact lookup closes native streams");
     }
@@ -972,7 +976,7 @@ public final class GridSnapshotReaderTest {
             Fixture f = inspectionFixture();
             ContextFixture c = new ContextFixture();
             f.afterValue = () -> c.values.put(field, new Object());
-            assertNotApplied("stale_context", () -> inspect(f, c, "LOCAL_ID"));
+            assertRpcError("stale_context", () -> inspect(f, c, "LOCAL_ID"));
         }
         Fixture rebound = inspectionFixture();
         ContextFixture reboundContext = new ContextFixture();
@@ -981,30 +985,30 @@ public final class GridSnapshotReaderTest {
             reboundContext.values.put(NativeReadContext.Field.CONTEXT, replacement);
             reboundContext.values.put(NativeReadContext.Field.DT_CONTEXT, replacement);
         };
-        assertNotApplied("stale_context", () -> inspect(rebound, reboundContext, "LOCAL_ID"));
+        assertRpcError("stale_context", () -> inspect(rebound, reboundContext, "LOCAL_ID"));
         Fixture f = inspectionFixture();
         ContextFixture c = new ContextFixture();
         c.values.put(NativeReadContext.Field.CONTEXT, null);
-        assertNotApplied("stale_context", () -> inspect(f, c, "LOCAL_ID"));
+        assertRpcError("stale_context", () -> inspect(f, c, "LOCAL_ID"));
         c.values.put(NativeReadContext.Field.CONTEXT, new Object());
-        assertNotApplied("stale_context", () -> inspect(f, c, "LOCAL_ID"));
+        assertRpcError("stale_context", () -> inspect(f, c, "LOCAL_ID"));
         ContextFixture deleted = new ContextFixture();
         deleted.values.put(NativeReadContext.Field.DELETED, true);
-        assertNotApplied("stale_context", () -> inspect(f, deleted, "LOCAL_ID"));
+        assertRpcError("stale_context", () -> inspect(f, deleted, "LOCAL_ID"));
         ContextFixture disposed = new ContextFixture();
         disposed.values.put(NativeReadContext.Field.DISPOSED, true);
-        assertNotApplied("stale_context", () -> inspect(f, disposed, "LOCAL_ID"));
+        assertRpcError("stale_context", () -> inspect(f, disposed, "LOCAL_ID"));
         ContextFixture unavailable = new ContextFixture();
         unavailable.values.put(GridParameterContext.Field.SETTABLE, null);
-        assertNotApplied("grid_unavailable", () -> inspect(f, unavailable, "LOCAL_ID"));
+        assertRpcError("native_unavailable", () -> inspect(f, unavailable, "LOCAL_ID"));
         ContextFixture missingWrapper = new ContextFixture();
         missingWrapper.values.put(GridParameterContext.Field.GUI_BOOLEAN, null);
-        assertNotApplied("grid_unavailable", () -> inspect(f, missingWrapper, "LOCAL_ID"));
+        assertRpcError("native_unavailable", () -> inspect(f, missingWrapper, "LOCAL_ID"));
         ContextFixture foreignProject = new ContextFixture();
         foreignProject.values.put(GridParameterContext.Field.PARAMETER_PROJECT, new Object());
-        assertNotApplied("stale_context", () -> inspect(f, foreignProject, "LOCAL_ID"));
-        assertNotApplied(
-                "grid_unavailable",
+        assertRpcError("stale_context", () -> inspect(f, foreignProject, "LOCAL_ID"));
+        assertRpcError(
+                "native_unavailable",
                 () -> f.reader.parameter(f.proxy, TRACK_ID, new UUID(1, 1), "LOCAL_ID", null, () -> {}));
         assertTrue(
                 f.read(0, 64, true).getAsJsonArray("modules").size() == 2,
@@ -1029,14 +1033,14 @@ public final class GridSnapshotReaderTest {
     @Test
     void rawParameterTypesAndRepresentability() {
         for (String value : List.of("null", "\"1\"", "true", "1.0", "1e0", "2147483648", "-2147483649"))
-            assertNotApplied("invalid_params", () -> request("integer", "0", value));
+            assertRpcError("invalid_params", () -> request("integer", "0", value));
         for (String value : List.of("0", "1", "\"false\"", "null"))
-            assertNotApplied("invalid_params", () -> request("boolean", "false", value));
+            assertRpcError("invalid_params", () -> request("boolean", "false", value));
         for (String value : List.of("1e309", "-1e309", "true", "\"0.5\"", "null", "9007199254740993"))
-            assertNotApplied("invalid_params", () -> request("float", "0", value));
-        assertNotApplied("invalid_params", () -> request("float", "9007199254740993", "0"));
-        assertNotApplied("invalid_params", () -> request("enum", "1.0", "2"));
-        assertNotApplied("invalid_params", () -> request("number", "0", "1"));
+            assertRpcError("invalid_params", () -> request("float", "0", value));
+        assertRpcError("invalid_params", () -> request("float", "9007199254740993", "0"));
+        assertRpcError("invalid_params", () -> request("enum", "1.0", "2"));
+        assertRpcError("invalid_params", () -> request("number", "0", "1"));
         assertTrue(
                 request("integer", "-2147483648", "2147483647").rawValue == Integer.MAX_VALUE,
                 "signed integer boundaries remain exact");
@@ -1049,25 +1053,25 @@ public final class GridSnapshotReaderTest {
     @Test
     void rawParameterCasRangesAndActualEnumValues() {
         WriterFixture f = new WriterFixture();
-        assertNotApplied("stale_context", () -> f.set(request("boolean", "false", "true")));
-        assertNotApplied("stale_context", () -> f.set(request("float", "1", "1")));
+        assertRpcError("stale_context", () -> f.set(request("boolean", "false", "true")));
+        assertRpcError("stale_context", () -> f.set(request("float", "1", "1")));
         assertTrue(f.calls == 0, "CAS and kind precede same-value no-op");
         f.scalar(FLOAT, 0.5, -1.0, 1.0);
-        assertNotApplied("invalid_params", () -> f.set(request("float", "0.5", "1.0001")));
-        assertNotApplied("stale_context", () -> f.set(request("float", "0.5000000000000001", "0.5")));
-        assertNotApplied("stale_context", () -> f.set(request("float", "0.4", "2")));
+        assertRpcError("invalid_params", () -> f.set(request("float", "0.5", "1.0001")));
+        assertRpcError("stale_context", () -> f.set(request("float", "0.5000000000000001", "0.5")));
+        assertRpcError("stale_context", () -> f.set(request("float", "0.4", "2")));
         f.scalar(INTEGER, -7, -10, 12);
-        assertNotApplied("invalid_params", () -> f.set(request("integer", "-7", "13")));
+        assertRpcError("invalid_params", () -> f.set(request("integer", "-7", "13")));
         f.set(request("integer", "-7", "12"));
         assertTrue(
                 (Integer) f.child.values.get(INTEGER_VALUE) == 12,
                 "signed raw integer edit reaches exact bounded model value");
         f.scalar(ENUM, 42, 0, 0);
-        assertNotApplied("invalid_params", () -> f.set(request("enum", "42", "1")));
+        assertRpcError("invalid_params", () -> f.set(request("enum", "42", "1")));
         f.set(request("enum", "42", "10"));
         assertTrue((Integer) f.child.values.get(ENUM_VALUE) == 10, "enum uses listed nonordinal option value");
         f.child.put(ENUM_VALUE, 99);
-        assertNotApplied("grid_unavailable", () -> f.set(request("enum", "99", "10")));
+        assertRpcError("native_unavailable", () -> f.set(request("enum", "99", "10")));
     }
 
     @Test
@@ -1144,28 +1148,34 @@ public final class GridSnapshotReaderTest {
         return f.writer.setAll(f.model.proxy, TRACK_ID, List.of(entries), () -> {}, () -> f.op.dispatched = true);
     }
 
+    /** Settled without success: an error, a cancellation or a result with outcome unknown. */
+    static boolean unsuccessful(HostOperation op) {
+        return op.result.isCompletedExceptionally()
+                || op.result.isDone() && !Results.outcomeOf(op.result.join()).succeeded();
+    }
+
+    /** Each batch entry as "outcome" or "outcome/reason". */
+    static List<String> outcomes(JsonArray entries) {
+        List<String> out = new ArrayList<>();
+        for (JsonElement element : entries) {
+            JsonObject entry = element.getAsJsonObject();
+            out.add(entry.get("outcome").getAsString()
+                    + (entry.has("reason") ? "/" + entry.get("reason").getAsString() : ""));
+        }
+        return out;
+    }
+
     @Test
     void batchChecksEveryCasBeforeAnyWrite() {
         WriterFixture f = batchFixture();
         JsonObject ok = batch(f, entry("LOCAL_ID", "true", "false"), entry("OTHER_ID", "true", "true"));
         JsonArray writes = ok.getAsJsonArray("writes");
+        assertEquals(List.of("applied", "already_matched"), outcomes(writes));
         assertTrue(
-                ok.get("batchStatus").getAsString().equals("applied")
-                        && ok.get("status").getAsString().equals("observed")
-                        && ok.get("completion").getAsString().equals("observed")
+                ok.get("outcome").getAsString().equals("applied")
                         && ok.get("written").getAsInt() == 1
                         && f.calls == 1
-                        && writes.get(0)
-                                .getAsJsonObject()
-                                .get("status")
-                                .getAsString()
-                                .equals("applied")
-                        && !writes.get(0).getAsJsonObject().get("value").getAsBoolean()
-                        && writes.get(1)
-                                .getAsJsonObject()
-                                .get("status")
-                                .getAsString()
-                                .equals("already_matched"),
+                        && !writes.get(0).getAsJsonObject().get("value").getAsBoolean(),
                 "batch applies changed entries in order and reports already-matched ones without dispatch");
         assertTrue(
                 writes.get(0).getAsJsonObject().get("display").getAsString().equals("native display"),
@@ -1179,8 +1189,8 @@ public final class GridSnapshotReaderTest {
                     entry("THIRD_ID", "false", "true"));
         });
         assertTrue(
-                error.code.equals("stale_context")
-                        && error.outcome.equals("not_applied")
+                error.reason.wire().equals("stale_context")
+                        && !error.unknown
                         && stale.calls == 0
                         && !stale.op.dispatched
                         && error.getMessage().contains("#1")
@@ -1194,9 +1204,7 @@ public final class GridSnapshotReaderTest {
         } catch (RpcException caught) {
             error = caught;
         }
-        assertTrue(
-                error.outcome.equals("not_applied") && missing.calls == 0,
-                "unknown parameter id fails the batch closed");
+        assertTrue(!error.unknown && missing.calls == 0, "unknown parameter id fails the batch closed");
     }
 
     @Test
@@ -1204,8 +1212,7 @@ public final class GridSnapshotReaderTest {
         WriterFixture f = batchFixture();
         int[] seen = {0};
         f.afterMutation = () -> {
-            if (++seen[0] == 2)
-                throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "children rebuilt after the native set");
+            if (++seen[0] == 2) throw Errors.notApplied(Reason.STALE_CONTEXT, "children rebuilt after the native set");
         };
         JsonObject result = batch(
                 f,
@@ -1213,27 +1220,130 @@ public final class GridSnapshotReaderTest {
                 entry("OTHER_ID", "true", "false"),
                 entry("THIRD_ID", "true", "false"));
         JsonArray writes = result.getAsJsonArray("writes");
+        assertEquals(List.of("applied", "unknown/stale_context", "not_applied/not_reached"), outcomes(writes));
         assertTrue(
-                f.calls == 2
-                        && result.get("batchStatus").getAsString().equals("unknown")
-                        && result.get("completion").getAsString().equals("unknown")
-                        && writes.get(1)
-                                .getAsJsonObject()
-                                .get("status")
-                                .getAsString()
-                                .equals("unknown")
-                        && writes.get(1)
-                                .getAsJsonObject()
-                                .getAsJsonObject("error")
-                                .get("code")
-                                .getAsString()
-                                .equals("stale_context")
-                        && writes.get(2)
-                                .getAsJsonObject()
-                                .get("status")
-                                .getAsString()
-                                .equals("not_dispatched"),
+                f.calls == 2 && result.get("outcome").getAsString().equals("unknown"),
                 "a not_applied-coded error thrown after the entry's native set is unknown, not failed");
+    }
+
+    @Test
+    void malformedNativeValuesFailClosed() {
+        Fixture missing = new Fixture();
+        missing.catalog = null;
+        assertRpcError("native_unavailable", () -> missing.reader.catalog("", 0, 64, () -> {}));
+        missing.catalog = List.of(new Node());
+        assertRpcError("native_unavailable", () -> missing.reader.catalog("", 0, 64, () -> {}));
+        for (int bad = 0; bad < 7; bad++) {
+            Fixture f = new Fixture();
+            Node child;
+            if (bad == 0) child = f.parameter(BOOLEAN, f.first).put(BOOLEAN_VALUE, "yes");
+            else if (bad == 1) {
+                child = f.parameter(INTEGER, f.first).put(INTEGER_VALUE, "7");
+            } else {
+                child = f.parameter(ENUM, f.first).put(ENUM_VALUE, 1);
+                Object options = bad == 2
+                        ? "not a list"
+                        : bad == 3 ? List.of(new Node()) : List.of(option(1, "One"), option(1, "Again"));
+                child.put(ENUM_DEFINITION, new Node().put(OPTIONS, options));
+                if (bad == 4) child.put(OWNER_MODULE, f.second);
+                if (bad == 5) f.first.put(CHILDREN, (Supplier<Object>) () -> "not a stream");
+            }
+            if (bad != 5) f.first.put(CHILDREN, List.of(child));
+            assertRpcError(bad == 4 ? "stale_context" : "native_unavailable", () -> f.read(0, 64, true));
+        }
+        assertRpcError("native_unavailable", () -> GridSnapshotReader.effectiveSteps(new int[1], 1));
+        assertRpcError("native_unavailable", () -> GridSnapshotReader.effectiveSteps(new float[1], -1));
+    }
+
+    @Test
+    void bindingsRequireCurrentIdentity() {
+        Fixture f = new Fixture();
+        Node floating = f.parameter(FLOAT, f.first);
+        f.first.put(CHILDREN, List.of(floating));
+        GridSnapshotReader.NativeTarget target = f.reader.target(f.proxy, TRACK_ID);
+        assertRpcError("stale_context", () -> f.reader.guardTarget(target, f.proxy, new UUID(9, 9)));
+        GridSnapshotReader.ParameterBinding scalar =
+                f.reader.bindParameter(f.proxy, TRACK_ID, new UUID(1, 1), "LOCAL_ID", () -> {});
+        assertRpcError("native_unavailable", () -> f.reader.bindBipolarParameter(scalar));
+        assertRpcError("stale_context", () -> f.reader.detachedParameter(floating, () -> {}, new ArrayList<>()));
+        f.first.put(INSTANCE_ID, "not a uuid");
+        assertRpcError("native_unavailable", () -> f.reader.moduleIdNamed(target, "Effective module", () -> {}));
+        f.parameters = false;
+        assertRpcError(
+                "native_unavailable",
+                () -> f.reader.bindParameter(f.proxy, TRACK_ID, new UUID(1, 1), "LOCAL_ID", () -> {}));
+        PanelFixture panels = new PanelFixture();
+        GridSnapshotReader.ParameterBinding panel =
+                panels.model.reader.bindParameter(panels.model.proxy, TRACK_ID, new UUID(1, 1), "PANEL_ID", () -> {});
+        GridSnapshotReader.ParameterBinding coupled = panels.model.reader.bindBipolarParameter(panel);
+        Node relinked = panels.model
+                .parameter(FLOAT, panels.model.first)
+                .put(PARAMETER_ID, "OTHER_VALUE")
+                .put(BIPOLAR_PANEL, panels.panel);
+        relinked.kinds.add(BIPOLAR_FLOAT);
+        panels.coupled.put(BIPOLAR_PANEL, null);
+        panels.model.first.put(CHILDREN, List.of(panels.panel, panels.coupled, relinked));
+        assertRpcError("stale_context", () -> panels.model.reader.guardBipolarParameter(panel, coupled));
+    }
+
+    @Test
+    void missingPanelAndStringBindingsRefuseBatchesBeforeDispatch() {
+        PanelFixture panels = new PanelFixture();
+        GridParameterWriter none = new GridParameterWriter(
+                panels.model.reader,
+                panels.context.reader,
+                new GridParameterWriter.Access() {
+                    @Override
+                    public void requireSupported(Object parameter, GridSnapshotReader.Kind kind) {
+                        throw new AssertionError("a panel never reaches scalar authorization");
+                    }
+
+                    @Override
+                    public void setRaw(Object parameter, double value) {
+                        throw new AssertionError("a panel never reaches the scalar setter");
+                    }
+                },
+                null,
+                null);
+        GridParameterWriter.Entry panel =
+                new GridParameterWriter.Entry(new UUID(1, 1), "PANEL_ID", request("boolean", "true", "false"));
+        assertRpcError(
+                "native_unavailable",
+                () -> none.set(
+                        panels.model.proxy, TRACK_ID, new UUID(1, 1), "PANEL_ID", panel.request, () -> {}, () -> {}));
+        assertRpcError(
+                "native_unavailable",
+                () -> none.setAll(panels.model.proxy, TRACK_ID, List.of(panel), () -> {}, () -> {}));
+        StringFixture strings = new StringFixture();
+        GridParameterWriter bare =
+                new GridParameterWriter(strings.model.reader, strings.context.reader, null, null, null);
+        GridParameterWriter.Entry text =
+                new GridParameterWriter.Entry(new UUID(1, 1), "TEXT_ID", stringRequest("before", "x"));
+        assertRpcError(
+                "native_unavailable",
+                () -> bare.setAll(strings.model.proxy, TRACK_ID, List.of(text), () -> {}, () -> {}));
+        assertTrue(panels.calls == 0 && strings.calls == 0, "nothing is dispatched without a write binding");
+    }
+
+    @Test
+    void batchEntryRefusedBeforeItsDispatchIsNotApplied() {
+        WriterFixture f = batchFixture();
+        Node other = (Node) ((List<?>) f.model.first.values.get(CHILDREN)).get(1);
+        f.afterMutation = () -> other.put(BOOLEAN_VALUE, false);
+        JsonObject result = batch(
+                f,
+                entry("LOCAL_ID", "true", "false"),
+                entry("OTHER_ID", "true", "false"),
+                entry("THIRD_ID", "true", "false"));
+        assertEquals(
+                List.of("applied", "not_applied/stale_context", "not_applied/not_reached"),
+                outcomes(result.getAsJsonArray("writes")),
+                "a stale entry after a written one is refused, later entries are not reached");
+        assertTrue(
+                result.get("outcome").getAsString().equals("not_applied")
+                        && result.get("written").getAsInt() == 1
+                        && f.calls == 1,
+                "the batch outcome is the worst entry and nothing is retried");
     }
 
     @Test
@@ -1262,7 +1372,7 @@ public final class GridSnapshotReaderTest {
                     broken.model.proxy, TRACK_ID, List.of(panel), () -> {}, () -> broken.op.dispatched = true);
         });
         assertTrue(
-                error.outcome.equals("not_applied") && broken.calls == 0 && !broken.op.dispatched,
+                !error.unknown && broken.calls == 0 && !broken.op.dispatched,
                 "an unresolvable panel coupling fails the batch before any write");
     }
 
@@ -1280,40 +1390,21 @@ public final class GridSnapshotReaderTest {
                 entry("THIRD_ID", "true", "false"));
         JsonArray writes = result.getAsJsonArray("writes");
         assertTrue(f.calls == 2, "failed readback stops dispatch");
-        assertTrue(
-                writes.get(0).getAsJsonObject().get("status").getAsString().equals("applied")
-                        && writes.get(1)
-                                .getAsJsonObject()
-                                .get("status")
-                                .getAsString()
-                                .equals("unknown")
-                        && writes.get(1)
-                                .getAsJsonObject()
-                                .getAsJsonObject("error")
-                                .get("code")
-                                .getAsString()
-                                .equals("grid_verification_failed")
-                        && writes.get(2)
-                                .getAsJsonObject()
-                                .get("status")
-                                .getAsString()
-                                .equals("not_dispatched")
-                        && result.get("batchStatus").getAsString().equals("unknown")
-                        && result.get("completion").getAsString().equals("unknown"),
-                "unknown entry is reported, later entries are not_dispatched, overall completion is unknown");
+        assertEquals(
+                List.of("applied", "unknown/readback_mismatch", "not_applied/not_reached"),
+                outcomes(writes),
+                "unknown entry is reported, later entries are not reached");
+        assertEquals("unknown", result.get("outcome").getAsString(), "the batch outcome is the worst entry");
         WriterFixture first = batchFixture();
         first.apply = false;
         JsonObject head = batch(first, entry("LOCAL_ID", "true", "false"), entry("OTHER_ID", "true", "false"));
+        assertEquals(
+                List.of("unknown/readback_mismatch", "not_applied/not_reached"),
+                outcomes(head.getAsJsonArray("writes")));
         assertTrue(
                 first.calls == 1
-                        && head.get("batchStatus").getAsString().equals("unknown")
-                        && head.get("written").getAsInt() == 0
-                        && head.getAsJsonArray("writes")
-                                .get(1)
-                                .getAsJsonObject()
-                                .get("status")
-                                .getAsString()
-                                .equals("not_dispatched"),
+                        && head.get("outcome").getAsString().equals("unknown")
+                        && head.get("written").getAsInt() == 0,
                 "an unknown first entry is reported, not thrown away, and nothing after it is dispatched or retried");
     }
 
@@ -1334,7 +1425,7 @@ public final class GridSnapshotReaderTest {
         assertTrue(
                 f.calls == 1 && !((Boolean) f.child.values.get(BOOLEAN_VALUE)),
                 "grid.get kind/value is accepted as the CAS expectation");
-        assertNotApplied("stale_context", () -> f.set(fromGet));
+        assertRpcError("stale_context", () -> f.set(fromGet));
         assertTrue(f.calls == 1, "a grid.get snapshot gone stale is rejected not_applied without a write");
     }
 
@@ -1366,9 +1457,7 @@ public final class GridSnapshotReaderTest {
         mismatched.apply = false;
         RpcException error = mismatched.failure(request("boolean", "true", "false"));
         assertTrue(
-                error.code.equals("grid_verification_failed")
-                        && error.outcome.equals("unknown")
-                        && mismatched.calls == 1,
+                error.reason.wire().equals("readback_mismatch") && error.unknown && mismatched.calls == 1,
                 "void setter with mismatched readback remains unknown without retry");
     }
 
@@ -1380,10 +1469,10 @@ public final class GridSnapshotReaderTest {
                 NativeReadContext.Field.INITIALIZED)) {
             WriterFixture f = new WriterFixture();
             f.context.values.put(field, false);
-            assertNotApplied("unsafe_state", () -> f.set(request("boolean", "true", "true")));
+            assertRpcError("unsafe_state", () -> f.set(request("boolean", "true", "true")));
             assertTrue(f.calls == 0, "false native prerequisite blocks even a no-op");
             f.context.values.put(field, null);
-            assertNotApplied("grid_unavailable", () -> f.set(request("boolean", "true", "false")));
+            assertRpcError("native_unavailable", () -> f.set(request("boolean", "true", "false")));
         }
         for (GridParameterContext.Field field : List.of(
                 GridParameterContext.Field.CIU,
@@ -1396,7 +1485,7 @@ public final class GridSnapshotReaderTest {
             f.model.afterValue = () -> {
                 if (++reads[0] == 2) f.context.values.put(field, true);
             };
-            assertNotApplied("unsafe_state", () -> f.set(request("boolean", "true", "false")));
+            assertRpcError("unsafe_state", () -> f.set(request("boolean", "true", "false")));
             assertTrue(
                     f.calls == 0 && !f.op.dispatched, "live predicate transition before invocation prevents dispatch");
         }
@@ -1408,21 +1497,21 @@ public final class GridSnapshotReaderTest {
                 NativeReadContext.Field.DEFAULT_DT)) {
             WriterFixture f = new WriterFixture();
             f.context.values.put(field, null);
-            assertNotApplied("grid_unavailable", () -> f.set(request("boolean", "true", "false")));
+            assertRpcError("native_unavailable", () -> f.set(request("boolean", "true", "false")));
             assertTrue(f.calls == 0, "missing native context object is unavailable, never false permission");
         }
         WriterFixture owner = new WriterFixture();
         owner.context.values.put(GridParameterContext.Field.LOCK_OWNER, new Object());
-        assertNotApplied("unsafe_state", () -> owner.set(request("boolean", "true", "false")));
+        assertRpcError("unsafe_state", () -> owner.set(request("boolean", "true", "false")));
         WriterFixture root = new WriterFixture();
         root.context.values.put(NativeReadContext.Field.ROOT, new Object());
-        assertNotApplied("stale_context", () -> root.set(request("boolean", "true", "false")));
+        assertRpcError("stale_context", () -> root.set(request("boolean", "true", "false")));
         WriterFixture moved = new WriterFixture();
         moved.model.afterValue = () -> moved.model.first.put(CHILDREN, List.of());
-        assertNotApplied("stale_context", () -> moved.set(request("boolean", "true", "false")));
+        assertRpcError("stale_context", () -> moved.set(request("boolean", "true", "false")));
         WriterFixture changedValue = new WriterFixture();
         changedValue.model.afterValue = () -> changedValue.child.put(BOOLEAN_VALUE, false);
-        assertNotApplied("stale_context", () -> changedValue.set(request("boolean", "true", "false")));
+        assertRpcError("stale_context", () -> changedValue.set(request("boolean", "true", "false")));
         WriterFixture rangeChanged = new WriterFixture();
         rangeChanged.scalar(FLOAT, 0.5, -1.0, 1.0);
         Node definition = (Node) rangeChanged.child.values.get(FLOAT_DEFINITION);
@@ -1430,13 +1519,13 @@ public final class GridSnapshotReaderTest {
         rangeChanged.model.afterValue = () -> {
             if (++reads[0] == 2) definition.put(FLOAT_MIN, 0.0);
         };
-        assertNotApplied("invalid_params", () -> rangeChanged.set(request("float", "0.5", "-0.5")));
+        assertRpcError("invalid_params", () -> rangeChanged.set(request("float", "0.5", "-0.5")));
         assertTrue(
                 rangeChanged.calls == 0 && !rangeChanged.op.dispatched,
                 "in-place live range contraction rejects a formerly valid negative value before dispatch");
         WriterFixture unknown = new WriterFixture();
         unknown.supported = false;
-        assertNotApplied("grid_unavailable", () -> unknown.set(request("boolean", "true", "false")));
+        assertRpcError("native_unavailable", () -> unknown.set(request("boolean", "true", "false")));
         assertTrue(
                 inspect(unknown.model, unknown.context, "LOCAL_ID")
                         .getAsJsonObject("parameter")
@@ -1449,32 +1538,28 @@ public final class GridSnapshotReaderTest {
     void rawParameterMutationFailuresRemainUnknown() {
         WriterFixture partial = new WriterFixture();
         partial.afterMutation = () -> {
-            throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "native failure after partial assignment");
+            throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "native failure after partial assignment");
         };
         RpcException error = partial.failure(request("boolean", "true", "false"));
         assertTrue(
-                error.outcome.equals("unknown")
-                        && partial.calls == 1
-                        && !(Boolean) partial.child.values.get(BOOLEAN_VALUE),
+                error.unknown && partial.calls == 1 && !(Boolean) partial.child.values.get(BOOLEAN_VALUE),
                 "partial mutation exception never fabricates rollback or not-applied");
         WriterFixture target = new WriterFixture();
         target.afterMutation = () -> target.model.proxy.put(TARGET, new Node(DEVICE));
         error = target.failure(request("boolean", "true", "false"));
         assertTrue(
-                error.code.equals("stale_context") && error.outcome.equals("unknown") && target.calls == 1,
+                error.reason.wire().equals("stale_context") && error.unknown && target.calls == 1,
                 "post-dispatch target failure remains unknown without retry");
         WriterFixture closed = new WriterFixture();
         closed.afterMutation = () -> closed.cancelled = true;
         error = closed.failure(request("boolean", "true", "false"));
         assertTrue(
-                error.code.equals("cancelled") && error.outcome.equals("unknown"),
+                error.reason.wire().equals("cancelled") && error.unknown,
                 "late cancellation does not imply native cancellation");
         WriterFixture early = new WriterFixture();
         early.cancelled = true;
         error = early.failure(request("boolean", "true", "false"));
-        assertTrue(
-                error.outcome.equals("not_applied") && early.calls == 0,
-                "before-dispatch cancellation prevents mutation");
+        assertTrue(!error.unknown && early.calls == 0, "before-dispatch cancellation prevents mutation");
     }
 
     private static Node stringPanel(Fixture f, String id, Object value) {
@@ -1583,7 +1668,7 @@ public final class GridSnapshotReaderTest {
                     "mixed scalar/boolean-panel/string graph retains each independent typed value");
         }
         context.values.put(GridParameterContext.Field.GUI_PANEL_STRING, null);
-        assertNotApplied("grid_unavailable", () -> inspect(f, context, "TEXT_ID"));
+        assertRpcError("native_unavailable", () -> inspect(f, context, "TEXT_ID"));
         assertTrue(
                 f.read(0, 64, true).getAsJsonArray("modules").size() == 2,
                 "missing string property inspection does not disable graph reads");
@@ -1605,8 +1690,8 @@ public final class GridSnapshotReaderTest {
                         .equals(supplementary.repeat(512)),
                 "exactly 1024 UTF-16 units remain readable, including supplementary characters");
         panel.put(STRING_VALUE, supplementary.repeat(512) + "x");
-        assertNotApplied("grid_bounds_exceeded", () -> inspect(f, context, "TEXT_ID"));
-        assertNotApplied("grid_bounds_exceeded", () -> f.read(0, 64, true));
+        assertRpcError("out_of_bounds", () -> inspect(f, context, "TEXT_ID"));
+        assertRpcError("out_of_bounds", () -> f.read(0, 64, true));
         panel.forbidden.add(STRING_VALUE);
         assertTrue(
                 f.read(0, 64, false).getAsJsonArray("modules").size() == 2,
@@ -1620,8 +1705,8 @@ public final class GridSnapshotReaderTest {
         panel.forbidden.remove(STRING_VALUE);
         for (Object invalid : Arrays.asList(null, Boolean.TRUE, 42)) {
             panel.put(STRING_VALUE, invalid);
-            assertNotApplied("grid_unavailable", () -> inspect(f, context, "TEXT_ID"));
-            assertNotApplied("grid_unavailable", () -> f.read(0, 64, true));
+            assertRpcError("native_unavailable", () -> inspect(f, context, "TEXT_ID"));
+            assertRpcError("native_unavailable", () -> f.read(0, 64, true));
         }
     }
 
@@ -1640,16 +1725,16 @@ public final class GridSnapshotReaderTest {
                 "unique empty native string identifier remains addressable");
         Node collision = f.parameter(BOOLEAN, f.first).put(PARAMETER_ID, "").put(BOOLEAN_VALUE, false);
         f.first.put(CHILDREN, List.of(panel, collision));
-        assertNotApplied("stale_context", () -> inspect(f, context, ""));
+        assertRpcError("stale_context", () -> inspect(f, context, ""));
         collision.kinds.clear();
         collision.kinds.add(PANEL_BOOLEAN);
-        assertNotApplied("stale_context", () -> inspect(f, context, ""));
+        assertRpcError("stale_context", () -> inspect(f, context, ""));
         f.first.put(CHILDREN, List.of(panel));
         panel.put(OWNER_MODULE, f.second);
-        assertNotApplied("stale_context", () -> inspect(f, context, ""));
+        assertRpcError("stale_context", () -> inspect(f, context, ""));
         panel.put(OWNER_MODULE, f.first);
         panel.threadAllowed = false;
-        assertNotApplied("grid_unavailable", () -> inspect(f, context, ""));
+        assertRpcError("native_unavailable", () -> inspect(f, context, ""));
         for (int change = 0; change < 5; change++) {
             Fixture moved = new Fixture();
             Node text = stringPanel(moved, "TEXT_ID", "before");
@@ -1663,7 +1748,7 @@ public final class GridSnapshotReaderTest {
                 if (mode == 3) c.values.put(NativeReadContext.Field.CONTEXT, new Object());
                 if (mode == 4) text.put(OWNER_MODULE, moved.second);
             };
-            assertNotApplied("stale_context", () -> inspect(moved, c, "TEXT_ID"));
+            assertRpcError("stale_context", () -> inspect(moved, c, "TEXT_ID"));
         }
     }
 
@@ -1702,7 +1787,7 @@ public final class GridSnapshotReaderTest {
                     });
                 });
                 assertTrue(
-                        error.code.equals("grid_unavailable") && error.outcome.equals("not_applied"),
+                        error.reason.wire().equals("native_unavailable") && !error.unknown,
                         "string panel rejects scalar writes and apparent no-ops before authorization");
             }
         }
@@ -1765,7 +1850,7 @@ public final class GridSnapshotReaderTest {
 
         @Override
         public void requireSupported(Object parameter) {
-            if (parameter != panel) throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "unmapped panel");
+            if (parameter != panel) throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "unmapped panel");
         }
 
         @Override
@@ -1806,7 +1891,7 @@ public final class GridSnapshotReaderTest {
                 noop.calls == 0
                         && !noop.op.dispatched
                         && !result.get("mutationDispatched").getAsBoolean()
-                        && result.get("verification").getAsString().equals("already_matched"),
+                        && result.get("outcome").getAsString().equals("already_matched"),
                 "matching string write is a verified no-op without native dispatch");
         StringFixture empty = new StringFixture();
         empty.set(stringRequest("before", ""));
@@ -1814,30 +1899,32 @@ public final class GridSnapshotReaderTest {
         StringFixture stale = new StringFixture();
         RpcException error = stale.failure(stringRequest("other", "x"));
         assertTrue(
-                error.code.equals("stale_context")
-                        && error.outcome.equals("not_applied")
+                error.reason.wire().equals("stale_context")
+                        && !error.unknown
                         && stale.calls == 0
                         && !stale.op.dispatched,
                 "stale string expectation is rejected before dispatch, even for a no-op");
         error = stale.failure(request("boolean", "true", "false"));
         assertTrue(
-                error.code.equals("stale_context") && stale.calls == 0,
+                error.reason.wire().equals("stale_context") && stale.calls == 0,
                 "a scalar request cannot target a string panel");
         StringFixture skipped = new StringFixture();
         skipped.context.override(skipped.panel, GridParameterContext.Field.CIU, true);
         error = skipped.failure(stringRequest("before", "x"));
-        assertTrue(error.code.equals("unsafe_state") && skipped.calls == 0, "panel skip predicate gates string writes");
+        assertTrue(
+                error.reason.wire().equals("unsafe_state") && skipped.calls == 0,
+                "panel skip predicate gates string writes");
         StringFixture wrongProject = new StringFixture();
         wrongProject.context.override(wrongProject.panel, NativeReadContext.Field.PROJECT, new Object());
         error = wrongProject.failure(stringRequest("before", "x"));
         assertTrue(
-                error.code.equals("stale_context") && wrongProject.calls == 0,
+                error.reason.wire().equals("stale_context") && wrongProject.calls == 0,
                 "owning project mismatch gates string writes");
         StringFixture uninitialized = new StringFixture();
         uninitialized.context.values.put(NativeReadContext.Field.INITIALIZED, false);
         error = uninitialized.failure(stringRequest("before", "x"));
         assertTrue(
-                error.code.equals("unsafe_state") && uninitialized.calls == 0,
+                error.reason.wire().equals("unsafe_state") && uninitialized.calls == 0,
                 "uninitialized document context gates string writes");
     }
 
@@ -1847,11 +1934,11 @@ public final class GridSnapshotReaderTest {
         unread.apply = false;
         RpcException error = unread.failure(stringRequest("before", "x"));
         assertTrue(
-                error.code.equals("grid_verification_failed") && error.outcome.equals("unknown") && unread.calls == 1,
+                error.reason.wire().equals("readback_mismatch") && error.unknown && unread.calls == 1,
                 "unobserved requested text is not a successful string dispatch");
         StringFixture partial = new StringFixture();
         partial.afterMutation = () -> {
-            throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "native string failure");
+            throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "native string failure");
         };
         error = partial.failure(stringRequest("before", "x"));
         assertTrue(
@@ -1874,7 +1961,7 @@ public final class GridSnapshotReaderTest {
                         });
             });
             assertTrue(
-                    caught.code.equals("grid_unavailable") && caught.outcome.equals("not_applied"),
+                    caught.reason.wire().equals("native_unavailable") && !caught.unknown,
                     "missing string write binding fails closed");
         }
         StringFixture batch = new StringFixture();
@@ -1885,7 +1972,7 @@ public final class GridSnapshotReaderTest {
         JsonObject item = result.getAsJsonArray("writes").get(0).getAsJsonObject();
         assertTrue(
                 batch.calls == 1
-                        && item.get("status").getAsString().equals("applied")
+                        && item.get("outcome").getAsString().equals("applied")
                         && item.get("value").getAsString().equals("batched")
                         && item.get("previousValue").getAsString().equals("before"),
                 "batch entries may write string panels");
@@ -1897,9 +1984,7 @@ public final class GridSnapshotReaderTest {
                 stalePre.writer.setAll(
                         stalePre.model.proxy, TRACK_ID, List.of(bad), () -> {}, () -> stalePre.op.dispatched = true);
             });
-            assertTrue(
-                    caught.outcome.equals("not_applied") && stalePre.calls == 0,
-                    "stale string entry fails the batch preflight");
+            assertTrue(!caught.unknown && stalePre.calls == 0, "stale string entry fails the batch preflight");
         }
     }
 
@@ -1908,23 +1993,23 @@ public final class GridSnapshotReaderTest {
         String max = "a".repeat(1024);
         stringRequest(max, max);
         for (String bad : List.of("1", "true", "null", "[]")) {
-            assertNotApplied(
+            assertRpcError(
                     "invalid_params",
                     () -> GridParameterWriter.Request.parse(HostFixture.json(
                             "{\"expectedKind\":\"string\",\"expectedValue\":\"a\",\"value\":" + bad + "}")));
-            assertNotApplied(
+            assertRpcError(
                     "invalid_params",
                     () -> GridParameterWriter.Request.parse(HostFixture.json(
                             "{\"expectedKind\":\"string\",\"expectedValue\":" + bad + ",\"value\":\"a\"}")));
         }
-        assertNotApplied("invalid_params", () -> stringRequest(max + "a", "a"));
-        assertNotApplied("invalid_params", () -> stringRequest("a", max + "a"));
-        assertNotApplied("invalid_params", () -> stringRequest("a", "\uD83D\uDE00".repeat(513)));
-        assertNotApplied(
+        assertRpcError("invalid_params", () -> stringRequest(max + "a", "a"));
+        assertRpcError("invalid_params", () -> stringRequest("a", max + "a"));
+        assertRpcError("invalid_params", () -> stringRequest("a", "\uD83D\uDE00".repeat(513)));
+        assertRpcError(
                 "invalid_params",
                 () -> GridParameterWriter.Request.parse(HostFixture.json(
                         "{\"expectedKind\":\"string\",\"expectedValue\":\"a\",\"display\":\"1 kHz\"}")));
-        assertNotApplied("invalid_params", () -> request("float", "0.0", "\"text\""));
+        assertRpcError("invalid_params", () -> request("float", "0.0", "\"text\""));
     }
 
     @Test
@@ -1961,7 +2046,7 @@ public final class GridSnapshotReaderTest {
                 .put(PARAMETER_ID, "PANEL_ID")
                 .put(BOOLEAN_VALUE, false);
         f.model.first.put(CHILDREN, List.of(f.panel, f.coupled, collision));
-        assertNotApplied("stale_context", () -> f.set(request("boolean", "true", "false")));
+        assertRpcError("stale_context", () -> f.set(request("boolean", "true", "false")));
         assertTrue(f.calls == 0, "panel/scalar identifier collision cannot choose the first matching child");
     }
 
@@ -2014,31 +2099,31 @@ public final class GridSnapshotReaderTest {
         unlicensed.context.override(unlicensed.coupled, GridParameterContext.Field.LICENSED, false);
         RpcException error = unlicensed.failure();
         assertTrue(
-                error.code.equals("unsafe_state") && error.outcome.equals("not_applied") && unlicensed.calls == 0,
+                error.reason.wire().equals("unsafe_state") && !error.unknown && unlicensed.calls == 0,
                 "linked scalar effective licensing gates panel writes");
         PanelFixture touched = new PanelFixture();
         touched.context.override(touched.coupled, GridParameterContext.Field.TOUCHED, true);
         error = touched.failure();
         assertTrue(
-                error.code.equals("unsafe_state") && touched.calls == 0,
+                error.reason.wire().equals("unsafe_state") && touched.calls == 0,
                 "linked scalar active touch blocks mode changes");
         PanelFixture skipped = new PanelFixture();
         skipped.context.override(skipped.panel, GridParameterContext.Field.CIU, true);
         error = skipped.failure();
         assertTrue(
-                error.code.equals("unsafe_state") && skipped.calls == 0,
+                error.reason.wire().equals("unsafe_state") && skipped.calls == 0,
                 "panel's own native skip predicate is retained");
         PanelFixture wrongProject = new PanelFixture();
         wrongProject.context.override(wrongProject.coupled, NativeReadContext.Field.PROJECT, new Object());
         error = wrongProject.failure();
         assertTrue(
-                error.code.equals("stale_context") && wrongProject.calls == 0,
+                error.reason.wire().equals("stale_context") && wrongProject.calls == 0,
                 "coupled parameter cannot cross owning projects");
         PanelFixture unknown = new PanelFixture();
         unknown.coupled.kinds.remove(BIPOLAR_FLOAT);
         error = unknown.failure();
         assertTrue(
-                error.code.equals("grid_unavailable") && unknown.calls == 0,
+                error.reason.wire().equals("native_unavailable") && unknown.calls == 0,
                 "generic float is not an inspected bipolar dependency");
         PanelFixture ambiguous = new PanelFixture();
         Node second = ambiguous
@@ -2050,29 +2135,25 @@ public final class GridSnapshotReaderTest {
         ambiguous.model.first.put(CHILDREN, List.of(ambiguous.panel, ambiguous.coupled, second));
         error = ambiguous.failure();
         assertTrue(
-                error.code.equals("grid_unavailable") && ambiguous.calls == 0,
+                error.reason.wire().equals("native_unavailable") && ambiguous.calls == 0,
                 "multiple coupled native parameters fail before dispatch");
         PanelFixture stale = new PanelFixture();
         stale.afterMutation = () -> stale.coupled.put(BIPOLAR_PANEL, new Object());
         error = stale.failure();
-        assertTrue(
-                error.outcome.equals("unknown") && stale.calls == 1,
-                "lost post-dispatch reference remains unknown with no retry");
+        assertTrue(error.unknown && stale.calls == 1, "lost post-dispatch reference remains unknown with no retry");
         PanelFixture unread = new PanelFixture();
         unread.apply = false;
         error = unread.failure();
         assertTrue(
-                error.code.equals("grid_verification_failed") && error.outcome.equals("unknown") && unread.calls == 1,
+                error.reason.wire().equals("readback_mismatch") && error.unknown && unread.calls == 1,
                 "unobserved requested boolean is not successful panel dispatch");
         PanelFixture partial = new PanelFixture();
         partial.afterMutation = () -> {
-            throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "native panel failure");
+            throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "native panel failure");
         };
         error = partial.failure();
         assertTrue(
-                error.outcome.equals("unknown")
-                        && partial.calls == 1
-                        && !(Boolean) partial.panel.values.get(BOOLEAN_VALUE),
+                error.unknown && partial.calls == 1 && !(Boolean) partial.panel.values.get(BOOLEAN_VALUE),
                 "native exception after panel/coercion changes cannot fabricate rollback");
     }
 
@@ -2109,9 +2190,7 @@ public final class GridSnapshotReaderTest {
         ModuleWriterFixture stale = new ModuleWriterFixture();
         HostOperation op = stale.start(new GridModuleWriter.Move(6, 3, 7, 3));
         assertTrue(
-                assertRpcError("stale_context", op).outcome.equals("not_applied")
-                        && stale.calls == 0
-                        && !stale.writer.quarantined(),
+                !assertRpcError("stale_context", op).unknown && stale.calls == 0 && !stale.writer.quarantined(),
                 "CAS precedes no-op and never quarantines");
         ModuleWriterFixture noop = new ModuleWriterFixture();
         op = noop.start(new GridModuleWriter.Move(7, 3, 7, 3));
@@ -2138,7 +2217,7 @@ public final class GridSnapshotReaderTest {
                 result.getAsJsonObject("previousPosition").get("x").getAsInt() == 7
                         && result.getAsJsonObject("requestedPosition").get("x").getAsInt() == 11
                         && result.getAsJsonObject("actualPosition").get("x").getAsInt() == 12
-                        && !result.get("matchesRequested").getAsBoolean(),
+                        && result.get("outcome").getAsString().equals("applied"),
                 "native reflow is honestly distinct from requested placement");
         JsonArray modules = result.getAsJsonObject("graph").getAsJsonArray("modules");
         assertTrue(
@@ -2183,7 +2262,7 @@ public final class GridSnapshotReaderTest {
                 "post-delete graph exposes native bypass reconnection, not just incident edges");
         HostOperation absent = f.start(null);
         assertTrue(
-                assertRpcError("stale_context", absent).outcome.equals("not_applied") && f.calls == 1,
+                !assertRpcError("stale_context", absent).unknown && f.calls == 1,
                 "missing UUID is not idempotent deletion success or a retry");
     }
 
@@ -2200,9 +2279,7 @@ public final class GridSnapshotReaderTest {
             f.context.values.put(field, true);
             HostOperation op = f.start(null);
             assertTrue(
-                    assertRpcError("unsafe_state", op).outcome.equals("not_applied")
-                            && f.calls == 0
-                            && !f.writer.quarantined(),
+                    !assertRpcError("unsafe_state", op).unknown && f.calls == 0 && !f.writer.quarantined(),
                     "native topology predicate rejects before dispatch: " + field);
         }
         for (NativeReadContext.Field field :
@@ -2220,7 +2297,7 @@ public final class GridSnapshotReaderTest {
                 GridTopologyContext.Field.LOCK_OWNER)) {
             ModuleWriterFixture f = new ModuleWriterFixture();
             f.context.values.put(field, null);
-            assertRpcError("grid_unavailable", f.start(null));
+            assertRpcError("native_unavailable", f.start(null));
             assertTrue(f.calls == 0, "unavailable required native context is not permission: " + field);
         }
         for (NativeReadContext.Field field :
@@ -2246,17 +2323,17 @@ public final class GridSnapshotReaderTest {
         assertRpcError("stale_context", moved.start(null));
         ModuleWriterFixture unknown = new ModuleWriterFixture();
         unknown.model.graph.put(MODULES, List.of(unknown.model.first, new Node()));
-        assertRpcError("grid_unavailable", unknown.start(null));
+        assertRpcError("native_unavailable", unknown.start(null));
         ModuleWriterFixture many = new ModuleWriterFixture();
         List<Node> modules = new ArrayList<>();
         for (int i = 0; i <= GridModuleWriter.MAX_MODULES; i++) modules.add(many.model.module(i, many.model.graph));
         many.model.graph.put(MODULES, modules);
-        assertRpcError("grid_bounds_exceeded", many.start(null));
+        assertRpcError("out_of_bounds", many.start(null));
         for (GridSnapshotReader.Field field : List.of(WIDTH, HEIGHT)) {
             for (int invalid : List.of(0, -1)) {
                 ModuleWriterFixture f = new ModuleWriterFixture();
                 f.model.second.put(field, invalid);
-                assertRpcError("grid_bounds_exceeded", f.start(null));
+                assertRpcError("out_of_bounds", f.start(null));
                 assertTrue(
                         f.calls == 0 && !f.writer.quarantined(),
                         "invalid unselected footprint blocks topology without quarantine");
@@ -2268,14 +2345,14 @@ public final class GridSnapshotReaderTest {
                 new GridModuleWriter.Move(7, 3, Integer.MIN_VALUE, 3),
                 new GridModuleWriter.Move(7, 3, 9, 65539))) {
             ModuleWriterFixture f = new ModuleWriterFixture();
-            assertRpcError("grid_bounds_exceeded", f.start(move));
+            assertRpcError("out_of_bounds", f.start(move));
             assertTrue(
                     f.calls == 0 && !f.writer.quarantined(),
                     "prospective endpoint, translation and full graph y-span checked before native allocation");
         }
         ModuleWriterFixture cumulative = new ModuleWriterFixture();
         cumulative.model.second.put(X, Integer.MAX_VALUE - 2);
-        assertRpcError("grid_bounds_exceeded", cumulative.start(null));
+        assertRpcError("out_of_bounds", cumulative.start(null));
         ModuleWriterFixture occupied = new ModuleWriterFixture();
         assertRpcError("invalid_params", occupied.start(new GridModuleWriter.Move(7, 3, 8, 3)));
         assertTrue(
@@ -2296,7 +2373,7 @@ public final class GridSnapshotReaderTest {
         unsupported.moveSupported = false;
         HostOperation unsupportedMove = unsupported.start(new GridModuleWriter.Move(7, 3, 10, 3));
         assertTrue(
-                assertRpcError("grid_unavailable", unsupportedMove).outcome.equals("not_applied")
+                !assertRpcError("native_unavailable", unsupportedMove).unknown
                         && !unsupported.writer.quarantined()
                         && unsupported.calls == 0,
                 "move binding/preparation failure is preflight, not quarantine");
@@ -2307,17 +2384,15 @@ public final class GridSnapshotReaderTest {
                 "unavailable move binding does not disable selective deletion");
         ModuleWriterFixture deleteFailure = new ModuleWriterFixture();
         deleteFailure.afterMutation = () -> {
-            throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "native delete failure");
+            throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "native delete failure");
         };
         HostOperation failedDelete = deleteFailure.start(null);
         assertTrue(
-                assertRpcError("grid_unavailable", failedDelete).outcome.equals("unknown")
-                        && deleteFailure.writer.quarantined(),
+                assertUnknown("native_unavailable", failedDelete) != null && deleteFailure.writer.quarantined(),
                 "native selective-delete exception also quarantines topology");
         HostOperation blockedMove = deleteFailure.start(new GridModuleWriter.Move(7, 3, 10, 3));
         assertTrue(
-                assertRpcError("grid_unavailable", blockedMove).outcome.equals("not_applied")
-                        && deleteFailure.calls == 1,
+                !assertRpcError("unresolved", blockedMove).unknown && deleteFailure.calls == 1,
                 "delete failure prevents future move without retry");
         GridModuleWriter recreated = new GridModuleWriter(
                 deleteFailure.model.reader,
@@ -2325,8 +2400,8 @@ public final class GridSnapshotReaderTest {
                 deleteFailure.context.reader,
                 deleteFailure,
                 deleteFailure.quarantine);
-        assertNotApplied(
-                "grid_unavailable",
+        assertRpcError(
+                "unresolved",
                 () -> recreated.delete(
                         deleteFailure.model.proxy,
                         TRACK_ID,
@@ -2350,14 +2425,14 @@ public final class GridSnapshotReaderTest {
         };
         HostOperation op = f.start(new GridModuleWriter.Move(7, 3, 10, 3));
         assertTrue(
-                assertRpcError("grid_unavailable", op).outcome.equals("unknown")
+                assertUnknown("native_unavailable", op) != null
                         && f.writer.quarantined()
                         && f.calls == 1
                         && f.events.isEmpty(),
                 "unexpected native failure quarantines both topology routes without retry or observation-as-success");
         HostOperation blocked = f.start(null);
         assertTrue(
-                assertRpcError("grid_unavailable", blocked).outcome.equals("not_applied") && f.calls == 1,
+                !assertRpcError("unresolved", blocked).unknown && f.calls == 1,
                 "quarantine prevents subsequent selective deletion before dispatch");
         assertTrue(
                 f.model.read(0, 64, false).getAsJsonArray("modules").size() == 2,
@@ -2367,9 +2442,7 @@ public final class GridSnapshotReaderTest {
         op = rejected.start(null);
         rejected.next();
         assertTrue(
-                assertRpcError("grid_verification_failed", op).outcome.equals("unknown")
-                        && !rejected.writer.quarantined()
-                        && rejected.calls == 1,
+                assertUnknown("readback_mismatch", op) != null && !rejected.writer.quarantined() && rejected.calls == 1,
                 "normal native delete return without removal is unknown, not fabricated success or automatic retry");
     }
 
@@ -2385,16 +2458,10 @@ public final class GridSnapshotReaderTest {
             if (change == 4) f.model.second.put(Y, 100000);
             if (change == 5) f.cancelled = true;
             f.next();
+            assertOutcome("unknown", op);
             assertTrue(
-                    op.result.isCompletedExceptionally() && !f.writer.quarantined() && f.calls == 1,
+                    !f.writer.quarantined() && f.calls == 1,
                     "later target/context/layout/bounds/cancellation failure is observed once without native retry");
-            {
-                java.util.concurrent.CompletionException error =
-                        assertThrows(java.util.concurrent.CompletionException.class, () -> op.result.join());
-                assertTrue(
-                        ((RpcException) error.getCause()).outcome.equals("unknown"),
-                        "every post-native failure retains unknown outcome");
-            }
         }
     }
 
@@ -2408,14 +2475,14 @@ public final class GridSnapshotReaderTest {
                 f.model.second.put(X, 10).put(Y, 4).put(WIDTH, 4).put(HEIGHT, 3);
                 HostOperation op = f.start(new GridModuleWriter.Move(7, 3, destination[0], destination[1]));
                 assertTrue(
-                        op.result.isCompletedExceptionally()
+                        unsuccessful(op)
                                 && !op.dispatched
                                 && f.calls == 0
                                 && !f.writer.quarantined()
                                 && f.events.isEmpty(),
                         "anchor anywhere inside another half-open footprint must reject before dispatch without quarantine");
                 assertTrue(
-                        assertRpcError("invalid_params", op).outcome.equals("not_applied"),
+                        !assertRpcError("invalid_params", op).unknown,
                         "deterministic native occupancy rejection is not an unknown mutation");
             });
         }
@@ -2446,14 +2513,14 @@ public final class GridSnapshotReaderTest {
                                     : field == NativeReadContext.Field.CONTEXT ? null : new Object());
                     HostOperation op = f.start(deleting ? null : new GridModuleWriter.Move(7, 3, 11, 5));
                     assertTrue(
-                            op.result.isCompletedExceptionally()
+                            unsuccessful(op)
                                     && !op.dispatched
                                     && f.calls == 0
                                     && !f.writer.quarantined()
                                     && f.events.isEmpty(),
                             "every participating module must be live, attached and in the exact project before native dispatch");
                     assertTrue(
-                            assertRpcError("stale_context", op).outcome.equals("not_applied"),
+                            !assertRpcError("stale_context", op).unknown,
                             "unselected module lifecycle rejection is a preflight stale context");
                 });
                 topologyRegression(failures, "surviving post-event " + field + " delete=" + deleting, () -> {
@@ -2470,10 +2537,10 @@ public final class GridSnapshotReaderTest {
                                     : field == NativeReadContext.Field.CONTEXT ? null : new Object());
                     f.next();
                     assertTrue(
-                            op.result.isCompletedExceptionally() && !f.writer.quarantined() && f.calls == 1,
+                            unsuccessful(op) && !f.writer.quarantined() && f.calls == 1,
                             "a later deleted/detached/wrong-project survivor must not become an observed success");
                     assertTrue(
-                            assertRpcError("stale_context", op).outcome.equals("unknown"),
+                            assertUnknown("stale_context", op) != null,
                             "post-native survivor failure remains unknown without quarantine or retry");
                 });
             }
@@ -2501,10 +2568,10 @@ public final class GridSnapshotReaderTest {
                 }
                 f.next();
                 assertTrue(
-                        op.result.isCompletedExceptionally() && !f.writer.quarantined() && f.calls == 1,
-                        "wrong rows and leftward displacement violate native move/reflow postconditions, not merely matchesRequested");
+                        unsuccessful(op) && !f.writer.quarantined() && f.calls == 1,
+                        "wrong rows and leftward displacement violate native move/reflow postconditions, not normal reflow");
                 assertTrue(
-                        assertRpcError("grid_verification_failed", op).outcome.equals("unknown"),
+                        assertUnknown("readback_mismatch", op) != null,
                         "inconsistent later move coordinates are unknown without retry");
             });
         }
@@ -2516,7 +2583,7 @@ public final class GridSnapshotReaderTest {
             f.next();
             JsonObject result = op.result.join();
             assertTrue(
-                    !result.get("matchesRequested").getAsBoolean()
+                    result.get("outcome").getAsString().equals("applied")
                             && result.getAsJsonObject("actualPosition").get("y").getAsInt() == 5
                             && result.getAsJsonObject("graph")
                                             .getAsJsonArray("modules")
@@ -2567,7 +2634,7 @@ public final class GridSnapshotReaderTest {
                 if (mode == 0) {
                     capture.requireSuccess();
                     assertTrue(true, "nonthrowing success capture is checked only by caller after native return");
-                } else assertNotApplied("grid_unavailable", capture::requireSuccess);
+                } else assertRpcError("native_unavailable", capture::requireSuccess);
             }
         } catch (ReflectiveOperationException error) {
             throw new AssertionError(error);
@@ -2579,7 +2646,7 @@ public final class GridSnapshotReaderTest {
         ConnectionFixture stale = new ConnectionFixture();
         HostOperation op = stale.start(stale.request(stale.output(), null));
         assertTrue(
-                assertRpcError("stale_context", op).outcome.equals("not_applied") && stale.calls == 0,
+                !assertRpcError("stale_context", op).unknown && stale.calls == 0,
                 "stale expectedSource fails before already-matched null and dispatch");
         ConnectionFixture noop = new ConnectionFixture();
         op = noop.start(noop.request(null, null));
@@ -2599,7 +2666,7 @@ public final class GridSnapshotReaderTest {
         connected.next();
         result = op.result.join();
         assertTrue(
-                result.get("matchesRequested").getAsBoolean()
+                result.get("outcome").getAsString().equals("applied")
                         && result.get("previousSource").isJsonNull()
                         && result.getAsJsonObject("actualSource")
                                 .get("portKey")
@@ -2611,7 +2678,7 @@ public final class GridSnapshotReaderTest {
         assertTrue(
                 connected.calls == 1
                         && !op.dispatched
-                        && op.result.join().get("matchesRequested").getAsBoolean(),
+                        && op.result.join().get("outcome").getAsString().equals("already_matched"),
                 "matching connected source does not begin a native undo record");
         op = connected.start(connected.request(connected.output(), null));
         connected.next();
@@ -2632,7 +2699,8 @@ public final class GridSnapshotReaderTest {
         repaired.next();
         result = op.result.join();
         assertTrue(
-                !result.get("matchesRequested").getAsBoolean()
+                result.get("outcome").getAsString().equals("unknown")
+                        && result.get("reason").getAsString().equals("readback_mismatch")
                         && result.get("actualSource").isJsonNull()
                         && result.get("previousSource").equals(GridConnectionWriter.Endpoint.json(prior))
                         && result.getAsJsonObject("graph")
@@ -2658,10 +2726,7 @@ public final class GridSnapshotReaderTest {
             if (change == 6) f.model.output.threadAllowed = false;
             HostOperation op = f.start(f.request(null, f.output()));
             assertTrue(
-                    op.result.isCompletedExceptionally()
-                            && !op.dispatched
-                            && f.calls == 0
-                            && !f.quarantine.quarantined(),
+                    unsuccessful(op) && !op.dispatched && f.calls == 0 && !f.quarantine.quarantined(),
                     "missing/excluded output, ambiguous keys/UUID, owner or thread errors fail before dispatch");
         }
         for (NativeReadContext.Field field : List.of(
@@ -2672,7 +2737,7 @@ public final class GridSnapshotReaderTest {
                 f.context.override(checked, field, field == NativeReadContext.Field.DELETED ? true : null);
                 HostOperation op = f.start(f.request(null, f.output()));
                 assertTrue(
-                        assertRpcError("stale_context", op).outcome.equals("not_applied") && f.calls == 0,
+                        !assertRpcError("stale_context", op).unknown && f.calls == 0,
                         "every input/output/module requires live attached exact project context");
             }
         }
@@ -2687,7 +2752,7 @@ public final class GridSnapshotReaderTest {
             f.context.values.put(field, true);
             HostOperation op = f.start(f.request(null, f.output()));
             assertTrue(
-                    assertRpcError("unsafe_state", op).outcome.equals("not_applied") && f.calls == 0,
+                    !assertRpcError("unsafe_state", op).unknown && f.calls == 0,
                     "conservative shared native context blocks cable before dispatch");
         }
         for (int change = 0; change < 4; change++) {
@@ -2702,7 +2767,7 @@ public final class GridSnapshotReaderTest {
             };
             HostOperation op = f.start(f.request(null, f.output()));
             assertTrue(
-                    assertRpcError("stale_context", op).outcome.equals("not_applied") && f.calls == 0,
+                    !assertRpcError("stale_context", op).unknown && f.calls == 0,
                     "captured source and module/port identities rechecked after native preparation");
         }
         for (int change = 0; change < 5; change++) {
@@ -2714,14 +2779,10 @@ public final class GridSnapshotReaderTest {
             if (change == 3) f.model.proxy.put(TARGET, new Node(DEVICE));
             if (change == 4) f.cancelled = true;
             f.next();
+            assertUnknown(change == 4 ? "cancelled" : "stale_context", op);
             assertTrue(
-                    op.result.isCompletedExceptionally() && f.calls == 1 && !f.quarantine.quarantined(),
+                    f.calls == 1 && !f.quarantine.quarantined(),
                     "later source membership/context/target/cancellation failure never retries or masquerades as synchronous native failure");
-            assertTrue(
-                    assertRpcError(change == 4 ? "cancelled" : "stale_context", op)
-                            .outcome
-                            .equals("unknown"),
-                    "failed later observation retains post-dispatch uncertainty");
         }
     }
 
@@ -2744,21 +2805,12 @@ public final class GridSnapshotReaderTest {
         f.next();
         JsonObject result = op.result.join();
         JsonArray items = result.getAsJsonArray("connections");
+        assertEquals(List.of("applied", "applied"), outcomes(items));
         assertTrue(
-                result.get("status").getAsString().equals("observed")
-                        && result.get("batchStatus").getAsString().equals("applied")
+                result.get("outcome").getAsString().equals("applied")
                         && result.get("written").getAsInt() == 2
-                        && items.size() == 2
-                        && items.get(1)
-                                .getAsJsonObject()
-                                .get("status")
-                                .getAsString()
-                                .equals("applied")
-                        && items.get(1)
-                                .getAsJsonObject()
-                                .get("matchesRequested")
-                                .getAsBoolean(),
-                "batch reports per-entry results and a separate batchStatus");
+                        && items.get(1).getAsJsonObject().has("actualSource"),
+                "batch reports per-entry results and the worst entry as its outcome");
         JsonObject shaped = GridDiff.shape(result, false);
         assertTrue(
                 !shaped.has("graph")
@@ -2768,14 +2820,9 @@ public final class GridSnapshotReaderTest {
         f.next();
         result = op.result.join();
         assertTrue(
-                result.get("batchStatus").getAsString().equals("applied")
+                result.get("outcome").getAsString().equals("already_matched")
                         && result.get("written").getAsInt() == 0
-                        && result.getAsJsonArray("connections")
-                                .get(0)
-                                .getAsJsonObject()
-                                .get("status")
-                                .getAsString()
-                                .equals("already_matched")
+                        && outcomes(result.getAsJsonArray("connections")).equals(List.of("already_matched"))
                         && f.calls == 2,
                 "already matching entries are not dispatched");
     }
@@ -2790,7 +2837,7 @@ public final class GridSnapshotReaderTest {
                 cable(f, "nope", new UUID(1, 2), null)));
         RpcException error = assertRpcError("stale_context", op);
         assertTrue(
-                error.outcome.equals("not_applied")
+                !error.unknown
                         && f.calls == 0
                         && !op.dispatched
                         && f.events.isEmpty()
@@ -2800,15 +2847,10 @@ public final class GridSnapshotReaderTest {
                 "any mismatch or absent port writes nothing and names each failing entry");
         ConnectionFixture unsupported = new ConnectionFixture();
         unsupported.supported = false;
+        assertRpcError(
+                "native_unavailable", unsupported.startBatch(List.of(unsupported.request(null, unsupported.output()))));
         assertTrue(
-                assertRpcError(
-                                        "grid_unavailable",
-                                        unsupported.startBatch(
-                                                List.of(unsupported.request(null, unsupported.output()))))
-                                .outcome
-                                .equals("not_applied")
-                        && unsupported.calls == 0
-                        && !unsupported.quarantine.quarantined(),
+                unsupported.calls == 0 && !unsupported.quarantine.quarantined(),
                 "unsupported runtime class is rejected before any entry dispatches");
     }
 
@@ -2826,27 +2868,11 @@ public final class GridSnapshotReaderTest {
         f.next();
         JsonObject result = op.result.join();
         JsonArray items = result.getAsJsonArray("connections");
+        assertEquals(List.of("applied", "unknown/native_unavailable", "not_applied/not_reached"), outcomes(items));
         assertTrue(
-                result.get("status").getAsString().equals("observed")
-                        && result.get("batchStatus").getAsString().equals("unknown")
-                        && result.get("completion").getAsString().equals("unknown")
+                result.get("outcome").getAsString().equals("unknown")
                         && f.calls == 2
                         && f.quarantine.quarantined()
-                        && items.get(0)
-                                .getAsJsonObject()
-                                .get("status")
-                                .getAsString()
-                                .equals("applied")
-                        && items.get(1)
-                                .getAsJsonObject()
-                                .get("status")
-                                .getAsString()
-                                .equals("unknown")
-                        && items.get(2)
-                                .getAsJsonObject()
-                                .get("status")
-                                .getAsString()
-                                .equals("not_dispatched")
                         && !result.has("graph")
                         && !result.has("connectionsChanged")
                         && f.events.isEmpty(),
@@ -2858,7 +2884,7 @@ public final class GridSnapshotReaderTest {
         };
         op = first.startBatch(List.of(first.request(null, first.output()), cable(first, "in2", new UUID(1, 2), null)));
         assertTrue(
-                op.result.join().get("batchStatus").getAsString().equals("unknown")
+                op.result.join().get("outcome").getAsString().equals("unknown")
                         && first.calls == 1
                         && first.quarantine.quarantined(),
                 "unknown first entry still quarantines and never starts the second");
@@ -2868,18 +2894,13 @@ public final class GridSnapshotReaderTest {
         ((Node) ((List<?>) drift.model.second.values.get(INPUTS)).get(0)).put(INPUT_SOURCE, drift.model.output);
         drift.next();
         result = op.result.join();
+        assertEquals(List.of("applied", "not_applied/stale_context"), outcomes(result.getAsJsonArray("connections")));
         assertTrue(
-                result.get("batchStatus").getAsString().equals("partial")
+                result.get("outcome").getAsString().equals("not_applied")
                         && drift.calls == 1
-                        && result.getAsJsonArray("connections")
-                                .get(1)
-                                .getAsJsonObject()
-                                .get("status")
-                                .getAsString()
-                                .equals("failed")
                         && result.has("graph")
                         && !drift.quarantine.quarantined(),
-                "a later entry that fails before its own dispatch is failed (partial) with the observed diff and no quarantine");
+                "a later entry that fails before its own dispatch is not_applied with the observed diff and no quarantine");
     }
 
     @Test
@@ -2892,27 +2913,36 @@ public final class GridSnapshotReaderTest {
         f.next();
         JsonObject result = op.result.join();
         JsonArray items = result.getAsJsonArray("connections");
+        assertEquals(List.of("unknown/readback_mismatch", "not_applied/not_reached"), outcomes(items));
         assertTrue(
-                result.get("status").getAsString().equals("observed")
-                        && result.get("batchStatus").getAsString().equals("partial")
-                        && result.get("completion").getAsString().equals("observed")
+                result.get("outcome").getAsString().equals("unknown")
                         && f.calls == 1
-                        && items.get(0)
-                                .getAsJsonObject()
-                                .get("status")
-                                .getAsString()
-                                .equals("mismatch")
                         && items.get(0).getAsJsonObject().get("actualSource").isJsonNull()
-                        && items.get(1)
-                                .getAsJsonObject()
-                                .get("status")
-                                .getAsString()
-                                .equals("not_dispatched")
                         && result.has("graph")
                         && result.has("graphBefore")
                         && !f.quarantine.quarantined()
                         && f.events.isEmpty(),
-                "a native-repair mismatch stops the batch as partial with known state and a diff, never quarantining");
+                "a native-repair mismatch stops the batch unknown (fail closed) with the observed diff, never quarantining");
+    }
+
+    @Test
+    void unreadableGeometryAndUnknownContextFamiliesFailClosed() {
+        assertInvalidParams(() -> GridConnectionWriter.Request.parseBatch(HostFixture.json("{\"connections\":[1]}")));
+        ModuleWriterFixture geometry = new ModuleWriterFixture();
+        geometry.model.first.put(WIDTH, "2");
+        assertRpcError("native_unavailable", geometry.start(new GridModuleWriter.Move(7, 3, 10, 3)));
+        ContextFixture context = new ContextFixture();
+        assertRpcError(
+                "native_unavailable",
+                () -> context.reader.capture(new Object(), new Object(), new Object(), new Object(), MODULE, () -> {}));
+        for (int bad = 0; bad < 3; bad++) {
+            ModuleWriterFixture f = new ModuleWriterFixture();
+            if (bad == 0) f.context.defaultSupported = false;
+            if (bad == 1) f.context.values.put(GridTopologyContext.Field.UNDO_ACTIVE, "yes");
+            if (bad == 2) f.context.values.put(NativeReadContext.Field.DISPOSED, "yes");
+            assertRpcError("native_unavailable", f.start(new GridModuleWriter.Move(7, 3, 10, 3)));
+            assertTrue(f.calls == 0, "an unreadable topology context dispatches nothing");
+        }
     }
 
     @Test
@@ -2933,17 +2963,17 @@ public final class GridSnapshotReaderTest {
             return p;
         };
         assertTrue(GridConnectionWriter.Request.parseBatch(body.apply(32)).size() == 32, "32 connections are accepted");
-        assertNotApplied("invalid_params", () -> GridConnectionWriter.Request.parseBatch(body.apply(0)));
-        assertNotApplied("invalid_params", () -> GridConnectionWriter.Request.parseBatch(body.apply(33)));
+        assertRpcError("invalid_params", () -> GridConnectionWriter.Request.parseBatch(body.apply(0)));
+        assertRpcError("invalid_params", () -> GridConnectionWriter.Request.parseBatch(body.apply(33)));
         JsonObject repeat = body.apply(2);
         repeat.getAsJsonArray("connections").get(1).getAsJsonObject().addProperty("targetPortKey", "in0");
-        assertNotApplied("invalid_params", () -> GridConnectionWriter.Request.parseBatch(repeat));
+        assertRpcError("invalid_params", () -> GridConnectionWriter.Request.parseBatch(repeat));
         JsonObject extra = body.apply(1);
         extra.getAsJsonArray("connections").get(0).getAsJsonObject().addProperty("x", 1);
-        assertNotApplied("invalid_params", () -> GridConnectionWriter.Request.parseBatch(extra));
+        assertRpcError("invalid_params", () -> GridConnectionWriter.Request.parseBatch(extra));
         JsonObject missing = body.apply(1);
         missing.getAsJsonArray("connections").get(0).getAsJsonObject().remove("source");
-        assertNotApplied("invalid_params", () -> GridConnectionWriter.Request.parseBatch(missing));
+        assertRpcError("invalid_params", () -> GridConnectionWriter.Request.parseBatch(missing));
     }
 
     @Test
@@ -2954,7 +2984,7 @@ public final class GridSnapshotReaderTest {
         HostOperation op = independent.start(independent.request(null, independent.output()));
         independent.next();
         assertTrue(
-                op.result.join().get("matchesRequested").getAsBoolean() && independent.calls == 1,
+                op.result.join().get("outcome").getAsString().equals("applied") && independent.calls == 1,
                 "cable capability does not depend on native footprints or move-specific occupied y-span");
         for (int bound = 0; bound < 3; bound++) {
             ConnectionFixture f = new ConnectionFixture();
@@ -2981,9 +3011,7 @@ public final class GridSnapshotReaderTest {
             }
             op = f.start(f.request(null, f.output()));
             assertTrue(
-                    assertRpcError("grid_bounds_exceeded", op).outcome.equals("not_applied")
-                            && f.calls == 0
-                            && f.model.closed > 0,
+                    !assertRpcError("out_of_bounds", op).unknown && f.calls == 0 && f.model.closed > 0,
                     "module/port/total budgets close streams before native dispatch");
         }
     }
@@ -2996,7 +3024,7 @@ public final class GridSnapshotReaderTest {
         };
         HostOperation op = cable.start(cable.request(null, cable.output()));
         assertTrue(
-                assertRpcError("grid_unavailable", op).outcome.equals("unknown")
+                assertUnknown("native_unavailable", op) != null
                         && cable.quarantine.quarantined()
                         && cable.calls == 1
                         && cable.events.isEmpty(),
@@ -3019,8 +3047,8 @@ public final class GridSnapshotReaderTest {
         String owner = cable.quarantine.reserve(GridInsertionWriterTest.ANY);
         cable.quarantine.poison(
                 owner, GridTopologyQuarantine.device(TRACK_ID, modules.model.graph), new com.google.gson.JsonObject());
-        assertNotApplied(
-                "grid_unavailable",
+        assertRpcError(
+                "unresolved",
                 () -> blocked.delete(
                         modules.model.proxy,
                         TRACK_ID,
@@ -3039,18 +3067,16 @@ public final class GridSnapshotReaderTest {
         modules.afterMutation = () -> {
             throw new AssertionError("native module failure");
         };
-        assertRpcError("grid_unavailable", modules.start(null));
+        assertUnknown("native_unavailable", modules.start(null));
         ConnectionFixture reverse = new ConnectionFixture(modules.quarantine);
         reverse.start(reverse.request(null, reverse.output()));
         assertTrue(reverse.calls == 1, "a module failure does not block the cable setter on another device");
         assertTrue(cable.model.read(0, 64, false).has("modules"), "read-only graph remains independently available");
         ConnectionFixture unsupported = new ConnectionFixture();
         unsupported.supported = false;
+        assertRpcError("native_unavailable", unsupported.start(unsupported.request(null, unsupported.output())));
         assertTrue(
-                assertRpcError("grid_unavailable", unsupported.start(unsupported.request(null, unsupported.output())))
-                                .outcome
-                                .equals("not_applied")
-                        && !unsupported.quarantine.quarantined(),
+                !unsupported.quarantine.quarantined(),
                 "runtime class rejection is predispatch and does not poison lifetime");
         for (boolean noop : List.of(false, true)) {
             ConnectionFixture timeout = new ConnectionFixture();
@@ -3059,18 +3085,17 @@ public final class GridSnapshotReaderTest {
             timeout.edit(
                     timeout.request(null, noop ? null : timeout.output()),
                     () -> {
-                        if (expired[0])
-                            throw Errors.notApplied(ErrorCode.DEADLINE_EXCEEDED, "later observation expired");
+                        if (expired[0]) throw Errors.notApplied(Reason.DEADLINE, "later observation expired");
                     },
                     () -> late.dispatched = true,
                     value -> late.result.complete(value),
                     late::fail);
             expired[0] = true;
             timeout.next();
+            if (noop) assertRpcError("deadline", late);
+            else assertUnknown("deadline", late);
             assertTrue(
-                    assertRpcError("deadline_exceeded", late).outcome.equals(noop ? "not_applied" : "unknown")
-                            && timeout.calls == (noop ? 0 : 1)
-                            && !timeout.quarantine.quarantined(),
+                    timeout.calls == (noop ? 0 : 1) && !timeout.quarantine.quarantined(),
                     "later-event timeout never retries, invents dispatch for no-op, or disguises unknown mutation as rejection");
         }
     }
@@ -3080,14 +3105,14 @@ public final class GridSnapshotReaderTest {
         class Base {}
         class Derived extends Base {}
         Bitwig614GridConnectionAccess.requireExact(new Base(), Base.class, "test input");
-        assertNotApplied(
-                "grid_unavailable",
+        assertRpcError(
+                "native_unavailable",
                 () -> Bitwig614GridConnectionAccess.requireExact(new Derived(), Base.class, "test input"));
-        assertNotApplied(
-                "grid_unavailable",
+        assertRpcError(
+                "native_unavailable",
                 () -> Bitwig614GridConnectionAccess.requireExact(new Derived(), Base.class, "test undo"));
-        assertNotApplied(
-                "grid_unavailable", () -> Bitwig614GridConnectionAccess.requireExact(null, Base.class, "test undo"));
+        assertRpcError(
+                "native_unavailable", () -> Bitwig614GridConnectionAccess.requireExact(null, Base.class, "test undo"));
     }
 
     static final class ConnectionFixture implements GridConnectionWriter.Access {
@@ -3135,7 +3160,7 @@ public final class GridSnapshotReaderTest {
                 edit(
                         request,
                         () -> {
-                            if (cancelled) throw Errors.notApplied(ErrorCode.CANCELLED, "cancelled");
+                            if (cancelled) throw Errors.notApplied(Reason.CANCELLED, "cancelled");
                         },
                         () -> op.dispatched = true,
                         value -> op.result.complete(value),
@@ -3181,7 +3206,7 @@ public final class GridSnapshotReaderTest {
                         TRACK_ID,
                         requests,
                         () -> {
-                            if (cancelled) throw Errors.notApplied(ErrorCode.CANCELLED, "cancelled");
+                            if (cancelled) throw Errors.notApplied(Reason.CANCELLED, "cancelled");
                         },
                         () -> op.dispatched = true,
                         value -> op.result.complete(value),
@@ -3194,7 +3219,7 @@ public final class GridSnapshotReaderTest {
 
         @Override
         public void requireSupported(Object input, Object undo) {
-            if (!supported) throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "unsupported runtime class");
+            if (!supported) throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "unsupported runtime class");
         }
 
         @Override
@@ -3240,7 +3265,7 @@ public final class GridSnapshotReaderTest {
                 edit(
                         move,
                         () -> {
-                            if (cancelled) throw Errors.notApplied(ErrorCode.CANCELLED, "cancelled");
+                            if (cancelled) throw Errors.notApplied(Reason.CANCELLED, "cancelled");
                         },
                         () -> op.dispatched = true,
                         value -> op.result.complete(value),
@@ -3267,7 +3292,7 @@ public final class GridSnapshotReaderTest {
 
         @Override
         public Runnable prepareMove(Object graph, Object module, int x, int y) {
-            if (!moveSupported) throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "move descriptor unavailable");
+            if (!moveSupported) throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "move descriptor unavailable");
             return () -> {
                 calls++;
                 if (apply) ((Node) module).put(X, x).put(Y, y);
@@ -3299,6 +3324,7 @@ public final class GridSnapshotReaderTest {
         final Map<Enum<?>, Object> values = new HashMap<>();
         final IdentityHashMap<Object, Map<Enum<?>, Object>> perObject = new IdentityHashMap<>();
         final Object context = new Object(), project = new Object(), dt = new Object();
+        boolean defaultSupported = true;
 
         ModuleContextFixture() {
             for (GridTopologyContext.Field field : GridTopologyContext.Field.values()) values.put(field, false);
@@ -3331,11 +3357,6 @@ public final class GridSnapshotReaderTest {
             return value(field, object);
         }
 
-        @Override
-        public ErrorCode unavailableCode() {
-            return ErrorCode.GRID_UNAVAILABLE;
-        }
-
         private Object value(Enum<?> field, Object object) {
             Map<Enum<?>, Object> specific = perObject.get(object);
             return specific != null && specific.containsKey(field) ? specific.get(field) : values.get(field);
@@ -3343,7 +3364,7 @@ public final class GridSnapshotReaderTest {
 
         @Override
         public boolean defaultContext(Object context) {
-            return true;
+            return defaultSupported;
         }
     }
 
@@ -3387,7 +3408,7 @@ public final class GridSnapshotReaderTest {
             return set(
                     request,
                     () -> {
-                        if (cancelled) throw Errors.notApplied(ErrorCode.CANCELLED, "cancelled");
+                        if (cancelled) throw Errors.notApplied(Reason.CANCELLED, "cancelled");
                     },
                     () -> op.dispatched = true);
         }
@@ -3400,17 +3421,15 @@ public final class GridSnapshotReaderTest {
             return writer.setAll(model.proxy, TRACK_ID, entries, check, dispatch);
         }
 
+        /** The writer's failure as the request reports it: once dispatched, unknown. */
         RpcException failure(GridParameterWriter.Request request) {
-            {
-                RpcException error = assertThrows(RpcException.class, () -> set(request));
-                op.fail(error);
-                return assertRpcError(error.code, op);
-            }
+            RpcException error = assertThrows(RpcException.class, () -> set(request));
+            return op.dispatched ? Errors.asUnknown(error) : error;
         }
 
         @Override
         public void requireSupported(Object parameter, GridSnapshotReader.Kind kind) {
-            if (!supported) throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "unmapped model");
+            if (!supported) throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "unmapped model");
         }
 
         @Override
@@ -3479,16 +3498,13 @@ public final class GridSnapshotReaderTest {
         }
 
         RpcException failure() {
-            {
-                RpcException error = assertThrows(RpcException.class, () -> set(request("boolean", "true", "false")));
-                op.fail(error);
-                return assertRpcError(error.code, op);
-            }
+            RpcException error = assertThrows(RpcException.class, () -> set(request("boolean", "true", "false")));
+            return op.dispatched ? Errors.asUnknown(error) : error;
         }
 
         @Override
         public void requireSupported(Object parameter) {
-            if (parameter != panel) throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "unmapped panel");
+            if (parameter != panel) throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "unmapped panel");
         }
 
         @Override
@@ -3552,11 +3568,6 @@ public final class GridSnapshotReaderTest {
         @Override
         public Object read(NativeReadContext.Field field, Object object) {
             return value(field, object);
-        }
-
-        @Override
-        public ErrorCode unavailableCode() {
-            return ErrorCode.GRID_UNAVAILABLE;
         }
 
         private Object value(Enum<?> field, Object object) {
@@ -3682,11 +3693,6 @@ public final class GridSnapshotReaderTest {
         }
 
         @Override
-        public ErrorCode unavailableCode() {
-            return ErrorCode.GRID_UNAVAILABLE;
-        }
-
-        @Override
         public boolean is(NativeDeviceTarget.Kind kind, Object value) {
             return value instanceof Node && ((Node) value).kinds.contains(kind);
         }
@@ -3734,13 +3740,13 @@ public final class GridSnapshotReaderTest {
 
         @Override
         public void documentThread() {
-            if (!document) throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "wrong thread");
+            if (!document) throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "wrong thread");
         }
 
         @Override
         public void requireModelThread(Object value) {
             if (!(value instanceof Node) || !((Node) value).threadAllowed)
-                throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "wrong thread predicate");
+                throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "wrong thread predicate");
         }
 
         @Override

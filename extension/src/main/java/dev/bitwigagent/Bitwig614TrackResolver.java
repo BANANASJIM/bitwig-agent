@@ -72,7 +72,7 @@ final class Bitwig614TrackResolver {
         StringJoiner supported = new StringJoiner("/");
         for (Kind k : allowed) supported.add(k.label);
         throw Errors.notApplied(
-                ErrorCode.UNSUPPORTED_SCOPE,
+                Reason.UNSUPPORTED_SCOPE,
                 "Track " + trackId + " is a " + kind.label + " track; this method supports " + supported
                         + " tracks only.");
     }
@@ -83,7 +83,7 @@ final class Bitwig614TrackResolver {
 
     static RpcException stale(String trackId) {
         return Errors.notApplied(
-                ErrorCode.STALE_CONTEXT,
+                Reason.STALE_CONTEXT,
                 "Track " + trackId + " no longer resolves to its native track; re-read tracks.list.");
     }
 

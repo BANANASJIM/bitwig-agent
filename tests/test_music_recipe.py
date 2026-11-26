@@ -6,6 +6,8 @@ from pathlib import Path
 import pytest
 from fakes import RECIPE_TARGET, RecipeGrid
 
+from bitwig_agent.errors import bridge_error
+
 
 @pytest.fixture
 def recipe():
@@ -29,7 +31,7 @@ def recipe():
         "safety_unobserved",
         "creation_unknown",
         "observed_unknown",
-        "error_unknown",
+        "error_refused",
     ],
 )
 async def test_recipe_stops_after_session_changes_during_creation(tmp_path, monkeypatch, transition, recipe):  # noqa: C901
@@ -68,24 +70,23 @@ async def test_recipe_stops_after_session_changes_during_creation(tmp_path, monk
             if method == "tracks.create":
                 created = True
                 if transition == "creation_unknown":
-                    return {"status": "dispatched", "completion": "unknown", "nameApplied": False}
+                    return {
+                        "outcome": "unknown",
+                        "reason": "not_observed",
+                        "message": "Native completion is unresolved",
+                        "nameApplied": False,
+                    }
                 if transition == "observed_unknown":
                     return {
-                        "status": "observed",
-                        "completion": "unknown",
+                        "outcome": "unknown",
+                        "reason": "deadline",
+                        "message": "Native completion is unresolved",
                         "trackId": "11111111-1111-1111-1111-111111111111",
                         "nameApplied": True,
                     }
-                if transition == "error_unknown":
-                    raise recipe.BridgeError(
-                        {
-                            "code": "timeout",
-                            "outcome": "unknown",
-                            "message": "Native completion is unresolved",
-                            "mutationDispatched": True,
-                        }
-                    )
-                return {"status": "observed", "trackId": "11111111-1111-1111-1111-111111111111"}
+                if transition == "error_refused":
+                    raise bridge_error("host_refused", "The host refused the track")
+                return {"outcome": "applied", "trackId": "11111111-1111-1111-1111-111111111111"}
             raise AssertionError(f"A changed session must not receive another mutation: {method}")
 
     monkeypatch.setattr(recipe, "BridgeClient", lambda port: Session())
@@ -94,17 +95,15 @@ async def test_recipe_stops_after_session_changes_during_creation(tmp_path, monk
     assert mutations == ["tracks.create"]
     report = json.loads((args.artifacts / "report.json").read_text())
     assert report["status"] == "incomplete_inspect_state"
-    if transition in {"creation_unknown", "observed_unknown", "error_unknown"}:
+    if transition == "error_refused":
+        assert report["createdTracks"] == []
+        assert "uncertainOperations" not in report
+    elif transition in {"creation_unknown", "observed_unknown"}:
         assert report["createdTracks"] == []
         uncertain = report["uncertainOperations"][0]
         assert uncertain["method"] == "tracks.create"
-        if transition == "error_unknown":
-            assert uncertain["error"]["outcome"] == "unknown"
-            assert uncertain["error"]["mutationDispatched"] is True
-        else:
-            assert uncertain["result"]["completion"] == "unknown"
-            assert uncertain["result"]["status"] == ("observed" if transition == "observed_unknown" else "dispatched")
-            assert uncertain["result"]["nameApplied"] is (transition == "observed_unknown")
+        assert uncertain["result"]["outcome"] == "unknown"
+        assert uncertain["result"]["nameApplied"] is (transition == "observed_unknown")
     else:
         assert [item["trackId"] for item in report["createdTracks"]] == ["11111111-1111-1111-1111-111111111111"]
 

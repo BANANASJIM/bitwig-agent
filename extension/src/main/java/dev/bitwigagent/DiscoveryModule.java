@@ -13,6 +13,7 @@ final class DiscoveryModule implements HostModule {
     static final Set<String> METHODS =
             Set.of("status", "tracks.list", "devices.list", "devices.layers.list", "capabilities");
     private static final BuildInfo BUILD = BuildInfo.load();
+    private static final GridTopologyQuarantine GRID_HOLDS = new GridTopologyQuarantine();
     private final ControllerHost host;
     private final Application application;
     private final Transport transport;
@@ -23,6 +24,7 @@ final class DiscoveryModule implements HostModule {
     private final ParameterModule parameters;
     private final ProjectModule project;
     private final RenderModule render;
+    private final Holds holds;
 
     DiscoveryModule(
             ControllerHost host,
@@ -34,7 +36,8 @@ final class DiscoveryModule implements HostModule {
             MethodSpecs specs,
             ParameterModule parameters,
             ProjectModule project,
-            RenderModule render) {
+            RenderModule render,
+            Holds holds) {
         this.host = host;
         this.application = application;
         this.transport = transport;
@@ -45,6 +48,7 @@ final class DiscoveryModule implements HostModule {
         this.parameters = parameters;
         this.project = project;
         this.render = render;
+        this.holds = holds;
     }
 
     @Override
@@ -58,7 +62,7 @@ final class DiscoveryModule implements HostModule {
     }
 
     static void validateParams(String method, JsonObject params) {
-        if (!METHODS.contains(method)) throw Errors.notApplied(ErrorCode.UNKNOWN_METHOD, "Unknown discovery method.");
+        if (!METHODS.contains(method)) throw Errors.notApplied(Reason.UNKNOWN_METHOD, "Unknown discovery method.");
         if (method.equals("devices.layers.list")) {
             DeviceSources.validateLayer(params, false, true);
             return;
@@ -86,12 +90,12 @@ final class DiscoveryModule implements HostModule {
                 operation.result.complete(capabilities(operation));
                 return;
             default:
-                throw Errors.notApplied(ErrorCode.UNKNOWN_METHOD, "Unsupported discovery method: " + method);
+                throw Errors.notApplied(Reason.UNKNOWN_METHOD, "Unsupported discovery method: " + method);
         }
     }
 
     private JsonObject status() {
-        JsonObject result = observed();
+        JsonObject result = new JsonObject();
         result.addProperty("hostVersion", host.getHostVersion());
         result.addProperty("projectName", application.projectName().get());
         result.addProperty("engineActive", application.hasActiveEngine().get());
@@ -105,11 +109,37 @@ final class DiscoveryModule implements HostModule {
         result.addProperty("trackWindowCapacity", TRACKS);
         result.addProperty("deviceWindowCapacity", DEVICES);
         result.add("parameterBindingDiagnostics", parameters.diagnostics());
+        result.add("holds", holds(holds, GRID_HOLDS));
         return result;
     }
 
+    /** Every hold: the id ack takes, whether ack accepts it, what is held; Grid devices from the process marker. */
+    static JsonArray holds(Holds holds, GridTopologyQuarantine grid) {
+        JsonArray out = new JsonArray();
+        for (Holds.View hold : holds.list()) {
+            JsonObject row = new JsonObject();
+            row.addProperty("id", hold.id);
+            row.addProperty("ackable", hold.ackable);
+            row.addProperty("description", hold.description);
+            out.add(row);
+        }
+        for (JsonObject device : grid.quarantinedDevices()) {
+            JsonObject row = new JsonObject();
+            row.addProperty(
+                    "id", GridTopologyQuarantine.holdId(device.get("device").getAsString()));
+            row.addProperty("ackable", true);
+            row.addProperty(
+                    "description",
+                    "A Grid topology edit on a device of track "
+                            + device.get("trackId").getAsString()
+                            + " has an unknown outcome; ack re-verifies the graph first.");
+            out.add(row);
+        }
+        return out;
+    }
+
     private JsonObject capabilities(HostOperation operation) {
-        JsonObject result = observed();
+        JsonObject result = new JsonObject();
         result.addProperty("scope", "implemented_toolkit_interfaces");
         result.addProperty("apiVersion", 25);
         result.addProperty("hostVersion", host.getHostVersion());
@@ -216,9 +246,8 @@ final class DiscoveryModule implements HostModule {
     }
 
     private JsonObject listTracks() {
-        if (!window.observed())
-            throw Errors.notApplied(ErrorCode.NOT_READY, "Track bank has not reported its size yet.");
-        JsonObject result = observed();
+        if (!window.observed()) throw Errors.notApplied(Reason.NOT_READY, "Track bank has not reported its size yet.");
+        JsonObject result = new JsonObject();
         JsonArray items = new JsonArray();
         TrackTree tree = TrackTree.capture(window);
         for (TrackTree.Node node : tree.nodes) {
@@ -250,7 +279,7 @@ final class DiscoveryModule implements HostModule {
             item.addProperty("type", device.deviceType().get());
             items.add(item);
         }
-        JsonObject result = observed();
+        JsonObject result = new JsonObject();
         result.addProperty("trackId", trackId);
         result.add("devices", items);
         result.add(

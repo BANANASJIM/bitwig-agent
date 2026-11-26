@@ -65,10 +65,10 @@ final class Bitwig614LauncherSettingsAccess implements LauncherSettingsModule.Ac
         Object nativeSlot = a.invoke(target, proxy), value = a.invoke(clip, proxy);
         if (!slotType.isInstance(nativeSlot) || !event.isInstance(value) || a.invoke(slot, value) != nativeSlot)
             throw Errors.notApplied(
-                    ErrorCode.STALE_CONTEXT, "Launcher proxy does not resolve to one attached native clip slot.");
+                    Reason.STALE_CONTEXT, "Launcher proxy does not resolve to one attached native clip slot.");
         Object track = resolver.require(resolver.slotTrack(nativeSlot), trackId, Bitwig614TrackResolver.Kind.CHANNEL);
         if (!expectedName.equals(a.invoke(name, value)))
-            throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Native clip name differs from expectedClipName.");
+            throw Errors.notApplied(Reason.STALE_CONTEXT, "Native clip name differs from expectedClipName.");
         Object owningProject = resolver.owner(value, projectType);
         Object[] models = {value, nativeSlot, track};
         String[] labels = {"clipDeleted", "slotDeleted", "trackDeleted", "projectDeleted"};
@@ -90,7 +90,7 @@ final class Bitwig614LauncherSettingsAccess implements LauncherSettingsModule.Ac
                     || a.invoke(clip, proxy) != value
                     || a.invoke(slot, value) != nativeSlot
                     || resolver.slotTrack(nativeSlot) != track)
-                throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Launcher target changed during native operation.");
+                throw Errors.notApplied(Reason.STALE_CONTEXT, "Launcher target changed during native operation.");
         };
         guard.run();
         JsonObject fields = new JsonObject();
@@ -106,8 +106,7 @@ final class Bitwig614LauncherSettingsAccess implements LauncherSettingsModule.Ac
                     else if (key.equals("nextActionLoopCount")) input = Integer.valueOf(requested.getAsInt());
                     else if (key.equals("nextActionDelayBeats")) input = Double.valueOf(requested.getAsDouble());
                     else input = Boolean.valueOf(requested.getAsBoolean());
-                    if (input == null)
-                        throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "Unsupported native nextAction");
+                    if (input == null) throw Errors.notApplied(Reason.INVALID_PARAMS, "Unsupported native nextAction");
                     a.invoke(setters.get(key), value, input);
                 }
             }
@@ -116,25 +115,19 @@ final class Bitwig614LauncherSettingsAccess implements LauncherSettingsModule.Ac
         JsonObject after = read(value, properties);
         for (var e : before.entrySet())
             if (!changes.has(e.getKey()) && !LauncherSettingsModule.matches(e.getValue(), after.get(e.getKey())))
-                throw Errors.unknown(
-                        ErrorCode.UNEXPECTED_SIDE_EFFECT, "Native write changed omitted setting: " + e.getKey());
+                throw Errors.unknown(Reason.SIDE_EFFECT, "Native write changed omitted setting: " + e.getKey());
         for (var e : changes.entrySet()) {
-            JsonObject f = new JsonObject();
-            f.add("requested", e.getValue());
-            f.add("observed", after.get(e.getKey()));
-            boolean match = LauncherSettingsModule.matches(e.getValue(), after.get(e.getKey()));
-            f.addProperty("matchesRequested", match);
-            f.addProperty(
-                    "verification",
-                    LauncherSettingsModule.matches(before.get(e.getKey()), e.getValue())
-                            ? "already_matching_native_read"
-                            : "native_model_read_after_write");
-            fields.add(e.getKey(), f);
-            if (!match)
-                throw Errors.unknown(
-                        ErrorCode.WRITE_NOT_OBSERVED, "Native clip setting readback differs: " + e.getKey());
+            if (!LauncherSettingsModule.matches(e.getValue(), after.get(e.getKey())))
+                throw Errors.unknown(Reason.READBACK_MISMATCH, "Native clip setting readback differs: " + e.getKey());
+            boolean already = LauncherSettingsModule.matches(before.get(e.getKey()), e.getValue());
+            fields.add(
+                    e.getKey(),
+                    Results.field(
+                            e.getValue(),
+                            after.get(e.getKey()),
+                            already ? Outcome.ALREADY_MATCHED : Outcome.APPLIED,
+                            null));
         }
-        after.addProperty("status", "observed");
         after.addProperty("name", (String) a.invoke(name, value));
         after.add("fields", fields);
         after.addProperty("nativeVersion", Bitwig614Runtime.VERSION);

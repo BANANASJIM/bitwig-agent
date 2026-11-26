@@ -13,7 +13,7 @@ import java.util.function.Supplier;
  * String-only process coordination; no extension/native objects survive in System properties.
  * One marker serializes native topology lifetimes (idle or pending owner). A failed or unverified topology edit
  * quarantines only the Grid device it touched, as one String record per device; other devices keep working.
- * A record survives extension replacement and is released only by an explicit {@link #reconcile} after re-verification.
+ * A record survives extension replacement and is released only by an {@link #ack} after re-verification.
  */
 final class GridTopologyQuarantine {
     static final String KEY = "dev.bitwigagent.grid.topology.native-lifetime.v1";
@@ -115,9 +115,9 @@ final class GridTopologyQuarantine {
     }
 
     private static String deviceBlocked(String record) {
-        return "This Grid device is quarantined (" + originOf(record)
+        return "This Grid device is held (" + originOf(record)
                 + "): a topology edit on it ended with an unknown outcome. Other devices and domains keep working and project.save is allowed. "
-                + "Inspect with grid.get, then call grid.topology.reconcile on this device to release it; do not retry or assume rollback.";
+                + "Do not retry or assume rollback.";
     }
 
     private String pendingReason(Properties p) {
@@ -238,16 +238,30 @@ final class GridTopologyQuarantine {
     }
 
     void requireAvailable(String device) {
-        String reason = blockedReason(device);
-        if (reason != null) throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, reason);
+        Properties p = properties();
+        synchronized (p) {
+            requireAdmitted(p, device);
+        }
+    }
+
+    private void requireAdmitted(Properties p, String device) {
+        String pending = pendingReason(p), record = record(p, device);
+        if (pending != null) throw Errors.notApplied(Reason.BUSY, pending);
+        if (record != null) throw Errors.notApplied(Reason.UNRESOLVED, deviceBlocked(record), next(device));
+    }
+
+    static String holdId(String device) {
+        return "grid:" + device;
+    }
+
+    private static String next(String device) {
+        return "Inspect with grid.get, then ack " + holdId(device) + ".";
     }
 
     String reserve(String device) {
         Properties p = properties();
         synchronized (p) {
-            String pending = pendingReason(p), record = record(p, device);
-            if (pending != null || record != null)
-                throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, pending != null ? pending : deviceBlocked(record));
+            requireAdmitted(p, device);
             String owner = UUID.randomUUID().toString();
             set(p, PENDING + owner);
             return owner;
@@ -295,7 +309,7 @@ final class GridTopologyQuarantine {
         }
     }
     /** Releases a device quarantine only if it is still the record the caller verified against (same text). */
-    boolean reconcile(String device, String verifiedRecord) {
+    boolean ack(String device, String verifiedRecord) {
         Properties p = properties();
         synchronized (p) {
             state(p);
@@ -324,10 +338,11 @@ final class GridTopologyQuarantine {
             why.addProperty("message", message.substring(0, Math.min(message.length(), 512)));
             detail.add("error", why);
             poison(owner, device, detail);
-            RpcException translated = Errors.notApplied(
-                    ErrorCode.GRID_UNAVAILABLE,
-                    "Native Grid topology operation/callback failed; outcome unknown. This Grid device is quarantined; other devices and project.save keep working. "
-                            + "Inspect with grid.get, then call grid.topology.reconcile on this device; do not retry or assume rollback.");
+            RpcException translated = Errors.unknown(
+                    Reason.NATIVE_UNAVAILABLE,
+                    "Native Grid topology operation/callback failed. This Grid device is held (" + holdId(device)
+                            + "); other devices and project.save keep working. " + next(device)
+                            + " Do not retry or assume rollback.");
             translated.initCause(error);
             throw translated;
         }
@@ -336,7 +351,7 @@ final class GridTopologyQuarantine {
 
     private static RpcException unavailable() {
         return Errors.notApplied(
-                ErrorCode.GRID_UNAVAILABLE,
+                Reason.NATIVE_UNAVAILABLE,
                 "Native Grid topology process marker is pending, malformed or inaccessible. Admission fails closed across extension replacement; full Bitwig JVM restart may be required.");
     }
 }

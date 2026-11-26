@@ -16,7 +16,7 @@ Run a single layer with `pixi run python scripts/check.py --layer lint`. Other t
 ## Constraints that are not obvious from the code
 
 - Native Bitwig bindings (`bitwig614`) can only be proven on a real host: use native E2E on an isolated test instance with a disposable project, never the user's active project.
-- Writes fail closed. A write whose outcome is `unknown` is never retried, by API or GUI; stop and inspect state.
+- Writes fail closed. A write whose outcome is `unknown` is never retried, by API or GUI; stop, inspect state, then `ack` its hold.
 - Never commit Bitwig host JARs, factory assets, credentials or personal paths.
 - Java compiles with JDK 25 but generated classes target Java 11.
 - Method metadata lives only in `src/bitwig_agent/protocol/`; Java reads the generated `protocol.json`.

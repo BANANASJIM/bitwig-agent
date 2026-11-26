@@ -40,11 +40,6 @@ final class Bitwig614ReadContextAccess implements NativeReadContext.Access {
     }
 
     @Override
-    public ErrorCode unavailableCode() {
-        return bindings.unavailableCode();
-    }
-
-    @Override
     public Object read(NativeReadContext.Field field, Object object) {
         Method reader = readers.get(field);
         return field == PROJECT ? bindings.invoke(reader, object, project) : bindings.invoke(reader, object);

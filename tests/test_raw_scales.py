@@ -95,7 +95,7 @@ def test_display_writes_convert_to_raw_and_are_idempotent(module, pid, text, raw
     assert all("display" not in w and "shown" not in w for w in writes)
     assert host.param("X", pid) == pytest.approx(raw)
     host.calls.clear()
-    assert apply_grid(host, spec)["status"] == "unchanged"
+    assert apply_grid(host, spec)["outcome"] == "already_matched"
     assert host.writes() == []
 
 

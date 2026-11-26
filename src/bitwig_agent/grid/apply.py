@@ -1,7 +1,7 @@
 """Client-side `grid.apply`: a declarative, re-appliable Grid patch composed from the guarded grid.* host methods.
 
 No host method is added. Every write is an ordinary guarded call with fresh CAS values, one request at a time,
-stopping at the first error/unknown/partial outcome and never retrying.
+stopping at the first error or non-success outcome and never retrying.
 """
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from bitwig_agent.diagnostics import diagnostics
-from bitwig_agent.errors import BridgeError, bridge_error
+from bitwig_agent.errors import BridgeError, bridge_error, unknown_result
 from bitwig_agent.grid.blocks import expand_blocks
 from bitwig_agent.grid.bundled import bundled_schema
 from bitwig_agent.grid.channel import Channel, Stop
@@ -79,7 +79,7 @@ class Session:
         # Spec-detectable parameter problems of existing modules surface before the first write.
         rows = await self.channel.read(read_params, params_to_read(spec, plan), full=spec.has_steps, require=True)
         plan.params = plan_module_params(spec, plan, rows)
-        ledger.undispatched = {"deleted": len(plan.deletes), "inserted": len(plan.inserts)}
+        ledger.unreached = {"deleted": len(plan.deletes), "inserted": len(plan.inserts)}
         return await (self._dry_run(plan) if spec.dry_run else self._write(plan))
 
     async def _dry_run(self, plan: Plan) -> dict[str, Any]:
@@ -99,14 +99,13 @@ class Session:
         except Stop as stop:
             return ledger.stop_report(stop)
         except Exception as exc:  # noqa: BLE001 - keep the report of work already dispatched
-            raw = {"error": bridge_error("internal_error", f"{type(exc).__name__}: {exc}", "unknown").error}
-            return ledger.stop_report(Stop("internal", raw, "unknown"))
-        return ledger.report("applied" if any(ledger.applied.values()) else "unchanged")
+            return ledger.stop_report(Stop("internal", unknown_result("internal", f"{type(exc).__name__}: {exc}")))
+        return ledger.report("applied" if any(ledger.applied.values()) else "already_matched")
 
 
 async def with_marker(client: Any, result: dict[str, Any], wrote: bool, timeout_ms: int) -> dict[str, Any]:
     """After a build, attach a host.diagnostics marker: sinceMarker=<it> shows only rejections that happened after the build."""
-    if not wrote or result.get("status") == "dryRun":
+    if not wrote:
         return result
     try:
         marker = (await diagnostics(client, {"maxEvents": 1, "sinceSeconds": 1}, timeout_ms)).get("marker")
@@ -129,5 +128,5 @@ async def apply(client: Any, args: dict[str, Any], timeout_ms: int = 5000) -> di
     except BridgeError:
         raise
     except Exception as exc:
-        raise bridge_error("internal_error", f"{type(exc).__name__}: {exc}") from exc
+        raise bridge_error("internal", f"{type(exc).__name__}: {exc}") from exc
     return await with_marker(client, result, channel.wrote, timeout_ms)

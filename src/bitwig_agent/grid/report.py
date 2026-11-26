@@ -38,7 +38,7 @@ class Ledger:
         self.ids: dict[str, str] = {}
         self.warnings: list[str] = []
         self.awaiting_rename: dict[str, str] = {}
-        self.undispatched: dict[str, int] = {}
+        self.unreached: dict[str, int] = {}
         self.phase = "validate"
 
     def warn(self, text: str) -> None:
@@ -58,9 +58,9 @@ class Ledger:
             | notes
         )
 
-    def report(self, status: str) -> dict[str, Any]:
+    def report(self, outcome: str) -> dict[str, Any]:
         base = {
-            "status": status,
+            "outcome": outcome,
             "applied": self.applied,
             "alreadyMatched": self.matched,
             "steps": self.steps,
@@ -69,20 +69,21 @@ class Ledger:
         return self._payload(base, notes_field(self.spec))
 
     def stop_report(self, stop: Stop) -> dict[str, Any]:
-        status = "unknown" if stop.outcome == "unknown" else ("partial" if any(self.applied.values()) else "failed")
-        out = self.report(status)
+        out = self.report(stop.outcome)
+        if stop.reason:
+            out["reason"] = stop.reason
         out["failure"] = {"phase": self.phase, "method": stop.method, "response": stop.raw}
         started = PHASES.index(self.phase) + 1 if self.phase in PHASES else 0
-        out["notDispatched"] = {
+        out["notReached"] = {
             "phasesNotStarted": list(PHASES[started:]),
             "failedPhaseIncomplete": self.phase,
-            **{k: v for k, v in self.undispatched.items() if v},
+            **{k: v for k, v in self.unreached.items() if v},
         }
         if self.awaiting_rename:
             out["unnamedModules"] = dict(self.awaiting_rename)
         out["next"] = (
-            "Outcome unknown: inspect with grid.get before any further write; this device may now be quarantined (grid.capabilities topologyQuarantine.devices): grid.topology.reconcile on it re-verifies and releases it, no restart."
-            if status == "unknown"
+            "Outcome unknown: inspect with grid.get before any further write; this device may now hold an unresolved topology change (status holds): release it with ack <id> after inspection."
+            if stop.outcome == "unknown"
             else "Fix the cause and re-apply the same spec; applied work is reused."
             + (
                 " Modules listed in unnamedModules are not renamed yet: rename them by hand (customName = value) or delete them first."
@@ -137,7 +138,7 @@ class Ledger:
                 "no bundled schema for this host version: ports, parameters and footprints of inserted modules are validated only after insertion"
             )
         result: dict[str, Any] = {
-            "status": "dryRun",
+            "dryRun": True,
             "planned": planned,
             "alreadyMatched": self.matched,
             "plan": steps_plan,
@@ -149,11 +150,11 @@ class Ledger:
     def unreachable_report(self, error: dict[str, Any]) -> dict[str, Any]:
         """dryRun when the target device cannot be read: the spec itself validated, the real apply would fail on the target."""
         fail = {
-            "code": error.get("code", "unknown"),
+            "reason": error.get("reason", "internal"),
             "message": error.get("message", "the target device could not be read"),
         }
         return (
-            {"status": "dryRun", "validated": True, "wouldFail": [fail], "plan": {}}
+            {"dryRun": True, "validated": True, "wouldFail": [fail], "plan": {}}
             | ({"warnings": self.warnings} if self.warnings else {})
             | notes_field(
                 self.spec, ["the spec is valid, but the target device could not be read, so no plan was computed"]

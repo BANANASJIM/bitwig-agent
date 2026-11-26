@@ -50,15 +50,16 @@ final class GridStringPanelWriter {
         JsonObject current = values.parameterValue(binding);
         if (!request.matches(current.get("value"), request.value))
             throw Errors.of(
-                    changed ? ErrorCode.GRID_VERIFICATION_FAILED : ErrorCode.STALE_CONTEXT,
+                    changed ? Reason.READBACK_MISMATCH : Reason.STALE_CONTEXT,
                     "Native string panel readback differs from the requested text; inspect state before another write.",
-                    changed ? Outcome.UNKNOWN : Outcome.NOT_APPLIED);
+                    changed);
         check.run();
         JsonObject result = values.parameterResult(binding, current);
+        result.addProperty("outcome", (changed ? Outcome.APPLIED : Outcome.ALREADY_MATCHED).wire());
         result.add("previousValue", previous);
         result.add("requestedValue", request.value);
         result.addProperty("mutationDispatched", changed);
-        result.addProperty("verification", changed ? "exact_native_string_panel_readback" : "already_matched");
+        result.addProperty("verification", "exact_native_string_panel_readback");
         result.addProperty("nativeMutation", changed);
         result.addProperty("nativeUndo", changed);
         result.addProperty(

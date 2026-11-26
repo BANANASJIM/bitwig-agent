@@ -69,7 +69,7 @@ final class SceneModule implements HostModule {
             case "scenes.rename":
                 Params.fields(p, Set.of("sceneIndex", "expectedName", "name"), Set.of());
                 if (Params.string(p, "name").length() > 128)
-                    throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "name must contain 1..128 characters.");
+                    throw Errors.notApplied(Reason.INVALID_PARAMS, "name must contain 1..128 characters.");
                 break;
             case "scenes.launch":
             case "scenes.duplicate":
@@ -77,7 +77,7 @@ final class SceneModule implements HostModule {
                 Params.fields(p, Set.of("sceneIndex", "expectedName"), Set.of());
                 break;
             default:
-                throw Errors.notApplied(ErrorCode.UNKNOWN_METHOD, "Unknown scene method.");
+                throw Errors.notApplied(Reason.UNKNOWN_METHOD, "Unknown scene method.");
         }
         Params.integer(p, "sceneIndex", 0, HostLimits.SCENES - 1);
         expected(p);
@@ -90,7 +90,7 @@ final class SceneModule implements HostModule {
                 || !value.getAsJsonPrimitive().isString()
                 || value.getAsString().length() > 256)
             throw Errors.notApplied(
-                    ErrorCode.INVALID_PARAMS,
+                    Reason.INVALID_PARAMS,
                     "expectedName must be a string of at most 256 characters (empty for an unnamed scene).");
         return value.getAsString();
     }
@@ -99,9 +99,9 @@ final class SceneModule implements HostModule {
     public void dispatch(HostOperation op, String method, JsonObject p) {
         scheduler.check(op);
         if (!window.observed() || count < 0)
-            throw Errors.notApplied(ErrorCode.NOT_READY, "Scene bank has not reported its size yet.");
+            throw Errors.notApplied(Reason.NOT_READY, "Scene bank has not reported its size yet.");
         if (bank.scrollPosition().get() != 0)
-            throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Scene bank is not at offset zero.");
+            throw Errors.notApplied(Reason.STALE_CONTEXT, "Scene bank is not at offset zero.");
         if (method.equals("scenes.list")) {
             op.result.complete(list());
             return;
@@ -109,13 +109,13 @@ final class SceneModule implements HostModule {
         int index = p.get("sceneIndex").getAsInt();
         if (index >= count)
             throw Errors.notApplied(
-                    ErrorCode.SCENE_OUT_OF_RANGE,
+                    Reason.OUT_OF_BOUNDS,
                     "sceneIndex " + index + " does not exist: the project has " + count + " scene(s).");
         String actual = names[index];
-        if (actual == null) throw Errors.notApplied(ErrorCode.NOT_READY, "Scene name has not been observed yet.");
+        if (actual == null) throw Errors.notApplied(Reason.NOT_READY, "Scene name has not been observed yet.");
         if (!actual.equals(expected(p)))
             throw Errors.notApplied(
-                    ErrorCode.STALE_TARGET,
+                    Reason.STALE_TARGET,
                     "Scene " + index + " is named \"" + actual + "\", not expectedName; re-read scenes.list.");
         switch (method) {
             case "scenes.rename":
@@ -133,7 +133,7 @@ final class SceneModule implements HostModule {
     }
 
     private JsonObject list() {
-        JsonObject out = Results.observed();
+        JsonObject out = new JsonObject();
         out.addProperty("scope", "scene_bank");
         out.add("window", Results.window(0, HostLimits.SCENES, count));
         out.addProperty("sceneCount", count);
@@ -156,20 +156,26 @@ final class SceneModule implements HostModule {
         return out;
     }
 
-    private JsonObject result(String status, String completion, String verification, int index) {
-        JsonObject out = Results.observed();
+    /** A write result; {@code verification} says how an applied write was observed. */
+    private JsonObject result(Outcome outcome, Reason reason, String verification, int index) {
+        JsonObject out = Results.outcome(outcome);
+        if (reason != null) out.addProperty("reason", reason.wire());
         out.addProperty("scope", "scene_bank");
         out.addProperty("sceneIndex", index);
-        out.addProperty("status", status);
-        out.addProperty("completion", completion);
-        out.addProperty("verification", verification);
+        if (verification != null) out.addProperty("verification", verification);
         out.addProperty("sceneCount", count);
         return out;
     }
 
+    private JsonObject result(boolean done, String verification, int index) {
+        return done
+                ? result(Outcome.APPLIED, null, verification, index)
+                : result(Outcome.UNKNOWN, Reason.NOT_OBSERVED, null, index);
+    }
+
     private void rename(HostOperation op, int index, String name) {
         if (name.equals(names[index])) {
-            JsonObject out = result("observed", "observed", "already_at_value", index);
+            JsonObject out = result(Outcome.ALREADY_MATCHED, null, null, index);
             out.addProperty("name", name);
             op.result.complete(out);
             return;
@@ -183,13 +189,8 @@ final class SceneModule implements HostModule {
                 scheduler.observeUntil(op),
                 () -> nameSequence[index] > before && name.equals(names[index]),
                 done -> {
-                    JsonObject out = result(
-                            done ? "observed" : "dispatched",
-                            done ? "observed" : "unknown",
-                            done ? "observer_after_write" : "name_not_observed",
-                            index);
+                    JsonObject out = result(done, "observer_after_write", index);
                     out.add("name", names[index] == null ? JsonNull.INSTANCE : new JsonPrimitive(names[index]));
-                    out.addProperty("matchesRequested", done);
                     op.result.complete(out);
                 });
     }
@@ -211,14 +212,13 @@ final class SceneModule implements HostModule {
                     return playing;
                 },
                 done -> {
-                    // A scene without clips has nothing to observe: dispatched, never claimed as playing.
-                    JsonObject out = result(
-                            done ? "observed" : "dispatched",
-                            done ? "observed" : "not_observed",
-                            done
-                                    ? "clips_playing_or_queued"
-                                    : clips.isEmpty() ? "scene_has_no_clips" : "playback_not_observed",
-                            index);
+                    // A scene without clips has nothing to observe: sent, never claimed as playing.
+                    boolean playing = !clips.isEmpty();
+                    for (ClipLauncherSlot slot : clips)
+                        playing &= slot.isPlaying().get();
+                    JsonObject out = clips.isEmpty() || done && !playing
+                            ? result(Outcome.SENT, null, null, index)
+                            : result(done, "clips_playing", index);
                     out.addProperty("clipCount", clips.size());
                     op.result.complete(out);
                 });
@@ -228,21 +228,17 @@ final class SceneModule implements HostModule {
         lock.requireStructureFree();
         if (count + 1 > HostLimits.SCENES)
             throw Errors.notApplied(
-                    ErrorCode.SCENE_LIMIT,
+                    Reason.LIMIT_REACHED,
                     "The project has " + count + " scene(s); the launcher tools address at most " + HostLimits.SCENES
                             + ", so one more cannot be added.");
         List<String> before = snapshotNames();
-        if (before == null) throw Errors.notApplied(ErrorCode.NOT_READY, "Not every scene name has been observed yet.");
+        if (before == null) throw Errors.notApplied(Reason.NOT_READY, "Not every scene name has been observed yet.");
         scheduler.check(op);
         op.dispatched = true;
         scenes[index].duplicateObject();
         long[] sequenceBefore = nameSequence.clone();
         scheduler.poll(op, scheduler.observeUntil(op), () -> duplicated(index, before), done -> {
-            JsonObject out = result(
-                    done ? "observed" : "dispatched",
-                    done ? "observed" : "unknown",
-                    done ? "scene_count_and_neighbour_names" : "duplicate_not_observed",
-                    index);
+            JsonObject out = result(done, "scene_count_and_neighbour_names", index);
             out.addProperty("sceneCountBefore", before.size());
             if (done) {
                 out.addProperty("newSceneIndex", index + 1);
@@ -274,20 +270,20 @@ final class SceneModule implements HostModule {
         SafetyObservation safety = transportSafety.stopped(op);
         if (count > HostLimits.SCENES)
             throw Errors.notApplied(
-                    ErrorCode.OUTSIDE_WINDOW,
+                    Reason.OUTSIDE_WINDOW,
                     "The project has " + count + " scenes; scene edits that need every name address at most "
                             + HostLimits.SCENES + ".");
-        if (count <= 1) throw Errors.notApplied(ErrorCode.LAST_SCENE, "A project keeps at least one scene.");
+        if (count <= 1) throw Errors.notApplied(Reason.LIMIT_REACHED, "A project keeps at least one scene.");
         List<ClipLauncherSlot> clips = occupied(index);
         for (ClipLauncherSlot slot : clips)
             if (slot.isPlaying().get()
                     || slot.isPlaybackQueued().get()
                     || slot.isRecording().get())
                 throw Errors.notApplied(
-                        ErrorCode.UNSAFE_STATE,
+                        Reason.UNSAFE_STATE,
                         "Delete requires the scene's clips to be neither playing, queued nor recording.");
         List<String> before = snapshotNames();
-        if (before == null) throw Errors.notApplied(ErrorCode.NOT_READY, "Not every scene name has been observed yet.");
+        if (before == null) throw Errors.notApplied(Reason.NOT_READY, "Not every scene name has been observed yet.");
         transportSafety.guardStopped(safety);
         scheduler.check(op);
         op.dispatched = true;
@@ -301,11 +297,7 @@ final class SceneModule implements HostModule {
                     return count == before.size() - 1 && expected.equals(unnamed(snapshotNames()));
                 },
                 done -> {
-                    JsonObject out = result(
-                            done ? "observed" : "dispatched",
-                            done ? "observed" : "unknown",
-                            done ? "scene_count_and_names" : "delete_not_observed",
-                            index);
+                    JsonObject out = result(done, "scene_count_and_names", index);
                     out.addProperty("sceneCountBefore", before.size());
                     out.addProperty("deletedName", before.get(index));
                     out.addProperty("clipsDeleted", clips.size());

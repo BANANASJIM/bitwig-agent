@@ -155,10 +155,7 @@ public final class MarkerModuleTest {
         MarkerModule m = module(f);
         f.transport.child("playPosition").data = 16.0;
         JsonObject r = call(f, m, "markers.insert", "{\"beat\":8,\"name\":\"Verse\"}");
-        assertTrue(
-                r.get("status").getAsString().equals("observed")
-                        && r.get("matchesRequested").getAsBoolean(),
-                "insert observed: " + r);
+        assertTrue(r.get("outcome").getAsString().equals("applied"), "insert observed: " + r);
         assertTrue(
                 bank.view().equals(List.of("Intro@0.0", "Verse@8.0", "Outro@64.0")),
                 "marker named and moved to the beat: " + bank.view());
@@ -168,7 +165,7 @@ public final class MarkerModuleTest {
                 "one native add; playhead untouched");
         assertTrue(r.getAsJsonObject("marker").get("name").getAsString().equals("Verse"), "result names the marker");
         assertTrue(r.getAsJsonArray("markers").size() == 3, "result carries the observed list");
-        assertTrue(f.services.holds.descriptions().isEmpty(), "observed insert leaves nothing unresolved");
+        assertTrue(f.services.holds.list().isEmpty(), "observed insert leaves nothing unresolved");
     }
 
     @Test
@@ -178,7 +175,7 @@ public final class MarkerModuleTest {
         MarkerModule m = module(f);
         JsonObject r = call(f, m, "markers.insert", "{\"beat\":4}");
         assertTrue(
-                r.get("matchesRequested").getAsBoolean() && bank.view().equals(List.of("Marker 1@4.0")),
+                r.get("outcome").getAsString().equals("applied") && bank.view().equals(List.of("Marker 1@4.0")),
                 "host-assigned name kept: " + bank.view());
     }
 
@@ -190,7 +187,7 @@ public final class MarkerModuleTest {
         MarkerModule m = module(f);
         HostOperation dup = f.submit(m, "markers.insert", json("{\"beat\":8}"));
         f.next();
-        assertRpcError("marker_exists_at_beat", dup);
+        assertRpcError("target_exists", dup);
         f.transport.child("isPlaying").emit(true);
         HostOperation playing = f.submit(m, "markers.insert", json("{\"beat\":9}"));
         f.next();
@@ -224,7 +221,7 @@ public final class MarkerModuleTest {
         HostOperation beyond =
                 f.submit(m, "markers.rename", json("{\"markerIndex\":5,\"expectedName\":\"Verse\",\"name\":\"X\"}"));
         f.next();
-        assertRpcError("unknown_marker", beyond);
+        assertRpcError("unknown_name", beyond);
         assertTrue(bank.view().equals(List.of("Intro@0.0", "Verse@8.0")), "refusals changed nothing");
         JsonObject r = call(
                 f,
@@ -232,13 +229,14 @@ public final class MarkerModuleTest {
                 "markers.rename",
                 "{\"markerIndex\":1,\"expectedName\":\"Verse\",\"expectedBeat\":8,\"name\":\"Verse 1\"}");
         assertTrue(
-                r.get("matchesRequested").getAsBoolean() && bank.view().equals(List.of("Intro@0.0", "Verse 1@8.0")),
+                r.get("outcome").getAsString().equals("applied")
+                        && bank.view().equals(List.of("Intro@0.0", "Verse 1@8.0")),
                 "renamed: " + bank.view());
         JsonObject same =
                 call(f, m, "markers.rename", "{\"markerIndex\":1,\"expectedName\":\"Verse 1\",\"name\":\"Verse 1\"}");
         assertTrue(
-                same.get("verification").getAsString().equals("already_at_value")
-                        && f.services.holds.descriptions().isEmpty(),
+                same.get("outcome").getAsString().equals("already_matched")
+                        && f.services.holds.list().isEmpty(),
                 "same name is not rewritten");
     }
 
@@ -256,7 +254,8 @@ public final class MarkerModuleTest {
         JsonObject r =
                 call(f, m, "markers.delete", "{\"markerIndex\":1,\"expectedName\":\"Verse\",\"expectedBeat\":8}");
         assertTrue(
-                r.get("matchesRequested").getAsBoolean() && bank.view().equals(List.of("Intro@0.0", "Chorus@16.0")),
+                r.get("outcome").getAsString().equals("applied")
+                        && bank.view().equals(List.of("Intro@0.0", "Chorus@16.0")),
                 "deleted: " + bank.view());
         assertTrue(
                 r.getAsJsonObject("deleted").get("name").getAsString().equals("Verse"),
@@ -273,14 +272,45 @@ public final class MarkerModuleTest {
         while (!op.result.isDone()) f.next();
         JsonObject r = op.result.join();
         assertTrue(
-                r.get("completion").getAsString().equals("unknown")
-                        && !r.get("matchesRequested").getAsBoolean(),
+                r.get("outcome").getAsString().equals("unknown")
+                        && r.get("reason").getAsString().equals("not_observed")
+                        && r.get("next").getAsString().contains("ack markers.unresolved"),
                 "unobserved insert is unknown: " + r);
-        assertTrue(f.services.holds.descriptions().size() == 1, "reported as unresolved for extension.restart");
+        assertTrue(f.services.holds.list().size() == 1, "reported as unresolved until acked");
         HostOperation next = f.submit(m, "markers.insert", json("{\"beat\":5}"));
         f.next();
-        assertRpcError("unresolved_mutation", next);
+        assertTrue(
+                assertRpcError("unresolved", next).next.contains("ack markers.unresolved"),
+                "the refusal names the hold to ack");
         assertTrue(f.transport.actions == 1, "no automatic retry and no second add");
+    }
+
+    @Test
+    void unobservedDeleteIsUnknownAndHolds() {
+        HostFixture f = new HostFixture();
+        Bank bank = new Bank(f);
+        bank.add("Intro", 0);
+        for (int i = 0; i < MarkerModule.WINDOW; i++)
+            bank.node.item(i).on("deleteObject", args -> {
+                f.mutation();
+                return null;
+            });
+        MarkerModule m = module(f);
+        HostOperation op = f.submit(
+                m, "markers.delete", json("{\"markerIndex\":0,\"expectedName\":\"Intro\"}"), f.tasks.after(300));
+        while (!op.result.isDone()) f.next();
+        JsonObject r = op.result.join();
+        assertTrue(
+                r.get("outcome").getAsString().equals("unknown")
+                        && r.get("reason").getAsString().equals("not_observed")
+                        && bank.view().equals(List.of("Intro@0.0"))
+                        && f.services.holds.list().size() == 1,
+                "an unobserved delete is unknown and holds markers: " + r);
+    }
+
+    @Test
+    void unknownMethodIsRefused() {
+        assertRpcError("unknown_method", () -> MarkerModule.validateParams("markers.bogus", new JsonObject()));
     }
 
     @Test

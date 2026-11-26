@@ -99,10 +99,9 @@ final class TransportModule implements HostModule {
             return;
         }
         if (!method.equals("transport.set"))
-            throw Errors.notApplied(ErrorCode.UNKNOWN_METHOD, "Unknown transport method.");
+            throw Errors.notApplied(Reason.UNKNOWN_METHOD, "Unknown transport method.");
         Params.fields(p, Set.of(), FIELDS);
-        if (p.size() == 0)
-            throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "At least one transport field is required.");
+        if (p.size() == 0) throw Errors.notApplied(Reason.INVALID_PARAMS, "At least one transport field is required.");
         for (String key : List.of("playing", "metronome", "loopEnabled", "punchInEnabled", "punchOutEnabled"))
             if (p.has(key)) Params.bool(p, key);
         if (p.has("metronomeVolumeNormalized")) Params.number(p, "metronomeVolumeNormalized", 0, 1);
@@ -115,15 +114,15 @@ final class TransportModule implements HostModule {
         }
         if (p.has("timeSignature") && !validSignature(Params.string(p, "timeSignature")))
             throw Errors.notApplied(
-                    ErrorCode.INVALID_PARAMS,
+                    Reason.INVALID_PARAMS,
                     "timeSignature must be numerator/denominator: numerator 1..32, denominator 1, 2, 4, 8, 16 or 32.");
         if (p.has("loopDurationBeats") && p.get("loopDurationBeats").getAsDouble() == 0)
-            throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "loopDurationBeats must be positive.");
+            throw Errors.notApplied(Reason.INVALID_PARAMS, "loopDurationBeats must be positive.");
         if (p.has("loopStartBeats")
                 && p.has("loopDurationBeats")
                 && !Double.isFinite(p.get("loopStartBeats").getAsDouble()
                         + p.get("loopDurationBeats").getAsDouble()))
-            throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "Loop end must be finite.");
+            throw Errors.notApplied(Reason.INVALID_PARAMS, "Loop end must be finite.");
     }
 
     static boolean validSignature(String text) {
@@ -155,7 +154,7 @@ final class TransportModule implements HostModule {
                 ? p.get("loopDurationBeats").getAsDouble()
                 : values.get("loopDurationBeats").value.getAsDouble();
         if (!Double.isFinite(start + duration))
-            throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "Loop end must be finite.");
+            throw Errors.notApplied(Reason.INVALID_PARAMS, "Loop end must be finite.");
         Request request = new Request(
                 op,
                 p,
@@ -166,7 +165,7 @@ final class TransportModule implements HostModule {
             if (stopping) write(request, "playing");
         } catch (RpcException error) {
             if (!op.dispatched) throw error;
-            finish(request, error.code);
+            finish(request, error.reason);
             return;
         }
         if (stopping && p.size() > 1) awaitStop(request);
@@ -207,7 +206,7 @@ final class TransportModule implements HostModule {
                         && !(key.equals("playing") && !request.p.get(key).getAsBoolean())) write(request, key);
         } catch (RpcException error) {
             if (!request.op.dispatched) throw error;
-            finish(request, error.code);
+            finish(request, error.reason);
             return;
         }
         await(request);
@@ -297,37 +296,37 @@ final class TransportModule implements HostModule {
         return before != null && (before == -1 || actual.sequence > before) && matches(key, actual.value, expected);
     }
 
-    private void finish(Request request, String reason) {
+    private void finish(Request request, Reason reason) {
         HostOperation op = request.op;
         JsonObject p = request.p;
         Map<String, Long> writes = request.writes;
         JsonObject result = snapshot();
         JsonObject fields = new JsonObject();
-        boolean all = reason == null;
+        Outcome worst = Outcome.ALREADY_MATCHED;
+        Reason worstReason = null;
         for (String key : p.keySet()) {
             Long before = writes.get(key);
             Sample actual = values.get(key);
-            boolean matched = verified(key, p.get(key), before);
-            all &= matched;
-            JsonObject field = new JsonObject();
-            field.add("requested", p.get(key));
-            field.add("observed", actual.value);
-            field.addProperty("matchesRequested", matched);
-            field.addProperty(
-                    "verification",
-                    before == null
-                            ? "not_dispatched"
-                            : before == -1
-                                    ? "already_at_value"
-                                    : actual.sequence <= before
-                                            ? "not_observed"
-                                            : matched ? "observer_after_write" : "readback_mismatch");
-            fields.add(key, field);
+            Outcome outcome;
+            Reason why = null;
+            if (before == null) {
+                outcome = Outcome.NOT_APPLIED;
+                why = Reason.NOT_REACHED;
+            } else if (before == -1) outcome = Outcome.ALREADY_MATCHED;
+            else if (actual.sequence <= before) {
+                outcome = Outcome.UNKNOWN;
+                why = Reason.NOT_OBSERVED;
+            } else if (verified(key, p.get(key), before)) outcome = Outcome.APPLIED;
+            else {
+                outcome = Outcome.UNKNOWN;
+                why = Reason.READBACK_MISMATCH;
+            }
+            fields.add(key, Results.field(p.get(key), actual.value, outcome, why));
+            if (outcome.compareTo(worst) > 0 && why != null) worstReason = why;
+            worst = worst.worst(outcome);
         }
-        result.addProperty("status", all ? "observed" : "dispatched");
-        result.addProperty("completion", all ? "observed" : "unknown");
-        result.addProperty("matchesRequested", all);
-        if (reason != null) result.addProperty("reason", reason);
+        result.addProperty("outcome", worst.wire());
+        if (!worst.succeeded()) result.addProperty("reason", (reason != null ? reason : worstReason).wire());
         result.add("fields", fields);
         if (request.silentEngine)
             Results.addWarning(
@@ -346,7 +345,7 @@ final class TransportModule implements HostModule {
     }
 
     private JsonObject snapshot() {
-        JsonObject result = Results.observed();
+        JsonObject result = new JsonObject();
         result.addProperty("projectName", application.projectName().get());
         result.addProperty("scope", "project_transport_observed_values");
         for (Map.Entry<String, Sample> entry : values.entrySet()) {
@@ -383,7 +382,7 @@ final class TransportModule implements HostModule {
 
     private void require(String key) {
         if (values.get(key).value.isJsonNull())
-            throw Errors.notApplied(ErrorCode.NOT_READY, "Transport field not observed: " + key);
+            throw Errors.notApplied(Reason.NOT_READY, "Transport field not observed: " + key);
     }
 
     private String observedString(String key) {

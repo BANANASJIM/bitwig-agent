@@ -29,6 +29,17 @@ final class Bitwig614RenderAccess implements RenderModule.Access {
     private final Object mp3, vorbis, opus;
     private Bitwig614ArrangerAccess arranger;
 
+    /** The exact bindings, or native_unavailable when a descriptor does not match the loaded host. */
+    static Bitwig614RenderAccess bind(Bitwig614Runtime.Access a) {
+        try {
+            return new Bitwig614RenderAccess(a);
+        } catch (ReflectiveOperationException | LinkageError error) {
+            throw Errors.notApplied(
+                    Reason.NATIVE_UNAVAILABLE,
+                    "Exact render bindings unavailable: " + Bitwig614Runtime.diagnostic(error));
+        }
+    }
+
     Bitwig614RenderAccess(Bitwig614Runtime.Access a) throws ReflectiveOperationException {
         this.a = a;
         resolver = new Bitwig614TrackResolver(a);
@@ -130,10 +141,10 @@ final class Bitwig614RenderAccess implements RenderModule.Access {
 
     private Object project(Object projectProxy) {
         if (!projectProxyType.isInstance(projectProxy))
-            throw Errors.notApplied(RenderModule.UNAVAILABLE, "Controller Project is not the native project proxy.");
+            throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Controller Project is not the native project proxy.");
         Object project = a.invoke(target, projectProxy);
         if (!projectType.isInstance(project))
-            throw Errors.notApplied(ErrorCode.NOT_READY, "Controller Project proxy is not bound to an open project.");
+            throw Errors.notApplied(Reason.NOT_READY, "Controller Project proxy is not bound to an open project.");
         a.requireModelThread(project);
         return project;
     }
@@ -142,24 +153,22 @@ final class Bitwig614RenderAccess implements RenderModule.Access {
     private void preflight(Object project) {
         if (Boolean.TRUE.equals(a.invoke(remote, project)))
             throw Errors.notApplied(
-                    ErrorCode.UNSUPPORTED_SCOPE,
+                    Reason.UNSUPPORTED_SCOPE,
                     "This project is driven by a remote session; its render job would run elsewhere.");
         if (a.invoke(current, project) != null)
-            throw Errors.notApplied(ErrorCode.BUSY, "Bitwig is already exporting or bouncing (possibly from the GUI).");
+            throw Errors.notApplied(Reason.BUSY, "Bitwig is already exporting or bouncing (possibly from the GUI).");
         String reason = (String) a.invoke(blocked, project);
-        if (reason != null)
-            throw Errors.notApplied(ErrorCode.RENDER_REFUSED, "Bitwig refuses to render: " + reason + ".");
+        if (reason != null) throw Errors.notApplied(Reason.HOST_REFUSED, "Bitwig refuses to render: " + reason + ".");
         if (!Boolean.TRUE.equals(a.invoke(engineActive, project)))
             throw Errors.notApplied(
-                    ErrorCode.RENDER_REFUSED,
-                    "The project's audio engine is not active; Bitwig would ignore the request.");
+                    Reason.HOST_REFUSED, "The project's audio engine is not active; Bitwig would ignore the request.");
         int files = (Integer) a.invoke(missingCount, a.invoke(missingFiles, project)), plugins = 0;
         for (Object chain : (List<?>) a.invoke(chains, a.invoke(devices, project)))
             for (Object device : (List<?>) a.invoke(chainDevices, chain))
                 if (hostedDevice.isInstance(device) && a.invoke(deviceState, device) == pluginMissing) plugins++;
         if (files > 0 || plugins > 0)
             throw Errors.notApplied(
-                    ErrorCode.RENDER_NEEDS_CONFIRMATION,
+                    Reason.NEEDS_CONFIRMATION,
                     "Project has " + files + " missing file(s) and " + plugins
                             + " missing plugin(s); Bitwig would ask for confirmation in a dialog. Fix them first.");
     }
@@ -174,10 +183,10 @@ final class Bitwig614RenderAccess implements RenderModule.Access {
         }
         if (resolver.kind(channel) != Bitwig614TrackResolver.Kind.CHANNEL)
             throw Errors.notApplied(
-                    ErrorCode.STALE_CONTEXT, "No native channel for " + (proxy == null ? "the master" : id) + ".");
+                    Reason.STALE_CONTEXT, "No native channel for " + (proxy == null ? "the master" : id) + ".");
         a.requireModelThread(channel);
         if (resolver.owner(channel, projectType) != project)
-            throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Source " + id + " belongs to another project.");
+            throw Errors.notApplied(Reason.STALE_CONTEXT, "Source " + id + " belongs to another project.");
         return channel;
     }
 
@@ -185,7 +194,7 @@ final class Bitwig614RenderAccess implements RenderModule.Access {
         Object job = a.invoke(current, project);
         if (!kind.isInstance(job))
             throw Errors.unknown(
-                    ErrorCode.RENDER_NOT_STARTED,
+                    Reason.JOB_FAILED,
                     "Bitwig accepted the call but no " + (kind == exportJob ? "export" : "bounce")
                             + " job was registered; inspect the output before another attempt.");
         CountDownLatch done = (CountDownLatch) a.invoke(latch, job);
@@ -214,7 +223,7 @@ final class Bitwig614RenderAccess implements RenderModule.Access {
                     Bitwig614TrackResolver.Kind.CHANNEL,
                     Bitwig614TrackResolver.Kind.GROUP);
             if (channels.contains(channel))
-                throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "Two sources resolve to the same native channel.");
+                throw Errors.notApplied(Reason.INVALID_PARAMS, "Two sources resolve to the same native channel.");
             channels.add(channel);
         }
         boolean wav = o.format.equals("wav");
@@ -271,12 +280,7 @@ final class Bitwig614RenderAccess implements RenderModule.Access {
 
     @Override
     public RenderModule.Clips clips(Object trackProxy, String trackId, Runnable check) {
-        try {
-            if (arranger == null) arranger = new Bitwig614ArrangerAccess(a);
-        } catch (ReflectiveOperationException error) {
-            throw Errors.notApplied(
-                    RenderModule.UNAVAILABLE, "Arranger readback bindings unavailable: " + error.getMessage());
-        }
+        if (arranger == null) arranger = Bitwig614ArrangerAccess.bind(a);
         return arranger.snapshot(trackProxy, trackId, check);
     }
 }

@@ -166,13 +166,13 @@ final class MixModule implements HostModule {
                 Params.fields(p, Set.of("trackId"), union(WRITABLE, DISPLAY_WRITABLE));
                 Params.string(p, "trackId");
                 if (p.size() == 1)
-                    throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "At least one track field is required.");
+                    throw Errors.notApplied(Reason.INVALID_PARAMS, "At least one track field is required.");
                 if (p.has("name")) Params.string(p, "name");
                 for (String key : List.of("volumeNormalized", "panNormalized"))
                     if (p.has(key)) Params.number(p, key, 0, 1);
                 for (String key : List.of("mute", "solo", "arm", "activated")) if (p.has(key)) Params.bool(p, key);
                 if (p.has("color") && !RGB.matcher(Params.string(p, "color")).matches())
-                    throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "color must be #RRGGBB.");
+                    throw Errors.notApplied(Reason.INVALID_PARAMS, "color must be #RRGGBB.");
                 for (String key : List.of("monitorMode", "crossFadeMode")) if (p.has(key)) Params.string(p, key);
                 if (p.has("volumeDb")) Params.number(p, "volumeDb", -150, 24);
                 if (p.has("panPercent")) Params.number(p, "panPercent", -100, 100);
@@ -184,7 +184,7 @@ final class MixModule implements HostModule {
                 Params.fields(p, Set.of("trackId"), SEND_OPTIONAL);
                 Params.string(p, "trackId");
                 if (p.has("sendIndex") == p.has("sendName"))
-                    throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "Supply exactly one of sendIndex or sendName.");
+                    throw Errors.notApplied(Reason.INVALID_PARAMS, "Supply exactly one of sendIndex or sendName.");
                 if (p.has("sendIndex")) Params.integer(p, "sendIndex", 0, 127);
                 for (String key : List.of("sendName", "expectedSendName", "display"))
                     if (p.has(key)) Params.string(p, key);
@@ -193,13 +193,12 @@ final class MixModule implements HostModule {
                 atMostOne(p, "valueNormalized", "display");
                 if (!p.has("valueNormalized") && !p.has("display") && !p.has("enabled"))
                     throw Errors.notApplied(
-                            ErrorCode.INVALID_PARAMS,
-                            "At least one of valueNormalized, display or enabled is required.");
+                            Reason.INVALID_PARAMS, "At least one of valueNormalized, display or enabled is required.");
                 return;
             case "tracks.create":
                 Params.fields(p, Set.of("type", "position", "name"), Set.of());
                 if (!Set.of("audio", "instrument", "effect").contains(Params.string(p, "type")))
-                    throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "type must be audio, instrument, or effect.");
+                    throw Errors.notApplied(Reason.INVALID_PARAMS, "type must be audio, instrument, or effect.");
                 Params.integer(p, "position", -1, Integer.MAX_VALUE);
                 Params.string(p, "name");
                 return;
@@ -214,7 +213,7 @@ final class MixModule implements HostModule {
                 Params.string(p, "expectedName");
                 return;
             default:
-                throw Errors.notApplied(ErrorCode.UNKNOWN_METHOD, "Unknown track method.");
+                throw Errors.notApplied(Reason.UNKNOWN_METHOD, "Unknown track method.");
         }
     }
 
@@ -228,7 +227,7 @@ final class MixModule implements HostModule {
         int n = 0;
         for (String key : keys) if (p.has(key)) n++;
         if (n > 1)
-            throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "Supply at most one of " + String.join(", ", keys) + ".");
+            throw Errors.notApplied(Reason.INVALID_PARAMS, "Supply at most one of " + String.join(", ", keys) + ".");
     }
 
     static List<String> trackIds(JsonObject p) {
@@ -237,17 +236,16 @@ final class MixModule implements HostModule {
                 || value.getAsJsonArray().size() < 1
                 || value.getAsJsonArray().size() > HostLimits.TRACKS)
             throw Errors.notApplied(
-                    ErrorCode.INVALID_PARAMS, "trackIds must be an array of 1.." + HostLimits.TRACKS + " track UUIDs.");
+                    Reason.INVALID_PARAMS, "trackIds must be an array of 1.." + HostLimits.TRACKS + " track UUIDs.");
         List<String> ids = new ArrayList<>();
         Set<String> seen = new HashSet<>();
         for (JsonElement item : value.getAsJsonArray()) {
             if (!item.isJsonPrimitive()
                     || !item.getAsJsonPrimitive().isString()
                     || !DeviceSources.canonicalUuid(item.getAsString()))
-                throw Errors.notApplied(
-                        ErrorCode.INVALID_PARAMS, "Each trackIds entry must be a canonical track UUID.");
+                throw Errors.notApplied(Reason.INVALID_PARAMS, "Each trackIds entry must be a canonical track UUID.");
             if (!seen.add(item.getAsString().toLowerCase(Locale.ROOT)))
-                throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "trackIds must be distinct.");
+                throw Errors.notApplied(Reason.INVALID_PARAMS, "trackIds must be distinct.");
             ids.add(item.getAsString().toLowerCase(Locale.ROOT));
         }
         return ids;
@@ -286,9 +284,7 @@ final class MixModule implements HostModule {
             target.state.track.selectInEditor();
             guard(op, target);
             JsonObject result = snapshot(target);
-            result.addProperty("status", "dispatched");
-            result.addProperty("completion", "not_observed");
-            result.addProperty("verification", "selection_has_no_reliable_public_observer");
+            result.addProperty("outcome", Outcome.SENT.wire());
             op.result.complete(result);
             return;
         }
@@ -362,7 +358,7 @@ final class MixModule implements HostModule {
                 target = DisplayScale.parse(kind, text);
                 if (Double.isNaN(target))
                     throw Errors.notApplied(
-                            ErrorCode.INVALID_PARAMS, "Display text not understood for " + kind + ": " + text);
+                            Reason.INVALID_PARAMS, "Display text not understood for " + kind + ": " + text);
             }
         }
     }
@@ -420,7 +416,7 @@ final class MixModule implements HostModule {
         } catch (RpcException error) {
             if (index == 0) throw error;
             DisplaySolver.Result failed = new DisplaySolver.Result();
-            failed.reason = error.code;
+            failed.reason = error.reason;
             restoreEarlier(op, target, solves, index, restored -> solverFailure(op, target, failed, restored));
         }
     }
@@ -465,17 +461,15 @@ final class MixModule implements HostModule {
         return all;
     }
 
-    /** A failed display write applied nothing else; it either put the original back (observed) or leaves the outcome unknown. */
+    /** A failed display write applied nothing else; it either put the original back (not applied) or leaves the outcome unknown. */
     private void solverFailure(HostOperation op, Target target, DisplaySolver.Result result, boolean earlierRestored) {
         boolean current = target.matches(window);
         JsonObject out = current ? snapshot(target) : scope();
         out.addProperty("trackId", target.id);
         boolean restored = (!result.dispatched || result.restored) && earlierRestored;
-        out.addProperty("status", "dispatched");
-        out.addProperty("completion", restored && current ? "observed" : "unknown");
-        out.addProperty("matchesRequested", false);
+        out.addProperty("outcome", (restored && current ? Outcome.NOT_APPLIED : Outcome.UNKNOWN).wire());
+        out.addProperty("reason", result.reason.wire());
         out.addProperty("otherFieldsApplied", !earlierRestored);
-        out.addProperty("reason", result.reason);
         for (Map.Entry<String, JsonElement> entry : target.extra.entrySet()) out.add(entry.getKey(), entry.getValue());
         op.result.complete(out);
     }
@@ -543,7 +537,7 @@ final class MixModule implements HostModule {
             }
         } catch (RpcException error) {
             if (!op.dispatched) throw error;
-            finish(op, target, changes, writes, created, createdKey, error.code);
+            finish(op, target, changes, writes, created, createdKey, error.reason);
             return;
         }
         await(op, target, changes, writes, created, createdKey);
@@ -555,36 +549,36 @@ final class MixModule implements HostModule {
         State state = target.state;
         JsonElement offset = state.meta("sendOffset");
         if (offset.isJsonNull() || state.meta("sendCount").isJsonNull())
-            throw Errors.notApplied(ErrorCode.NOT_READY, "Send window is not observed yet.");
+            throw Errors.notApplied(Reason.NOT_READY, "Send window is not observed yet.");
         int slot = -1;
         if (p.has("sendIndex")) {
             slot = p.get("sendIndex").getAsInt() - offset.getAsInt();
             if (slot < 0 || slot >= HostLimits.SENDS)
-                throw Errors.notApplied(ErrorCode.OUTSIDE_WINDOW, "sendIndex is outside the observed send window.");
+                throw Errors.notApplied(Reason.OUTSIDE_WINDOW, "sendIndex is outside the observed send window.");
         } else {
             String wanted = p.get("sendName").getAsString();
             for (int j = 0; j < HostLimits.SENDS; j++) {
                 JsonElement exists = state.meta("send" + j + ".exists"), name = state.meta("send" + j + ".name");
                 if (exists.isJsonNull() || name.isJsonNull())
-                    throw Errors.notApplied(ErrorCode.NOT_READY, "Send names are not all observed yet.");
+                    throw Errors.notApplied(Reason.NOT_READY, "Send names are not all observed yet.");
                 if (exists.getAsBoolean() && name.getAsString().equals(wanted)) {
                     if (slot >= 0)
                         throw Errors.notApplied(
-                                ErrorCode.AMBIGUOUS_SEND, "More than one send is named " + wanted + "; use sendIndex.");
+                                Reason.AMBIGUOUS_NAME, "More than one send is named " + wanted + "; use sendIndex.");
                     slot = j;
                 }
             }
-            if (slot < 0) throw Errors.notApplied(ErrorCode.UNKNOWN_SEND, "No send is named " + wanted + ".");
+            if (slot < 0) throw Errors.notApplied(Reason.UNKNOWN_NAME, "No send is named " + wanted + ".");
         }
         String prefix = "send" + slot + ".";
         JsonElement exists = state.meta(prefix + "exists"), name = state.meta(prefix + "name");
         if (exists.isJsonNull() || name.isJsonNull())
-            throw Errors.notApplied(ErrorCode.NOT_READY, "Send is not observed yet.");
-        if (!exists.getAsBoolean()) throw Errors.notApplied(ErrorCode.UNKNOWN_SEND, "No send exists at that index.");
+            throw Errors.notApplied(Reason.NOT_READY, "Send is not observed yet.");
+        if (!exists.getAsBoolean()) throw Errors.notApplied(Reason.UNKNOWN_NAME, "No send exists at that index.");
         if (p.has("expectedSendName")
                 && !p.get("expectedSendName").getAsString().equals(name.getAsString()))
             throw Errors.notApplied(
-                    ErrorCode.STALE_TARGET,
+                    Reason.STALE_TARGET,
                     "Send name is " + name.getAsString() + ", not the expected "
                             + p.get("expectedSendName").getAsString() + ".");
         double displayTarget = Double.NaN;
@@ -593,7 +587,7 @@ final class MixModule implements HostModule {
                     DisplayScale.parse(DisplayScale.Kind.DB, p.get("display").getAsString());
             if (Double.isNaN(displayTarget))
                 throw Errors.notApplied(
-                        ErrorCode.INVALID_PARAMS,
+                        Reason.INVALID_PARAMS,
                         "Send display must read like \"-12 dB\" or \"-inf dB\": "
                                 + p.get("display").getAsString());
         }
@@ -641,7 +635,7 @@ final class MixModule implements HostModule {
             if (!state.meta(prefix + "exists").equals(new JsonPrimitive(true))
                     || now.isJsonNull()
                     || !now.getAsString().equals(name))
-                throw Errors.notApplied(ErrorCode.STALE_TARGET, "Send changed during operation.");
+                throw Errors.notApplied(Reason.STALE_TARGET, "Send changed during operation.");
         }
 
         void start() {
@@ -714,7 +708,7 @@ final class MixModule implements HostModule {
                 if (p.has("enabled")) write("enabled", p.get("enabled"), level);
             } catch (RpcException error) {
                 if (!op.dispatched) throw error;
-                finish(error.code);
+                finish(error.reason);
                 return;
             }
             await();
@@ -754,7 +748,7 @@ final class MixModule implements HostModule {
                     done -> finish(null));
         }
 
-        void finish(String reason) {
+        void finish(Reason reason) {
             boolean current = target.matches(window);
             JsonObject result = current ? snapshot(target) : scope();
             result.addProperty("trackId", target.id);
@@ -764,37 +758,21 @@ final class MixModule implements HostModule {
                             ? -1
                             : state.meta("sendOffset").getAsInt() + slot);
             result.addProperty("sendName", name);
-            boolean all = current && reason == null;
             JsonObject fields = new JsonObject();
             for (Map.Entry<String, JsonElement> entry : requested.entrySet()) {
                 String key = entry.getKey();
-                Long before = writes.get(key);
-                boolean matched = current && verified(key);
-                all &= matched;
-                JsonObject field = new JsonObject();
-                field.add("requested", entry.getValue());
-                field.add("observed", current ? state.meta(prefix + key) : JsonNull.INSTANCE);
-                field.addProperty("matchesRequested", matched);
-                field.addProperty(
-                        "verification",
-                        !current
-                                ? "target_changed"
-                                : before == null
-                                        ? "not_dispatched"
-                                        : key.equals("valueNormalized") && solvedValue && matched
-                                                ? "display_readback"
-                                                : before == -1
-                                                        ? "already_at_value"
-                                                        : state.metaSeq(prefix + key) <= before
-                                                                ? "not_observed"
-                                                                : matched
-                                                                        ? "observer_after_write"
-                                                                        : "readback_mismatch");
-                fields.add(key, field);
+                fields.add(
+                        key,
+                        writeField(
+                                entry.getValue(),
+                                current ? state.meta(prefix + key) : JsonNull.INSTANCE,
+                                current,
+                                writes.get(key),
+                                state.metaSeq(prefix + key),
+                                current && verified(key),
+                                key.equals("valueNormalized") && solvedValue));
             }
-            result.addProperty("status", all ? "observed" : "dispatched");
-            result.addProperty("completion", all ? "observed" : "unknown");
-            result.addProperty("matchesRequested", all);
+            stamp(result, fields, current ? reason : null);
             result.add("fields", fields);
             // Guide 7.1.6: moving a send level turns the send on; say so rather than leaving it implicit.
             JsonElement now = state.meta(prefix + "enabled");
@@ -804,7 +782,6 @@ final class MixModule implements HostModule {
                     && !enabledBefore.getAsBoolean()
                     && now.getAsBoolean();
             result.addProperty("autoEnabled", auto);
-            if (reason != null) result.addProperty("reason", reason);
             for (Map.Entry<String, JsonElement> entry : target.extra.entrySet())
                 result.add(entry.getKey(), entry.getValue());
             op.result.complete(result);
@@ -827,9 +804,9 @@ final class MixModule implements HostModule {
 
     private void guard(HostOperation op, Target target) {
         if (!target.matches(window))
-            throw Errors.notApplied(ErrorCode.STALE_TARGET, "Track UUID/proxy changed during operation.");
+            throw Errors.notApplied(Reason.STALE_TARGET, "Track UUID/proxy changed during operation.");
         if (target.state.rebindPending)
-            throw Errors.notApplied(ErrorCode.NOT_READY, "Track proxy rebind awaits a host flush.");
+            throw Errors.notApplied(Reason.NOT_READY, "Track proxy rebind awaits a host flush.");
         scheduler.check(op);
     }
 
@@ -858,7 +835,7 @@ final class MixModule implements HostModule {
                         writes,
                         created,
                         createdKey,
-                        target.matches(window) ? null : "stale_target"));
+                        target.matches(window) ? null : Reason.TARGET_CHANGED));
     }
 
     private void finish(
@@ -868,75 +845,99 @@ final class MixModule implements HostModule {
             Map<String, Long> writes,
             JsonObject created,
             String createdKey,
-            String reason) {
+            Reason reason) {
         boolean current = target.matches(window);
         JsonObject result = current ? snapshot(target) : scope();
         result.addProperty("trackId", target.id);
-        boolean all = current && reason == null;
         JsonObject fields = new JsonObject();
         for (int i = 0; i < FIELDS.length; i++) {
             String key = FIELDS[i];
             if (!changes.has(key)) continue;
             Long before = writes.get(key);
-            boolean matched = current && verified(target.state, i, changes.get(key), before);
-            all &= matched;
-            JsonObject field = new JsonObject();
-            field.add("requested", changes.get(key));
-            field.add("observed", current ? value(target.state, i) : JsonNull.INSTANCE);
-            field.addProperty("matchesRequested", matched);
-            field.addProperty(
-                    "verification",
-                    !current
-                            ? "target_changed"
-                            : before == null
-                                    ? "not_dispatched"
-                                    : before == -1
-                                            ? "already_at_value"
-                                            : target.state.sequence[i] <= before
-                                                    ? "not_observed"
-                                                    : matched ? "observer_after_write" : "readback_mismatch");
-            if (target.solved.contains(key) && matched) field.addProperty("verification", "display_readback");
-            fields.add(key, field);
+            fields.add(
+                    key,
+                    writeField(
+                            changes.get(key),
+                            current ? value(target.state, i) : JsonNull.INSTANCE,
+                            current,
+                            before,
+                            target.state.sequence[i],
+                            current && verified(target.state, i, changes.get(key), before),
+                            target.solved.contains(key)));
         }
-        result.addProperty("status", all ? "observed" : "dispatched");
-        result.addProperty("completion", all ? "observed" : "unknown");
-        result.addProperty("matchesRequested", all);
+        stamp(result, fields, current ? reason : null);
         result.add("fields", fields);
-        if (reason != null) result.addProperty("reason", reason);
         if (created != null) result.add(createdKey, created);
         for (Map.Entry<String, JsonElement> entry : target.extra.entrySet())
             result.add(entry.getKey(), entry.getValue());
         op.result.complete(result);
     }
 
+    /** One written field: its outcome and, when it is not a success, why. */
+    private static JsonObject writeField(
+            JsonElement requested,
+            JsonElement observed,
+            boolean current,
+            Long before,
+            long sequence,
+            boolean matched,
+            boolean solved) {
+        if (!current) return Results.field(requested, observed, Outcome.UNKNOWN, Reason.TARGET_CHANGED);
+        if (before == null) return Results.field(requested, observed, Outcome.NOT_APPLIED, Reason.NOT_REACHED);
+        if (!matched)
+            return Results.field(
+                    requested,
+                    observed,
+                    Outcome.UNKNOWN,
+                    before != -1 && sequence <= before ? Reason.NOT_OBSERVED : Reason.READBACK_MISMATCH);
+        return Results.field(
+                requested, observed, before == -1 && !solved ? Outcome.ALREADY_MATCHED : Outcome.APPLIED, null);
+    }
+
+    /** The result's outcome is its worst field's; {@code reason} (a failure that stopped the writes) outranks the fields'. */
+    private static void stamp(JsonObject result, JsonObject fields, Reason reason) {
+        Outcome worst = Outcome.ALREADY_MATCHED;
+        String why = null;
+        for (Map.Entry<String, JsonElement> entry : fields.entrySet()) {
+            JsonObject field = entry.getValue().getAsJsonObject();
+            Outcome outcome = Results.outcomeOf(field);
+            if (outcome.compareTo(worst) > 0 && field.has("reason"))
+                why = field.get("reason").getAsString();
+            worst = worst.worst(outcome);
+        }
+        result.addProperty("outcome", worst.wire());
+        if (!worst.succeeded()) result.addProperty("reason", reason != null ? reason.wire() : why);
+    }
+
     private void create(HostOperation op, JsonObject p) {
         if (holds.held(CREATION))
-            throw Errors.notApplied(
-                    ErrorCode.UNRESOLVED_CREATION,
-                    "A prior native track factory remains unattributed; further automatic creation is quarantined for this extension instance.");
+            throw holds.blocked(
+                    CREATION,
+                    "A prior native track factory remains unattributed; track creation is refused.",
+                    "Inspect tracks.list");
         if (holds.held(GROUP))
-            throw Errors.notApplied(
-                    ErrorCode.UNRESOLVED_CREATION,
-                    "A prior tracks.group operation remains unattributed; track creation is quarantined for this extension instance.");
+            throw holds.blocked(
+                    GROUP,
+                    "A prior tracks.group operation remains unattributed; track creation is refused.",
+                    "Inspect tracks.list");
         if (creation != null && !creation.result.isDone())
-            throw Errors.notApplied(ErrorCode.BUSY, "Another track creation or grouping awaits observations.");
-        if (!window.observed())
-            throw Errors.notApplied(ErrorCode.NOT_READY, "Track bank has not reported its size yet.");
+            throw Errors.notApplied(Reason.BUSY, "Another track creation or grouping awaits observations.");
+        if (!window.observed()) throw Errors.notApplied(Reason.NOT_READY, "Track bank has not reported its size yet.");
         Creation before = capture();
         if (!before.complete)
             throw Errors.notApplied(
-                    ErrorCode.NOT_READY,
+                    Reason.NOT_READY,
                     "Creation requires a complete observed UUID/type/position baseline inside the track window.");
         if (before.total >= HostLimits.TRACKS)
             throw Errors.notApplied(
-                    ErrorCode.OUTSIDE_WINDOW,
+                    Reason.OUTSIDE_WINDOW,
                     "The " + HostLimits.TRACKS
-                            + "-track window is full: the new track could not be observed; no factory was dispatched.");
+                            + "-track window is full: the new track could not be observed; nothing changed.");
         if (before.groups && !before.tree.complete)
             throw Errors.notApplied(
-                    ErrorCode.UNSUPPORTED_SCOPE,
+                    Reason.UNSUPPORTED_SCOPE,
                     "Track creation in a grouped project needs every track's parent observed (" + before.tree.reason
-                            + "); the insertion position cannot be attributed safely and no factory was dispatched.");
+                            + "); the insertion position cannot be attributed safely and nothing changed.");
         creation = op;
         scheduler.check(op);
         op.dispatched = true;
@@ -959,43 +960,47 @@ final class MixModule implements HostModule {
     }
 
     private void group(HostOperation op, JsonObject p) {
-        if (holds.held(CREATION) || holds.held(GROUP))
-            throw Errors.notApplied(
-                    ErrorCode.UNRESOLVED_CREATION,
-                    "A prior track creation or grouping remains unattributed; grouping is quarantined for this extension instance.");
+        if (holds.held(CREATION))
+            throw holds.blocked(
+                    CREATION,
+                    "A prior native track factory remains unattributed; grouping is refused.",
+                    "Inspect tracks.list");
+        if (holds.held(GROUP))
+            throw holds.blocked(
+                    GROUP,
+                    "A prior tracks.group operation remains unattributed; grouping is refused.",
+                    "Inspect tracks.list");
         if (creation != null && !creation.result.isDone())
-            throw Errors.notApplied(ErrorCode.BUSY, "Another track creation or grouping awaits observations.");
-        if (!window.observed())
-            throw Errors.notApplied(ErrorCode.NOT_READY, "Track bank has not reported its size yet.");
+            throw Errors.notApplied(Reason.BUSY, "Another track creation or grouping awaits observations.");
+        if (!window.observed()) throw Errors.notApplied(Reason.NOT_READY, "Track bank has not reported its size yet.");
         transportSafety.recording(op);
         selection.requireFree();
         List<String> ids = trackIds(p);
         Creation before = capture();
         if (!before.complete)
             throw Errors.notApplied(
-                    ErrorCode.NOT_READY,
+                    Reason.NOT_READY,
                     "Grouping requires a complete observed UUID/type/position window of at most " + HostLimits.TRACKS
                             + " tracks.");
         if (before.total >= HostLimits.TRACKS)
             throw Errors.notApplied(
-                    ErrorCode.OUTSIDE_WINDOW,
+                    Reason.OUTSIDE_WINDOW,
                     "The " + HostLimits.TRACKS
-                            + "-track window is full: the new group could not be observed; nothing was dispatched.");
+                            + "-track window is full: the new group could not be observed; nothing changed.");
         if (!before.tree.complete)
             throw Errors.notApplied(
-                    ErrorCode.UNSUPPORTED_SCOPE,
-                    "Grouping needs every track's parent observed (" + before.tree.reason
-                            + "); nothing was dispatched.");
+                    Reason.UNSUPPORTED_SCOPE,
+                    "Grouping needs every track's parent observed (" + before.tree.reason + "); nothing changed.");
         List<TrackTree.Node> nodes = new ArrayList<>();
         for (String id : ids) {
             TrackTree.Node node = before.tree.byId.get(id);
             if (node == null)
                 throw Errors.notApplied(
-                        ErrorCode.OUTSIDE_WINDOW,
+                        Reason.OUTSIDE_WINDOW,
                         "Track UUID is absent from the current " + HostLimits.TRACKS + "-track window: " + id);
             if (node.master() || "Effect".equals(node.type))
                 throw Errors.notApplied(
-                        ErrorCode.UNSUPPORTED_SCOPE,
+                        Reason.UNSUPPORTED_SCOPE,
                         "Only audio, instrument, hybrid and group tracks can be grouped; " + id + " is " + node.type
                                 + ".");
             nodes.add(node);
@@ -1004,8 +1009,8 @@ final class MixModule implements HostModule {
         for (TrackTree.Node node : nodes)
             if (!Objects.equals(node.parentId, parent))
                 throw Errors.notApplied(
-                        ErrorCode.UNSUPPORTED_SCOPE,
-                        "All trackIds must share one parent (top level or the same group); nothing was dispatched.");
+                        Reason.UNSUPPORTED_SCOPE,
+                        "All trackIds must share one parent (top level or the same group); nothing changed.");
         nodes.sort(Comparator.comparingInt(n -> n.position));
         List<Object> proxies = new ArrayList<>();
         List<String> ordered = new ArrayList<>();
@@ -1015,11 +1020,10 @@ final class MixModule implements HostModule {
         }
         if (groupAccess == null) {
             try {
-                groupAccess = new Bitwig614TrackGroupAccess(natives.get(op).access(ErrorCode.TRACK_GROUP_UNAVAILABLE));
+                groupAccess = new Bitwig614TrackGroupAccess(natives.get(op).access());
             } catch (ReflectiveOperationException error) {
                 throw Errors.notApplied(
-                        ErrorCode.TRACK_GROUP_UNAVAILABLE,
-                        "Exact track group descriptors unavailable: " + error.getMessage());
+                        Reason.NATIVE_UNAVAILABLE, "Exact track group descriptors unavailable: " + error.getMessage());
             }
         }
         GroupAccess access = groupAccess;
@@ -1058,7 +1062,7 @@ final class MixModule implements HostModule {
                 op,
                 until,
                 () -> groupStep(op, p, before, ids, parent, nativeInfo, candidate),
-                () -> unknownGroup(op, p, "group_membership_not_observed"));
+                () -> unknownGroup(op, p, Reason.NOT_OBSERVED, "group_membership_not_observed"));
     }
 
     /** The conclusion once the group is attributed (seen on two polls in a row) or cannot be; null to keep polling. */
@@ -1072,11 +1076,11 @@ final class MixModule implements HostModule {
             String[] candidate) {
         Creation after = capture();
         if (after.offset != before.offset || !after.ids.containsAll(before.ids))
-            return () -> unknownGroup(op, p, "track_window_or_existing_targets_changed");
+            return () -> unknownGroup(op, p, Reason.TARGET_CHANGED, "track_window_or_existing_targets_changed");
         Set<String> added = new HashSet<>(after.ids);
         added.removeAll(before.ids);
         if (added.size() > 1 || after.total > before.total + 1)
-            return () -> unknownGroup(op, p, "ambiguous_added_tracks");
+            return () -> unknownGroup(op, p, Reason.SIDE_EFFECT, "ambiguous_added_tracks");
         String found = null;
         if (after.complete && after.tree.complete && added.size() == 1 && after.total == before.total + 1) {
             String id = added.iterator().next();
@@ -1118,52 +1122,50 @@ final class MixModule implements HostModule {
             return;
         }
         JsonObject result = scope();
-        result.addProperty("status", "observed");
-        result.addProperty("completion", "observed");
+        result.addProperty("outcome", Outcome.APPLIED.wire());
         result.addProperty("trackId", found);
         result.add("group", info);
         op.result.complete(result);
     }
 
-    private void unknownGroup(HostOperation op, JsonObject p, String reason) {
+    private void unknownGroup(HostOperation op, JsonObject p, Reason reason, String detail) {
+        op.result.complete(unattributed(p, reason, detail, GROUP));
+    }
+
+    private JsonObject unattributed(JsonObject p, Reason reason, String detail, String hold) {
         JsonObject result = scope();
-        result.addProperty("status", "dispatched");
-        result.addProperty("completion", "unknown");
-        result.addProperty("verification", "not_observed");
-        result.addProperty("reason", reason);
+        result.addProperty("outcome", Outcome.UNKNOWN.wire());
+        result.addProperty("reason", reason.wire());
+        result.addProperty("detail", detail);
         result.addProperty("nameApplied", false);
         result.add("requested", p);
         result.add("trackId", JsonNull.INSTANCE);
-        result.addProperty(
-                "quarantine",
-                "tracks.create and tracks.group refuse until extension.restart; inspect tracks.list, never retry");
-        op.result.complete(result);
+        result.addProperty("next", "Inspect tracks.list, then ack " + hold + "; never retry before that.");
+        return result;
     }
 
     /** Delete one audio/instrument/hybrid/effect track by Track.deleteObject (DeleteableObject), verified by bank UUID set and count. */
     private void delete(HostOperation op, Target target, String expectedName) {
         SafetyObservation safety = transportSafety.stopped(op);
-        if (!window.observed())
-            throw Errors.notApplied(ErrorCode.NOT_READY, "Track bank has not reported its size yet.");
+        if (!window.observed()) throw Errors.notApplied(Reason.NOT_READY, "Track bank has not reported its size yet.");
         guard(op, target);
         JsonElement type = target.state.meta("type"), name = value(target.state, 0), index = target.state.meta("index");
         if (type.isJsonNull() || name.isJsonNull())
-            throw Errors.notApplied(ErrorCode.NOT_READY, "Track type/name have not been observed.");
+            throw Errors.notApplied(Reason.NOT_READY, "Track type/name have not been observed.");
         if (!Set.of("Audio", "Instrument", "Hybrid", "Effect").contains(type.getAsString()))
             throw Errors.notApplied(
-                    ErrorCode.UNSUPPORTED_SCOPE,
+                    Reason.UNSUPPORTED_SCOPE,
                     "Only Audio, Instrument, Hybrid and Effect tracks can be deleted; this track is "
-                            + type.getAsString() + " (group and master are refused); nothing was dispatched.");
+                            + type.getAsString() + " (group and master are refused); nothing changed.");
         if (!name.getAsString().equals(expectedName))
-            throw Errors.notApplied(
-                    ErrorCode.STALE_TARGET, "Track name differs from expectedName; no delete was dispatched.");
+            throw Errors.notApplied(Reason.STALE_TARGET, "Track name differs from expectedName; nothing changed.");
         Creation before = capture();
         if (!before.complete || !before.ids.contains(target.id))
             throw Errors.notApplied(
-                    ErrorCode.NOT_READY,
+                    Reason.NOT_READY,
                     "Deletion needs the whole project observed in the " + HostLimits.TRACKS
                             + "-track bank window (offset 0, at most " + HostLimits.TRACKS
-                            + " tracks including group children and effect tracks, every UUID/type/position read); this project exceeds it or is not fully observed yet. Nothing was dispatched.");
+                            + " tracks including group children and effect tracks, every UUID/type/position read); this project exceeds it or is not fully observed yet. Nothing changed.");
         transportSafety.guardStopped(safety);
         guard(op, target);
         op.dispatched = true;
@@ -1180,10 +1182,8 @@ final class MixModule implements HostModule {
         scheduler.poll(op, scheduler.observeUntil(op), () -> deletedFrom(capture(), before, id), gone -> {
             Creation after = capture();
             JsonObject result = scope();
-            result.addProperty("status", gone ? "observed" : "dispatched");
-            result.addProperty("completion", gone ? "observed" : "unknown");
-            result.addProperty("matchesRequested", gone);
-            result.addProperty("verification", gone ? "uuid_absent_count_decremented" : "deletion_not_observed");
+            result.addProperty("outcome", (gone ? Outcome.APPLIED : Outcome.UNKNOWN).wire());
+            if (!gone) result.addProperty("reason", Reason.NOT_OBSERVED.wire());
             result.add("deleted", deleted);
             result.addProperty("trackCountBefore", before.total);
             result.addProperty("trackCountAfter", after.total);
@@ -1203,25 +1203,26 @@ final class MixModule implements HostModule {
                 op,
                 scheduler.observeUntil(op),
                 () -> creationStep(op, p, before, candidate),
-                () -> unknownCreation(op, p, "unique_added_track_not_observed"));
+                () -> unknownCreation(op, p, Reason.NOT_OBSERVED, "unique_added_track_not_observed"));
     }
 
     /** The conclusion once the new track is attributed (seen on two polls in a row) or cannot be; null to keep polling. */
     private Runnable creationStep(HostOperation op, JsonObject p, Creation before, String[] candidate) {
         Creation after = capture();
         if (after.offset != before.offset || !after.ids.containsAll(before.ids))
-            return () -> unknownCreation(op, p, "track_window_or_existing_targets_changed");
+            return () -> unknownCreation(op, p, Reason.TARGET_CHANGED, "track_window_or_existing_targets_changed");
         Set<String> added = new HashSet<>(after.ids);
         added.removeAll(before.ids);
         if (added.size() > 1 || after.total > before.total + 1)
-            return () -> unknownCreation(op, p, "ambiguous_added_tracks");
+            return () -> unknownCreation(op, p, Reason.SIDE_EFFECT, "ambiguous_added_tracks");
         if (after.complete && after.total == before.total + 1 && added.size() == 1) {
             String id = added.iterator().next();
             State state = states[window.trackSlot(id)];
             String type = p.get("type").getAsString();
             boolean effect = type.equals("effect");
             int requested = p.get("position").getAsInt();
-            if (!before.groups && after.groups) return () -> unknownCreation(op, p, "group_appeared_during_creation");
+            if (!before.groups && after.groups)
+                return () -> unknownCreation(op, p, Reason.SIDE_EFFECT, "group_appeared_during_creation");
             // Application inserts into the root group's main or effect list: in a grouped project the index counts
             // only top-level tracks, so attribution needs the observed parent of the new track.
             int oldSize;
@@ -1294,20 +1295,12 @@ final class MixModule implements HostModule {
         return out;
     }
 
-    private void unknownCreation(HostOperation op, JsonObject p, String reason) {
-        JsonObject result = scope();
-        result.addProperty("status", "dispatched");
-        result.addProperty("completion", "unknown");
-        result.addProperty("verification", "not_observed");
-        result.addProperty("reason", reason);
-        result.addProperty("nameApplied", false);
-        result.add("requested", p);
-        result.add("trackId", JsonNull.INSTANCE);
-        op.result.complete(result);
+    private void unknownCreation(HostOperation op, JsonObject p, Reason reason, String detail) {
+        op.result.complete(unattributed(p, reason, detail, CREATION));
     }
 
     private JsonObject scope() {
-        JsonObject result = Results.observed();
+        JsonObject result = new JsonObject();
         result.addProperty("scope", "flat_track_bank");
         result.addProperty("identityScope", "observed_uuid_on_bank_proxy");
         result.add("window", Results.window(window.offset(), HostLimits.TRACKS, window.total()));

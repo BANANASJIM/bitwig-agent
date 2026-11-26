@@ -1,6 +1,6 @@
 """Client-side `grid.export` / `grid.graph`: read a live Grid device and name everything (no UUID joins).
 
-`grid.export` returns a `grid.apply` spec of the device: applying it back to the same device is `unchanged`.
+`grid.export` returns a `grid.apply` spec of the device: applying it back to the same device is `already_matched`.
 Read-only toward Bitwig; the only side effect is the optional file at outPath.
 """
 
@@ -121,7 +121,7 @@ async def read_voicing(
     try:
         got = await client.call("grid.voicing.get", target, timeout_ms)
     except BridgeError as exc:
-        warnings.append(f"voicing not exported: {exc.error.get('code')}")
+        warnings.append(f"voicing not exported: {exc.error['reason']}")
         return None
     live = got.get("voicing") if isinstance(got, dict) and got.get("supported") else None
     return {k: live[k] for k in VOICING_FIELDS if k in live} if isinstance(live, dict) else None
@@ -131,7 +131,7 @@ async def export(client: Any, args: dict[str, Any], timeout_ms: int = 5000) -> d
     path, overwrite = args.get("outPath"), args.get("overwrite", False)
     if path is not None:
         if not overwrite and os.path.exists(path):
-            raise bridge_error("file_exists", f"{path} exists; pass overwrite=true to replace it")
+            raise bridge_error("target_exists", f"{path} exists; pass overwrite=true to replace it")
         if not os.path.isdir(os.path.dirname(path)):
             raise bridge_error("invalid_params", f"Parent directory does not exist: {os.path.dirname(path)}")
     mode, namespace, target = args.get("includeParams", "changed"), args.get("namespace"), device_target(args)
@@ -148,7 +148,6 @@ async def export(client: Any, args: dict[str, Any], timeout_ms: int = 5000) -> d
     if not spec["modules"]:
         built["warnings"].append("no modules exported; an empty modules list is not a valid grid.apply spec")
     out = {
-        "status": "exported",
         "moduleCount": len(spec["modules"]),
         "connectionCount": len(spec["connections"]),
         "includeParams": mode,
@@ -162,8 +161,8 @@ async def export(client: Any, args: dict[str, Any], timeout_ms: int = 5000) -> d
         with open(path, "wb" if overwrite else "xb") as f:
             f.write(data)
     except OSError as exc:
-        raise bridge_error("write_failed", f"Cannot write {path}: {exc}") from exc
-    return {**out, "outPath": path, "bytes": len(data)}
+        raise bridge_error("job_failed", f"Cannot write {path}: {exc}") from exc
+    return {"outcome": "applied", **out, "outPath": path, "bytes": len(data)}
 
 
 async def graph(client: Any, args: dict[str, Any], timeout_ms: int = 5000) -> dict[str, Any]:
@@ -177,7 +176,6 @@ async def graph(client: Any, args: dict[str, Any], timeout_ms: int = 5000) -> di
         for m in built["modules"]
     ]
     return {
-        "status": "observed",
         "moduleCount": len(modules),
         "connectionCount": len(built["connections"]),
         "modules": modules,

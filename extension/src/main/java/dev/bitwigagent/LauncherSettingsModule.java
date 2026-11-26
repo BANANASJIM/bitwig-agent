@@ -34,7 +34,8 @@ final class LauncherSettingsModule implements HostModule {
     private LauncherModule launcher;
     private static final String PENDING = LauncherStructureLock.SETTINGS_PENDING,
             QUARANTINE = LauncherStructureLock.SETTINGS;
-    private static final String HOLD = "A launcher.set settings write is pending or unresolved.";
+    private static final String PENDING_HOLD = "A launcher.set settings write is pending.",
+            QUARANTINE_HOLD = "A launcher.set settings write was dispatched and its outcome is unresolved.";
 
     LauncherSettingsModule(
             Scheduler scheduler,
@@ -83,7 +84,7 @@ final class LauncherSettingsModule implements HostModule {
 
     static void validateParams(String method, JsonObject p) {
         if (!METHODS.contains(method))
-            throw Errors.notApplied(ErrorCode.UNKNOWN_METHOD, "Unknown launcher settings method");
+            throw Errors.notApplied(Reason.UNKNOWN_METHOD, "Unknown launcher settings method");
         Set<String> required = Set.of("trackId", "slotIndex", "expectedClipName");
         Set<String> optional = new HashSet<>();
         if (method.equals("launcher.set")) {
@@ -92,17 +93,17 @@ final class LauncherSettingsModule implements HostModule {
         }
         Params.fields(p, required, optional);
         if (!DeviceSources.canonicalUuid(Params.string(p, "trackId")))
-            throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "trackId must be a canonical UUID");
+            throw Errors.notApplied(Reason.INVALID_PARAMS, "trackId must be a canonical UUID");
         Params.integer(p, "slotIndex", 0, HostLimits.SCENES - 1);
         if (Params.string(p, "expectedClipName").length() > 256)
-            throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "expectedClipName is too long");
+            throw Errors.notApplied(Reason.INVALID_PARAMS, "expectedClipName is too long");
         if (method.equals("launcher.set") && p.size() == 3)
-            throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "Supply at least one setting");
+            throw Errors.notApplied(Reason.INVALID_PARAMS, "Supply at least one setting");
         boolean launch = LauncherModule.hasLaunchFields(p), nextAction = false;
         for (String key : WRITE_ORDER) nextAction |= p.has(key);
         if (launch && nextAction)
             throw Errors.notApplied(
-                    ErrorCode.INVALID_PARAMS,
+                    Reason.INVALID_PARAMS,
                     "Launch fields (launchQuantization, launchMode, useLoopStartAsQuantizationReference) and Next Action fields use different paths; send them in two calls");
         if (p.has("launchQuantization")) Params.string(p, "launchQuantization");
         if (p.has("launchMode")) Params.string(p, "launchMode");
@@ -111,7 +112,7 @@ final class LauncherSettingsModule implements HostModule {
             if (p.has(key)) {
                 if (key.equals("nextAction")) {
                     if (!Set.of("play_next", "stop").contains(Params.string(p, key)))
-                        throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "nextAction must be play_next or stop");
+                        throw Errors.notApplied(Reason.INVALID_PARAMS, "nextAction must be play_next or stop");
                 } else if (key.equals("nextActionLoopCount")) Params.integer(p, key, 1, 64);
                 else if (key.endsWith("Enabled") || key.equals("nextActionLinkToLoop")) Params.bool(p, key);
                 else Params.number(p, key, 0, 4194304);
@@ -133,16 +134,14 @@ final class LauncherSettingsModule implements HostModule {
         boolean write = method.equals("launcher.set");
         if (write && LauncherModule.hasLaunchFields(p)) {
             if (launcher == null)
-                throw Errors.notApplied(ErrorCode.LAUNCHER_UNAVAILABLE, "Launch settings need the launcher module");
+                throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Launch settings need the launcher module");
             launcher.launchSettings(op, p);
             return;
         }
         if (holds.held(PENDING))
-            throw Errors.notApplied(ErrorCode.BUSY, "Another native launcher settings operation is pending");
+            throw Errors.notApplied(Reason.BUSY, "Another native launcher settings operation is pending");
         if (write && holds.held(QUARANTINE))
-            throw Errors.notApplied(
-                    ErrorCode.WRITE_QUARANTINED,
-                    "An unresolved launcher settings write requires inspection and extension reload");
+            throw holds.blocked(QUARANTINE, "A launcher settings write is unresolved.", "Inspect launcher.get");
         String id = p.get("trackId").getAsString(),
                 expected = p.get("expectedClipName").getAsString();
         int index = window.trackSlot(id), number = p.get("slotIndex").getAsInt();
@@ -150,33 +149,32 @@ final class LauncherSettingsModule implements HostModule {
         ClipLauncherSlotBank bank = track.clipLauncherSlotBank();
         if (bank.scrollPosition().get() != 0 || number >= bank.itemCount().get())
             throw Errors.notApplied(
-                    ErrorCode.OUTSIDE_WINDOW, "Launcher slot is outside the current zero-offset scene window");
+                    Reason.OUTSIDE_WINDOW, "Launcher slot is outside the current zero-offset scene window");
         ClipLauncherSlot slot = (ClipLauncherSlot) bank.getItemAt(number);
         if (!slot.hasContent().get()
                 || !expected.equals(slot.name().get())
                 || slot.sceneIndex().get() != number)
             throw Errors.notApplied(
-                    ErrorCode.STALE_CONTEXT, "Observe the exact occupied slot name and index before settings access");
+                    Reason.STALE_CONTEXT, "Observe the exact occupied slot name and index before settings access");
         if (write && launcher != null) launcher.requireSettingsSafe(id, number);
         SafetyObservation safety = write ? transportSafety.stopped(op) : null;
         if (access == null)
             try {
-                access = new Bitwig614LauncherSettingsAccess(
-                        natives.get(op).access(ErrorCode.LAUNCHER_SETTINGS_UNAVAILABLE));
+                access = new Bitwig614LauncherSettingsAccess(natives.get(op).access());
             } catch (ReflectiveOperationException e) {
                 throw Errors.notApplied(
-                        ErrorCode.LAUNCHER_SETTINGS_UNAVAILABLE,
+                        Reason.NATIVE_UNAVAILABLE,
                         "Exact launcher settings descriptors unavailable: " + e.getMessage());
             }
         JsonObject changes = new JsonObject();
         for (String key : WRITE_ORDER) if (p.has(key)) changes.add(key, p.get(key));
         long epoch = epochs.get(index);
-        holds.place(PENDING, HOLD);
+        holds.inFlight(PENDING, PENDING_HOLD);
         Runnable check = () -> {
             scheduler.check(op);
             if (epochs.get(index) != epoch)
                 throw Errors.notApplied(
-                        ErrorCode.STALE_CONTEXT, "Launcher track bank changed while settings operation was queued");
+                        Reason.STALE_CONTEXT, "Launcher track bank changed while settings operation was queued");
             if (write) transportSafety.guardStopped(safety);
         };
         try {
@@ -186,9 +184,16 @@ final class LauncherSettingsModule implements HostModule {
                     JsonObject result = access.apply(slot, id, expected, changes, check, () -> {
                         check.run();
                         op.dispatched = true;
-                        holds.place(QUARANTINE, HOLD);
+                        holds.place(QUARANTINE, QUARANTINE_HOLD);
                     });
                     check.run();
+                    if (write)
+                        result.addProperty(
+                                "outcome",
+                                Results.worst(result.getAsJsonObject("fields")
+                                                .asMap()
+                                                .values())
+                                        .wire());
                     result.addProperty("trackId", id);
                     result.addProperty("slotIndex", number);
                     scheduler.schedule(
@@ -200,8 +205,7 @@ final class LauncherSettingsModule implements HostModule {
                                         || slot.sceneIndex().get() != number
                                         || !expected.equals(slot.name().get()))
                                     throw Errors.notApplied(
-                                            ErrorCode.STALE_CONTEXT,
-                                            "Launcher public target changed after native access");
+                                            Reason.STALE_CONTEXT, "Launcher public target changed after native access");
                                 if (write) holds.release(QUARANTINE);
                                 holds.release(PENDING);
                                 op.result.complete(result);

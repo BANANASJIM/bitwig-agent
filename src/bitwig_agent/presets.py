@@ -184,7 +184,6 @@ def search(args: dict[str, Any], roots: list[tuple[str, Path]] | None = None) ->
     offset, limit = args.get("offset", 0), args.get("limit", 25)
     page = [h[4] for h in hits[offset : offset + limit]]
     return {
-        "status": "observed",
         "scope": "offline_preset_files",
         "verification": "file_names_and_plain_headers_not_insertion_or_audio_proof",
         "roots": searched,

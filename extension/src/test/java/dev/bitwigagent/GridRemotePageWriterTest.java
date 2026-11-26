@@ -5,6 +5,8 @@ import static dev.bitwigagent.GridSnapshotReader.Kind.*;
 import static dev.bitwigagent.GridSnapshotReaderTest.ContextFixture;
 import static dev.bitwigagent.GridSnapshotReaderTest.Fixture;
 import static dev.bitwigagent.GridSnapshotReaderTest.Node;
+import static dev.bitwigagent.NativeDeviceTarget.Field.TARGET;
+import static dev.bitwigagent.NativeDeviceTarget.Kind.DEVICE;
 import static dev.bitwigagent.RpcAssert.*;
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -52,7 +54,7 @@ public final class GridRemotePageWriterTest {
         final List<String> calls = new ArrayList<>();
         final HostOperation op = new HostOperation(Long.MAX_VALUE);
         final GridRemotePageWriter writer;
-        boolean licensed = true, visible = true, apply = true, createNothing;
+        boolean licensed = true, visible = true, apply = true, createNothing, listsMissing;
         Runnable afterCall = () -> {};
 
         RemoteFixture() {
@@ -122,7 +124,21 @@ public final class GridRemotePageWriterTest {
 
         @Override
         public Object presetPages(Object host) {
-            return editedPages;
+            return listsMissing ? null : editedPages;
+        }
+
+        /** The named page is replaced by a same-named one while the write context is read. */
+        void replacedDuringContextRead(String name) {
+            Object undo = new Object();
+            boolean[] replaced = {false};
+            context.values.put(GridParameterContext.Field.UNDO, (Supplier<Object>) () -> {
+                if (!replaced[0]) {
+                    replaced[0] = true;
+                    pages.removeIf(page -> page.name.equals(name));
+                    userPage(name);
+                }
+                return undo;
+            });
         }
 
         @Override
@@ -302,8 +318,8 @@ public final class GridRemotePageWriterTest {
         f.userPage("Macros");
         RpcException error = f.defineFailure(TWO);
         assertTrue(
-                error.code.equals("page_exists")
-                        && error.outcome.equals("not_applied")
+                error.reason.wire().equals("target_exists")
+                        && !error.unknown
                         && error.getMessage().contains("replace")
                         && f.calls.isEmpty()
                         && !f.op.dispatched,
@@ -313,12 +329,16 @@ public final class GridRemotePageWriterTest {
         error = preset.defineFailure(
                 TWO.replace("\"pageName\":\"Macros\",", "\"pageName\":\"Macros\",\"mode\":\"replace\","));
         assertTrue(
-                error.code.equals("page_exists") && error.getMessage().contains("device") && preset.calls.isEmpty(),
+                error.reason.wire().equals("target_exists")
+                        && error.getMessage().contains("device")
+                        && preset.calls.isEmpty(),
                 "a same-named device page is never replaced");
         RemoteFixture module = new RemoteFixture();
         error = module.defineFailure(TWO.replace("\"pageName\":\"Macros\"", "\"pageName\":\"Mx: darkness\""));
         assertTrue(
-                error.code.equals("page_exists") && error.getMessage().contains("module") && module.calls.isEmpty(),
+                error.reason.wire().equals("target_exists")
+                        && error.getMessage().contains("module")
+                        && module.calls.isEmpty(),
                 "a name shown by a Grid module page conflicts");
         RemoteFixture twice = new RemoteFixture();
         twice.userPage("Macros");
@@ -326,7 +346,7 @@ public final class GridRemotePageWriterTest {
         error = twice.defineFailure(
                 TWO.replace("\"pageName\":\"Macros\",", "\"pageName\":\"Macros\",\"mode\":\"replace\","));
         assertTrue(
-                error.code.equals("stale_context") && twice.calls.isEmpty(),
+                error.reason.wire().equals("stale_context") && twice.calls.isEmpty(),
                 "several same-named preset pages are ambiguous");
     }
 
@@ -356,7 +376,7 @@ public final class GridRemotePageWriterTest {
                 f.calls.isEmpty()
                         && !f.op.dispatched
                         && !result.get("mutationDispatched").getAsBoolean()
-                        && result.get("verification").getAsString().equals("already_matched"),
+                        && result.get("outcome").getAsString().equals("already_matched"),
                 "an identical replace is a verified no-op");
         page.slots.put(0, new Slot(f.darkness, "old"));
         f.calls.clear();
@@ -379,9 +399,7 @@ public final class GridRemotePageWriterTest {
         RpcException error = refused.defineFailure(
                 TWO.replace("\"pageName\":\"Macros\",", "\"pageName\":\"Macros\",\"mode\":\"replace\","));
         assertTrue(
-                error.code.equals("unsupported_scope")
-                        && error.outcome.equals("not_applied")
-                        && refused.calls.isEmpty(),
+                error.reason.wire().equals("unsupported_scope") && !error.unknown && refused.calls.isEmpty(),
                 "an existing page's eligibility is checked before dispatch");
     }
 
@@ -390,46 +408,52 @@ public final class GridRemotePageWriterTest {
         RemoteFixture f = new RemoteFixture();
         assertTrue(
                 f.defineFailure("{\"pageName\":\"P\",\"slots\":[{\"moduleName\":\"Nope\",\"parameterId\":\"VALUE\"}]}")
-                        .code
+                        .reason
+                        .wire()
                         .equals("stale_context"),
                 "an unknown module name is stale");
         f.model.second.put(MODULE_NAME, "Mx: darkness");
         RpcException error = f.defineFailure(
                 "{\"pageName\":\"P\",\"slots\":[{\"moduleName\":\"Mx: darkness\",\"parameterId\":\"VALUE\"}]}");
         assertTrue(
-                error.code.equals("stale_context") && error.getMessage().contains("moduleId"),
+                error.reason.wire().equals("stale_context")
+                        && error.getMessage().contains("moduleId"),
                 "an ambiguous module name asks for moduleId");
         RemoteFixture g = new RemoteFixture();
         assertTrue(
                 g.defineFailure("{\"pageName\":\"P\",\"slots\":[{\"moduleId\":\"" + FIRST
                                 + "\",\"parameterId\":\"MISSING\"}]}")
-                        .code
+                        .reason
+                        .wire()
                         .equals("stale_context"),
                 "a missing parameter is stale");
         error = g.defineFailure(
                 "{\"pageName\":\"P\",\"slots\":[{\"moduleId\":\"" + SECOND + "\",\"parameterId\":\"BIPOLAR\"}]}");
         assertTrue(
-                error.code.equals("unsupported_scope") && error.getMessage().contains("scalar"),
+                error.reason.wire().equals("unsupported_scope")
+                        && error.getMessage().contains("scalar"),
                 "boolean panels are not remote-mappable");
         g.unmappable.add(g.grit);
         assertTrue(
                 g.defineFailure("{\"pageName\":\"P\",\"slots\":[{\"moduleId\":\"" + SECOND
                                 + "\",\"parameterId\":\"VALUE\"}]}")
-                        .code
+                        .reason
+                        .wire()
                         .equals("unsupported_scope"),
                 "a parameter outside the device or not mappable is refused");
         error = g.defineFailure("{\"pageName\":\"P\",\"slots\":[{\"moduleId\":\"" + FIRST
                 + "\",\"parameterId\":\"VALUE\"}," + "{\"moduleName\":\"Mx: darkness\",\"parameterId\":\"VALUE\"}]}");
         assertTrue(
-                error.code.equals("invalid_params") && g.calls.isEmpty(),
+                error.reason.wire().equals("invalid_params") && g.calls.isEmpty(),
                 "the same parameter in two slots is refused after resolution");
         RemoteFixture names = new RemoteFixture();
         names.model.unavailable.add(GridSnapshotReader.Metadata.MODULE_NAMES);
         assertTrue(
                 names.defineFailure(
                                 "{\"pageName\":\"P\",\"slots\":[{\"moduleName\":\"Mx: grit\",\"parameterId\":\"VALUE\"}]}")
-                        .code
-                        .equals("grid_unavailable"),
+                        .reason
+                        .wire()
+                        .equals("native_unavailable"),
                 "selecting by module name needs the native name readers");
     }
 
@@ -438,32 +462,38 @@ public final class GridRemotePageWriterTest {
         RemoteFixture f = new RemoteFixture();
         f.licensed = false;
         assertTrue(
-                f.defineFailure(TWO).code.equals("unsafe_state") && f.calls.isEmpty(),
+                f.defineFailure(TWO).reason.wire().equals("unsafe_state") && f.calls.isEmpty(),
                 "an unlicensed device is refused");
         RemoteFixture undo = new RemoteFixture();
         undo.context.values.put(GridParameterContext.Field.UNDO_ACTIVE, true);
         assertTrue(
-                undo.defineFailure(TWO).code.equals("unsafe_state") && undo.calls.isEmpty(),
+                undo.defineFailure(TWO).reason.wire().equals("unsafe_state") && undo.calls.isEmpty(),
                 "an active undo change gates the write");
         RemoteFixture skipped = new RemoteFixture();
         skipped.context.override(skipped.model.device, GridParameterContext.Field.CIU, true);
         assertTrue(
-                skipped.defineFailure(TWO).code.equals("unsafe_state") && skipped.calls.isEmpty(),
+                skipped.defineFailure(TWO).reason.wire().equals("unsafe_state") && skipped.calls.isEmpty(),
                 "the device skip predicate gates the write");
         RemoteFixture project = new RemoteFixture();
         project.context.override(project.editedPages, NativeReadContext.Field.PROJECT, new Object());
         assertTrue(
-                project.defineFailure(TWO).code.equals("stale_context") && project.calls.isEmpty(),
+                project.defineFailure(TWO).reason.wire().equals("stale_context") && project.calls.isEmpty(),
                 "a page list of another project is refused");
         RemoteFixture lock = new RemoteFixture();
         lock.context.values.put(GridParameterContext.Field.LOCK_OWNER, new Object());
         assertTrue(
-                lock.defineFailure(TWO).code.equals("unsafe_state") && lock.calls.isEmpty(),
+                lock.defineFailure(TWO).reason.wire().equals("unsafe_state") && lock.calls.isEmpty(),
                 "a foreign device lock owner gates the write");
+        RemoteFixture uninitialized = new RemoteFixture();
+        uninitialized.context.values.put(NativeReadContext.Field.INITIALIZED, false);
+        assertRpcError("unsafe_state", () -> uninitialized.define(TWO));
+        RemoteFixture rooted = new RemoteFixture();
+        rooted.context.values.put(NativeReadContext.Field.ROOT, new Object());
+        assertRpcError("stale_context", () -> rooted.define(TWO));
         RemoteFixture thread = new RemoteFixture();
         thread.editedPages.threadAllowed = false;
         assertTrue(
-                thread.defineFailure(TWO).code.equals("grid_unavailable") && thread.calls.isEmpty(),
+                thread.defineFailure(TWO).reason.wire().equals("native_unavailable") && thread.calls.isEmpty(),
                 "the model thread predicate gates the page list");
     }
 
@@ -471,34 +501,31 @@ public final class GridRemotePageWriterTest {
     void failuresAfterDispatchAreUnknown() {
         RemoteFixture thrown = new RemoteFixture();
         thrown.afterCall = () -> {
-            if (thrown.calls.size() == 3) throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "native map failure");
+            if (thrown.calls.size() == 3) throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "native map failure");
         };
         RpcException error = thrown.defineFailure(TWO);
         assertTrue(
-                error.outcome.equals("unknown")
-                        && thrown.calls.equals(List.of("create", "rename", "map0"))
-                        && thrown.op.dispatched,
+                error.unknown && thrown.calls.equals(List.of("create", "rename", "map0")) && thrown.op.dispatched,
                 "a native failure after dispatch is unknown and nothing is retried or rolled back");
         RemoteFixture unread = new RemoteFixture();
         unread.apply = false;
         error = unread.defineFailure(TWO);
         assertTrue(
-                error.code.equals("grid_verification_failed") && error.outcome.equals("unknown"),
-                "an unobserved page name is unknown");
+                error.reason.wire().equals("readback_mismatch") && error.unknown, "an unobserved page name is unknown");
         RemoteFixture none = new RemoteFixture();
         none.createNothing = true;
         error = none.defineFailure(TWO);
         assertTrue(
-                error.code.equals("grid_verification_failed")
-                        && error.outcome.equals("unknown")
+                error.reason.wire().equals("readback_mismatch")
+                        && error.unknown
                         && none.calls.equals(List.of("create")),
                 "a native create that yields no page is unknown");
         RemoteFixture refused = new RemoteFixture();
         refused.ineligible.add(refused.grit);
         error = refused.defineFailure(TWO);
         assertTrue(
-                error.code.equals("unsupported_scope")
-                        && error.outcome.equals("unknown")
+                error.reason.wire().equals("unsupported_scope")
+                        && error.unknown
                         && error.getMessage().contains("deletePage")
                         && refused.calls.equals(List.of("create", "rename")),
                 "a new page refusing a slot stops before mapping and says how to clean up");
@@ -508,8 +535,39 @@ public final class GridRemotePageWriterTest {
         };
         error = hidden.defineFailure(TWO);
         assertTrue(
-                error.code.equals("grid_verification_failed") && error.outcome.equals("unknown"),
+                error.reason.wire().equals("readback_mismatch") && error.unknown,
                 "a page missing from the visible list fails verification");
+    }
+
+    @Test
+    void pageChangesAroundDispatchAreCaught() {
+        RemoteFixture lists = new RemoteFixture();
+        lists.listsMissing = true;
+        assertRpcError("native_unavailable", () -> lists.define(TWO));
+        RemoteFixture replaced = new RemoteFixture();
+        replaced.userPage("Macros");
+        replaced.replacedDuringContextRead("Macros");
+        assertRpcError(
+                "stale_context",
+                () -> replaced.define(
+                        TWO.replace("\"pageName\":\"Macros\",", "\"pageName\":\"Macros\",\"mode\":\"replace\",")));
+        RemoteFixture deleted = new RemoteFixture();
+        deleted.userPage("Macros");
+        deleted.replacedDuringContextRead("Macros");
+        assertRpcError("stale_context", () -> deleted.delete("Macros"));
+        assertTrue(replaced.calls.isEmpty() && deleted.calls.isEmpty(), "a page changed before dispatch is untouched");
+        RemoteFixture moved = new RemoteFixture();
+        moved.userPage("Macros");
+        moved.afterCall = () -> moved.model.proxy.put(TARGET, new Node(DEVICE));
+        assertTrue(moved.deleteFailure("Macros").unknown, "a target change after the native delete is unknown");
+        RemoteFixture dropped = new RemoteFixture();
+        dropped.afterCall = () -> {
+            if (dropped.calls.size() == 4) dropped.pages.clear();
+        };
+        RpcException error = dropped.defineFailure(TWO);
+        assertTrue(
+                error.unknown && error.reason.wire().equals("readback_mismatch"),
+                "a defined page that left the preset list is unknown");
     }
 
     @Test
@@ -520,7 +578,8 @@ public final class GridRemotePageWriterTest {
         f.others.add(new Page("", f.otherPages, f.host));
         RpcException error = f.defineFailure(TWO.replace("\"pageName\":\"Macros\"", "\"pageName\":\"Perform\""));
         assertTrue(
-                error.code.equals("page_exists") && f.calls.isEmpty(), "an unnamed first preset page shows as Perform");
+                error.reason.wire().equals("target_exists") && f.calls.isEmpty(),
+                "an unnamed first preset page shows as Perform");
         assertTrue(
                 f.defineFailure(TWO.replace("\"pageName\":\"Macros\"", "\"pageName\":\"Page 1\""))
                         .getMessage()
@@ -550,27 +609,28 @@ public final class GridRemotePageWriterTest {
                 "a named preset page is deleted and verified absent");
         RemoteFixture missing = new RemoteFixture();
         assertTrue(
-                missing.deleteFailure("Macros").code.equals("stale_context") && missing.calls.isEmpty(),
+                missing.deleteFailure("Macros").reason.wire().equals("stale_context") && missing.calls.isEmpty(),
                 "a missing page is stale");
         RemoteFixture preset = new RemoteFixture();
         preset.others.add(new Page("Macros", preset.otherPages, preset.host));
         assertTrue(
-                preset.deleteFailure("Macros").code.equals("unsupported_scope") && preset.calls.isEmpty(),
+                preset.deleteFailure("Macros").reason.wire().equals("unsupported_scope") && preset.calls.isEmpty(),
                 "device pages are not deleted");
         assertTrue(
-                preset.deleteFailure("Mx: darkness").code.equals("unsupported_scope"), "module pages are not deleted");
+                preset.deleteFailure("Mx: darkness").reason.wire().equals("unsupported_scope"),
+                "module pages are not deleted");
         RemoteFixture stuck = new RemoteFixture();
         stuck.apply = false;
         stuck.userPage("Macros");
         RpcException error = stuck.deleteFailure("Macros");
         assertTrue(
-                error.code.equals("grid_verification_failed") && error.outcome.equals("unknown"),
+                error.reason.wire().equals("readback_mismatch") && error.unknown,
                 "a page still listed after delete is unknown");
         RemoteFixture undo = new RemoteFixture();
         undo.userPage("Macros");
         undo.context.values.put(GridParameterContext.Field.UNDO_EXECUTING, true);
         assertTrue(
-                undo.deleteFailure("Macros").code.equals("unsafe_state") && undo.calls.isEmpty(),
+                undo.deleteFailure("Macros").reason.wire().equals("unsafe_state") && undo.calls.isEmpty(),
                 "delete shares the write gates");
     }
 

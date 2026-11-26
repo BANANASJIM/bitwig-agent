@@ -40,7 +40,8 @@ final class DisplaySolver {
 
     static final class Result {
         boolean ok, dispatched, restoreAttempted, restored;
-        String reason, observedDisplay;
+        Reason reason;
+        String failure, observedDisplay;
         Boolean originalEnabled;
         double normalized = Double.NaN, original = Double.NaN;
         int probes;
@@ -56,7 +57,7 @@ final class DisplaySolver {
             out.addProperty("probes", probes);
             out.addProperty("matched", ok);
             out.addProperty("method", "bisection_on_observed_display");
-            if (reason != null) out.addProperty("reason", reason);
+            if (failure != null) out.addProperty("failure", failure);
             if (restoreAttempted) out.addProperty("restored", restored);
             return out;
         }
@@ -90,7 +91,7 @@ final class DisplaySolver {
         port.guard();
         JsonElement now = port.value();
         if (now.isJsonNull() || port.display().isJsonNull())
-            throw Errors.notApplied(ErrorCode.NOT_READY, "Parameter value or display is not observed yet.");
+            throw Errors.notApplied(Reason.NOT_READY, "Parameter value or display is not observed yet.");
         result.original = now.getAsDouble();
         JsonElement enabled = port.enabled();
         result.originalEnabled = enabled.isJsonNull() ? null : enabled.getAsBoolean();
@@ -102,7 +103,7 @@ final class DisplaySolver {
         port.guard();
         // The scheduler throws deadline_exceeded once the deadline passes, so stop while a restore still fits.
         if (op.deadline - scheduler.now() < 2 * PROBE_TIMEOUT_NANOS + Scheduler.DEADLINE_MARGIN_NANOS) {
-            fail("deadline");
+            fail("deadline", Reason.DEADLINE);
             return;
         }
         result.probes++;
@@ -133,9 +134,9 @@ final class DisplaySolver {
                 () -> !targetHolds() || port.valueSeq() > before && near(port.value(), x),
                 () -> {
                     if (targetHolds()) settle(x);
-                    else fail("target_changed");
+                    else fail("target_changed", Reason.TARGET_CHANGED);
                 },
-                () -> fail("probe_not_observed"));
+                () -> fail("probe_not_observed", Reason.NOT_OBSERVED));
     }
 
     /** Counts the polls that let the display text catch up with the value. */
@@ -143,7 +144,7 @@ final class DisplaySolver {
         int[] polls = {0};
         scheduler.await(op, () -> !targetHolds() || polls[0]++ >= SETTLE_POLLS, () -> {
             if (targetHolds()) evaluate(x);
-            else fail("target_changed");
+            else fail("target_changed", Reason.TARGET_CHANGED);
         });
     }
 
@@ -153,7 +154,7 @@ final class DisplaySolver {
         result.observedDisplay = display.isJsonNull() ? null : display.getAsString();
         double number = DisplayScale.parse(kind, result.observedDisplay);
         if (Double.isNaN(number)) {
-            fail("display_unparseable");
+            fail("display_unparseable", Reason.READBACK_MISMATCH);
             return;
         }
         boolean bottom = target <= DisplayScale.MINUS_INF;
@@ -164,20 +165,21 @@ final class DisplaySolver {
             return;
         }
         if (bottom) {
-            fail("display_not_reachable");
+            fail("display_not_reachable", Reason.READBACK_MISMATCH);
             return;
         }
         if (number < target) lo = x;
         else hi = x;
         if (result.probes >= MAX_PROBES || hi - lo < 2e-5) {
-            fail("display_not_reachable");
+            fail("display_not_reachable", Reason.READBACK_MISMATCH);
             return;
         }
         probe((lo + hi) / 2);
     }
 
     /** Put the original value (and enabled state, which a probe write can flip) back and report whether the host showed it; never retried. */
-    private void fail(String reason) {
+    private void fail(String failure, Reason reason) {
+        result.failure = failure;
         result.reason = reason;
         if (!result.dispatched) {
             done.accept(result);

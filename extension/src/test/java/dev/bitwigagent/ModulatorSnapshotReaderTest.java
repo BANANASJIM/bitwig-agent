@@ -76,7 +76,7 @@ public final class ModulatorSnapshotReaderTest {
                         && row.get("name").isJsonNull(),
                 "unavailable details are null, not empty success");
         assertTrue(!result.get("complete").getAsBoolean() && f.childrenReads == 0, "missing content is not traversed");
-        assertRpcError("modulator_unavailable", f::get);
+        assertRpcError("native_unavailable", f::get);
         assertTrue(f.valueReads == 0, "unmaterialized get has no value fallback");
     }
 
@@ -139,7 +139,7 @@ public final class ModulatorSnapshotReaderTest {
                 "target_not_found", () -> absent.reader.parameter(absent.proxy, TRACK, outsideId, "TEXT", () -> {}));
         f = new Fixture();
         f.targetOwner = new Node();
-        assertRpcError("modulator_unavailable", f::get);
+        assertRpcError("native_unavailable", f::get);
         f = new Fixture();
         f.trackId = new UUID(1, 8);
         assertRpcError("stale_context", f::get);
@@ -149,28 +149,28 @@ public final class ModulatorSnapshotReaderTest {
     void duplicatesAndUnknownIdentityFailClosed() {
         Fixture f = new Fixture();
         f.modulator().put(ID, f.id(f.first));
-        assertRpcError("modulator_unavailable", () -> f.list(0, 1));
+        assertRpcError("native_unavailable", () -> f.list(0, 1));
         Fixture repeated = new Fixture();
         repeated.rows.add(repeated.first);
-        assertRpcError("modulator_unavailable", repeated::get);
+        assertRpcError("native_unavailable", repeated::get);
         Fixture ids = new Fixture();
         ids.child(ids.contents, "TEXT", false);
-        assertRpcError("modulator_unavailable", ids::get);
+        assertRpcError("native_unavailable", ids::get);
         Fixture empty = new Fixture();
         empty.panel.put(PARAMETER_ID, "");
         empty.child(empty.contents, "", true);
-        assertRpcError("modulator_unavailable", () -> empty.list(0, 64));
+        assertRpcError("native_unavailable", () -> empty.list(0, 64));
         Fixture objects = new Fixture();
         objects.children(objects.contents).add(objects.panel);
-        assertRpcError("modulator_unavailable", objects::get);
+        assertRpcError("native_unavailable", objects::get);
         Fixture unknown = new Fixture();
         unknown.rows.add(new Node());
-        assertRpcError("modulator_unavailable", unknown::get);
+        assertRpcError("native_unavailable", unknown::get);
         Fixture missing = new Fixture();
         UUID requestedId = missing.id(missing.first);
         missing.first.put(ID, null);
         assertRpcError(
-                "modulator_unavailable",
+                "native_unavailable",
                 () -> missing.reader.parameter(missing.proxy, TRACK, requestedId, "TEXT", () -> {}));
     }
 
@@ -238,7 +238,7 @@ public final class ModulatorSnapshotReaderTest {
         assertRpcError("stale_context", dt::get);
         Fixture thread = new Fixture();
         thread.panel.thread = false;
-        assertRpcError("modulator_unavailable", thread::get);
+        assertRpcError("native_unavailable", thread::get);
         Fixture observed = new Fixture();
         observed.initialized = false;
         observed.root = new Node();
@@ -253,25 +253,25 @@ public final class ModulatorSnapshotReaderTest {
                 alias.get().get("value").getAsString().equals("initial"),
                 "owning channel alias participates in target/context checks");
         alias.afterValue = () -> alias.alias = new Node();
-        assertRpcError("modulator_unavailable", alias::get);
+        assertRpcError("native_unavailable", alias::get);
     }
 
     @Test
     void boundsApplyToActualWorkNotOnlyPage() {
         Fixture primary = new Fixture();
         primary.countOverride = 4097;
-        assertRpcError("modulator_bounds_exceeded", () -> primary.list(100000, 1));
+        assertRpcError("out_of_bounds", () -> primary.list(100000, 1));
         assertTrue(primary.indexReads == 0, "count bound applies before primary iteration");
         Fixture children = new Fixture();
         children.contents.put(CHILDREN, Collections.nCopies(257, children.panel));
-        assertRpcError("modulator_bounds_exceeded", () -> children.list(0, 1));
+        assertRpcError("out_of_bounds", () -> children.list(0, 1));
         Fixture aggregate = new Fixture();
         aggregate.rows.clear();
         for (int i = 0; i < 65; i++) {
             Node row = aggregate.modulator(), contents = aggregate.contents(row);
             for (int j = 0; j < 256; j++) aggregate.child(contents, "control" + j, false);
         }
-        assertRpcError("modulator_bounds_exceeded", () -> aggregate.list(0, 128));
+        assertRpcError("out_of_bounds", () -> aggregate.list(0, 128));
         Fixture page = new Fixture();
         page.modulator();
         JsonObject result = page.list(1, 1);
@@ -288,15 +288,15 @@ public final class ModulatorSnapshotReaderTest {
         text.panel.put(VALUE, "x".repeat(1024));
         assertTrue(text.get().get("value").getAsString().length() == 1024, "exact text bound accepted");
         text.panel.put(VALUE, "x".repeat(1025));
-        assertRpcError("modulator_bounds_exceeded", text::get);
+        assertRpcError("out_of_bounds", text::get);
         text.panel.put(VALUE, "\ud83c\udfb5".repeat(513));
-        assertRpcError("modulator_bounds_exceeded", text::get);
+        assertRpcError("out_of_bounds", text::get);
         Fixture id = new Fixture();
         id.panel.put(PARAMETER_ID, "x".repeat(1025));
-        assertRpcError("modulator_bounds_exceeded", () -> id.list(0, 1));
+        assertRpcError("out_of_bounds", () -> id.list(0, 1));
         Fixture name = new Fixture();
         name.first.put(NAME, "x".repeat(1025));
-        assertRpcError("modulator_bounds_exceeded", name::get);
+        assertRpcError("out_of_bounds", name::get);
         assertRpcError("invalid_params", () -> page.list(-1, 1));
         assertRpcError("invalid_params", () -> page.list(0, 129));
     }
@@ -327,7 +327,7 @@ public final class ModulatorSnapshotReaderTest {
             Node contents = work.contents(work.modulator());
             for (int j = 0; j < 256; j++) work.child(contents, "control" + j, false);
         }
-        assertRpcError("modulator_bounds_exceeded", () -> work.list(0, 128));
+        assertRpcError("out_of_bounds", () -> work.list(0, 128));
         work.rows.remove(work.rows.size() - 1);
         assertTrue(
                 work.list(0, 128).getAsJsonObject("window").get("total").getAsInt() == 32,
@@ -355,7 +355,7 @@ public final class ModulatorSnapshotReaderTest {
                 f.list(0, 1).getAsJsonArray("modulators").size() == 1 && f.valueReads == 2,
                 "inventory details are confined to requested page; off-page values/names/contents are not inspected");
         f.panel.put(VALUE, new Object());
-        assertRpcError("modulator_unavailable", f::get);
+        assertRpcError("native_unavailable", f::get);
     }
 
     @Test
@@ -378,21 +378,21 @@ public final class ModulatorSnapshotReaderTest {
                 !descriptor.get("supported").getAsBoolean()
                         && descriptor.get("parameterId").getAsString().equals("TEXT"),
                 "discovery survives QEE binding unavailability");
-        assertRpcError("modulator_unavailable", unavailable::get);
+        assertRpcError("native_unavailable", unavailable::get);
     }
 
     @Test
     void errorsAndCancellationAreNotHidden() {
         Fixture f = new Fixture();
         f.onRead = (field, object) -> {
-            if (field == VALUE) throw Errors.notApplied(ErrorCode.MODULATOR_UNAVAILABLE, "native getter failed");
+            if (field == VALUE) throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "native getter failed");
         };
-        assertRpcError("modulator_unavailable", f::get);
+        assertRpcError("native_unavailable", f::get);
         Fixture cancelled = new Fixture();
         assertRpcError(
                 "cancelled",
                 () -> cancelled.reader.list(cancelled.proxy, TRACK, 0, 64, () -> {
-                    throw Errors.notApplied(ErrorCode.CANCELLED, "cancelled");
+                    throw Errors.notApplied(Reason.CANCELLED, "cancelled");
                 }));
         assertTrue(cancelled.indexReads == 0, "cancellation precedes native collection work");
         Fixture deadline = new Fixture();
@@ -400,14 +400,14 @@ public final class ModulatorSnapshotReaderTest {
         assertRpcError(
                 "deadline",
                 () -> deadline.reader.parameter(deadline.proxy, TRACK, deadline.id(deadline.first), "TEXT", () -> {
-                    if (deadline.expired) throw Errors.of("deadline", "expired", Outcome.NOT_APPLIED);
+                    if (deadline.expired) throw Errors.notApplied(Reason.DEADLINE, "expired");
                 }));
     }
 
     @Test
     void runtimeGateIsReadOnlyAndDoesNotClaimAcceptance() {
-        Bitwig614ModulatorAdapter adapter = new Bitwig614ModulatorAdapter(
-                new Bitwig614Runtime(new Object(), "6.1.2", () -> {}).access(ErrorCode.MODULATOR_UNAVAILABLE));
+        Bitwig614ModulatorAdapter adapter =
+                new Bitwig614ModulatorAdapter(new Bitwig614Runtime(new Object(), "6.1.2", () -> {}).access());
         JsonObject capabilities = adapter.capabilities();
         assertTrue(
                 !capabilities.getAsJsonObject("runtimeGate").get("available").getAsBoolean(),
@@ -423,7 +423,7 @@ public final class ModulatorSnapshotReaderTest {
                 !capabilities.get("writeAvailable").getAsBoolean()
                         && capabilities.get("nativeVerification").getAsString().equals("not_established_by_binding"),
                 "binding is never native acceptance or write authority");
-        assertRpcError("modulator_unavailable", () -> adapter.list(new Object(), TRACK, 0, 64, () -> {}));
+        assertRpcError("host_mismatch", () -> adapter.list(new Object(), TRACK, 0, 64, () -> {}));
     }
 
     private static final class Node {
@@ -558,7 +558,7 @@ public final class ModulatorSnapshotReaderTest {
         @Override
         public void requireModelThread(Object object) {
             if (!(object instanceof Node) || !((Node) object).thread)
-                throw Errors.notApplied(ErrorCode.MODULATOR_UNAVAILABLE, "model thread");
+                throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "model thread");
         }
 
         @Override
@@ -596,11 +596,6 @@ public final class ModulatorSnapshotReaderTest {
 
         @Override
         public void documentThread() {}
-
-        @Override
-        public ErrorCode unavailableCode() {
-            return ErrorCode.MODULATOR_UNAVAILABLE;
-        }
 
         @Override
         public Object read(NativeReadContext.Field field, Object object) {

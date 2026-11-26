@@ -167,7 +167,7 @@ public final class GridStepsVoicingTest {
         Fixture bad = new Fixture();
         Node nan = stepsNode(bad, new float[] {Float.NaN}, 1);
         bad.first.put(CHILDREN, List.of(nan));
-        assertNotApplied("grid_unavailable", () -> inspect(bad, stepContext(nan), "DATA", false));
+        assertRpcError("native_unavailable", () -> inspect(bad, stepContext(nan), "DATA", false));
     }
 
     private static final class BgP {}
@@ -276,7 +276,7 @@ public final class GridStepsVoicingTest {
 
         @Override
         public void requireSupported(Object parameter) {
-            if (parameter != steps) throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "unmapped step array");
+            if (parameter != steps) throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "unmapped step array");
         }
 
         @Override
@@ -340,7 +340,7 @@ public final class GridStepsVoicingTest {
                 noop.calls == 0
                         && !noop.op.dispatched
                         && !result.get("mutationDispatched").getAsBoolean()
-                        && result.get("verification").getAsString().equals("already_matched"),
+                        && result.get("outcome").getAsString().equals("already_matched"),
                 "an identical write is a verified no-op without dispatch");
         StepFixture tiny = new StepFixture(2, 2);
         tiny.set(steps(tiny.json(0, 2), "[0.3,0.4]", false));
@@ -360,15 +360,12 @@ public final class GridStepsVoicingTest {
         StepFixture f = new StepFixture(256, 4);
         RpcException error = f.failure(steps("[0.9,0.9,0.9,0.9]", "[0.5]", false));
         assertTrue(
-                error.code.equals("stale_context")
-                        && error.outcome.equals("not_applied")
-                        && f.calls == 0
-                        && !f.op.dispatched,
+                error.reason.wire().equals("stale_context") && !error.unknown && f.calls == 0 && !f.op.dispatched,
                 "a stale expectation is rejected before dispatch, even for a no-op");
         StepFixture shortArray = new StepFixture(4, 4);
         error = shortArray.failure(steps("[0,0,0,0,0]", "[0.5]", false));
         assertTrue(
-                error.code.equals("stale_context") && shortArray.calls == 0,
+                error.reason.wire().equals("stale_context") && shortArray.calls == 0,
                 "expectedValues longer than the native array is stale");
         StepFixture window = new StepFixture(256, 4);
         window.set(steps(window.json(0, 6), "[0.5,0.5,0.5,0.5,0.5,0.5]", false));
@@ -378,7 +375,9 @@ public final class GridStepsVoicingTest {
         GridParameterWriter.Request scalar = GridParameterWriter.Request.parse(
                 HostFixture.json("{\"expectedKind\":\"float\",\"expectedValue\":0.0,\"value\":0.5}"));
         error = f.failure(scalar);
-        assertTrue(error.code.equals("stale_context") && f.calls == 0, "a scalar request cannot target a step array");
+        assertTrue(
+                error.reason.wire().equals("stale_context") && f.calls == 0,
+                "a scalar request cannot target a step array");
         StepFixture scalarTarget = new StepFixture(256, 4);
         Node floating = scalarTarget
                 .model
@@ -415,33 +414,44 @@ public final class GridStepsVoicingTest {
                                 });
             });
             assertTrue(
-                    caught.code.equals("stale_context") && caught.outcome.equals("not_applied"),
+                    caught.reason.wire().equals("stale_context") && !caught.unknown,
                     "a steps request cannot target a scalar parameter");
         }
         StepFixture skipped = new StepFixture(256, 4);
         skipped.context.override(skipped.steps, GridParameterContext.Field.CIU, true);
         assertTrue(
-                skipped.failure(steps(skipped.json(0, 4), "[0.5]", false)).code.equals("unsafe_state")
+                skipped.failure(steps(skipped.json(0, 4), "[0.5]", false))
+                                .reason
+                                .wire()
+                                .equals("unsafe_state")
                         && skipped.calls == 0,
                 "the skip predicate gates step array writes");
         StepFixture undo = new StepFixture(256, 4);
         undo.context.override(undo.steps, GridParameterContext.Field.UNDO_ACTIVE, false);
         undo.context.values.put(GridParameterContext.Field.UNDO_ACTIVE, true);
         assertTrue(
-                undo.failure(steps(undo.json(0, 4), "[0.5]", false)).code.equals("unsafe_state") && undo.calls == 0,
+                undo.failure(steps(undo.json(0, 4), "[0.5]", false))
+                                .reason
+                                .wire()
+                                .equals("unsafe_state")
+                        && undo.calls == 0,
                 "an active undo change gates step array writes");
         StepFixture settable = new StepFixture(256, 4);
         settable.context.values.put(GridParameterContext.Field.SETTABLE, false);
         assertTrue(
                 settable.failure(steps(settable.json(0, 4), "[0.5]", false))
-                                .code
+                                .reason
+                                .wire()
                                 .equals("unsafe_state")
                         && settable.calls == 0,
                 "a non-settable GUI property gates step array writes");
         StepFixture project = new StepFixture(256, 4);
         project.context.override(project.steps, NativeReadContext.Field.PROJECT, new Object());
         assertTrue(
-                project.failure(steps(project.json(0, 4), "[0.5]", false)).code.equals("stale_context")
+                project.failure(steps(project.json(0, 4), "[0.5]", false))
+                                .reason
+                                .wire()
+                                .equals("stale_context")
                         && project.calls == 0,
                 "owning project mismatch gates step array writes");
     }
@@ -452,7 +462,7 @@ public final class GridStepsVoicingTest {
         unread.apply = false;
         RpcException error = unread.failure(steps(unread.json(0, 4), "[0.5]", false));
         assertTrue(
-                error.code.equals("grid_verification_failed") && error.outcome.equals("unknown") && unread.calls == 1,
+                error.reason.wire().equals("readback_mismatch") && error.unknown && unread.calls == 1,
                 "an unobserved requested array is not a successful dispatch");
         StepFixture side = new StepFixture(256, 4);
         side.afterMutation = () -> {
@@ -462,11 +472,11 @@ public final class GridStepsVoicingTest {
         };
         error = side.failure(steps(side.json(0, 4), "[0.5]", false));
         assertTrue(
-                error.code.equals("grid_verification_failed") && error.outcome.equals("unknown"),
+                error.reason.wire().equals("readback_mismatch") && error.unknown,
                 "a native side effect outside the prefix fails the whole-array readback");
         StepFixture partial = new StepFixture(256, 4);
         partial.afterMutation = () -> {
-            throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "native array failure");
+            throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "native array failure");
         };
         error = partial.failure(steps(partial.json(0, 4), "[0.5]", false));
         assertTrue(
@@ -489,8 +499,13 @@ public final class GridStepsVoicingTest {
                         });
             });
             assertTrue(
-                    caught.code.equals("grid_unavailable") && caught.outcome.equals("not_applied"),
+                    caught.reason.wire().equals("native_unavailable") && !caught.unknown,
                     "a missing step write binding fails closed");
+            GridParameterWriter.Entry entry =
+                    new GridParameterWriter.Entry(MODULE, "DATA", steps(absent.json(0, 4), "[0.5]", false));
+            assertRpcError(
+                    "native_unavailable",
+                    () -> none.setAll(absent.model.proxy, TRACK_ID, List.of(entry), () -> {}, () -> {}));
         }
         StepFixture batch = new StepFixture(256, 4);
         GridParameterWriter.Entry entry =
@@ -500,7 +515,7 @@ public final class GridStepsVoicingTest {
         JsonObject item = result.getAsJsonArray("writes").get(0).getAsJsonObject();
         assertTrue(
                 batch.calls == 1
-                        && item.get("status").getAsString().equals("applied")
+                        && item.get("outcome").getAsString().equals("applied")
                         && item.getAsJsonArray("values").size() == 4
                         && item.getAsJsonArray("previousValues").size() == 4
                         && batch.live()[1] == 0.8f,
@@ -512,9 +527,7 @@ public final class GridStepsVoicingTest {
                     RpcException.class,
                     () -> stale.writer.setAll(
                             stale.model.proxy, TRACK_ID, List.of(bad), () -> {}, () -> stale.op.dispatched = true));
-            assertTrue(
-                    caught.outcome.equals("not_applied") && stale.calls == 0,
-                    "a stale step entry fails the batch preflight");
+            assertTrue(!caught.unknown && stale.calls == 0, "a stale step entry fails the batch preflight");
         }
     }
 
@@ -643,7 +656,7 @@ public final class GridStepsVoicingTest {
                         && result.get("reason").getAsString().contains("no_voicing_model")
                         && !result.has("voicing"),
                 "Note Grid and FX Grid report voicing unsupported with a reason");
-        assertNotApplied("grid_unavailable", () -> {
+        assertRpcError("native_unavailable", () -> {
             f.present = true;
             f.model.document = false;
             f.get();
@@ -675,7 +688,7 @@ public final class GridStepsVoicingTest {
                 noop.calls.isEmpty()
                         && !noop.op.dispatched
                         && !result.get("mutationDispatched").getAsBoolean()
-                        && result.get("verification").getAsString().equals("already_matched"),
+                        && result.get("outcome").getAsString().equals("already_matched"),
                 "an identical voicing write is a verified no-op");
         VoicingFixture mixed = new VoicingFixture();
         mixed.set(
@@ -707,22 +720,17 @@ public final class GridStepsVoicingTest {
         VoicingFixture f = new VoicingFixture();
         RpcException error = f.failure("{\"expected\":{\"voices\":2},\"set\":{\"voices\":3}}");
         assertTrue(
-                error.code.equals("stale_context")
-                        && error.outcome.equals("not_applied")
-                        && f.calls.isEmpty()
-                        && !f.op.dispatched,
+                error.reason.wire().equals("stale_context") && !error.unknown && f.calls.isEmpty() && !f.op.dispatched,
                 "a stale voicing expectation is rejected before dispatch");
         VoicingFixture unread = new VoicingFixture();
         unread.apply = false;
         error = unread.failure("{\"expected\":{\"voices\":1},\"set\":{\"voices\":4}}");
         assertTrue(
-                error.code.equals("grid_verification_failed")
-                        && error.outcome.equals("unknown")
-                        && unread.calls.size() == 1,
+                error.reason.wire().equals("readback_mismatch") && error.unknown && unread.calls.size() == 1,
                 "an unobserved requested voicing is unknown, never retried");
         VoicingFixture thrown = new VoicingFixture();
         thrown.afterSet = () -> {
-            throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "native voicing failure");
+            throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "native voicing failure");
         };
         {
             RpcException caught = assertThrows(
@@ -735,19 +743,20 @@ public final class GridStepsVoicingTest {
         absent.present = false;
         error = absent.failure("{\"expected\":{\"voices\":1},\"set\":{\"voices\":4}}");
         assertTrue(
-                error.code.equals("unsupported_scope") && error.outcome.equals("not_applied"),
+                error.reason.wire().equals("unsupported_scope") && !error.unknown,
                 "a device without voicing rejects writes unsupported");
         VoicingFixture readOnly = new VoicingFixture(false);
         error = readOnly.failure("{\"expected\":{\"voices\":1},\"set\":{\"voices\":4}}");
         assertTrue(
-                error.code.equals("grid_unavailable") && readOnly.calls.isEmpty(),
+                error.reason.wire().equals("native_unavailable") && readOnly.calls.isEmpty(),
                 "unbound write operations fail closed");
         assertTrue(readOnly.get().get("supported").getAsBoolean(), "an unbound write operation leaves reads available");
         VoicingFixture undo = new VoicingFixture();
         undo.context.values.put(GridParameterContext.Field.UNDO_ACTIVE, true);
         assertTrue(
                 undo.failure("{\"expected\":{\"voices\":1},\"set\":{\"voices\":4}}")
-                                .code
+                                .reason
+                                .wire()
                                 .equals("unsafe_state")
                         && undo.calls.isEmpty(),
                 "an active undo change gates voicing writes");
@@ -755,7 +764,8 @@ public final class GridStepsVoicingTest {
         skipped.context.override(skipped.voicing, GridParameterContext.Field.CIU, true);
         assertTrue(
                 skipped.failure("{\"expected\":{\"voices\":1},\"set\":{\"voices\":4}}")
-                                .code
+                                .reason
+                                .wire()
                                 .equals("unsafe_state")
                         && skipped.calls.isEmpty(),
                 "the skip predicate gates voicing writes");
@@ -763,7 +773,8 @@ public final class GridStepsVoicingTest {
         project.context.override(project.voicing, NativeReadContext.Field.PROJECT, new Object());
         assertTrue(
                 project.failure("{\"expected\":{\"voices\":1},\"set\":{\"voices\":4}}")
-                                .code
+                                .reason
+                                .wire()
                                 .equals("stale_context")
                         && project.calls.isEmpty(),
                 "owning project mismatch gates voicing writes");
@@ -815,6 +826,13 @@ public final class GridStepsVoicingTest {
         assertInvalidParams(() -> GridModule.validateParams(
                 "grid.parameters.get",
                 HostFixture.json("{" + target + module.substring(0, module.length() - 1) + ",\"full\":\"yes\"}")));
+        assertInvalidParams(() ->
+                GridModule.validateParams("grid.parameters.set", HostFixture.json("{" + target + "\"writes\":[1]}")));
+        assertInvalidParams(() -> GridModule.validateParams(
+                "grid.voicing.get", HostFixture.json("{" + target + "\"detail\":\"everything\"}")));
+        assertRpcError("unknown_method", () -> GridModule.validateParams("grid.unknown", new JsonObject()));
+        for (String voices : List.of("[1]", "99999999999"))
+            assertInvalidParams(() -> request("{\"expected\":{\"voices\":" + voices + "},\"set\":{\"voices\":2}}"));
         GridModule.validateParams(
                 "grid.voicing.get", HostFixture.json("{" + target.substring(0, target.length() - 1) + "}"));
         GridModule.validateParams(

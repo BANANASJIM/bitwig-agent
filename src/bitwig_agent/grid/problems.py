@@ -18,7 +18,7 @@ class SpecError(Exception):
 
 def invalid_spec(problems: list[str]) -> BridgeError:
     return bridge_error(
-        "invalid_spec",
+        "invalid_params",
         f"{len(problems)} problem(s); nothing was written: " + " | ".join(problems[:20]),
         problems=problems,
     )

@@ -26,7 +26,6 @@ public final class RenderModuleTest {
     void validationIsStrict() {
         RenderModule.validateParams("export.audio", export(TestPaths.absolute("/tmp"), "master"));
         RenderModule.validateParams("bounce.inPlace", bounce(A));
-        RenderModule.validateParams("render.status", new JsonObject());
         JsonObject flac24 = export(TestPaths.absolute("/tmp"), A);
         flac24.addProperty("format", "flac");
         flac24.addProperty("bitDepth", 24);
@@ -88,10 +87,22 @@ public final class RenderModuleTest {
         invalid("bounce.inPlace", p);
         p = bounce(A, A);
         invalid("bounce.inPlace", p);
-        p = new JsonObject();
-        p.addProperty("x", 1);
-        invalid("render.status", p);
         assertTrue(HostFixture.SPECS.methods().containsAll(RenderModule.METHODS), "render methods registered");
+    }
+
+    @Test
+    void ungatedHostIsUnavailable() throws IOException {
+        assertRpcError("unknown_method", () -> RenderModule.validateParams("render.status", new JsonObject()));
+        HostFixture fixture = new HostFixture();
+        RenderModule module = fixture.services.render(null);
+        JsonObject capability = module.capability(new HostOperation(fixture.tasks.after(5000)));
+        assertTrue(
+                !capability.get("available").getAsBoolean() && capability.has("reason"),
+                "capabilities report the binding unavailable off the gated host");
+        HostOperation op = fixture.submit(
+                module, "export.audio", export(temp("bwa-render-gate").toString(), "master"));
+        fixture.next();
+        assertRpcError("host_mismatch", op);
     }
 
     @Test
@@ -108,13 +119,18 @@ public final class RenderModuleTest {
                         && stems.files.get(2).equals(dir.resolve("Stem-03.flac")),
                 "several: -01, -02, ...");
         Files.write(dir.resolve("Mix.wav"), new byte[] {1});
-        assertNotApplied("target_exists", () -> RenderPlan.export(dir, "Mix", 1, "wav", false));
+        assertRpcError("target_exists", () -> RenderPlan.export(dir, "Mix", 1, "wav", false));
         assertTrue(
                 RenderPlan.export(dir, "Mix", 1, "wav", true).before.get(0).exists,
                 "overwrite records the old file for change detection");
         Files.createDirectory(dir.resolve("Dir.wav"));
-        assertNotApplied("invalid_target", () -> RenderPlan.export(dir, "Dir", 1, "wav", true));
-        assertNotApplied("invalid_target", () -> RenderPlan.export(dir.resolve("missing"), "Mix", 1, "wav", false));
+        assertRpcError("invalid_target", () -> RenderPlan.export(dir, "Dir", 1, "wav", true));
+        assertRpcError("invalid_target", () -> RenderPlan.export(dir.resolve("missing"), "Mix", 1, "wav", false));
+        Path locked = Files.createDirectory(dir.resolve("locked"));
+        assertTrue(locked.toFile().setWritable(false), "directory made read-only");
+        if (!Files.isWritable(locked))
+            assertRpcError("invalid_target", () -> RenderPlan.export(locked, "Mix", 1, "wav", false));
+        assertTrue(locked.toFile().setWritable(true), "directory writable again for cleanup");
     }
 
     @Test
@@ -172,7 +188,7 @@ public final class RenderModuleTest {
     }
 
     @Test
-    void exportIsObservedOnlyWithLatchAndValidFiles() throws IOException {
+    void exportIsAppliedOnlyWithLatchAndValidFiles() throws IOException {
         Sim sim = new Sim();
         JsonObject p = export(sim.dir.toString(), "master", A);
         p.addProperty("bitDepth", 16);
@@ -181,7 +197,7 @@ public final class RenderModuleTest {
         p.addProperty("dither", true);
         HostOperation op = sim.start("export.audio", p, 5000);
         sim.drainUntil(op);
-        JsonObject result = op.result.join();
+        JsonObject result = assertOutcome("applied", op);
         assertTrue(
                 sim.dispatches == 1 && sim.sources.get(0) == null && sim.sources.get(1) != null,
                 "one dispatch; master is the null source, the track its proxy");
@@ -195,11 +211,10 @@ public final class RenderModuleTest {
                 "options reach the native call unchanged");
         assertTrue(sim.paths[0].equals(sim.dir.resolve("Mix-01").toString()), "extensionless base paths");
         assertTrue(
-                result.get("status").getAsString().equals("observed")
-                        && result.get("exported").getAsBoolean()
-                        && result.getAsJsonArray("files").size() == 2
-                        && result.get("mayOpenFileManager").getAsBoolean(),
-                "observed export with verified files");
+                result.getAsJsonArray("files").size() == 2
+                        && result.get("mayOpenFileManager").getAsBoolean()
+                        && !result.has("status"),
+                "applied export with verified files");
         assertTrue(
                 result.getAsJsonArray("files")
                         .get(1)
@@ -208,16 +223,23 @@ public final class RenderModuleTest {
                         .getAsString()
                         .equals(A),
                 "rows keep source order");
-        assertTrue(sim.fixture.services.holds.descriptions().isEmpty(), "completed job is not unresolved");
-        JsonObject status = sim.call("render.status");
+        assertTrue(sim.holds().isEmpty(), "a completed job holds nothing");
+        JsonObject job = sim.job("render:1");
         assertTrue(
-                status.getAsJsonObject("job").get("state").getAsString().equals("completed")
-                        && status.getAsJsonObject("job").get("verified").getAsBoolean(),
-                "render.status re-verifies a completed job");
+                job.get("id").getAsString().equals("render:1")
+                        && job.get("method").getAsString().equals("export.audio")
+                        && job.get("state").getAsString().equals("completed")
+                        && job.get("outcome").getAsString().equals("applied")
+                        && job.getAsJsonArray("files").size() == 2,
+                "jobs.get re-verifies a completed job");
         HostOperation again = sim.start("export.audio", export(sim.dir.toString(), "master", A), 5000);
         sim.drainUntil(again);
         assertRpcError("target_exists", again);
         assertTrue(sim.dispatches == 1, "existing files refused before dispatch");
+        assertTrue(
+                sim.job("render:1").get("outcome").getAsString().equals("applied"),
+                "a job refused before dispatch keeps the previous job current");
+        assertRpcError("target_not_found", sim.jobsGet("render:2"));
 
         Sim playing = new Sim();
         playing.fixture.transport.child("isPlaying").emit(true);
@@ -228,56 +250,81 @@ public final class RenderModuleTest {
     }
 
     @Test
-    void longExportStaysBusyAndIsPolled() throws IOException {
+    void longExportStaysBusyAndIsFollowedWithJobsGet() throws IOException {
         Sim sim = new Sim();
         sim.finish = false;
         HostOperation op = sim.start("export.audio", export(sim.dir.toString(), "master"), 200);
         sim.drainUntil(op);
-        JsonObject result = op.result.join();
+        JsonObject result = assertUnknown("deadline", op);
         assertTrue(
-                result.get("status").getAsString().equals("dispatched")
-                        && result.get("outcome").getAsString().equals("unknown")
+                result.get("job").getAsString().equals("render:1")
+                        && result.get("next").getAsString().contains("jobs.get render:1")
                         && result.get("nativeCompletion").getAsString().equals("pending")
-                        && result.get("poll").getAsString().equals("render.status"),
-                "no latch within the deadline: dispatched/unknown with a poll method");
-        assertTrue(sim.fixture.services.holds.descriptions().size() == 1, "a running job is unresolved");
+                        && result.getAsJsonArray("plannedFiles").size() == 1
+                        && !result.has("status")
+                        && !result.has("poll"),
+                "no latch within the deadline: unknown/deadline with the job id");
+        assertTrue(
+                sim.holds().size() == 1
+                        && !sim.holds().get(0).ackable
+                        && sim.holds().get(0).description.contains("jobs.get render:1"),
+                "a running job is an in-flight hold");
+        assertRpcError("busy", () -> sim.fixture.services.holds.ack(sim.holds().get(0).id));
         HostOperation busy = sim.start("bounce.inPlace", bounce(A), 5000);
         sim.drainUntil(busy);
-        assertRpcError("busy", busy);
-        assertTrue(
-                sim.call("render.status")
-                        .getAsJsonObject("job")
-                        .get("state")
-                        .getAsString()
-                        .equals("running"),
-                "status reports running");
+        assertTrue(assertRpcError("busy", busy).next.contains("jobs.get render:1"), "busy points at jobs.get");
+        assertTrue(sim.job("render:1").get("state").getAsString().equals("running"), "jobs.get reports running");
+        assertTrue(!sim.job("render:1").has("outcome"), "a running job has no outcome yet");
+        assertRpcError("target_not_found", sim.jobsGet("render:9"));
+        assertRpcError("target_not_found", sim.jobsGet("saveAs:1"));
+        assertRpcError("target_not_found", sim.jobsGet("render"));
         sim.complete();
-        JsonObject status = sim.call("render.status");
+        JsonObject job = sim.job("render:1");
         assertTrue(
-                status.getAsJsonObject("job").get("state").getAsString().equals("completed")
-                        && status.getAsJsonObject("job").get("verified").getAsBoolean()
-                        && sim.fixture.services.holds.descriptions().isEmpty(),
-                "after the latch the polled job verifies and nothing is unresolved");
+                job.get("state").getAsString().equals("completed")
+                        && job.get("outcome").getAsString().equals("applied")
+                        && sim.holds().isEmpty(),
+                "after the latch the job verifies and nothing is held");
         assertTrue(sim.dispatches == 1, "never re-dispatched");
     }
 
     @Test
-    void refusalsBeforeDispatchAreNotApplied() throws IOException {
+    void refusalsBeforeDispatchAreErrors() throws IOException {
         Sim sim = new Sim();
-        sim.refusal = "render_needs_confirmation";
+        sim.refusal = Reason.NEEDS_CONFIRMATION;
         HostOperation op = sim.start("export.audio", export(sim.dir.toString(), "master"), 5000);
         sim.drainUntil(op);
-        assertTrue(
-                assertRpcError("render_needs_confirmation", op).outcome.equals("not_applied"),
-                "native preflight refusal is not_applied");
-        assertTrue(
-                sim.call("render.status").get("job").isJsonNull()
-                        && sim.fixture.services.holds.descriptions().isEmpty(),
-                "a refused job leaves no status or unresolved entry");
+        assertTrue(!assertRpcError("needs_confirmation", op).unknown, "native preflight refusal changes nothing");
+        assertRpcError("target_not_found", sim.jobsGet("render:1"));
+        assertTrue(sim.holds().isEmpty(), "a refused job leaves no job or hold");
         sim.refusal = null;
         HostOperation next = sim.start("export.audio", export(sim.dir.toString(), "master"), 5000);
         sim.drainUntil(next);
-        assertTrue(next.result.join().get("exported").getAsBoolean(), "the next export is not blocked");
+        assertOutcome("applied", next);
+    }
+
+    @Test
+    void dispatchWithoutNativeJobIsUnknown() throws IOException {
+        Sim sim = new Sim();
+        sim.lost = true;
+        HostOperation op = sim.start("export.audio", export(sim.dir.toString(), "master"), 5000);
+        sim.drainUntil(op);
+        assertUnknown("job_failed", op);
+        JsonObject job = sim.job("render:1");
+        assertTrue(
+                job.get("state").getAsString().equals("unknown") && job.has("hint") && !job.has("outcome"),
+                "a dispatched call without a native job is state unknown");
+        assertTrue(sim.holds().isEmpty(), "a lost export does not quarantine");
+
+        Sim bounce = new Sim();
+        bounce.lost = true;
+        op = bounce.start("bounce.inPlace", bounce(A), 5000);
+        bounce.drainUntil(op);
+        assertTrue(
+                assertUnknown("job_failed", op) != null
+                        && bounce.holds().size() == 1
+                        && bounce.holds().get(0).ackable,
+                "a lost bounce quarantines bounces");
     }
 
     @Test
@@ -286,15 +333,22 @@ public final class RenderModuleTest {
         sim.write = false;
         HostOperation op = sim.start("export.audio", export(sim.dir.toString(), "master"), 5000);
         sim.drainUntil(op);
+        assertTrue(!assertRpcError("job_failed", op).unknown, "latch without files: nothing was written");
+        JsonObject job = sim.job("render:1");
         assertTrue(
-                assertRpcError("export_failed", op).outcome.equals("not_applied"),
-                "latch without files: nothing was written");
+                job.get("outcome").getAsString().equals("not_applied")
+                        && job.get("reason").getAsString().equals("job_failed"),
+                "jobs.get reports the same evaluation");
         Sim garbage = new Sim();
         garbage.garbage = true;
         op = garbage.start("export.audio", export(garbage.dir.toString(), "master"), 5000);
         garbage.drainUntil(op);
+        assertUnknown("job_failed", op);
+        job = garbage.job("render:1");
         assertTrue(
-                assertRpcError("export_failed", op).outcome.equals("unknown"), "written but invalid output is unknown");
+                job.get("outcome").getAsString().equals("unknown")
+                        && job.get("reason").getAsString().equals("job_failed"),
+                "written but invalid output is unknown");
         Sim deleted = new Sim();
         deleted.write = false;
         deleted.deleteOld = true;
@@ -303,9 +357,7 @@ public final class RenderModuleTest {
         p.addProperty("overwrite", true);
         op = deleted.start("export.audio", p, 5000);
         deleted.drainUntil(op);
-        assertTrue(
-                assertRpcError("export_failed", op).outcome.equals("unknown"),
-                "an overwritten file that is now gone is unknown, not not_applied");
+        assertUnknown("job_failed", op);
     }
 
     @Test
@@ -320,32 +372,26 @@ public final class RenderModuleTest {
         };
         HostOperation op = sim.start("bounce.inPlace", bounce(A), 5000);
         sim.drainUntil(op);
-        JsonObject result = op.result.join();
+        JsonObject result = assertOutcome("applied", op);
         assertTrue(sim.dispatches == 1 && sim.tap.equals("pre_fader"), "one bounce dispatch with the requested tap");
-        JsonObject typed = result.getAsJsonArray("tracks").get(0).getAsJsonObject();
-        assertTrue(
-                typed.get("trackTypeBefore").getAsString().equals("Instrument")
-                        && typed.get("trackTypeAfter").getAsString().equals("Hybrid")
-                        && typed.has("warning"),
-                "an instrument track turned Hybrid by the bounce is reported");
         JsonObject track = result.getAsJsonArray("tracks").get(0).getAsJsonObject();
         assertTrue(
-                result.get("bounced").getAsBoolean()
-                        && result.get("nativeUndo").getAsBoolean()
+                track.get("trackTypeBefore").getAsString().equals("Instrument")
+                        && track.get("trackTypeAfter").getAsString().equals("Hybrid")
+                        && track.has("warning"),
+                "an instrument track turned Hybrid by the bounce is reported");
+        assertTrue(
+                result.get("nativeUndo").getAsBoolean()
                         && track.getAsJsonObject("clip")
                                 .get("kind")
                                 .getAsString()
                                 .equals("audio")
                         && track.get("clipsBefore").getAsInt() == 2,
-                "bounced only with one new audio clip over the range");
-        // A later edit on the lane must not turn the verified job into a quarantine.
+                "applied only with one new audio clip over the range");
         sim.clips.put(A, lanes(clip(64, 4, "Other", "instrument")));
         assertTrue(
-                !sim.call("render.status")
-                                .getAsJsonObject("job")
-                                .get("verified")
-                                .getAsBoolean()
-                        && sim.fixture.services.holds.descriptions().isEmpty(),
+                sim.job("render:1").get("outcome").getAsString().equals("unknown")
+                        && sim.holds().isEmpty(),
                 "re-reading a reported job reports, never quarantines");
 
         Sim partial = new Sim();
@@ -355,48 +401,71 @@ public final class RenderModuleTest {
                 clip(-8, 8, "Long", "instrument"), clip(0, 16, "Long", "audio"), clip(16, 16, "Long", "instrument"));
         op = partial.start("bounce.inPlace", bounce(A), 5000);
         partial.drainUntil(op);
-        assertTrue(
-                op.result.join().get("bounced").getAsBoolean(),
-                "a clip cut at both range edges leaves new remnants outside the range: still verified");
+        assertOutcome("applied", op);
 
         Sim again = new Sim();
         again.clips.put(A, lanes(clip(0, 16, "Bounce", "audio")));
         again.afterBounce = before -> lanes(clip(0, 16, "Bounce", "audio"));
         op = again.start("bounce.inPlace", bounce(A), 5000);
         again.drainUntil(op);
-        assertTrue(
-                op.result.join().get("bounced").getAsBoolean(),
-                "re-bouncing a bounced range is a new clip object, not 'unchanged'");
+        assertOutcome("applied", op);
 
         Sim none = new Sim();
         none.module.applyGraceNanos = 0;
         op = none.start("bounce.inPlace", bounce(A), 5000);
         none.drainUntil(op);
         assertTrue(
-                assertRpcError("bounce_failed", op).outcome.equals("not_applied")
-                        && none.fixture.services.holds.descriptions().isEmpty(),
-                "a finished job that changed nothing is not_applied");
+                !assertRpcError("job_failed", op).unknown && none.holds().isEmpty(),
+                "a finished job that changed nothing is an error");
+
+        Sim slow = new Sim();
+        op = slow.start("bounce.inPlace", bounce(A), 200);
+        slow.drainUntil(op);
+        assertTrue(
+                assertUnknown("deadline", op)
+                        .get("nativeCompletion")
+                        .getAsString()
+                        .equals("completed"),
+                "a finished bounce whose lane has not changed within the deadline is followed with jobs.get");
+        JsonObject job = slow.job("render:1");
+        assertTrue(
+                job.get("outcome").getAsString().equals("not_applied")
+                        && job.get("reason").getAsString().equals("job_failed")
+                        && slow.holds().isEmpty(),
+                "jobs.get decides it: nothing changed");
     }
 
     @Test
-    void unverifiedBounceQuarantinesBounces() throws IOException {
+    void unverifiedBounceHoldsBouncesUntilAck() throws IOException {
         Sim sim = new Sim();
         sim.afterBounce = before -> lanes(clip(0, 8, "Half", "audio"));
         HostOperation op = sim.start("bounce.inPlace", bounce(A), 5000);
         sim.drainUntil(op);
         assertTrue(
-                assertRpcError("bounce_verification_failed", op).outcome.equals("unknown"),
-                "a different lane is unknown");
+                assertUnknown("readback_mismatch", op)
+                        .get("message")
+                        .getAsString()
+                        .contains("ack render.quarantine"),
+                "a different lane is unknown and names the hold");
         assertTrue(
-                sim.fixture.services.holds.descriptions().size() == 1,
-                "unknown bounce is listed for extension.restart");
+                sim.holds().size() == 1
+                        && sim.holds().get(0).ackable
+                        && sim.holds().get(0).id.equals("render.quarantine"),
+                "the unknown bounce is an unresolved hold");
         HostOperation again = sim.start("bounce.inPlace", bounce(A), 5000);
         sim.drainUntil(again);
-        assertRpcError("unresolved_mutation", again);
+        String next = assertRpcError("unresolved", again).next;
+        assertTrue(
+                next.contains("arranger.clips.list") && next.contains("ack render.quarantine"),
+                "the refusal says what to inspect and what to ack");
         HostOperation export = sim.start("export.audio", export(sim.dir.toString(), "master"), 5000);
         sim.drainUntil(export);
-        assertTrue(
-                export.result.join().get("exported").getAsBoolean() && sim.dispatches == 2, "exports stay available");
+        assertTrue(assertOutcome("applied", export) != null && sim.dispatches == 2, "exports stay available");
+        sim.fixture.services.holds.ack("render.quarantine");
+        sim.afterBounce = before -> lanes(clip(0, 16, "Bounce", "audio"));
+        again = sim.start("bounce.inPlace", bounce(A), 5000);
+        sim.drainUntil(again);
+        assertTrue(assertOutcome("applied", again) != null && sim.dispatches == 3, "ack lifts the hold");
     }
 
     @Test
@@ -407,28 +476,44 @@ public final class RenderModuleTest {
         HostOperation op = sim.start("bounce.inPlace", bounce(A), 200);
         sim.drainUntil(op);
         assertTrue(
-                op.result.join().get("status").getAsString().equals("dispatched"),
-                "bounce without latch by the deadline is dispatched");
+                assertUnknown("deadline", op).get("job").getAsString().equals("render:1"),
+                "bounce without latch by the deadline returns its job");
         sim.completeBounce();
         assertTrue(
-                sim.fixture.services.holds.descriptions().size() == 1, "a finished but unverified bounce stays listed");
+                sim.holds().size() == 1
+                        && !sim.holds().get(0).ackable
+                        && sim.holds().get(0).description.contains("jobs.get render:1"),
+                "a finished but unverified bounce stays in flight");
         HostOperation again = sim.start("bounce.inPlace", bounce(B), 5000);
         sim.drainUntil(again);
-        assertRpcError("unresolved_mutation", again);
+        assertTrue(assertRpcError("busy", again).next.contains("jobs.get render:1"), "verify first");
         HostOperation export = sim.start("export.audio", export(sim.dir.toString(), "master"), 5000);
         sim.drainUntil(export);
-        assertRpcError("unresolved_mutation", export);
-        JsonObject status = sim.call("render.status");
+        assertRpcError("busy", export);
         assertTrue(
-                status.getAsJsonObject("job").get("verified").getAsBoolean()
-                        && sim.fixture.services.holds.descriptions().isEmpty(),
-                "render.status verifies and clears it");
+                sim.job("render:1").get("outcome").getAsString().equals("applied")
+                        && sim.holds().isEmpty(),
+                "jobs.get verifies and clears it");
         sim.finish = true;
         again = sim.start("bounce.inPlace", bounce(B), 5000);
         sim.drainUntil(again);
         assertTrue(
-                again.result.join().get("bounced").getAsBoolean() && sim.dispatches == 2,
+                assertOutcome("applied", again) != null && sim.dispatches == 2,
                 "the next bounce runs after verification");
+
+        Sim wrong = new Sim();
+        wrong.finish = false;
+        wrong.afterBounce = before -> lanes(clip(0, 8, "Half", "audio"));
+        op = wrong.start("bounce.inPlace", bounce(A), 200);
+        wrong.drainUntil(op);
+        wrong.completeBounce();
+        JsonObject job = wrong.job("render:1");
+        assertTrue(
+                job.get("outcome").getAsString().equals("unknown")
+                        && job.get("reason").getAsString().equals("readback_mismatch")
+                        && wrong.holds().size() == 1
+                        && wrong.holds().get(0).id.equals("render.quarantine"),
+                "a late bounce's first verification decides the quarantine");
     }
 
     /** Simulated native side: a job that writes its files or replaces lanes, and completes when told. */
@@ -437,12 +522,14 @@ public final class RenderModuleTest {
         final Deque<Runnable> document = new ArrayDeque<>();
         final Path dir;
         final RenderModule module;
+        final JobsModule jobs;
         /** Lane per track; the JsonObject instances stand in for native clip objects (identity). */
         final Map<String, List<JsonObject>> clips = new HashMap<>();
 
         java.util.function.Function<List<JsonObject>, List<JsonObject>> afterBounce = before -> new ArrayList<>();
-        boolean finish = true, write = true, garbage, deleteOld, done;
-        String refusal, tap;
+        boolean finish = true, write = true, garbage, deleteOld, done, lost;
+        Reason refusal;
+        String tap;
         int dispatches;
         List<Object> sources;
         String[] paths;
@@ -474,9 +561,10 @@ public final class RenderModuleTest {
                         Runnable check,
                         Runnable before) {
                     check.run();
-                    if (refusal != null) throw Errors.of(refusal, "simulated refusal", Outcome.NOT_APPLIED);
+                    if (refusal != null) throw Errors.notApplied(refusal, "simulated refusal");
                     before.run();
                     dispatches++;
+                    if (lost) throw Errors.unknown(Reason.JOB_FAILED, "simulated: no job registered");
                     sources = s;
                     paths = basePaths;
                     options = o;
@@ -497,6 +585,7 @@ public final class RenderModuleTest {
                     check.run();
                     before.run();
                     dispatches++;
+                    if (lost) throw Errors.unknown(Reason.JOB_FAILED, "simulated: no job registered");
                     tap = t;
                     done = false;
                     bounced = ids;
@@ -512,6 +601,7 @@ public final class RenderModuleTest {
                     return new RenderModule.Clips(new ArrayList<>(lane), rows);
                 }
             });
+            jobs = new JobsModule(module);
         }
 
         void complete() {
@@ -540,10 +630,20 @@ public final class RenderModuleTest {
             return fixture.submit(module, method, p, fixture.tasks.after(timeoutMs));
         }
 
-        JsonObject call(String method) {
-            HostOperation op = start(method, new JsonObject(), 5000);
+        HostOperation jobsGet(String id) {
+            JsonObject p = new JsonObject();
+            p.addProperty("id", id);
+            HostOperation op = fixture.submit(jobs, "jobs.get", p, fixture.tasks.after(5000));
             drainUntil(op);
-            return op.result.join();
+            return op;
+        }
+
+        JsonObject job(String id) {
+            return jobsGet(id).result.join().getAsJsonObject("job");
+        }
+
+        List<Holds.View> holds() {
+            return fixture.services.holds.list();
         }
 
         void drainUntil(HostOperation op) {

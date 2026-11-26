@@ -58,7 +58,7 @@ final class ParameterModule implements HostModule {
     }
 
     static void validateParams(String method, JsonObject params) {
-        if (!METHODS.contains(method)) throw Errors.notApplied(ErrorCode.UNKNOWN_METHOD, "Unknown parameter method.");
+        if (!METHODS.contains(method)) throw Errors.notApplied(Reason.UNKNOWN_METHOD, "Unknown parameter method.");
         if (method.startsWith("parameters.layer.")) {
             DeviceSources.validateLayer(params, method.endsWith(".set"), false);
             return;
@@ -83,7 +83,7 @@ final class ParameterModule implements HostModule {
     @Override
     public void dispatch(HostOperation request, String method, JsonObject params) {
         if (parameterRequest != null && !parameterRequest.result.isDone())
-            throw Errors.notApplied(ErrorCode.BUSY, "Another parameter operation is awaiting host observations.");
+            throw Errors.notApplied(Reason.BUSY, "Another parameter operation is awaiting host observations.");
         parameterRequest = request;
         if (method.endsWith(".list")) bind(request, params);
         else setParameter(request, params);
@@ -132,7 +132,7 @@ final class ParameterModule implements HostModule {
                 request,
                 () -> {
                     if (binding != target || !bankTargetMatches(target))
-                        throw Errors.notApplied(ErrorCode.STALE_TARGET, "Target changed during binding.");
+                        throw Errors.notApplied(Reason.STALE_TARGET, "Target changed during binding.");
                     return matches(target) && target.source.idsObserved;
                 },
                 () -> {
@@ -142,7 +142,7 @@ final class ParameterModule implements HostModule {
     }
 
     private JsonObject listParameters() {
-        JsonObject result = observed();
+        JsonObject result = new JsonObject();
         result.add("target", binding.json());
         JsonArray items = new JsonArray();
         ParameterSource source = binding.source;
@@ -171,27 +171,26 @@ final class ParameterModule implements HostModule {
                 || target.source != requested
                 || !matches(target)) {
             throw Errors.notApplied(
-                    ErrorCode.STALE_CONTEXT,
-                    "Read the matching parameter list method again before writing this target.");
+                    Reason.STALE_CONTEXT, "Read the matching parameter list method again before writing this target.");
         }
         String id = params.get("parameterId").getAsString();
         ParameterSource source = target.source;
         if (!source.parameterIds.contains(id))
-            throw Errors.notApplied(ErrorCode.UNKNOWN_PARAMETER, "Parameter is not in the observed ID list.");
+            throw Errors.notApplied(Reason.UNKNOWN_NAME, "Parameter is not in the observed ID list.");
         ParameterState parameter = source.parameters == null ? null : source.parameters.get(id);
         if (parameter == null || parameter.value == null)
-            throw Errors.notApplied(ErrorCode.NOT_READY, "Parameter has no readable value.");
+            throw Errors.notApplied(Reason.NOT_READY, "Parameter has no readable value.");
         double requestedValue = params.get("value").getAsDouble();
         double applied = Math.round(requestedValue * (RESOLUTION - 1)) / (double) (RESOLUTION - 1);
         if (Math.abs(parameter.value - applied) <= TOLERANCE) {
             request.result.complete(
-                    writeResult(target, id, requestedValue, applied, parameter.value, "already_at_value"));
+                    writeResult(target, id, requestedValue, applied, parameter.value, Outcome.ALREADY_MATCHED, null));
             return;
         }
         long before = parameter.sequence;
         scheduler.check(request);
         if (!matches(target))
-            throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Target changed before parameter dispatch.");
+            throw Errors.notApplied(Reason.STALE_CONTEXT, "Target changed before parameter dispatch.");
         request.dispatched = true;
         source.identity.device.setDirectParameterValueNormalized(
                 id, Math.round(requestedValue * (RESOLUTION - 1)), RESOLUTION);
@@ -200,18 +199,12 @@ final class ParameterModule implements HostModule {
                 scheduler.observeUntil(request),
                 () -> {
                     if (binding != target || !target.token.equals(token) || !matches(target))
-                        throw Errors.unknown(
-                                ErrorCode.STALE_CONTEXT, "Target changed after dispatch; outcome unknown.");
+                        throw Errors.unknown(Reason.STALE_CONTEXT, "Target changed after dispatch; outcome unknown.");
                     Double seen = observedAfter(target, id, before);
                     return seen != null && Math.abs(seen - applied) <= TOLERANCE;
                 },
                 () -> request.result.complete(writeResult(
-                        target,
-                        id,
-                        requestedValue,
-                        applied,
-                        observedAfter(target, id, before),
-                        "observer_after_write")),
+                        target, id, requestedValue, applied, observedAfter(target, id, before), Outcome.APPLIED, null)),
                 () -> {
                     Double seen = observedAfter(target, id, before);
                     request.result.complete(writeResult(
@@ -220,7 +213,8 @@ final class ParameterModule implements HostModule {
                             requestedValue,
                             applied,
                             seen,
-                            seen != null ? "readback_mismatch" : "not_observed"));
+                            Outcome.UNKNOWN,
+                            seen != null ? Reason.READBACK_MISMATCH : Reason.NOT_OBSERVED));
                 });
     }
 
@@ -232,10 +226,15 @@ final class ParameterModule implements HostModule {
     }
 
     private static JsonObject writeResult(
-            Binding target, String id, double requested, double applied, Double actual, String verification) {
-        boolean matched = actual != null && Math.abs(actual - applied) <= TOLERANCE;
-        JsonObject result = new JsonObject();
-        result.addProperty("status", matched ? "observed" : "dispatched");
+            Binding target,
+            String id,
+            double requested,
+            double applied,
+            Double actual,
+            Outcome outcome,
+            Reason reason) {
+        JsonObject result = Results.outcome(outcome);
+        if (reason != null) result.addProperty("reason", reason.wire());
         result.add("target", target.json());
         result.addProperty("parameterId", id);
         result.addProperty("requestedValue", requested);
@@ -243,8 +242,6 @@ final class ParameterModule implements HostModule {
         nullable(result, "observedValue", actual);
         nullable(result, "difference", actual == null ? null : actual - applied);
         result.addProperty("tolerance", TOLERANCE);
-        result.addProperty("matchesRequested", matched);
-        result.addProperty("verification", verification);
         result.addProperty("resolution", RESOLUTION);
         return result;
     }

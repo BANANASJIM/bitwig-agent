@@ -48,13 +48,13 @@ The main sources are under [`extension/src/main/java/dev/bitwigagent`](https://g
   - `TransportSafety` owns the single rule set for recording, automation-write and playing state.
   - `SelectionLease` owns the editor selection that launcher cursor operations bind, and `LauncherStructureLock` says what pins launcher slot rows.
   - `NativeRuntime` is the lazy shared gate to the native bindings.
-  - `Holds` owns every unresolved or in-flight write, which `extension.restart` lists and refuses on.
-- `HostOperation` tracks deadlines and completion. Host API work crosses the scheduler boundary rather than running on the network thread.
+  - `Holds` owns every unresolved or in-flight write: `status` lists them, writes in the domain are refused while one stands, and `AckModule` (`ack`) releases an unresolved one. `JobsModule` (`jobs.get`) reports the long jobs that in-flight holds stand for.
+- `HostOperation` tracks deadlines and turns a failure after dispatch into an unknown result. Host API work crosses the scheduler boundary rather than running on the network thread.
 - `DeviceSources` owns fixed root/layer/child addresses and continuity observations. `ParameterModule` owns continuously observed source-specific parameter data and the single shared active binding/request. Switching flat or nested targets invalidates the prior binding.
 - Discovery, Actions, transport, mix, devices and Launcher/MIDI have separate domain modules and observations. Their result semantics differ: a dispatch-only Action is not equivalent to an acknowledged parameter change.
-- `GridModule` separates target/RPC guards from bounded graph serialization and scalar, boolean-panel and topology writers. `GridTopologyQuarantine` serializes native topology lifetimes and keeps one quarantine record per Grid device, released only by `grid.topology.reconcile`.
+- `GridModule` separates target/RPC guards from bounded graph serialization and scalar, boolean-panel and topology writers. `GridTopologyQuarantine` serializes native topology lifetimes and keeps one quarantine record per Grid device, released only by `ack` after a graph re-check.
 - `ProjectModule` owns `project.save` (public Save action) and `project.saveAs`; `ProjectSaveAsPlan` mirrors the native folder rules host-free and `Bitwig614ProjectSaveAsAccess` calls the dialog-free save pipeline with a completion callback.
-- `RenderModule` owns `export.audio`, `bounce.inPlace` and `render.status`; `RenderPlan` names the output files and checks their headers host-free, and `Bitwig614RenderAccess` starts the native render jobs and exposes their completion latch (bounce readback reuses `Bitwig614ArrangerAccess`).
+- `RenderModule` owns `export.audio` and `bounce.inPlace` (followed with `jobs.get`); `RenderPlan` names the output files and checks their headers host-free, and `Bitwig614RenderAccess` starts the native render jobs and exposes their completion latch (bounce readback reuses `Bitwig614ArrangerAccess`).
 - `RoutingModule` owns `tracks.routing.*` and `devices.sidechain.*` (validation, bank/device targets, stopped-transport safety and quarantine); `Bitwig614RoutingAccess` binds the native output/input choosers and sidechain components, enforces audio/note kinds, checks cycles before writing and reads every write back by identity.
 - `ModulatorModule` and `ModulatorSnapshotReader` own bounded, nonloading primary-modulator reads. They share root target/read-context machinery, not Grid write authority.
 - `ModulatorEditModule` (RPC boundary), `ModulatorEditor` (CAS, dispatch, readback) and `Bitwig614ModulatorEditAccess` (descriptors) own device-modulator edits. They reuse the Grid parameter reader for typed values and Grid targets, and the Grid parameter/topology context checks, but not Grid write authority or topology quarantine.
@@ -68,14 +68,14 @@ The unnamed-package [`BitwigAgent614GridInsertion.java`](https://github.com/BANA
 1. The agent inspects the installed method schema and obtains fresh discovery/target data. The user, not a token or tool description, supplies authorization.
 2. Python validates and creates a bounded JSON request with a unique `id` and `timeoutMs`. IDs correlate replies; they are not persistent idempotency keys.
 3. The loopback transport admits the request and Java validates/routes it. Host work is scheduled with a monotonic deadline; deferred mutations check that deadline too.
-4. The domain rechecks the relevant target, context and safety observations. If eligible, it dispatches the operation and observes the method-specific completion evidence.
-5. The reply carries a result or an error with its outcome. MCP/CLI preserve that distinction. The agent must inspect per-field verification, mutation/dispatch flags and completion—not merely whether a JSON result exists.
+4. The domain rechecks the relevant target, context and safety observations. If eligible, it dispatches the operation and observes the method-specific evidence.
+5. The reply is a result or an error. A write result carries an `outcome`; an error always means nothing changed. MCP/CLI preserve that distinction (`isError` / exit 1 for an error or an outcome other than applied, already_matched or sent). The agent must read the outcome, not merely whether a JSON result exists.
 
-Outcome semantics (`not_dispatched`, `not_applied`, `unknown`) and recovery rules are defined once in [PROTOCOL.md](../PROTOCOL.md#core-discovery-and-direct-parameters); a transport timeout after dispatch is `unknown`, never "failed, therefore retry." Some successful envelopes also report `completion: unknown`; an `observed` status does not cancel that uncertainty.
+Outcomes, errors, holds and recovery are defined once in [PROTOCOL.md](../PROTOCOL.md#results-errors-and-recovery); a transport timeout after a write's dispatch is an `unknown` result, never "failed, therefore retry."
 
 The deadline is not cancellation or rollback. The client adds a short response-delivery grace without extending/replaying the host request. It never retries automatically. One call can have several native effects, and undo-aware native dispatch does not establish one-call/one-Undo grouping.
 
-On uncertainty, stop the writer, retain the response and ownership record, and reconcile through authorized inspection. Do not blindly retry through either the API or GUI. Unresolved Launcher mutations and native topology lifetimes have specific quarantine rules. Topology admission can survive extension classloader replacement in the same JVM; a device quarantine is released by `grid.topology.reconcile` after inspection, and a restart never proves rollback. Follow the exact [protocol recovery boundaries](../PROTOCOL.md#shared-topology-lifecycle-admission), not an improvised reset.
+On uncertainty, stop the writer, retain the response and ownership record, and reconcile through authorized inspection. Do not blindly retry through either the API or GUI. An unknown write leaves a hold that is released by `ack` after inspection, never by a restart (which proves no rollback); native topology lifetimes have specific rules. Topology admission can survive extension classloader replacement in the same JVM. Follow the exact [protocol recovery boundaries](../PROTOCOL.md#shared-topology-lifecycle-admission), not an improvised reset.
 
 ## What a target means
 

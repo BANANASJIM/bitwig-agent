@@ -56,7 +56,7 @@ final class Bitwig614TrackGroupAccess implements MixModule.GroupAccess {
             context.guard(capture, models, labels, check);
             if (!resolve(proxies, ids).equals(tracks) || parent(tracks) != common)
                 throw Errors.notApplied(
-                        ErrorCode.STALE_CONTEXT, "Native track targets or their parent group changed before grouping.");
+                        Reason.STALE_CONTEXT, "Native track targets or their parent group changed before grouping.");
         };
         guard.run();
         beforeWrite.run();
@@ -75,7 +75,7 @@ final class Bitwig614TrackGroupAccess implements MixModule.GroupAccess {
             Object track = resolver.resolve(
                     proxies.get(i), ids.get(i), Bitwig614TrackResolver.Kind.CHANNEL, Bitwig614TrackResolver.Kind.GROUP);
             if (tracks.contains(track))
-                throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Two trackIds resolve to the same native track.");
+                throw Errors.notApplied(Reason.STALE_CONTEXT, "Two trackIds resolve to the same native track.");
             tracks.add(track);
         }
         return tracks;
@@ -86,9 +86,9 @@ final class Bitwig614TrackGroupAccess implements MixModule.GroupAccess {
         for (Object track : tracks) {
             Object owner = resolver.parent(track);
             if (!groupClass.isInstance(owner))
-                throw Errors.notApplied(ErrorCode.UNSUPPORTED_SCOPE, "Native parent is not a track group.");
+                throw Errors.notApplied(Reason.UNSUPPORTED_SCOPE, "Native parent is not a track group.");
             if (common != null && owner != common)
-                throw Errors.notApplied(ErrorCode.UNSUPPORTED_SCOPE, "Tracks do not share one native parent group.");
+                throw Errors.notApplied(Reason.UNSUPPORTED_SCOPE, "Tracks do not share one native parent group.");
             common = owner;
         }
         return common;

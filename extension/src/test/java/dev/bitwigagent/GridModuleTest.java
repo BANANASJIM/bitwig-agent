@@ -117,7 +117,7 @@ public final class GridModuleTest {
         f.device.child("position").emit(1);
         f.host.next();
         assertTrue(
-                assertRpcError("stale_context", op).outcome.equals("not_applied"),
+                !assertRpcError("stale_context", op).unknown,
                 "post-read rebind rejects stale result without mutation ambiguity");
     }
 
@@ -130,13 +130,13 @@ public final class GridModuleTest {
         assertTrue(f.adapter.reads == 0 && f.host.tasks.isEmpty(), "cancelled document queue work never reads");
         op = f.host.submit(f.module, "grid.get", target(), 0);
         f.host.next();
-        assertRpcError("deadline_exceeded", op);
+        assertRpcError("deadline", op);
         assertTrue(f.adapter.tasks.isEmpty(), "expired controller queue work never dispatches native reads");
         Fixture closed = new Fixture();
         op = closed.start(target());
         closed.host.services.scheduler.close();
         closed.adapter.next();
-        assertRpcError("unavailable", op);
+        assertRpcError("not_ready", op);
         assertTrue(closed.adapter.reads == 0, "extension close invalidates queued document work");
         Fixture late = new Fixture();
         op = late.start(target());
@@ -177,7 +177,7 @@ public final class GridModuleTest {
         errors.adapter.fail = true;
         op = errors.start(target());
         errors.adapter.next();
-        assertRpcError("not_grid", op);
+        assertRpcError("kind_mismatch", op);
         assertTrue(errors.host.tasks.isEmpty(), "nonGrid error does not deliver a fake empty graph");
     }
 
@@ -186,29 +186,27 @@ public final class GridModuleTest {
         JsonObject value = new JsonObject();
         value.add("unavailable", JsonNull.INSTANCE);
         assertTrue(
-                BoundedJson.serialize(value, 240000, ErrorCode.GRID_BOUNDS_EXCEEDED, "oversize")
+                BoundedJson.serialize(value, 240000, Reason.OUT_OF_BOUNDS, "oversize")
                         .contains("null"),
                 "unsupported null fields survive immutable handoff");
         value.addProperty("large", "x".repeat(240000));
         {
             RpcException error = assertThrows(
-                    RpcException.class,
-                    () -> BoundedJson.serialize(value, 240000, ErrorCode.GRID_BOUNDS_EXCEEDED, "oversize"));
+                    RpcException.class, () -> BoundedJson.serialize(value, 240000, Reason.OUT_OF_BOUNDS, "oversize"));
             assertTrue(
-                    error.code.equals("grid_bounds_exceeded"),
+                    error.reason.wire().equals("out_of_bounds"),
                     "oversize asks caller to reduce page instead of truncating");
         }
     }
 
     @Test
     void loadedSourceGateFailsClosed() throws Exception {
-        GridAdapter wrongVersion = new Bitwig614GridAdapter(
-                new Bitwig614Runtime(new Object(), "6.1.3", () -> {}).access(ErrorCode.GRID_UNAVAILABLE));
+        GridAdapter wrongVersion =
+                new Bitwig614GridAdapter(new Bitwig614Runtime(new Object(), "6.1.3", () -> {}).access());
         assertTrue(
                 !wrongVersion.capabilities().get("gatePassed").getAsBoolean(),
                 "unsupported version fails before any native binding");
-        GridAdapter noSource = new Bitwig614GridAdapter(
-                new Bitwig614Runtime(new Object(), "6.1.4", () -> {}).access(ErrorCode.GRID_UNAVAILABLE));
+        GridAdapter noSource = new Bitwig614GridAdapter(new Bitwig614Runtime(new Object(), "6.1.4", () -> {}).access());
         assertTrue(
                 !noSource.capabilities().get("gatePassed").getAsBoolean(),
                 "missing loaded CodeSource cannot fall back to arbitrary installed JAR");
@@ -248,7 +246,8 @@ public final class GridModuleTest {
                 noSource.snapshot(
                         new Object(), UUID.fromString(HostFixture.A), 0, 64, true, false, null, false, () -> {});
             });
-            assertTrue(error.code.equals("grid_unavailable"), "snapshot requires exact verified identity gate");
+            assertTrue(
+                    error.reason.wire().equals("native_unavailable"), "snapshot requires exact verified identity gate");
         }
         {
             RpcException error = assertThrows(RpcException.class, () -> {
@@ -256,7 +255,7 @@ public final class GridModuleTest {
                     throw new AssertionError("read escaped gate");
                 });
             });
-            assertTrue(error.code.equals("grid_unavailable"), "failed gate returns actionable unavailable");
+            assertTrue(error.reason.wire().equals("host_mismatch"), "a failed gate is a host mismatch");
         }
         Path file = Files.createTempFile("grid-hash-test-", ".bin");
         try {
@@ -268,10 +267,10 @@ public final class GridModuleTest {
             {
                 RpcException error = assertThrows(RpcException.class, () -> {
                     Bitwig614Runtime.hash(file, () -> {
-                        throw Errors.notApplied(ErrorCode.CANCELLED, "cancel hashing");
+                        throw Errors.notApplied(Reason.CANCELLED, "cancel hashing");
                     });
                 });
-                assertTrue(error.code.equals("cancelled"), "gate hashing observes request cancellation");
+                assertTrue(error.reason.wire().equals("cancelled"), "gate hashing observes request cancellation");
             }
         } finally {
             Files.deleteIfExists(file);
@@ -417,7 +416,7 @@ public final class GridModuleTest {
         controller.host.transport.child("isArrangerRecordEnabled").emit(true);
         controller.host.next();
         assertTrue(
-                assertRpcError("unsafe_state", op).outcome.equals("not_applied") && controller.adapter.tasks.isEmpty(),
+                !assertRpcError("unsafe_state", op).unknown && controller.adapter.tasks.isEmpty(),
                 "recording enabled in initial controller queue is rejected");
         for (String key : List.of(
                 "isArrangerRecordEnabled",
@@ -428,9 +427,7 @@ public final class GridModuleTest {
             queued.host.transport.child(key).emit(true);
             queued.adapter.next();
             assertTrue(
-                    assertRpcError("unsafe_state", op).outcome.equals("not_applied")
-                            && queued.adapter.writer.calls == 0
-                            && !op.dispatched,
+                    !assertRpcError("unsafe_state", op).unknown && queued.adapter.writer.calls == 0 && !op.dispatched,
                     "recording enabled in document queue prevents invocation");
         }
         Fixture started = new Fixture();
@@ -448,7 +445,7 @@ public final class GridModuleTest {
         changed.device.child("name").emit("Poly Grid");
         changed.adapter.next();
         assertTrue(
-                assertRpcError("stale_context", op).outcome.equals("not_applied") && changed.adapter.writer.calls == 0,
+                !assertRpcError("stale_context", op).unknown && changed.adapter.writer.calls == 0,
                 "target ABA before mutation is not-applied");
         Fixture immediate = new Fixture();
         op = immediate.startWrite();
@@ -456,7 +453,7 @@ public final class GridModuleTest {
                 () -> immediate.host.transport.child("isArrangerRecordEnabled").emit(true);
         immediate.adapter.next();
         assertTrue(
-                assertRpcError("unsafe_state", op).outcome.equals("not_applied") && immediate.adapter.writer.calls == 0,
+                !assertRpcError("unsafe_state", op).unknown && immediate.adapter.writer.calls == 0,
                 "changed safety at writer entry is rechecked, not cached permission");
         Fixture cancelled = new Fixture();
         op = cancelled.startWrite();
@@ -496,13 +493,12 @@ public final class GridModuleTest {
     void everyPostDispatchBoundaryKeepsUnknownOutcome() {
         Fixture nativeFailure = new Fixture();
         nativeFailure.adapter.writer.afterMutation = () -> {
-            throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "native partial failure");
+            throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "native partial failure");
         };
         HostOperation op = nativeFailure.startWrite();
         nativeFailure.adapter.next();
         assertTrue(
-                assertRpcError("grid_unavailable", op).outcome.equals("unknown")
-                        && nativeFailure.adapter.writer.calls == 1,
+                assertUnknown("native_unavailable", op) != null && nativeFailure.adapter.writer.calls == 1,
                 "document callback normalizes partial native failures without retry");
         Fixture linkage = new Fixture();
         linkage.adapter.writer.afterMutation = () -> {
@@ -511,7 +507,7 @@ public final class GridModuleTest {
         op = linkage.startWrite();
         linkage.adapter.next();
         assertTrue(
-                assertRpcError("grid_unavailable", op).outcome.equals("unknown") && linkage.adapter.writer.calls == 1,
+                assertUnknown("native_unavailable", op) != null && linkage.adapter.writer.calls == 1,
                 "native Error completes uncertain result instead of escaping the callback");
         Fixture serialization = new Fixture();
         serialization.adapter.afterWrite =
@@ -519,31 +515,26 @@ public final class GridModuleTest {
         op = serialization.startWrite();
         serialization.adapter.next();
         assertTrue(
-                assertRpcError("grid_bounds_exceeded", op).outcome.equals("unknown"),
+                assertUnknown("out_of_bounds", op) != null,
                 "serialization failure after mutation cannot become not-applied");
         Fixture target = new Fixture();
         op = target.startWrite();
         target.adapter.next();
         target.device.child("position").emit(1);
         target.host.next();
-        assertTrue(
-                assertRpcError("stale_context", op).outcome.equals("unknown"),
-                "late public target failure remains unknown");
+        assertTrue(assertUnknown("stale_context", op) != null, "late public target failure remains unknown");
         Fixture safety = new Fixture();
         op = safety.startWrite();
         safety.adapter.next();
         safety.host.transport.child("isArrangerRecordEnabled").emit(true);
         safety.host.next();
         assertTrue(
-                assertRpcError("unsafe_state", op).outcome.equals("unknown"),
-                "post-mutation safety change cannot erase dispatched state");
+                assertUnknown("unsafe_state", op) != null, "post-mutation safety change cannot erase dispatched state");
         Fixture closed = new Fixture();
         op = closed.startWrite();
         closed.adapter.writer.afterMutation = closed.host.services.scheduler::close;
         closed.adapter.next();
-        assertTrue(
-                assertRpcError("unavailable", op).outcome.equals("unknown"),
-                "extension close during invocation preserves unknown");
+        assertTrue(assertUnknown("not_ready", op) != null, "extension close during invocation preserves unknown");
         Fixture late = new Fixture();
         op = late.startWrite();
         late.adapter.next();
@@ -561,9 +552,7 @@ public final class GridModuleTest {
         noop.device.child("position").emit(1);
         noop.host.next();
         assertTrue(
-                assertRpcError("stale_context", op).outcome.equals("not_applied")
-                        && !op.dispatched
-                        && noop.adapter.writer.calls == 0,
+                !assertRpcError("stale_context", op).unknown && !op.dispatched && noop.adapter.writer.calls == 0,
                 "late error after no-op does not invent a dispatched mutation");
         HostOperation expired = new HostOperation(0);
         expired.dispatched = true;
@@ -571,9 +560,7 @@ public final class GridModuleTest {
             RpcException error = assertThrows(RpcException.class, () -> noop.host.services.scheduler.check(expired));
             expired.fail(error);
         }
-        assertTrue(
-                assertRpcError("deadline_exceeded", expired).outcome.equals("unknown"),
-                "deadline after dispatch preserves uncertainty");
+        assertTrue(assertUnknown("deadline", expired) != null, "deadline after dispatch preserves uncertainty");
     }
 
     private static JsonObject moduleTarget(boolean move) {
@@ -668,7 +655,7 @@ public final class GridModuleTest {
                 if (boundary < 2) f.adapter.next();
                 else f.host.next();
                 assertTrue(
-                        assertRpcError("stale_context", op).outcome.equals(boundary == 0 ? "not_applied" : "unknown")
+                        failed("stale_context", op, boundary == 0)
                                 && f.adapter.topology.calls == (boundary == 0 ? 0 : 1),
                         "safety epoch change across native queue, later observation or controller delivery never retries");
             }
@@ -679,8 +666,7 @@ public final class GridModuleTest {
             target.device.child("name").emit("Poly Grid");
             target.adapter.next();
             assertTrue(
-                    assertRpcError("stale_context", op).outcome.equals("not_applied")
-                            && target.adapter.topology.calls == 0,
+                    !assertRpcError("stale_context", op).unknown && target.adapter.topology.calls == 0,
                     "observed target ABA blocks topology before native dispatch");
         }
     }
@@ -778,7 +764,7 @@ public final class GridModuleTest {
         f.host.next();
         JsonObject result = op.result.join();
         assertTrue(
-                result.get("matchesRequested").getAsBoolean()
+                result.get("outcome").getAsString().equals("applied")
                         && result.has("target")
                         && result.get("previousSource").isJsonNull()
                         && !result.has("graph")
@@ -850,8 +836,7 @@ public final class GridModuleTest {
             HostOperation op = f.host.submit(f.module, "grid.connections.set", connectionTarget());
             f.host.next();
             assertTrue(
-                    assertRpcError("unsafe_state", op).outcome.equals("not_applied")
-                            && f.adapter.connections.calls == 0,
+                    !assertRpcError("unsafe_state", op).unknown && f.adapter.connections.calls == 0,
                     "every stopped/recording/automation prerequisite blocks cable dispatch");
         }
         Fixture unobserved = new Fixture(true, false);
@@ -875,7 +860,7 @@ public final class GridModuleTest {
                 if (boundary < 2) f.adapter.next();
                 else f.host.next();
                 assertTrue(
-                        assertRpcError("stale_context", op).outcome.equals(boundary == 0 ? "not_applied" : "unknown")
+                        failed("stale_context", op, boundary == 0)
                                 && f.adapter.connections.calls == (boundary == 0 ? 0 : 1),
                         "cable safety/target ABA guards all three queue boundaries");
             }
@@ -895,8 +880,7 @@ public final class GridModuleTest {
         HostOperation op = expired.host.submit(expired.module, "grid.connections.set", connectionTarget(), 0);
         expired.host.next();
         assertTrue(
-                assertRpcError("deadline_exceeded", op).outcome.equals("not_applied")
-                        && expired.adapter.tasks.isEmpty(),
+                !assertRpcError("deadline", op).unknown && expired.adapter.tasks.isEmpty(),
                 "expired cable request never enters native queue");
         Fixture closed = new Fixture();
         op = closed.host.submit(closed.module, "grid.connections.set", connectionTarget());
@@ -905,7 +889,7 @@ public final class GridModuleTest {
         closed.host.services.scheduler.close();
         closed.adapter.next();
         assertTrue(
-                assertRpcError("unavailable", op).outcome.equals("unknown") && closed.adapter.connections.calls == 1,
+                assertUnknown("not_ready", op) != null && closed.adapter.connections.calls == 1,
                 "close after setter return cannot convert abandoned observation into success or rollback");
     }
 
@@ -985,8 +969,7 @@ public final class GridModuleTest {
         JsonObject result = op.result.join();
         assertTrue(
                 op.dispatched
-                        && result.get("status").getAsString().equals("observed")
-                        && result.get("batchStatus").getAsString().equals("applied")
+                        && result.get("outcome").getAsString().equals("applied")
                         && result.get("written").getAsInt() == 1
                         && result.getAsJsonArray("writes").size() == 1
                         && result.has("target")
@@ -1223,8 +1206,7 @@ public final class GridModuleTest {
         f.host.next();
         JsonObject result = op.result.join();
         assertTrue(
-                result.get("status").getAsString().equals("observed")
-                        && result.get("batchStatus").getAsString().equals("applied")
+                result.get("outcome").getAsString().equals("applied")
                         && result.get("written").getAsInt() == 2
                         && result.getAsJsonArray("modules").size() == 2
                         && result.getAsJsonArray("modulesAdded").size() == 2
@@ -1274,7 +1256,7 @@ public final class GridModuleTest {
     }
 
     @Test
-    void reconcileReleasesSettlementMismatchThroughTheQueues() {
+    void ackReleasesSettlementMismatchThroughTheQueues() {
         Fixture f = new Fixture();
         HostOperation op = f.host.submit(f.module, "grid.modules.insert", insertionTarget());
         f.host.next();
@@ -1283,8 +1265,8 @@ public final class GridModuleTest {
         f.adapter.insertion.incoming.put(GridSnapshotReader.Field.Y, 9);
         f.adapter.next();
         assertTrue(
-                f.adapter.insertion.guard.quarantined() && op.result.isCompletedExceptionally(),
-                "settlement mismatch quarantines with an unknown request");
+                f.adapter.insertion.guard.quarantined() && assertUnknown("readback_mismatch", op) != null,
+                "settlement mismatch holds the device with an unknown request");
         JsonObject compact = GridModule.compactCapabilities(capabilitiesWith(f.adapter.insertion.guard));
         assertTrue(
                 compact.getAsJsonObject("topologyQuarantine")
@@ -1295,14 +1277,16 @@ public final class GridModuleTest {
                         .getAsString()
                         .equals("settlement_mismatch"),
                 "compact capabilities keep the quarantined device and its origin");
-        assertRpcError("invalid_params", f.host.submit(f.module, "grid.topology.reconcile", insertionTarget()));
-        HostOperation reconcile = f.host.submit(f.module, "grid.topology.reconcile", target());
+        AckModule ack = f.host.services.ack(f.module);
+        JsonObject id = new JsonObject();
+        id.addProperty("id", GridTopologyQuarantine.holdId(HostFixture.A + "/" + graphKey(f)));
+        HostOperation acked = f.host.submit(ack, "ack", id);
         f.host.next();
         f.adapter.next();
         f.host.next();
-        JsonObject result = reconcile.result.join();
+        JsonObject result = acked.result.join();
         assertTrue(
-                result.get("released").getAsBoolean()
+                result.get("outcome").getAsString().equals("applied")
                         && result.getAsJsonObject("found")
                                 .getAsJsonObject("module")
                                 .get("inserted")
@@ -1311,9 +1295,34 @@ public final class GridModuleTest {
                                 .get("trackId")
                                 .getAsString()
                                 .equals(HostFixture.A)
-                        && !reconcile.dispatched,
-                "reconcile is a document-queue read that releases a consistent mismatch");
+                        && !acked.dispatched,
+                "ack is a document-queue read that releases a consistent mismatch");
         f.adapter.insertion.guard.requireAvailable(GridInsertionWriterTest.ANY);
+        HostOperation again = f.host.submit(ack, "ack", id);
+        f.host.next();
+        f.adapter.next();
+        assertRpcError("unknown_hold", again);
+        JsonObject elsewhere = new JsonObject();
+        elsewhere.addProperty("id", GridTopologyQuarantine.holdId(HostFixture.A + "/0"));
+        HostOperation missing = f.host.submit(ack, "ack", elsewhere);
+        f.host.next();
+        f.adapter.next();
+        assertTrue(
+                assertRpcError("unknown_hold", missing).getMessage().contains("No observed Grid device"),
+                "a hold id naming no observed device on the track releases nothing");
+    }
+
+    /** The device part of a Grid hold id: the identity of the fixture's native graph. */
+    private static String graphKey(Fixture f) {
+        String device = GridInsertionWriterTest.device(f.adapter.insertion);
+        return device.substring(device.indexOf('/') + 1);
+    }
+
+    /** An error when nothing was dispatched, else a settled unknown result; both carry {@code reason}. */
+    private static boolean failed(String reason, HostOperation op, boolean beforeDispatch) {
+        if (beforeDispatch) assertRpcError(reason, op);
+        else assertUnknown(reason, op);
+        return true;
     }
 
     private static JsonObject capabilitiesWith(GridTopologyQuarantine guard) {
@@ -1386,7 +1395,7 @@ public final class GridModuleTest {
             HostOperation op = f.host.submit(f.module, "grid.modules.insert", insertionTarget());
             f.host.next();
             assertTrue(
-                    assertRpcError("unsafe_state", op).outcome.equals("not_applied") && f.adapter.insertion.loads == 0,
+                    !assertRpcError("unsafe_state", op).unknown && f.adapter.insertion.loads == 0,
                     "observed unsafe transport blocks insertion before native loading");
         }
         for (int change = 0; change < 4; change++) {
@@ -1411,11 +1420,11 @@ public final class GridModuleTest {
             f.adapter.next();
             f.adapter.insertion.guard.requireAvailable(GridInsertionWriterTest.ANY);
             assertTrue(
-                    op.result.isCompletedExceptionally() && f.host.tasks.isEmpty(),
+                    (op.result.isCancelled() || assertOutcome("unknown", op) != null) && f.host.tasks.isEmpty(),
                     "native settlement is not skipped by controller schedule/future/extension close");
             if (change < 2)
                 assertTrue(
-                        assertRpcError("stale_context", op).outcome.equals("unknown"),
+                        assertUnknown("stale_context", op) != null,
                         "loader dispatch preserves uncertainty after public ABA");
         }
         Fixture late = new Fixture();
@@ -1428,7 +1437,7 @@ public final class GridModuleTest {
         late.host.next();
         late.adapter.insertion.guard.requireAvailable(GridInsertionWriterTest.ANY);
         assertTrue(
-                assertRpcError("stale_context", op).outcome.equals("unknown") && late.adapter.insertion.placements == 1,
+                assertUnknown("stale_context", op) != null && late.adapter.insertion.placements == 1,
                 "post-settlement controller rejection never resurrects native pending lifetime");
     }
 
@@ -1529,7 +1538,7 @@ public final class GridModuleTest {
         f.host.next();
         f.adapter.next();
         assertTrue(
-                assertRpcError("stale_context", stale).outcome.equals("not_applied") && f.adapter.naming.calls == 2,
+                !assertRpcError("stale_context", stale).unknown && f.adapter.naming.calls == 2,
                 "effective name cannot authorize even an otherwise matching raw no-op");
         HostOperation noop = f.host.submit(f.module, "grid.modules.rename", renameTarget("", ""));
         f.host.next();
@@ -1554,8 +1563,7 @@ public final class GridModuleTest {
             HostOperation op = unsafe.host.submit(unsafe.module, "grid.modules.rename", renameTarget("", ""));
             unsafe.host.next();
             assertTrue(
-                    assertRpcError("unsafe_state", op).outcome.equals("not_applied")
-                            && unsafe.adapter.naming.calls == 0,
+                    !assertRpcError("unsafe_state", op).unknown && unsafe.adapter.naming.calls == 0,
                     "unsafe no-op still requires stopped/nonrecording/nonautomation authorization");
         }
         Fixture controller = new Fixture();
@@ -1565,16 +1573,14 @@ public final class GridModuleTest {
         controller.host.transport.child("isPlaying").emit(false);
         controller.host.next();
         assertTrue(
-                assertRpcError("stale_context", queued).outcome.equals("not_applied")
-                        && controller.adapter.tasks.isEmpty(),
+                !assertRpcError("stale_context", queued).unknown && controller.adapter.tasks.isEmpty(),
                 "rename safety ticket rejects transitions before initial controller dispatch");
         Fixture unobserved = new Fixture(true, false);
         HostOperation unready =
                 unobserved.host.submit(unobserved.module, "grid.modules.rename", renameTarget("", "Lead"));
         unobserved.host.next();
         assertTrue(
-                assertRpcError("not_ready", unready).outcome.equals("not_applied")
-                        && unobserved.adapter.naming.calls == 0,
+                !assertRpcError("not_ready", unready).unknown && unobserved.adapter.naming.calls == 0,
                 "unobserved safety never authorizes rename");
         for (int boundary = 0; boundary < 3; boundary++)
             for (int transition = 0; transition < 3; transition++) {
@@ -1596,8 +1602,7 @@ public final class GridModuleTest {
                 if (boundary < 2) f.adapter.next();
                 else f.host.next();
                 assertTrue(
-                        assertRpcError("stale_context", op).outcome.equals(boundary == 0 ? "not_applied" : "unknown")
-                                && f.adapter.naming.calls == (boundary == 0 ? 0 : 1),
+                        failed("stale_context", op, boundary == 0) && f.adapter.naming.calls == (boundary == 0 ? 0 : 1),
                         "name safety/target ABA at dispatch, document observation or controller delivery never retries");
             }
         Fixture immediate = new Fixture();
@@ -1611,8 +1616,7 @@ public final class GridModuleTest {
         immediate.adapter.next();
         if (!immediate.adapter.tasks.isEmpty()) immediate.adapter.next();
         assertTrue(
-                assertRpcError("stale_context", changed).outcome.equals("unknown")
-                        && immediate.adapter.naming.calls == 1,
+                assertUnknown("stale_context", changed) != null && immediate.adapter.naming.calls == 1,
                 "a safety transition during the native setter cannot be reported not-applied");
         Fixture noop = new Fixture();
         HostOperation op = noop.host.submit(noop.module, "grid.modules.rename", renameTarget("", ""));
@@ -1622,7 +1626,7 @@ public final class GridModuleTest {
         noop.device.child("position").emit(1);
         noop.host.next();
         assertTrue(
-                assertRpcError("stale_context", op).outcome.equals("not_applied") && !op.dispatched,
+                !assertRpcError("stale_context", op).unknown && !op.dispatched,
                 "late no-op delivery still checks explicit target without claiming a write");
     }
 
@@ -1644,8 +1648,7 @@ public final class GridModuleTest {
                         "cancel/close before native dispatch prevents setter; after dispatch never rolls back or retries");
                 if (close)
                     assertTrue(
-                            assertRpcError("unavailable", op).outcome.equals(boundary == 0 ? "not_applied" : "unknown"),
-                            "close preserves native rename outcome boundary");
+                            failed("not_ready", op, boundary == 0), "close preserves native rename outcome boundary");
                 else assertTrue(op.result.isCancelled(), "cancelled rename cannot be completed by late callbacks");
             }
     }
@@ -1655,6 +1658,81 @@ public final class GridModuleTest {
         result.addProperty("moduleId", "00000000-0000-0001-0000-000000000001");
         result.addProperty("parameterId", "EXACT_ID");
         return result;
+    }
+
+    @Test
+    void layerAddressingNeedsObservedLayersAndChildren() {
+        JsonObject badParent = target();
+        badParent.addProperty("trackId", "not-a-uuid");
+        assertInvalidParams(() -> DeviceSources.validateParent(badParent));
+        assertInvalidParams(() -> DeviceSources.validateLayer(HostFixture.json("{\"parent\":1}"), false, true));
+        HostFixture unobserved = HostFixture.withoutServices();
+        unobserved.tracks[0].child("createDeviceBank").child("scrollPosition").notifyInitial = false;
+        TestServices services = new TestServices(
+                unobserved.host.proxy(com.bitwig.extension.controller.api.ControllerHost.class), unobserved.tasks::now);
+        assertTrue(
+                assertRpcError("not_ready", () -> services.sources.root(target()))
+                        .getMessage()
+                        .contains("Root device window"),
+                "a root device window that was never observed is not addressable");
+        Fixture f = new Fixture();
+        DeviceSources sources = f.host.services.sources;
+        FakeHost layers = f.device.child("createLayerBank");
+        f.device.child("hasLayers").emit(true);
+        layers.child("exists").emit(true);
+        layers.child("itemCount").emit(1);
+        FakeHost layer = layers.item(0);
+        String id = "00000000-0000-0000-0000-0000000000aa";
+        layer.child("exists").emit(true);
+        assertTrue(
+                assertRpcError("not_ready", () -> sources.layer(target(), id))
+                        .getMessage()
+                        .contains("Layer identity window"),
+                "an existing layer without an observed UUID is not addressable");
+        layer.child("channelId").emit(id);
+        assertTrue(
+                assertRpcError("not_ready", () -> sources.layer(target(), id))
+                        .getMessage()
+                        .contains("Layer and child window"),
+                "a layer whose child window was never observed is not addressable");
+        layer.child("createDeviceBank").child("exists").emit(true);
+        JsonObject child = new JsonObject();
+        child.add("parent", target());
+        child.addProperty("layerId", id);
+        child.addProperty("childDeviceIndex", 2);
+        child.addProperty("expectedChildDeviceName", "Child");
+        child.addProperty("discoveryToken", "token");
+        assertRpcError("outside_window", () -> sources.child(child));
+        child.addProperty("childDeviceIndex", 0);
+        assertTrue(
+                assertRpcError("not_ready", () -> sources.child(child))
+                        .getMessage()
+                        .contains("Child metadata"),
+                "an absent layer child is not addressable");
+    }
+
+    @Test
+    void voicingAndRemotePagesCrossBothQueues() {
+        Fixture f = new Fixture();
+        String slots = "\"slots\":[{\"moduleId\":\"" + new UUID(1, 1) + "\",\"parameterId\":\"VALUE\"}]";
+        for (String[] call : new String[][] {
+            {"grid.voicing.get", ""},
+            {"grid.voicing.set", "\"expected\":{\"voices\":1},\"set\":{\"voices\":2}"},
+            {"devices.remote.define", "\"pageName\":\"Macros\"," + slots},
+            {"devices.remote.deletePage", "\"pageName\":\"Macros\""}
+        }) {
+            JsonObject params = target();
+            if (!call[1].isEmpty())
+                HostFixture.json("{" + call[1] + "}").entrySet().forEach(e -> params.add(e.getKey(), e.getValue()));
+            HostOperation op = f.host.submit(f.module, call[0], params);
+            f.host.next();
+            f.adapter.next();
+            f.host.next();
+            assertTrue(
+                    op.result.join().has("target") && op.dispatched == !call[0].equals("grid.voicing.get"),
+                    call[0] + " reaches the adapter once and dispatches only when it writes");
+        }
+        assertTrue(f.adapter.reads == 1 && f.adapter.remoteCalls == 2, "each call reached its adapter method");
     }
 
     private static JsonObject target() {
@@ -1764,7 +1842,7 @@ public final class GridModuleTest {
                 Runnable check) {
             check.run();
             reads++;
-            if (fail) throw Errors.notApplied(ErrorCode.NOT_GRID, "not a Grid device");
+            if (fail) throw Errors.notApplied(Reason.KIND_MISMATCH, "not a Grid device");
             return result(offset, limit, parameters);
         }
 
@@ -1778,14 +1856,14 @@ public final class GridModuleTest {
                 Runnable check) {
             check.run();
             reads++;
-            return Results.observed();
+            return new JsonObject();
         }
 
         @Override
         public JsonObject voicing(Object proxy, UUID expectedTrackId, Runnable check) {
             check.run();
             reads++;
-            return Results.observed();
+            return new JsonObject();
         }
 
         @Override
@@ -1793,7 +1871,7 @@ public final class GridModuleTest {
                 Object proxy, UUID track, GridVoicingWriter.Request request, Runnable check, Runnable dispatch) {
             check.run();
             dispatch.run();
-            return Results.observed();
+            return new JsonObject();
         }
 
         @Override
@@ -1802,7 +1880,7 @@ public final class GridModuleTest {
             check.run();
             dispatch.run();
             remoteCalls++;
-            return Results.observed();
+            return new JsonObject();
         }
 
         @Override
@@ -1811,7 +1889,7 @@ public final class GridModuleTest {
             check.run();
             dispatch.run();
             remoteCalls++;
-            return Results.observed();
+            return new JsonObject();
         }
 
         @Override
@@ -1906,8 +1984,9 @@ public final class GridModuleTest {
         }
 
         @Override
-        public JsonObject reconcileTopology(Object proxy, UUID track, Runnable check) {
-            return insertion.writer.reconcile(insertion.model.proxy, GridInsertionWriterTest.TRACK, check);
+        public JsonObject ackTopology(Object proxy, UUID track, String device, Runnable check) {
+            String nativeDevice = GridInsertionWriterTest.TRACK + device.substring(device.indexOf('/'));
+            return insertion.writer.ack(insertion.model.proxy, GridInsertionWriterTest.TRACK, nativeDevice, check);
         }
 
         @Override

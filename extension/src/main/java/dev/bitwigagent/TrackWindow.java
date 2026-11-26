@@ -87,12 +87,12 @@ final class TrackWindow {
     }
 
     int trackSlot(String trackId) {
-        if (!observed) throw Errors.notApplied(ErrorCode.NOT_READY, "Track bank has not reported its size yet.");
+        if (!observed) throw Errors.notApplied(Reason.NOT_READY, "Track bank has not reported its size yet.");
         for (int i = 0; i < TRACKS; i++) {
             if (trackMatches(trackId, at(i))) return i;
         }
         throw Errors.notApplied(
-                ErrorCode.OUTSIDE_WINDOW, "Track UUID is absent from the current " + TRACKS + "-track window.");
+                Reason.OUTSIDE_WINDOW, "Track UUID is absent from the current " + TRACKS + "-track window.");
     }
 
     boolean trackMatches(String trackId, Track track) {

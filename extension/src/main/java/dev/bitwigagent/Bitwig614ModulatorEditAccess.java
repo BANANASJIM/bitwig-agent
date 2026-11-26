@@ -181,7 +181,7 @@ final class Bitwig614ModulatorEditAccess implements ModulatorEditor.Access {
     public void guardDevice(Object proxy, UUID trackId, Object device, Runnable check) {
         NativeDeviceTarget.Capture now = targets.capture(proxy, trackId, check);
         if (now.device != device)
-            throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Explicit native device changed during the operation.");
+            throw Errors.notApplied(Reason.STALE_CONTEXT, "Explicit native device changed during the operation.");
     }
 
     @Override
@@ -195,13 +195,12 @@ final class Bitwig614ModulatorEditAccess implements ModulatorEditor.Access {
     public List<Object> modulators(Object collection) {
         int size = (Integer) bindings.invoke(count, collection);
         if (size < 0 || size > ModulatorSnapshotReader.MAX_MODULATORS)
-            throw Errors.notApplied(
-                    ErrorCode.MODULATOR_BOUNDS_EXCEEDED, "Primary modulator collection size is outside 0..4096.");
+            throw Errors.notApplied(Reason.OUT_OF_BOUNDS, "Primary modulator collection size is outside 0..4096.");
         List<Object> result = new ArrayList<>(size);
         for (int i = 0; i < size; i++) {
             Object member = bindings.invoke(index, collection, i);
             if (member == null || member.getClass() != modulatorType)
-                throw Errors.notApplied(ErrorCode.MODULATOR_UNAVAILABLE, "Unknown primary modulator model.");
+                throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Unknown primary modulator model.");
             bindings.requireModelThread(member);
             result.add(member);
         }
@@ -240,7 +239,7 @@ final class Bitwig614ModulatorEditAccess implements ModulatorEditor.Access {
         if (value == null) return null;
         Object list = bindings.invoke(children, value);
         if (!(list instanceof List<?>))
-            throw Errors.notApplied(ErrorCode.MODULATOR_UNAVAILABLE, "Modulator contents children are not a list.");
+            throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Modulator contents children are not a list.");
         List<Object> result = new ArrayList<>(((List<?>) list).size());
         for (Object child : (List<?>) list) {
             if (child != null) bindings.requireModelThread(child);
@@ -299,11 +298,11 @@ final class Bitwig614ModulatorEditAccess implements ModulatorEditor.Access {
     public List<Object> mappings(Object source) {
         Object list = bindings.invoke(mappings, source);
         if (!(list instanceof List<?>))
-            throw Errors.notApplied(ErrorCode.MODULATOR_UNAVAILABLE, "Modulation mappings are not a list.");
+            throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Modulation mappings are not a list.");
         List<Object> result = new ArrayList<>();
         for (Object item : (List<?>) list) {
             if (item == null || item.getClass() != mappingType)
-                throw Errors.notApplied(ErrorCode.MODULATOR_UNAVAILABLE, "Unknown modulation mapping model.");
+                throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Unknown modulation mapping model.");
             result.add(item);
         }
         return result;
@@ -325,7 +324,7 @@ final class Bitwig614ModulatorEditAccess implements ModulatorEditor.Access {
         Object value = bindings.invoke(transfer, mapping);
         if (value == null) return null;
         if (!transferType.isInstance(value))
-            throw Errors.notApplied(ErrorCode.MODULATOR_UNAVAILABLE, "Unknown transfer-function value.");
+            throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Unknown transfer-function value.");
         return ((Enum<?>) value).name().toLowerCase(Locale.ROOT);
     }
 
@@ -348,7 +347,7 @@ final class Bitwig614ModulatorEditAccess implements ModulatorEditor.Access {
     public double range(Object target) {
         Object owner = bindings.invoke(modulationRange, target);
         if (owner == null)
-            throw Errors.notApplied(ErrorCode.MODULATOR_UNAVAILABLE, "Target has no modulation range descriptor.");
+            throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Target has no modulation range descriptor.");
         return (Double) bindings.invoke(range, owner);
     }
 
@@ -376,7 +375,7 @@ final class Bitwig614ModulatorEditAccess implements ModulatorEditor.Access {
         GridSnapshotReader.Kind kind = grid.detachedKind(parameter);
         if (kind == null)
             throw Errors.notApplied(
-                    ErrorCode.UNSUPPORTED_SCOPE, "Only float, integer, enum and boolean controls are supported.");
+                    Reason.UNSUPPORTED_SCOPE, "Only float, integer, enum and boolean controls are supported.");
         parameterContexts.requireWritable(device, container, owner, parameter, kind, null, check);
     }
 
@@ -389,7 +388,7 @@ final class Bitwig614ModulatorEditAccess implements ModulatorEditor.Access {
     public ModulatorEditor.Type resolveType(UUID wantedId, String wantedName) {
         Object value = bindings.invoke(catalog, null);
         if (!(value instanceof List<?>))
-            throw Errors.notApplied(ErrorCode.MODULATOR_UNAVAILABLE, "Native catalog is not a list.");
+            throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Native catalog is not a list.");
         Map<String, ModulatorEditor.Type> byName = new LinkedHashMap<>();
         List<ModulatorEditor.Type> types = new ArrayList<>();
         for (Object entry : (List<?>) value) {
@@ -404,9 +403,9 @@ final class Bitwig614ModulatorEditAccess implements ModulatorEditor.Access {
                 : GridNames.resolve(types, type -> type.name, wantedName);
         if (hits.size() == 1) return hits.get(0);
         if (hits.size() > 1)
-            throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "Modulator type name is ambiguous; pass typeId.");
+            throw Errors.notApplied(Reason.INVALID_PARAMS, "Modulator type name is ambiguous; pass typeId.");
         throw Errors.notApplied(
-                ErrorCode.TARGET_NOT_FOUND,
+                Reason.TARGET_NOT_FOUND,
                 "No modulator type " + (wantedId != null ? wantedId : "'" + wantedName + "'")
                         + (wantedName == null
                                 ? ""
@@ -426,7 +425,7 @@ final class Bitwig614ModulatorEditAccess implements ModulatorEditor.Access {
         Object constant = null;
         for (Object item : transferType.getEnumConstants())
             if (((Enum<?>) item).name().equalsIgnoreCase(function)) constant = item;
-        if (constant == null) throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "Unknown transfer function.");
+        if (constant == null) throw Errors.notApplied(Reason.INVALID_PARAMS, "Unknown transfer function.");
         Object chosen = constant;
         return () -> bindings.invoke(map, source, target, value, on, chosen, null);
     }
@@ -440,14 +439,14 @@ final class Bitwig614ModulatorEditAccess implements ModulatorEditor.Access {
     private void requireExact(Object source, Object target) {
         if (!isSource(source) || !targetType.isInstance(target))
             throw Errors.notApplied(
-                    ErrorCode.MODULATOR_UNAVAILABLE,
+                    Reason.NATIVE_UNAVAILABLE,
                     "Mapping requires the inspected exact source class and a parameter target.");
     }
 
     @Override
     public Runnable prepareDelete(Object collection, Object modulator) {
         if (modulator == null || modulator.getClass() != modulatorType)
-            throw Errors.notApplied(ErrorCode.MODULATOR_UNAVAILABLE, "Not an inspected modulator model.");
+            throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Not an inspected modulator model.");
         List<Object> selected = Collections.singletonList(modulator);
         return () -> bindings.invoke(delete, collection, selected);
     }
@@ -456,14 +455,14 @@ final class Bitwig614ModulatorEditAccess implements ModulatorEditor.Access {
     public Runnable prepareInsert(Object collection, UUID type, int column, int row, Consumer<String> settled) {
         Object app = bindings.invoke(singleton, null);
         if (app == null)
-            throw Errors.notApplied(ErrorCode.MODULATOR_UNAVAILABLE, "Native application singleton is unavailable.");
+            throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Native application singleton is unavailable.");
         Object file = bindings.invoke(resource, app, type);
         if (!(file instanceof File) || !((File) file).isFile())
             throw Errors.notApplied(
-                    ErrorCode.MODULATOR_UNAVAILABLE, "Modulator resource is unavailable through the native resolver.");
+                    Reason.NATIVE_UNAVAILABLE, "Modulator resource is unavailable through the native resolver.");
         Object point = bindings.invoke(insertionPoint, collection, column, row, null);
         if (point == null || point.getClass() != insertionType)
-            throw Errors.notApplied(ErrorCode.MODULATOR_UNAVAILABLE, "Native insertion point differs.");
+            throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Native insertion point differs.");
         Object listener = Proxy.newProxyInstance(
                 listenerType.getClassLoader(), new Class<?>[] {listenerType}, new Listener(settled));
         return () -> {
@@ -508,12 +507,11 @@ final class Bitwig614ModulatorEditAccess implements ModulatorEditor.Access {
 
     private static String text(Object value) {
         if (value != null && !(value instanceof String))
-            throw Errors.notApplied(ErrorCode.MODULATOR_UNAVAILABLE, "Native text has an unexpected type.");
+            throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Native text has an unexpected type.");
         String text = (String) value;
         if (text != null && text.length() > ModulatorEditor.MAX_TEXT)
             throw Errors.notApplied(
-                    ErrorCode.MODULATOR_BOUNDS_EXCEEDED,
-                    "Native text exceeds 1024 UTF-16 units; values are never truncated.");
+                    Reason.OUT_OF_BOUNDS, "Native text exceeds 1024 UTF-16 units; values are never truncated.");
         return text;
     }
 }

@@ -46,7 +46,9 @@ public final class MethodSpecsTest {
         JsonObject methods = new JsonObject(), root = new JsonObject();
         methods.add(name, method);
         root.add("methods", methods);
-        root.add("limits", bundle().getAsJsonObject("limits"));
+        JsonObject full = bundle();
+        for (String key : new String[] {"limits", "protocol", "outcomes", "errorCodes", "reasons"})
+            root.add(key, full.get(key));
         return root;
     }
 
@@ -78,8 +80,8 @@ public final class MethodSpecsTest {
                         && specs.get("status").readOnly,
                 "routing and modulator reads are read-only");
         assertTrue(
-                !specs.get("grid.topology.reconcile").projectWrite && !specs.get("grid.topology.reconcile").readOnly,
-                "reconcile is long-running and not read-only, but is not a project structure write");
+                !specs.get("ack").projectWrite && !specs.get("ack").readOnly && specs.get("jobs.get").readOnly,
+                "ack writes no project structure; jobs.get only reads");
         assertTrue(
                 specs.contains("project.saveAs")
                         && specs.get("project.saveAs").defaultTimeoutMs == 30000
@@ -109,12 +111,30 @@ public final class MethodSpecsTest {
         JsonObject noLimits = one("a", method(true, true, "", 5000, 10000));
         noLimits.remove("limits");
         malformed(noLimits.toString(), "missing limits");
+        JsonObject noProtocol = one("a", method(true, true, "", 5000, 10000));
+        noProtocol.remove("protocol");
+        malformed(noProtocol.toString(), "missing protocol");
+        JsonObject strayCode = one("a", method(true, true, "", 5000, 10000));
+        strayCode.getAsJsonObject("reasons").addProperty("busy", "nonexistent");
+        malformed(strayCode.toString(), "reason with an unknown code");
+        JsonObject noReasons = one("a", method(true, true, "", 5000, 10000));
+        noReasons.add("reasons", new JsonObject());
+        malformed(noReasons.toString(), "empty reasons");
         JsonObject emptyWindow = one("a", method(true, true, "", 5000, 10000));
         emptyWindow.getAsJsonObject("limits").addProperty("trackWindow", 0);
         malformed(emptyWindow.toString(), "empty track window");
         assertTrue(
                 parse(one("a", method(true, true, "\"engine\"", 5000, 10000))).get("a").engineRequired,
                 "minimal bundle");
+    }
+
+    @Test
+    void vocabularyComesFromTheBundle() {
+        MethodSpecs.Vocabulary vocabulary = MethodSpecs.load().vocabulary();
+        assertEquals(bundle().get("protocol").getAsString(), vocabulary.protocol);
+        assertEquals("unknown", vocabulary.outcomes.get(vocabulary.outcomes.size() - 1), "worst outcome last");
+        assertEquals("stale", vocabulary.reasons.get("stale_target"));
+        assertTrue(vocabulary.errorCodes.containsAll(vocabulary.reasons.values()));
     }
 
     @Test

@@ -66,7 +66,7 @@ final class ProjectState {
         Readiness r = readiness();
         if (Boolean.FALSE.equals(r.ready))
             throw Errors.notApplied(
-                    ErrorCode.PROJECT_NOT_READY,
+                    Reason.NOT_READY,
                     "Project is not ready (" + r.reason
                             + "): it was just opened, recovered or renamed, so this write could land in a transient project. Poll status until projectReady is true, then re-discover targets; nothing was written.");
     }
@@ -79,9 +79,9 @@ final class ProjectState {
     void requireEngineActive(String what) {
         if (!engineActive())
             throw Errors.notApplied(
-                    ErrorCode.ENGINE_INACTIVE,
+                    Reason.ENGINE_INACTIVE,
                     "The audio engine is not active for this project, so " + what + " would not sound or be observed. "
-                            + "Run project.activateEngine (or the \"Activate Engine For Project\" action), confirm status.engineActive=true, then retry; nothing was dispatched.");
+                            + "Run project.activateEngine (or the \"Activate Engine For Project\" action), confirm status.engineActive=true, then retry; nothing changed.");
     }
 
     /** Observed Project.isModified(); null until the first callback, never a getter default. */

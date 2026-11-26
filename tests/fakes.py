@@ -11,7 +11,7 @@ from typing import Any, ClassVar
 
 import pytest
 
-from bitwig_agent.errors import BridgeError
+from bitwig_agent.errors import BridgeError, bridge_error, unknown_result
 from bitwig_agent.frontends import cli
 from bitwig_agent.grid import bundled, values
 from bitwig_agent.grid.apply import apply as apply_spec
@@ -37,7 +37,7 @@ class FakeGrid:
         self.shift = 0  # insert lands this far right of the request, like native reflow
         self.fail: dict[str, object] = {}
         self.caps_extra: dict = {}
-        self.cut_status = "failed"  # status of the entry where a capped insert stops
+        self.cut_reason = "deadline"  # reason of the first entry a capped insert does not run
         self.insert_caps: list[int] = []  # per insert call: apply only this many entries, then report partial
         self.voicing: dict[str, Any] | None = None  # Poly Grid voicing; None = Note/FX Grid
         self.timeouts: list[tuple[str, int]] = []
@@ -137,12 +137,11 @@ class FakeGrid:
         return getattr(self, "h_" + method.replace("grid.", "").replace(".", "_"))(params)
 
     def h_capabilities(self, p):
-        return {"status": "observed", "hostVersion": self.version, **self.caps_extra}
+        return {"hostVersion": self.version, **self.caps_extra}
 
     def h_catalog(self, p):
         entries = [{"typeId": m["typeId"], "name": n} for n, m in self.catalog.items()]
         return {
-            "status": "observed",
             "entries": entries[p["offset"] : p["offset"] + p["limit"]],
             "window": {"complete": p["offset"] + p["limit"] >= len(entries)},
         }
@@ -155,7 +154,6 @@ class FakeGrid:
             for (t, tp), (s, sp) in self.conns.items()
         ]
         return {
-            "status": "observed",
             "modules": [self.row(m, p["includeParameters"], p.get("full")) for m in page],
             "connections": conns,
             "window": {"total": len(mods), "complete": True},
@@ -166,7 +164,8 @@ class FakeGrid:
         cap = self.insert_caps.pop(0) if self.insert_caps else len(p["modules"])
         for k, spec in enumerate(p["modules"]):
             if k >= cap:
-                entries.append({"typeId": spec["typeId"], "status": "not_dispatched" if k > cap else self.cut_status})
+                reason = self.cut_reason if k == cap else "not_reached"
+                entries.append({"typeId": spec["typeId"], "outcome": "not_applied", "reason": reason})
                 continue
             name = next(n for n, m in self.catalog.items() if m["typeId"] == spec["typeId"])
             iid = self.add(name, "", spec["x"] + self.shift, spec["y"])
@@ -174,17 +173,14 @@ class FakeGrid:
             entries.append(
                 {
                     "typeId": spec["typeId"],
-                    "status": "applied",
+                    "outcome": "applied",
                     "moduleId": iid,
                     "actualPosition": {"x": spec["x"] + self.shift, "y": spec["y"]},
                 }
             )
             added.append(self.row(self.mods[iid], False))
-        batch = "applied" if cap >= len(p["modules"]) else "partial"
         return {
-            "status": "observed",
-            "batchStatus": batch,
-            "completion": "complete",
+            "outcome": "applied" if cap >= len(p["modules"]) else "not_applied",
             "modules": entries,
             "modulesAdded": added,
         }
@@ -192,33 +188,28 @@ class FakeGrid:
     def h_modules_rename(self, p):
         m = self.mods[p["moduleId"]]
         if m["customName"] != p["expectedCustomName"]:
-            raise BridgeError({"code": "stale_context", "message": "name changed", "outcome": "not_applied"})
+            raise bridge_error("stale_context", "name changed")
         m["customName"] = m["name"] = p["customName"]
-        return {"status": "observed", "operation": "rename"}
+        return {"outcome": "applied", "operation": "rename"}
 
     def h_modules_move(self, p):
         m = self.mods[p["moduleId"]]
         if (m["x"], m["y"]) != (p["expectedX"], p["expectedY"]):
-            raise BridgeError({"code": "stale_context", "message": "moved", "outcome": "not_applied"})
+            raise bridge_error("stale_context", "moved")
         for o in self.mods.values():  # host rule: the anchor may not lie inside another module's footprint
             if (
                 o is not m
                 and o["x"] <= p["x"] < o["x"] + o["info"]["width"]
                 and o["y"] <= p["y"] < o["y"] + o["info"]["height"]
             ):
-                raise BridgeError({"code": "invalid_params", "message": "occupied anchor", "outcome": "not_applied"})
+                raise bridge_error("overlap", "occupied anchor")
         m["x"], m["y"] = p["x"], p["y"]
-        return {
-            "status": "observed",
-            "operation": "move",
-            "actualPosition": {"x": p["x"], "y": p["y"]},
-            "matchesRequested": True,
-        }
+        return {"outcome": "applied", "operation": "move", "actualPosition": {"x": p["x"], "y": p["y"]}}
 
     def h_modules_delete(self, p):
         self.mods.pop(p["moduleId"])
         self.conns = {k: v for k, v in self.conns.items() if p["moduleId"] not in (k[0], v[0])}
-        return {"status": "observed", "operation": "delete", "removed": True}
+        return {"outcome": "applied", "operation": "delete", "removed": True}
 
     def h_parameters_set(self, p):
         entries = []
@@ -228,12 +219,12 @@ class FakeGrid:
                 n = len(w["expectedValues"])
                 assert len(w["values"]) <= n <= 64
                 if [values.f32(x) for x in par["value"][:n]] != [values.f32(x) for x in w["expectedValues"]]:
-                    raise BridgeError({"code": "stale_context", "message": "stale", "outcome": "not_applied"})
+                    raise bridge_error("stale_context", "stale")
                 par["value"][: len(w["values"])] = [values.f32(x) for x in w["values"]]
-                entries.append({"moduleId": w["moduleId"], "parameterId": w["parameterId"], "status": "applied"})
+                entries.append({"moduleId": w["moduleId"], "parameterId": w["parameterId"], "outcome": "applied"})
                 continue
             if (par["kind"], par["value"]) != (w["expectedKind"], w["expectedValue"]):
-                raise BridgeError({"code": "stale_context", "message": "stale", "outcome": "not_applied"})
+                raise bridge_error("stale_context", "stale")
             if "display" in w:
                 par["value"], par["display"] = 99.0, w["display"]
             elif par.get("numericUnit") == "seconds":
@@ -243,21 +234,19 @@ class FakeGrid:
                 )
             else:
                 par["value"], par["display"] = w["value"], str(w["value"])
-            entries.append({"moduleId": w["moduleId"], "parameterId": w["parameterId"], "status": "applied"})
-        return {"status": "observed", "batchStatus": "applied", "completion": "complete", "writes": entries}
+            entries.append({"moduleId": w["moduleId"], "parameterId": w["parameterId"], "outcome": "applied"})
+        return {"outcome": "applied", "written": len(entries), "writes": entries}
 
     def h_transport_get(self, p):
-        return {"status": "observed", **self.transport}
+        return {**self.transport}
 
     def h_voicing_get(self, p):
         if self.voicing is None:
             return {
-                "status": "observed",
                 "supported": False,
                 "reason": "no_voicing_model: only Poly Grid has device voicing",
             }
         return {
-            "status": "observed",
             "supported": True,
             "voicing": dict(self.voicing),
             "mode": "poly" if self.voicing["voices"] > 1 else self.voicing["monoMode"],
@@ -266,9 +255,9 @@ class FakeGrid:
     def h_voicing_set(self, p):
         assert self.voicing is not None
         if any(self.voicing[k] != v for k, v in p["expected"].items()):
-            raise BridgeError({"code": "stale_context", "message": "stale voicing", "outcome": "not_applied"})
+            raise bridge_error("stale_context", "stale voicing")
         self.voicing.update(p["set"])
-        return {"status": "observed", "supported": True, "voicing": dict(self.voicing), "changedUnrequested": []}
+        return {"outcome": "applied", "supported": True, "voicing": dict(self.voicing), "changedUnrequested": []}
 
     def h_connections_set(self, p):
         entries = []
@@ -276,13 +265,13 @@ class FakeGrid:
             key = (c["targetModuleId"], c["targetPortKey"])
             cur = self.conns.get(key)
             if (cur and {"moduleId": cur[0], "portKey": cur[1]}) != c["expectedSource"]:
-                raise BridgeError({"code": "stale_context", "message": "stale", "outcome": "not_applied"})
+                raise bridge_error("stale_context", "stale")
             if c["source"]:
                 self.conns[key] = (c["source"]["moduleId"], c["source"]["portKey"])
             else:
                 self.conns.pop(key, None)
-            entries.append({"status": "applied", "matchesRequested": True})
-        return {"status": "observed", "batchStatus": "applied", "completion": "complete", "connections": entries}
+            entries.append({"outcome": "applied"})
+        return {"outcome": "applied", "written": len(entries), "connections": entries}
 
 
 TRACK = "12345678-1234-1234-1234-123456789abc"
@@ -330,7 +319,6 @@ class LayoutGrid:
         page = rows[params["moduleOffset"] : params["moduleOffset"] + min(params["moduleLimit"], self.cap)]
         page = [m if params["includeParameters"] else {k: v for k, v in m.items() if k != "parameters"} for m in page]
         return {
-            "status": "observed",
             "modules": page,
             "connections": self.connections,
             "window": {
@@ -406,7 +394,6 @@ class RecipeGrid:
             ids = set(params["moduleIds"]) if "moduleIds" in params else None
             rows = self.rows(ids, params.get("includeParameters", True))
             return {
-                "status": "observed",
                 "target": {**RECIPE_TARGET, "nativeOwningTrack": "corroborated_before_and_after_capture"},
                 "window": {"offset": 0, "total": len(rows), "complete": True},
                 "modules": rows,
@@ -421,7 +408,7 @@ class RecipeGrid:
                 if key[0] != module_id and value["moduleId"] != module_id
             }
             return {
-                "status": "observed",
+                "outcome": "applied",
                 "modulesRemoved": [{"moduleId": module_id, "typeId": removed["typeId"]}],
                 "moduleCount": len(self.modules),
             }
@@ -481,7 +468,7 @@ class RecipeGrid:
             row = self.rows({module_id}, parameters=False)[0]
             row.pop("parameters")
             return {
-                "status": "observed",
+                "outcome": "applied",
                 "moduleId": module_id,
                 "modulesAdded": [row],
                 "moduleCount": len(self.modules),
@@ -491,7 +478,7 @@ class RecipeGrid:
             for entry in entries:
                 current = self.parameter(entry["moduleId"], entry["parameterId"])
                 if current["kind"] != entry["expectedKind"] or current["value"] != entry["expectedValue"]:
-                    raise BridgeError({"code": "stale_context", "outcome": "not_applied", "message": "stale"})
+                    raise bridge_error("stale_context", "stale")
             results = []
             for entry in entries:
                 current = self.parameter(entry["moduleId"], entry["parameterId"])
@@ -500,16 +487,14 @@ class RecipeGrid:
                     {
                         "moduleId": entry["moduleId"],
                         "parameterId": entry["parameterId"],
-                        "status": "applied" if changed else "already_matched",
+                        "outcome": "applied" if changed else "already_matched",
                         "previousValue": current["value"],
                         "value": entry["value"],
                     }
                 )
                 current["value"] = entry["value"]
             return {
-                "status": "observed",
-                "batchStatus": "applied",
-                "completion": "observed",
+                "outcome": "applied",
                 "written": len(results),
                 "writes": results,
             }
@@ -522,16 +507,13 @@ class RecipeGrid:
             for edit in edits:
                 self.cables[edit["targetModuleId"], edit["targetPortKey"]] = edit["source"]
             return {
-                "status": "observed",
-                "batchStatus": "applied",
-                "completion": "observed",
+                "outcome": "applied",
                 "written": len(edits),
                 "connections": [
                     {
                         "targetModuleId": edit["targetModuleId"],
                         "targetPortKey": edit["targetPortKey"],
-                        "status": "applied",
-                        "matchesRequested": True,
+                        "outcome": "applied",
                     }
                     for edit in edits
                 ],
@@ -692,12 +674,11 @@ class FakeBridge:
             return {"tracks": [{"trackId": t, "index": i, "name": t} for i, t in enumerate(self.solo)]}
         if method == "tracks.get":
             return {"trackId": params["trackId"], "solo": self.solo[params["trackId"]]}
-        if method == "tracks.set":
-            if params["trackId"] == self.fail_set and params["solo"] is False:
-                raise BridgeError({"code": "host_error", "message": "boom", "outcome": "unknown"})
+        if method == "tracks.set" and not (params["trackId"] == self.fail_set and params["solo"] is False):
             self.solo[params["trackId"]] = params["solo"]
-            return {}
-        return {}
+        elif method == "tracks.set":
+            return unknown_result("deadline", "boom")
+        return {"outcome": "applied"}
 
 
 def parse_arguments(
@@ -706,17 +687,16 @@ def parse_arguments(
     return validate_call(method, cli.parse_arguments(method, pairs, raw, timeout_ms))
 
 
-LAYER_UNKNOWN_ERROR = {
-    "code": "deadline_exceeded",
-    "message": "Inspect child before another write",
+LAYER_UNKNOWN_RESULT = {
     "outcome": "unknown",
-    "details": {"dispatched": True},
+    "reason": "deadline",
+    "message": "Inspect child before another write",
 }
 
 
 def string_panel_result(modulator_id, value):
     return {
-        "completion": "observed",
+        "outcome": "applied",
         "modulatorId": modulator_id,
         "parameterId": "",
         "kind": "string",
@@ -731,7 +711,7 @@ def string_panel_result(modulator_id, value):
 
 def assert_rejected_before_tcp(error, host):
     assert error["code"] == "invalid_params"
-    assert error["outcome"] == "not_dispatched"
+    assert "outcome" not in error
     assert host.connections == 0
 
 
@@ -743,7 +723,7 @@ def assert_display_rejected(module, param, text):
     }
     with pytest.raises(BridgeError) as err:
         apply_grid(host, spec)
-    assert err.value.error["code"] == "invalid_spec"
+    assert err.value.error["reason"] == "invalid_params"
     assert host.writes() == []
 
 

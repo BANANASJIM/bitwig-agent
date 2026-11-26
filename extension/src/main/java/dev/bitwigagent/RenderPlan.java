@@ -40,9 +40,9 @@ final class RenderPlan {
     static RenderPlan export(Path directory, String baseName, int sources, String format, boolean overwrite) {
         if (!Files.isDirectory(directory))
             throw Errors.notApplied(
-                    ErrorCode.INVALID_TARGET, "directory " + directory + " does not exist or is not a directory.");
+                    Reason.INVALID_TARGET, "directory " + directory + " does not exist or is not a directory.");
         if (!Files.isWritable(directory))
-            throw Errors.notApplied(ErrorCode.INVALID_TARGET, "directory " + directory + " is not writable.");
+            throw Errors.notApplied(Reason.INVALID_TARGET, "directory " + directory + " is not writable.");
         RenderPlan plan = new RenderPlan(directory, format);
         for (int i = 0; i < sources; i++) {
             Path base = directory.resolve(sources == 1 ? baseName : baseName + String.format("-%02d", i + 1));
@@ -59,11 +59,11 @@ final class RenderPlan {
         before.clear();
         for (Path file : files) {
             if (Files.isSymbolicLink(file) || Files.isDirectory(file))
-                throw Errors.notApplied(ErrorCode.INVALID_TARGET, file + " is a directory or symbolic link.");
+                throw Errors.notApplied(Reason.INVALID_TARGET, file + " is a directory or symbolic link.");
             ProjectSaveAsPlan.Stat stat = ProjectSaveAsPlan.Stat.of(file);
             if (stat.exists && !overwrite)
                 throw Errors.notApplied(
-                        ErrorCode.TARGET_EXISTS, file + " already exists; pass overwrite:true to replace it.");
+                        Reason.TARGET_EXISTS, file + " already exists; pass overwrite:true to replace it.");
             before.add(stat);
         }
     }

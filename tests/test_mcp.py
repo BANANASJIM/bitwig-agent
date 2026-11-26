@@ -1,7 +1,8 @@
 import pytest
-from fakes import INVALID_NAMES, LAYER_UNKNOWN_ERROR, assert_rejected_before_tcp, string_panel_result
+from fakes import INVALID_NAMES, LAYER_UNKNOWN_RESULT, assert_rejected_before_tcp, string_panel_result
 
 from bitwig_agent.protocol import CLIENT_SIDE, TOOLS
+from bitwig_agent.protocol.base import REASONS
 from bitwig_agent.protocol.launcher import NOTE_WINDOW
 
 pytestmark = pytest.mark.anyio
@@ -19,14 +20,15 @@ async def test_real_stdio_preserves_partial_domain_results(mcp_session, host):
         # All domains must preserve a partial result instead of claiming that
         # dispatch, a selected window, or a subset of edits proves completion.
         result = {
-            "status": "dispatched",
+            "outcome": "unknown",
+            "reason": "not_observed",
             "verification": {"verified": False},
             "window": {"complete": False},
             "edits": [{"index": 0, "outcome": "unknown"}],
         }
         host.reply = lambda request, result=result: {"id": request["id"], "result": result}
         response = await mcp_session.call_tool(method, params)
-        assert response.is_error is False
+        assert response.is_error is True, "an unknown outcome is flagged, never hidden"
         got = response.structured_content
         if method == "status":  # client adds a mismatch note when the host reports no extension version
             got["result"].pop("extensionMismatch")
@@ -36,13 +38,13 @@ async def test_real_stdio_preserves_partial_domain_results(mcp_session, host):
 
 
 async def test_grid_host_unknown_error_survives_mcp_without_retry(mcp_session, host):
-    error = {
-        "code": "deadline_exceeded",
-        "message": "Observe before another write",
+    unknown = {
         "outcome": "unknown",
+        "reason": "deadline",
+        "message": "Observe before another write",
         "details": {"dispatched": True},
     }
-    host.reply = lambda request: {"id": request["id"], "error": error}
+    host.reply = lambda request: {"id": request["id"], "result": unknown}
     response = await mcp_session.call_tool(
         "grid.parameters.set",
         {
@@ -56,7 +58,7 @@ async def test_grid_host_unknown_error_survives_mcp_without_retry(mcp_session, h
         },
     )
     assert response.is_error is True
-    assert response.structured_content == {"error": error}
+    assert response.structured_content == {"result": unknown}
     assert host.requests[0]["timeoutMs"] == 100
     assert host.connections == 1
     assert len(host.requests) == 1
@@ -67,7 +69,7 @@ async def test_grid_host_unknown_error_survives_mcp_without_retry(mcp_session, h
 @pytest.mark.parametrize(
     "reply",
     [
-        lambda request: {"id": request["id"], "error": {"code": "bad", "message": "missing outcome"}},
+        lambda request: {"id": request["id"], "error": {"code": "stale", "message": "missing reason"}},
         lambda request: ('{"id":"' + request["id"] + '","result":{"observedValue":1e9999}}\n').encode(),
     ],
 )
@@ -75,9 +77,21 @@ async def test_malformed_host_result_is_structured_unknown(mcp_session, host, re
     host.reply = reply
     response = await mcp_session.call_tool("parameters.set", SET)
     assert response.is_error is True
-    assert response.structured_content["error"]["outcome"] == "unknown"
-    assert response.structured_content["error"]["code"] == "transport_error"
+    assert response.structured_content["result"]["outcome"] == "unknown"
+    assert response.structured_content["result"]["reason"] == "transport"
     assert host.connections == 1
+
+
+@pytest.mark.parametrize(
+    ("outcome", "is_error"),
+    [("applied", False), ("already_matched", False), ("sent", False), ("not_applied", True), ("unknown", True)],
+)
+async def test_is_error_follows_the_outcome(mcp_session, host, outcome, is_error):
+    host.reply = lambda request: {"id": request["id"], "result": {"outcome": outcome}}
+    response = await mcp_session.call_tool("parameters.set", SET)
+    assert response.is_error is is_error
+    host.reply = lambda request: {"id": request["id"], "result": {"tracks": []}}
+    assert (await mcp_session.call_tool("tracks.list", {})).is_error is False, "reads carry no outcome"
 
 
 @pytest.mark.parametrize(
@@ -131,7 +145,7 @@ async def test_invalid_action_arguments_never_reach_tcp(mcp_session, host, metho
 
 
 async def test_unknown_action_id_preserves_host_rejection(mcp_session, host):
-    error = {"code": "unknown_action", "message": "Unknown ID", "outcome": "not_applied"}
+    error = {"code": REASONS["unknown_name"].value, "reason": "unknown_name", "message": "Unknown ID"}
     host.reply = lambda request: {"id": request["id"], "error": error}
     response = await mcp_session.call_tool("actions.invoke", {"actionId": "missing"})
     assert response.structured_content == {"error": error}
@@ -301,17 +315,17 @@ async def test_grid_insert_mcp_rejects_non_int32_before_tcp(mcp_session, host, f
 
 
 async def test_grid_insert_mcp_preserves_loader_unknown_without_retry(mcp_session, host):
-    error = {
-        "code": "deadline_exceeded",
-        "message": "Inspect actual graph",
+    unknown = {
         "outcome": "unknown",
+        "reason": "deadline",
+        "message": "Inspect actual graph",
         "details": {"loaderDispatched": True, "placementDispatched": False},
     }
-    host.reply = lambda request: {"id": request["id"], "error": error}
+    host.reply = lambda request: {"id": request["id"], "result": unknown}
     params = {**TARGET, "typeId": TRACK, "x": -(2**31), "y": 2**31 - 1}
     response = await mcp_session.call_tool("grid.modules.insert", {**params, "timeoutMs": 250})
     assert response.is_error
-    assert response.structured_content == {"error": error}
+    assert response.structured_content == {"result": unknown}
     assert len(host.requests) == host.connections == 1
 
 
@@ -419,12 +433,12 @@ async def test_invalid_layer_write_never_reaches_tcp(mcp_session, host, changes)
 
 
 async def test_layer_mcp_preserves_unknown_without_retry(mcp_session, host):
-    error = LAYER_UNKNOWN_ERROR
-    host.reply = lambda request: {"id": request["id"], "error": error}
+    unknown = LAYER_UNKNOWN_RESULT
+    host.reply = lambda request: {"id": request["id"], "result": unknown}
     params = TOOLS["parameters.layer.set"].examples[0]
     response = await mcp_session.call_tool("parameters.layer.set", {**params, "timeoutMs": 250})
     assert response.is_error
-    assert response.structured_content == {"error": error}
+    assert response.structured_content == {"result": unknown}
     assert host.requests[0]["params"] == params
     assert host.requests[0]["timeoutMs"] == 250
     assert len(host.requests) == host.connections == 1
@@ -484,7 +498,6 @@ async def test_modulator_mcp_preserves_raw_string_and_unavailable_metadata(mcp_s
 
 async def test_modulator_mcp_preserves_partial_inventory_without_inventing_contents(mcp_session, host):
     result = {
-        "completion": "observed",
         "scope": "primary_modulators_on_root_device",
         "window": {"offset": 0, "limit": 1, "total": 2, "returned": 1},
         "modulators": [
@@ -509,14 +522,14 @@ async def test_modulator_mcp_preserves_partial_inventory_without_inventing_conte
 @pytest.mark.parametrize(
     "error_code",
     [
-        "modulator_unavailable",
-        "modulator_bounds_exceeded",
+        "native_unavailable",
+        "out_of_bounds",
         "unsupported_scope",
         "stale_context",
     ],
 )
 async def test_modulator_mcp_preserves_read_errors_without_retry(mcp_session, host, error_code):
-    error = {"code": error_code, "message": "Read rejected", "outcome": "not_dispatched"}
+    error = {"code": REASONS[error_code].value, "reason": error_code, "message": "Read rejected"}
     host.reply = lambda request: {"id": request["id"], "error": error}
     response = await mcp_session.call_tool("modulators.parameters.get", TOOLS["modulators.parameters.get"].examples[0])
     assert response.is_error
@@ -569,15 +582,15 @@ async def test_grid_rename_mcp_missing_name_is_not_defaulted_to_reset(mcp_sessio
 
 async def test_grid_rename_mcp_preserves_unknown_raw_reset_outcome_without_retry(mcp_session, host):
     params = {**TARGET, "moduleId": TRACK, "expectedCustomName": " \t\u03b1𝄞 ", "customName": ""}
-    error = {
-        "code": "stale_context",
-        "message": "Inspect actual raw name",
+    unknown = {
         "outcome": "unknown",
+        "reason": "stale_context",
+        "message": "Inspect actual raw name",
         "details": {"mutationDispatched": True, "rollbackVerified": False},
     }
-    host.reply = lambda request: {"id": request["id"], "error": error}
+    host.reply = lambda request: {"id": request["id"], "result": unknown}
     response = await mcp_session.call_tool("grid.modules.rename", params)
     assert response.is_error
-    assert response.structured_content == {"error": error}
+    assert response.structured_content == {"result": unknown}
     assert host.requests[0]["params"] == params
     assert len(host.requests) == host.connections == 1

@@ -19,7 +19,7 @@ final class MidiImportPreflight {
         try {
             sequence = MidiSystem.getSequence(path.toFile());
         } catch (IOException | InvalidMidiDataException error) {
-            throw Errors.notApplied(ErrorCode.INVALID_MIDI_FILE, "MIDI import requires a readable Standard MIDI File.");
+            throw Errors.notApplied(Reason.INVALID_FILE, "MIDI import requires a readable Standard MIDI File.");
         }
         for (Track track : sequence.getTracks()) {
             for (int i = 0; i < track.size(); i++) {
@@ -37,7 +37,7 @@ final class MidiImportPreflight {
             }
         }
         throw Errors.notApplied(
-                ErrorCode.EMPTY_MIDI_FILE,
+                Reason.INVALID_FILE,
                 "MIDI import requires a positive-velocity note-on or another channel event; use launcher.create for an empty timed clip.");
     }
 

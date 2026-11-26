@@ -35,6 +35,7 @@ from mcp.types import TextContent
 
 from bitwig_agent.client import MAX_PORT
 from bitwig_agent.protocol import TOOLS
+from bitwig_agent.protocol.base import REASONS, SUCCEEDED, Outcome
 
 TCP_ROW_FIELDS = 10
 
@@ -86,21 +87,24 @@ class NativeOutcomeGuard:
             self.stop("Malformed native response; inspect raw evidence before continuing.")
         if "error" in envelope:
             error = envelope["error"]
-            if not isinstance(error, dict) or error.get("outcome") not in ("not_applied", "not_dispatched"):
-                self.stop("Native error has unknown outcome; inspect raw evidence before continuing.")
+            if not isinstance(error, dict) or REASONS.get(str(error.get("reason"))) != error.get("code"):
+                self.stop("Malformed native error; inspect raw evidence before continuing.")
             return envelope
         result = envelope["result"]
         if not isinstance(result, dict):
             self.stop("Malformed native result; inspect raw evidence before continuing.")
-        if result.get("completion") == "unknown":
-            self.stop("Native result has unknown completion; observed field values do not acknowledge the write.")
         if result.get("topologyQuarantined") is True or result.get("topologyAdmissionBlocked") is True:
             self.stop("Native topology admission is blocked; coordinator inspection is required.")
-        dispatch_only = (
-            allow_dispatch_only and result.get("status") == "dispatched" and result.get("completion") == "not_observed"
-        )
-        if result.get("status") != "observed" and not dispatch_only:
-            self.stop("Native result is not observed or an explicitly expected dispatch-only operation.")
+        outcome = result.get("outcome")
+        if outcome == Outcome.UNKNOWN or any(
+            isinstance(field, dict) and field.get("outcome") == Outcome.UNKNOWN
+            for field in (result.get("fields") or {}).values()
+        ):
+            self.stop("Native write outcome is unknown; observed values do not acknowledge it.")
+        if outcome is not None and outcome not in SUCCEEDED:
+            self.stop("Native write was not applied; inspect raw evidence before continuing.")
+        if outcome == Outcome.SENT and not allow_dispatch_only:
+            self.stop("Native write was only sent, and this step expects an observed outcome.")
         return envelope
 
 
@@ -265,10 +269,7 @@ async def probe(target, report):  # noqa: PLR0915
                 outcome_guard.observe(body)
                 if response.is_error:
                     raise RuntimeError(f"Native {method} failed; inspect calls.jsonl (no retry)")
-                result = body["result"]
-                if result.get("status") != "observed":
-                    raise RuntimeError(f"Native {method} did not return an observed read")
-                return result
+                return body["result"]
 
         before = await call("status")
         report["beforeStatus"] = before

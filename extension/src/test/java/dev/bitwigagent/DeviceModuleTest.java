@@ -42,9 +42,9 @@ public final class DeviceModuleTest {
                     order + ": first meaningful identity must retain early remote callbacks without replay");
             assertTrue(
                     f.call("devices.remote.set", remoteWrite(initial, 1, .8))
-                            .get("verification")
+                            .get("outcome")
                             .getAsString()
-                            .equals("observer_after_write"),
+                            .equals("applied"),
                     order + ": initial source is usable without metadata replay");
             f.devices[1].child("exists").emit(false);
             f.devices[1].child("exists").emit(true);
@@ -70,9 +70,9 @@ public final class DeviceModuleTest {
         assertTrue(
                 established
                         .call("devices.remote.set", remoteWrite(initial, 1, .8))
-                        .get("verification")
+                        .get("outcome")
                         .getAsString()
-                        .equals("observer_after_write"),
+                        .equals("applied"),
                 "initial out-of-order control population is writable without callback replay");
         for (boolean controlFirst : List.of(false, true)) {
             Fake f = new Fake(true, true);
@@ -90,9 +90,9 @@ public final class DeviceModuleTest {
                     "first device and control presence retain early remote observations, controlFirst=" + controlFirst);
             assertTrue(
                     f.call("devices.remote.set", remoteWrite(initial, 1, .8))
-                            .get("verification")
+                            .get("outcome")
                             .getAsString()
-                            .equals("observer_after_write"),
+                            .equals("applied"),
                     "late initial device/control presence permits setter, controlFirst=" + controlFirst);
         }
     }
@@ -155,15 +155,15 @@ public final class DeviceModuleTest {
             otherWrite.addProperty("expectedParameterName", "Other");
             assertTrue(
                     f.call("devices.remote.set", otherWrite)
-                            .get("verification")
+                            .get("outcome")
                             .getAsString()
-                            .equals("observer_after_write"),
+                            .equals("applied"),
                     "unaffected control remains writable without callback replay");
             assertTrue(
                     f.call("devices.remote.set", remoteWrite(otherSource, 0, .3))
-                            .get("verification")
+                            .get("outcome")
                             .getAsString()
-                            .equals("observer_after_write"),
+                            .equals("applied"),
                     "another source retains its token and readiness");
             control.child("value").data = .35;
             f.flush();
@@ -184,15 +184,15 @@ public final class DeviceModuleTest {
             control.child("value").emit(.35);
             f.next();
             assertTrue(
-                    pending.join().get("verification").getAsString().equals("observer_after_write"),
+                    pending.join().get("outcome").getAsString().equals("applied"),
                     "only fresh same-source callback acknowledges the explicit write");
             control.child("exists").emit(true);
             JsonObject fresh = f.call("devices.remote.get", target(1));
             assertTrue(
                     f.call("devices.remote.set", remoteWrite(fresh, 1, .35))
-                                    .get("verification")
+                                    .get("outcome")
                                     .getAsString()
-                                    .equals("already_observed_no_write")
+                                    .equals("already_matched")
                             && control.child("value").writes == 1,
                     "duplicate presence preserves a genuinely fresh value for subsequent no-op");
         }
@@ -325,10 +325,7 @@ public final class DeviceModuleTest {
                 "same-name device at index one is the only write target");
         result = f.call("devices.select", target(1));
         assertTrue(f.selected == 1, "selection targets explicit fixed device, not first matching name");
-        assertTrue(
-                result.get("status").getAsString().equals("dispatched")
-                        && result.get("completion").getAsString().equals("not_observed"),
-                "selection never fabricates completion");
+        assertTrue(result.get("outcome").getAsString().equals("sent"), "selection never fabricates completion");
         p = target(1);
         p.addProperty("expectedDeviceName", "Wrong");
         p.addProperty("enabled", true);
@@ -359,11 +356,11 @@ public final class DeviceModuleTest {
         f.devices[1].child("isEnabled").emit(false);
         f.next();
         assertTrue(
-                future.join().get("verification").getAsString().equals("observer_after_write"),
+                future.join().get("outcome").getAsString().equals("applied"),
                 "fresh same-source callback verifies bypass");
         int writes = f.devices[1].child("isEnabled").writes;
         assertTrue(
-                f.call("devices.set", p).get("verification").getAsString().equals("already_observed_no_write"),
+                f.call("devices.set", p).get("outcome").getAsString().equals("already_matched"),
                 "idempotent state avoids duplicate mutation");
         assertTrue(f.devices[1].child("isEnabled").writes == writes, "already observed bypass does not write again");
     }
@@ -373,7 +370,7 @@ public final class DeviceModuleTest {
         Fake f = new Fake();
         JsonObject p = target(0);
         p.addProperty("enabled", false);
-        assertRpcError("deadline_exceeded", f.run("devices.set", p, f.tasks.now() - 1));
+        assertRpcError("deadline", f.run("devices.set", p, f.tasks.now() - 1));
         assertTrue(f.devices[0].child("isEnabled").writes == 0, "expired request cannot bypass device");
         CompletableFuture<JsonObject> canceled = f.request("devices.set", p);
         canceled.cancel(false);
@@ -384,7 +381,7 @@ public final class DeviceModuleTest {
         f.devices[0].child("name").emit("Replacement");
         f.next();
         assertTrue(
-                pending.join().get("completion").getAsString().equals("unknown"),
+                pending.join().get("outcome").getAsString().equals("unknown"),
                 "changed target after dispatch is unknown");
         assertTrue(f.devices[0].child("isEnabled").writes == 1, "target change cannot replay write");
         Fake shortWait = new Fake();
@@ -392,7 +389,7 @@ public final class DeviceModuleTest {
         JsonObject result =
                 shortWait.run("devices.set", p, shortWait.tasks.after(20)).join();
         assertTrue(
-                result.get("status").getAsString().equals("dispatched"),
+                result.get("outcome").getAsString().equals("unknown"),
                 "bounded observation timeout does not invent completion");
         assertTrue(shortWait.devices[0].child("isEnabled").writes == 1, "timeout never retries mutation");
     }
@@ -470,7 +467,7 @@ public final class DeviceModuleTest {
             f.insertMode = mode;
             JsonObject result = f.call("devices.insert", insert("bitwig", NATIVE));
             assertTrue(
-                    result.get("verification").getAsString().equals("ambiguous_chain_change"),
+                    result.get("reason").getAsString().equals("readback_mismatch"),
                     "concurrent chain edits are ambiguous: " + mode);
             assertTrue(
                     result.get("inserted").isJsonNull(),
@@ -482,7 +479,7 @@ public final class DeviceModuleTest {
         JsonObject result = f.run("devices.insert", insert("bitwig", NATIVE), f.tasks.after(20))
                 .join();
         assertTrue(
-                result.get("verification").getAsString().equals("insertion_not_observed"),
+                result.get("reason").getAsString().equals("not_observed"),
                 "public unknown-ID no-op is honestly reported");
         assertTrue(result.get("inserted").isJsonNull() && f.insertions == 1, "no-op never invents ID or retries");
         Fake shifted = new Fake();
@@ -511,7 +508,7 @@ public final class DeviceModuleTest {
                 "mid-chain insertion is identified at its final slot");
         assertTrue(
                 result.getAsJsonArray("after").size() == 4
-                        && result.get("status").getAsString().equals("observed"),
+                        && result.get("outcome").getAsString().equals("applied"),
                 "mid-chain insertion reports the whole shifted chain");
 
         for (String[] c : new String[][] {{"start", "start:-1", "0"}, {"after", "after:2", "3"}}) {
@@ -568,7 +565,7 @@ public final class DeviceModuleTest {
         p.addProperty("position", "start");
         JsonObject missed = none.run("devices.insert", p, none.tasks.after(20)).join();
         assertTrue(
-                missed.get("verification").getAsString().equals("insertion_not_observed")
+                missed.get("reason").getAsString().equals("not_observed")
                         && missed.get("inserted").isJsonNull()
                         && none.points.size() == 1,
                 "an unobserved positioned insert is not retried");
@@ -583,7 +580,7 @@ public final class DeviceModuleTest {
                 f.deletions == 1 && names(f).equals(List.of("A", "C")),
                 "delete removes exactly the named device: " + names(f));
         assertTrue(
-                result.get("status").getAsString().equals("observed")
+                result.get("outcome").getAsString().equals("applied")
                         && result.get("verification")
                                 .getAsString()
                                 .equals("observed_count_decrement_and_shifted_suffix")
@@ -602,9 +599,9 @@ public final class DeviceModuleTest {
         Fake last = chain("A", "B");
         assertTrue(
                 last.call("devices.delete", named(1, "B"))
-                                .get("status")
+                                .get("outcome")
                                 .getAsString()
-                                .equals("observed")
+                                .equals("applied")
                         && names(last).equals(List.of("A")),
                 "deleting the last device observes the empty tail");
 
@@ -623,17 +620,17 @@ public final class DeviceModuleTest {
         JsonObject r = silent.run("devices.delete", named(0, "A"), silent.tasks.after(20))
                 .join();
         assertTrue(
-                r.get("status").getAsString().equals("dispatched")
-                        && r.get("verification").getAsString().equals("deletion_not_observed")
+                r.get("outcome").getAsString().equals("unknown")
+                        && r.get("reason").getAsString().equals("not_observed")
                         && silent.deletions == 1,
                 "an unobserved deletion is honest and never retried");
         Fake changed = chain("A", "B", "C");
         changed.deleteMode = "prefix";
         assertTrue(
                 changed.call("devices.delete", named(2, "C"))
-                        .get("verification")
+                        .get("reason")
                         .getAsString()
-                        .equals("ambiguous_chain_change"),
+                        .equals("readback_mismatch"),
                 "a changed prefix during deletion is ambiguous");
     }
 
@@ -674,8 +671,8 @@ public final class DeviceModuleTest {
         swap.addProperty("toIndex", 1);
         JsonObject r = twins.call("devices.move", swap);
         assertTrue(
-                r.get("status").getAsString().equals("dispatched")
-                        && r.get("verification").getAsString().equals("move_indistinguishable_by_name_and_type")
+                r.get("outcome").getAsString().equals("unknown")
+                        && r.get("reason").getAsString().equals("readback_mismatch")
                         && twins.points.size() == 1,
                 "identically named neighbours cannot prove a move");
 
@@ -686,7 +683,7 @@ public final class DeviceModuleTest {
         JsonObject missed =
                 silent.run("devices.move", p, silent.tasks.after(20)).join();
         assertTrue(
-                missed.get("verification").getAsString().equals("move_not_observed") && silent.points.size() == 1,
+                missed.get("reason").getAsString().equals("not_observed") && silent.points.size() == 1,
                 "an unobserved move is reported and not retried");
     }
 
@@ -752,9 +749,7 @@ public final class DeviceModuleTest {
                 result.get("pageName").getAsString().equals("Tone")
                         && result.get("pageIndex").getAsInt() == 1,
                 "requested page index and name are observed");
-        assertTrue(
-                result.get("verification").getAsString().equals("page_observer_after_write"),
-                "page requires fresh index callback");
+        assertTrue(result.get("outcome").getAsString().equals("applied"), "page requires fresh index callback");
         assertTrue(
                 !result.get("complete").getAsBoolean()
                         && result.getAsJsonArray("controls")
@@ -804,7 +799,7 @@ public final class DeviceModuleTest {
         double originalValue = remoteValue(original);
         JsonObject changed = f.call("devices.remote.set", remoteWrite(original, 1, .8));
         assertTrue(
-                changed.get("verification").getAsString().equals("observer_after_write")
+                changed.get("outcome").getAsString().equals("applied")
                         && remoteValue(changed) == .8
                         && remoteValue(f.call("devices.remote.get", target(1))) == .8,
                 "absolute RPC reaches the observed target under pending pickup");
@@ -822,14 +817,14 @@ public final class DeviceModuleTest {
         JsonObject restored = f.call("devices.remote.set", remoteWrite(changed, 1, originalValue));
         assertTrue(
                 remoteValue(restored) == originalValue
-                        && restored.get("verification").getAsString().equals("observer_after_write")
+                        && restored.get("outcome").getAsString().equals("applied")
                         && f.controls[1][0].child("value").takeoverPending,
                 "fresh source-bound absolute write restores the original value without altering takeover");
         assertTrue(
                 f.call("devices.remote.set", remoteWrite(restored, 1, originalValue))
-                                .get("verification")
+                                .get("outcome")
                                 .getAsString()
-                                .equals("already_observed_no_write")
+                                .equals("already_matched")
                         && f.controls[1][0].child("value").writes == 2,
                 "observed no-op under pickup does not dispatch another write");
 
@@ -867,14 +862,14 @@ public final class DeviceModuleTest {
         f.controls[1][0].child("value").emit(.9);
         f.next();
         assertTrue(
-                pending.join().get("verification").getAsString().equals("observer_after_write"),
+                pending.join().get("outcome").getAsString().equals("applied"),
                 "same-source fresh remote observation verifies write");
         JsonObject latest = f.call("devices.remote.get", target(1));
         pending = f.run("devices.remote.set", remoteWrite(latest, 1, .7));
         f.pages[1].child("getName").emit("Changed");
         f.next();
         assertTrue(
-                pending.join().get("completion").getAsString().equals("unknown"),
+                pending.join().get("outcome").getAsString().equals("unknown"),
                 "page change during remote write prevents misleading verification");
         assertTrue(f.controls[1][0].child("value").writes == 2, "remote writes never replay after uncertain result");
     }
@@ -948,7 +943,7 @@ public final class DeviceModuleTest {
             f.controls[1][0].child("value").emit(.35);
             f.next();
             assertTrue(
-                    pending.join().get("verification").getAsString().equals("observer_after_write"),
+                    pending.join().get("outcome").getAsString().equals("applied"),
                     transition + ": fresh same-source callback still verifies the write");
         }
     }
@@ -997,7 +992,7 @@ public final class DeviceModuleTest {
         JsonObject result = f.run("devices.remote.set", remoteWrite(current, 1, .6), f.tasks.after(20))
                 .join();
         assertTrue(
-                result.get("verification").getAsString().equals("postcondition_not_observed")
+                result.get("reason").getAsString().equals("not_observed")
                         && f.controls[1][0].child("value").writes == 1,
                 "recovered page baseline does not preserve predecessor value freshness");
     }
@@ -1053,7 +1048,7 @@ public final class DeviceModuleTest {
         JsonObject result = f.run("devices.remote.set", remoteWrite(returned, 1, .6), f.tasks.after(20))
                 .join();
         assertTrue(
-                result.get("verification").getAsString().equals("postcondition_not_observed")
+                result.get("reason").getAsString().equals("not_observed")
                         && f.controls[1][0].child("value").writes == 1,
                 "page-return getter equality is readable, not fresh no-op or write acknowledgement");
     }
@@ -1120,11 +1115,8 @@ public final class DeviceModuleTest {
             f.flush();
             f.next();
             assertTrue(
-                    pending.join().get("completion").getAsString().equals("unknown")
-                            && pending.join()
-                                    .get("verification")
-                                    .getAsString()
-                                    .equals("remote_context_changed_after_dispatch"),
+                    pending.join().get("outcome").getAsString().equals("unknown")
+                            && pending.join().get("reason").getAsString().equals("target_changed"),
                     transition + ": lifecycle change invalidates the pending write even after flush recovery");
             JsonObject current = f.call("devices.remote.get", target(1));
             assertTrue(
@@ -1212,7 +1204,7 @@ public final class DeviceModuleTest {
         JsonObject result =
                 f.run("devices.remote.page", page, f.tasks.after(20)).join();
         assertTrue(
-                result.get("verification").getAsString().equals("postcondition_not_observed")
+                result.get("reason").getAsString().equals("not_observed")
                         && f.pages[1].child("selectedPageIndex").writes == 1,
                 "recovered unchanged page index also requires a fresh observer, not a false verified no-op");
         Fake mapped = new Fake();
@@ -1236,7 +1228,7 @@ public final class DeviceModuleTest {
                         "devices.remote.set", remoteWrite(unmapped, 1, .6), mapped.tasks.after(20))
                 .join();
         assertTrue(
-                unacknowledged.get("verification").getAsString().equals("postcondition_not_observed")
+                unacknowledged.get("reason").getAsString().equals("not_observed")
                         && mapped.controls[1][0].child("value").writes == 1,
                 "callback during remapping cannot become fresh no-op proof after flush");
     }
@@ -1258,10 +1250,7 @@ public final class DeviceModuleTest {
         JsonObject write = remoteWrite(fresh, 1, .8);
         write.addProperty("expectedDeviceName", "Renamed");
         assertTrue(
-                f.call("devices.remote.set", write)
-                        .get("verification")
-                        .getAsString()
-                        .equals("observer_after_write"),
+                f.call("devices.remote.set", write).get("outcome").getAsString().equals("applied"),
                 "fresh name/context permits same-source remote write without replaying unchanged page metadata");
     }
 
@@ -1632,5 +1621,19 @@ public final class DeviceModuleTest {
         bank.put("itemCount", 0);
         bank.put("scrollPosition", 0);
         return bank;
+    }
+
+    @Test
+    void unknownOperationAndUnchangedPageAreReported() {
+        assertRpcError("unknown_method", () -> DeviceModule.validateParams("devices.bogus", new JsonObject()));
+        Fake f = new Fake();
+        JsonObject listing = f.call("devices.remote.get", target(1));
+        JsonObject p = target(1);
+        p.add("contextToken", listing.get("contextToken"));
+        p.addProperty("pageIndex", 0);
+        p.addProperty("expectedPageName", "Main");
+        assertTrue(
+                f.call("devices.remote.page", p).get("outcome").getAsString().equals("already_matched"),
+                "the selected page is not written again");
     }
 }

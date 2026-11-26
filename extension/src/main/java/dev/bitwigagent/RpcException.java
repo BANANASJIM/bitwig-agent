@@ -1,23 +1,28 @@
 package dev.bitwigagent;
 
-/** A protocol error; outcome describes effects, not merely response delivery. */
+/**
+ * A failure. Raised before any host change it is a protocol error (nothing changed); marked unknown it is reported
+ * as a result with outcome unknown, because a host change may have happened.
+ */
 public final class RpcException extends RuntimeException {
     private static final long serialVersionUID = 1L;
 
-    public final String code;
-    public final String outcome;
+    public final Reason reason;
+    public final String next;
+    public final boolean unknown;
 
-    public RpcException(String code, String message, String outcome) {
+    RpcException(Reason reason, String message, String next, boolean unknown) {
         super(message);
-        this.code = code;
-        this.outcome = outcome;
+        this.reason = reason;
+        this.next = next;
+        this.unknown = unknown;
     }
 
-    public boolean is(ErrorCode expected) {
-        return expected.wire().equals(code);
+    public String code() {
+        return reason.code().wire();
     }
 
-    public boolean is(Outcome expected) {
-        return expected.wire().equals(outcome);
+    public boolean is(Reason expected) {
+        return reason == expected;
     }
 }

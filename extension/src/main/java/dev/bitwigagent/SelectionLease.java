@@ -26,6 +26,6 @@ final class SelectionLease {
     void requireFree() {
         if (held())
             throw Errors.notApplied(
-                    ErrorCode.BUSY, "A launcher cursor operation holds the editor selection; no request was queued.");
+                    Reason.BUSY, "A launcher cursor operation holds the editor selection; no request was queued.");
     }
 }

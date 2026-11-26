@@ -21,8 +21,8 @@ final class MarkerModule implements HostModule {
     private final CueMarkerBank bank;
     private final CueMarker[] items = new CueMarker[WINDOW];
     private static final String UNRESOLVED = "markers.unresolved";
+    private static final String INSPECT_THEN_ACK = "Inspect markers.list, then ack " + UNRESOLVED + ".";
     private boolean observed;
-    private HostOperation active;
 
     MarkerModule(
             ControllerHost host,
@@ -79,7 +79,7 @@ final class MarkerModule implements HostModule {
                 if (p.has("expectedBeat")) Params.number(p, "expectedBeat", 0, 1e7);
                 return;
             default:
-                throw Errors.notApplied(ErrorCode.UNKNOWN_METHOD, "Unknown marker method.");
+                throw Errors.notApplied(Reason.UNKNOWN_METHOD, "Unknown marker method.");
         }
     }
 
@@ -125,7 +125,7 @@ final class MarkerModule implements HostModule {
     }
 
     private JsonObject describe(Snapshot snap) {
-        JsonObject out = Results.observed();
+        JsonObject out = new JsonObject();
         out.addProperty("scope", "arranger_cue_markers");
         JsonArray list = new JsonArray();
         for (int i = 0; i < snap.markers.size(); i++) {
@@ -148,7 +148,7 @@ final class MarkerModule implements HostModule {
     @Override
     public void dispatch(HostOperation op, String method, JsonObject p) {
         scheduler.check(op);
-        if (!observed) throw Errors.notApplied(ErrorCode.NOT_READY, "Cue marker bank has not reported its size yet.");
+        if (!observed) throw Errors.notApplied(Reason.NOT_READY, "Cue marker bank has not reported its size yet.");
         Snapshot before = read();
         if (method.equals("markers.list")) {
             op.result.complete(describe(before));
@@ -156,14 +156,10 @@ final class MarkerModule implements HostModule {
         }
         if (!before.complete)
             throw Errors.notApplied(
-                    ErrorCode.UNSUPPORTED_SCOPE,
+                    Reason.UNSUPPORTED_SCOPE,
                     "Marker edits need the whole marker list inside the " + WINDOW + "-marker window.");
         if (holds.held(UNRESOLVED))
-            throw Errors.notApplied(
-                    ErrorCode.UNRESOLVED_MUTATION,
-                    "A prior marker write was not observed; inspect markers.list or restart the extension first.");
-        if (active != null && !active.result.isDone())
-            throw Errors.notApplied(ErrorCode.BUSY, "Another marker write awaits observation.");
+            throw holds.blocked(UNRESOLVED, "A prior marker write was not observed.", "Inspect markers.list");
         transportSafety.requirePlaybackSafe();
         if (method.equals("markers.insert")) {
             insert(op, p, before);
@@ -177,11 +173,10 @@ final class MarkerModule implements HostModule {
             newName = p.get("name").getAsString();
             expected.merge(new Marker(0, newName, target.beat).key(), 1, Integer::sum);
             if (newName.equals(target.name)) {
-                finish(op, method, expected, target.beat, newName, "already_at_value", true);
+                finish(op, method, target.beat, newName, Outcome.ALREADY_MATCHED, null);
                 return;
             }
         }
-        active = op;
         op.dispatched = true;
         holds.place(UNRESOLVED, "A markers.* write was dispatched and its outcome was not observed.");
         CueMarker marker = items[target.slot];
@@ -193,15 +188,15 @@ final class MarkerModule implements HostModule {
     private Marker locate(Snapshot snap, JsonObject p) {
         int rank = p.get("markerIndex").getAsInt();
         if (rank >= snap.markers.size())
-            throw Errors.notApplied(ErrorCode.UNKNOWN_MARKER, "markerIndex is beyond the observed marker list.");
+            throw Errors.notApplied(Reason.UNKNOWN_NAME, "markerIndex is beyond the observed marker list.");
         Marker m = snap.markers.get(rank);
         if (!m.name.equals(p.get("expectedName").getAsString()))
             throw Errors.notApplied(
-                    ErrorCode.STALE_TARGET,
+                    Reason.STALE_TARGET,
                     "Marker " + rank + " is named " + m.name + ", not the expected name; list again.");
         if (p.has("expectedBeat") && Math.abs(m.beat - p.get("expectedBeat").getAsDouble()) > BEAT_TOLERANCE)
             throw Errors.notApplied(
-                    ErrorCode.STALE_TARGET,
+                    Reason.STALE_TARGET,
                     "Marker " + rank + " is at beat " + m.beat + ", not the expected beat; list again.");
         return m;
     }
@@ -212,10 +207,8 @@ final class MarkerModule implements HostModule {
         for (Marker m : before.markers)
             if (Math.abs(m.beat - beat) <= BEAT_TOLERANCE)
                 throw Errors.notApplied(
-                        ErrorCode.MARKER_EXISTS_AT_BEAT,
-                        "A marker named " + m.name + " is already at beat " + m.beat + ".");
-        if (before.total >= WINDOW) throw Errors.notApplied(ErrorCode.UNSUPPORTED_SCOPE, "The marker window is full.");
-        active = op;
+                        Reason.TARGET_EXISTS, "A marker named " + m.name + " is already at beat " + m.beat + ".");
+        if (before.total >= WINDOW) throw Errors.notApplied(Reason.UNSUPPORTED_SCOPE, "The marker window is full.");
         op.dispatched = true;
         holds.place(UNRESOLVED, "A markers.* write was dispatched and its outcome was not observed.");
         transport.addCueMarkerAtPlaybackPosition();
@@ -229,10 +222,10 @@ final class MarkerModule implements HostModule {
             Marker created = gained(now, before);
             if (created == null) {
                 JsonObject result = describe(now);
-                result.addProperty("status", "dispatched");
-                result.addProperty("completion", "unknown");
-                result.addProperty("matchesRequested", false);
-                result.addProperty("reason", "unique_added_marker_not_observed");
+                result.addProperty("outcome", Outcome.UNKNOWN.wire());
+                result.addProperty("reason", Reason.NOT_OBSERVED.wire());
+                result.addProperty("message", "The inserted marker was not observed as a single new entry.");
+                result.addProperty("next", INSPECT_THEN_ACK);
                 holds.place(UNRESOLVED, "A markers.* write was dispatched and its outcome was not observed.");
                 op.result.complete(result);
                 return;
@@ -280,30 +273,24 @@ final class MarkerModule implements HostModule {
                     Snapshot now = read();
                     return now.complete && same(now.multiset(), expected);
                 },
-                () -> finish(op, method, expected, beat, name, "observer_after_write", true),
-                () -> finish(op, method, expected, beat, name, "not_observed", false));
+                () -> finish(op, method, beat, name, Outcome.APPLIED, null),
+                () -> finish(op, method, beat, name, Outcome.UNKNOWN, Reason.NOT_OBSERVED));
     }
 
-    private void finish(
-            HostOperation op,
-            String method,
-            Map<String, Integer> expected,
-            double beat,
-            String name,
-            String verification,
-            boolean matched) {
+    private void finish(HostOperation op, String method, double beat, String name, Outcome outcome, Reason reason) {
         // An already-satisfied rename dispatched nothing, so it leaves no unresolved write behind.
-        if (matched) holds.release(UNRESOLVED);
+        if (outcome.succeeded()) holds.release(UNRESOLVED);
         JsonObject result = describe(read());
-        result.addProperty("status", matched ? "observed" : "dispatched");
-        result.addProperty("completion", matched ? "observed" : "unknown");
-        result.addProperty("matchesRequested", matched);
-        result.addProperty("verification", verification);
+        result.addProperty("outcome", outcome.wire());
         JsonObject marker = new JsonObject();
         marker.addProperty("name", name);
         marker.addProperty("beat", beat);
         result.add(method.equals("markers.delete") ? "deleted" : "marker", marker);
-        if (!matched) result.addProperty("reason", "marker_list_did_not_reach_expected_state");
+        if (reason != null) {
+            result.addProperty("reason", reason.wire());
+            result.addProperty("message", "The marker list did not reach the expected state.");
+            result.addProperty("next", INSPECT_THEN_ACK);
+        }
         op.result.complete(result);
     }
 

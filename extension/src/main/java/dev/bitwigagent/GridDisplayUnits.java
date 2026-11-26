@@ -99,7 +99,7 @@ final class GridDisplayUnits {
 
     private static RpcException unsupported(String why) {
         return Errors.notApplied(
-                ErrorCode.UNSUPPORTED_UNIT,
+                Reason.UNSUPPORTED_UNIT,
                 why + " Supported display units: " + new TreeSet<>(UNITS.keySet()) + "; write the raw value instead.");
     }
 
@@ -131,13 +131,13 @@ final class GridDisplayUnits {
         Quantity wanted = parse(unit, requested);
         if (wanted == null)
             throw Errors.notApplied(
-                    ErrorCode.INVALID_PARAMS,
+                    Reason.INVALID_PARAMS,
                     "display must be a number with an explicit unit suffix " + new TreeSet<>(unit.suffixes.keySet())
                             + ", e.g. \"1.2 kHz\".");
         double raw = unit.toRaw.applyAsDouble(wanted.natural);
         if (!Double.isFinite(raw))
             throw Errors.notApplied(
-                    ErrorCode.INVALID_PARAMS, "display is outside the convertible domain for '" + token + "'.");
+                    Reason.INVALID_PARAMS, "display is outside the convertible domain for '" + token + "'.");
         return raw;
     }
 

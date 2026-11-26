@@ -44,7 +44,7 @@ final class ContextModule implements HostModule {
     }
 
     static void validateParams(String method, JsonObject p) {
-        if (!METHODS.contains(method)) throw Errors.notApplied(ErrorCode.UNKNOWN_METHOD, "Unknown context method.");
+        if (!METHODS.contains(method)) throw Errors.notApplied(Reason.UNKNOWN_METHOD, "Unknown context method.");
         Params.fields(p, Set.of(), Set.of());
     }
 
@@ -56,7 +56,7 @@ final class ContextModule implements HostModule {
 
     /** Unobserved values are JSON null, never guessed. */
     private JsonObject snapshot() {
-        JsonObject out = Results.observed();
+        JsonObject out = new JsonObject();
         for (Map.Entry<String, JsonElement> e : transport.basics().entrySet()) out.add(e.getKey(), e.getValue());
         out.add("projectModified", Results.modified(projectState.modified()));
         out.addProperty("engineActive", projectState.engineActive());

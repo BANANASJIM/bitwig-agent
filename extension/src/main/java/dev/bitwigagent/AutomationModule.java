@@ -49,7 +49,7 @@ final class AutomationModule implements HostModule {
         final String kind, expectedDeviceName, parameterId;
         final int deviceIndex;
         final UUID moduleId;
-        Object deviceProxy, grid;
+        Object deviceProxy;
 
         Target(String kind, int deviceIndex, String expectedDeviceName, UUID moduleId, String parameterId) {
             this.kind = kind;
@@ -113,9 +113,7 @@ final class AutomationModule implements HostModule {
     private final Holds holds;
     private final TrackEpochs epochs;
     private Access access;
-    private Object gridAdapter;
     private static final String PENDING = "automation.pending", QUARANTINE = "automation.quarantine";
-    private static final String HOLD = "An automation point write is pending or unresolved.";
 
     AutomationModule(
             Scheduler scheduler,
@@ -173,7 +171,7 @@ final class AutomationModule implements HostModule {
                 points(p);
                 break;
             default:
-                throw Errors.notApplied(ErrorCode.UNKNOWN_METHOD, "Unknown automation method.");
+                throw Errors.notApplied(Reason.UNKNOWN_METHOD, "Unknown automation method.");
         }
         if (!DeviceSources.canonicalUuid(Params.string(p, "trackId")))
             throw Errors.invalid("trackId must be a canonical UUID");
@@ -296,13 +294,13 @@ final class AutomationModule implements HostModule {
     static void verify(List<Point> expected, List<Point> actual) {
         if (actual.size() != expected.size())
             throw Errors.unknown(
-                    ErrorCode.AUTOMATION_VERIFICATION_FAILED,
+                    Reason.READBACK_MISMATCH,
                     "Native lane holds " + actual.size() + " points after the write, expected " + expected.size()
                             + "; inspect automation.points.get before another write.");
         for (int i = 0; i < expected.size(); i++)
             if (!same(expected.get(i), actual.get(i)))
                 throw Errors.unknown(
-                        ErrorCode.AUTOMATION_VERIFICATION_FAILED,
+                        Reason.READBACK_MISMATCH,
                         "Native point " + i + " reads back as " + actual.get(i).json() + ", expected "
                                 + expected.get(i).json() + "; inspect automation.points.get before another write.");
     }
@@ -310,14 +308,14 @@ final class AutomationModule implements HostModule {
     static void requireExpected(List<Point> current, int expectedCount, String expectedHash) {
         if (current.size() != expectedCount || !hash(current).equals(expectedHash))
             throw Errors.notApplied(
-                    ErrorCode.STALE_TARGET,
+                    Reason.STALE_TARGET,
                     "The lane holds " + current.size()
                             + " points with a different pointsHash than expected; re-read automation.points.get.");
     }
 
-    /** Lane summary: whole-lane count and hash, plus the points inside range (bounded). */
-    static JsonObject lane(String trackId, Target target, boolean exists, List<Point> all, double[] range) {
-        JsonObject out = Results.observed();
+    /** Lane summary into {@code out}: whole-lane count and hash, plus the points inside range (bounded). */
+    static JsonObject lane(
+            JsonObject out, String trackId, Target target, boolean exists, List<Point> all, double[] range) {
         out.addProperty("trackId", trackId);
         out.add("target", target.json());
         out.addProperty("laneExists", exists);
@@ -352,11 +350,12 @@ final class AutomationModule implements HostModule {
         scheduler.check(op);
         boolean write = method.equals("automation.points.set");
         if (holds.held(PENDING))
-            throw Errors.notApplied(ErrorCode.BUSY, "Another native automation operation is pending.");
+            throw Errors.notApplied(Reason.BUSY, "Another native automation operation is pending.");
         if (write && holds.held(QUARANTINE))
-            throw Errors.notApplied(
-                    ErrorCode.UNRESOLVED_MUTATION,
-                    "An unresolved automation write requires inspection (automation.points.get) and extension.restart before further automation writes.");
+            throw holds.blocked(
+                    QUARANTINE,
+                    "An earlier automation point write has an unknown outcome; automation writes are refused.",
+                    "Inspect automation.points.get");
         String id = p.get("trackId").getAsString();
         int index = window.trackSlot(id);
         Track track = window.at(index);
@@ -372,38 +371,28 @@ final class AutomationModule implements HostModule {
             target.deviceProxy = device.device;
         }
         SafetyObservation safety = write ? transportSafety.stopped(op) : null;
-        if (access == null) {
-            try {
-                access = new Bitwig614AutomationAccess(natives.get(op).access(ErrorCode.AUTOMATION_UNAVAILABLE));
-            } catch (ReflectiveOperationException error) {
-                throw Errors.notApplied(
-                        ErrorCode.AUTOMATION_UNAVAILABLE,
-                        "Exact automation descriptors unavailable: " + error.getMessage());
-            }
-        }
-        if (target.grid()) {
-            if (gridAdapter == null && access instanceof Bitwig614AutomationAccess)
-                gridAdapter = new Bitwig614GridAdapter(natives.get(op).access(ErrorCode.GRID_UNAVAILABLE));
-            target.grid = gridAdapter;
-        }
+        if (access == null)
+            access = Bitwig614AutomationAccess.bind(natives.get(op).access());
         long epoch = epochs.get(index);
         DeviceSources.RootReadTicket ticket = device;
         Runnable check = () -> {
             scheduler.check(op);
             if (epochs.get(index) != epoch)
                 throw Errors.notApplied(
-                        ErrorCode.STALE_CONTEXT, "Track bank changed while the automation operation was queued.");
+                        Reason.STALE_CONTEXT, "Track bank changed while the automation operation was queued.");
             if (ticket != null) ticket.check();
             if (write) transportSafety.guardStopped(safety);
         };
         Runnable beforeWrite = () -> {
             check.run();
             op.dispatched = true;
-            holds.place(QUARANTINE, HOLD);
+            holds.place(
+                    QUARANTINE,
+                    "An automation point write on track " + id + " has an unknown outcome until read back.");
         };
         Access bridge = access;
         double[] range = range(p);
-        holds.place(PENDING, HOLD);
+        holds.inFlight(PENDING, "A native automation operation on track " + id + " is running.");
         try {
             bridge.execute(() -> {
                 try {
@@ -423,7 +412,7 @@ final class AutomationModule implements HostModule {
                     String serialized = BoundedJson.serialize(
                             result,
                             240000,
-                            ErrorCode.AUTOMATION_BOUNDS_EXCEEDED,
+                            Reason.OUT_OF_BOUNDS,
                             "Automation response exceeds the bounded transport size; pass a smaller range.");
                     scheduler.schedule(
                             op,
@@ -431,7 +420,7 @@ final class AutomationModule implements HostModule {
                                 check.run();
                                 if (!window.trackMatches(id, track))
                                     throw Errors.notApplied(
-                                            ErrorCode.STALE_CONTEXT, "Track target changed after native access.");
+                                            Reason.STALE_CONTEXT, "Track target changed after native access.");
                                 if (ticket != null) sources.guardRootRead(ticket);
                                 if (write) holds.release(QUARANTINE);
                                 holds.release(PENDING);

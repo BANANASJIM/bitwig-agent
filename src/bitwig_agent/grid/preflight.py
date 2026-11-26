@@ -22,7 +22,7 @@ async def _transport_blocks(channel: Channel, structural: bool) -> list[Refusal]
     fix = "stop playback and turn them off" if "playing" in busy else "turn them off"
     return [
         {
-            "code": "unsafe_state",
+            "reason": "unsafe_state",
             "message": f"{', '.join(busy)} blocks this write; {fix} with transport.set, then retry",
         }
     ]
@@ -31,7 +31,7 @@ async def _transport_blocks(channel: Channel, structural: bool) -> list[Refusal]
 def _unverified_displays(spec: Spec, plan: Plan) -> list[Refusal]:
     return [
         {
-            "code": "display_unverified",
+            "reason": "unsupported_unit",
             "message": f"{name}.{w['parameterId']}: the host converts the display {w['to']['display']!r} itself and may refuse it (unsupported_unit); write the raw value to be certain",
         }
         for name in spec.names

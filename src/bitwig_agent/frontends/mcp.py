@@ -22,7 +22,7 @@ from mcp.types import (
 )
 
 from bitwig_agent.core import views
-from bitwig_agent.core.invoke import Error, invoke
+from bitwig_agent.core.invoke import invoke
 
 
 def create_server() -> Server:
@@ -50,13 +50,19 @@ def create_server() -> Server:
                 TextContent(type="text", text=json.dumps(envelope.payload, allow_nan=False, separators=(",", ":")))
             ],
             structured_content=envelope.payload,
-            is_error=isinstance(envelope, Error),
+            is_error=envelope.failed,
         )
 
     return Server(
         "Bitwig Agent",
         version=views.version(),
-        instructions="Discover capabilities and tracks.list first. Our indices are zero-based. Use exact discovered targets and inspect bounded windows and verification. Timeouts are not cancellation; reconcile unknown outcomes before another write. No automatic retries. The agent may use Computer Use for API gaps; never blindly repeat an uncertain write through the GUI.",
+        instructions=(
+            "Discover with status and tracks.list; indices are zero-based; use exact discovered targets. "
+            "Every write returns outcome: applied, already_matched, sent (dispatched, nothing to observe), "
+            "not_applied, or unknown. An error always means nothing changed. On unknown stop: inspect the state, "
+            "then ack the hold that status.holds or the next refusal names; never retry an unknown write, by API or "
+            "GUI. A long job returns unknown with job=<id>: follow it with jobs.get. No automatic retries."
+        ),
         on_list_tools=list_tools,
         on_call_tool=call_tool,
     )

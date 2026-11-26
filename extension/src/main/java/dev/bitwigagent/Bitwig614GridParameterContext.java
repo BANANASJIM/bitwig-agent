@@ -46,22 +46,22 @@ final class Bitwig614GridParameterContext extends Bitwig614ContextReaders<GridPa
     public Object read(GridParameterContext.Field field, Object object) {
         if (field == GUI_PANEL_BOOLEAN) {
             if (panels == null)
-                throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Boolean panel property binding unavailable.");
+                throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Boolean panel property binding unavailable.");
             return panels.property(object);
         }
         if (field == GUI_STEP_ARRAY) {
             if (steps == null)
-                throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Step array property binding unavailable.");
+                throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Step array property binding unavailable.");
             return steps.property(object);
         }
         if (field == GUI_VOICING) {
             if (voicing == null)
-                throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Voicing property binding unavailable.");
+                throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Voicing property binding unavailable.");
             return voicing.property(object);
         }
         if (field == GUI_PANEL_STRING) {
             if (strings == null)
-                throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "String panel property binding unavailable.");
+                throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "String panel property binding unavailable.");
             return strings.property(object);
         }
         return invoke(field, UNDO, object, "parameter context");

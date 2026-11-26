@@ -8,8 +8,9 @@ from typing import Any
 
 from bitwig_agent.client import BridgeClient, configured_port, load_json
 from bitwig_agent.core import composed
-from bitwig_agent.errors import BridgeError, bridge_error
+from bitwig_agent.errors import BridgeError, UnknownOutcome, bridge_error
 from bitwig_agent.protocol import invalid_params_message, validate_call
+from bitwig_agent.protocol.base import SUCCEEDED
 
 
 @dataclass(frozen=True)
@@ -20,6 +21,11 @@ class Result:
     def payload(self) -> dict[str, Any]:
         return {"result": self.result}
 
+    @property
+    def failed(self) -> bool:
+        """A write whose outcome is not a success; reads carry no outcome."""
+        return "outcome" in self.result and self.result["outcome"] not in SUCCEEDED
+
 
 @dataclass(frozen=True)
 class Error:
@@ -29,6 +35,8 @@ class Error:
     @property
     def payload(self) -> dict[str, Any]:
         return {"error": self.error}
+
+    failed = True
 
 
 Envelope = Result | Error
@@ -52,5 +60,7 @@ async def invoke(name: str, args: Mapping[str, Any], client: BridgeClient | None
         return Result(await bridge.call(name, arguments, timeout_ms))
     except BridgeError as exc:
         return Error(exc.error)
+    except UnknownOutcome as exc:
+        return Result(exc.result)
     except (ValueError, TypeError, RecursionError) as exc:
         return invalid_params(name, exc)

@@ -75,11 +75,20 @@ public final class ArrangerModuleTest {
     }
 
     @Test
+    void unknownMethodAndUngatedHostAreRefused() {
+        assertRpcError("unknown_method", () -> ArrangerModule.validateParams("arranger.clips.split", obj()));
+        HostFixture host = new HostFixture();
+        host.tracks[0].child("channelId").emit(ID);
+        HostOperation op = host.start(host.services.arranger(null), "arranger.clips.list", obj("trackId", ID));
+        assertRpcError("host_mismatch", op);
+    }
+
+    @Test
     void listIsReadOnlyAndNeedsNoStoppedTransport() {
         Fixture f = new Fixture(true, "Audio");
         JsonObject result = f.call("arranger.clips.list", obj("trackId", ID));
         assertTrue(
-                result.get("status").getAsString().equals("observed") && f.lists == 1 && f.writes == 0,
+                !result.has("outcome") && f.lists == 1 && f.writes == 0,
                 "list reads through the adapter without writing");
     }
 
@@ -133,33 +142,55 @@ public final class ArrangerModuleTest {
     }
 
     @Test
-    void unknownWriteQuarantinesWritesButNotReads() {
+    void pendingOperationIsBusy() {
+        Fixture f = new Fixture(false, "Instrument");
+        HostOperation first = f.start("arranger.clips.create", create(0, 4));
+        assertTrue(
+                f.host.services.holds.list().size() == 1
+                        && !f.host.services.holds.list().get(0).ackable,
+                "a running native operation is an in-flight hold");
+        assertRpcError("busy", f.start("arranger.clips.list", obj("trackId", ID)));
+        f.drain();
+        assertTrue(
+                assertOutcome("applied", first) != null
+                        && f.host.services.holds.list().isEmpty(),
+                "the settled operation releases its hold");
+    }
+
+    @Test
+    void unknownWriteHoldsWritesButNotReadsUntilAck() {
         Fixture f = new Fixture(false, "Instrument");
         f.failAfterWrite = true;
         HostOperation failed = f.start("arranger.clips.create", create(0, 4));
         f.drain();
         assertTrue(failed.dispatched, "failure happened after dispatch");
-        {
-            CompletionException e = assertThrows(CompletionException.class, () -> failed.result.join());
-            assertTrue(((RpcException) e.getCause()).outcome.equals("unknown"), "post-dispatch failure is unknown");
-        }
-        assertRpcError("unresolved_mutation", f.start("arranger.clips.create", create(8, 4)));
+        assertUnknown("readback_mismatch", failed);
+        String next = assertRpcError("unresolved", f.start("arranger.clips.create", create(8, 4))).next;
         assertTrue(
-                f.call("arranger.clips.list", obj("trackId", ID))
-                        .get("status")
-                        .getAsString()
-                        .equals("observed"),
-                "reads stay available");
-        assertTrue(!f.host.services.holds.descriptions().isEmpty(), "unresolved write is listed for extension.restart");
+                next.contains("arranger.clips.list") && next.contains("ack arranger.quarantine"),
+                "the refusal says what to inspect and what to ack");
+        HostOperation list = f.start("arranger.clips.list", obj("trackId", ID));
+        f.drain();
+        assertTrue(list.result.join() != null, "reads stay available");
+        List<Holds.View> holds = f.host.services.holds.list();
+        assertTrue(
+                holds.size() == 1
+                        && holds.get(0).ackable
+                        && holds.get(0).description.contains(ID),
+                "the unknown write is an unresolved hold");
+        f.host.services.holds.ack("arranger.quarantine");
+        f.failAfterWrite = false;
+        HostOperation after = f.start("arranger.clips.create", create(8, 4));
+        f.drain();
+        assertOutcome("applied", after);
         Fixture before = new Fixture(false, "Instrument");
         before.failBeforeWrite = true;
         HostOperation rejected = before.start("arranger.clips.create", create(0, 4));
         before.drain();
-        assertRpcError("arranger_overlap", rejected);
+        assertRpcError("overlap", rejected);
         assertTrue(
-                !rejected.dispatched
-                        && before.host.services.holds.descriptions().isEmpty(),
-                "pre-dispatch refusal does not quarantine");
+                !rejected.dispatched && before.host.services.holds.list().isEmpty(),
+                "pre-dispatch refusal holds nothing");
     }
 
     static JsonObject create(double start, double length) {
@@ -245,7 +276,7 @@ public final class ArrangerModuleTest {
                 public JsonObject list(Object track, String id, Runnable check) {
                     lists++;
                     check.run();
-                    return Results.observed();
+                    return new JsonObject();
                 }
 
                 public JsonObject create(
@@ -297,12 +328,11 @@ public final class ArrangerModuleTest {
         JsonObject write(Runnable check, Runnable before) {
             calls++;
             check.run();
-            if (failBeforeWrite) throw Errors.notApplied(ErrorCode.ARRANGER_OVERLAP, "simulated overlap");
+            if (failBeforeWrite) throw Errors.notApplied(Reason.OVERLAP, "simulated overlap");
             before.run();
             writes++;
-            if (failAfterWrite)
-                throw new RpcException("arranger_verification_failed", "simulated readback mismatch", "unknown");
-            return Results.observed();
+            if (failAfterWrite) throw Errors.unknown(Reason.READBACK_MISMATCH, "simulated readback mismatch");
+            return Results.outcome(Outcome.APPLIED);
         }
 
         HostOperation start(String m, JsonObject p) {

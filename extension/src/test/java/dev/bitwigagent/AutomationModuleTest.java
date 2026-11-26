@@ -88,28 +88,27 @@ public final class AutomationModuleTest {
             RpcException e = assertThrows(
                     RpcException.class, () -> AutomationModule.requireExpected(lane, 2, AutomationModule.hash(lane)));
             assertTrue(
-                    e.code.equals("stale_target") && e.outcome.equals("not_applied"),
+                    e.reason.wire().equals("stale_target") && !e.unknown,
                     "count mismatch is stale_target before dispatch");
         }
         {
             RpcException e = assertThrows(
                     RpcException.class, () -> AutomationModule.verify(lane, List.of(a, p(8, 0.41, false), c)));
-            assertTrue(
-                    e.code.equals("automation_verification_failed") && e.outcome.equals("unknown"),
-                    "readback mismatch is unknown");
+            assertTrue(e.reason.wire().equals("readback_mismatch") && e.unknown, "readback mismatch is unknown");
         }
         AutomationModule.verify(lane, List.of(a, p(8, 0.4 + 1e-12, false), c));
         List<AutomationModule.Point> big = new ArrayList<>();
         for (int i = 0; i < 1500; i++) big.add(p(i, 0.5, true));
         JsonObject summary = AutomationModule.lane(
-                ID, AutomationModule.Target.parse(get("volume")), true, big, new double[] {10, 20});
+                new JsonObject(), ID, AutomationModule.Target.parse(get("volume")), true, big, new double[] {10, 20});
         assertTrue(
                 summary.get("count").getAsInt() == 1500
                         && summary.get("pointsInRange").getAsInt() == 11
                         && summary.getAsJsonArray("points").size() == 11
                         && !summary.get("truncated").getAsBoolean(),
                 "range filters listed points, count covers the lane");
-        JsonObject whole = AutomationModule.lane(ID, AutomationModule.Target.parse(get("volume")), true, big, null);
+        JsonObject whole = AutomationModule.lane(
+                new JsonObject(), ID, AutomationModule.Target.parse(get("volume")), true, big, null);
         assertTrue(
                 whole.getAsJsonArray("points").size() == AutomationModule.MAX_READ
                         && whole.get("truncated").getAsBoolean(),
@@ -117,12 +116,21 @@ public final class AutomationModuleTest {
     }
 
     @Test
+    void unknownMethodAndUngatedHostAreRefused() {
+        assertRpcError(
+                "unknown_method", () -> AutomationModule.validateParams("automation.points.clear", get("volume")));
+        HostFixture host = new HostFixture();
+        host.tracks[0].child("channelId").emit(ID);
+        HostOperation op = host.start(host.services.automation(null), "automation.points.get", get("volume"));
+        assertRpcError("host_mismatch", op);
+    }
+
+    @Test
     void readNeedsNoStoppedTransport() {
         Fixture f = new Fixture(true);
         JsonObject result = f.call("automation.points.get", get("volume"));
         assertTrue(
-                result.get("status").getAsString().equals("observed") && f.reads == 1 && f.writes == 0,
-                "get reads through the adapter while playing");
+                !result.has("outcome") && f.reads == 1 && f.writes == 0, "get reads through the adapter while playing");
         assertTrue(
                 f.lastTarget.kind.equals("volume") && f.lastRange == null, "target and absent range reach the adapter");
     }
@@ -154,41 +162,58 @@ public final class AutomationModuleTest {
         Fixture f = new Fixture(false);
         HostOperation op = f.start("automation.points.get", gridGet("CUTOFF"));
         f.drain();
-        {
-            CompletionException e = assertThrows(CompletionException.class, () -> op.result.join());
-            assertTrue(((RpcException) e.getCause()).outcome.equals("not_applied"), "unobserved device is refused");
-        }
+        assertTrue(!rejection(op).unknown, "unobserved device is refused");
         assertTrue(f.calls == 0, "grid target is refused before native access without an observed device");
     }
 
     @Test
-    void unknownWriteQuarantinesWritesButNotReads() {
+    void pendingOperationIsBusy() {
+        Fixture f = new Fixture(false);
+        HostOperation first = f.start("automation.points.set", set(points(point(0, 0.5, "hold"))));
+        assertTrue(
+                f.host.services.holds.list().size() == 1
+                        && !f.host.services.holds.list().get(0).ackable,
+                "a running native operation is an in-flight hold");
+        assertRpcError("busy", f.start("automation.points.get", get("pan")));
+        f.drain();
+        assertTrue(
+                assertOutcome("applied", first) != null
+                        && f.host.services.holds.list().isEmpty(),
+                "the settled operation releases its hold");
+    }
+
+    @Test
+    void unknownWriteHoldsWritesButNotReadsUntilAck() {
         Fixture f = new Fixture(false);
         f.failAfterWrite = true;
         HostOperation failed = f.start("automation.points.set", set(points(point(0, 0.5, "hold"))));
         f.drain();
         assertTrue(failed.dispatched, "failure happened after dispatch");
-        {
-            CompletionException e = assertThrows(CompletionException.class, () -> failed.result.join());
-            assertTrue(((RpcException) e.getCause()).outcome.equals("unknown"), "post-dispatch failure is unknown");
-        }
-        assertRpcError("unresolved_mutation", f.start("automation.points.set", set(new JsonArray())));
+        assertUnknown("readback_mismatch", failed);
+        String next = assertRpcError("unresolved", f.start("automation.points.set", set(new JsonArray()))).next;
         assertTrue(
-                f.call("automation.points.get", get("pan"))
-                        .get("status")
-                        .getAsString()
-                        .equals("observed"),
-                "reads stay available");
-        assertTrue(!f.host.services.holds.descriptions().isEmpty(), "unresolved write is listed for extension.restart");
+                next.contains("automation.points.get") && next.contains("ack automation.quarantine"),
+                "the refusal says what to inspect and what to ack");
+        assertTrue(!f.call("automation.points.get", get("pan")).has("outcome"), "reads stay available");
+        List<Holds.View> holds = f.host.services.holds.list();
+        assertTrue(
+                holds.size() == 1
+                        && holds.get(0).ackable
+                        && holds.get(0).description.contains(ID),
+                "the unknown write is an unresolved hold");
+        f.host.services.holds.ack("automation.quarantine");
+        f.failAfterWrite = false;
+        HostOperation after = f.start("automation.points.set", set(new JsonArray()));
+        f.drain();
+        assertOutcome("applied", after);
         Fixture before = new Fixture(false);
         before.failBeforeWrite = true;
         HostOperation rejected = before.start("automation.points.set", set(new JsonArray()));
         before.drain();
         assertRpcError("stale_target", rejected);
         assertTrue(
-                !rejected.dispatched
-                        && before.host.services.holds.descriptions().isEmpty(),
-                "pre-dispatch refusal does not quarantine");
+                !rejected.dispatched && before.host.services.holds.list().isEmpty(),
+                "pre-dispatch refusal holds nothing");
     }
 
     static AutomationModule.Point p(double beat, double value, boolean linear) {
@@ -278,7 +303,7 @@ public final class AutomationModuleTest {
                     lastTarget = target;
                     lastRange = range;
                     check.run();
-                    return Results.observed();
+                    return new JsonObject();
                 }
 
                 public JsonObject set(
@@ -298,13 +323,11 @@ public final class AutomationModuleTest {
                     lastHash = hash;
                     lastPoints = points;
                     lastRange = range;
-                    if (failBeforeWrite) throw Errors.notApplied(ErrorCode.STALE_TARGET, "simulated hash mismatch");
+                    if (failBeforeWrite) throw Errors.notApplied(Reason.STALE_TARGET, "simulated hash mismatch");
                     before.run();
                     writes++;
-                    if (failAfterWrite)
-                        throw new RpcException(
-                                "automation_verification_failed", "simulated readback mismatch", "unknown");
-                    return Results.observed();
+                    if (failAfterWrite) throw Errors.unknown(Reason.READBACK_MISMATCH, "simulated readback mismatch");
+                    return Results.outcome(Outcome.APPLIED);
                 }
             });
         }

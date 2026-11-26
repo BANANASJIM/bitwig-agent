@@ -16,7 +16,7 @@ public final class SceneModuleTest {
         final HostFixture f = new HostFixture();
         final List<String> names = new ArrayList<>();
         final SceneModule module;
-        boolean applyDuplicate = true, applyDelete = true, positional;
+        boolean applyDuplicate = true, applyDelete = true, positional, playsOnLaunch;
 
         Model(String... initial) {
             names.addAll(Arrays.asList(initial));
@@ -52,7 +52,8 @@ public final class SceneModuleTest {
                     scene.actions++;
                     for (int t = 0; t < 2; t++) {
                         FakeHost slot = f.slot(t, index);
-                        if (slot.child("hasContent").data.equals(true)) slot.child("isPlaybackQueued").data = true;
+                        if (slot.child("hasContent").data.equals(true))
+                            slot.child(playsOnLaunch ? "isPlaying" : "isPlaybackQueued").data = true;
                     }
                     return null;
                 });
@@ -85,6 +86,20 @@ public final class SceneModuleTest {
             while (!op.result.isDone()) f.next();
             return op;
         }
+    }
+
+    @Test
+    void refusesUnknownMethodsLongNamesAndUnreadyBanks() {
+        assertRpcError("unknown_method", () -> SceneModule.validateParams("scenes.bogus", new JsonObject()));
+        assertInvalidParams(() -> SceneModule.validateParams(
+                "scenes.rename",
+                HostFixture.json("{\"sceneIndex\":0,\"expectedName\":\"\",\"name\":\"" + "x".repeat(129) + "\"}")));
+        Model unready = new Model("A");
+        unready.f.bank.child("sceneBank").child("itemCount").emit(-1);
+        assertRpcError("not_ready", unready.start("scenes.list", "{}"));
+        Model scrolled = new Model("A");
+        scrolled.f.bank.child("sceneBank").child("scrollPosition").data = 1;
+        assertRpcError("stale_context", scrolled.start("scenes.list", "{}"));
     }
 
     @Test
@@ -131,7 +146,7 @@ public final class SceneModuleTest {
         Model m = new Model("Intro", "");
         JsonObject out = m.call("scenes.rename", "{\"sceneIndex\":1,\"expectedName\":\"\",\"name\":\"Verse\"}");
         assertTrue(
-                out.get("status").getAsString().equals("observed")
+                out.get("outcome").getAsString().equals("applied")
                         && out.get("verification").getAsString().equals("observer_after_write")
                         && out.get("name").getAsString().equals("Verse"),
                 "rename verified by the name observer");
@@ -141,21 +156,20 @@ public final class SceneModuleTest {
                 "only the addressed scene written");
         out = m.call("scenes.rename", "{\"sceneIndex\":1,\"expectedName\":\"Verse\",\"name\":\"Verse\"}");
         assertTrue(
-                out.get("verification").getAsString().equals("already_at_value")
+                out.get("outcome").getAsString().equals("already_matched")
                         && m.f.bank.child("sceneBank").item(1).child("name").writes == 1,
                 "same name is not rewritten");
         HostOperation stale = m.start("scenes.rename", "{\"sceneIndex\":1,\"expectedName\":\"Chorus\",\"name\":\"X\"}");
-        assertTrue(assertRpcError("stale_target", stale).outcome.equals("not_applied"), "wrong expectedName refused");
+        assertTrue(!assertRpcError("stale_target", stale).unknown, "wrong expectedName refused");
         assertRpcError(
-                "scene_out_of_range",
-                m.start("scenes.rename", "{\"sceneIndex\":5,\"expectedName\":\"\",\"name\":\"X\"}"));
+                "out_of_bounds", m.start("scenes.rename", "{\"sceneIndex\":5,\"expectedName\":\"\",\"name\":\"X\"}"));
         m.f.bank.child("sceneBank").item(0).child("name").notifyWrites = false;
         HostOperation silent =
                 m.startShort("scenes.rename", "{\"sceneIndex\":0,\"expectedName\":\"Intro\",\"name\":\"Start\"}");
         JsonObject result = silent.result.join();
         assertTrue(
-                result.get("status").getAsString().equals("dispatched")
-                        && result.get("completion").getAsString().equals("unknown"),
+                result.get("outcome").getAsString().equals("unknown")
+                        && result.get("reason").getAsString().equals("not_observed"),
                 "unobserved rename stays unknown");
     }
 
@@ -164,7 +178,7 @@ public final class SceneModuleTest {
         Model m = new Model("Intro", "Verse", "Outro");
         JsonObject out = m.call("scenes.duplicate", "{\"sceneIndex\":1,\"expectedName\":\"Verse\"}");
         assertTrue(
-                out.get("status").getAsString().equals("observed")
+                out.get("outcome").getAsString().equals("applied")
                         && out.get("newSceneIndex").getAsInt() == 2
                         && out.get("sceneCountBefore").getAsInt() == 3,
                 "duplicate observed after its source");
@@ -177,13 +191,13 @@ public final class SceneModuleTest {
                 .result
                 .join();
         assertTrue(
-                unknown.get("status").getAsString().equals("dispatched")
-                        && unknown.get("completion").getAsString().equals("unknown"),
+                unknown.get("outcome").getAsString().equals("unknown")
+                        && unknown.get("reason").getAsString().equals("not_observed"),
                 "unobserved duplicate stays unknown");
         Model tail = new Model("A", "B");
         out = tail.call("scenes.duplicate", "{\"sceneIndex\":1,\"expectedName\":\"B\"}");
         assertTrue(
-                out.get("status").getAsString().equals("observed")
+                out.get("outcome").getAsString().equals("applied")
                         && out.get("newSceneIndex").getAsInt() == 2,
                 "duplicating the last scene is observed by count");
         assertTrue(
@@ -192,20 +206,17 @@ public final class SceneModuleTest {
                 "a stale placeholder name is never reported");
         Model pinned = new Model("A", "B");
         pinned.f.services.holds.place(LauncherStructureLock.MUTATION, "A launcher mutation is pinned.");
+        RpcException pinnedError = assertRpcError(
+                "unresolved", pinned.start("scenes.duplicate", "{\"sceneIndex\":0,\"expectedName\":\"A\"}"));
         assertTrue(
-                assertRpcError(
-                                "unresolved_mutation",
-                                pinned.start("scenes.duplicate", "{\"sceneIndex\":0,\"expectedName\":\"A\"}"))
-                        .outcome
-                        .equals("not_applied"),
-                "a pinned launcher blocks duplicate");
-        assertRpcError(
-                "unresolved_mutation", pinned.start("scenes.delete", "{\"sceneIndex\":0,\"expectedName\":\"A\"}"));
+                pinnedError.next.contains("ack " + LauncherStructureLock.MUTATION),
+                "the refusal names the hold to ack");
+        assertRpcError("unresolved", pinned.start("scenes.delete", "{\"sceneIndex\":0,\"expectedName\":\"A\"}"));
         assertTrue(pinned.f.bank.child("sceneBank").item(0).actions == 0, "nothing dispatched while pinned");
         String[] full = new String[HostLimits.SCENES];
         Arrays.fill(full, "S");
         Model limit = new Model(full);
-        assertRpcError("scene_limit", limit.start("scenes.duplicate", "{\"sceneIndex\":0,\"expectedName\":\"S\"}"));
+        assertRpcError("limit_reached", limit.start("scenes.duplicate", "{\"sceneIndex\":0,\"expectedName\":\"S\"}"));
     }
 
     @Test
@@ -214,7 +225,7 @@ public final class SceneModuleTest {
         m.f.slot(0, 1).child("hasContent").data = true;
         JsonObject out = m.call("scenes.delete", "{\"sceneIndex\":1,\"expectedName\":\"Verse\"}");
         assertTrue(
-                out.get("status").getAsString().equals("observed")
+                out.get("outcome").getAsString().equals("applied")
                         && out.get("deletedName").getAsString().equals("Verse")
                         && out.get("clipsDeleted").getAsInt() == 1,
                 "delete observed with the clip count it removed");
@@ -224,13 +235,7 @@ public final class SceneModuleTest {
         Model playing = new Model("A", "B");
         playing.f.slot(0, 0).child("hasContent").data = true;
         playing.f.slot(0, 0).child("isPlaying").data = true;
-        assertTrue(
-                assertRpcError(
-                                "unsafe_state",
-                                playing.start("scenes.delete", "{\"sceneIndex\":0,\"expectedName\":\"A\"}"))
-                        .outcome
-                        .equals("not_applied"),
-                "a playing clip blocks delete");
+        assertRpcError("unsafe_state", playing.start("scenes.delete", "{\"sceneIndex\":0,\"expectedName\":\"A\"}"));
         assertTrue(playing.f.bank.child("sceneBank").item(0).actions == 0, "nothing dispatched");
         Model transport = new Model("A", "B");
         transport.f.transport.child("isPlaying").emit(true);
@@ -240,15 +245,15 @@ public final class SceneModuleTest {
         assertRpcError(
                 "outside_window", new Model(many).start("scenes.delete", "{\"sceneIndex\":0,\"expectedName\":\"S\"}"));
         Model last = new Model("Only");
-        assertRpcError("last_scene", last.start("scenes.delete", "{\"sceneIndex\":0,\"expectedName\":\"Only\"}"));
+        assertRpcError("limit_reached", last.start("scenes.delete", "{\"sceneIndex\":0,\"expectedName\":\"Only\"}"));
         Model silent = new Model("A", "B");
         silent.applyDelete = false;
         JsonObject unknown = silent.startShort("scenes.delete", "{\"sceneIndex\":0,\"expectedName\":\"A\"}")
                 .result
                 .join();
         assertTrue(
-                unknown.get("status").getAsString().equals("dispatched")
-                        && unknown.get("completion").getAsString().equals("unknown"),
+                unknown.get("outcome").getAsString().equals("unknown")
+                        && unknown.get("reason").getAsString().equals("not_observed"),
                 "unobserved delete stays unknown");
     }
 
@@ -258,7 +263,7 @@ public final class SceneModuleTest {
         m.positional = true;
         JsonObject out = m.call("scenes.duplicate", "{\"sceneIndex\":0,\"expectedName\":\"Scene 1\"}");
         assertTrue(
-                out.get("status").getAsString().equals("observed")
+                out.get("outcome").getAsString().equals("applied")
                         && out.get("newSceneIndex").getAsInt() == 1,
                 "duplicate of a positionally named scene is observed");
         assertTrue(
@@ -266,7 +271,7 @@ public final class SceneModuleTest {
                 "later default labels shifted");
         out = m.call("scenes.delete", "{\"sceneIndex\":1,\"expectedName\":\"Scene 2\"}");
         assertTrue(
-                out.get("status").getAsString().equals("observed")
+                out.get("outcome").getAsString().equals("applied")
                         && out.get("verification").getAsString().equals("scene_count_and_names"),
                 "delete is observed despite shifted default labels");
         assertTrue(m.names.equals(List.of("Scene 1", "Scene 2", "Chorus", "Scene 4")), "back to the original labels");
@@ -274,12 +279,12 @@ public final class SceneModuleTest {
         renamed.positional = true;
         renamed.applyDelete = false;
         assertTrue(
-                !renamed.startShort("scenes.delete", "{\"sceneIndex\":0,\"expectedName\":\"Scene 1\"}")
+                renamed.startShort("scenes.delete", "{\"sceneIndex\":0,\"expectedName\":\"Scene 1\"}")
                         .result
                         .join()
-                        .get("status")
+                        .get("outcome")
                         .getAsString()
-                        .equals("observed"),
+                        .equals("unknown"),
                 "an unchanged list is still not observed");
     }
 
@@ -289,27 +294,27 @@ public final class SceneModuleTest {
         m.f.slot(0, 0).child("hasContent").data = true;
         JsonObject out = m.call("scenes.launch", "{\"sceneIndex\":0,\"expectedName\":\"Intro\"}");
         assertTrue(
-                out.get("status").getAsString().equals("observed")
-                        && out.get("verification").getAsString().equals("clips_playing_or_queued")
+                out.get("outcome").getAsString().equals("sent")
+                        && !out.has("verification")
                         && out.get("clipCount").getAsInt() == 1,
-                "launch observed through the scene's clips");
+                "a queued launch is sent, not playing");
+        Model playing = new Model("Intro");
+        playing.playsOnLaunch = true;
+        playing.f.slot(0, 0).child("hasContent").data = true;
+        out = playing.call("scenes.launch", "{\"sceneIndex\":0,\"expectedName\":\"Intro\"}");
+        assertTrue(
+                out.get("outcome").getAsString().equals("applied")
+                        && out.get("verification").getAsString().equals("clips_playing"),
+                "launch observed through the scene's playing clips");
         JsonObject empty = m.startShort("scenes.launch", "{\"sceneIndex\":1,\"expectedName\":\"Empty\"}")
                 .result
                 .join();
         assertTrue(
-                empty.get("status").getAsString().equals("dispatched")
-                        && empty.get("completion").getAsString().equals("not_observed")
-                        && empty.get("verification").getAsString().equals("scene_has_no_clips"),
-                "a scene without clips is dispatched, never claimed as playing");
+                empty.get("outcome").getAsString().equals("sent") && !empty.has("verification"),
+                "a scene without clips is sent, never claimed as playing");
         Model unsafe = new Model("A");
         unsafe.f.transport.child("isArrangerRecordEnabled").emit(true);
-        assertTrue(
-                assertRpcError(
-                                "unsafe_state",
-                                unsafe.start("scenes.launch", "{\"sceneIndex\":0,\"expectedName\":\"A\"}"))
-                        .outcome
-                        .equals("not_applied"),
-                "recording blocks launch");
+        assertRpcError("unsafe_state", unsafe.start("scenes.launch", "{\"sceneIndex\":0,\"expectedName\":\"A\"}"));
         assertTrue(unsafe.f.bank.child("sceneBank").item(0).actions == 0, "nothing dispatched");
     }
 }

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import PurePath, PurePosixPath, PureWindowsPath
 from typing import Annotated, Any, Self
 
@@ -14,6 +16,102 @@ from bitwig_agent.protocol.limits import (
     MAX_TIMEOUT_MS,
     MIN_TIMEOUT_MS,
 )
+
+PROTOCOL = "0.5"
+
+
+class Outcome(StrEnum):
+    """What a write did, in rising severity: a result's outcome is the worst of its entries."""
+
+    ALREADY_MATCHED = "already_matched"
+    APPLIED = "applied"
+    SENT = "sent"
+    NOT_APPLIED = "not_applied"
+    UNKNOWN = "unknown"
+
+
+SUCCEEDED = frozenset({Outcome.ALREADY_MATCHED, Outcome.APPLIED, Outcome.SENT})
+
+
+def worst(outcomes: Iterable[str]) -> Outcome:
+    order = list(Outcome)
+    return max((Outcome(o) for o in outcomes), key=order.index, default=Outcome.ALREADY_MATCHED)
+
+
+class ErrorCode(StrEnum):
+    """An error always means nothing changed; the code says what the caller can do about it."""
+
+    INVALID_PARAMS = "invalid_params"
+    STALE = "stale"
+    CONFLICT = "conflict"
+    PENDING = "pending"
+    UNSAFE_STATE = "unsafe_state"
+    UNAVAILABLE = "unavailable"
+    REFUSED = "refused"
+    INCOMPATIBLE = "incompatible"
+    UNKNOWN_METHOD = "unknown_method"
+    INTERNAL = "internal"
+
+
+_REASONS_BY_CODE: dict[ErrorCode, tuple[str, ...]] = {
+    ErrorCode.INVALID_PARAMS: (
+        "invalid_params",
+        "invalid_request",
+        "invalid_target",
+        "kind_mismatch",
+        "unsupported_scope",
+        "unsupported_unit",
+        "unknown_name",
+        "ambiguous_name",
+        "out_of_bounds",
+        "invalid_file",
+        "no_notes",
+        "unverifiable_clip",
+    ),
+    ErrorCode.STALE: ("stale_context", "stale_target", "target_not_found", "target_changed", "unknown_hold"),
+    ErrorCode.CONFLICT: (
+        "target_exists",
+        "overlap",
+        "limit_reached",
+        "readback_mismatch",
+        "side_effect",
+        "not_reached",
+    ),
+    ErrorCode.PENDING: ("busy", "unresolved"),
+    ErrorCode.UNSAFE_STATE: ("unsafe_state", "engine_inactive", "unsaved_changes", "not_isolated"),
+    ErrorCode.UNAVAILABLE: (
+        "not_ready",
+        "native_unavailable",
+        "outside_window",
+        "deadline",
+        "transport",
+        "not_observed",
+        "unsupported_platform",
+    ),
+    ErrorCode.REFUSED: (
+        "host_refused",
+        "routing_cycle",
+        "needs_confirmation",
+        "path_not_allowed",
+        "job_failed",
+        "cancelled",
+    ),
+    ErrorCode.INCOMPATIBLE: ("protocol_mismatch", "host_mismatch"),
+    ErrorCode.UNKNOWN_METHOD: ("unknown_method",),
+    ErrorCode.INTERNAL: ("internal",),
+}
+REASONS: dict[str, ErrorCode] = {reason: code for code, names in _REASONS_BY_CODE.items() for reason in names}
+"""The closed reason list: each reason belongs to one error code and also explains a result entry."""
+
+
+def vocabulary() -> dict[str, Any]:
+    return {
+        "protocol": PROTOCOL,
+        "outcomes": [o.value for o in Outcome],
+        "errorCodes": [c.value for c in ErrorCode],
+        "reasons": {reason: code.value for reason, code in REASONS.items()},
+    }
+
 
 Nonempty = Annotated[str, Field(min_length=1, max_length=4096)]
 TrackId = Annotated[

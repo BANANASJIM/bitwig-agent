@@ -18,7 +18,6 @@ def test_project_save_is_a_write_tool_without_arguments():
     assert validate_call("project.save", {})[0] == {}
     with pytest.raises(ValidationError):
         validate_call("project.save", {"force": True})
-    assert "projectModified" in TOOLS["extension.restart"].description
 
 
 def test_project_save_as_takes_a_final_bwproject_path_and_explicit_flags():

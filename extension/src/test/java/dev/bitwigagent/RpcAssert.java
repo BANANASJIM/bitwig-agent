@@ -1,35 +1,29 @@
 package dev.bitwigagent;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.google.gson.JsonObject;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 
-/** Assertions on the structured errors a module reports, synchronously or through a settled future. */
+/** Assertions on what a module reports: errors (nothing changed) and results with an outcome. */
 final class RpcAssert {
     private RpcAssert() {}
 
-    static RpcException assertRpcError(String code, Runnable action) {
-        RpcException error = assertThrows(RpcException.class, action::run, "expected " + code);
-        assertEquals(code, error.code, "error code: " + error.getMessage());
+    /** A synchronous error with {@code reason}; an error always means nothing changed. */
+    static RpcException assertRpcError(String reason, Runnable action) {
+        RpcException error = assertThrows(RpcException.class, action::run, "expected " + reason);
+        assertEquals(reason, error.reason.wire(), "error reason: " + error.getMessage());
+        assertFalse(error.unknown, "a synchronous error is raised before any host change");
         return error;
-    }
-
-    static RpcException assertRpcError(String code, String outcome, Runnable action) {
-        RpcException error = assertRpcError(code, action);
-        assertEquals(outcome, error.outcome, "outcome of " + code);
-        return error;
-    }
-
-    static RpcException assertNotApplied(String code, Runnable action) {
-        return assertRpcError(code, Outcome.NOT_APPLIED.wire(), action);
     }
 
     static RpcException assertInvalidParams(Runnable action) {
-        return assertNotApplied(ErrorCode.INVALID_PARAMS.wire(), action);
+        return assertRpcError(Reason.INVALID_PARAMS.wire(), action);
     }
 
     static RpcException rejection(CompletableFuture<?> result) {
@@ -42,19 +36,28 @@ final class RpcAssert {
         return rejection(operation.result);
     }
 
-    static RpcException assertRpcError(String code, CompletableFuture<?> result) {
+    static RpcException assertRpcError(String reason, CompletableFuture<?> result) {
         RpcException error = rejection(result);
-        assertEquals(code, error.code, "error code: " + error.getMessage());
+        assertEquals(reason, error.reason.wire(), "error reason: " + error.getMessage());
         return error;
     }
 
-    static RpcException assertRpcError(String code, HostOperation operation) {
-        return assertRpcError(code, operation.result);
+    static RpcException assertRpcError(String reason, HostOperation operation) {
+        return assertRpcError(reason, operation.result);
     }
 
-    static RpcException assertRpcError(String code, String outcome, HostOperation operation) {
-        RpcException error = assertRpcError(code, operation);
-        assertEquals(outcome, error.outcome, "outcome of " + code);
-        return error;
+    /** A settled result whose outcome is {@code outcome}. */
+    static JsonObject assertOutcome(String outcome, HostOperation operation) {
+        assertTrue(operation.result.isDone(), "the future must already be settled");
+        JsonObject result = operation.result.join();
+        assertEquals(outcome, result.get("outcome").getAsString(), "outcome: " + result);
+        return result;
+    }
+
+    /** A settled result with outcome unknown and {@code reason}: a host change may have happened. */
+    static JsonObject assertUnknown(String reason, HostOperation operation) {
+        JsonObject result = assertOutcome(Outcome.UNKNOWN.wire(), operation);
+        assertEquals(reason, result.get("reason").getAsString(), "unknown reason: " + result);
+        return result;
     }
 }

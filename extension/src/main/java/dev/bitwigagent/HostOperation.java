@@ -14,17 +14,12 @@ final class HostOperation {
         this.deadline = deadline;
     }
 
+    /** Before dispatch a failure is an error (nothing changed); after it, a result with outcome unknown. */
     void fail(Throwable error) {
-        if (dispatched) {
-            if (error instanceof RpcException) {
-                RpcException rpc = (RpcException) error;
-                error = Errors.withOutcome(rpc, Outcome.UNKNOWN);
-            } else {
-                error = Errors.unknown(
-                        ErrorCode.INTERNAL_ERROR,
-                        "Failure after native dispatch; outcome unknown. Inspect state before another write.");
-            }
-        }
-        result.completeExceptionally(error);
+        RpcException rpc = error instanceof RpcException
+                ? (RpcException) error
+                : Errors.notApplied(Reason.INTERNAL, "Internal failure: " + error);
+        if (dispatched || rpc.unknown) result.complete(Errors.unknownResult(rpc));
+        else result.completeExceptionally(rpc);
     }
 }

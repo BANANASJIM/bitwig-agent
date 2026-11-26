@@ -53,25 +53,25 @@ final class ModulatorModule implements HostModule {
         }
         boolean parameter = method.equals("modulators.parameters.get");
         if (!parameter && !method.equals("modulators.list"))
-            throw Errors.notApplied(ErrorCode.UNKNOWN_METHOD, "Unknown modulator read.");
+            throw Errors.notApplied(Reason.UNKNOWN_METHOD, "Unknown modulator read.");
         Params.fields(
                 p,
                 parameter ? Set.of("parent", "modulatorId", "parameterId") : Set.of("parent"),
                 parameter ? Set.of() : Set.of("offset", "limit"));
         if (!p.get("parent").isJsonObject())
-            throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "parent must be an object.");
+            throw Errors.notApplied(Reason.INVALID_PARAMS, "parent must be an object.");
         JsonObject parent = p.getAsJsonObject("parent");
         DeviceSources.validateParent(parent);
         integer(parent, "deviceIndex", 0, HostLimits.DEVICES - 1);
         if (parameter) {
             if (!DeviceSources.canonicalUuid(Params.string(p, "modulatorId")))
-                throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "modulatorId must be a canonical current UUID.");
+                throw Errors.notApplied(Reason.INVALID_PARAMS, "modulatorId must be a canonical current UUID.");
             JsonElement id = p.get("parameterId");
             if (!id.isJsonPrimitive()
                     || !id.getAsJsonPrimitive().isString()
                     || id.getAsString().length() > 1024)
                 throw Errors.notApplied(
-                        ErrorCode.INVALID_PARAMS,
+                        Reason.INVALID_PARAMS,
                         "parameterId must be an exact string of at most 1024 UTF-16 units; empty is allowed.");
         } else {
             if (p.has("offset")) integer(p, "offset", 0, 100000);
@@ -82,7 +82,7 @@ final class ModulatorModule implements HostModule {
     private static int integer(JsonObject p, String key, int min, int max) {
         int result = Params.integer(p, key, min, max);
         if (!p.get(key).getAsString().matches("-?[0-9]+"))
-            throw Errors.notApplied(ErrorCode.INVALID_PARAMS, key + " must be an integer, not a decimal or exponent.");
+            throw Errors.notApplied(Reason.INVALID_PARAMS, key + " must be an integer, not a decimal or exponent.");
         return result;
     }
 
@@ -90,7 +90,7 @@ final class ModulatorModule implements HostModule {
     public void dispatch(HostOperation op, String method, JsonObject p) {
         scheduler.check(op);
         if (adapter == null)
-            adapter = new Bitwig614ModulatorAdapter(natives.get(op).access(ErrorCode.MODULATOR_UNAVAILABLE));
+            adapter = new Bitwig614ModulatorAdapter(natives.get(op).access());
         if (method.equals("modulators.capabilities")) {
             JsonObject capabilities = adapter.capabilities();
             // Read-only fields above describe modulators.list/parameters.get; edit methods report separately here.
@@ -151,14 +151,13 @@ final class ModulatorModule implements HostModule {
                         error instanceof RpcException
                                 ? error
                                 : Errors.notApplied(
-                                        ErrorCode.MODULATOR_UNAVAILABLE,
+                                        Reason.NATIVE_UNAVAILABLE,
                                         "Modulator read failed: "
                                                 + error.getClass().getSimpleName()
                                                 + "; inspect the exact host binding."));
             } catch (Error error) {
                 op.fail(Errors.notApplied(
-                        ErrorCode.MODULATOR_UNAVAILABLE,
-                        "Native modulator read failed; inspect the loaded host binding."));
+                        Reason.NATIVE_UNAVAILABLE, "Native modulator read failed; inspect the loaded host binding."));
             }
         });
     }
@@ -167,7 +166,7 @@ final class ModulatorModule implements HostModule {
         return BoundedJson.serialize(
                 value,
                 MAX_RESPONSE_CHARS,
-                ErrorCode.MODULATOR_BOUNDS_EXCEEDED,
+                Reason.OUT_OF_BOUNDS,
                 "Modulator response exceeds bounded transport size; reduce limit. Values are never truncated.");
     }
 }

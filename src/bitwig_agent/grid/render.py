@@ -370,15 +370,15 @@ def _write(path: str, data: bytes, overwrite: bool) -> None:
         with open(path, "wb" if overwrite else "xb") as handle:
             handle.write(data)
     except FileExistsError as exc:
-        raise bridge_error("file_exists", f"{path} exists; pass overwrite=true to replace it") from exc
+        raise bridge_error("target_exists", f"{path} exists; pass overwrite=true to replace it") from exc
     except OSError as exc:
-        raise bridge_error("write_failed", f"Cannot write {path}: {exc}") from exc
+        raise bridge_error("job_failed", f"Cannot write {path}: {exc}") from exc
 
 
 async def render(client: Any, args: dict[str, Any], timeout_ms: int = 5000) -> dict[str, Any]:
     path, fmt, overwrite = args["outPath"], args.get("format", "svg"), args.get("overwrite", False)
     if not overwrite and os.path.exists(path):
-        raise bridge_error("file_exists", f"{path} exists; pass overwrite=true to replace it")
+        raise bridge_error("target_exists", f"{path} exists; pass overwrite=true to replace it")
     if not os.path.isdir(os.path.dirname(path)):
         raise bridge_error("invalid_params", f"Parent directory does not exist: {os.path.dirname(path)}")
     convert = None
@@ -389,11 +389,11 @@ async def render(client: Any, args: dict[str, Any], timeout_ms: int = 5000) -> d
     call = host_call(client, device_target(args), timeout_ms)
     rows, cables = await read_graph(call)
     if not rows:
-        raise bridge_error("empty_grid", "The Grid device has no modules to render")
+        raise bridge_error("invalid_params", "The Grid device has no modules to render")
     box = _box(rows)
     if max(box["width"], box["height"]) > MAX_SPAN:
         raise bridge_error(
-            "layout_too_large",
+            "out_of_bounds",
             f"Layout spans {box['width']}x{box['height']} cells (limit {MAX_SPAN}); too sparse to draw",
             boundingBox=box,
         )
@@ -405,11 +405,11 @@ async def render(client: Any, args: dict[str, Any], timeout_ms: int = 5000) -> d
     if convert is not None:
         done = await asyncio.to_thread(subprocess.run, convert, input=data, capture_output=True, timeout=120)
         if done.returncode != 0 or not done.stdout:
-            raise bridge_error("convert_failed", f"{convert[0]} failed: {done.stderr.decode('utf-8', 'replace')[:300]}")
+            raise bridge_error("job_failed", f"{convert[0]} failed: {done.stderr.decode('utf-8', 'replace')[:300]}")
         data = done.stdout
     _write(path, data, overwrite)
     return {
-        "status": "rendered",
+        "outcome": "applied",
         "outPath": path,
         "format": fmt,
         "bytes": len(data),

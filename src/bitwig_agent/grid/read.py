@@ -39,9 +39,8 @@ async def _page(call: GridCall, request: dict[str, Any]) -> dict[str, Any]:
     page = await call("grid.get", request)
     if not isinstance(page, dict) or not isinstance(page.get("modules"), list):
         raise bridge_error(
-            "internal_error",
+            "internal",
             "grid.get returned an unusable result",
-            "not_applied",
             **(page if isinstance(page, dict) else {}),
         )
     return page
@@ -59,7 +58,7 @@ async def read_graph(call: GridCall, *, params: bool = False) -> Graph:
             cables[(c["targetModuleId"], c["targetPortKey"])] = c
         total = (page.get("window") or {}).get("total", len(rows))
         if not page["modules"] and len(rows) < total:
-            raise bridge_error("graph_incomplete", f"grid.get returned {len(rows)} of {total} modules")
+            raise bridge_error("not_ready", f"grid.get returned {len(rows)} of {total} modules")
     return Graph(rows, list(cables.values()))
 
 
@@ -80,7 +79,7 @@ async def read_params(
         page = await _page(call, request)
         if require and page.get("missingModuleIds"):
             raise bridge_error(
-                "not_applied",
+                "target_not_found",
                 "grid.get did not return every requested module",
                 missingModuleIds=page["missingModuleIds"],
             )

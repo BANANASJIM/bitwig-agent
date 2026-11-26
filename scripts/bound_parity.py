@@ -20,7 +20,7 @@ from pydantic import ValidationError
 from tooling import host_paths
 
 from bitwig_agent.protocol import CLIENT_SIDE, TOOLS
-from bitwig_agent.protocol.base import MAX_BEAT
+from bitwig_agent.protocol.base import MAX_BEAT, PROTOCOL
 from bitwig_agent.protocol.launcher import MIDI_PITCH_COUNT
 
 UUID_PATTERN = r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
@@ -361,14 +361,14 @@ def python_verdict(method, params):
 async def java_verdict(port, method, params):
     reader, writer = await asyncio.open_connection("127.0.0.1", port, limit=1 << 21)
     try:
-        request = {"id": "parity", "method": method, "params": params, "timeoutMs": 5000}
+        request = {"id": "parity", "method": method, "params": params, "timeoutMs": 5000, "protocol": PROTOCOL}
         writer.write((json.dumps(request, separators=(",", ":")) + "\n").encode())
         await writer.drain()
         response = json.loads(await asyncio.wait_for(reader.readline(), 10))
     finally:
         writer.close()
     error = response.get("error")
-    return error is None or error["code"] == "fixture_unknown", error
+    return error is None, error
 
 
 def cases(method):

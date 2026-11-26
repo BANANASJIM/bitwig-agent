@@ -75,9 +75,7 @@ public final class HostBridgeTest {
                         .equals(current.getAsJsonObject("target").get("contextToken")),
                 "A ID changes cannot invalidate B's token");
         JsonObject written = call(host, bridge, "parameters.set", write(current, .8));
-        assertTrue(
-                written.get("verification").getAsString().equals("observer_after_write"),
-                "B write needs B's fresh callback");
+        assertTrue(written.get("outcome").getAsString().equals("applied"), "B write needs B's fresh callback");
         assertTrue(host.deviceWrites[0] == 0 && host.deviceWrites[1] == 1, "write dispatched exactly to bank device B");
         assertTrue(host.parameterValues[0] == .11, "writing B cannot change A");
         CompletableFuture<JsonObject> stale = bridge.handle("parameters.set", write(first, .75), host.deadline());
@@ -115,9 +113,9 @@ public final class HostBridgeTest {
         JsonObject freshWrite = write(current, .8);
         assertTrue(
                 call(host, bridge, "parameters.set", freshWrite)
-                        .get("verification")
+                        .get("outcome")
                         .getAsString()
-                        .equals("observer_after_write"),
+                        .equals("applied"),
                 "fresh renamed context can still verify a write");
         assertTrue(
                 host.deviceWrites[0] == 1 && host.deviceWrites[1] == 0,
@@ -147,8 +145,7 @@ public final class HostBridgeTest {
         host.next();
         JsonObject result = pending.join();
         assertTrue(host.actionInvocations == 1, "action invoked once");
-        assertTrue(result.get("status").getAsString().equals("dispatched"), "Action has no completion observation");
-        assertTrue(result.get("completion").getAsString().equals("not_observed"), "completion scope explicit");
+        assertTrue(result.get("outcome").getAsString().equals("sent"), "completion scope explicit");
     }
 
     @Test
@@ -166,15 +163,15 @@ public final class HostBridgeTest {
         CompletableFuture<JsonObject> pending =
                 bridge.handle("actions.invoke", actionParams("missing"), host.deadline());
         host.next();
-        assertRpcError("unknown_action", pending);
+        assertRpcError("unknown_name", pending);
         pending = bridge.handle("actions.invoke", actionParams("fixture.action"), host.tasks.now() - 1);
         host.next();
-        assertRpcError("deadline_exceeded", pending);
+        assertRpcError("deadline", pending);
         host.slowActionLookup = true;
         int beforeSlowLookup = host.actionLookups;
         pending = bridge.handle("actions.invoke", actionParams("fixture.action"), host.tasks.after(30));
         host.next();
-        assertRpcError("deadline_exceeded", pending);
+        assertRpcError("deadline", pending);
         assertTrue(host.actionLookups == beforeSlowLookup + 1, "deadline test expires during lookup, before invoke");
         host.slowActionLookup = false;
         pending = bridge.handle("actions.invoke", actionParams("fixture.action"), host.deadline());
@@ -184,7 +181,7 @@ public final class HostBridgeTest {
         pending = bridge.handle("actions.invoke", actionParams("fixture.action"), host.deadline());
         bridge.close();
         host.next();
-        assertRpcError("unavailable", pending);
+        assertRpcError("not_ready", pending);
         assertTrue(host.actionInvocations == 0, "closed bridge never invokes Action");
     }
 
@@ -236,7 +233,7 @@ public final class HostBridgeTest {
                 "capabilities reports the saveAs binding separately and fails closed off the gated host");
         JsonObject render = call(host, bridge, "capabilities", new JsonObject()).getAsJsonObject("render");
         assertTrue(
-                render.getAsJsonArray("methods").size() == 3
+                render.getAsJsonArray("methods").size() == 2
                         && !render.get("available").getAsBoolean()
                         && render.has("reason"),
                 "capabilities reports the render binding and fails closed off the gated host");
@@ -250,14 +247,12 @@ public final class HostBridgeTest {
         JsonObject saved = call(host, bridge, "project.save", new JsonObject());
         assertTrue(
                 host.saveInvocations == 1
-                        && saved.get("saved").getAsBoolean()
-                        && saved.get("status").getAsString().equals("observed"),
+                        && saved.get("outcome").getAsString().equals("applied")
+                        && !saved.get("projectModified").getAsBoolean(),
                 "observed isModified=false after dispatch reports saved");
         JsonObject again = call(host, bridge, "project.save", new JsonObject());
         assertTrue(
-                host.saveInvocations == 1
-                        && again.get("alreadySaved").getAsBoolean()
-                        && again.get("saved").getAsBoolean(),
+                host.saveInvocations == 1 && again.get("outcome").getAsString().equals("already_matched"),
                 "observed-saved project dispatches nothing");
         // Unobserved (null) state still dispatches, and only a fresh false callback counts.
         Fake unobserved = new Fake();
@@ -270,10 +265,9 @@ public final class HostBridgeTest {
         JsonObject result = pending.join();
         assertTrue(unobserved.saveInvocations == 1, "save dispatched exactly once, never re-invoked while waiting");
         assertTrue(
-                result.get("status").getAsString().equals("dispatched")
-                        && !result.get("saved").getAsBoolean()
-                        && result.get("completion").getAsString().equals("not_observed")
-                        && result.get("hint").getAsString().contains("Save As"),
+                result.get("outcome").getAsString().equals("unknown")
+                        && result.get("reason").getAsString().equals("not_observed")
+                        && result.get("message").getAsString().contains("Save As"),
                 "no observation is not_observed with a dialog hint");
         // A stale false from before the dispatch is not evidence.
         Fake stale = new Fake();
@@ -285,7 +279,9 @@ public final class HostBridgeTest {
         stale.modified.emit(false);
         spins = 0;
         while (!pending.isDone() && spins++ < 100000000) stale.next();
-        assertTrue(pending.join().get("saved").getAsBoolean(), "later observer callback to false confirms save");
+        assertTrue(
+                pending.join().get("outcome").getAsString().equals("applied"),
+                "later observer callback to false confirms save");
         Fake bad = new Fake();
         HostBridge b4 = bad.bridge();
         JsonObject extra = new JsonObject();
@@ -307,7 +303,7 @@ public final class HostBridgeTest {
         JsonObject already = call(f, bridge, "project.activateEngine", new JsonObject());
         assertTrue(
                 already.get("engineActive").getAsBoolean()
-                        && already.get("alreadyActive").getAsBoolean()
+                        && already.get("outcome").getAsString().equals("already_matched")
                         && f.activateInvocations == 0,
                 "an active engine dispatches nothing");
         assertTrue(
@@ -324,12 +320,12 @@ public final class HostBridgeTest {
         assertRpcError("engine_inactive", refused);
         {
             RpcException e = rejection(refused);
-            assertTrue(e.outcome.equals("not_applied"), "inactive-engine refusal dispatched nothing");
+            assertTrue(!e.unknown, "inactive-engine refusal dispatched nothing");
         }
         JsonObject activated = call(f, bridge, "project.activateEngine", new JsonObject());
         assertTrue(
                 f.activateInvocations == 1
-                        && activated.get("status").getAsString().equals("observed")
+                        && activated.get("outcome").getAsString().equals("applied")
                         && activated.get("engineActive").getAsBoolean(),
                 "activation is invoked once and confirmed by an observed true");
         // The action runs but the engine never reports active: bounded, not retried, never claimed.
@@ -344,9 +340,9 @@ public final class HostBridgeTest {
         JsonObject result = pending.join();
         assertTrue(
                 stuck.activateInvocations == 1
-                        && result.get("status").getAsString().equals("dispatched")
-                        && !result.get("engineActive").getAsBoolean()
-                        && result.get("completion").getAsString().equals("not_observed"),
+                        && result.get("outcome").getAsString().equals("unknown")
+                        && result.get("reason").getAsString().equals("not_observed")
+                        && !result.get("engineActive").getAsBoolean(),
                 "unconfirmed activation is reported, not retried");
     }
 
@@ -371,10 +367,10 @@ public final class HostBridgeTest {
                 "context.get carries projectReady");
         CompletableFuture<JsonObject> refused = bridge.handle("tracks.create", create, f.deadline());
         f.next();
-        assertRpcError("project_not_ready", refused);
+        assertRpcError("not_ready", refused);
         {
             RpcException e = rejection(refused);
-            assertTrue(e.outcome.equals("not_applied"), "refused write is not_applied");
+            assertTrue(!e.unknown, "refused write is not_applied");
         }
         f.tasks.advance(SETTLE - 1);
         assertTrue(
@@ -414,10 +410,10 @@ public final class HostBridgeTest {
             try {
                 bridge.preflight(method);
             } catch (RpcException e) {
-                refusal = e.code;
+                refusal = e.reason.wire();
             }
             assertTrue(
-                    Objects.equals(refusal, projectWrite ? "project_not_ready" : engine ? "engine_inactive" : null),
+                    Objects.equals(refusal, projectWrite ? "not_ready" : engine ? "engine_inactive" : null),
                     method + " admission while the project settles and the engine is inactive: " + refusal);
         }
         f.tasks.advance(SETTLE);
@@ -425,7 +421,7 @@ public final class HostBridgeTest {
             if (!HostFixture.SPECS.get(method).engineRequired) continue;
             RpcException refused = assertThrows(RpcException.class, () -> bridge.preflight(method), method);
             assertTrue(
-                    refused.code.equals("engine_inactive")
+                    refused.reason.wire().equals("engine_inactive")
                             && refused.getMessage().contains(method),
                     method + " names itself");
         }
@@ -469,9 +465,9 @@ public final class HostBridgeTest {
         consent.addProperty("discardUnsavedChanges", true);
         assertTrue(
                 call(host, bridge, "actions.invoke", consent)
-                                .get("status")
+                                .get("outcome")
                                 .getAsString()
-                                .equals("dispatched")
+                                .equals("sent")
                         && host.quitInvocations == 1,
                 "explicit discardUnsavedChanges dispatches");
         host.modified.emit(false);
@@ -627,12 +623,26 @@ public final class HostBridgeTest {
         host.writeMode = "match";
         JsonObject result = call(host, bridge, "parameters.set", write(listing, .75));
         assertTrue(host.writes == 1, "one dispatch");
-        assertTrue(result.get("status").getAsString().equals("observed"), "matching callback observed");
-        assertTrue(result.get("verification").getAsString().equals("observer_after_write"), "fresh callback evidence");
-        assertTrue(result.get("matchesRequested").getAsBoolean(), "readback within declared tolerance");
+        assertTrue(result.get("outcome").getAsString().equals("applied"), "fresh callback evidence");
+        assertTrue(
+                result.get("outcome").getAsString().matches("applied|already_matched"),
+                "readback within declared tolerance");
         result = call(host, bridge, "parameters.set", write(listing, .75));
         assertTrue(host.writes == 1, "already satisfied absolute set need not dispatch");
-        assertTrue(result.get("verification").getAsString().equals("already_at_value"), "no-op explicitly identified");
+        assertTrue(result.get("outcome").getAsString().equals("already_matched"), "no-op explicitly identified");
+    }
+
+    @Test
+    void unlistedParameterIdIsRefused() {
+        Fake host = new Fake();
+        HostBridge bridge = host.bridge();
+        JsonObject listing = call(host, bridge, "parameters.list", target());
+        JsonObject p = write(listing, .75);
+        p.addProperty("parameterId", "not-listed");
+        CompletableFuture<JsonObject> pending = bridge.handle("parameters.set", p, host.deadline());
+        host.next();
+        assertRpcError("unknown_name", pending);
+        assertTrue(host.writes == 0, "nothing is written");
     }
 
     @Test
@@ -646,10 +656,10 @@ public final class HostBridgeTest {
         assertTrue(!result.isDone(), "cached value is not fresh readback");
         while (!result.isDone()) host.next();
         JsonObject response = result.join();
-        assertTrue(response.get("status").getAsString().equals("dispatched"), "unobserved write remains dispatched");
+        assertTrue(response.get("outcome").getAsString().equals("unknown"), "unobserved write is unknown");
         assertTrue(
                 response.get("observedValue").isJsonNull(), "old pre-write value not reported as post-write evidence");
-        assertTrue(response.get("verification").getAsString().equals("not_observed"), "honest unobserved state");
+        assertTrue(response.get("reason").getAsString().equals("not_observed"), "honest unobserved state");
     }
 
     @Test
@@ -661,10 +671,10 @@ public final class HostBridgeTest {
         CompletableFuture<JsonObject> result = bridge.handle("parameters.set", write(listing, .75), host.deadline());
         while (!result.isDone()) host.next();
         JsonObject response = result.join();
-        assertTrue(response.get("status").getAsString().equals("dispatched"), "mismatch is not observed success");
-        assertTrue(response.get("verification").getAsString().equals("readback_mismatch"), "mismatch explicit");
+        assertTrue(response.get("outcome").getAsString().equals("unknown"), "mismatch is not observed success");
+        assertTrue(response.get("reason").getAsString().equals("readback_mismatch"), "mismatch explicit");
         assertTrue(response.get("observedValue").getAsDouble() == .4, "actual mismatch value retained");
-        assertTrue(!response.get("matchesRequested").getAsBoolean(), "match false");
+        assertTrue(!response.get("outcome").getAsString().matches("applied|already_matched"), "match false");
     }
 
     @Test
@@ -692,7 +702,7 @@ public final class HostBridgeTest {
         CompletableFuture<JsonObject> result =
                 bridge.handle("parameters.set", write(listing, .75), host.tasks.now() - 1);
         host.next();
-        assertRpcError("deadline_exceeded", result);
+        assertRpcError("deadline", result);
         assertTrue(host.writes == 0, "expired queued operation cannot mutate");
         result = bridge.handle("parameters.set", write(listing, .75), host.deadline());
         result.completeExceptionally(new IllegalStateException("caller abandoned operation"));
@@ -701,7 +711,7 @@ public final class HostBridgeTest {
         result = bridge.handle("parameters.set", write(listing, .75), host.deadline());
         bridge.close();
         host.next();
-        assertRpcError("unavailable", result);
+        assertRpcError("not_ready", result);
         assertTrue(host.writes == 0, "closed bridge cannot write");
     }
 
@@ -766,7 +776,7 @@ public final class HostBridgeTest {
         host.emitValue(1, .75);
         host.next();
         assertTrue(
-                pending.join().get("verification").getAsString().equals("observer_after_write"),
+                pending.join().get("outcome").getAsString().equals("applied"),
                 "only B's fresh callback verifies B's write");
         assertTrue(host.deviceWrites[0] == 0 && host.deviceWrites[1] == 1, "no cursor or wrong-device write path");
     }
@@ -1194,7 +1204,7 @@ public final class HostBridgeTest {
         JsonObject listing = call(f, bridge, "parameters.layer.list", layerTarget(f, bridge, 0, 1));
         JsonObject noOp = call(f, bridge, "parameters.layer.set", layerWrite(listing, .35));
         assertTrue(
-                noOp.get("verification").getAsString().equals("already_at_value") && f.childWrites[0][1] == 0,
+                noOp.get("outcome").getAsString().equals("already_matched") && f.childWrites[0][1] == 0,
                 "nested no-op is distinct from post-dispatch observation");
         f.writeMode = "none";
         CompletableFuture<JsonObject> write =
@@ -1212,9 +1222,7 @@ public final class HostBridgeTest {
         assertRpcError("busy", busy);
         f.emitChildValue(0, 1, applied);
         f.next();
-        assertTrue(
-                write.join().get("verification").getAsString().equals("observer_after_write"),
-                "exact child fresh callback verifies");
+        assertTrue(write.join().get("outcome").getAsString().equals("applied"), "exact child fresh callback verifies");
         assertTrue(
                 f.childWrites[0][1] == 1
                         && f.childWrites[0][0] == 0
@@ -1260,9 +1268,9 @@ public final class HostBridgeTest {
             assertRpcError("stale_context", stale);
             assertTrue(
                     call(f, bridge, "parameters.layer.set", layerWrite(fresh, .8))
-                            .get("verification")
+                            .get("outcome")
                             .getAsString()
-                            .equals("observer_after_write"),
+                            .equals("applied"),
                     renamed + " fresh rename context still writes its exact child");
         }
     }
@@ -1696,11 +1704,11 @@ public final class HostBridgeTest {
         f.layerNodes[0].child("exists").emit(true);
         f.emitChildValue(0, 0, .8);
         f.next();
-        assertRpcError("stale_context", pending);
-        {
-            RpcException error = rejection(pending);
-            assertTrue(error.outcome.equals("unknown"), "replacement callback cannot acknowledge a pending write");
-        }
+        JsonObject result = pending.join();
+        assertTrue(
+                result.get("outcome").getAsString().equals("unknown")
+                        && result.get("reason").getAsString().equals("stale_context"),
+                "replacement callback cannot acknowledge a pending write");
     }
 
     private static double parameterValue(JsonObject listing) {
@@ -1731,7 +1739,7 @@ public final class HostBridgeTest {
                 full.layerCalls.equals(List.of("0:end:insertBitwigDevice")),
                 "layer end uses that layer's chain: " + full.layerCalls);
         assertTrue(
-                beyond.get("status").getAsString().equals("observed")
+                beyond.get("outcome").getAsString().equals("applied")
                         && beyond.get("verification").getAsString().equals("observed_count_increment_beyond_window")
                         && beyond.get("inserted").isJsonNull()
                         && beyond.get("afterCount").getAsInt() == 3
@@ -1747,7 +1755,7 @@ public final class HostBridgeTest {
                         && f.layerNames.get(1).equals(List.of("Inserted", "Solo")),
                 "layer start inserts before the first child: " + f.layerNames);
         assertTrue(
-                start.get("status").getAsString().equals("observed")
+                start.get("outcome").getAsString().equals("applied")
                         && start.get("verification").getAsString().equals("observed_count_increment_shifted_suffix")
                         && start.getAsJsonObject("inserted").get("deviceIndex").getAsInt() == 0
                         && start.getAsJsonArray("before").size() == 1
@@ -1797,8 +1805,7 @@ public final class HostBridgeTest {
         silent.next();
         JsonObject unobserved = pending.join();
         assertTrue(
-                unobserved.get("verification").getAsString().equals("insertion_not_observed")
-                        && silent.layerCalls.size() == 1,
+                unobserved.get("reason").getAsString().equals("not_observed") && silent.layerCalls.size() == 1,
                 "an unobserved layer insert is reported, never retried");
     }
 

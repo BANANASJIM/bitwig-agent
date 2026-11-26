@@ -11,6 +11,8 @@ from types import SimpleNamespace
 import pytest
 from mcp.types import CallToolResult, TextContent
 
+from bitwig_agent.protocol.base import REASONS
+
 if sys.platform != "linux":
     pytest.skip("smoke-native.py needs Linux /proc and xprop", allow_module_level=True)
 
@@ -104,22 +106,18 @@ def test_nested_task_group_failures_retain_actionable_leaf_causes():
 @pytest.mark.parametrize(
     "envelope",
     [
-        {"error": {"code": "grid_bounds_exceeded", "outcome": "unknown"}},
+        {"result": {"outcome": "unknown", "reason": "not_observed"}},
         # Real native tracks.set can show the requested values without a fresh
-        # write observation. Checking only error.outcome misses this uncertainty.
-        {
-            "result": {
-                "status": "dispatched",
-                "completion": "unknown",
-                "fields": {"mute": {"observed": True, "verification": "not_observed"}},
-            }
-        },
-        {"result": {"status": "observed", "topologyQuarantined": True}},
-        {"result": {"status": "observed", "topologyAdmissionBlocked": True}},
+        # write observation; a field outcome carries that uncertainty.
+        {"result": {"outcome": "applied", "fields": {"mute": {"requested": True, "outcome": "unknown"}}}},
+        {"result": {"outcome": "not_applied", "reason": "not_reached"}},
+        {"result": {"topologyQuarantined": True}},
+        {"result": {"topologyAdmissionBlocked": True}},
         {"error": {"code": "unavailable"}},
+        {"error": {"code": "stale", "reason": "busy"}},
         {"error": None},
         {"result": None},
-        {"result": {"status": "observed"}, "error": None},
+        {"result": {}, "error": None},
         {},
     ],
 )
@@ -133,20 +131,21 @@ def test_native_uncertainty_latches_before_another_operation(envelope):
     with pytest.raises(native_smoke.NativeRunStopped):
         guard.before_call()
     with pytest.raises(native_smoke.NativeRunStopped):
-        guard.observe({"result": {"status": "observed"}})
+        guard.observe({"result": {"outcome": "applied"}})
 
 
-@pytest.mark.parametrize("outcome", ["not_applied", "not_dispatched"])
-def test_known_negative_cases_do_not_poison_native_run(outcome):
+@pytest.mark.parametrize("reason", ["invalid_params", "stale_target"])
+def test_errors_change_nothing_and_do_not_poison_native_run(reason):
     guard = native_smoke.NativeOutcomeGuard()
-    guard.observe({"error": {"code": "invalid_params", "outcome": outcome}})
+    guard.observe({"error": {"code": REASONS[reason].value, "reason": reason, "message": "m"}})
     guard.before_call()
-    guard.observe({"result": {"status": "observed"}})
+    guard.observe({"result": {"outcome": "already_matched"}})
+    guard.observe({"result": {"tracks": []}})
     assert not guard.stopped
 
 
 def test_dispatch_only_requires_explicit_case_expectation():
-    response = {"result": {"status": "dispatched", "completion": "not_observed"}}
+    response = {"result": {"outcome": "sent"}}
     strict = native_smoke.NativeOutcomeGuard()
     with pytest.raises(native_smoke.NativeRunStopped):
         strict.observe(response)

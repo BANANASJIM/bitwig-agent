@@ -138,7 +138,7 @@ public final class SchedulerTest {
         HostOperation op = new HostOperation(tasks.after(100));
         scheduler.await(op, () -> false, () -> fail("never done"));
         drain();
-        assertRpcError("deadline_exceeded", op);
+        assertRpcError("deadline", op);
     }
 
     @Test
@@ -164,7 +164,7 @@ public final class SchedulerTest {
         scheduler.poll(op, tasks.after(500), () -> false, () -> fail("done"), () -> fail("timeout"));
         scheduler.close();
         drain();
-        assertRpcError("unavailable", Outcome.NOT_APPLIED.wire(), op);
+        assertRpcError("not_ready", op);
     }
 
     @Test

@@ -102,7 +102,7 @@ public final class MixModuleTest {
         p.addProperty("volumeNormalized", .75);
         p.addProperty("mute", true);
         JsonObject result = f.call(module, "tracks.set", p);
-        assertTrue(result.get("matchesRequested").getAsBoolean(), "requested mix observed");
+        assertTrue(result.get("outcome").getAsString().matches("applied|already_matched"), "requested mix observed");
         assertTrue(
                 f.tracks[1].child("volume").child("value").writes == 1 && f.tracks[1].child("mute").writes == 1,
                 "only UUID B receives writes");
@@ -115,9 +115,9 @@ public final class MixModuleTest {
         assertTrue(
                 again.getAsJsonObject("fields")
                         .getAsJsonObject("mute")
-                        .get("verification")
+                        .get("outcome")
                         .getAsString()
-                        .equals("already_at_value"),
+                        .equals("already_matched"),
                 "idempotent mix set explicit");
         assertTrue(f.tracks[1].child("mute").writes == 1, "no unnecessary second mute write");
         HostOperation absent =
@@ -162,9 +162,7 @@ public final class MixModuleTest {
         unlisted.addProperty("trackId", HostFixture.B);
         HostOperation refused = f.submit(module, "tracks.set", unlisted);
         f.next();
-        assertTrue(
-                assertRpcError("invalid_params", refused).outcome.equals("not_applied"),
-                "option the host does not list is refused");
+        assertTrue(!assertRpcError("invalid_params", refused).unknown, "option the host does not list is refused");
         assertTrue(
                 f.tracks[1].child("monitorMode").writes == 0 && f.tracks[1].child("mute").writes == 0,
                 "nothing written when an option is refused");
@@ -173,7 +171,7 @@ public final class MixModuleTest {
         p.addProperty("trackId", HostFixture.B);
         JsonObject result = f.call(module, "tracks.set", p);
         assertTrue(
-                result.get("matchesRequested").getAsBoolean()
+                result.get("outcome").getAsString().matches("applied|already_matched")
                         && result.get("color").getAsString().equals("#ff8800")
                         && !result.get("activated").getAsBoolean()
                         && result.get("monitorMode").getAsString().equals("ON")
@@ -182,9 +180,9 @@ public final class MixModuleTest {
         assertTrue(
                 result.getAsJsonObject("fields")
                         .getAsJsonObject("color")
-                        .get("verification")
+                        .get("outcome")
                         .getAsString()
-                        .equals("observer_after_write"),
+                        .equals("applied"),
                 "color verified by observer");
         assertTrue(
                 f.tracks[1].child("color").writes == 1
@@ -195,9 +193,9 @@ public final class MixModuleTest {
         assertTrue(
                 again.getAsJsonObject("fields")
                                 .getAsJsonObject("monitorMode")
-                                .get("verification")
+                                .get("outcome")
                                 .getAsString()
-                                .equals("already_at_value")
+                                .equals("already_matched")
                         && f.tracks[1].child("monitorMode").writes == 1
                         && f.tracks[1].child("isActivated").writes == 1,
                 "matching values are not rewritten");
@@ -207,7 +205,7 @@ public final class MixModuleTest {
         HostOperation op = f.submit(module, "tracks.set", silent, f.tasks.after(300));
         while (!op.result.isDone()) f.next();
         assertTrue(
-                !op.result.join().get("matchesRequested").getAsBoolean(),
+                !op.result.join().get("outcome").getAsString().matches("applied|already_matched"),
                 "an unobserved enum write is not reported as done");
     }
 
@@ -221,7 +219,7 @@ public final class MixModuleTest {
         p.addProperty("trackId", HostFixture.B);
         JsonObject result = f.call(module, "tracks.set", p);
         assertTrue(
-                result.get("matchesRequested").getAsBoolean()
+                result.get("outcome").getAsString().matches("applied|already_matched")
                         && result.get("color").getAsString().equals("#ff5704"),
                 "one 8-bit step of float rounding still matches and the observed hex is reported");
         JsonObject far = HostFixture.json("{\"color\":\"#ff5a05\"}");
@@ -229,7 +227,9 @@ public final class MixModuleTest {
         color.afterWrite = () -> color.emit(new float[] {1f, 0x57 / 255f, 4 / 255f});
         HostOperation farOp = f.submit(module, "tracks.set", far, f.tasks.after(300));
         while (!farOp.result.isDone()) f.next();
-        assertTrue(!farOp.result.join().get("matchesRequested").getAsBoolean(), "a larger difference is a mismatch");
+        assertTrue(
+                !farOp.result.join().get("outcome").getAsString().matches("applied|already_matched"),
+                "a larger difference is a mismatch");
         f.tracks[1].child("monitorMode").emit("STORED");
         JsonObject read = f.call(module, "tracks.get", HostFixture.target(HostFixture.B));
         assertTrue(
@@ -245,9 +245,9 @@ public final class MixModuleTest {
         assertTrue(
                 again.getAsJsonObject("fields")
                                 .getAsJsonObject("monitorMode")
-                                .get("verification")
+                                .get("outcome")
                                 .getAsString()
-                                .equals("already_at_value")
+                                .equals("already_matched")
                         && f.tracks[1].child("monitorMode").writes == 0,
                 "the currently observed out-of-list value can be written back");
         JsonObject bogus = HostFixture.json("{\"monitorMode\":\"LOUD\"}");
@@ -265,15 +265,14 @@ public final class MixModuleTest {
         JsonObject selected = f.call(module, "tracks.select", HostFixture.target(HostFixture.B));
         assertTrue(
                 selected.get("selected").getAsBoolean()
-                        && selected.get("completion").getAsString().equals("not_observed"),
+                        && selected.get("outcome").getAsString().equals("sent"),
                 "a selection callback is snapshot evidence, not UI-navigation completion");
         assertTrue(
                 f.tracks[1].actions == 1 && f.tracks[0].actions == 0,
                 "select operates on requested bank proxy, not current UI cursor");
         JsonObject again = f.call(module, "tracks.select", HostFixture.target(HostFixture.B));
         assertTrue(
-                f.tracks[1].actions == 2
-                        && again.get("completion").getAsString().equals("not_observed"),
+                f.tracks[1].actions == 2 && again.get("outcome").getAsString().equals("sent"),
                 "an already-selected snapshot does not suppress an explicit editor-navigation command");
     }
 
@@ -291,15 +290,15 @@ public final class MixModuleTest {
         assertTrue(op.result.isDone(), "selection navigation must not wait for an optional legacy callback");
         JsonObject result = op.result.join();
         assertTrue(
-                result.get("completion").getAsString().equals("not_observed")
-                        && result.get("status").getAsString().equals("dispatched"),
+                result.get("outcome").getAsString().equals("sent")
+                        && result.get("outcome").getAsString().equals("sent"),
                 "missing selection callback yields a UI dispatch receipt, never an observed completion");
         assertTrue(
                 result.get("selected").isJsonNull()
                         && !result.getAsJsonObject("readable").get("selected").getAsBoolean(),
                 "reopened track cannot inherit the previous generation's selected value");
         assertTrue(
-                !result.has("fields") && !result.has("matchesRequested"),
+                !result.has("fields") && !result.has("fields"),
                 "UI navigation does not pretend to be a verified mix setter");
         assertTrue(
                 f.tracks[0].actions == 1 && f.tasks.isEmpty(),
@@ -315,16 +314,14 @@ public final class MixModuleTest {
         HostOperation op = f.submit(module, "tracks.select", HostFixture.target(HostFixture.B));
         f.next();
         RpcException busy = assertRpcError("busy", op);
-        assertTrue(
-                busy.outcome.equals("not_applied") && f.tracks[1].actions == 0,
-                "held lease rejects select before dispatch");
+        assertTrue(!busy.unknown && f.tracks[1].actions == 0, "held lease rejects select before dispatch");
         assertTrue(f.tasks.isEmpty(), "rejected select is not queued");
         holder.result.complete(new JsonObject());
         assertTrue(
                 f.call(module, "tracks.select", HostFixture.target(HostFixture.B))
-                                .get("status")
+                                .get("outcome")
                                 .getAsString()
-                                .equals("dispatched")
+                                .equals("sent")
                         && f.tracks[1].actions == 1,
                 "released lease allows select");
     }
@@ -336,9 +333,7 @@ public final class MixModuleTest {
         JsonObject p = HostFixture.target(HostFixture.A);
         HostOperation expired = f.submit(module, "tracks.select", p, f.tasks.now() - 1);
         f.next();
-        assertTrue(
-                assertRpcError("deadline_exceeded", expired).outcome.equals("not_applied"),
-                "expired selection is rejected before dispatch");
+        assertTrue(!assertRpcError("deadline", expired).unknown, "expired selection is rejected before dispatch");
         HostOperation cancelled = f.submit(module, "tracks.select", p);
         cancelled.result.cancel(false);
         f.next();
@@ -347,7 +342,7 @@ public final class MixModuleTest {
         HostOperation unready = f.submit(module, "tracks.select", p);
         f.next();
         assertTrue(
-                assertRpcError("not_ready", unready).outcome.equals("not_applied") && f.tracks[0].actions == 0,
+                !assertRpcError("not_ready", unready).unknown && f.tracks[0].actions == 0,
                 "cancelled or rebound-before-flush selection cannot reach the host");
         module.flush();
         f.tracks[0].child("selected").afterWrite =
@@ -355,7 +350,7 @@ public final class MixModuleTest {
         HostOperation shifted = f.submit(module, "tracks.select", p);
         f.next();
         assertTrue(
-                assertRpcError("stale_target", shifted).outcome.equals("unknown") && f.tracks[0].actions == 1,
+                assertUnknown("stale_target", shifted) != null && f.tracks[0].actions == 1,
                 "identity loss after dispatch remains unknown, not an accepted dispatch-only receipt");
     }
 
@@ -379,7 +374,7 @@ public final class MixModuleTest {
         volume.emit(.75);
         f.next();
         assertTrue(
-                op.result.join().get("matchesRequested").getAsBoolean() && volume.writes == 1,
+                op.result.join().get("outcome").getAsString().matches("applied|already_matched") && volume.writes == 1,
                 "fresh matching callback verifies without replay");
     }
 
@@ -394,10 +389,9 @@ public final class MixModuleTest {
         p.addProperty("volumeNormalized", .8);
         JsonObject result = f.call(module, "tracks.set", p);
         assertTrue(
-                result.get("status").getAsString().equals("dispatched")
-                        && result.get("completion").getAsString().equals("unknown"),
+                result.get("outcome").getAsString().equals("unknown"),
                 "partial mutation with shifted target is unknown");
-        assertTrue(result.get("reason").getAsString().equals("stale_target"), "target change identified");
+        assertTrue(result.get("reason").getAsString().equals("target_changed"), "target change identified");
         assertTrue(
                 f.tracks[0].child("volume").child("value").writes == 0,
                 "replacement track never receives remaining volume write");
@@ -417,9 +411,7 @@ public final class MixModuleTest {
         p.addProperty("arm", true);
         HostOperation expired = f.submit(module, "tracks.set", p, f.tasks.now() - 1);
         f.next();
-        assertTrue(
-                assertRpcError("deadline_exceeded", expired).outcome.equals("not_applied"),
-                "expired target setter not applied");
+        assertTrue(!assertRpcError("deadline", expired).unknown, "expired target setter not applied");
         HostOperation cancelled = f.submit(module, "tracks.set", p);
         cancelled.result.cancel(false);
         f.next();
@@ -455,28 +447,22 @@ public final class MixModuleTest {
         HostOperation wrong = f.submit(module, "tracks.delete", delete(HostFixture.B, "Nope"));
         f.next();
         assertTrue(
-                assertRpcError("stale_target", wrong).outcome.equals("not_applied") && f.tracks[1].actions == 0,
+                !assertRpcError("stale_target", wrong).unknown && f.tracks[1].actions == 0,
                 "name mismatch never dispatches");
         f.tracks[1].child("trackType").emit("Master");
         HostOperation master = f.submit(module, "tracks.delete", delete(HostFixture.B, "Track 1"));
         f.next();
-        assertTrue(
-                assertRpcError("unsupported_scope", master).outcome.equals("not_applied") && f.tracks[1].actions == 0,
-                "master refused");
+        assertTrue(!assertRpcError("unsupported_scope", master).unknown && f.tracks[1].actions == 0, "master refused");
         f.tracks[1].child("trackType").emit("Group");
         HostOperation group = f.submit(module, "tracks.delete", delete(HostFixture.B, "Track 1"));
         f.next();
-        assertTrue(
-                assertRpcError("unsupported_scope", group).outcome.equals("not_applied") && f.tracks[1].actions == 0,
-                "group refused");
+        assertTrue(!assertRpcError("unsupported_scope", group).unknown && f.tracks[1].actions == 0, "group refused");
         // An instrument track that bounce.inPlace turned Hybrid stays deletable.
         f.tracks[1].child("trackType").emit("Hybrid");
         f.transport.child("isPlaying").emit(true);
         HostOperation playing = f.submit(module, "tracks.delete", delete(HostFixture.B, "Track 1"));
         f.next();
-        assertTrue(
-                assertRpcError("unsafe_state", playing).outcome.equals("not_applied") && f.tracks[1].actions == 0,
-                "playing refused");
+        assertTrue(!assertRpcError("unsafe_state", playing).unknown && f.tracks[1].actions == 0, "playing refused");
         f.transport.child("isPlaying").emit(false);
         HostOperation op = f.submit(module, "tracks.delete", delete(HostFixture.B, "Track 1"));
         f.next();
@@ -484,8 +470,7 @@ public final class MixModuleTest {
         JsonObject result = op.result.join();
         assertTrue(
                 f.tracks[1].actions == 1
-                        && result.get("completion").getAsString().equals("observed")
-                        && result.get("verification").getAsString().equals("uuid_absent_count_decremented")
+                        && result.get("outcome").getAsString().matches("applied|already_matched")
                         && result.get("trackCountBefore").getAsInt() == 2
                         && result.get("trackCountAfter").getAsInt() == 1,
                 "deleted once, verified");
@@ -496,7 +481,7 @@ public final class MixModuleTest {
         while (!nothing.result.isDone() && !silent.tasks.isEmpty()) silent.next();
         assertTrue(
                 nothing.result.isDone()
-                        && nothing.result.join().get("completion").getAsString().equals("unknown"),
+                        && nothing.result.join().get("outcome").getAsString().equals("unknown"),
                 "no observed change stays unknown");
     }
 
@@ -542,7 +527,7 @@ public final class MixModuleTest {
         };
         JsonObject result = ambiguous.call(module, "tracks.create", create("audio", -1));
         assertTrue(
-                result.get("completion").getAsString().equals("unknown")
+                result.get("outcome").getAsString().equals("unknown")
                         && !result.get("nameApplied").getAsBoolean(),
                 "multiple additions never claim creation completion");
         assertTrue(
@@ -554,8 +539,7 @@ public final class MixModuleTest {
         HostOperation rejected = outside.submit(other, "tracks.create", create("effect", -1));
         outside.next();
         assertTrue(
-                assertRpcError("not_ready", rejected).outcome.equals("not_applied"),
-                "incomplete16-track baseline rejects before mutation");
+                !assertRpcError("not_ready", rejected).unknown, "incomplete16-track baseline rejects before mutation");
         assertTrue(
                 outside.application.actions == 0 && !rejected.dispatched,
                 "known unobservable baseline must never invoke a factory");
@@ -576,7 +560,7 @@ public final class MixModuleTest {
                 HostOperation rejected = f.submit(module, "tracks.create", create(type, position));
                 f.next();
                 assertTrue(
-                        assertRpcError("unsupported_scope", rejected).outcome.equals("not_applied"),
+                        !assertRpcError("unsupported_scope", rejected).unknown,
                         "known grouped baseline explicitly rejects as not applied");
                 assertTrue(
                         !rejected.dispatched && f.application.actions == 0,
@@ -598,7 +582,8 @@ public final class MixModuleTest {
             f.next();
             f.next();
             assertTrue(
-                    admitted.result.join().get("matchesRequested").getAsBoolean() && f.application.actions == 1,
+                    admitted.result.join().get("outcome").getAsString().matches("applied|already_matched")
+                            && f.application.actions == 1,
                     "grouped pre-dispatch rejection does not quarantine later supported creation");
             assertTrue(
                     f.tracks[2].child("name").writes == 1, "later ungrouped creation names only the observed addition");
@@ -619,9 +604,9 @@ public final class MixModuleTest {
         assertTrue(
                 op.dispatched && f.application.actions == 1, "concurrent grouping occurs after one factory dispatch");
         assertTrue(
-                result.get("status").getAsString().equals("dispatched")
-                        && result.get("completion").getAsString().equals("unknown")
-                        && result.get("reason").getAsString().equals("group_appeared_during_creation"),
+                result.get("outcome").getAsString().equals("unknown")
+                        && result.get("reason").getAsString().equals("side_effect")
+                        && result.get("detail").getAsString().equals("group_appeared_during_creation"),
                 "group appearing after dispatch retains structural unknown attribution");
         assertTrue(
                 !result.get("nameApplied").getAsBoolean()
@@ -632,9 +617,7 @@ public final class MixModuleTest {
         HostOperation later = f.submit(module, "tracks.create", create("audio", -1));
         f.next();
         assertTrue(
-                assertRpcError("unresolved_creation", later).outcome.equals("not_applied")
-                        && !later.dispatched
-                        && f.application.actions == 1,
+                !assertRpcError("unresolved", later).unknown && !later.dispatched && f.application.actions == 1,
                 "concurrent structural unknown retains quarantine even when the group disappears");
     }
 
@@ -652,9 +635,7 @@ public final class MixModuleTest {
                     "type/position mismatch is not a nameable creation");
             f.services.scheduler.close();
             f.next();
-            assertTrue(
-                    assertRpcError("unavailable", op).outcome.equals("unknown"),
-                    "abandoned factory remains unknown, not not_applied");
+            assertTrue(assertUnknown("not_ready", op) != null, "abandoned factory remains unknown, not not_applied");
         }
     }
 
@@ -722,12 +703,12 @@ public final class MixModuleTest {
             f.tracks[0].child("mute").emit(true);
             f.next();
             assertTrue(
-                    op.result.join().get("matchesRequested").getAsBoolean(),
+                    op.result.join().get("outcome").getAsString().matches("applied|already_matched"),
                     "requested field can verify without every unchanged field replaying");
             JsonObject selected = f.call(module, "tracks.select", HostFixture.target(id));
             assertTrue(
                     f.tracks[0].actions == 1
-                            && selected.get("completion").getAsString().equals("not_observed"),
+                            && selected.get("outcome").getAsString().equals("sent"),
                     "rebound selection dispatches explicitly without pretending to verify UI completion");
         }
     }
@@ -760,15 +741,14 @@ public final class MixModuleTest {
         HostOperation b = f.submit(module, "tracks.create", requestB);
         f.next();
         assertTrue(
-                assertRpcError("unresolved_creation", b).outcome.equals("not_applied"),
-                "cancelled RPC does not release native factory attribution");
+                !assertRpcError("unresolved", b).unknown, "cancelled RPC does not release native factory attribution");
         f.addTrack(2, HostFixture.C, "Audio");
         assertTrue(
                 f.application.actions == 1 && f.tracks[2].child("name").writes == 0,
                 "late A addition can never be attributed or named by B");
         HostOperation c = f.submit(module, "tracks.create", requestB);
         f.next();
-        assertRpcError("unresolved_creation", c);
+        assertRpcError("unresolved", c);
         assertTrue(f.application.actions == 1, "late observation alone does not silently release quarantine");
         HostFixture unknown = new HostFixture();
         MixModule second = unknown.services.mix();
@@ -778,11 +758,11 @@ public final class MixModuleTest {
         };
         JsonObject dispatched = unknown.call(second, "tracks.create", create("audio", -1));
         assertTrue(
-                dispatched.get("completion").getAsString().equals("unknown"),
+                dispatched.get("outcome").getAsString().equals("unknown"),
                 "ambiguous post-dispatch observation produces completed unknown result");
         HostOperation next = unknown.submit(second, "tracks.create", create("audio", -1));
         unknown.next();
-        assertRpcError("unresolved_creation", next);
+        assertRpcError("unresolved", next);
         assertTrue(unknown.application.actions == 1, "completed unknown result also retains quarantine");
     }
 
@@ -824,7 +804,8 @@ public final class MixModuleTest {
             f.next();
             JsonObject result = created.result.join();
             assertTrue(
-                    result.get("matchesRequested").getAsBoolean() && f.application.actions == 1,
+                    result.get("outcome").getAsString().matches("applied|already_matched")
+                            && f.application.actions == 1,
                     "complete native-style baseline supports one instrument factory and observed name");
             assertTrue(
                     result.getAsJsonObject("creation").get("observedPosition").getAsInt() == 2,
@@ -840,7 +821,7 @@ public final class MixModuleTest {
         HostOperation rejected = f.submit(module, "tracks.create", create("audio", -1));
         f.next();
         assertTrue(
-                assertRpcError("not_ready", rejected).outcome.equals("not_applied"),
+                !assertRpcError("not_ready", rejected).unknown,
                 "missing type baseline rejects before dispatch despite complete track count");
         assertTrue(
                 f.application.actions == 0 && !rejected.dispatched,
@@ -851,7 +832,7 @@ public final class MixModuleTest {
         f.next();
         f.next();
         assertTrue(
-                created.result.join().get("matchesRequested").getAsBoolean(),
+                created.result.join().get("outcome").getAsString().matches("applied|already_matched"),
                 "pre-dispatch rejection does not quarantine a later fully observed creation");
     }
 
@@ -877,14 +858,15 @@ public final class MixModuleTest {
         assertTrue(op.result.isDone(), "absolute RPC mix targets apply without crossing a physical pickup point");
         JsonObject result = op.result.join();
         assertTrue(
-                result.get("matchesRequested").getAsBoolean(), "pickup does not leave requested pan/volume unobserved");
+                result.get("outcome").getAsString().matches("applied|already_matched"),
+                "pickup does not leave requested pan/volume unobserved");
         for (String field : List.of("volumeNormalized", "panNormalized"))
             assertTrue(
                     result.getAsJsonObject("fields")
                             .getAsJsonObject(field)
-                            .get("verification")
+                            .get("outcome")
                             .getAsString()
-                            .equals("observer_after_write"),
+                            .equals("applied"),
                     "absolute target still requires fresh observer evidence: " + field);
         JsonObject read = f.call(module, "tracks.get", HostFixture.target(HostFixture.B));
         assertTrue(
@@ -931,7 +913,7 @@ public final class MixModuleTest {
                 "unchanged slot positions no longer permanently block complete factory observation");
         JsonObject result = op.result.join();
         assertTrue(
-                result.get("matchesRequested").getAsBoolean()
+                result.get("outcome").getAsString().matches("applied|already_matched")
                         && result.get("trackId").getAsString().equals(added),
                 "unique factory addition names the correct UUID after native-like callback ordering");
         assertTrue(
@@ -947,9 +929,9 @@ public final class MixModuleTest {
                 f.tracks[2].child("name").writes == 1
                         && result.getAsJsonObject("fields")
                                 .getAsJsonObject("name")
-                                .get("verification")
+                                .get("outcome")
                                 .getAsString()
-                                .equals("observer_after_write"),
+                                .equals("applied"),
                 "early equal name is readable but cannot suppress the new generation's explicit naming write");
         JsonObject effect = f.call(module, "tracks.get", HostFixture.target(HostFixture.C));
         assertTrue(
@@ -1018,14 +1000,15 @@ public final class MixModuleTest {
         f.next();
         JsonObject result = old.result.join();
         assertTrue(
-                result.get("completion").getAsString().equals("unknown")
-                        && result.get("reason").getAsString().equals("stale_target"),
+                result.get("outcome").getAsString().equals("unknown")
+                        && result.get("reason").getAsString().equals("target_changed"),
                 "same-UUID rebind plus matching callback cannot acknowledge an old-generation write");
         assertTrue(
                 !result.getAsJsonObject("fields")
                         .getAsJsonObject("volumeNormalized")
-                        .get("matchesRequested")
-                        .getAsBoolean(),
+                        .get("outcome")
+                        .getAsString()
+                        .matches("applied|already_matched"),
                 "reopened source never validates stale write evidence");
     }
 
@@ -1068,7 +1051,7 @@ public final class MixModuleTest {
             f.next();
             JsonObject result = op.result.join();
             assertTrue(
-                    result.get("matchesRequested").getAsBoolean()
+                    result.get("outcome").getAsString().matches("applied|already_matched")
                             && result.get("trackId").getAsString().equals(HostFixture.C),
                     "grouped project: the top-level index counts the group, not its child");
             assertTrue(
@@ -1091,9 +1074,7 @@ public final class MixModuleTest {
                 "a top-level track at the wrong index is never named");
         f.services.scheduler.close();
         f.next();
-        assertTrue(
-                assertRpcError("unavailable", op).outcome.equals("unknown"),
-                "unattributed grouped creation stays unknown");
+        assertTrue(assertUnknown("not_ready", op) != null, "unattributed grouped creation stays unknown");
     }
 
     @Test
@@ -1108,7 +1089,7 @@ public final class MixModuleTest {
                 "a new track observed inside a group is not the requested top-level track");
         f.services.scheduler.close();
         f.next();
-        assertTrue(assertRpcError("unavailable", op).outcome.equals("unknown"), "it remains an unknown creation");
+        assertTrue(assertUnknown("not_ready", op) != null, "it remains an unknown creation");
     }
 
     @Test
@@ -1321,11 +1302,11 @@ public final class MixModuleTest {
         }
         JsonObject result = op.result.join();
         assertTrue(
-                result.get("status").getAsString().equals("observed")
+                result.get("outcome").getAsString().matches("applied|already_matched")
                         && result.get("trackId").getAsString().equals(G)
                         && f.tracks[2].child("name").data.equals("T: Grp"),
                 "observed native grouping succeeds and names the group");
-        assertTrue(f.services.holds.descriptions().isEmpty(), "no quarantine after the observed grouping");
+        assertTrue(f.services.holds.list().isEmpty(), "no quarantine after the observed grouping");
     }
 
     private static JsonObject groupRequest(String... ids) {
@@ -1410,7 +1391,7 @@ public final class MixModuleTest {
                 "tracks are passed in flat order, not request order");
         assertTrue(
                 result.get("trackId").getAsString().equals(G)
-                        && result.get("matchesRequested").getAsBoolean(),
+                        && result.get("outcome").getAsString().matches("applied|already_matched"),
                 "the new group is identified and named");
         JsonObject info = result.getAsJsonObject("group");
         assertTrue(
@@ -1421,7 +1402,7 @@ public final class MixModuleTest {
         assertTrue(
                 f.tracks[2].child("name").data.equals("Drums") && f.tracks[0].child("name").writes == 0,
                 "only the group is renamed");
-        assertTrue(f.services.holds.descriptions().isEmpty(), "observed grouping releases its quarantine");
+        assertTrue(f.services.holds.list().isEmpty(), "observed grouping releases its quarantine");
         HostFixture plain = new HostFixture();
         FakeGroup quiet = new FakeGroup();
         MixModule unnamed = plain.services.mix(quiet);
@@ -1440,7 +1421,7 @@ public final class MixModuleTest {
         plain.next();
         JsonObject single = one.result.join();
         assertTrue(
-                single.get("completion").getAsString().equals("observed")
+                single.get("outcome").getAsString().matches("applied|already_matched")
                         && !single.has("fields")
                         && plain.tracks[2].child("name").writes == 0,
                 "without name the observed group is returned unnamed");
@@ -1460,32 +1441,27 @@ public final class MixModuleTest {
         HostOperation mixed = f.submit(module, "tracks.group", groupRequest(HostFixture.B, HostFixture.C));
         f.next();
         assertTrue(
-                assertRpcError("unsupported_scope", mixed).outcome.equals("not_applied") && access.calls == 0,
+                !assertRpcError("unsupported_scope", mixed).unknown && access.calls == 0,
                 "different parents are refused before native access");
         f.tracks[2].child("trackType").emit("Effect");
         HostOperation effect = f.submit(module, "tracks.group", groupRequest(HostFixture.C));
         f.next();
         assertTrue(
-                assertRpcError("unsupported_scope", effect).outcome.equals("not_applied") && access.calls == 0,
-                "effect tracks are refused");
+                !assertRpcError("unsupported_scope", effect).unknown && access.calls == 0, "effect tracks are refused");
         HostOperation outside = f.submit(module, "tracks.group", groupRequest("00000000-0000-0000-0000-0000000000aa"));
         f.next();
-        assertTrue(
-                assertRpcError("outside_window", outside).outcome.equals("not_applied"),
-                "unknown track is outside the window");
+        assertTrue(!assertRpcError("outside_window", outside).unknown, "unknown track is outside the window");
         f.services.selection.handOff(new HostOperation(Long.MAX_VALUE));
         HostOperation leased = f.submit(module, "tracks.group", groupRequest(HostFixture.B));
         f.next();
         assertTrue(
-                assertRpcError("busy", leased).outcome.equals("not_applied") && access.calls == 0,
-                "a held selection lease blocks grouping");
+                !assertRpcError("busy", leased).unknown && access.calls == 0, "a held selection lease blocks grouping");
         f.services.selection.handOff(null);
         f.transport.child("isArrangerRecordEnabled").emit(true);
         HostOperation recording = f.submit(module, "tracks.group", groupRequest(HostFixture.B));
         f.next();
         assertTrue(
-                assertRpcError("unsafe_state", recording).outcome.equals("not_applied") && access.calls == 0,
-                "recording blocks grouping");
+                !assertRpcError("unsafe_state", recording).unknown && access.calls == 0, "recording blocks grouping");
     }
 
     @Test
@@ -1497,21 +1473,18 @@ public final class MixModuleTest {
         while (!op.result.isDone() && !f.tasks.isEmpty()) f.next();
         JsonObject result = op.result.join();
         assertTrue(
-                result.get("completion").getAsString().equals("unknown")
-                        && result.get("reason").getAsString().equals("group_membership_not_observed"),
+                result.get("outcome").getAsString().equals("unknown")
+                        && result.get("reason").getAsString().equals("not_observed"),
                 "an unobserved native grouping is unknown, never success");
-        assertTrue(!f.services.holds.descriptions().isEmpty(), "unknown grouping is listed for extension.restart");
+        assertTrue(!f.services.holds.list().isEmpty(), "unknown grouping is listed as a hold");
         HostOperation create = f.submit(module, "tracks.create", create("audio", -1));
         f.next();
         assertTrue(
-                assertRpcError("unresolved_creation", create).outcome.equals("not_applied")
-                        && f.application.actions == 0,
+                !assertRpcError("unresolved", create).unknown && f.application.actions == 0,
                 "creation is quarantined after unknown grouping");
         HostOperation again = f.submit(module, "tracks.group", groupRequest(HostFixture.A));
         f.next();
-        assertTrue(
-                assertRpcError("unresolved_creation", again).outcome.equals("not_applied") && access.calls == 1,
-                "grouping is never retried");
+        assertTrue(!assertRpcError("unresolved", again).unknown && access.calls == 1, "grouping is never retried");
     }
 
     private static JsonObject create(String type, int position) {
@@ -1520,5 +1493,62 @@ public final class MixModuleTest {
         p.addProperty("position", position);
         p.addProperty("name", "Created");
         return p;
+    }
+
+    @Test
+    void unknownMethodIsRefused() {
+        assertRpcError("unknown_method", () -> MixModule.validateParams("tracks.bogus", new JsonObject()));
+    }
+
+    @Test
+    void groupWithoutBoundNativeAccessIsRefusedByTheRuntimeGate() {
+        HostFixture f = new HostFixture();
+        HostOperation op = f.submit(f.services.mix(), "tracks.group", groupRequest(HostFixture.A));
+        f.next();
+        assertRpcError("host_mismatch", op);
+    }
+
+    @Test
+    void unobservedCreationIsUnknownAndHoldsCreationAndGrouping() {
+        HostFixture f = new HostFixture();
+        MixModule module = f.services.mix();
+        f.create = factory -> {};
+        HostOperation op = f.submit(module, "tracks.create", create("audio", -1), f.tasks.after(400));
+        while (!op.result.isDone() && !f.tasks.isEmpty()) f.next();
+        assertUnknown("not_observed", op);
+        HostOperation group = f.submit(module, "tracks.group", groupRequest(HostFixture.A));
+        f.next();
+        assertRpcError("unresolved", group);
+    }
+
+    @Test
+    void creationThatRemovesAnExistingTrackReportsTargetChange() {
+        HostFixture f = new HostFixture();
+        MixModule module = f.services.mix();
+        f.create = factory -> {
+            f.addTrack(2, HostFixture.C, "Audio");
+            f.tracks[0].child("channelId").emit("");
+            f.tracks[0].child("exists").emit(false);
+        };
+        HostOperation op = f.submit(module, "tracks.create", create("audio", -1));
+        while (!op.result.isDone() && !f.tasks.isEmpty()) f.next();
+        assertUnknown("target_changed", op);
+    }
+
+    @Test
+    void creationAndGroupingAreBusyWhileTheNewTrackIsBeingNamed() {
+        HostFixture f = new HostFixture();
+        MixModule module = f.services.mix();
+        f.create = factory -> f.addTrack(2, HostFixture.C, "Audio");
+        f.tracks[2].child("name").notifyWrites = false;
+        HostOperation first = f.submit(module, "tracks.create", create("audio", -1), f.tasks.after(2000));
+        while (f.tracks[2].child("name").writes == 0 && !first.result.isDone()) f.next();
+        assertTrue(!first.result.isDone(), "the name write awaits its observation");
+        HostOperation second = f.submit(module, "tracks.create", create("audio", -1));
+        f.next();
+        assertRpcError("busy", second);
+        HostOperation group = f.submit(module, "tracks.group", groupRequest(HostFixture.A));
+        f.next();
+        assertRpcError("busy", group);
     }
 }

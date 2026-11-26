@@ -247,10 +247,10 @@ async def diagnostics(client: Any, args: dict[str, Any], timeout_ms: int) -> dic
     path = next((p for p in candidates() if p.is_file()), None)
     if path is None:
         return {
-            "status": "unsupported",
+            "supported": False,
             "platform": sys.platform,
             "searched": [str(p) for p in candidates()],
-            "reason": "Bitwig log file not found (BITWIG_LOG_PATH overrides)",
+            "note": "Bitwig log file not found (BITWIG_LOG_PATH overrides)",
             "dialogs": DIALOG_NOTE,
         }
 
@@ -295,7 +295,6 @@ async def diagnostics(client: Any, args: dict[str, Any], timeout_ms: int) -> dic
     max_events = args.get("maxEvents", 50)
 
     result: dict[str, Any] = {
-        "status": "observed",
         "platform": sys.platform,
         "logPath": str(path),
         "window": window,

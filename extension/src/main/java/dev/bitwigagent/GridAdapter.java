@@ -122,8 +122,8 @@ interface GridAdapter {
             Runnable dispatch,
             Consumer<JsonObject> complete,
             Consumer<Throwable> fail);
-    /** Re-verifies the device a settlement-mismatch quarantine was recorded on and releases it if consistent. */
-    JsonObject reconcileTopology(Object deviceProxy, UUID expectedTrackId, Runnable check);
+    /** Re-verifies a held device and releases its topology hold if consistent; null when the proxy is another device. */
+    JsonObject ackTopology(Object deviceProxy, UUID expectedTrackId, String device, Runnable check);
 
     void setConnection(
             Object deviceProxy,

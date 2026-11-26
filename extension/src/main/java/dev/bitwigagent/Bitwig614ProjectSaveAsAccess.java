@@ -18,6 +18,17 @@ final class Bitwig614ProjectSaveAsAccess implements ProjectModule.SaveAsAccess {
     private final Class<?> projectType, projectProxyType, callbackType;
     private final Method application, target, window, save, projectsRoot, saving;
 
+    /** The exact bindings, or native_unavailable when a descriptor does not match the loaded host. */
+    static Bitwig614ProjectSaveAsAccess bind(Bitwig614Runtime.Access a) {
+        try {
+            return new Bitwig614ProjectSaveAsAccess(a);
+        } catch (ReflectiveOperationException | LinkageError error) {
+            throw Errors.notApplied(
+                    Reason.NATIVE_UNAVAILABLE,
+                    "Exact project save bindings unavailable: " + Bitwig614Runtime.diagnostic(error));
+        }
+    }
+
     Bitwig614ProjectSaveAsAccess(Bitwig614Runtime.Access a) throws ReflectiveOperationException {
         this.a = a;
         Class<?> app = a.type("com.bitwig.flt.app.TL");
@@ -62,7 +73,7 @@ final class Bitwig614ProjectSaveAsAccess implements ProjectModule.SaveAsAccess {
 
     private Object app() {
         Object app = a.invoke(application, null);
-        if (app == null) throw Errors.notApplied(ErrorCode.NOT_READY, "Native application is not ready.");
+        if (app == null) throw Errors.notApplied(Reason.NOT_READY, "Native application is not ready.");
         return app;
     }
 
@@ -77,16 +88,15 @@ final class Bitwig614ProjectSaveAsAccess implements ProjectModule.SaveAsAccess {
     public void saveAs(Object projectProxy, Path file, Runnable beforeDispatch, ProjectModule.Completion done) {
         a.documentThread();
         if (!projectProxyType.isInstance(projectProxy))
-            throw Errors.notApplied(
-                    ErrorCode.PROJECT_SAVE_AS_UNAVAILABLE, "Controller Project is not the native project proxy.");
+            throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Controller Project is not the native project proxy.");
         Object project = a.invoke(target, projectProxy);
         if (!projectType.isInstance(project))
-            throw Errors.notApplied(ErrorCode.NOT_READY, "Controller Project proxy is not bound to an open project.");
+            throw Errors.notApplied(Reason.NOT_READY, "Controller Project proxy is not bound to an open project.");
         Object app = app(), documentWindow = a.invoke(window, app, project);
         if (documentWindow == null)
-            throw Errors.notApplied(ErrorCode.NOT_READY, "The current project has no document window.");
+            throw Errors.notApplied(Reason.NOT_READY, "The current project has no document window.");
         if (Boolean.TRUE.equals(a.invoke(saving, project)))
-            throw Errors.notApplied(ErrorCode.BUSY, "Bitwig is already saving this project.");
+            throw Errors.notApplied(Reason.BUSY, "Bitwig is already saving this project.");
         Object callback = Proxy.newProxyInstance(
                 callbackType.getClassLoader(), new Class<?>[] {callbackType}, (proxy, method, args) -> {
                     switch (signature(method)) {

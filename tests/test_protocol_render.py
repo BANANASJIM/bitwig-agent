@@ -35,9 +35,9 @@ def test_export_audio_and_bounce_in_place_are_strict_long_write_tools():
     )
     assert TOOLS["export.audio"].read_only is False
     assert TOOLS["bounce.inPlace"].read_only is False
-    assert TOOLS["render.status"].read_only is True
+    assert TOOLS["jobs.get"].read_only is True
     assert TOOLS["export.audio"].max_timeout_ms == TOOLS["bounce.inPlace"].max_timeout_ms == 60000
-    assert TOOLS["render.status"].max_timeout_ms == 10000
+    assert TOOLS["jobs.get"].max_timeout_ms == 10000
     bad: Any
     for bad in (
         {"sources": []},
