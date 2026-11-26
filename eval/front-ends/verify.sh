@@ -14,10 +14,11 @@
 #   t4 strong  sidechain source is Drums AND a dynamics parameter differs from a fresh insert of the same device.
 #              The host exposes no parameter defaults, so the baseline is a fresh insert of that device on a
 #              scratch audio track created and deleted here (scratchDeleted says whether the delete worked).
-#   t5 strong  the render measures above -40 LUFS and at least half of its energy is below 250 Hz (audio.analyze
-#              bands, sub+low). Both dialects have the same offline analysis, nothing in the project is touched,
-#              and the start state has no other sound source (Drums has no instrument), so a silent, empty or
-#              high-band-only render fails. It cannot tell bass from other low content; that is accepted.
+#   t5 strong  the agent's master file measures AND an export of the Bass track alone (export.audio, sources = the
+#              Bass track, start 0, length of the agent's file at the project tempo) to RAW_DIR/bass-only measures
+#              above -40 LUFS. That proves the arranger has bass in the range the master render covers (a bass left
+#              in launcher clips renders silent). Both dialects export a single track, so there is no band fallback;
+#              a failed export fails the check (bassRender says which).
 set -euo pipefail
 # shellcheck source=lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -184,18 +185,36 @@ if [[ "$sidechain_ok" == true && "$moved" == true ]]; then t4_strong=pass
 elif [[ "$sidechain_ok" == true && "$moved_known" == false ]]; then t4_strong=review; fi
 put t4 "$(verdict "$sidechain_ok")" "{\"drums\":$([[ -n "$drums" ]] && echo true || echo false),\"strong\":\"$t4_strong\",\"dynamicsMoved\":$([[ "$moved_known" == true ]] && echo "$moved" || echo null),\"scratchDeleted\":$scratch_deleted,\"goals\":{\"compressor\":$compressor_found,\"sidechain\":$sidechain_ok,\"dynamics\":$moved}}"
 
-# T5: a WAV in the export directory whose integrated loudness measures; strong adds the low-band check
+# T5: a WAV in the export directory whose integrated loudness measures; strong adds a Bass-only render
 wav="$(find "$export_dir" -maxdepth 2 -name '*.wav' -type f -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -n 1 | cut -d' ' -f2-)"
 lufs=null
-low_share=null
+bass_lufs=null
+bass_render=none
 if [[ -n "$wav" ]]; then
   analysis="$(read_state loudness audio.analyze "$(jq -nc --arg p "$wav" '{path: $p, mode: "loudness"}')")"
   lufs="$(jq -c '[.. | objects | to_entries[] | select(.key | test("integrated|lufs"; "i")) | .value | numbers][0] // null' <<<"$analysis")"
-  bands="$(read_state bands audio.analyze "$(jq -nc --arg p "$wav" '{path: $p, mode: "bands"}')")"
-  low_share="$(jq -c '[.. | objects | select(has("bandsDb")) | .bandsDb | ((if .sub == null then 0 else pow(10; .sub / 10) end) + (if .low == null then 0 else pow(10; .low / 10) end))] | if length == 0 then null else add / length end' <<<"$bands")"
+  duration="$(jq -r '[.. | objects | .durationSeconds? | numbers][0] // 16' <<<"$analysis")"
+  tempo="$(rd "$dialect" transport.get '{}' 2>/dev/null </dev/null | jq -r '.tempoBpm // 120' 2>/dev/null || echo 120)"
+  if [[ -n "$bass" ]]; then
+    bass_dir="$(cd "$raw" && pwd)/bass-only"
+    mkdir -p "$bass_dir"
+    end_beats="$(jq -nr --argjson d "$duration" --argjson t "${tempo:-120}" '($d * $t / 60 * 1000 | round) / 1000')"
+    if [[ "$dialect" == new ]]; then
+      export_args="$(jq -nc --argjson t "$bass" --arg d "$bass_dir" --argjson e "$end_beats" '{sources: [$t], directory: $d, baseName: "bass-only", startBeats: 0, endBeats: $e, fileType: "wav", overwrite: true}')"
+      ok='.outcome == "applied"'
+    else
+      export_args="$(jq -nc --arg t "$(track_id "$bass")" --arg d "$bass_dir" --argjson e "$end_beats" '{sources: [$t], directory: $d, baseName: "bass-only", startBeats: 0, endBeats: $e, format: "wav", overwrite: true, timeoutMs: 60000}')"
+      ok='.exported == true'
+    fi
+    bass_render=export_failed
+    if read_state bass-export export.audio "$export_args" | jq -e "$ok" >/dev/null 2>&1; then
+      bass_render=exported
+      bass_lufs="$(read_state bass-loudness audio.analyze "$(jq -nc --arg p "$bass_dir/bass-only.wav" '{path: $p, mode: "loudness"}')" | jq -c '[.. | objects | to_entries[] | select(.key | test("integrated|lufs"; "i")) | .value | numbers][0] // null')"
+    fi
+  fi
 fi
 measured="$(jq '. != null and . > -70' <<<"$lufs")"
-t5_strong="$(verdict "$(jq -n --argjson l "$lufs" --argjson s "$low_share" '$l != null and $l > -40 and $s != null and $s >= 0.5')")"
-put t5 "$(verdict "$measured")" "{\"file\":$(jq -Rn --arg w "$wav" '$w // null'),\"lufs\":$lufs,\"lowShare\":$low_share,\"strong\":\"$t5_strong\",\"goals\":{\"export\":$([[ -n "$wav" ]] && echo true || echo false)}}"
+t5_strong="$(verdict "$(jq -n --argjson l "$lufs" --argjson b "$bass_lufs" '$l != null and $l > -70 and $b != null and $b > -40')")"
+put t5 "$(verdict "$measured")" "{\"file\":$(jq -Rn --arg w "$wav" '$w // null'),\"lufs\":$lufs,\"bassRender\":\"$bass_render\",\"bassLufs\":$bass_lufs,\"strong\":\"$t5_strong\",\"goals\":{\"export\":$([[ -n "$wav" ]] && echo true || echo false)}}"
 
 jq -c --arg cond "$cond" '{condition: $cond} + .' <<<"$results"

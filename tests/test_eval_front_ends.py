@@ -271,10 +271,9 @@ def verify_world(tmp_path: Path) -> tuple[Path, Path, dict[str, Any], dict[str, 
                 }
             ]
         },
-        "audio.analyze": {
-            "loudness": {"integratedLufs": -14.2},
-            "windows": [{"bandsDb": {"sub": -2.0, "low": -6.0, "mid": -20.0, "high": -40.0, "air": None}}],
-        },
+        "audio.analyze": {"integratedLufs": -14.2, "durationSeconds": 16.0},
+        "transport.get": {"tempoBpm": 120.0},
+        "export.audio": {"outcome": "applied"},
         "devices.catalog": {"devices": [{"name": "Compressor", "path": "/lib/Compressor.bwdevice"}]},
         "tracks.insert": {
             "ref": {"kind": "track", "id": "33333333-3333-3333-3333-333333333333", "name": "FE5 scratch"}
@@ -325,8 +324,12 @@ def test_verify_reads_state_through_the_condition_client(tmp_path: Path) -> None
     assert verdict["t4"]["goals"] == {"compressor": True, "sidechain": True, "dynamics": True}
     assert verdict["t5"]["lufs"] == -14.2
     assert verdict["t5"]["strong"] == "pass"
-    assert 0.5 < verdict["t5"]["lowShare"] < 1
+    assert (verdict["t5"]["bassRender"], verdict["t5"]["bassLufs"]) == ("exported", -14.2)
     log = (state / "log").read_text()
+    export_line = log.split("export.audio ")[1].splitlines()[0]
+    assert '"endBeats":32' in export_line
+    assert '"sources":[{"kind":"track"' in export_line
+    assert "bass-only" in export_line
     assert '{"parent":' in log.split("devices.insert ")[1].splitlines()[0]
     assert "tracks.delete" in log
     assert (tmp_path / "raw" / "tracks.json").is_file()
@@ -367,13 +370,15 @@ def test_verify_t4_compares_with_a_fresh_insert_and_field_names_flip(tmp_path: P
     (state / "devices.catalog").write_text(json.dumps({"devices": []}))
     assert json.loads(verify_again(tmp_path, state, env, "raw5").stdout)["t4"]["strong"] == "review"
     (state / "devices.catalog").write_text(json.dumps(answers["devices.catalog"]))
-    # a render that is silent or high-band only fails the stricter T5
-    (state / "audio.analyze").write_text(
-        json.dumps({"integratedLufs": -14.2, "windows": [{"bandsDb": {"sub": -30.0, "low": -25.0, "high": -0.5}}]})
-    )
-    assert json.loads(verify_again(tmp_path, state, env, "raw7").stdout)["t5"]["strong"] == "fail"
-    (state / "audio.analyze").write_text(json.dumps({"integratedLufs": -80.0, "windows": []}))
-    assert json.loads(verify_again(tmp_path, state, env, "raw8").stdout)["t5"]["strong"] == "fail"
+    # a master with no bass in the arranger: the Bass-only render is silent, the stricter T5 fails, the old one passes
+    (state / "audio.analyze.2").write_text(json.dumps({"integratedLufs": -80.0}))
+    silent = json.loads(verify_again(tmp_path, state, env, "raw7").stdout)["t5"]
+    assert (silent["status"], silent["strong"], silent["bassLufs"]) == ("pass", "fail", -80.0)
+    (state / "audio.analyze.2").unlink()
+    (state / "export.audio").write_text(json.dumps({"code": "job_failed"}))
+    failed = json.loads(verify_again(tmp_path, state, env, "raw8").stdout)["t5"]
+    assert (failed["strong"], failed["bassRender"]) == ("fail", "export_failed")
+    (state / "export.audio").write_text(json.dumps(answers["export.audio"]))
     # the FE6-b rename lives in two variables
     (state / "log").unlink()
     flipped = env | {"BWA_F_INSERT_TO": "to", "BWA_F_LIST_PARENT": "target"}
