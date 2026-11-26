@@ -4,6 +4,7 @@ from typing import Annotated, Literal, Self
 
 from pydantic import Field, model_validator
 
+from bitwig_agent.protocol.annotations import ADD
 from bitwig_agent.protocol.base import (
     PROJECT_READY,
     TRACK,
@@ -162,6 +163,7 @@ SPECS: dict[str, ToolSpec] = {
         False,
         {"trackIds": [TRACK, "12345678-1234-1234-1234-123456789abd"], "name": "Drums"},
         requires=PROJECT_READY,
+        annotations=ADD,
     ),
     "tracks.delete": tool(
         TrackDeleteArgs,

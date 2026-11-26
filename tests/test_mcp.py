@@ -1,5 +1,6 @@
 import pytest
 from fakes import INVALID_NAMES, LAYER_UNKNOWN_RESULT, assert_rejected_before_tcp, string_panel_result
+from mcp.shared.exceptions import MCPError
 
 from bitwig_agent.protocol import CLIENT_SIDE, TOOLS
 from bitwig_agent.protocol.base import REASONS
@@ -31,8 +32,8 @@ async def test_real_stdio_preserves_partial_domain_results(mcp_session, host):
         assert response.is_error is True, "an unknown outcome is flagged, never hidden"
         got = response.structured_content
         if method == "status":  # client adds a mismatch note when the host reports no extension version
-            got["result"].pop("extensionMismatch")
-        assert got == {"result": result}
+            got.pop("extensionMismatch")
+        assert got == result
         assert host.requests[-1]["params"] == params
     assert host.connections == len(TOOLS) - len(CLIENT_SIDE)
 
@@ -58,7 +59,7 @@ async def test_grid_host_unknown_error_survives_mcp_without_retry(mcp_session, h
         },
     )
     assert response.is_error is True
-    assert response.structured_content == {"result": unknown}
+    assert response.structured_content == unknown
     assert host.requests[0]["timeoutMs"] == 100
     assert host.connections == 1
     assert len(host.requests) == 1
@@ -77,8 +78,8 @@ async def test_malformed_host_result_is_structured_unknown(mcp_session, host, re
     host.reply = reply
     response = await mcp_session.call_tool("parameters.set", SET)
     assert response.is_error is True
-    assert response.structured_content["result"]["outcome"] == "unknown"
-    assert response.structured_content["result"]["reason"] == "transport"
+    assert response.structured_content["outcome"] == "unknown"
+    assert response.structured_content["reason"] == "transport"
     assert host.connections == 1
 
 
@@ -117,12 +118,12 @@ async def test_is_error_follows_the_outcome(mcp_session, host, outcome, is_error
 async def test_invalid_arguments_never_reach_tcp(mcp_session, host, override):
     response = await mcp_session.call_tool("parameters.set", {**SET, **override})
     assert response.is_error is True
-    assert_rejected_before_tcp(response.structured_content["error"], host)
+    assert_rejected_before_tcp(response.structured_content, host)
 
 
 async def test_unknown_tool_does_not_open_tcp(mcp_session, host):
-    response = await mcp_session.call_tool("project.delete", {})
-    assert response.is_error is True
+    with pytest.raises(MCPError, match=r"Unknown method: project\.delete"):
+        await mcp_session.call_tool("project.delete", {})
     assert host.connections == 0
 
 
@@ -148,7 +149,7 @@ async def test_unknown_action_id_preserves_host_rejection(mcp_session, host):
     error = {"code": REASONS["unknown_name"].value, "reason": "unknown_name", "message": "Unknown ID"}
     host.reply = lambda request: {"id": request["id"], "error": error}
     response = await mcp_session.call_tool("actions.invoke", {"actionId": "missing"})
-    assert response.structured_content == {"error": error}
+    assert response.structured_content == error
     assert response.is_error is True
     assert host.connections == 1
 
@@ -208,7 +209,7 @@ async def test_absent_fields_and_explicit_nullable_fields_remain_distinct_over_m
 async def test_invalid_domain_edits_are_not_dispatched(mcp_session, host, method, params):
     response = await mcp_session.call_tool(method, params)
     assert response.is_error
-    assert_rejected_before_tcp(response.structured_content["error"], host)
+    assert_rejected_before_tcp(response.structured_content, host)
 
 
 async def test_grid_parameter_utf16_limit_is_checked_beyond_json_schema(mcp_session, host):
@@ -216,7 +217,7 @@ async def test_grid_parameter_utf16_limit_is_checked_beyond_json_schema(mcp_sess
         "grid.parameters.get", {**TARGET, "moduleId": TRACK, "parameterId": "𝄞" * 513}
     )
     assert response.is_error
-    assert_rejected_before_tcp(response.structured_content["error"], host)
+    assert_rejected_before_tcp(response.structured_content, host)
 
 
 async def test_grid_mcp_rejects_integer_float_token_despite_json_schema_integer_semantics(mcp_session, host):
@@ -225,7 +226,7 @@ async def test_grid_mcp_rejects_integer_float_token_despite_json_schema_integer_
         {**TARGET, "moduleId": TRACK, "parameterId": "", "expectedKind": "integer", "expectedValue": 0, "value": 1.0},
     )
     assert response.is_error
-    assert_rejected_before_tcp(response.structured_content["error"], host)
+    assert_rejected_before_tcp(response.structured_content, host)
 
 
 @pytest.mark.parametrize("field", ["expectedX", "expectedY", "x", "y"])
@@ -234,14 +235,14 @@ async def test_grid_move_mcp_rejects_float_despite_json_schema_integer_semantics
         "grid.modules.move", {**TARGET, "moduleId": TRACK, "expectedX": 0, "expectedY": 0, "x": 4, "y": 2, field: 1.0}
     )
     assert response.is_error
-    assert_rejected_before_tcp(response.structured_content["error"], host)
+    assert_rejected_before_tcp(response.structured_content, host)
 
 
 async def test_mcp_discovery_publishes_required_nullable_connection_contract(mcp_session):
     response = await mcp_session.list_tools()
     tools = {tool.name: tool for tool in response.tools}
     assert len(response.tools) == len(tools)
-    assert set(tools) == set(TOOLS)
+    assert set(tools) == set(TOOLS) | {"help"}
     tool = tools["grid.connections.set"]
     assert tool.annotations.read_only_hint is False
     schema = tool.input_schema
@@ -311,7 +312,7 @@ async def test_grid_insert_mcp_rejects_non_int32_before_tcp(mcp_session, host, f
         },
     )
     assert response.is_error
-    assert_rejected_before_tcp(response.structured_content["error"], host)
+    assert_rejected_before_tcp(response.structured_content, host)
 
 
 async def test_grid_insert_mcp_preserves_loader_unknown_without_retry(mcp_session, host):
@@ -325,7 +326,7 @@ async def test_grid_insert_mcp_preserves_loader_unknown_without_retry(mcp_sessio
     params = {**TARGET, "typeId": TRACK, "x": -(2**31), "y": 2**31 - 1}
     response = await mcp_session.call_tool("grid.modules.insert", {**params, "timeoutMs": 250})
     assert response.is_error
-    assert response.structured_content == {"result": unknown}
+    assert response.structured_content == unknown
     assert len(host.requests) == host.connections == 1
 
 
@@ -357,7 +358,7 @@ async def test_connection_mcp_rejects_nested_endpoint_errors_before_tcp(mcp_sess
         },
     )
     assert response.is_error
-    assert_rejected_before_tcp(response.structured_content["error"], host)
+    assert_rejected_before_tcp(response.structured_content, host)
 
 
 @pytest.mark.parametrize("field", ["expectedSource", "source"])
@@ -366,7 +367,7 @@ async def test_connection_mcp_never_infers_missing_cas_null(mcp_session, host, f
     del params[field]
     response = await mcp_session.call_tool("grid.connections.set", params)
     assert response.is_error
-    assert_rejected_before_tcp(response.structured_content["error"], host)
+    assert_rejected_before_tcp(response.structured_content, host)
 
 
 async def test_mcp_discovery_publishes_strict_layer_contracts(mcp_session):
@@ -404,7 +405,7 @@ async def test_mcp_discovery_publishes_strict_layer_contracts(mcp_session):
 async def test_invalid_layer_parent_never_reaches_tcp(mcp_session, host, method, parent):
     response = await mcp_session.call_tool(method, {**TOOLS[method].examples[0], "parent": parent})
     assert response.is_error
-    assert_rejected_before_tcp(response.structured_content["error"], host)
+    assert_rejected_before_tcp(response.structured_content, host)
 
 
 @pytest.mark.parametrize(
@@ -429,7 +430,7 @@ async def test_invalid_layer_write_never_reaches_tcp(mcp_session, host, changes)
         "parameters.layer.set", {**TOOLS["parameters.layer.set"].examples[0], **changes}
     )
     assert response.is_error
-    assert_rejected_before_tcp(response.structured_content["error"], host)
+    assert_rejected_before_tcp(response.structured_content, host)
 
 
 async def test_layer_mcp_preserves_unknown_without_retry(mcp_session, host):
@@ -438,7 +439,7 @@ async def test_layer_mcp_preserves_unknown_without_retry(mcp_session, host):
     params = TOOLS["parameters.layer.set"].examples[0]
     response = await mcp_session.call_tool("parameters.layer.set", {**params, "timeoutMs": 250})
     assert response.is_error
-    assert response.structured_content == {"result": unknown}
+    assert response.structured_content == unknown
     assert host.requests[0]["params"] == params
     assert host.requests[0]["timeoutMs"] == 250
     assert len(host.requests) == host.connections == 1
@@ -481,7 +482,7 @@ async def test_modulator_mcp_rejects_invalid_args_before_tcp(mcp_session, host, 
         "modulators.parameters.get", {**TOOLS["modulators.parameters.get"].examples[0], **changes}
     )
     assert response.is_error
-    assert_rejected_before_tcp(response.structured_content["error"], host)
+    assert_rejected_before_tcp(response.structured_content, host)
 
 
 @pytest.mark.parametrize("value", ["", " \tMacro \u03b1𝄞\n "])
@@ -491,7 +492,7 @@ async def test_modulator_mcp_preserves_raw_string_and_unavailable_metadata(mcp_s
     host.reply = lambda request: {"id": request["id"], "result": result}
     response = await mcp_session.call_tool("modulators.parameters.get", params)
     assert response.is_error is False
-    assert response.structured_content == {"result": result}
+    assert response.structured_content == result
     assert host.requests[0]["params"]["parameterId"] == ""
     assert len(host.requests) == host.connections == 1
 
@@ -515,7 +516,7 @@ async def test_modulator_mcp_preserves_partial_inventory_without_inventing_conte
     host.reply = lambda request: {"id": request["id"], "result": result}
     response = await mcp_session.call_tool("modulators.list", {"parent": TARGET, "limit": 1})
     assert response.is_error is False
-    assert response.structured_content == {"result": result}
+    assert response.structured_content == result
     assert len(host.requests) == host.connections == 1
 
 
@@ -533,7 +534,7 @@ async def test_modulator_mcp_preserves_read_errors_without_retry(mcp_session, ho
     host.reply = lambda request: {"id": request["id"], "error": error}
     response = await mcp_session.call_tool("modulators.parameters.get", TOOLS["modulators.parameters.get"].examples[0])
     assert response.is_error
-    assert response.structured_content == {"error": error}
+    assert response.structured_content == error
     assert len(host.requests) == host.connections == 1
 
 
@@ -551,7 +552,7 @@ async def test_modulator_mcp_preserves_read_errors_without_retry(mcp_session, ho
 async def test_modulator_mcp_pagination_rejects_coercion_before_tcp(mcp_session, host, field, value):
     response = await mcp_session.call_tool("modulators.list", {"parent": TARGET, field: value})
     assert response.is_error
-    assert_rejected_before_tcp(response.structured_content["error"], host)
+    assert_rejected_before_tcp(response.structured_content, host)
 
 
 @pytest.mark.parametrize("field", ["expectedCustomName", "customName"])
@@ -568,7 +569,7 @@ async def test_grid_rename_mcp_rejects_non_string_and_utf16_overflow_before_tcp(
         },
     )
     assert response.is_error
-    assert_rejected_before_tcp(response.structured_content["error"], host)
+    assert_rejected_before_tcp(response.structured_content, host)
 
 
 @pytest.mark.parametrize("field", ["expectedCustomName", "customName"])
@@ -577,7 +578,7 @@ async def test_grid_rename_mcp_missing_name_is_not_defaulted_to_reset(mcp_sessio
     del params[field]
     response = await mcp_session.call_tool("grid.modules.rename", params)
     assert response.is_error
-    assert_rejected_before_tcp(response.structured_content["error"], host)
+    assert_rejected_before_tcp(response.structured_content, host)
 
 
 async def test_grid_rename_mcp_preserves_unknown_raw_reset_outcome_without_retry(mcp_session, host):
@@ -591,6 +592,6 @@ async def test_grid_rename_mcp_preserves_unknown_raw_reset_outcome_without_retry
     host.reply = lambda request: {"id": request["id"], "result": unknown}
     response = await mcp_session.call_tool("grid.modules.rename", params)
     assert response.is_error
-    assert response.structured_content == {"result": unknown}
+    assert response.structured_content == unknown
     assert host.requests[0]["params"] == params
     assert len(host.requests) == host.connections == 1

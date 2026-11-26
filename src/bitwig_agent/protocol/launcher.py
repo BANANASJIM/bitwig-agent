@@ -5,6 +5,7 @@ from typing import Annotated, Any, Literal, Self
 
 from pydantic import Field, model_validator
 
+from bitwig_agent.protocol.annotations import STEER
 from bitwig_agent.protocol.base import (
     ENGINE,
     MAX_BEAT,
@@ -373,7 +374,7 @@ SPECS: dict[str, ToolSpec] = {
     ),
     "launcher.launch": tool(ClipArgs, LAUNCHER_LAUNCH_DESCRIPTION, False, CLIP, requires=ENGINE),
     "launcher.stop": tool(DeviceArgs, LAUNCHER_STOP_DESCRIPTION, False, {"trackId": TRACK}),
-    "notes.read": tool(NoteWindowArgs, NOTES_READ_DESCRIPTION, False, NOTE_WINDOW, CLIP),
+    "notes.read": tool(NoteWindowArgs, NOTES_READ_DESCRIPTION, False, NOTE_WINDOW, CLIP, annotations=STEER),
     "notes.edit": tool(
         NoteEditArgs,
         NOTES_EDIT_DESCRIPTION,

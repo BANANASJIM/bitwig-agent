@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import PurePath, PurePosixPath, PureWindowsPath
@@ -8,8 +9,10 @@ from typing import Annotated, Any, Self
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.config import JsonDict
 
+from bitwig_agent.protocol.annotations import Annotations
 from bitwig_agent.protocol.limits import (
     DEFAULT_TIMEOUT_MS,
+    DESCRIPTION_LIMIT,
     DEVICE_WINDOW,
     LONG_TIMEOUT_MS,
     MAX_TIMEOUT_MS,
@@ -187,6 +190,28 @@ PROJECT_READY = ("projectReady",)
 ENGINE = ("engine",)
 
 
+HELP_POINTER = " Full guide: help topic={name}."
+POINTER_BUDGET = len(HELP_POINTER.format(name="x" * 40))
+_SENTENCE_END = re.compile(r"(?<!e\.g)(?<!i\.e)\.\s+(?=[A-Z])")
+
+
+def summarize(text: str) -> str:
+    """Leading whole sentences that fit the description budget, leaving room for the help pointer."""
+    budget = DESCRIPTION_LIMIT - POINTER_BUDGET
+    summary = ""
+    start = 0
+    for match in _SENTENCE_END.finditer(text):
+        sentence = text[start : match.end()].strip()
+        if len(summary) + len(sentence) + 1 > budget:
+            break
+        summary = f"{summary} {sentence}".strip()
+        start = match.end()
+    if summary:
+        return summary
+    cut = text[: budget - 1].rsplit(" ", 1)[0].rstrip(",;:(")
+    return f"{cut}\u2026"
+
+
 @dataclass(frozen=True)
 class ToolSpec:
     model: type[BaseModel]
@@ -195,6 +220,13 @@ class ToolSpec:
     examples: tuple[dict[str, Any], ...]
     requires: tuple[str, ...] = ()
     host: bool = True
+    expose: bool = True
+    annotations: Annotations | None = None
+    doc: str = ""
+
+    @property
+    def full_description(self) -> str:
+        return self.doc or self.description
 
     @property
     def project_write(self) -> bool:
@@ -213,19 +245,28 @@ class ToolSpec:
 
     def describe(self) -> dict[str, Any]:
         return {
-            "description": self.description,
+            "description": self.full_description,
             "readOnly": self.read_only,
             "inputSchema": self.model.model_json_schema(),
             "examples": list(self.examples),
         }
 
 
-def tool(
+def tool(  # noqa: PLR0913 - the method table row: one keyword per column
     model: type[BaseModel],
-    description: str,
+    description: str | tuple[str, str],
     read_only: bool,
     *examples: dict[str, Any],
     requires: tuple[str, ...] = (),
     host: bool = True,
+    expose: bool = True,
+    annotations: Annotations | None = None,
 ) -> ToolSpec:
-    return ToolSpec(model, description, read_only, examples or ({},), requires, host)
+    if isinstance(description, tuple):
+        short, description = description
+        doc = description
+    else:
+        short, doc = (
+            (description, "") if len(description) <= DESCRIPTION_LIMIT else (summarize(description), description)
+        )
+    return ToolSpec(model, short, read_only, examples or ({},), requires, host, expose, annotations, doc)

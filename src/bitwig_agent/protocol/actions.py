@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pydantic import Field
 
+from bitwig_agent.protocol.annotations import OPEN_WORLD_EDIT
 from bitwig_agent.protocol.base import Nonempty, StatusArgs, ToolSpec, omitted, tool
 
 
@@ -24,5 +25,7 @@ ACTIONS_INVOKE_DESCRIPTION = "Invoke one exact ID from actions.list in the curre
 
 SPECS: dict[str, ToolSpec] = {
     "actions.list": tool(ActionListArgs, ACTIONS_LIST_DESCRIPTION, True, {"query": "scene", "limit": 20}),
-    "actions.invoke": tool(ActionArgs, ACTIONS_INVOKE_DESCRIPTION, False, {"actionId": "from-actions.list"}),
+    "actions.invoke": tool(
+        ActionArgs, ACTIONS_INVOKE_DESCRIPTION, False, {"actionId": "from-actions.list"}, annotations=OPEN_WORLD_EDIT
+    ),
 }

@@ -630,6 +630,7 @@ SPECS: dict[str, ToolSpec] = {
         {**TARGET, "expected": {"voices": 1, "voiceStacking": 1}, "set": {"voices": 8, "voiceStacking": 2}},
         {**TARGET, "expected": {"voices": 1, "monoMode": "true_mono"}, "set": {"monoMode": "digi_mono"}},
         requires=PROJECT_READY,
+        expose=False,
     ),
     "grid.modules.insert": tool(
         GridModuleInsertArgs,
@@ -644,6 +645,7 @@ SPECS: dict[str, ToolSpec] = {
             ],
         },
         requires=PROJECT_READY,
+        expose=False,
     ),
     "grid.modules.rename": tool(
         GridModuleRenameArgs,
@@ -662,6 +664,7 @@ SPECS: dict[str, ToolSpec] = {
             "customName": "",
         },
         requires=PROJECT_READY,
+        expose=False,
     ),
     "grid.modules.move": tool(
         GridModuleMoveArgs,
@@ -669,6 +672,7 @@ SPECS: dict[str, ToolSpec] = {
         False,
         {**TARGET, "moduleId": "abcdef01-2345-6789-abcd-0123456789ab", "expectedX": 0, "expectedY": 0, "x": 4, "y": 2},
         requires=PROJECT_READY,
+        expose=False,
     ),
     "grid.modules.delete": tool(
         GridModuleEditArgs,
@@ -676,6 +680,7 @@ SPECS: dict[str, ToolSpec] = {
         False,
         {**TARGET, "moduleId": "abcdef01-2345-6789-abcd-0123456789ab"},
         requires=PROJECT_READY,
+        expose=False,
     ),
     "grid.connections.set": tool(
         GridConnectionSetArgs,
@@ -716,5 +721,6 @@ SPECS: dict[str, ToolSpec] = {
             ],
         },
         requires=PROJECT_READY,
+        expose=False,
     ),
 }

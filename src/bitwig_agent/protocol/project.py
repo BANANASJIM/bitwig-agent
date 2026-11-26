@@ -4,6 +4,7 @@ from typing import Self
 
 from pydantic import Field, model_validator
 
+from bitwig_agent.protocol.annotations import ADD, STEER
 from bitwig_agent.protocol.base import (
     UTF16_BYTES_PER_UNIT,
     StatusArgs,
@@ -92,14 +93,15 @@ SPECS: dict[str, ToolSpec] = {
     "status": tool(StatusArgs, STATUS_DESCRIPTION, True),
     "capabilities": tool(StatusArgs, CAPABILITIES_DESCRIPTION, True),
     "context.get": tool(StatusArgs, CONTEXT_GET_DESCRIPTION, True),
-    "project.save": tool(StatusArgs, PROJECT_SAVE_DESCRIPTION, False),
+    "project.save": tool(StatusArgs, PROJECT_SAVE_DESCRIPTION, False, annotations=STEER),
     "project.saveAs": tool(
         ProjectSaveAsArgs,
         PROJECT_SAVE_AS_DESCRIPTION,
         False,
         {"path": "/home/me/Bitwig Studio/Projects/Agent Sketch/Agent Sketch.bwproject"},
+        annotations=ADD,
     ),
-    "project.activateEngine": tool(StatusArgs, PROJECT_ACTIVATE_ENGINE_DESCRIPTION, False),
+    "project.activateEngine": tool(StatusArgs, PROJECT_ACTIVATE_ENGINE_DESCRIPTION, False, annotations=STEER),
     "host.diagnostics": tool(
         HostDiagnosticsArgs, HOST_DIAGNOSTICS_DESCRIPTION, True, {"sinceSeconds": 300}, host=False
     ),

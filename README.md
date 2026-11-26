@@ -68,7 +68,7 @@ bitwig-agent-install --mcp-config
 
 Copy the printed JSON into your client's MCP configuration and reload its connection. This command **only prints configuration**; it does not modify client settings. It uses an absolute Python path so GUI clients need not inherit your shell's `PATH`.
 
-The client starts the **stdio** server. Running `bitwig-agent` manually just waits for an MCP client; it is not a GUI or a host connectivity check.
+The client starts the **stdio** server. Running `bitwig-agent-mcp` manually just waits for an MCP client; it is not a GUI or a host connectivity check.
 
 ## Explore the tools
 

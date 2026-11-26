@@ -5,6 +5,7 @@ from typing import Annotated, Any, Literal, Self
 
 from pydantic import Field, model_validator
 
+from bitwig_agent.protocol.annotations import SET
 from bitwig_agent.protocol.base import (
     MAX_STRING_UNITS,
     PROJECT_READY,
@@ -294,6 +295,7 @@ SPECS: dict[str, ToolSpec] = {
             "mode": "replace",
             "slots": [{"moduleName": "Mx: darkness", "parameterId": "VALUE"}],
         },
+        annotations=SET,
     ),
     "devices.remote.deletePage": tool(
         RemoteDeletePageArgs, DEVICES_REMOTE_DELETE_PAGE_DESCRIPTION, False, {**TARGET, "pageName": "Macros"}

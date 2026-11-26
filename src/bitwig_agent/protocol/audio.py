@@ -4,6 +4,7 @@ from typing import Annotated, Literal, Self
 
 from pydantic import Field, field_validator, model_validator
 
+from bitwig_agent.protocol.annotations import ADD, SET
 from bitwig_agent.protocol.base import Nonempty, StatusArgs, ToolSpec, TrackId, omitted, tool, validate_local_path
 
 
@@ -91,13 +92,16 @@ AUDIO_ANALYZE_DESCRIPTION = "Offline WAV analysis of one absolute .wav (channel 
 
 
 SPECS: dict[str, ToolSpec] = {
-    "audio.route": tool(AudioRouteArgs, AUDIO_ROUTE_DESCRIPTION, False, {"mode": "silent"}, host=False),
+    "audio.route": tool(
+        AudioRouteArgs, AUDIO_ROUTE_DESCRIPTION, False, {"mode": "silent"}, host=False, annotations=SET
+    ),
     "audio.capture": tool(
         AudioCaptureArgs,
         AUDIO_CAPTURE_DESCRIPTION,
         False,
         {"seconds": 8, "outPath": "/tmp/bitwig-capture.wav"},
         host=False,
+        annotations=ADD,
     ),
     "audio.analyze": tool(
         AudioAnalyzeArgs,

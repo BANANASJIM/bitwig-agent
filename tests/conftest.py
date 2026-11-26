@@ -1,4 +1,5 @@
 import asyncio
+import dataclasses
 import json
 import os
 import sys
@@ -6,6 +7,8 @@ import sys
 import pytest
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+
+from bitwig_agent.protocol import TOOLS
 
 
 @pytest.fixture
@@ -59,14 +62,45 @@ async def host():
         await asyncio.gather(*pending, return_exceptions=True)
 
 
+SERVER = "from bitwig_agent.frontends.mcp import main; main()"
+SERVER_EXPOSING_ALL = (
+    "import dataclasses\n"
+    "from bitwig_agent.protocol import TOOLS\n"
+    "TOOLS.update({name: dataclasses.replace(spec, expose=True) for name, spec in TOOLS.items()})\n" + SERVER
+)
+
+
+@pytest.fixture(autouse=True)
+def every_method_exposed(request, monkeypatch):
+    """Method tests drive hidden building blocks too; tests of the surface itself ask for real_surface."""
+    if "real_surface" in request.fixturenames:
+        return
+    for name, spec in list(TOOLS.items()):
+        monkeypatch.setitem(TOOLS, name, dataclasses.replace(spec, expose=True))
+
+
 @pytest.fixture
-async def mcp_session(host):
+def real_surface():
+    """Marks a test that must see the surface exactly as the method table exposes it."""
+
+
+async def stdio_session(host, code):
     params = StdioServerParameters(
-        command=sys.executable,
-        args=["-c", "from bitwig_agent.frontends.mcp import main; main()"],
-        env=dict(os.environ, BITWIG_AGENT_PORT=str(host.port)),
+        command=sys.executable, args=["-c", code], env=dict(os.environ, BITWIG_AGENT_PORT=str(host.port))
     )
     async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
         initialized = await session.initialize()
         assert initialized.server_info.name == "Bitwig Agent"
+        yield session
+
+
+@pytest.fixture
+async def mcp_session(host):
+    async for session in stdio_session(host, SERVER_EXPOSING_ALL):
+        yield session
+
+
+@pytest.fixture
+async def real_mcp_session(host, real_surface):
+    async for session in stdio_session(host, SERVER):
         yield session

@@ -63,6 +63,14 @@ public class McpTransportFixture {
 """
 
 
+SERVER = "from bitwig_agent.frontends.mcp import main; main()"
+SERVER_EXPOSING_ALL = (
+    "import dataclasses\n"
+    "from bitwig_agent.protocol import TOOLS\n"
+    "TOOLS.update({name: dataclasses.replace(spec, expose=True) for name, spec in TOOLS.items()})\n" + SERVER
+)
+
+
 def payload(response):
     return response.structured_content or json.loads(response.content[0].text)
 
@@ -95,16 +103,20 @@ async def exercise(folder: Path, api: Path) -> None:  # noqa: PLR0915
     try:
         port = int((await asyncio.wait_for(process.stdout.readline(), 10)).decode())
         env = dict(os.environ, BITWIG_AGENT_PORT=str(port))
-        server = StdioServerParameters(
-            command=sys.executable, args=["-c", "from bitwig_agent.frontends.mcp import main; main()"], env=env
-        )
+        server = StdioServerParameters(command=sys.executable, args=["-c", SERVER_EXPOSING_ALL], env=env)
+        surface = StdioServerParameters(command=sys.executable, args=["-c", SERVER], env=env)
+        async with stdio_client(surface) as (read, write), ClientSession(read, write) as session:
+            await session.initialize()
+            offered = {tool.name for tool in (await session.list_tools()).tools}
+        exposed = {name for name, spec in TOOLS.items() if spec.expose}
+        require(offered == exposed | {"help"}, f"Surface mismatch: {sorted(offered ^ (exposed | {'help'}))}")
         async with stdio_client(server) as (read, write), ClientSession(read, write) as session:
             await session.initialize()
-            names = {tool.name for tool in (await session.list_tools()).tools}
+            names = {tool.name for tool in (await session.list_tools()).tools} - {"help"}
             response = await session.call_tool("status", {})
             status = payload(response)
             require(not response.is_error, f"Java status fixture failed: {status}")
-            java_names = set(status["result"]["supportedMethods"])
+            java_names = set(status["supportedMethods"])
             require(
                 names - CLIENT_SIDE == java_names == set(TOOLS) - CLIENT_SIDE and names >= CLIENT_SIDE,
                 f"Registry mismatch: MCP={sorted(names)}, Java={sorted(java_names)}",
@@ -126,14 +138,12 @@ async def exercise(folder: Path, api: Path) -> None:  # noqa: PLR0915
                     body = payload(response)
                     if method == "parameters.set":
                         require(
-                            response.is_error
-                            and body.get("result", {}).get("outcome") == "unknown"
-                            and body["result"]["reason"] == "not_observed",
+                            response.is_error and body.get("outcome") == "unknown" and body["reason"] == "not_observed",
                             f"Lost Java ambiguity for {method}: {body}",
                         )
                     else:
                         require(not response.is_error, f"{method} failed Java/schema validation: {body}")
-                        result = body["result"]
+                        result = body
                         require(
                             result.get("fixtureOnly") is True
                             and result.get("method") == method

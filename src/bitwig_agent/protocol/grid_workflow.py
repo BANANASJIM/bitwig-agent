@@ -4,6 +4,7 @@ from typing import Annotated, Literal, Self
 
 from pydantic import Field, field_validator, model_validator
 
+from bitwig_agent.protocol.annotations import ADD, SET
 from bitwig_agent.protocol.audio import wav_path
 from bitwig_agent.protocol.base import (
     MAX_STRING_UNITS,
@@ -315,6 +316,12 @@ GRID_APPLY_DESCRIPTION = (
     + UNK
 )
 GRID_PROBE_DESCRIPTION = "Listen to one Grid output port (client-side, Linux/PipeWire; composed from grid.get, grid.connections.set, audio.capture and audio.analyze). Snapshots the cables into every Audio Out of the device, rewires the probe port '<module name>.<OUT port>' to one existing Audio Out (others are disconnected), records seconds (0.2..20) from the start of the arrangement, restores every cable by compare-and-set and returns audio.analyze of mode probe|mono_pitch|onsets|level|bands (bands = band balance + spectral peaks with note names: use it for steady/noisy sources mono_pitch cannot pitch). outPath (+overwrite) keeps the recorded WAV, otherwise it is deleted. Needs audio.route silent unless allowAudible, recording and automation write off (a playing transport is stopped; it stays stopped). A restore that cannot finish returns outcome unknown (reason job_failed) listing the inputs still changed; never retried. Returns outcome applied with port, mode, audioOut, cablesChanged, capture and analysis. Read the Grid first (grid.graph) for names."
+GRID_APPLY_SUMMARY = (
+    "Make ONE Grid device match a declarative spec: modules=[{name, type, x, y, params?}] and connections="
+    "[{from:'name.OUT', to:'name.IN'}]. Modules are identified by their unique customName, so re-applying is safe. "
+    "Run dryRun=true first. Start from grid.export to change an existing patch; grid.describe looks up module types "
+    "and parameters. Refused while the transport plays or records."
+)
 GRID_EXPORT_DESCRIPTION = "Read ONE Grid device (all pages) and return a grid.apply spec of it, composed client-side from grid.get/grid.voicing.get (not a host method; read-only toward Bitwig, writes only outPath). Use it to work on an existing patch: edit the spec, apply it back. Modules by customName (unnamed ones get a stable generated name '_<type>_<x>_<y>', listed in `unnamed`; grid.apply matches unnamed modules by it), type, x, y, params (raw values, enum as {label}, string and step arrays included), cables as 'name.PORT' pairs, voicing on Poly Grid. includeParams: changed (default; differs from the bundled 6.1.4 defaults) | all | none. namespace exports only that prefix; cables to/from other modules turn into `external` names (grid.apply references them without declaring them). Applying the export to the same device is already_matched. outPath writes the spec JSON instead of returning it (outcome applied)."
 GRID_GRAPH_DESCRIPTION = "Read ONE Grid device as names, no UUID joins (client-side over grid.get, read-only): modules [{name, type, x, y, size, params?}] and connections [{from:'name.OUT', to:'name.IN'}]; unnamed modules carry a generated name and unnamed:true. Optional namespace prefix filter (cables to outside modules listed in `external`), includeParams none (default) | changed | all. Pages internally; fails with graph_incomplete rather than return part of a device."
 GRID_RENDER_DESCRIPTION = "Draw ONE Grid device's layout to an image file, composed client-side from grid.get (not a host method; read-only toward Bitwig, writes only outPath). Use it to see what you built when the Grid editor is not visible. Target as grid.get plus outPath (absolute; refused if it exists unless overwrite=true), format svg (default) or png (rsvg-convert, else magick, else error), optional namespace (customName prefix to highlight, others dimmed), showConnections (default true), scale 0.25..4. Modules are coloured by category, Label modules are section headers, Comment modules show their text, cables run from output to input side. Returns outcome applied, outPath, bytes, imageSize and a layout summary: moduleCount, connectionCount, boundingBox (cells), categories, overlaps (pairs of modules sharing cells, capped at 50, with overlapCount), unconnected modules (capped), sections inferred from 'P: ' name prefixes with bounding boxes, density (occupied cells / bbox cells). Reads all pages; fails with not_ready rather than draw part of a device."
@@ -331,7 +338,7 @@ SPECS: dict[str, ToolSpec] = {
     ),
     "grid.apply": tool(
         GridApplyArgs,
-        GRID_APPLY_DESCRIPTION,
+        (GRID_APPLY_SUMMARY, GRID_APPLY_DESCRIPTION),
         False,
         {
             "target": TARGET,
@@ -343,6 +350,7 @@ SPECS: dict[str, ToolSpec] = {
             "dryRun": True,
         },
         host=False,
+        annotations=SET,
     ),
     "grid.probe": tool(
         GridProbeArgs,
@@ -350,6 +358,7 @@ SPECS: dict[str, ToolSpec] = {
         False,
         {**TARGET, "port": "H: osc.OUT", "seconds": 4, "mode": "mono_pitch"},
         host=False,
+        annotations=ADD,
     ),
     "grid.export": tool(
         GridExportArgs, GRID_EXPORT_DESCRIPTION, True, {**TARGET, "includeParams": "changed"}, host=False

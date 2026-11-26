@@ -5,6 +5,7 @@ from typing import Annotated, Literal, Self
 
 from pydantic import Field, model_validator
 
+from bitwig_agent.protocol.annotations import ADD
 from bitwig_agent.protocol.base import MAX_BEAT, PROJECT_READY, TRACK, DeviceArgs, StrictModel, ToolSpec, omitted, tool
 from bitwig_agent.protocol.launcher import CLIP, check_note_spans
 from bitwig_agent.protocol.limits import BEAT_GRID, BEAT_GRID_LABEL, MAX_CLIP_BEATS, SCENE_WINDOW
@@ -118,6 +119,7 @@ SPECS: dict[str, ToolSpec] = {
         False,
         {**CLIP, "expectedClipName": "Sketch", "startBeats": 0},
         requires=PROJECT_READY,
+        annotations=ADD,
     ),
     "arranger.clips.edit": tool(
         ArrangerClipEditArgs,

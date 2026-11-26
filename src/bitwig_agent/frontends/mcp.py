@@ -8,10 +8,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+from typing import Any
 
 from mcp.server import Server, ServerRequestContext
 from mcp.server.stdio import stdio_server
+from mcp.shared.exceptions import MCPError
 from mcp.types import (
+    INVALID_PARAMS,
     CallToolRequestParams,
     CallToolResult,
     ListToolsResult,
@@ -22,47 +25,56 @@ from mcp.types import (
 )
 
 from bitwig_agent.core import views
-from bitwig_agent.core.invoke import invoke
+from bitwig_agent.core.invoke import Envelope, Error, ask_help, invoke
+
+
+def text_result(payload: dict[str, Any], is_error: bool) -> CallToolResult:
+    return CallToolResult(
+        content=[TextContent(type="text", text=json.dumps(payload, allow_nan=False, separators=(",", ":")))],
+        structured_content=payload,
+        is_error=is_error,
+    )
+
+
+def envelope_result(envelope: Envelope) -> CallToolResult:
+    if isinstance(envelope, Error):
+        return text_result(envelope.error, True)
+    return text_result(envelope.result, envelope.failed)
+
+
+async def list_tools(ctx: ServerRequestContext, params: PaginatedRequestParams | None) -> ListToolsResult:
+    return ListToolsResult(
+        tools=[
+            Tool(
+                name=view.name,
+                description=view.description,
+                input_schema=view.input_schema,
+                annotations=ToolAnnotations(
+                    read_only_hint=view.annotations.read_only,
+                    destructive_hint=view.annotations.destructive,
+                    idempotent_hint=view.annotations.idempotent,
+                    open_world_hint=view.annotations.open_world,
+                ),
+            )
+            for view in views.tools()
+        ]
+    )
+
+
+async def call_tool(ctx: ServerRequestContext, params: CallToolRequestParams) -> CallToolResult:
+    arguments = params.arguments or {}
+    if params.name == views.HELP_NAME:
+        return envelope_result(ask_help(arguments.get("topic")))
+    if not views.exists(params.name):
+        raise MCPError(INVALID_PARAMS, views.unknown_tool_message(params.name))
+    return envelope_result(await invoke(params.name, arguments))
 
 
 def create_server() -> Server:
-    async def list_tools(ctx: ServerRequestContext, params: PaginatedRequestParams | None) -> ListToolsResult:
-        return ListToolsResult(
-            tools=[
-                Tool(
-                    name=view.name,
-                    description=view.description
-                    + " Example arguments: "
-                    + json.dumps(view.example, ensure_ascii=False),
-                    input_schema=view.input_schema,
-                    annotations=ToolAnnotations(
-                        read_only_hint=view.read_only, destructive_hint=not view.read_only, idempotent_hint=False
-                    ),
-                )
-                for view in views.tools()
-            ]
-        )
-
-    async def call_tool(ctx: ServerRequestContext, params: CallToolRequestParams) -> CallToolResult:
-        envelope = await invoke(params.name, params.arguments or {})
-        return CallToolResult(
-            content=[
-                TextContent(type="text", text=json.dumps(envelope.payload, allow_nan=False, separators=(",", ":")))
-            ],
-            structured_content=envelope.payload,
-            is_error=envelope.failed,
-        )
-
     return Server(
         "Bitwig Agent",
         version=views.version(),
-        instructions=(
-            "Discover with status and tracks.list; indices are zero-based; use exact discovered targets. "
-            "Every write returns outcome: applied, already_matched, sent (dispatched, nothing to observe), "
-            "not_applied, or unknown. An error always means nothing changed. On unknown stop: inspect the state, "
-            "then ack the hold that status.holds or the next refusal names; never retry an unknown write, by API or "
-            "GUI. A long job returns unknown with job=<id>: follow it with jobs.get. No automatic retries."
-        ),
+        instructions=views.instructions(),
         on_list_tools=list_tools,
         on_call_tool=call_tool,
     )

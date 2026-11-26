@@ -38,7 +38,7 @@ Releases = "https://github.com/BANANASJIM/bitwig-agent/releases"
 exclude = ["/packaging"]
 
 [project.scripts]
-bitwig-agent = "bitwig_agent.frontends.mcp:main"
+bitwig-agent-mcp = "bitwig_agent.frontends.mcp:main"
 bitwig-agent-rpc = "bitwig_agent.frontends.cli:main"
 bitwig-agent-install = "bitwig_agent.install:main"
 
@@ -115,6 +115,7 @@ py311-mcp-min = ["py311", "mcp-min", "dev", "native-music", "package"]
 
 [tool.pixi.feature.dev.tasks]
 test = "pytest -q"
+surface = "python scripts/surface.py"
 
 [tool.pixi.feature.java.tasks]
 lint = "python scripts/lint.py"

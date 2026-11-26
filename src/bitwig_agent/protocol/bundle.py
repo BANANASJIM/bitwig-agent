@@ -19,7 +19,7 @@ def export_bundle() -> dict[str, Any]:
                 "requires": list(spec.requires),
                 "defaultTimeoutMs": spec.default_timeout_ms,
                 "maxTimeoutMs": spec.max_timeout_ms,
-                "description": spec.description,
+                "description": spec.full_description,
                 "inputSchema": spec.model.model_json_schema(),
             }
             for name, spec in TOOLS.items()

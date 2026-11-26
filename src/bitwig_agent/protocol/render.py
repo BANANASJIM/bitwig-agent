@@ -4,6 +4,7 @@ from typing import Annotated, Literal, Self
 
 from pydantic import Field, model_validator
 
+from bitwig_agent.protocol.annotations import ADD, EDIT
 from bitwig_agent.protocol.base import (
     MAX_BEAT,
     TRACK,
@@ -126,11 +127,13 @@ SPECS: dict[str, ToolSpec] = {
             "tap": "pre_fader",
             "overwrite": True,
         },
+        annotations=ADD,
     ),
     "bounce.inPlace": tool(
         BounceInPlaceArgs,
         BOUNCE_IN_PLACE_DESCRIPTION,
         False,
         {"trackIds": [TRACK], "startBeats": 0, "endBeats": 16, "tap": "post_fader"},
+        annotations=EDIT,
     ),
 }

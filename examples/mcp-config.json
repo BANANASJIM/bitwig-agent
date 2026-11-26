@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "bitwig-agent": {
-      "command": "bitwig-agent",
+      "command": "bitwig-agent-mcp",
       "args": [],
       "env": {"BITWIG_AGENT_PORT": "61172"}
     }
