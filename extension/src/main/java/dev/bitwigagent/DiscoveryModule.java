@@ -65,7 +65,7 @@ final class DiscoveryModule implements HostModule {
     public void dispatch(HostOperation operation, String method, JsonObject params) {
         switch (method) {
             case "status":
-                operation.result.complete(status(params.has("detail")));
+                operation.result.complete(status(operation, params.has("detail")));
                 return;
             case "capabilities":
                 operation.result.complete(capabilities(operation));
@@ -75,7 +75,7 @@ final class DiscoveryModule implements HostModule {
         }
     }
 
-    private JsonObject status(boolean full) {
+    private JsonObject status(HostOperation operation, boolean full) {
         JsonObject result = new JsonObject();
         result.addProperty("hostVersion", host.getHostVersion());
         result.addProperty("projectName", application.projectName().get());
@@ -91,8 +91,12 @@ final class DiscoveryModule implements HostModule {
         result.addProperty("deviceWindowCapacity", DEVICES);
         result.add("parameterBindingDiagnostics", parameters.diagnostics());
         result.add("holds", holds(holds, GRID_HOLDS));
-        for (HostModule domain : domains) domain.status(result, full);
+        addDomainSections(operation, result, domains, full);
         return result;
+    }
+
+    static void addDomainSections(HostOperation operation, JsonObject out, List<HostModule> domains, boolean full) {
+        for (HostModule domain : domains) domain.status(operation, out, full);
     }
 
     /** Every hold: the id ack takes, whether ack accepts it, what is held; Grid devices from the process marker. */

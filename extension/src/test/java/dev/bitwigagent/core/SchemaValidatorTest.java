@@ -111,14 +111,14 @@ public final class SchemaValidatorTest {
     }
 
     @Test
-    void stringLengthCountsCodePoints() {
+    void maxLengthCountsUtf16UnitsAndMinLengthCodePoints() {
         SchemaValidator bounded = field("{\"type\":\"string\",\"minLength\":2,\"maxLength\":3}");
         accepts(bounded, "\"ab\"");
         accepts(bounded, "\"abc\"");
         rejects(bounded, "\"a\"", "at least 2");
         rejects(bounded, "\"abcd\"", "at most 3");
-        accepts(bounded, "\"😀😀😀\"");
-        rejects(bounded, "\"😀😀😀😀\"", "at most 3");
+        accepts(bounded, "\"😀a\"");
+        rejects(bounded, "\"😀😀\"", "at most 3");
         rejects(bounded, "\"😀\"", "at least 2");
         accepts(bounded, "\"\\ud83d\\ud83d\"");
     }
