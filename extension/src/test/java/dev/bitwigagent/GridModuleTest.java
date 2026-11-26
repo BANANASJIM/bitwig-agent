@@ -365,7 +365,9 @@ public final class GridModuleTest {
         assertRpcError("not_ready", missing.startWrite());
         assertTrue(missing.adapter.tasks.isEmpty(), "default false getter is not an observed safe state");
         for (String key : List.of(
-                "isArrangerRecordEnabled", "isArrangerAutomationWriteEnabled", "isClipLauncherAutomationWriteEnabled")) {
+                "isArrangerRecordEnabled",
+                "isArrangerAutomationWriteEnabled",
+                "isClipLauncherAutomationWriteEnabled")) {
             Fixture unsafe = new Fixture();
             unsafe.host.transport.child(key).emit(true);
             assertRpcError("unsafe_state", unsafe.startWrite());
@@ -418,7 +420,9 @@ public final class GridModuleTest {
                 assertRpcError("unsafe_state", op).outcome.equals("not_applied") && controller.adapter.tasks.isEmpty(),
                 "recording enabled in initial controller queue is rejected");
         for (String key : List.of(
-                "isArrangerRecordEnabled", "isArrangerAutomationWriteEnabled", "isClipLauncherAutomationWriteEnabled")) {
+                "isArrangerRecordEnabled",
+                "isArrangerAutomationWriteEnabled",
+                "isClipLauncherAutomationWriteEnabled")) {
             Fixture queued = new Fixture();
             op = queued.startWrite();
             queued.host.transport.child(key).emit(true);
@@ -452,8 +456,7 @@ public final class GridModuleTest {
                 () -> immediate.host.transport.child("isArrangerRecordEnabled").emit(true);
         immediate.adapter.next();
         assertTrue(
-                assertRpcError("unsafe_state", op).outcome.equals("not_applied")
-                        && immediate.adapter.writer.calls == 0,
+                assertRpcError("unsafe_state", op).outcome.equals("not_applied") && immediate.adapter.writer.calls == 0,
                 "changed safety at writer entry is rechecked, not cached permission");
         Fixture cancelled = new Fixture();
         op = cancelled.startWrite();
