@@ -44,8 +44,8 @@
     },
     {
       "files": [
-        "tests/test_audio.py",
-        "tests/test_audio.py"
+        "tests/test_audio_pipewire.py",
+        "tests/test_audio_pipewire.py"
       ],
       "count": 1,
       "tokens": 60

@@ -6,7 +6,7 @@ import struct
 
 import pytest
 
-from bitwig_agent import audio, loudness
+from bitwig_agent.audio import loudness, pipewire
 from bitwig_agent.errors import BridgeError
 from bitwig_agent.protocol import validate_call
 
@@ -29,7 +29,7 @@ def sine(db, hz, seconds, rate=RATE, phase=0.0):
 
 def analyze(path, **args):
     params, _ = validate_call("audio.analyze", {"path": str(path), "mode": "loudness", **args})
-    return asyncio.run(audio.analyze(params))
+    return asyncio.run(pipewire.analyze(params))
 
 
 def expected_lufs(amplitude_db, hz, channel_weights=(1.0, 1.0), rate=RATE):
@@ -192,6 +192,6 @@ def test_existing_modes_still_read_channel_zero(tmp_path):
     tone = sine(-6, 997, 1)
     write_float_wav(tmp_path / "e.wav", [tone, [0.0] * len(tone)])
     params, _ = validate_call("audio.analyze", {"path": str(tmp_path / "e.wav"), "mode": "level"})
-    out = asyncio.run(audio.analyze(params))
+    out = asyncio.run(pipewire.analyze(params))
     assert out["analyzedChannel"] == 0
     assert out["peakDb"] == pytest.approx(-6.02, abs=0.05)

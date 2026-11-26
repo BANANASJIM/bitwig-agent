@@ -20,7 +20,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from bitwig_agent import audio_analysis
+from bitwig_agent.audio import analysis
 from bitwig_agent.errors import BridgeError, bridge_error
 
 NODE = "Bitwig Studio"
@@ -396,7 +396,7 @@ async def capture(bridge: Any, args: dict[str, Any], timeout_ms: int) -> dict[st
                 run(["pw-link", "-d", src, dst])
         if solo:
             solo_block.update(await restore_solo(bridge, previous_solo, changed, timeout_ms))
-    stats = await asyncio.to_thread(audio_analysis.analyze, {"path": path, "mode": "level", "windowSeconds": 60})
+    stats = await asyncio.to_thread(analysis.analyze, {"path": path, "mode": "level", "windowSeconds": 60})
     return {
         "path": path,
         "requestedSeconds": seconds,
@@ -409,7 +409,7 @@ async def capture(bridge: Any, args: dict[str, Any], timeout_ms: int) -> dict[st
         "rms": stats["rms"],
         "rmsDb": stats["rmsDb"],
         "clipping": stats["clipping"],
-        "silent": stats["peak"] < audio_analysis.SILENT_PEAK,
+        "silent": stats["peak"] < analysis.SILENT_PEAK,
         "fromStart": from_start,
         "audible": allow_audible,
         "transportStopped": transport_started,
@@ -421,6 +421,6 @@ async def capture(bridge: Any, args: dict[str, Any], timeout_ms: int) -> dict[st
 
 async def analyze(args: dict[str, Any]) -> dict[str, Any]:
     try:
-        return await asyncio.to_thread(audio_analysis.analyze, args)
-    except audio_analysis.WavError as exc:
+        return await asyncio.to_thread(analysis.analyze, args)
+    except analysis.WavError as exc:
         raise bridge_error("invalid_params", str(exc)) from exc

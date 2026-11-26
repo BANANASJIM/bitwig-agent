@@ -11,7 +11,7 @@ import json
 from io import BytesIO
 from pathlib import Path
 
-from bitwig_agent.loudness import STEREO_CHANNELS
+from bitwig_agent.audio.loudness import STEREO_CHANNELS
 
 MAX_INPUT_PEAK = 0.15
 
