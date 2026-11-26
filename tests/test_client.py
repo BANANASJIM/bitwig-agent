@@ -7,7 +7,7 @@ import pytest
 from pydantic import ValidationError
 
 from bitwig_agent import client_side
-from bitwig_agent.client import MAX_BYTES, BridgeClient, configured_port, package_version
+from bitwig_agent.client import MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, BridgeClient, configured_port, package_version
 from bitwig_agent.errors import BridgeError
 from bitwig_agent.protocol import CLIENT_SIDE, TOOLS, validate_call
 from bitwig_agent.protocol.parameters import SetArgs
@@ -56,7 +56,7 @@ async def test_timeout_unknown_and_no_retry(host):
         lambda request: b'{"unfinished":',
         lambda request: None,
         lambda request: (json.dumps({"id": request["id"], "result": {"value": float("nan")}}) + "\n").encode(),
-        lambda request: b"x" * (MAX_BYTES + 1) + b"\n",
+        lambda request: b"x" * (MAX_RESPONSE_BYTES + 1) + b"\n",
     ],
 )
 async def test_untrustworthy_response_rejected_without_retry(host, reply):
@@ -96,7 +96,7 @@ async def test_connection_refused_is_not_dispatched():
 
 
 async def test_large_or_nonfinite_request_rejected_before_connection(host):
-    unsendable: list[dict[str, Any]] = [{"large": "x" * MAX_BYTES}, {"value": float("nan")}]
+    unsendable: list[dict[str, Any]] = [{"large": "x" * MAX_REQUEST_BYTES}, {"value": float("nan")}]
     for params in unsendable:
         with pytest.raises(ValueError, match=r"validation errors? for SetArgs"):
             await BridgeClient(host.port).call("parameters.set", params)
@@ -196,7 +196,7 @@ async def test_extension_restart_params(host):
 
 
 async def test_oversized_grid_get_response_says_to_lower_module_limit(host):
-    host.reply = lambda request: b"x" * (MAX_BYTES + 1) + b"\n"
+    host.reply = lambda request: b"x" * (MAX_RESPONSE_BYTES + 1) + b"\n"
     params = {"trackId": SET["trackId"], "deviceIndex": 0, "expectedDeviceName": "Grid", "moduleLimit": 256}
     with pytest.raises(BridgeError) as caught:
         await BridgeClient(host.port).call("grid.get", params)

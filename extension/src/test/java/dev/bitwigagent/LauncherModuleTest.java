@@ -445,7 +445,7 @@ public final class LauncherModuleTest {
         check(out.getAsJsonArray("notes").size() == 2048, "response stays bounded");
         check(!out.get("completeWindow").getAsBoolean() && out.has("continuation"), "dense partial read is explicit");
         check(
-                out.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8).length < RpcServer.MAX_BYTES,
+                out.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8).length < RpcServer.MAX_RESPONSE_BYTES,
                 "dense read fits protocol frame");
     }
 
@@ -1572,6 +1572,8 @@ public final class LauncherModuleTest {
         validClipEdits(
                 clipEdit("rename", "name", repeat(128)),
                 clipEdit("resize", "lengthBeats", 4096),
+                clipEdit("resize", "lengthBeats", 1.5),
+                clipEdit("resize", "lengthBeats", 1.0 / 128),
                 clipEdit("color", "rgb", "#aB09fF"),
                 clipEdit("transpose", "semitones", -48),
                 clipEdit("transpose", "semitones", 48),
@@ -1591,8 +1593,8 @@ public final class LauncherModuleTest {
         rejectClipEdit(clipEdit("rename", "name", repeat(129)));
         rejectClipEdit(clipEdit("rename", "name", "x", "semitones", 1));
         rejectClipEdit(clipEdit("resize", "lengthBeats", 0));
+        rejectClipEdit(clipEdit("resize", "lengthBeats", 1.0 / 256));
         rejectClipEdit(clipEdit("resize", "lengthBeats", 4097));
-        rejectClipEdit(clipEdit("resize", "lengthBeats", 1.5));
         rejectClipEdit(clipEdit("color", "rgb", "ff0000"));
         rejectClipEdit(clipEdit("color", "rgb", "#ff00"));
         rejectClipEdit(clipEdit("color", "rgb", "#gg0000"));

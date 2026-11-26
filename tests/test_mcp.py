@@ -265,7 +265,7 @@ async def test_mcp_discovery_publishes_required_nullable_connection_contract(mcp
     assert {tuple(sorted(branch["required"])) for branch in schema["oneOf"]} == {("x", "y"), ("modules",)}
     assert {"typeId", "typeName", "modules"} <= set(schema["properties"])
     assert schema["properties"]["modules"]["minItems"] == 1
-    assert schema["properties"]["modules"]["maxItems"] == 16
+    assert "maxItems" not in schema["properties"]["modules"]
     for field in ("x", "y"):
         coordinate = schema["properties"][field]
         assert coordinate["type"] == "integer"

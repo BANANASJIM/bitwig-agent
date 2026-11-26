@@ -1301,10 +1301,9 @@ def test_grid_insert_batch_is_exclusive_bounded_and_per_entry_strict():
     base = {key: GRID_INSERT[key] for key in TARGET}
     params, _ = validate_call("grid.modules.insert", {**base, "modules": [entry, {"typeId": TRACK, "x": 8, "y": 2}]})
     assert params["modules"][1] == {"typeId": TRACK, "x": 8, "y": 2}
-    validate_call("grid.modules.insert", {**base, "modules": [entry] * 16})
+    validate_call("grid.modules.insert", {**base, "modules": [entry] * 17})
     for bad in (
         {**base, "modules": []},
-        {**base, "modules": [entry] * 17},
         {**base, "modules": [entry], "x": 1},
         {**base, "modules": [entry], "typeName": "a"},
         {**base, "modules": [{"x": 1, "y": 1}]},
@@ -1400,7 +1399,7 @@ def test_clips_edit_accepts_one_operation(fields):
         {"op": "duplicateContent", "amount": 1},
         {"op": "resize", "lengthBeats": 0},
         {"op": "resize", "lengthBeats": 4097},
-        {"op": "resize", "lengthBeats": 1.5},
+        {"op": "resize", "lengthBeats": 1 / 256},
         {"op": "color", "rgb": "ff0000"},
         {"op": "color", "rgb": "#ff00"},
         {"op": "color", "rgb": "#gg0000"},

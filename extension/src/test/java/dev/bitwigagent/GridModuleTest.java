@@ -1195,15 +1195,14 @@ public final class GridModuleTest {
         JsonObject emptyBatch = batchInsertion();
         JsonObject[] many = new JsonObject[17];
         Arrays.fill(many, moduleAt("typeId", type, 1, 1));
-        GridModule.validateParams("grid.modules.insert", batchInsertion(Arrays.copyOf(many, 16)));
+        GridModule.validateParams("grid.modules.insert", batchInsertion(many));
         JsonObject neither = batchInsertion(moduleAt("typeId", type, 1, 1));
         neither.getAsJsonArray("modules").get(0).getAsJsonObject().remove("typeId");
         JsonObject badCoordinate = batchInsertion(moduleAt("typeId", type, 1, 1));
         badCoordinate.getAsJsonArray("modules").get(0).getAsJsonObject().addProperty("x", 1.5);
         JsonObject extraKey = batchInsertion(moduleAt("typeId", type, 1, 1));
         extraKey.getAsJsonArray("modules").get(0).getAsJsonObject().addProperty("copy", true);
-        for (JsonObject bad : List.of(
-                both, blank, longName, withSingle, emptyBatch, batchInsertion(many), neither, badCoordinate, extraKey))
+        for (JsonObject bad : List.of(both, blank, longName, withSingle, emptyBatch, neither, badCoordinate, extraKey))
             TransportMixFixture.error(f.host.submit(f.module, "grid.modules.insert", bad), "invalid_params");
         check(
                 f.host.tasks.isEmpty() && f.adapter.tasks.isEmpty() && f.adapter.insertion.loads == 0,
