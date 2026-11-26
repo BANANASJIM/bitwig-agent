@@ -57,8 +57,15 @@ skill_dir() { printf '%s/skills/bitwig-agent' "$(cond_tree "$1")"; }
 
 # The test instance is the only thing these scripts may touch.
 assert_test_instance() {
-  local dialect="$1" status
-  status="$(rd "$dialect" status '{}')" || die "status failed: is the test Bitwig up on :1?"
+  local dialect="$1" status tries
+  # A just-started host answers status before the project settles; writes are refused until projectReady (0.4 has no flag).
+  for tries in $(seq 1 60); do
+    status="$(rd "$dialect" status '{}' 2>/dev/null)" || status=
+    [[ -n "$status" ]] && [[ "$(jq -r '.projectReady // true' <<<"$status")" == true ]] && break
+    sleep 2
+  done
+  [[ -n "$status" ]] || die "status failed: is the test Bitwig up on :1?"
+  [[ "$(jq -r '.projectReady // true' <<<"$status")" == true ]] || die "project never became ready"
   [[ "$(jq -r '.instance.display' <<<"$status")" == ":1" ]] || die "status.instance.display is not :1: refusing to touch this instance"
   [[ "$(jq -r '.projectName' <<<"$status")" == "BWA Test" ]] || die "status.projectName is not 'BWA Test': refusing"
 }
