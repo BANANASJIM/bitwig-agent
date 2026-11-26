@@ -39,15 +39,15 @@ public final class SharedDataTest {
         JsonObject host = SharedData.read("host");
         assertEquals(host.get("version").getAsString(), Bitwig614Runtime.VERSION);
         assertEquals(host.get("jarSha256").getAsString(), Bitwig614Runtime.SHA256);
-        assertEquals(
-                host.get("apiVersion").getAsInt(), new BitwigAgentExtensionDefinition().getRequiredAPIVersion());
+        assertEquals(host.get("apiVersion").getAsInt(), new BitwigAgentExtensionDefinition().getRequiredAPIVersion());
     }
 
     @Test
     void quantities() {
         for (JsonElement item : rows("quantity")) {
             JsonObject row = item.getAsJsonObject();
-            double[] got = GridDisplayUnits.quantity(row.get("unit").getAsString(), row.get("text").getAsString());
+            double[] got = GridDisplayUnits.quantity(
+                    row.get("unit").getAsString(), row.get("text").getAsString());
             if (absent(row.get("natural"))) assertNull(got, row.get("text").getAsString());
             else {
                 assertNotNull(got, row.get("text").getAsString());
@@ -65,8 +65,14 @@ public final class SharedDataTest {
             if (formula.equals("cbrt") || formula.equals("log10")) continue;
             double factor = row.has("factor") ? row.get("factor").getAsDouble() : 1.0;
             DoubleUnaryOperator[] pair = GridDisplayUnits.formula(formula, factor);
-            close(row.get("natural").getAsDouble(), pair[1].applyAsDouble(row.get("raw").getAsDouble()), formula);
-            close(row.get("raw").getAsDouble(), pair[0].applyAsDouble(row.get("natural").getAsDouble()), formula);
+            close(
+                    row.get("natural").getAsDouble(),
+                    pair[1].applyAsDouble(row.get("raw").getAsDouble()),
+                    formula);
+            close(
+                    row.get("raw").getAsDouble(),
+                    pair[0].applyAsDouble(row.get("natural").getAsDouble()),
+                    formula);
         }
     }
 
@@ -74,10 +80,12 @@ public final class SharedDataTest {
     void toRaw() {
         for (JsonElement item : rows("toRaw")) {
             JsonObject row = item.getAsJsonObject();
-            JsonObject current = display(row.get("unit").getAsString(), row.get("display").getAsString());
+            JsonObject current =
+                    display(row.get("unit").getAsString(), row.get("display").getAsString());
             current.addProperty("value", row.get("value").getAsDouble());
             String requested = row.get("requested").getAsString();
-            if (absent(row.get("raw"))) assertThrows(RpcException.class, () -> GridDisplayUnits.toRaw(current, requested));
+            if (absent(row.get("raw")))
+                assertThrows(RpcException.class, () -> GridDisplayUnits.toRaw(current, requested));
             else close(row.get("raw").getAsDouble(), GridDisplayUnits.toRaw(current, requested), requested);
         }
     }
@@ -86,7 +94,8 @@ public final class SharedDataTest {
     void near() {
         for (JsonElement item : rows("near")) {
             JsonObject row = item.getAsJsonObject();
-            JsonObject after = display(row.get("unit").getAsString(), row.get("live").getAsString());
+            JsonObject after =
+                    display(row.get("unit").getAsString(), row.get("live").getAsString());
             assertEquals(
                     !row.get("near").getAsBoolean(),
                     GridDisplayUnits.mismatch(after, row.get("wanted").getAsString()),
@@ -102,7 +111,9 @@ public final class SharedDataTest {
             JsonObject row = item.getAsJsonObject();
             List<String> hits = new ArrayList<>();
             for (JsonElement hit : row.getAsJsonArray("hits")) hits.add(hit.getAsString());
-            assertEquals(hits, GridNames.resolve(catalog, name -> name, row.get("query").getAsString()));
+            assertEquals(
+                    hits,
+                    GridNames.resolve(catalog, name -> name, row.get("query").getAsString()));
         }
     }
 }
