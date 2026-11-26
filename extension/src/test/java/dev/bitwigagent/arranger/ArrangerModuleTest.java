@@ -289,7 +289,10 @@ public final class ArrangerModuleTest {
         assertRpcError("invalid_params", () -> ArrangerModule.notes(notes(note(0, 60, 100, 1), note(0, 60, 90, 1)), 4));
         assertRpcError("invalid_params", () -> ArrangerModule.notes(notes(note(3.5, 60, 100, 1)), 4));
         assertRpcError("invalid_params", () -> ArrangerModule.notes(notes(note(0.001, 60, 100, 1)), 4));
-        assertRpcError("invalid_params", () -> ArrangerModule.notes(notes(note(0, 60, 100, 0.001)), 4));
+        assertEquals(
+                0.45,
+                ArrangerModule.notes(notes(note(0, 60, 100, 0.45)), 4).get(0)[3],
+                "durations need not align to the onset grid");
         assertEquals(
                 2,
                 ArrangerModule.notes(notes(note(0, 60, 100, 4), note(0, 61, 100, 4)), 4)

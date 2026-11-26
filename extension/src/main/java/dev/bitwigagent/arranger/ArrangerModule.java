@@ -28,7 +28,6 @@ import java.util.function.Consumer;
 /** Arranger timeline clips on a track's main clip lane through exact version-gated native bindings. */
 public final class ArrangerModule implements HostModule {
     static final Set<String> METHODS = Set.of("arranger.list");
-    static final double GRID = NoteGrid.BEAT_GRID;
 
     public interface Access {
         void execute(Runnable work);
@@ -111,34 +110,18 @@ public final class ArrangerModule implements HostModule {
 
     /** Notes are {beat, pitch, velocity, durationBeats}; beats are relative to the clip start, on a 1/128-beat grid. */
     public static List<double[]> notes(JsonArray array, double length) {
+        NoteGrid.requireNoteRules(array, BigDecimal.valueOf(length));
         List<double[]> out = new ArrayList<>();
         for (JsonElement item : array) {
             JsonObject n = item.getAsJsonObject();
-            double beat = n.get("beat").getAsDouble(),
-                    duration = n.get("durationBeats").getAsDouble();
-            int pitch = n.get("pitch").getAsInt(), velocity = n.get("velocity").getAsInt();
-            aligned(n.get("beat"), "beat");
-            aligned(n.get("durationBeats"), "durationBeats");
-            for (double[] o : out) {
-                if (o[1] == pitch && o[0] == beat) throw Errors.invalid("duplicate note cell (same beat and pitch)");
-                if (o[1] == pitch && beat < o[0] + o[3] && o[0] < beat + duration)
-                    throw Errors.invalid("same-pitch note durations overlap");
-            }
-            if (new BigDecimal(n.get("beat").getAsString())
-                            .add(new BigDecimal(n.get("durationBeats").getAsString()))
-                            .compareTo(BigDecimal.valueOf(length))
-                    > 0) throw Errors.invalid("notes must fit inside lengthBeats");
-            out.add(new double[] {beat, pitch, velocity, duration});
+            out.add(new double[] {
+                n.get("beat").getAsDouble(),
+                n.get("pitch").getAsInt(),
+                n.get("velocity").getAsInt(),
+                n.get("durationBeats").getAsDouble()
+            });
         }
         return out;
-    }
-
-    private static void aligned(JsonElement value, String key) {
-        if (new BigDecimal(value.getAsString())
-                        .divide(BigDecimal.valueOf(GRID))
-                        .stripTrailingZeros()
-                        .scale()
-                > 0) throw Errors.invalid(key + " must be a multiple of " + NoteGrid.BEAT_GRID_LABEL + " beat");
     }
 
     @Override

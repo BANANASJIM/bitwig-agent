@@ -318,7 +318,7 @@ def test_notes_take_a_clip_ref_and_the_window_is_optional_but_all_or_none():
         [note(), note(beat=0.5)],
         [note(beat=3.5)],
         [note(beat=0.1)],
-        [note(durationBeats=0.3)],
+        [note(beat=3.75, durationBeats=0.5)],
         [note(pitch=True)],
         [note(velocity=0)],
         [note(velocity=128)],
@@ -344,6 +344,57 @@ def test_rejects_ambiguous_or_out_of_window_note_edits(edits):
 def test_derived_window_still_rejects_cell_and_overlap_errors(edits):
     with pytest.raises(ValidationError):
         validate_call("notes.edit", {"target": CLIP_REF, "edits": edits})
+
+
+def message(method, args):
+    with pytest.raises(ValidationError) as error:
+        validate_call(method, args)
+    return str(error.value)
+
+
+def test_durations_need_no_grid_and_overlap_is_judged_as_stored():
+    insert = {"to": SLOT, "loop": {"lengthBeats": 8}, "name": "Bass"}
+    eighths = [{**NOTE, "beat": b / 2, "durationBeats": 0.45} for b in range(16)]
+    params, _ = validate_call("clips.insert", {**insert, "notes": eighths})
+    assert params["notes"][0]["durationBeats"] == 0.45
+    # 0.5000001 is stored as 0.5 (1/1048576-beat steps): it ends where the next same-pitch note starts
+    validate_call("notes.edit", {"target": CLIP_REF, "edits": [note(durationBeats=0.5000001), note(beat=0.5)]})
+    text = message("notes.edit", {"target": CLIP_REF, "edits": [note(durationBeats=0.5000006), note(beat=0.5)]})
+    assert "edits[1] starts at beat 0.5 before edits[0] on pitch 60 ends at beat 0.5000006" in text
+
+
+def test_every_broken_rule_is_reported_at_once_with_its_index_and_fix():
+    insert = {"to": SLOT, "loop": {"lengthBeats": 4}, "name": "Bass"}
+    notes = [
+        {**NOTE, "pitch": 33, "durationBeats": 0.75},
+        {**NOTE, "pitch": 33, "beat": 0.5, "durationBeats": 0.25},
+        {**NOTE, "pitch": 40, "beat": 1.3, "durationBeats": 0.25},
+        {**NOTE, "pitch": 41, "beat": 3.5},
+        {**NOTE, "pitch": 40, "beat": 1.3, "durationBeats": 0.25},
+    ]
+    text = message("clips.insert", {**insert, "notes": notes})
+    assert "notes: 5 problems, nothing was written: " in text
+    assert (
+        "notes[1] starts at beat 0.5 before notes[0] on pitch 33 ends at beat 0.75: shorten notes[0] to durationBeats <= 0.5"
+        in text
+    )
+    assert "notes[2] beat 1.3 is not on the 1/128-beat grid: use 1.296875 or 1.3046875" in text
+    assert "notes[3] ends at beat 4.5, past the clip length 4: shorten it to durationBeats <= 0.5" in text
+    assert "notes[4] repeats the beat and pitch of notes[2]: remove one" in text
+    assert text.index("notes[1]") < text.index("notes[2]") < text.index("notes[3]") < text.index("notes[4]")
+    late = message("clips.insert", {**insert, "notes": [{**NOTE, "beat": 4}]})
+    assert "notes[0] starts at beat 4, at or past the clip length 4" in late
+
+
+def test_an_explicit_window_reports_alignment_range_and_end():
+    text = message(
+        "notes.edit",
+        {**NOTE_WINDOW, "edits": [note(beat=0.1), note(beat=5), note(beat=3.75, durationBeats=0.5)]},
+    )
+    assert "edits: 3 problems" in text
+    assert "edits[0] beat 0.1 does not align with stepSizeBeats 0.25: use a multiple of it" in text
+    assert "edits[1] (beat 5, pitch 60) is outside the window: beats 0 to 4, pitches 0 to 127" in text
+    assert "edits[2] ends at beat 4.25, past the window end 4: shorten it to durationBeats <= 0.25" in text
 
 
 def test_decimal_grid_alignment_is_exact_not_float_rounding():

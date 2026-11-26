@@ -31,6 +31,9 @@ BEAT_GRID_DIVISOR = 128
 BEAT_GRID = 1 / BEAT_GRID_DIVISOR
 BEAT_GRID_LABEL = f"1/{BEAT_GRID_DIVISOR}"
 MAX_CLIP_BEATS = 4096
+# Bitwig 6.1.4 stores a note duration to this step (native readback: 0.225 reads back as 0.22500038146972656).
+DURATION_RESOLUTION_DIVISOR = 1 << 20
+DURATION_RESOLUTION = 1 / DURATION_RESOLUTION_DIVISOR
 
 
 def mebibytes(size: int) -> str:
@@ -51,6 +54,7 @@ def bundle_limits() -> dict[str, int | float]:
         "maxResponseBytes": MAX_RESPONSE_BYTES,
         "defaultPort": DEFAULT_PORT,
         "beatGrid": BEAT_GRID,
+        "durationResolution": DURATION_RESOLUTION,
         "maxClipBeats": MAX_CLIP_BEATS,
         "responseGraceMs": RESPONSE_GRACE_MS,
     }

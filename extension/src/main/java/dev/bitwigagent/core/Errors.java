@@ -77,6 +77,24 @@ public final class Errors {
         return out;
     }
 
+    /** The failure a completed stage carries, unwrapped from its CompletionException. */
+    public static RpcException cause(Throwable error) {
+        Throwable cause = error instanceof java.util.concurrent.CompletionException && error.getCause() != null
+                ? error.getCause()
+                : error;
+        return cause instanceof RpcException
+                ? (RpcException) cause
+                : notApplied(Reason.INTERNAL, String.valueOf(cause.getMessage()));
+    }
+
+    /** A stage's own failure as its entry: an error before any write is not_applied, a possible change unknown. */
+    public static JsonObject entryResult(Throwable error) {
+        RpcException rpc = cause(error);
+        JsonObject out = unknownResult(rpc);
+        if (!rpc.unknown) out.addProperty("outcome", Outcome.NOT_APPLIED.wire());
+        return out;
+    }
+
     /** An unknown result a module built itself gets the method's read as {@code next}; its own {@code next} wins. */
     public static JsonObject withInspect(JsonObject result, String inspect) {
         if (inspect != null
