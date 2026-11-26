@@ -46,8 +46,7 @@ public final class SceneWindowLeaseTest {
         assertTrue(enter(f, a, 16, false, false)[0]);
         assertTrue(enter(f, b, 16, false, false)[0]);
         assertEquals(16, f.bankOffset);
-        assertTrue(lease(f).heldBy(a));
-        assertTrue(lease(f).heldBy(b));
+        assertFalse(lease(f).admits(operation(f), 0, false), "both are holding");
         assertTrue(lease(f).admits(operation(f), 16, false));
         assertFalse(lease(f).admits(operation(f), 16, true), "an exclusive request needs the window alone");
         assertFalse(lease(f).admits(operation(f), 0, false), "another position is not shared");
@@ -82,7 +81,6 @@ public final class SceneWindowLeaseTest {
         assertTrue(lease(f).held());
         finish(a);
         assertFalse(lease(f).held());
-        assertFalse(lease(f).heldBy(a));
         assertTrue(enter(f, operation(f), 0, true, false)[0], "the exclusive flag went with its holder");
         assertEquals(0, f.bankOffset);
     }
@@ -102,7 +100,7 @@ public final class SceneWindowLeaseTest {
         settle(f, () -> ready[0]);
         assertTrue(ready[0]);
         assertEquals(0, f.bankOffset);
-        assertTrue(lease(f).heldBy(reader));
+        assertFalse(lease(f).admits(operation(f), 16, false), "the reader holds window 0");
     }
 
     @Test
@@ -128,25 +126,25 @@ public final class SceneWindowLeaseTest {
     }
 
     @Test
-    void restScrollsBackOnlyWhenTheWindowIsFree() {
+    void aWindowEchoedLateIsNotUsedBeforeItIsShown() {
         LauncherFake f = world();
-        HostOperation holder = operation(f);
-        enter(f, holder, 16, false, false);
-        lease(f).rest();
-        assertEquals(16, f.bankOffset, "a held window stays");
-        finish(holder);
-        lease(f).rest();
+        f.slots[3].content = true;
+        f.slots[3].name = "Early";
+        f.slots[19].content = true;
+        f.slots[19].name = "Late";
+        f.scrollEchoMs = 200;
+        HostOperation first = operation(f);
+        assertTrue(enter(f, first, 16, false, false)[0]);
+        assertEquals(16, f.bankOffset);
+        finish(first);
+        HostOperation second = operation(f);
+        boolean[] ready = new boolean[1];
+        lease(f).enter(second, 0, false, false, () -> ready[0] = true);
+        assertFalse(ready[0], "the scroll back has not been echoed yet");
+        assertEquals(16, f.bankOffset, "second");
+        settle(f, () -> ready[0]);
         assertEquals(0, f.bankOffset);
-        int scrolls = f.scrolls;
-        lease(f).rest();
-        assertEquals(scrolls, f.scrolls, "a resting window is not scrolled again");
-    }
-
-    @Test
-    void restDoesNothingBeforeTheSceneCountIsObserved() {
-        LauncherFake f = new LauncherFake(true, false, false, false, false);
-        lease(f).rest();
-        assertEquals(0, f.scrolls);
+        assertTrue(f.slots[3].content, "the window now shows scene 3's slot");
     }
 
     @Test

@@ -106,8 +106,6 @@ public final class ContextModuleTest {
                         .get("name")
                         .getAsString());
         assertEquals(1, f.scrolls, "the hinted window is the only one visited");
-        f.flush();
-        assertEquals(0, f.bankOffset, "the window rests at scene 0");
     }
 
     @Test
@@ -118,7 +116,6 @@ public final class ContextModuleTest {
         f.selected = 20;
         assertEquals(f.clip(20), get(f).getAsJsonObject("cursorClip"));
         assertEquals(1, f.scrolls, "the first window after the first one holds it");
-        f.flush();
 
         LauncherFake late = world(40);
         late.cursorSceneUnknown = true;
@@ -126,8 +123,6 @@ public final class ContextModuleTest {
         late.selected = 35;
         assertEquals(late.clip(35), get(late).getAsJsonObject("cursorClip"));
         assertEquals(2, late.scrolls, "every window is scanned in turn");
-        late.flush();
-        assertEquals(0, late.bankOffset);
     }
 
     @Test
@@ -150,20 +145,16 @@ public final class ContextModuleTest {
     }
 
     @Test
-    void twoCallsGiveTheSameResultAndTheWindowRests() {
+    void twoCallsGiveTheSameResult() {
         LauncherFake f = world(40);
         occupy(f, 3, "Head");
         occupy(f, 33, "Hook");
         f.selected = 33;
         JsonObject first = get(f);
-        f.flush();
-        assertEquals(0, f.bankOffset);
         JsonObject second = get(f);
-        f.flush();
         first.remove("projectChangedMsAgo");
         second.remove("projectChangedMsAgo");
         assertEquals(first, second);
-        assertEquals(0, f.bankOffset);
         assertFalse(f.services.launcherTargets().lease.held());
     }
 
@@ -224,5 +215,28 @@ public final class ContextModuleTest {
         assertTrue(out.get("selectedTrack").isJsonNull());
         assertTrue(out.get("cursorClip").isJsonNull());
         assertEquals(0, f.scrolls);
+    }
+
+    @Test
+    void aHintedCursorSceneVisitsOnlyItsOwnWindow() {
+        LauncherFake f = world(64);
+        occupy(f, 33, "Hook");
+        f.selected = 33;
+        int before = f.scrolls;
+        JsonObject out = get(f);
+        assertEquals(f.clip(33), out.getAsJsonObject("cursorClip"));
+        assertEquals(before + 1, f.scrolls, "one scroll to the cursor's window, no scan of the others");
+    }
+
+    @Test
+    void aScanThatCannotFinishBeforeTheDeadlineLeavesTheCursorClipNull() {
+        LauncherFake f = world(64);
+        occupy(f, 33, "Hook");
+        f.selected = 33;
+        f.cursorSceneUnknown = true;
+        HostOperation op = new HostOperation(f.tasks.after(300));
+        f.start(op, "context.get", new JsonObject());
+        f.drain(op);
+        assertTrue(op.result.join().get("cursorClip").isJsonNull(), "degraded, not a deadline error");
     }
 }

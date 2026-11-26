@@ -107,6 +107,20 @@ def test_nothing_an_agent_reads_names_an_unexposed_method():
         assert not pattern.search(text), f"{where} names an unexposed method"
 
 
+def test_nothing_an_agent_reads_names_a_method_that_does_not_exist():
+    domains = {name.split(".")[0] for name in TOOLS if "." in name}
+    token = re.compile(r"`((?:" + "|".join(sorted(domains)) + r")\.[a-z][A-Za-z]*(?:\.[a-z][A-Za-z]*)*)`")
+    texts = {f"description of {name}": spec.description for name, spec in TOOLS.items() if spec.expose}
+    texts |= {f"summary of {name}": spec.summary for name, spec in TOOLS.items() if spec.expose}
+    texts |= {f"topic {name}": text for name, text in TOPICS.items()}
+    texts["USAGE.md"] = (ROOT / "USAGE.md").read_text()
+    for path in sorted((ROOT / "skills").rglob("*.md")):
+        texts[str(path.relative_to(ROOT))] = path.read_text()
+    for where, text in texts.items():
+        unknown = sorted({name for name in token.findall(text) if name not in TOOLS})
+        assert not unknown, f"{where} names methods that do not exist: {unknown}"
+
+
 def test_help_lists_topics_and_exposed_tools_and_rejects_the_unknown():
     listing = views.help()
     assert {"loop", "outcomes", "recovery"} <= set(listing["topics"])

@@ -44,6 +44,8 @@ final class LauncherFake {
     boolean transportPlaying;
     /** The window position the scene bank scrolled to, and how often it was scrolled. */
     int bankOffset, scrolls;
+    /** When above 0 the scene bank echoes a scroll only after this many milliseconds of host time. */
+    long scrollEchoMs;
 
     int selected, start, writes, creates, failWriteAt, nameWrites, playbackDispatches, stopWrites;
     double size = .25, loopStart;
@@ -403,7 +405,10 @@ final class LauncherFake {
         bank.live("itemCount", () -> scenes);
         FakeHost scroll = bank.child("scrollPosition").reading(() -> bankOffset);
         scroll.on("set", a -> {
-            if (!scrollStuck) scroll((Integer) a[0]);
+            int offset = (Integer) a[0];
+            if (scrollStuck) return null;
+            if (scrollEchoMs > 0) tasks.schedule(() -> scroll(offset), scrollEchoMs);
+            else scroll(offset);
             return null;
         });
         for (int j = 0; j < HostLimits.SCENES; j++) {
@@ -828,11 +833,6 @@ final class LauncherFake {
             if (tasks.isEmpty() || ++iterations > 3000) throw new AssertionError("fixture operation did not settle");
             next();
         }
-    }
-
-    /** The flush boundary: the scene window returns to scene 0 once nobody holds it. */
-    void flush() {
-        sceneModule.flush();
     }
 
     static final class SlotData {

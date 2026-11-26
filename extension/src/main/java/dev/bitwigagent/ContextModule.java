@@ -52,8 +52,8 @@ final class ContextModule implements HostModule {
             op.result.complete(out);
             return;
         }
-        // The window rests at scene 0, so the slots listed are scenes 0-15; a reader waits for a holder elsewhere.
-        launcher.targets.lease.enter(op, 0, false, true, () -> {
+        // The slots listed are scenes 0-15; a reader waits for a holder elsewhere and, with more scenes, holds alone.
+        launcher.targets.lease.enter(op, 0, window.sceneCount() > HostLimits.SCENES, true, () -> {
             Integer cursorTrack = tracks(out);
             if (cursorTrack == null) op.result.complete(out);
             else findCursorClip(op, out, cursorTrack);
@@ -155,21 +155,25 @@ final class ContextModule implements HostModule {
         }
         List<Integer> visit = new ArrayList<>();
         int hinted = launcher.cursorScene();
-        if (hinted >= 0 && hinted < window.sceneCount()) visit.add(window.sceneWindowFor(hinted));
-        for (int scene = HostLimits.SCENES; scene < window.sceneCount(); scene += HostLimits.SCENES)
-            if (!visit.contains(window.sceneWindowFor(scene))) visit.add(window.sceneWindowFor(scene));
-        visit.remove(Integer.valueOf(0));
-        scan(op, out, t, visit, 0);
+        if (hinted >= 0) {
+            if (hinted < window.sceneCount() && window.sceneWindowFor(hinted) != 0)
+                visit.add(window.sceneWindowFor(hinted));
+        } else
+            for (int scene = HostLimits.SCENES; scene < window.sceneCount(); scene += HostLimits.SCENES)
+                if (!visit.contains(window.sceneWindowFor(scene))) visit.add(window.sceneWindowFor(scene));
+        long until = scheduler.deadlineUntil(op) - Scheduler.OBSERVE_WINDOW_NANOS;
+        scan(op, out, t, visit, 0, until);
     }
 
-    private void scan(HostOperation op, JsonObject out, int t, List<Integer> visit, int i) {
-        if (i == visit.size()) {
+    /** A window that cannot be reached before the deadline leaves cursorClip null instead of failing the read. */
+    private void scan(HostOperation op, JsonObject out, int t, List<Integer> visit, int i, long until) {
+        if (i == visit.size() || scheduler.now() >= until) {
             op.result.complete(out);
             return;
         }
         launcher.targets.lease.moveWhenFree(op, visit.get(i), () -> {
             JsonObject found = shownCursorClip(t);
-            if (found == null) scan(op, out, t, visit, i + 1);
+            if (found == null) scan(op, out, t, visit, i + 1, until);
             else {
                 out.add("cursorClip", found);
                 op.result.complete(out);

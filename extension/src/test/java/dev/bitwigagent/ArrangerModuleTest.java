@@ -431,8 +431,6 @@ public final class ArrangerModuleTest {
         assertEquals("Hook", x.lane.lastName);
         assertEquals(8.0, x.lane.lastStart);
         assertEquals(arrangerClip(x.f.track(), 8, "Hook"), result.get("ref"));
-        x.f.flush();
-        assertEquals(0, x.f.bankOffset);
     }
 
     @Test

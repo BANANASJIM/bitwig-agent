@@ -130,9 +130,9 @@ final class LauncherTargets {
 
     // ---- entering the window, then resolving ----
 
-    void enterScene(HostOperation op, JsonObject ref, boolean wait, Consumer<Loc> ready) {
+    void enterScene(HostOperation op, JsonObject ref, boolean wait, boolean exclusive, Consumer<Loc> ready) {
         int offset = offsetOf(ref);
-        lease.enter(op, offset, false, wait, () -> ready.accept(scene(ref, offset)));
+        lease.enter(op, offset, exclusive, wait, () -> ready.accept(scene(ref, offset)));
     }
 
     void enterSlot(HostOperation op, JsonObject ref, boolean wait, Consumer<Loc> ready) {

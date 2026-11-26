@@ -130,11 +130,16 @@ final class ClipModule implements HostModule {
         List<String> launcherOnly = new ArrayList<>(List.of("color", "loop"));
         launcherOnly.addAll(NEXT_ACTION);
         launcherOnly.addAll(LAUNCH_FIELDS);
-        for (String key : arranger ? launcherOnly : List.of("lengthBeats"))
+        for (String key : arranger ? launcherOnly : List.of("lengthBeats")) {
             if (p.has(key))
                 throw Errors.notApplied(
                         Reason.UNSUPPORTED_SCOPE,
                         key + " cannot be set on " + (arranger ? "an arranger" : "a launcher") + " clip");
+            if (p.has("expect") && p.getAsJsonObject("expect").has(key))
+                throw Errors.notApplied(
+                        Reason.UNSUPPORTED_SCOPE,
+                        "expect." + key + " cannot be compared on " + (arranger ? "an arranger" : "a launcher") + " clip");
+        }
         if (p.keySet().stream()
                 .allMatch(key -> Set.of("target", "expect", "timeoutMs").contains(key)))
             throw Errors.invalid("supply at least one clip setting");
@@ -444,7 +449,9 @@ final class ClipModule implements HostModule {
             if (Math.abs(source - target) >= HostLimits.SCENES)
                 throw Errors.notApplied(
                         Reason.UNSUPPORTED_SCOPE,
-                        "The source and target slot must be within " + HostLimits.SCENES + " scenes of each other.");
+                        "The source and target slot must be within " + HostLimits.SCENES
+                                + " scenes of each other: copy via an empty slot within " + HostLimits.SCENES
+                                + " scenes, or notes.read + clips.insert {notes} for a MIDI clip.");
             int offset = Math.min(Math.min(source, target), Math.max(0, window.sceneCount() - HostLimits.SCENES));
             state.targets.lease.enter(op, offset, false, false, () -> {
                 LauncherTargets.Loc from1 = state.targets.clip(from, offset), to1 = state.targets.slot(to, offset);
@@ -973,8 +980,8 @@ final class ClipModule implements HostModule {
         }
         JsonObject ref = refs.get(i).getAsJsonObject();
         HostOperation child = new HostOperation(op.deadline);
-        state.selection.handOff(child);
         child.result.whenComplete((result, error) -> {
+            if (child.dispatched()) op.markDispatched();
             JsonObject entry = error == null ? result : failed(error);
             if (batch.record(entry)) transformNext(op, refs, i + 1, batch);
             else {
@@ -996,6 +1003,7 @@ final class ClipModule implements HostModule {
         try {
             LauncherState.Target target = state.target(state.targets.clip(ref, offset));
             state.requireResolved(target.id(), target.scene());
+            state.selection.handOff(child);
             state.bind(
                     child,
                     target,

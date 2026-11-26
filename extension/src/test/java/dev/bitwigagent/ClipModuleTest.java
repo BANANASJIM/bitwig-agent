@@ -41,8 +41,6 @@ public final class ClipModuleTest {
         assertEquals(
                 24, f.bankOffset, "the window showed scene 33 while the clip was created, kept inside the 40 scenes");
         assertEquals(f.clip(33), inserted.get("ref").getAsJsonObject(), "the result carries the new clip's ref");
-        f.flush();
-        assertEquals(0, f.bankOffset, "the window rests at scene 0 once nobody holds it");
 
         JsonObject read = f.call("clips.get", params("target", inserted.get("ref")));
         assertEquals(4.0, read.getAsJsonObject("loop").get("lengthBeats").getAsDouble());
@@ -519,9 +517,7 @@ public final class ClipModuleTest {
         f.services.holds.release(LauncherStructureLock.SETTINGS_PENDING);
         f.failImport = true;
         f.start("clips.import", importParams(f, 0, file(dir)));
-        RpcException error = assertThrows(
-                RpcException.class, () -> f.services.launcherState().requireSettingsSafe(LauncherFake.ID, 0));
-        assertEquals("unresolved", error.reason.wire(), "an unresolved import blocks native settings");
+        assertRpcError("unresolved", f.startAndDrain("clips.insert", insertParams(f, 0)));
     }
 
     @Test
@@ -761,8 +757,6 @@ public final class ClipModuleTest {
         assertEquals(4.0, out.getAsJsonObject("loop").get("lengthBeats").getAsDouble());
         assertEquals(0.0, out.getAsJsonObject("loop").get("startBeats").getAsDouble());
         assertEquals(5, f.selected, "clips.get selects nothing");
-        f.flush();
-        assertEquals(0, f.bankOffset);
     }
 
     @Test
@@ -908,8 +902,6 @@ public final class ClipModuleTest {
         assertEquals("applied", out.get("outcome").getAsString());
         assertTrue(f.slots[18].content);
         assertEquals(Refs.launcherClip(f.track(), f.scene(18), "Riff"), out.get("ref"));
-        f.flush();
-        assertEquals(0, f.bankOffset);
         occupy(f, 30, "Back");
         JsonObject backwards = f.call("clips.copy", params("from", f.clip(30), "to", f.slot(25)));
         assertEquals("applied", backwards.get("outcome").getAsString());

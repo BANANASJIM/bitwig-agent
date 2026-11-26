@@ -175,6 +175,14 @@ def test_set_arranger_clip_takes_name_and_length_only():
     assert reason("clips.set", {"target": CLIP_REF, "lengthBeats": 8}) == "unsupported_scope"
 
 
+def test_set_refuses_expect_keys_the_clip_kind_cannot_have():
+    arranger = {"target": ARRANGER_CLIP_REF, "name": "x"}
+    assert validate_call("clips.set", {**arranger, "expect": {"lengthBeats": 4}})
+    assert reason("clips.set", {**arranger, "expect": {"nextAction": "stop"}}) == "unsupported_scope"
+    assert reason("clips.set", {**arranger, "expect": {"loop": {"lengthBeats": 4}}}) == "unsupported_scope"
+    assert reason("clips.set", {"target": CLIP_REF, "name": "x", "expect": {"lengthBeats": 4}}) == "unsupported_scope"
+
+
 @pytest.mark.parametrize(
     "changes",
     [

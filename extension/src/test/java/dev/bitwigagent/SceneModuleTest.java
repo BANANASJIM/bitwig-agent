@@ -119,8 +119,6 @@ public final class SceneModuleTest {
         assertEquals(1, row(out, 39).get("clipCount").getAsInt());
         assertEquals("Late", row(out, 35).getAsJsonObject("ref").get("name").getAsString());
         assertTrue(f.scrolls >= 2, "the listing moved the window");
-        f.flush();
-        assertEquals(0, f.bankOffset, "the window rests at scene 0");
     }
 
     @Test
@@ -461,15 +459,11 @@ public final class SceneModuleTest {
         assertEquals("Middle", f.sceneNames[20]);
         assertEquals(20, refIndex(out));
         assertEquals(16, f.bankOffset);
-        f.flush();
-        assertEquals(0, f.bankOffset, "the window rests at scene 0");
 
         out = f.call("scenes.set", params("target", f.scene(35), "name", "Finale"));
         assertEquals("applied", outcome(out));
         assertEquals("Finale", f.sceneNames[35]);
         assertEquals(24, f.bankOffset, "the last window is the one that fits the 40 scenes");
-        f.flush();
-        assertEquals(0, f.bankOffset);
     }
 
     @Test
@@ -526,14 +520,24 @@ public final class SceneModuleTest {
     }
 
     @Test
-    void aDuplicateAtAWindowEdgeWithoutAMovableWindowOmitsTheRef() {
+    void aDuplicateNeedsTheWindowAloneAndIsBusyWhileAnotherHoldsIt() {
         LauncherFake f = world(40);
         f.sceneNames[31] = "Edge";
         holdWindow(f, 16);
-        JsonObject out = f.call("scenes.duplicate", params("target", f.scene(31)));
+        assertRpcError("busy", f.startAndDrain("scenes.duplicate", params("target", f.scene(31))));
+        assertEquals(0, f.sceneDuplicates, "nothing was duplicated");
+    }
+
+    @Test
+    void aDuplicateWhoseWindowDoesNotSettleAfterTheWriteStillCompletesApplied() {
+        LauncherFake f = world(40);
+        f.sceneNames[31] = "Edge";
+        HostOperation op = f.start("scenes.duplicate", params("target", f.scene(31)));
+        f.scrollStuck = true;
+        f.drain(op);
+        JsonObject out = op.result.join();
         assertEquals("applied", outcome(out));
-        assertEquals(41, out.get("sceneCount").getAsInt());
-        assertFalse(out.has("ref"), "another holder keeps the window where it is");
+        assertFalse(out.has("ref"), "the copy lies outside the window that could not be moved");
     }
 
     @Test

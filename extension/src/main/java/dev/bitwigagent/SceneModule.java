@@ -60,11 +60,6 @@ final class SceneModule implements HostModule {
     public void validate(String method, JsonObject params) {}
 
     @Override
-    public void flush() {
-        targets.lease.rest();
-    }
-
-    @Override
     public void dispatch(HostOperation op, String method, JsonObject p) {
         scheduler.check(op);
         switch (method) {
@@ -76,7 +71,8 @@ final class SceneModule implements HostModule {
                 return;
             default:
         }
-        targets.enterScene(op, p.getAsJsonObject("target"), false, at -> {
+        boolean structure = method.equals("scenes.duplicate") || method.equals("scenes.delete");
+        targets.enterScene(op, p.getAsJsonObject("target"), false, structure, at -> {
             switch (method) {
                 case "scenes.set":
                     rename(op, at, p.get("name").getAsString());
@@ -306,10 +302,14 @@ final class SceneModule implements HostModule {
             return;
         }
         try {
-            targets.lease.move(op, window.sceneWindowFor(scene), () -> {
-                out.add("ref", targets.sceneRef(scene, window.sceneOffset()));
-                op.result.complete(out);
-            });
+            targets.lease.moveAfterWrite(
+                    op,
+                    window.sceneWindowFor(scene),
+                    () -> {
+                        out.add("ref", targets.sceneRef(scene, window.sceneOffset()));
+                        op.result.complete(out);
+                    },
+                    () -> op.result.complete(out));
         } catch (RpcException busy) {
             op.result.complete(out);
         }

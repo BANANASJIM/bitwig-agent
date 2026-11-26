@@ -128,8 +128,6 @@ final class LauncherState {
             });
             track.isQueuedForStop().markInterested();
             ClipLauncherSlotBank bank = track.clipLauncherSlotBank();
-            bank.scrollPosition().markInterested();
-            bank.itemCount().markInterested();
             for (int j = 0; j < HostLimits.SCENES; j++)
                 slots[t][j] = new Slot((ClipLauncherSlot) bank.getItemAt(j), cursorSlot);
         }
@@ -144,11 +142,6 @@ final class LauncherState {
     void acquire(HostOperation op) {
         selection.acquire(op);
         cursorMutation = null;
-    }
-
-    void requireSettingsSafe(String id, int scene) {
-        lock.requireNoCursorOperation();
-        requireResolved(id, scene);
     }
 
     void requireResolved(String id, int scene) {

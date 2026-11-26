@@ -781,8 +781,6 @@ public final class ClipEditTest {
         assertEquals(
                 f.clip(33), r.getAsJsonArray("entries").get(1).getAsJsonObject().get("ref"));
         assertEquals(24, f.bankOffset, "the second window is held for the last write");
-        f.flush();
-        assertEquals(0, f.bankOffset);
         assertTrue(f.services.holds.list().isEmpty());
     }
 
@@ -855,7 +853,51 @@ public final class ClipEditTest {
                         .getAsJsonObject("scene")
                         .get("index")
                         .getAsInt());
-        f.flush();
+    }
+
+    @Test
+    void aWriteAfterAScrollResolvesAgainstTheSettledWindow() {
+        LauncherFake f = new LauncherFake();
+        f.scenes = 40;
+        f.scrollEchoMs = 200;
+        f.slots[3].content = true;
+        f.slots[3].name = "Near";
+        f.slots[33].content = true;
+        f.slots[33].name = "Far";
+        JsonObject far = f.call("clips.set", params("target", f.clip(33), "nextAction", "stop"));
+        assertEquals("applied", far.get("outcome").getAsString());
+        assertEquals(24, f.bankOffset);
+        JsonObject near = f.call("clips.set", params("target", f.clip(3), "nextAction", "stop"));
+        assertEquals("applied", near.get("outcome").getAsString());
         assertEquals(0, f.bankOffset);
+        assertEquals(f.clip(3), near.get("ref").getAsJsonObject(), "the ref is the near clip's, not a clip of the old window");
+        assertTrue(f.slots[3].nextAction.has("nextAction") && f.slots[33].nextAction.has("nextAction"));
+    }
+
+    @Test
+    void aFailureBetweenTransformEntriesReleasesTheSelection() {
+        LauncherFake f = twoWindows();
+        f.onSelect = () -> f.scrollStuck = true;
+        HostOperation op = f.startAndDrain("clips.transform", params("targets", clips(f, 3, 33), "op", "doubleContent"));
+        assertUnknown("not_ready", op);
+        f.scrollStuck = false;
+        f.onSelect = () -> {};
+        HostOperation read = f.startAndDrain("notes.read", params("target", f.clip(3)));
+        assertTrue(read.result.join().has("notes"), "the next cursor operation is admitted");
+    }
+
+    @Test
+    void anExpectKeyTheClipKindCannotHaveIsRefusedAsUnsupportedScope() {
+        LauncherFake f = twoWindows();
+        f.lane.clips.add(new double[] {8, 4});
+        f.lane.names.add("Verse");
+        RpcException arranger = assertRpcError(
+                "unsupported_scope",
+                f.start("clips.set", params("target", arrangerRef(f, 8, "Verse"), "name", "x", "expect", obj("{\"nextAction\":\"stop\"}"))));
+        assertTrue(arranger.getMessage().contains("expect.nextAction"));
+        assertRpcError(
+                "unsupported_scope",
+                f.start("clips.set", params("target", f.clip(3), "name", "x", "expect", obj("{\"lengthBeats\":4}"))));
+        assertEquals(0, f.lane.edited);
     }
 }

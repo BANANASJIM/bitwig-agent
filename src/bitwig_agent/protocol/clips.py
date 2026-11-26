@@ -191,11 +191,16 @@ class ClipSetArgs(StatusArgs):
         supplied = self.model_fields_set
         if not supplied & set(SETTINGS):
             raise ValueError("supply at least one clip setting")
+        expected = self.expect.model_fields_set if self.expect is not None else set()
         if isinstance(self.target, ArrangerClipRef):
-            wrong = [key for key in LAUNCHER_ONLY if key in supplied]
+            wrong = [key for key in LAUNCHER_ONLY if key in supplied] + [
+                f"expect.{key}" for key in expected & set(LAUNCHER_ONLY)
+            ]
             hint = "an arranger clip takes name and lengthBeats"
         else:
-            wrong = [key for key in ("lengthBeats",) if key in supplied]
+            wrong = [key for key in ("lengthBeats",) if key in supplied] + [
+                f"expect.{key}" for key in expected & {"lengthBeats"}
+            ]
             hint = "a launcher clip takes loop:{lengthBeats}"
         if wrong:
             raise ReasonError("unsupported_scope", f"{', '.join(wrong)} cannot be set on this clip: {hint}")
@@ -367,24 +372,26 @@ CLIPS_SET_DESCRIPTION = (
     "native, no selection) and launchQuantization, launchMode, useLoopStartAsQuantizationReference (select the clip; "
     "options lists the host's own values). Arranger clip: name, lengthBeats (the start stays; overlap is refused). "
     "Next Action and launch fields need a stopped, non-recording transport. Paths run in the order next action, launch, clip; the first that does "
-    "not succeed stops the rest (not_applied, not_reached). Returns the new ref. Never retry unknown."
+    "not succeed stops the rest (not_applied, not_reached). An arranger set needs a settled project and a stopped transport. Returns the new ref. Never retry unknown."
 )
 CLIPS_DELETE_DESCRIPTION = (
     "Delete one clip (launcher or arranger). Needs a stopped transport, recording/automation-write off and the clip "
-    "idle. Verified by the slot being empty (launcher) or the clip absent from the lane (arranger). An unobserved "
+    "idle; an arranger delete also needs a settled project. Verified by the slot being empty (launcher) or the clip absent from the lane (arranger). An unobserved "
     "delete is outcome unknown and holds that slot until you inspect it and ack the hold; never retry."
 )
 CLIPS_COPY_DESCRIPTION = (
     "Copy an occupied launcher clip (from) to another empty slot of the same track (to: a slot ref) or onto the same "
     "track's arranger timeline (to {track, startBeats}; Bitwig's copy of launcher clips, any overlap is refused). "
-    "Returns the new clip's ref; nameChanged is reported if the host renames a slot copy. Needs a stopped transport, "
-    "recording/automation-write off. An unobserved copy is outcome unknown and holds that slot; never retry."
+    "Slot to slot works only within 16 scenes of the source (else unsupported_scope: copy via an empty slot within 16 "
+    "scenes, or notes.read + clips.insert {notes} for MIDI clips). Returns the new clip's ref; nameChanged is "
+    "reported if the host renames a slot copy. Needs a stopped transport, recording/automation-write off; arranger "
+    "writes also need a settled project. An unobserved copy is outcome unknown and holds that slot; never retry."
 )
 CLIPS_MOVE_DESCRIPTION = (
     "Move one arranger clip to to.startBeats on its own track; the length is kept and an overlap with another clip "
     "is refused. One native undoable edit verified by native readback; already_matched when it is already there. "
-    "Needs a stopped transport with recording/automation-write off; an unknown outcome refuses further arranger "
-    "writes until you inspect arranger.list and ack the hold."
+    "Arranger writes need a settled project and a stopped transport with recording/automation-write off; an unknown "
+    "outcome refuses further arranger writes until you inspect arranger.list and ack the hold."
 )
 CLIPS_LAUNCH_DESCRIPTION = (
     "Launch an existing launcher clip. Can start playback and produce audio. Recording and both automation-write "
@@ -502,7 +509,6 @@ SPECS: dict[str, ToolSpec] = {
         CLIPS_MOVE_DESCRIPTION,
         False,
         examples=({"target": ARRANGER_CLIP_REF, "to": {"startBeats": 32}},),
-        requires=PROJECT_READY,
     ),
     "clips.launch": ToolSpec(
         ClipTargetArgs,

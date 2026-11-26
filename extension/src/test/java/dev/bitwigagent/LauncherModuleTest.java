@@ -141,8 +141,6 @@ public final class LauncherModuleTest {
         assertEquals(f.clip(33), row(list, 33).get("clip"));
         assertEquals(0, list.getAsJsonObject("window").get("offset").getAsInt());
         assertEquals(40, list.getAsJsonObject("window").get("total").getAsInt());
-        f.flush();
-        assertEquals(0, f.bankOffset, "the window rests at scene 0 after the read");
     }
 
     @Test

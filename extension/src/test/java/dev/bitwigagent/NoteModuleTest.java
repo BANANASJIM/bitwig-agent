@@ -744,8 +744,6 @@ public final class NoteModuleTest {
                         .getAsDouble());
         assertEquals(33, f.selected);
         assertEquals(24, f.bankOffset, "the window showed scene 33 while the clip was read");
-        f.flush();
-        assertEquals(0, f.bankOffset, "the window rests at scene 0 once nobody holds it");
     }
 
     @Test
@@ -757,8 +755,6 @@ public final class NoteModuleTest {
         assertFalse(out.has("trackId") || out.has("slotIndex"));
         assertTrue(f.notes.containsKey(LauncherFake.key(33, 0, 8, 65)), "written into the clip of scene 33");
         assertEquals(24, f.bankOffset);
-        f.flush();
-        assertEquals(0, f.bankOffset);
         assertEquals(
                 2, f.call("notes.read", window(f, 33)).getAsJsonArray("notes").size());
     }

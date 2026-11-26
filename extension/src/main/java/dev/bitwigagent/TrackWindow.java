@@ -11,6 +11,7 @@ final class TrackWindow {
     private final DeviceBank[] devices = new DeviceBank[TRACKS];
     private final Track[] parents = new Track[TRACKS];
     private SceneBank scenes;
+    private int scrollTarget = -1;
     private volatile boolean observed, scenesObserved;
 
     TrackWindow(ControllerHost host) {
@@ -104,7 +105,13 @@ final class TrackWindow {
         return scenes.scrollPosition().get();
     }
 
+    /** Where the window was last asked to scroll; the observed position may still lag behind it. */
+    int scrollTarget() {
+        return scrollTarget >= 0 ? scrollTarget : sceneOffset();
+    }
+
     void scrollScenes(int offset) {
+        scrollTarget = offset;
         scenes.scrollPosition().set(offset);
     }
 
