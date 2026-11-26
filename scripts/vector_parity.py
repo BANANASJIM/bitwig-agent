@@ -34,11 +34,6 @@ SAMPLE_UUID = "12345678-1234-1234-1234-123456789abc"
 # for cross-field rules the two sides legitimately express differently.
 SKIPS: dict[tuple[str, str, str], str] = {
     (
-        "tracks.bounce",
-        "targets.0.name",
-        "reject",
-    ): "ref names are capped in UTF-16 units by the Python Ref validator, but the extension schema counts code points (P2-0 gap)",
-    (
         "devices.insert",
         "id",
         "accept",
