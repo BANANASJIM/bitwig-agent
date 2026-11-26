@@ -3,6 +3,7 @@ package dev.bitwigagent;
 import com.bitwig.extension.controller.api.Track;
 import com.google.gson.*;
 import java.util.*;
+import java.util.function.IntFunction;
 
 /**
  * Parent/child structure of the flat track window from public observations only: each bank slot's
@@ -229,21 +230,21 @@ final class TrackTree {
         return count;
     }
 
-    /** Child rows for tracks.list; parent fields are null when unresolved rather than guessed. */
-    void describe(JsonObject row, Node node) {
+    /** Child rows for tracks.list; the parent is null when unresolved rather than guessed. {@code refOf} gives a slot's ref. */
+    void describe(JsonObject row, Node node, IntFunction<JsonObject> refOf) {
         row.addProperty("type", node.type);
         row.addProperty("isGroup", node.group());
         row.add(
                 "groupExpanded",
                 node.group() && node.expanded != null ? new JsonPrimitive(node.expanded) : JsonNull.INSTANCE);
         if (node.master()) {
-            row.add("parentId", JsonNull.INSTANCE);
+            row.add("parent", JsonNull.INSTANCE);
             row.add("depth", JsonNull.INSTANCE);
             return;
         }
         row.add(
-                "parentId",
-                node.parentResolved && !node.topLevel ? new JsonPrimitive(node.parentId) : JsonNull.INSTANCE);
+                "parent",
+                node.parentResolved && !node.topLevel ? refOf.apply(byId.get(node.parentId).slot) : JsonNull.INSTANCE);
         row.add("depth", node.depth >= 0 ? new JsonPrimitive(node.depth) : JsonNull.INSTANCE);
         row.addProperty("parentResolved", node.parentResolved);
         if (node.parentInferred) row.addProperty("parentSource", "preorder_inference");

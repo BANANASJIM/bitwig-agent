@@ -46,13 +46,13 @@ BATCH_HELP = "\n".join(
         "bitwig-agent batch [-|@file]",
         "",
         "Run JSON Lines from stdin (or @file), one call per line, in order:",
-        '  {"method":"tracks.set","params":{"trackId":"...","mute":true}}',
+        '  {"method":"tracks.set","params":{"target":{"kind":"track","id":"...","name":"..."},"mute":true}}',
         "params is optional; blank lines are skipped. Every line is validated before the first call is sent.",
         "stdout gets one result line per finished call. It stops at the first error (stderr, prefixed with",
         "the line number) or the first outcome outside applied|already_matched|sent (that result is printed),",
         "and exits with that call's code. Nothing is retried or run in parallel.",
         "Example:",
-        "  jq -c '.tracks[] | {method:\"tracks.set\",params:{trackId:.trackId,mute:true}}' t.json | bitwig-agent batch",
+        "  jq -c '.tracks[] | {method:\"tracks.set\",params:{target:.ref,mute:true}}' t.json | bitwig-agent batch",
     ]
 )
 EXIT_TABLE = (

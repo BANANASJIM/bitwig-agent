@@ -4,39 +4,45 @@ import static dev.bitwigagent.RpcAssert.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 import com.google.gson.*;
+import dev.bitwigagent.core.Refs;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
 /** Behavioral fake-host tests; no claim about audio, routing, or native factory completion. */
 public final class MixModuleTest {
 
+    private static JsonObject set(String id, String json) {
+        JsonObject p = HostFixture.json(json);
+        p.add("target", HostFixture.track(id));
+        return p;
+    }
+
+    private static String outcome(JsonObject result, String field) {
+        return result.getAsJsonObject("fields")
+                .getAsJsonObject(field)
+                .get("outcome")
+                .getAsString();
+    }
+
     @Test
-    void readsExposeNormalizedUnitsAndSends() {
+    void readsReturnRefsAndValueUnits() {
         HostFixture f = new HostFixture();
         MixModule module = f.services.mix();
-        JsonObject result = f.call(module, "tracks.get", HostFixture.target(HostFixture.A));
-        assertTrue(result.get("volumeNormalized").getAsDouble() == .5, "actual normalized volume");
-        assertTrue(
-                result.get("volumeDisplay").getAsString().equals("-12 dB"),
-                "host display retained separately from normalized value");
-        assertTrue(
-                result.getAsJsonObject("units")
-                        .get("volumeNormalized")
-                        .getAsString()
-                        .equals("normalized_0_1_not_db"),
-                "normalized is never falsely named dB");
+        JsonObject result = f.call(module, "tracks.get", HostFixture.targeting(HostFixture.A));
+        assertEquals(HostFixture.track(HostFixture.A), result.getAsJsonObject("ref"));
+        JsonObject volume = result.getAsJsonObject("volume");
+        assertEquals(.5, volume.get("value").getAsDouble());
+        assertEquals("-12 dB", volume.get("display").getAsString());
+        assertEquals(Refs.parameter(HostFixture.track(HostFixture.A), "volume", null), volume.getAsJsonObject("ref"));
+        assertEquals("0.00 %", result.getAsJsonObject("pan").get("display").getAsString());
+        assertFalse(result.has("units") || result.has("volumeNormalized") || result.has("volumeDisplay"));
         JsonObject send = result.getAsJsonArray("sends").get(0).getAsJsonObject();
-        assertTrue(
-                send.get("valueNormalized").getAsDouble() == .25
-                        && send.get("display").getAsString().equals("-18 dB"),
-                "send value/display are distinct");
-        assertTrue(
-                send.get("enabled").getAsBoolean() && !send.get("preFader").getAsBoolean(), "send metadata observed");
-        assertTrue(
-                result.getAsJsonObject("window").get("capacity").getAsInt() == HostLimits.TRACKS
-                        && result.getAsJsonObject("sendWindow").get("capacity").getAsInt() == 8,
-                "bounded observation scope explicit");
-        assertTrue(f.host.calls("createTrackBank") == 1, "mix never creates a duplicate track bank");
+        assertEquals(Refs.send(HostFixture.track(HostFixture.A), 0, "Reverb"), send.getAsJsonObject("ref"));
+        assertEquals(.25, send.getAsJsonObject("value").get("value").getAsDouble());
+        assertEquals("-18 dB", send.getAsJsonObject("value").get("display").getAsString());
+        assertTrue(send.get("enabled").getAsBoolean() && !send.get("preFader").getAsBoolean());
+        assertEquals(8, result.getAsJsonObject("sendWindow").get("capacity").getAsInt());
+        assertEquals(1, f.host.calls("createTrackBank"), "mix never creates a duplicate track bank");
     }
 
     @Test
@@ -49,7 +55,7 @@ public final class MixModuleTest {
         module.flush();
         JsonObject before = module.brief(0);
         assertTrue(
-                before.get("trackId").getAsString().equals(HostFixture.A)
+                before.getAsJsonObject("ref").equals(HostFixture.track(HostFixture.A))
                         && before.get("name").getAsString().equals("Track 0")
                         && before.get("type").getAsString().equals("Audio")
                         && before.get("index").getAsInt() == 0,
@@ -71,79 +77,178 @@ public final class MixModuleTest {
         HostFixture f = new HostFixture();
         MixModule module = f.services.mix();
         for (String text : List.of(
-                "{\"volumeNormalized\":-0.1}",
-                "{\"panNormalized\":1.1}",
+                "{\"volume\":-0.1}",
+                "{\"pan\":1.1}",
+                "{\"pan\":{\"label\":\"C\"}}",
+                "{\"volume\":{\"display\":\"\"}}",
                 "{\"mute\":1}",
                 "{\"arm\":null}",
                 "{\"name\":\"\"}",
                 "{\"extra\":true}",
+                "{\"mute\":true,\"expect\":{\"mute\":1}}",
                 "{}")) {
-            JsonObject p = HostFixture.json(text);
-            p.addProperty("trackId", HostFixture.A);
-            assertRpcError("invalid_params", f.submit(module, "tracks.set", p));
-            assertTrue(f.tasks.isEmpty(), "invalid mix field rejected before scheduling");
+            assertRpcError("invalid_params", f.submit(module, "tracks.set", set(HostFixture.A, text)));
+            assertTrue(f.tasks.isEmpty(), "invalid mix field rejected before scheduling: " + text);
         }
-        for (String text : List.of(
-                "{\"type\":\"group\",\"position\":0,\"name\":\"X\"}",
-                "{\"type\":\"audio\",\"position\":-2,\"name\":\"X\"}",
-                "{\"type\":\"effect\",\"position\":0.5,\"name\":\"X\"}",
-                "{\"type\":\"instrument\",\"position\":0}",
-                "{\"type\":\"audio\",\"position\":2147483648,\"name\":\"X\"}")) {
-            assertRpcError("invalid_params", f.submit(module, "tracks.create", HostFixture.json(text)));
-            assertTrue(f.tasks.isEmpty(), "invalid create combination rejected before scheduling");
+        JsonObject legacy = HostFixture.json("{\"trackId\":\"" + HostFixture.A + "\",\"mute\":true}");
+        assertRpcError("invalid_params", f.submit(module, "tracks.set", legacy));
+        JsonObject unnamed = HostFixture.json("{\"target\":{\"kind\":\"track\",\"id\":\"" + HostFixture.A + "\"}}");
+        unnamed.addProperty("mute", true);
+        assertRpcError("invalid_params", f.submit(module, "tracks.set", unnamed));
+        assertTrue(f.tasks.isEmpty());
+    }
+
+    @Test
+    void writesOnlyTheRefAndFieldsAndRoundTripsReadValues() {
+        HostFixture f = new HostFixture();
+        MixModule module = f.services.mix();
+        JsonObject p = set(HostFixture.B, "{\"volume\":0.75,\"mute\":true}");
+        JsonObject result = f.call(module, "tracks.set", p);
+        assertTrue(result.get("outcome").getAsString().matches("applied|already_matched"), "requested mix observed");
+        assertEquals(HostFixture.track(HostFixture.B), result.getAsJsonObject("ref"), "R5: the written ref");
+        assertTrue(
+                f.tracks[1].child("volume").child("value").writes == 1 && f.tracks[1].child("mute").writes == 1,
+                "only track B receives writes");
+        assertTrue(
+                f.tracks[0].child("volume").child("value").writes == 0 && f.tracks[0].child("mute").writes == 0,
+                "track A untouched");
+        for (String key : List.of("name", "pan", "solo", "arm"))
+            assertTrue(f.tracks[1].child(key).writes == 0, "omitted field unchanged: " + key);
+        assertEquals("already_matched", outcome(f.call(module, "tracks.set", p), "mute"), "idempotent");
+        assertEquals(1, f.tracks[1].child("mute").writes, "no unnecessary second mute write");
+        JsonObject read = f.call(module, "tracks.get", HostFixture.targeting(HostFixture.B));
+        JsonObject back = HostFixture.targeting(HostFixture.B);
+        back.add("volume", read.getAsJsonObject("volume").get("value"));
+        back.add("pan", read.getAsJsonObject("pan").get("value"));
+        back.add("name", read.get("name"));
+        back.add("color", read.get("color"));
+        back.add("monitorMode", read.getAsJsonObject("monitorMode").get("value"));
+        back.add("crossFadeMode", read.getAsJsonObject("crossFadeMode").get("value"));
+        back.add("activated", read.get("activated"));
+        JsonObject roundTrip = f.call(module, "tracks.set", back);
+        assertEquals("already_matched", roundTrip.get("outcome").getAsString(), "a read value writes back unchanged");
+        HostOperation absent = f.submit(
+                module,
+                "tracks.set",
+                HostFixture.json(
+                        "{\"target\":{\"kind\":\"track\",\"id\":\"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee\",\"name\":\"x\"},\"mute\":true}"));
+        f.next();
+        RpcException gone = assertRpcError("target_not_found", absent);
+        assertEquals("tracks.list", gone.next);
+        assertTrue(f.tracks[0].child("mute").writes == 0, "absent UUID never falls back to the selected track");
+    }
+
+    @Test
+    void writingTheValueAFieldAlreadyHasIsAlreadyMatchedEvenWithoutAnyCallback() {
+        HostFixture f = new HostFixture();
+        for (String field : List.of("volume", "pan")) {
+            FakeHost value = f.tracks[1].child(field).child("value");
+            value.notifyInitial = false;
+            value.notifyWrites = false;
+        }
+        MixModule module = f.services.mix();
+        for (String field : List.of("volume", "pan")) {
+            HostOperation op = f.submit(module, "tracks.set", set(HostFixture.B, "{\"" + field + "\":0.5}"));
+            for (int i = 0; i < 50 && !op.result.isDone() && !f.tasks.isEmpty(); i++) f.next();
+            assertTrue(op.result.isDone(), field + " settles");
+            JsonObject result = op.result.join();
+            assertEquals("already_matched", result.get("outcome").getAsString(), field + ": " + result);
         }
     }
 
     @Test
-    void writesOnlyExplicitUuidAndFields() {
+    void aSendReadValueWritesBackUnchanged() {
         HostFixture f = new HostFixture();
         MixModule module = f.services.mix();
-        JsonObject p = HostFixture.target(HostFixture.B);
-        p.addProperty("volumeNormalized", .75);
-        p.addProperty("mute", true);
-        JsonObject result = f.call(module, "tracks.set", p);
-        assertTrue(result.get("outcome").getAsString().matches("applied|already_matched"), "requested mix observed");
+        JsonObject row = f.call(module, "tracks.get", HostFixture.targeting(HostFixture.A))
+                .getAsJsonArray("sends")
+                .get(0)
+                .getAsJsonObject();
+        JsonObject back = new JsonObject();
+        back.add("target", row.get("ref"));
+        back.add("value", row.getAsJsonObject("value").get("value"));
+        back.add("enabled", row.get("enabled"));
+        JsonObject result = f.call(module, "tracks.sends.set", back);
+        assertEquals("already_matched", result.get("outcome").getAsString());
+        assertEquals(0, f.tracks[0].child("sendBank").item(0).child("value").writes);
+    }
+
+    @Test
+    void aRenamedTrackIsStaleAsTheTargetButNotAsAnAncestor() {
+        HostFixture f = new HostFixture();
+        MixModule module = f.services.mix();
+        f.tracks[1].child("name").emit("Bass");
+        HostOperation stale = f.submit(module, "tracks.set", set(HostFixture.B, "{\"mute\":true}"));
+        f.next();
+        RpcException changed = assertRpcError("target_changed", stale);
+        assertEquals(Refs.track(HostFixture.B, "Bass"), changed.current, "the ref found there now");
+        assertEquals(0, f.tracks[1].child("mute").writes);
+        JsonObject read = f.call(module, "tracks.get", HostFixture.targeting(HostFixture.B));
+        assertEquals(
+                Refs.track(HostFixture.B, "Bass"), read.getAsJsonObject("ref"), "a read does not compare the name");
+        JsonObject current = HostFixture.json("{\"mute\":true}");
+        current.add("target", changed.current);
+        assertTrue(f.call(module, "tracks.set", current)
+                .get("outcome")
+                .getAsString()
+                .matches("applied|already.*"));
+        JsonObject sendRef = f.call(module, "tracks.get", HostFixture.targeting(HostFixture.A))
+                .getAsJsonArray("sends")
+                .get(0)
+                .getAsJsonObject()
+                .getAsJsonObject("ref");
+        f.tracks[0].child("name").emit("Lead");
+        JsonObject send = HostFixture.json("{\"enabled\":false}");
+        send.add("target", sendRef);
         assertTrue(
-                f.tracks[1].child("volume").child("value").writes == 1 && f.tracks[1].child("mute").writes == 1,
-                "only UUID B receives writes");
-        assertTrue(
-                f.tracks[0].child("volume").child("value").writes == 0 && f.tracks[0].child("mute").writes == 0,
-                "UUID A untouched");
-        for (String key : List.of("name", "pan", "solo", "arm"))
-            assertTrue(f.tracks[1].child(key).writes == 0, "omitted field unchanged: " + key);
-        JsonObject again = f.call(module, "tracks.set", p);
-        assertTrue(
-                again.getAsJsonObject("fields")
-                        .getAsJsonObject("mute")
+                f.call(module, "tracks.sends.set", send)
                         .get("outcome")
                         .getAsString()
-                        .equals("already_matched"),
-                "idempotent mix set explicit");
-        assertTrue(f.tracks[1].child("mute").writes == 1, "no unnecessary second mute write");
-        HostOperation absent = f.submit(
+                        .matches("applied|already.*"),
+                "a send ref survives its track's rename");
+    }
+
+    @Test
+    void expectComparesBareValuesBeforeAnyWrite() {
+        HostFixture f = new HostFixture();
+        MixModule module = f.services.mix();
+        HostOperation mismatch =
+                f.submit(module, "tracks.set", set(HostFixture.B, "{\"pan\":0.2,\"expect\":{\"pan\":0.9}}"));
+        f.next();
+        RpcException error = assertRpcError("target_changed", mismatch);
+        assertEquals(.5, error.observed.get("pan").getAsDouble());
+        assertEquals(0, f.tracks[1].child("pan").child("value").writes, "nothing written on a mismatch");
+        JsonObject matched = f.call(
                 module,
                 "tracks.set",
-                HostFixture.json("{\"trackId\":\"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee\",\"mute\":true}"));
-        f.next();
-        assertRpcError("outside_window", absent);
-        assertTrue(f.tracks[0].child("mute").writes == 0, "absent UUID never falls back to selected track");
+                set(
+                        HostFixture.B,
+                        "{\"pan\":0.2,\"color\":\"#FF0000\",\"expect\":{\"pan\":0.5,\"color\":\"#000000\"}}"));
+        assertTrue(matched.get("outcome").getAsString().matches("applied|already_matched"));
+        assertEquals(1, f.tracks[1].child("pan").child("value").writes);
     }
 
     @Test
     void colorActivatedMonitorAndCrossFadeAreReadAndWritten() {
         HostFixture f = new HostFixture();
         MixModule module = f.services.mix();
-        JsonObject read = f.call(module, "tracks.get", HostFixture.target(HostFixture.B));
+        JsonObject read = f.call(module, "tracks.get", HostFixture.targeting(HostFixture.B));
         assertTrue(
                 read.get("color").getAsString().equals("#000000")
                         && read.get("activated").getAsBoolean()
-                        && read.get("monitorMode").getAsString().equals("AUTO")
-                        && read.get("crossFadeMode").getAsString().equals("AB"),
+                        && read.getAsJsonObject("monitorMode")
+                                .get("value")
+                                .getAsString()
+                                .equals("AUTO")
+                        && read.getAsJsonObject("crossFadeMode")
+                                .get("value")
+                                .getAsString()
+                                .equals("AB"),
                 "new track fields are read");
         assertTrue(
-                read.getAsJsonObject("options").getAsJsonArray("monitorMode").size() == 3
-                        && read.getAsJsonObject("options")
-                                .getAsJsonArray("crossFadeMode")
+                read.getAsJsonObject("monitorMode").getAsJsonArray("options").size() == 3
+                        && read.getAsJsonObject("crossFadeMode")
+                                .getAsJsonArray("options")
                                 .get(0)
                                 .getAsString()
                                 .equals("A"),
@@ -155,56 +260,42 @@ public final class MixModuleTest {
                 "{\"activated\":\"yes\"}",
                 "{\"monitorMode\":3}",
                 "{\"crossFadeMode\":\"\"}")) {
-            JsonObject p = HostFixture.json(text);
-            p.addProperty("trackId", HostFixture.B);
-            assertRpcError("invalid_params", f.submit(module, "tracks.set", p));
+            assertRpcError("invalid_params", f.submit(module, "tracks.set", set(HostFixture.B, text)));
             assertTrue(f.tasks.isEmpty(), "invalid field rejected before scheduling: " + text);
         }
-        JsonObject unlisted = HostFixture.json("{\"mute\":true,\"monitorMode\":\"LOUD\"}");
-        unlisted.addProperty("trackId", HostFixture.B);
-        HostOperation refused = f.submit(module, "tracks.set", unlisted);
+        HostOperation refused =
+                f.submit(module, "tracks.set", set(HostFixture.B, "{\"mute\":true,\"monitorMode\":\"LOUD\"}"));
         f.next();
         assertTrue(!assertRpcError("invalid_params", refused).unknown, "option the host does not list is refused");
         assertTrue(
                 f.tracks[1].child("monitorMode").writes == 0 && f.tracks[1].child("mute").writes == 0,
                 "nothing written when an option is refused");
-        JsonObject p = HostFixture.json(
+        JsonObject p = set(
+                HostFixture.B,
                 "{\"color\":\"#FF8800\",\"activated\":false,\"monitorMode\":\"ON\",\"crossFadeMode\":\"B\"}");
-        p.addProperty("trackId", HostFixture.B);
         JsonObject result = f.call(module, "tracks.set", p);
-        assertTrue(
-                result.get("outcome").getAsString().matches("applied|already_matched")
-                        && result.get("color").getAsString().equals("#ff8800")
-                        && !result.get("activated").getAsBoolean()
-                        && result.get("monitorMode").getAsString().equals("ON")
-                        && result.get("crossFadeMode").getAsString().equals("B"),
-                "every new field is read back");
-        assertTrue(
+        assertTrue(result.get("outcome").getAsString().matches("applied|already_matched"), "every field is applied");
+        assertEquals("applied", outcome(result, "color"), "color verified by observer");
+        assertEquals(
+                "#ff8800",
                 result.getAsJsonObject("fields")
                         .getAsJsonObject("color")
-                        .get("outcome")
-                        .getAsString()
-                        .equals("applied"),
-                "color verified by observer");
+                        .get("requested")
+                        .getAsString());
         assertTrue(
                 f.tracks[1].child("color").writes == 1
                         && f.tracks[0].child("color").writes == 0
                         && f.tracks[0].child("monitorMode").writes == 0,
-                "only UUID B is written");
+                "only track B is written");
         JsonObject again = f.call(module, "tracks.set", p);
         assertTrue(
-                again.getAsJsonObject("fields")
-                                .getAsJsonObject("monitorMode")
-                                .get("outcome")
-                                .getAsString()
-                                .equals("already_matched")
+                outcome(again, "monitorMode").equals("already_matched")
                         && f.tracks[1].child("monitorMode").writes == 1
                         && f.tracks[1].child("isActivated").writes == 1,
                 "matching values are not rewritten");
         f.tracks[1].child("crossFadeMode").notifyWrites = false;
-        JsonObject silent = HostFixture.json("{\"crossFadeMode\":\"A\"}");
-        silent.addProperty("trackId", HostFixture.B);
-        HostOperation op = f.submit(module, "tracks.set", silent, f.tasks.after(300));
+        HostOperation op =
+                f.submit(module, "tracks.set", set(HostFixture.B, "{\"crossFadeMode\":\"A\"}"), f.tasks.after(300));
         while (!op.result.isDone()) f.next();
         assertTrue(
                 !op.result.join().get("outcome").getAsString().matches("applied|already_matched"),
@@ -217,62 +308,42 @@ public final class MixModuleTest {
         MixModule module = f.services.mix();
         FakeHost color = f.tracks[1].child("color");
         color.afterWrite = () -> color.emit(new float[] {1f, 0x57 / 255f, 4 / 255f});
-        JsonObject p = HostFixture.json("{\"color\":\"#ff5705\"}");
-        p.addProperty("trackId", HostFixture.B);
-        JsonObject result = f.call(module, "tracks.set", p);
+        JsonObject result = f.call(module, "tracks.set", set(HostFixture.B, "{\"color\":\"#ff5705\"}"));
         assertTrue(
                 result.get("outcome").getAsString().matches("applied|already_matched")
-                        && result.get("color").getAsString().equals("#ff5704"),
+                        && result.getAsJsonObject("fields")
+                                .getAsJsonObject("color")
+                                .get("observed")
+                                .getAsString()
+                                .equals("#ff5704"),
                 "one 8-bit step of float rounding still matches and the observed hex is reported");
-        JsonObject far = HostFixture.json("{\"color\":\"#ff5a05\"}");
-        far.addProperty("trackId", HostFixture.B);
         color.afterWrite = () -> color.emit(new float[] {1f, 0x57 / 255f, 4 / 255f});
-        HostOperation farOp = f.submit(module, "tracks.set", far, f.tasks.after(300));
+        HostOperation farOp =
+                f.submit(module, "tracks.set", set(HostFixture.B, "{\"color\":\"#ff5a05\"}"), f.tasks.after(300));
         while (!farOp.result.isDone()) f.next();
         assertTrue(
                 !farOp.result.join().get("outcome").getAsString().matches("applied|already_matched"),
                 "a larger difference is a mismatch");
         f.tracks[1].child("monitorMode").emit("STORED");
-        JsonObject read = f.call(module, "tracks.get", HostFixture.target(HostFixture.B));
+        JsonObject again = f.call(module, "tracks.set", set(HostFixture.B, "{\"monitorMode\":\"STORED\"}"));
         assertTrue(
-                read.getAsJsonArray("observedOutsideOptions").size() == 1
-                        && read.getAsJsonArray("observedOutsideOptions")
-                                .get(0)
-                                .getAsString()
-                                .equals("monitorMode"),
-                "a host value outside the option list is flagged");
-        JsonObject back = HostFixture.json("{\"monitorMode\":\"STORED\"}");
-        back.addProperty("trackId", HostFixture.B);
-        JsonObject again = f.call(module, "tracks.set", back);
-        assertTrue(
-                again.getAsJsonObject("fields")
-                                .getAsJsonObject("monitorMode")
-                                .get("outcome")
-                                .getAsString()
-                                .equals("already_matched")
-                        && f.tracks[1].child("monitorMode").writes == 0,
+                outcome(again, "monitorMode").equals("already_matched") && f.tracks[1].child("monitorMode").writes == 0,
                 "the currently observed out-of-list value can be written back");
-        JsonObject bogus = HostFixture.json("{\"monitorMode\":\"LOUD\"}");
-        bogus.addProperty("trackId", HostFixture.B);
-        HostOperation refused = f.submit(module, "tracks.set", bogus);
+        HostOperation refused = f.submit(module, "tracks.set", set(HostFixture.B, "{\"monitorMode\":\"LOUD\"}"));
         f.next();
         assertRpcError("invalid_params", refused);
     }
 
     @Test
-    void selectionUsesUuidNotCurrentUi() {
+    void selectionUsesTheRefNotCurrentUi() {
         HostFixture f = new HostFixture();
         MixModule module = f.services.mix();
         f.tracks[0].child("selected").emit(true);
-        JsonObject selected = f.call(module, "tracks.select", HostFixture.target(HostFixture.B));
-        assertTrue(
-                selected.get("selected").getAsBoolean()
-                        && selected.get("outcome").getAsString().equals("sent"),
-                "a selection callback is snapshot evidence, not UI-navigation completion");
-        assertTrue(
-                f.tracks[1].actions == 1 && f.tracks[0].actions == 0,
-                "select operates on requested bank proxy, not current UI cursor");
-        JsonObject again = f.call(module, "tracks.select", HostFixture.target(HostFixture.B));
+        JsonObject selected = f.call(module, "tracks.select", HostFixture.targeting(HostFixture.B));
+        assertEquals("sent", selected.get("outcome").getAsString());
+        assertEquals(HostFixture.track(HostFixture.B), selected.getAsJsonObject("ref"));
+        assertTrue(f.tracks[1].actions == 1 && f.tracks[0].actions == 0, "select operates on the requested proxy");
+        JsonObject again = f.call(module, "tracks.select", HostFixture.targeting(HostFixture.B));
         assertTrue(
                 f.tracks[1].actions == 2 && again.get("outcome").getAsString().equals("sent"),
                 "an already-selected snapshot does not suppress an explicit editor-navigation command");
@@ -287,21 +358,12 @@ public final class MixModuleTest {
         f.tracks[0].child("exists").emit(true);
         module.flush();
         f.tracks[0].child("selected").notifyWrites = false;
-        HostOperation op = f.submit(module, "tracks.select", HostFixture.target(HostFixture.A));
+        HostOperation op = f.submit(module, "tracks.select", HostFixture.targeting(HostFixture.A));
         f.next();
         assertTrue(op.result.isDone(), "selection navigation must not wait for an optional legacy callback");
         JsonObject result = op.result.join();
-        assertTrue(
-                result.get("outcome").getAsString().equals("sent")
-                        && result.get("outcome").getAsString().equals("sent"),
-                "missing selection callback yields a UI dispatch receipt, never an observed completion");
-        assertTrue(
-                result.get("selected").isJsonNull()
-                        && !result.getAsJsonObject("readable").get("selected").getAsBoolean(),
-                "reopened track cannot inherit the previous generation's selected value");
-        assertTrue(
-                !result.has("fields") && !result.has("fields"),
-                "UI navigation does not pretend to be a verified mix setter");
+        assertEquals("sent", result.get("outcome").getAsString());
+        assertFalse(result.has("fields"), "UI navigation does not pretend to be a verified mix setter");
         assertTrue(
                 f.tracks[0].actions == 1 && f.tasks.isEmpty(),
                 "selection dispatches once without deferred retries or callback polling");
@@ -313,14 +375,14 @@ public final class MixModuleTest {
         MixModule module = f.services.mix();
         HostOperation holder = new HostOperation(Long.MAX_VALUE);
         f.services.selection.acquire(holder);
-        HostOperation op = f.submit(module, "tracks.select", HostFixture.target(HostFixture.B));
+        HostOperation op = f.submit(module, "tracks.select", HostFixture.targeting(HostFixture.B));
         f.next();
         RpcException busy = assertRpcError("busy", op);
         assertTrue(!busy.unknown && f.tracks[1].actions == 0, "held lease rejects select before dispatch");
         assertTrue(f.tasks.isEmpty(), "rejected select is not queued");
         holder.result.complete(new JsonObject());
         assertTrue(
-                f.call(module, "tracks.select", HostFixture.target(HostFixture.B))
+                f.call(module, "tracks.select", HostFixture.targeting(HostFixture.B))
                                 .get("outcome")
                                 .getAsString()
                                 .equals("sent")
@@ -332,7 +394,7 @@ public final class MixModuleTest {
     void selectionRespectsOperationAndIdentityGuards() {
         HostFixture f = new HostFixture();
         MixModule module = f.services.mix();
-        JsonObject p = HostFixture.target(HostFixture.A);
+        JsonObject p = HostFixture.targeting(HostFixture.A);
         HostOperation expired = f.submit(module, "tracks.select", p, f.tasks.now() - 1);
         f.next();
         assertTrue(!assertRpcError("deadline", expired).unknown, "expired selection is rejected before dispatch");
@@ -352,7 +414,7 @@ public final class MixModuleTest {
         HostOperation shifted = f.submit(module, "tracks.select", p);
         f.next();
         assertTrue(
-                assertUnknown("stale_target", shifted) != null && f.tracks[0].actions == 1,
+                assertUnknown("target_changed", shifted) != null && f.tracks[0].actions == 1,
                 "identity loss after dispatch remains unknown, not an accepted dispatch-only receipt");
     }
 
@@ -362,9 +424,7 @@ public final class MixModuleTest {
         MixModule module = f.services.mix();
         FakeHost volume = f.tracks[1].child("volume").child("value");
         volume.notifyWrites = false;
-        JsonObject p = HostFixture.target(HostFixture.B);
-        p.addProperty("volumeNormalized", .75);
-        HostOperation op = f.submit(module, "tracks.set", p);
+        HostOperation op = f.submit(module, "tracks.set", set(HostFixture.B, "{\"volume\":0.75}"));
         f.next();
         assertTrue(!op.result.isDone(), "changed getter without callback cannot verify write");
         f.tracks[0].child("volume").child("value").emit(.75);
@@ -386,17 +446,11 @@ public final class MixModuleTest {
         MixModule module = f.services.mix();
         f.tracks[0].child("name").afterWrite =
                 () -> f.tracks[0].child("channelId").emit(HostFixture.C);
-        JsonObject p = HostFixture.target(HostFixture.A);
-        p.addProperty("name", "Renamed");
-        p.addProperty("volumeNormalized", .8);
-        JsonObject result = f.call(module, "tracks.set", p);
-        assertTrue(
-                result.get("outcome").getAsString().equals("unknown"),
-                "partial mutation with shifted target is unknown");
-        assertTrue(result.get("reason").getAsString().equals("target_changed"), "target change identified");
-        assertTrue(
-                f.tracks[0].child("volume").child("value").writes == 0,
-                "replacement track never receives remaining volume write");
+        JsonObject result = f.call(module, "tracks.set", set(HostFixture.A, "{\"name\":\"Renamed\",\"volume\":0.8}"));
+        assertEquals("unknown", result.get("outcome").getAsString(), "partial mutation with shifted target is unknown");
+        assertEquals("target_changed", result.get("reason").getAsString());
+        assertFalse(result.has("ref"), "no ref of a target that is no longer there");
+        assertEquals(0, f.tracks[0].child("volume").child("value").writes, "the replacement never receives the volume");
         assertTrue(
                 result.getAsJsonObject("fields")
                         .getAsJsonObject("name")
@@ -409,8 +463,7 @@ public final class MixModuleTest {
     void expiredAndCancelledWritesAreNotApplied() {
         HostFixture f = new HostFixture();
         MixModule module = f.services.mix();
-        JsonObject p = HostFixture.target(HostFixture.A);
-        p.addProperty("arm", true);
+        JsonObject p = set(HostFixture.A, "{\"arm\":true}");
         HostOperation expired = f.submit(module, "tracks.set", p, f.tasks.now() - 1);
         f.next();
         assertTrue(!assertRpcError("deadline", expired).unknown, "expired target setter not applied");
@@ -418,241 +471,13 @@ public final class MixModuleTest {
         cancelled.result.cancel(false);
         f.next();
         assertTrue(f.tracks[0].child("arm").writes == 0, "queued callbacks after deadline/cancel cannot arm");
-        JsonObject partial = HostFixture.target(HostFixture.A);
-        partial.addProperty("name", "First");
-        partial.addProperty("arm", true);
-        HostOperation during = f.submit(module, "tracks.set", partial);
+        HostOperation during = f.submit(module, "tracks.set", set(HostFixture.A, "{\"name\":\"First\",\"arm\":true}"));
         f.tracks[0].child("name").afterWrite = () -> during.result.cancel(false);
         f.next();
         assertTrue(
                 during.result.isCancelled() && f.tracks[0].child("name").writes == 1,
                 "cancellation can occur after the first mutation");
         assertTrue(f.tracks[0].child("arm").writes == 0, "per-field cancellation guard prevents late arming");
-    }
-
-    @Test
-    void creationNamesOnlyUniqueObservedAddition() {
-        for (String type : List.of("audio", "instrument", "effect")) verifyCreation(type);
-    }
-
-    private static JsonObject delete(String id, String name) {
-        JsonObject p = HostFixture.target(id);
-        p.addProperty("expectedName", name);
-        return p;
-    }
-
-    @Test
-    void deleteIsNameGuardedAndVerifiedByUuidAndCount() {
-        HostFixture f = new HostFixture();
-        MixModule module = f.services.mix();
-        f.delete = slot -> f.removeTrack(slot, 1);
-        HostOperation wrong = f.submit(module, "tracks.delete", delete(HostFixture.B, "Nope"));
-        f.next();
-        assertTrue(
-                !assertRpcError("stale_target", wrong).unknown && f.tracks[1].actions == 0,
-                "name mismatch never dispatches");
-        f.tracks[1].child("trackType").emit("Master");
-        HostOperation master = f.submit(module, "tracks.delete", delete(HostFixture.B, "Track 1"));
-        f.next();
-        assertTrue(!assertRpcError("unsupported_scope", master).unknown && f.tracks[1].actions == 0, "master refused");
-        f.tracks[1].child("trackType").emit("Group");
-        HostOperation group = f.submit(module, "tracks.delete", delete(HostFixture.B, "Track 1"));
-        f.next();
-        assertTrue(!assertRpcError("unsupported_scope", group).unknown && f.tracks[1].actions == 0, "group refused");
-        // An instrument track that tracks.bounce turned Hybrid stays deletable.
-        f.tracks[1].child("trackType").emit("Hybrid");
-        f.transport.child("isPlaying").emit(true);
-        HostOperation playing = f.submit(module, "tracks.delete", delete(HostFixture.B, "Track 1"));
-        f.next();
-        assertTrue(!assertRpcError("unsafe_state", playing).unknown && f.tracks[1].actions == 0, "playing refused");
-        f.transport.child("isPlaying").emit(false);
-        HostOperation op = f.submit(module, "tracks.delete", delete(HostFixture.B, "Track 1"));
-        f.next();
-        if (!op.result.isDone()) f.next();
-        JsonObject result = op.result.join();
-        assertTrue(
-                f.tracks[1].actions == 1
-                        && result.get("outcome").getAsString().matches("applied|already_matched")
-                        && result.get("trackCountBefore").getAsInt() == 2
-                        && result.get("trackCountAfter").getAsInt() == 1,
-                "deleted once, verified");
-        HostFixture silent = new HostFixture();
-        MixModule other = silent.services.mix();
-        HostOperation nothing = silent.submit(other, "tracks.delete", delete(HostFixture.B, "Track 1"));
-        silent.next();
-        while (!nothing.result.isDone() && !silent.tasks.isEmpty()) silent.next();
-        assertTrue(
-                nothing.result.isDone()
-                        && nothing.result.join().get("outcome").getAsString().equals("unknown"),
-                "no observed change stays unknown");
-    }
-
-    private static void verifyCreation(String type) {
-        HostFixture f = new HostFixture();
-        MixModule module = f.services.mix();
-        f.create = factory -> {
-            String hostType = Character.toUpperCase(type.charAt(0)) + type.substring(1);
-            assertTrue(factory.equals("create" + hostType + "Track"), "requested type chooses exact public factory");
-            f.addTrack(2, HostFixture.C, hostType);
-        };
-        HostOperation op = f.submit(module, "tracks.create", create(type, -1));
-        f.next();
-        assertTrue(
-                f.tracks[2].child("name").writes == 0 && !op.result.isDone(),
-                "void factory is not immediate completion or slot naming");
-        f.next();
-        JsonObject result = op.result.join();
-        assertTrue(result.get("trackId").getAsString().equals(HostFixture.C), "new unique UUID selected by difference");
-        assertTrue(
-                result.getAsJsonObject("creation")
-                        .get("verification")
-                        .getAsString()
-                        .equals("unique_added_uuid_count_type_position"),
-                "creation evidence declared");
-        assertTrue(
-                f.tracks[2].child("name").writes == 1
-                        && f.tracks[2].child("name").data.equals("Created"),
-                "only unique observed target named");
-        assertTrue(
-                f.tracks[0].child("name").writes == 0 && f.tracks[1].child("name").writes == 0,
-                "preexisting tracks not renamed");
-        assertTrue(f.application.actions == 1, "factory not retried");
-    }
-
-    @Test
-    void ambiguousCreationStaysUnknownAndIncompleteBaselineDoesNotDispatch() {
-        HostFixture ambiguous = new HostFixture();
-        MixModule module = ambiguous.services.mix();
-        ambiguous.create = factory -> {
-            ambiguous.addTrack(2, HostFixture.C, "Audio");
-            ambiguous.addTrack(3, "extra-track", "Audio");
-        };
-        JsonObject result = ambiguous.call(module, "tracks.create", create("audio", -1));
-        assertTrue(
-                result.get("outcome").getAsString().equals("unknown")
-                        && !result.get("nameApplied").getAsBoolean(),
-                "multiple additions never claim creation completion");
-        assertTrue(
-                ambiguous.tracks[2].child("name").writes == 0 && ambiguous.tracks[3].child("name").writes == 0,
-                "ambiguous tracks never renamed");
-        HostFixture outside = new HostFixture();
-        MixModule other = outside.services.mix();
-        outside.bank.child("itemCount").emit(HostLimits.TRACKS + 4);
-        HostOperation rejected = outside.submit(other, "tracks.create", create("effect", -1));
-        outside.next();
-        assertTrue(
-                !assertRpcError("not_ready", rejected).unknown, "incomplete16-track baseline rejects before mutation");
-        assertTrue(
-                outside.application.actions == 0 && !rejected.dispatched(),
-                "known unobservable baseline must never invoke a factory");
-    }
-
-    @Test
-    void groupedBaselineRejectsWithoutMutationOrQuarantine() {
-        for (String type : List.of("audio", "instrument", "effect")) {
-            HostFixture f = new HostFixture();
-            MixModule module = f.services.mix();
-            f.tracks[0].child("trackType").emit("Group");
-            JsonObject beforeA = f.call(module, "tracks.get", HostFixture.target(HostFixture.A));
-            JsonObject beforeB = f.call(module, "tracks.get", HostFixture.target(HostFixture.B));
-            Object count = f.bank.child("itemCount").data;
-            String hostType = Character.toUpperCase(type.charAt(0)) + type.substring(1);
-            f.create = factory -> f.addTrack(2, HostFixture.C, hostType);
-            for (int position : new int[] {-1, 0}) {
-                HostOperation rejected = f.submit(module, "tracks.create", create(type, position));
-                f.next();
-                assertTrue(
-                        !assertRpcError("unsupported_scope", rejected).unknown,
-                        "known grouped baseline explicitly rejects as not applied");
-                assertTrue(
-                        !rejected.dispatched() && f.application.actions == 0,
-                        "known grouped baseline never dispatches any native track factory");
-                assertTrue(
-                        count.equals(f.bank.child("itemCount").data)
-                                && Boolean.FALSE.equals(f.tracks[2].child("exists").data),
-                        "rejected grouped creation leaves project track count and empty slot unchanged");
-                assertTrue(
-                        beforeA.equals(f.call(module, "tracks.get", HostFixture.target(HostFixture.A)))
-                                && beforeB.equals(f.call(module, "tracks.get", HostFixture.target(HostFixture.B))),
-                        "rejected grouped creation preserves existing track snapshots");
-                for (FakeHost track : f.tracks)
-                    assertTrue(track.child("name").writes == 0, "rejected grouped creation never renames any track");
-                assertTrue(f.tasks.isEmpty(), "rejection leaves no creation observation task pending");
-            }
-            f.tracks[0].child("trackType").emit("Instrument");
-            HostOperation admitted = f.submit(module, "tracks.create", create(type, -1));
-            f.next();
-            f.next();
-            assertTrue(
-                    admitted.result.join().get("outcome").getAsString().matches("applied|already_matched")
-                            && f.application.actions == 1,
-                    "grouped pre-dispatch rejection does not quarantine later supported creation");
-            assertTrue(
-                    f.tracks[2].child("name").writes == 1, "later ungrouped creation names only the observed addition");
-        }
-    }
-
-    @Test
-    void concurrentGroupAppearanceRemainsUnknownAndQuarantined() {
-        HostFixture f = new HostFixture();
-        MixModule module = f.services.mix();
-        f.create = factory -> {
-            f.tracks[0].child("trackType").emit("Group");
-            f.addTrack(2, HostFixture.C, "Audio");
-        };
-        HostOperation op = f.submit(module, "tracks.create", create("audio", -1));
-        f.next();
-        JsonObject result = op.result.join();
-        assertTrue(
-                op.dispatched() && f.application.actions == 1, "concurrent grouping occurs after one factory dispatch");
-        assertTrue(
-                result.get("outcome").getAsString().equals("unknown")
-                        && result.get("reason").getAsString().equals("side_effect")
-                        && result.get("detail").getAsString().equals("group_appeared_during_creation"),
-                "group appearing after dispatch retains structural unknown attribution");
-        assertTrue(
-                !result.get("nameApplied").getAsBoolean()
-                        && result.get("trackId").isJsonNull()
-                        && f.tracks[2].child("name").writes == 0,
-                "concurrent grouped insertion is never attributed or renamed");
-        f.tracks[0].child("trackType").emit("Instrument");
-        HostOperation later = f.submit(module, "tracks.create", create("audio", -1));
-        f.next();
-        assertTrue(
-                !assertRpcError("unresolved", later).unknown && !later.dispatched() && f.application.actions == 1,
-                "concurrent structural unknown retains quarantine even when the group disappears");
-    }
-
-    @Test
-    void wrongTypeOrPositionCannotBeNamed() {
-        for (boolean wrongType : new boolean[] {true, false}) {
-            HostFixture f = new HostFixture();
-            MixModule module = f.services.mix();
-            f.create = factory -> f.addTrack(2, HostFixture.C, wrongType ? "Instrument" : "Audio");
-            HostOperation op = f.submit(module, "tracks.create", create("audio", wrongType ? -1 : 0));
-            f.next();
-            f.next();
-            assertTrue(
-                    !op.result.isDone() && f.tracks[2].child("name").writes == 0,
-                    "type/position mismatch is not a nameable creation");
-            f.services.scheduler.close();
-            f.next();
-            assertTrue(assertUnknown("not_ready", op) != null, "abandoned factory remains unknown, not not_applied");
-        }
-    }
-
-    @Test
-    void creationNeverNamesAfterCancellation() {
-        HostFixture f = new HostFixture();
-        MixModule module = f.services.mix();
-        f.create = factory -> f.addTrack(2, HostFixture.C, "Audio");
-        HostOperation op = f.submit(module, "tracks.create", create("audio", -1));
-        f.next();
-        op.result.cancel(false);
-        f.next();
-        assertTrue(
-                f.tracks[2].child("name").writes == 0 && f.application.actions == 1,
-                "late observation after cancelled creation cannot rename or retry");
     }
 
     @Test
@@ -668,26 +493,24 @@ public final class MixModuleTest {
                 f.tracks[0].child("exists").emit(false);
                 f.tracks[0].child("exists").emit(true);
             }
-            JsonObject read = f.call(module, "tracks.get", HostFixture.target(id));
+            JsonObject target = Refs.track(id, "Track 0");
+            JsonObject read = f.call(module, "tracks.get", params(target));
             assertTrue(
                     read.get("mute").isJsonNull() && read.get("selected").isJsonNull(),
                     "replacement cannot inherit previous identity's mix/selection observations");
+            assertFalse(read.get("observationsComplete").getAsBoolean(), "partial snapshot declares missing readiness");
             assertTrue(
-                    !read.get("observationsComplete").getAsBoolean()
-                            && !read.getAsJsonObject("readable").get("mute").getAsBoolean(),
-                    "partial snapshot explicitly declares missing readiness");
-            assertTrue(
-                    read.get("volumeDisplay").isJsonNull()
+                    read.getAsJsonObject("volume").get("display") == null
                             && read.get("sendWindow").isJsonNull(),
                     "replacement cannot inherit display/send metadata");
-            JsonObject pendingWrite = HostFixture.target(id);
+            JsonObject pendingWrite = params(target);
             pendingWrite.addProperty("mute", true);
             HostOperation blocked = f.submit(module, "tracks.set", pendingWrite);
             f.next();
             assertRpcError("not_ready", blocked);
             assertTrue(f.tracks[0].child("mute").writes == 0, "no mutation before the actual host flush boundary");
             module.flush();
-            JsonObject baseline = f.call(module, "tracks.get", HostFixture.target(id));
+            JsonObject baseline = f.call(module, "tracks.get", params(target));
             assertTrue(
                     baseline.get("mute").getAsBoolean() && baseline.get("index").getAsInt() == 0,
                     "continuous unchanged proxy values become readable after flush without callback replay");
@@ -695,9 +518,7 @@ public final class MixModuleTest {
                     baseline.get("selected").isJsonNull(),
                     "legacy selection callback is not fabricated from predecessor state");
             f.tracks[0].child("mute").notifyWrites = false;
-            JsonObject p = HostFixture.target(id);
-            p.addProperty("mute", true);
-            HostOperation op = f.submit(module, "tracks.set", p);
+            HostOperation op = f.submit(module, "tracks.set", pendingWrite);
             f.next();
             assertTrue(
                     f.tracks[0].child("mute").writes == 1 && !op.result.isDone(),
@@ -707,12 +528,18 @@ public final class MixModuleTest {
             assertTrue(
                     op.result.join().get("outcome").getAsString().matches("applied|already_matched"),
                     "requested field can verify without every unchanged field replaying");
-            JsonObject selected = f.call(module, "tracks.select", HostFixture.target(id));
+            JsonObject selected = f.call(module, "tracks.select", params(target));
             assertTrue(
                     f.tracks[0].actions == 1
                             && selected.get("outcome").getAsString().equals("sent"),
                     "rebound selection dispatches explicitly without pretending to verify UI completion");
         }
+    }
+
+    private static JsonObject params(JsonObject target) {
+        JsonObject p = new JsonObject();
+        p.add("target", target);
+        return p;
     }
 
     @Test
@@ -723,119 +550,11 @@ public final class MixModuleTest {
         MixModule module = f.services.mix();
         f.tracks[0].child("channelId").emit(HostFixture.A);
         f.tracks[0].child("exists").emit(true);
-        JsonObject read = f.call(module, "tracks.get", HostFixture.target(HostFixture.A));
+        JsonObject read = f.call(module, "tracks.get", HostFixture.targeting(HostFixture.A));
         assertTrue(
-                read.get("volumeNormalized").getAsDouble() == .5
+                read.getAsJsonObject("volume").get("value").getAsDouble() == .5
                         && read.get("observationsComplete").getAsBoolean(),
                 "first identity callback after fields is not treated as replacement");
-    }
-
-    @Test
-    void unresolvedFactoryQuarantinesLaterCreation() {
-        HostFixture f = new HostFixture();
-        MixModule module = f.services.mix();
-        HostOperation a = f.submit(module, "tracks.create", create("audio", -1));
-        f.next();
-        a.result.cancel(false);
-        f.next();
-        JsonObject requestB = create("audio", -1);
-        requestB.addProperty("name", "Must not name A");
-        HostOperation b = f.submit(module, "tracks.create", requestB);
-        f.next();
-        assertTrue(
-                !assertRpcError("unresolved", b).unknown, "cancelled RPC does not release native factory attribution");
-        f.addTrack(2, HostFixture.C, "Audio");
-        assertTrue(
-                f.application.actions == 1 && f.tracks[2].child("name").writes == 0,
-                "late A addition can never be attributed or named by B");
-        HostOperation c = f.submit(module, "tracks.create", requestB);
-        f.next();
-        assertRpcError("unresolved", c);
-        assertTrue(f.application.actions == 1, "late observation alone does not silently release quarantine");
-        HostFixture unknown = new HostFixture();
-        MixModule second = unknown.services.mix();
-        unknown.create = factory -> {
-            unknown.addTrack(2, HostFixture.C, "Audio");
-            unknown.addTrack(3, "extra-track", "Audio");
-        };
-        JsonObject dispatched = unknown.call(second, "tracks.create", create("audio", -1));
-        assertTrue(
-                dispatched.get("outcome").getAsString().equals("unknown"),
-                "ambiguous post-dispatch observation produces completed unknown result");
-        HostOperation next = unknown.submit(second, "tracks.create", create("audio", -1));
-        unknown.next();
-        assertRpcError("unresolved", next);
-        assertTrue(unknown.application.actions == 1, "completed unknown result also retains quarantine");
-    }
-
-    @Test
-    void placeholderStartupPreservesNativeStyleBaseline() {
-        for (boolean existenceFirst : new boolean[] {true, false}) {
-            HostFixture f = new HostFixture();
-            String[] ids = {HostFixture.A, HostFixture.B, HostFixture.C, "00000000-0000-0000-0000-000000000004"};
-            String[] types = {"Instrument", "Audio", "Effect", "Master"};
-            for (int i = 0; i < ids.length; i++) {
-                f.tracks[i].child("channelId").data = "";
-                f.tracks[i].child("exists").data = false;
-                f.tracks[i].child("trackType").data = types[i];
-            }
-            f.bank.child("itemCount").emit(4);
-            MixModule module = f.services.mix();
-            // Native failure shape: complete4-track window includes Effect and Master.
-            // Real type/position arrive before first nonempty IDs, with no replay afterward.
-            for (int i = 0; i < ids.length; i++) {
-                f.tracks[i].child("trackType").emit(types[i]);
-                f.tracks[i].child("position").emit(i);
-                if (existenceFirst) f.tracks[i].child("exists").emit(true);
-                f.tracks[i].child("channelId").emit(ids[i]);
-                if (!existenceFirst) f.tracks[i].child("exists").emit(true);
-            }
-            JsonObject read = f.call(module, "tracks.get", HostFixture.target(ids[3]));
-            assertTrue(
-                    read.get("type").getAsString().equals("Master")
-                            && read.get("index").getAsInt() == 3,
-                    "placeholder-to-first-identity preserves type/index without replay");
-            f.create = factory -> {
-                f.tracks[2].child("position").emit(3);
-                f.tracks[3].child("position").emit(4);
-                f.addTrack(4, "00000000-0000-0000-0000-000000000005", "Instrument");
-                f.tracks[4].child("position").emit(2);
-            };
-            HostOperation created = f.submit(module, "tracks.create", create("instrument", -1));
-            f.next();
-            f.next();
-            JsonObject result = created.result.join();
-            assertTrue(
-                    result.get("outcome").getAsString().matches("applied|already_matched")
-                            && f.application.actions == 1,
-                    "complete native-style baseline supports one instrument factory and observed name");
-            assertTrue(
-                    result.getAsJsonObject("creation").get("observedPosition").getAsInt() == 2,
-                    "main insertion ordinal excludes effect/master but full UUID baseline includes both");
-        }
-    }
-
-    @Test
-    void missingCreationMetadataRejectsBeforeFactory() {
-        HostFixture f = new HostFixture();
-        f.tracks[1].child("trackType").notifyInitial = false;
-        MixModule module = f.services.mix();
-        HostOperation rejected = f.submit(module, "tracks.create", create("audio", -1));
-        f.next();
-        assertTrue(
-                !assertRpcError("not_ready", rejected).unknown,
-                "missing type baseline rejects before dispatch despite complete track count");
-        assertTrue(
-                f.application.actions == 0 && !rejected.dispatched(),
-                "no unnamed native creation on known incomplete readiness");
-        f.tracks[1].child("trackType").emit("Audio");
-        f.create = factory -> f.addTrack(2, HostFixture.C, "Audio");
-        HostOperation created = f.submit(module, "tracks.create", create("audio", -1));
-        f.next();
-        f.next();
-        assertTrue(
-                created.result.join().get("outcome").getAsString().matches("applied|already_matched"),
-                "pre-dispatch rejection does not quarantine a later fully observed creation");
     }
 
     @Test
@@ -852,28 +571,19 @@ public final class MixModuleTest {
                 return null; // No getter change and no observer delivery while pickup waits.
             });
         }
-        JsonObject p = HostFixture.target(HostFixture.B);
-        p.addProperty("volumeNormalized", .75);
-        p.addProperty("panNormalized", .62);
-        HostOperation op = f.submit(module, "tracks.set", p);
+        HostOperation op = f.submit(module, "tracks.set", set(HostFixture.B, "{\"volume\":0.75,\"pan\":0.62}"));
         f.next();
         assertTrue(op.result.isDone(), "absolute RPC mix targets apply without crossing a physical pickup point");
         JsonObject result = op.result.join();
         assertTrue(
                 result.get("outcome").getAsString().matches("applied|already_matched"),
                 "pickup does not leave requested pan/volume unobserved");
-        for (String field : List.of("volumeNormalized", "panNormalized"))
-            assertTrue(
-                    result.getAsJsonObject("fields")
-                            .getAsJsonObject(field)
-                            .get("outcome")
-                            .getAsString()
-                            .equals("applied"),
-                    "absolute target still requires fresh observer evidence: " + field);
-        JsonObject read = f.call(module, "tracks.get", HostFixture.target(HostFixture.B));
+        for (String field : List.of("volume", "pan"))
+            assertEquals("applied", outcome(result, field), "absolute target still requires fresh evidence: " + field);
+        JsonObject read = f.call(module, "tracks.get", HostFixture.targeting(HostFixture.B));
         assertTrue(
-                read.get("volumeNormalized").getAsDouble() == .75
-                        && read.get("panNormalized").getAsDouble() == .62,
+                read.getAsJsonObject("volume").get("value").getAsDouble() == .75
+                        && read.getAsJsonObject("pan").get("value").getAsDouble() == .62,
                 "subsequent consumer read exposes the changed normalized values");
         assertTrue(
                 f.tracks[0].child("volume").child("value").writes == 0
@@ -882,82 +592,19 @@ public final class MixModuleTest {
     }
 
     @Test
-    void creationSurvivesNativeBankShiftWithoutValueReplay() {
-        HostFixture f = new HostFixture();
-        String master = "00000000-0000-0000-0000-000000000004";
-        String added = "00000000-0000-0000-0000-000000000005";
-        f.addTrack(2, HostFixture.C, "Effect");
-        f.addTrack(3, master, "Master");
-        MixModule module = f.services.mix();
-        f.create = factory -> {
-            // Existing slot 2 becomes the new main track. New fields can precede its UUID.
-            f.tracks[2].child("name").emit("Created");
-            f.tracks[2].child("pan").child("value").emit(.62);
-            f.tracks[2].child("channelId").emit(added);
-            f.tracks[2].child("trackType").emit("Instrument");
-            // The Effect shifts onto the previous Master proxy, with position 3 unchanged.
-            f.tracks[3].child("name").emit("Shifted Effect");
-            f.tracks[3].child("channelId").emit(HostFixture.C);
-            f.tracks[3].child("trackType").emit("Effect");
-            f.tracks[2].child("volume").child("displayedValue").data = "-9 dB";
-            f.addTrack(4, master, "Master");
-        };
-        HostOperation op = f.submit(module, "tracks.create", create("instrument", -1));
-        f.next();
-        assertTrue(
-                !op.result.isDone() && f.application.actions == 1,
-                "void factory waits for rebound proxy readiness without retry");
-        module.flush();
-        f.next();
-        f.next();
-        assertTrue(
-                op.result.isDone(),
-                "unchanged slot positions no longer permanently block complete factory observation");
-        JsonObject result = op.result.join();
-        assertTrue(
-                result.get("outcome").getAsString().matches("applied|already_matched")
-                        && result.get("trackId").getAsString().equals(added),
-                "unique factory addition names the correct UUID after native-like callback ordering");
-        assertTrue(
-                result.get("index").getAsInt() == 2
-                        && result.get("type").getAsString().equals("Instrument")
-                        && result.get("name").getAsString().equals("Created"),
-                "factory result retains correct type, position and name");
-        assertTrue(
-                result.get("panNormalized").getAsDouble() == .62
-                        && result.get("volumeDisplay").getAsString().equals("-9 dB"),
-                "early pan survives rebind and metadata is refreshed from current getters, not predecessor cache");
-        assertTrue(
-                f.tracks[2].child("name").writes == 1
-                        && result.getAsJsonObject("fields")
-                                .getAsJsonObject("name")
-                                .get("outcome")
-                                .getAsString()
-                                .equals("applied"),
-                "early equal name is readable but cannot suppress the new generation's explicit naming write");
-        JsonObject effect = f.call(module, "tracks.get", HostFixture.target(HostFixture.C));
-        assertTrue(
-                effect.get("name").getAsString().equals("Shifted Effect")
-                        && effect.get("index").getAsInt() == 3,
-                "shifted preexisting track recovers early name and unchanged position without replay");
-        assertTrue(
-                f.tracks[3].child("name").writes == 0 && f.tracks[4].child("name").writes == 0,
-                "factory recovery never names shifted Effect or Master");
-    }
-
-    @Test
     void reopenedSourcesWaitForFlushAndIdentityAgreement() {
         for (boolean sameUuid : new boolean[] {true, false}) {
             HostFixture f = new HostFixture();
             MixModule module = f.services.mix();
             String id = sameUuid ? HostFixture.A : HostFixture.C;
+            JsonObject ref = Refs.track(id, "Reopened");
             f.tracks[0].child("exists").emit(false);
             module.flush(); // Closing a project is not a valid readable binding.
             f.tracks[0].child("name").emit("Reopened");
             f.tracks[0].child("channelId").data = id;
             f.tracks[0].child("exists").data = true;
             module.flush(); // Getters alone cannot replace observed identity/existence.
-            JsonObject incomplete = f.call(module, "tracks.get", HostFixture.target(id));
+            JsonObject incomplete = f.call(module, "tracks.get", params(Refs.track(id, "Reopened")));
             assertTrue(
                     incomplete.get("name").isJsonNull()
                             && incomplete.get("index").isJsonNull(),
@@ -965,22 +612,22 @@ public final class MixModuleTest {
             if (!sameUuid) {
                 f.tracks[0].child("exists").emit(true);
                 module.flush();
-                JsonObject wrongIdentity = f.call(module, "tracks.get", HostFixture.target(id));
+                JsonObject wrongIdentity = f.call(module, "tracks.get", params(ref));
                 assertTrue(
                         wrongIdentity.get("name").isJsonNull(),
                         "existence agreement alone cannot validate the wrong observed UUID");
             }
             f.tracks[0].child("channelId").emit(id);
             f.tracks[0].child("exists").emit(true);
-            JsonObject pending = f.call(module, "tracks.get", HostFixture.target(id));
+            JsonObject pending = f.call(module, "tracks.get", params(ref));
             assertTrue(
                     pending.get("name").isJsonNull(), "reappearance remains masked until an actual later host flush");
             module.flush();
-            JsonObject read = f.call(module, "tracks.get", HostFixture.target(id));
+            JsonObject read = f.call(module, "tracks.get", params(ref));
             assertTrue(
                     read.get("name").getAsString().equals("Reopened")
                             && read.get("index").getAsInt() == 0
-                            && read.get("panNormalized").getAsDouble() == .5,
+                            && read.getAsJsonObject("pan").get("value").getAsDouble() == .5,
                     "same/new UUID reappearance recovers continuous values without unchanged callbacks");
         }
     }
@@ -991,9 +638,7 @@ public final class MixModuleTest {
         MixModule module = f.services.mix();
         FakeHost volume = f.tracks[0].child("volume").child("value");
         volume.notifyWrites = false;
-        JsonObject p = HostFixture.target(HostFixture.A);
-        p.addProperty("volumeNormalized", .7);
-        HostOperation old = f.submit(module, "tracks.set", p);
+        HostOperation old = f.submit(module, "tracks.set", set(HostFixture.A, "{\"volume\":0.7}"));
         f.next();
         f.tracks[0].child("exists").emit(false);
         f.tracks[0].child("exists").emit(true);
@@ -1005,552 +650,14 @@ public final class MixModuleTest {
                 result.get("outcome").getAsString().equals("unknown")
                         && result.get("reason").getAsString().equals("target_changed"),
                 "same-UUID rebind plus matching callback cannot acknowledge an old-generation write");
-        assertTrue(
-                !result.getAsJsonObject("fields")
-                        .getAsJsonObject("volumeNormalized")
-                        .get("outcome")
-                        .getAsString()
-                        .matches("applied|already_matched"),
+        assertFalse(
+                outcome(result, "volume").matches("applied|already_matched"),
                 "reopened source never validates stale write evidence");
     }
 
-    static final String ROOT = "00000000-0000-0000-0000-0000000000ff", G = "00000000-0000-0000-0000-000000000004";
-
-    private static void parent(HostFixture f, int slot, String id) {
-        FakeHost parent = f.tracks[slot].child("createParentTrack");
-        parent.child("exists").data = id != null;
-        parent.child("channelId").data = id == null ? "" : id;
-    }
-
-    private static void group(HostFixture f, int slot, String id, int position) {
-        FakeHost track = f.tracks[slot];
-        track.child("channelId").emit(id);
-        track.child("exists").emit(true);
-        track.child("trackType").emit("Group");
-        track.child("isGroup").data = true;
-        track.child("position").emit(position);
-    }
-
-    private static HostOperation groupedCreation(HostFixture f, String sibling, String createdParent, int position) {
-        MixModule module = f.services.mix();
-        f.tracks[0].child("trackType").emit("Group");
-        f.tracks[0].child("isGroup").data = true;
-        parent(f, 0, ROOT);
-        parent(f, 1, sibling);
-        f.create = factory -> {
-            f.addTrack(2, HostFixture.C, "Audio");
-            parent(f, 2, createdParent);
-        };
-        return f.submit(module, "tracks.create", create("audio", position));
-    }
-
     @Test
-    void groupedCreationAttributesTopLevelIndex() {
-        for (int position : new int[] {-1, 1}) {
-            HostFixture f = new HostFixture();
-            HostOperation op = groupedCreation(f, HostFixture.A, ROOT, position);
-            f.next();
-            f.next();
-            JsonObject result = op.result.join();
-            assertTrue(
-                    result.get("outcome").getAsString().matches("applied|already_matched")
-                            && result.get("trackId").getAsString().equals(HostFixture.C),
-                    "grouped project: the top-level index counts the group, not its child");
-            assertTrue(
-                    result.getAsJsonObject("creation")
-                            .get("parentScope")
-                            .getAsString()
-                            .equals("top_level_of_grouped_project"),
-                    "grouped creation declares its top-level scope");
-            assertTrue(
-                    f.tracks[2].child("name").writes == 1 && f.application.actions == 1,
-                    "only the observed top-level addition is named");
-        }
-        HostFixture f = new HostFixture();
-        HostOperation op = groupedCreation(f, HostFixture.A, ROOT, 0);
-        f.next();
-        f.next();
-        f.next();
-        assertTrue(
-                !op.result.isDone() && f.tracks[2].child("name").writes == 0,
-                "a top-level track at the wrong index is never named");
-        f.services.scheduler.close();
-        f.next();
-        assertTrue(assertUnknown("not_ready", op) != null, "unattributed grouped creation stays unknown");
-    }
-
-    @Test
-    void groupedCreationInsideAGroupIsNeverNamed() {
-        HostFixture f = new HostFixture();
-        HostOperation op = groupedCreation(f, ROOT, HostFixture.A, -1);
-        f.next();
-        f.next();
-        f.next();
-        assertTrue(
-                !op.result.isDone() && f.tracks[2].child("name").writes == 0,
-                "a new track observed inside a group is not the requested top-level track");
-        f.services.scheduler.close();
-        f.next();
-        assertTrue(assertUnknown("not_ready", op) != null, "it remains an unknown creation");
-    }
-
-    @Test
-    void trackTreeResolvesParentsAndRejectsInconsistentOrder() {
-        HostFixture f = new HostFixture();
-        TrackTree flat = TrackTree.capture(f.services.window);
-        assertTrue(
-                flat.complete
-                        && !flat.groups
-                        && flat.byId.get(HostFixture.B).topLevel
-                        && flat.byId.get(HostFixture.B).depth == 0,
-                "without groups every track is top-level and no parent observation is needed");
-        f.tracks[0].child("trackType").emit("Group");
-        f.tracks[0].child("isGroup").data = true;
-        TrackTree unobserved = TrackTree.capture(f.services.window);
-        assertTrue(
-                !unobserved.complete && "parent_observation_missing".equals(unobserved.reason),
-                "groups without parent observations are incomplete");
-        parent(f, 0, ROOT);
-        parent(f, 1, HostFixture.A);
-        TrackTree tree = TrackTree.capture(f.services.window);
-        TrackTree.Node child = tree.byId.get(HostFixture.B);
-        assertTrue(
-                tree.complete && HostFixture.A.equals(child.parentId) && child.depth == 1 && !child.topLevel,
-                "child resolves to its group");
-        JsonObject row = new JsonObject();
-        tree.describe(row, child);
-        assertTrue(
-                row.get("parentId").getAsString().equals(HostFixture.A)
-                        && row.get("depth").getAsInt() == 1,
-                "tracks.list row carries parentId/depth");
-        JsonObject groupRow = new JsonObject();
-        tree.describe(groupRow, tree.byId.get(HostFixture.A));
-        assertTrue(
-                groupRow.get("isGroup").getAsBoolean()
-                        && groupRow.get("parentId").isJsonNull()
-                        && groupRow.get("depth").getAsInt() == 0,
-                "group row is top-level");
-        f.addTrack(2, HostFixture.C, "Audio");
-        parent(f, 2, HostFixture.B);
-        TrackTree bad = TrackTree.capture(f.services.window);
-        assertTrue(
-                !bad.complete && "parent_not_a_group_in_window".equals(bad.reason),
-                "a parent that is not a group in the window fails closed");
-        parent(f, 2, ROOT);
-        f.tracks[2].child("position").emit(1);
-        f.tracks[1].child("position").emit(2);
-        TrackTree order = TrackTree.capture(f.services.window);
-        assertTrue(
-                !order.complete && "parent_order_inconsistent".equals(order.reason),
-                "a top-level track between a group and its child breaks pre-order");
-    }
-
-    static final String D = "00000000-0000-0000-0000-000000000005",
-            E = "00000000-0000-0000-0000-000000000006",
-            FX = "00000000-0000-0000-0000-000000000007",
-            MASTER = "00000000-0000-0000-0000-000000000008",
-            ELSEWHERE = "00000000-0000-0000-0000-0000000000ee";
-    /**
-     * The 6.1.4 native observation after tracks.group (0fcbad3): three top-level tracks, the new group, its two
-     * children (parent proxy = the group), an effect track and Master. Only the group's own parent proxy is odd.
-     */
-    private static HostFixture observedGroupLayout(String groupParent) {
-        HostFixture f = new HostFixture();
-        f.tracks[0].child("trackType").emit("Instrument");
-        parent(f, 0, ROOT);
-        parent(f, 1, ROOT);
-        f.addTrack(2, HostFixture.C, "Instrument");
-        parent(f, 2, ROOT);
-        group(f, 3, G, 3);
-        parent(f, 3, groupParent);
-        f.addTrack(4, D, "Audio");
-        parent(f, 4, G);
-        f.addTrack(5, E, "Audio");
-        parent(f, 5, G);
-        f.addTrack(6, FX, "Effect");
-        parent(f, 6, ROOT);
-        f.addTrack(7, MASTER, "Master");
-        parent(f, 7, null);
-        return f;
-    }
-
-    @Test
-    void trackTreeInfersGroupWhoseParentProxyIsUninformative() {
-        for (String raw : new String[] {G, ELSEWHERE}) {
-            TrackTree tree = TrackTree.capture(observedGroupLayout(raw).services.window);
-            TrackTree.Node group = tree.byId.get(G);
-            assertTrue(
-                    tree.complete && group.topLevel && group.depth == 0 && group.parentInferred,
-                    "top-level group resolves from pre-order: " + raw);
-            assertTrue(
-                    tree.byId.get(D).depth == 1 && G.equals(tree.byId.get(E).parentId) && tree.byId.get(FX).depth == 0,
-                    "children and effect track resolve");
-            JsonObject row = new JsonObject();
-            tree.describe(row, group);
-            assertTrue(
-                    row.get("parentId").isJsonNull()
-                            && row.get("depth").getAsInt() == 0
-                            && row.get("parentResolved").getAsBoolean()
-                            && row.get("parentSource").getAsString().equals("preorder_inference")
-                            && row.get("parentObserved").getAsString().equals(raw),
-                    "tracks.list row shows depth 0, the inference and the raw proxy value");
-            JsonObject child = new JsonObject();
-            tree.describe(child, tree.byId.get(D));
-            assertTrue(
-                    !child.has("parentSource") && !child.has("parentObserved"),
-                    "observed parents carry no inference fields");
-        }
-        // Group first in the window and naming itself: the root comes from the first top-level non-group track.
-        HostFixture first = new HostFixture();
-        group(first, 0, G, 0);
-        parent(first, 0, G);
-        first.addTrack(1, D, "Audio");
-        parent(first, 1, G);
-        first.tracks[1].child("position").emit(1);
-        first.addTrack(2, HostFixture.C, "Audio");
-        parent(first, 2, ROOT);
-        TrackTree leading = TrackTree.capture(first.services.window);
-        assertTrue(
-                leading.complete
-                        && leading.byId.get(G).topLevel
-                        && G.equals(leading.byId.get(D).parentId)
-                        && leading.byId.get(HostFixture.C).topLevel,
-                "a leading self-reporting group never becomes the root of its own children");
-        // Leading group naming an id outside the window: the root still comes from the later top-level track.
-        HostFixture foreign = new HostFixture();
-        group(foreign, 0, G, 0);
-        parent(foreign, 0, ELSEWHERE);
-        foreign.addTrack(1, D, "Audio");
-        parent(foreign, 1, G);
-        foreign.addTrack(2, E, "Audio");
-        parent(foreign, 2, G);
-        foreign.addTrack(3, HostFixture.C, "Audio");
-        parent(foreign, 3, ROOT);
-        TrackTree outside = TrackTree.capture(foreign.services.window);
-        assertTrue(
-                outside.complete
-                        && outside.byId.get(G).depth == 0
-                        && outside.byId.get(HostFixture.C).topLevel
-                        && outside.byId.get(E).depth == 1,
-                "a leading group naming a foreign id never becomes the root");
-        // Two groups sharing that odd value and no top-level non-group track: the nested group is not made top-level.
-        HostFixture odd = new HostFixture();
-        group(odd, 0, G, 0);
-        parent(odd, 0, ELSEWHERE);
-        group(odd, 1, D, 1);
-        parent(odd, 1, ELSEWHERE);
-        odd.addTrack(2, E, "Audio");
-        parent(odd, 2, D);
-        TrackTree noRoot = TrackTree.capture(odd.services.window);
-        assertTrue(
-                !noRoot.complete && "group_parent_ambiguous".equals(noRoot.reason) && !noRoot.byId.get(D).topLevel,
-                "without a root observation a group after a group is never guessed top-level");
-        // After another group's child, the group could be that child's sibling or top-level: never guessed.
-        HostFixture nested = observedGroupLayout(G);
-        group(nested, 2, HostFixture.C, 2);
-        parent(nested, 2, ROOT);
-        nested.tracks[3].child("position").emit(4);
-        nested.tracks[4].child("position").emit(3);
-        parent(nested, 4, HostFixture.C);
-        TrackTree ambiguous = TrackTree.capture(nested.services.window);
-        assertTrue(
-                !ambiguous.complete
-                        && "group_parent_ambiguous".equals(ambiguous.reason)
-                        && ambiguous.byId.get(G).depth < 0,
-                "ambiguous group parent fails closed");
-        // A group naming a non-group track in the window is inconsistent, not inferred.
-        TrackTree wrong = TrackTree.capture(observedGroupLayout(HostFixture.C).services.window);
-        assertTrue(
-                !wrong.complete && "parent_not_a_group_in_window".equals(wrong.reason),
-                "a group whose parent is a plain track fails closed");
-        TrackTree missing = TrackTree.capture(observedGroupLayout(null).services.window);
-        assertTrue(
-                !missing.complete && "parent_observation_missing".equals(missing.reason),
-                "a missing group parent observation fails closed");
-    }
-
-    @Test
-    void groupObservedWhenTheGroupParentProxyNamesItself() {
-        HostFixture f = new HostFixture();
-        FakeGroup access = new FakeGroup();
-        MixModule module = f.services.mix(access);
-        f.tracks[0].child("trackType").emit("Instrument");
-        f.addTrack(2, D, "Audio");
-        f.addTrack(3, E, "Audio");
-        f.addTrack(4, FX, "Effect");
-        f.addTrack(5, MASTER, "Master");
-        access.effect = () -> {
-            // Native shape: the group takes the first child's slot, the children shift down, Master moves out of slot
-            // 5.
-            group(f, 2, G, 2);
-            parent(f, 2, G);
-            f.addTrack(3, D, "Audio");
-            f.addTrack(4, E, "Audio");
-            f.addTrack(5, FX, "Effect");
-            f.addTrack(6, MASTER, "Master");
-            parent(f, 0, ROOT);
-            parent(f, 1, ROOT);
-            parent(f, 3, G);
-            parent(f, 4, G);
-            parent(f, 5, ROOT);
-            parent(f, 6, null);
-        };
-        JsonObject p = groupRequest(D, E);
-        p.addProperty("name", "T: Grp");
-        HostOperation op = f.submit(module, "tracks.group", p);
-        while (!op.result.isDone() && !f.tasks.isEmpty()) {
-            module.flush();
-            f.next();
-        }
-        JsonObject result = op.result.join();
-        assertTrue(
-                result.get("outcome").getAsString().matches("applied|already_matched")
-                        && result.get("trackId").getAsString().equals(G)
-                        && f.tracks[2].child("name").data.equals("T: Grp"),
-                "observed native grouping succeeds and names the group");
-        assertTrue(f.services.holds.list().isEmpty(), "no quarantine after the observed grouping");
-    }
-
-    private static JsonObject groupRequest(String... ids) {
-        JsonObject p = new JsonObject();
-        JsonArray a = new JsonArray();
-        for (String id : ids) a.add(id);
-        p.add("trackIds", a);
-        return p;
-    }
-
-    @Test
-    void groupValidationRejectsBeforeScheduling() {
-        HostFixture f = new HostFixture();
-        MixModule module = f.services.mix();
-        List<JsonObject> invalid = new java.util.ArrayList<>(List.of(
-                groupRequest(),
-                groupRequest("not-a-uuid"),
-                groupRequest(HostFixture.A, HostFixture.A),
-                groupRequest(HostFixture.A, HostFixture.A.toUpperCase())));
-        JsonObject many = groupRequest();
-        for (int i = 0; i < HostLimits.TRACKS + 1; i++)
-            many.getAsJsonArray("trackIds").add(String.format("00000000-0000-0000-0000-%012d", i));
-        invalid.add(many);
-        JsonObject named = groupRequest(HostFixture.A);
-        named.addProperty("name", "");
-        invalid.add(named);
-        JsonObject extra = groupRequest(HostFixture.A);
-        extra.addProperty("position", 0);
-        invalid.add(extra);
-        for (JsonObject p : invalid) {
-            assertRpcError("invalid_params", f.submit(module, "tracks.group", p));
-            assertTrue(f.tasks.isEmpty(), "invalid tracks.group rejected before scheduling: " + p);
-        }
-        MixModule.validateParams("tracks.group", groupRequest(HostFixture.A, HostFixture.B));
-    }
-
-    static final class FakeGroup implements MixModule.GroupAccess {
-        Runnable effect = () -> {};
-        int calls;
-        List<String> ids;
-
-        public void execute(Runnable work) {
-            work.run();
-        }
-
-        public JsonObject group(List<Object> proxies, List<String> ids, Runnable check, Runnable before) {
-            calls++;
-            this.ids = ids;
-            check.run();
-            before.run();
-            effect.run();
-            JsonObject out = new JsonObject();
-            out.addProperty("nativeOperation", "track_group.group_tracks");
-            return out;
-        }
-    }
-
-    @Test
-    void groupVerifiesMembershipAndNamesTheGroup() {
-        HostFixture f = new HostFixture();
-        FakeGroup access = new FakeGroup();
-        MixModule module = f.services.mix(access);
-        access.effect = () -> {
-            group(f, 2, G, 0);
-            f.tracks[0].child("position").emit(1);
-            f.tracks[1].child("position").emit(2);
-            f.bank.child("itemCount").emit(3);
-            parent(f, 2, ROOT);
-            parent(f, 0, G);
-            parent(f, 1, G);
-        };
-        JsonObject p = groupRequest(HostFixture.B, HostFixture.A);
-        p.addProperty("name", "Drums");
-        HostOperation op = f.submit(module, "tracks.group", p);
-        f.next();
-        f.next();
-        assertTrue(!op.result.isDone(), "one membership observation is not enough");
-        f.next();
-        JsonObject result = op.result.join();
-        assertTrue(
-                access.ids.equals(List.of(HostFixture.A, HostFixture.B)),
-                "tracks are passed in flat order, not request order");
-        assertTrue(
-                result.get("trackId").getAsString().equals(G)
-                        && result.get("outcome").getAsString().matches("applied|already_matched"),
-                "the new group is identified and named");
-        JsonObject info = result.getAsJsonObject("group");
-        assertTrue(
-                info.get("verification").getAsString().startsWith("unique_added_group_uuid")
-                        && info.getAsJsonArray("children").size() == 2
-                        && info.get("parentId").isJsonNull(),
-                "group evidence lists children and parent");
-        assertTrue(
-                f.tracks[2].child("name").data.equals("Drums") && f.tracks[0].child("name").writes == 0,
-                "only the group is renamed");
-        assertTrue(f.services.holds.list().isEmpty(), "observed grouping releases its quarantine");
-        HostFixture plain = new HostFixture();
-        FakeGroup quiet = new FakeGroup();
-        MixModule unnamed = plain.services.mix(quiet);
-        quiet.effect = () -> {
-            group(plain, 2, G, 0);
-            plain.tracks[0].child("position").emit(1);
-            plain.tracks[1].child("position").emit(2);
-            plain.bank.child("itemCount").emit(3);
-            parent(plain, 2, ROOT);
-            parent(plain, 0, G);
-            parent(plain, 1, ROOT);
-        };
-        HostOperation one = plain.submit(unnamed, "tracks.group", groupRequest(HostFixture.A));
-        plain.next();
-        plain.next();
-        plain.next();
-        JsonObject single = one.result.join();
-        assertTrue(
-                single.get("outcome").getAsString().matches("applied|already_matched")
-                        && !single.has("fields")
-                        && plain.tracks[2].child("name").writes == 0,
-                "without name the observed group is returned unnamed");
-    }
-
-    @Test
-    void groupRefusesMixedParentsEffectTracksAndRecording() {
-        HostFixture f = new HostFixture();
-        FakeGroup access = new FakeGroup();
-        MixModule module = f.services.mix(access);
-        f.tracks[0].child("trackType").emit("Group");
-        f.tracks[0].child("isGroup").data = true;
-        f.addTrack(2, HostFixture.C, "Audio");
-        parent(f, 0, ROOT);
-        parent(f, 1, HostFixture.A);
-        parent(f, 2, ROOT);
-        HostOperation mixed = f.submit(module, "tracks.group", groupRequest(HostFixture.B, HostFixture.C));
-        f.next();
-        assertTrue(
-                !assertRpcError("unsupported_scope", mixed).unknown && access.calls == 0,
-                "different parents are refused before native access");
-        f.tracks[2].child("trackType").emit("Effect");
-        HostOperation effect = f.submit(module, "tracks.group", groupRequest(HostFixture.C));
-        f.next();
-        assertTrue(
-                !assertRpcError("unsupported_scope", effect).unknown && access.calls == 0, "effect tracks are refused");
-        HostOperation outside = f.submit(module, "tracks.group", groupRequest("00000000-0000-0000-0000-0000000000aa"));
-        f.next();
-        assertTrue(!assertRpcError("outside_window", outside).unknown, "unknown track is outside the window");
-        f.services.selection.handOff(new HostOperation(Long.MAX_VALUE));
-        HostOperation leased = f.submit(module, "tracks.group", groupRequest(HostFixture.B));
-        f.next();
-        assertTrue(
-                !assertRpcError("busy", leased).unknown && access.calls == 0, "a held selection lease blocks grouping");
-        f.services.selection.handOff(null);
-        f.transport.child("isArrangerRecordEnabled").emit(true);
-        HostOperation recording = f.submit(module, "tracks.group", groupRequest(HostFixture.B));
-        f.next();
-        assertTrue(
-                !assertRpcError("unsafe_state", recording).unknown && access.calls == 0, "recording blocks grouping");
-    }
-
-    @Test
-    void unobservedGroupQuarantinesCreationAndGrouping() {
-        HostFixture f = new HostFixture();
-        FakeGroup access = new FakeGroup();
-        MixModule module = f.services.mix(access);
-        HostOperation op = f.submit(module, "tracks.group", groupRequest(HostFixture.A), f.tasks.after(400));
-        while (!op.result.isDone() && !f.tasks.isEmpty()) f.next();
-        JsonObject result = op.result.join();
-        assertTrue(
-                result.get("outcome").getAsString().equals("unknown")
-                        && result.get("reason").getAsString().equals("not_observed"),
-                "an unobserved native grouping is unknown, never success");
-        assertTrue(!f.services.holds.list().isEmpty(), "unknown grouping is listed as a hold");
-        HostOperation create = f.submit(module, "tracks.create", create("audio", -1));
-        f.next();
-        assertTrue(
-                !assertRpcError("unresolved", create).unknown && f.application.actions == 0,
-                "creation is quarantined after unknown grouping");
-        HostOperation again = f.submit(module, "tracks.group", groupRequest(HostFixture.A));
-        f.next();
-        assertTrue(!assertRpcError("unresolved", again).unknown && access.calls == 1, "grouping is never retried");
-    }
-
-    private static JsonObject create(String type, int position) {
-        JsonObject p = new JsonObject();
-        p.addProperty("type", type);
-        p.addProperty("position", position);
-        p.addProperty("name", "Created");
-        return p;
-    }
-
-    @Test
-    void unknownMethodIsRefused() {
-        assertRpcError("unknown_method", () -> MixModule.validateParams("tracks.bogus", new JsonObject()));
-    }
-
-    @Test
-    void groupWithoutBoundNativeAccessIsRefusedByTheRuntimeGate() {
-        HostFixture f = new HostFixture();
-        HostOperation op = f.submit(f.services.mix(), "tracks.group", groupRequest(HostFixture.A));
-        f.next();
-        assertRpcError("host_mismatch", op);
-    }
-
-    @Test
-    void unobservedCreationIsUnknownAndHoldsCreationAndGrouping() {
-        HostFixture f = new HostFixture();
-        MixModule module = f.services.mix();
-        f.create = factory -> {};
-        HostOperation op = f.submit(module, "tracks.create", create("audio", -1), f.tasks.after(400));
-        while (!op.result.isDone() && !f.tasks.isEmpty()) f.next();
-        assertUnknown("not_observed", op);
-        HostOperation group = f.submit(module, "tracks.group", groupRequest(HostFixture.A));
-        f.next();
-        assertRpcError("unresolved", group);
-    }
-
-    @Test
-    void creationThatRemovesAnExistingTrackReportsTargetChange() {
-        HostFixture f = new HostFixture();
-        MixModule module = f.services.mix();
-        f.create = factory -> {
-            f.addTrack(2, HostFixture.C, "Audio");
-            f.tracks[0].child("channelId").emit("");
-            f.tracks[0].child("exists").emit(false);
-        };
-        HostOperation op = f.submit(module, "tracks.create", create("audio", -1));
-        while (!op.result.isDone() && !f.tasks.isEmpty()) f.next();
-        assertUnknown("target_changed", op);
-    }
-
-    @Test
-    void creationAndGroupingAreBusyWhileTheNewTrackIsBeingNamed() {
-        HostFixture f = new HostFixture();
-        MixModule module = f.services.mix();
-        f.create = factory -> f.addTrack(2, HostFixture.C, "Audio");
-        f.tracks[2].child("name").notifyWrites = false;
-        HostOperation first = f.submit(module, "tracks.create", create("audio", -1), f.tasks.after(2000));
-        while (f.tracks[2].child("name").writes == 0 && !first.result.isDone()) f.next();
-        assertTrue(!first.result.isDone(), "the name write awaits its observation");
-        HostOperation second = f.submit(module, "tracks.create", create("audio", -1));
-        f.next();
-        assertRpcError("busy", second);
-        HostOperation group = f.submit(module, "tracks.group", groupRequest(HostFixture.A));
-        f.next();
-        assertRpcError("busy", group);
+    void unknownMethodsAreNotRegistered() {
+        assertFalse(MixModule.METHODS.contains("tracks.create"));
+        assertFalse(MixModule.METHODS.contains("tracks.meters"));
     }
 }

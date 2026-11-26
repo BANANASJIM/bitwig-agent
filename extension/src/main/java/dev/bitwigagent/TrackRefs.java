@@ -2,7 +2,6 @@ package dev.bitwigagent;
 
 import static dev.bitwigagent.HostLimits.TRACKS;
 
-import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import dev.bitwigagent.core.Refs;
 
@@ -31,17 +30,6 @@ final class TrackRefs {
         if (!Refs.matches(ref, current, target))
             throw Errors.targetChanged("The track was renamed since it was read.", current);
         return slot;
-    }
-
-    /** The track-list index a position names; an anchor must be a top-level track. */
-    int insertionIndex(JsonElement position) {
-        return Positions.index(position, window.total(), anchor -> {
-            int slot = resolve(anchor, false);
-            if (window.parent(slot).exists().get())
-                throw Errors.notApplied(
-                        Reason.UNSUPPORTED_SCOPE, "An anchor must be a top-level track, not a track inside a group.");
-            return window.at(slot).position().get();
-        });
     }
 
     JsonObject ref(int slot) {

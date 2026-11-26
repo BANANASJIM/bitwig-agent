@@ -361,7 +361,7 @@ async def create(args: argparse.Namespace) -> int:  # noqa: C901, PLR0912, PLR09
 
     async def call(method: str, params: dict | None = None) -> dict:
         if method in {
-            "tracks.create",
+            "tracks.insert",
             "tracks.set",
             "devices.insert",
             "clips.insert",
@@ -443,14 +443,17 @@ async def create(args: argparse.Namespace) -> int:  # noqa: C901, PLR0912, PLR09
                     raise RuntimeError(f"Missing or ambiguous complete native MODULE catalog entry: {name}")
                 types[name] = matches[0]["typeId"]
         for label, path, edits in presets:
-            created = await call("tracks.create", {"type": "instrument", "position": -1, "name": f"Toolkit {label}"})
-            track_id = created["trackId"]
-            if not track_id or track_id in {item["trackId"] for item in tracks["tracks"] + report["createdTracks"]}:
+            created = await call("tracks.insert", {"type": "instrument", "name": f"Toolkit {label}"})
+            track_ref = created["ref"]
+            track_id = track_ref["id"]
+            known = {item["ref"]["id"] for item in tracks["tracks"]} | {
+                item["trackId"] for item in report["createdTracks"]
+            }
+            if track_id in known:
                 raise RuntimeError("Creation did not identify a new owned track")
-            report["createdTracks"].append({"trackId": track_id, "label": label})
-            await call("tracks.set", {"trackId": track_id, "mute": True, "arm": False, "volumeNormalized": 0.5})
-            row = next(item for item in (await call("tracks.list"))["tracks"] if item["trackId"] == track_id)
-            owned = {"kind": "track", "id": row["trackId"], "name": row["name"]}
+            report["createdTracks"].append({"trackId": track_id, "ref": track_ref, "label": label})
+            await call("tracks.set", {"target": track_ref, "mute": True, "arm": False, "volume": 0.5})
+            owned = track_ref
             empty = await call("devices.list", {"parent": owned})
             if empty["window"].get("complete") is not True or empty["devices"]:
                 raise RuntimeError("Owned new track does not have a completely observed empty device chain")
@@ -494,17 +497,13 @@ async def create(args: argparse.Namespace) -> int:  # noqa: C901, PLR0912, PLR09
             report["createdTracks"][-1]["noteReadback"] = readback
             # Clip selection can auto-arm according to existing host preferences.
             # Restore safety explicitly without changing those user preferences.
-            await call("tracks.set", {"trackId": track_id, "mute": True, "arm": False})
+            await call("tracks.set", {"target": track_ref, "mute": True, "arm": False})
             checked_notes(readback, window, edits)
             report["createdTracks"][-1]["noteCount"] = len(readback["notes"])
         await safety_guard()
         for owned in report["createdTracks"]:
-            state = await call("tracks.get", {"trackId": owned["trackId"]})
-            if (
-                state.get("trackId") != owned["trackId"]
-                or state.get("mute") is not True
-                or state.get("arm") is not False
-            ):
+            state = await call("tracks.get", {"target": owned["ref"]})
+            if state.get("ref") != owned["ref"] or state.get("mute") is not True or state.get("arm") is not False:
                 raise RuntimeError("Owned output track is not observed muted and disarmed")
             if scratch:
                 patch = owned["patch"]

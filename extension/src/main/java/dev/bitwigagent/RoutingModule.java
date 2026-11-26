@@ -15,9 +15,6 @@ import java.util.concurrent.atomic.AtomicLong;
 final class RoutingModule implements HostModule {
     static final Set<String> METHODS =
             Set.of("tracks.routing.get", "tracks.routing.set", "devices.sidechain.get", "devices.sidechain.set");
-    static final Set<String> OUTPUT_KINDS = Set.of("none", "track_audio_input", "track_note_input");
-    static final Set<String> SOURCE_KINDS = Set.of(
-            "none", "pre_fader", "post_fader", "track_notes", "all_ins", "computer_keyboard", "onscreen_keyboard");
     static final Set<String> TRACK_KINDS =
             Set.of("track_audio_input", "track_note_input", "pre_fader", "post_fader", "track_notes");
     /** Native source-kind group (kCk) that admits each requestable source kind; "none" is always admitted. */
@@ -62,13 +59,14 @@ final class RoutingModule implements HostModule {
                 Runnable beforeWrite);
     }
 
-    /** One observed bank track: public UUID, public type and its proxy (the native side re-resolves and re-checks it). */
+    /** One observed bank track: public UUID, name, type and its proxy (the native side re-resolves and re-checks it). */
     static final class TrackRef {
-        final String id, type;
+        final String id, name, type;
         final Object proxy;
 
-        TrackRef(String id, String type, Object proxy) {
+        TrackRef(String id, String name, String type, Object proxy) {
             this.id = id;
+            this.name = name;
             this.type = type;
             this.proxy = proxy;
         }
@@ -76,6 +74,7 @@ final class RoutingModule implements HostModule {
 
     private final Scheduler scheduler;
     private final TrackWindow window;
+    private final TrackRefs trackRefs;
     private final DeviceSources sources;
     private final TransportSafety transportSafety;
     private final NativeRuntime natives;
@@ -89,17 +88,19 @@ final class RoutingModule implements HostModule {
     RoutingModule(
             Scheduler scheduler,
             TrackWindow window,
+            TrackRefs trackRefs,
             DeviceSources sources,
             TransportSafety transportSafety,
             NativeRuntime natives,
             Holds holds,
             MethodSpecs specs) {
-        this(scheduler, window, sources, transportSafety, natives, holds, specs, null);
+        this(scheduler, window, trackRefs, sources, transportSafety, natives, holds, specs, null);
     }
 
     RoutingModule(
             Scheduler scheduler,
             TrackWindow window,
+            TrackRefs trackRefs,
             DeviceSources sources,
             TransportSafety transportSafety,
             NativeRuntime natives,
@@ -108,6 +109,7 @@ final class RoutingModule implements HostModule {
             Access access) {
         this.scheduler = scheduler;
         this.window = window;
+        this.trackRefs = trackRefs;
         this.sources = sources;
         this.transportSafety = transportSafety;
         this.natives = natives;
@@ -132,106 +134,31 @@ final class RoutingModule implements HostModule {
         validateParams(method, p);
     }
 
-    static void validateParams(String method, JsonObject p) {
-        switch (method) {
-            case "tracks.routing.get":
-                Params.fields(p, Set.of("trackId"), Set.of("includeChoices"));
-                if (p.has("includeChoices")) Params.bool(p, "includeChoices");
-                break;
-            case "tracks.routing.set": {
-                Params.fields(p, Set.of("trackId"), Set.of("output", "input", "expectedOutput", "expectedInput"));
-                if (!p.has("output") && !p.has("input")) throw Errors.invalid("Supply output, input or both.");
-                pair(p, "output", "expectedOutput", OUTPUT_KINDS);
-                pair(p, "input", "expectedInput", SOURCE_KINDS);
-                break;
-            }
-            case "devices.sidechain.get":
-                Params.fields(p, Set.of("trackId", "deviceIndex", "expectedDeviceName"), Set.of("includeChoices"));
-                device(p);
-                if (p.has("includeChoices")) Params.bool(p, "includeChoices");
-                break;
-            case "devices.sidechain.set":
-                Params.fields(
-                        p,
-                        Set.of("trackId", "deviceIndex", "expectedDeviceName", "source", "expectedSource"),
-                        Set.of(
-                                "componentIndex",
-                                "expectedComponentId",
-                                "componentId",
-                                "expectedModulatorId",
-                                "expectedModuleId"));
-                device(p);
-                if (p.has("componentIndex") == p.has("componentId"))
-                    throw Errors.invalid("Supply exactly one of componentIndex or componentId.");
-                if (p.has("componentIndex") != p.has("expectedComponentId"))
-                    throw Errors.invalid(
-                            "componentIndex needs expectedComponentId (that row's componentId), and only it.");
-                if (p.has("componentIndex")) {
-                    Params.integer(p, "componentIndex", 0, MAX_COMPONENTS - 1);
-                    Params.string(p, "expectedComponentId");
-                } else Params.string(p, "componentId");
-                for (String owner : List.of("expectedModulatorId", "expectedModuleId"))
-                    if (p.has(owner)) uuid(p, owner);
-                entry(p, "source", SOURCE_KINDS, false);
-                entry(p, "expectedSource", SOURCE_KINDS, true);
-                break;
-            default:
-                throw Errors.notApplied(Reason.UNKNOWN_METHOD, "Unknown routing method.");
-        }
-        uuid(p, "trackId");
-    }
-
-    private static void device(JsonObject p) {
-        Params.integer(p, "deviceIndex", 0, HostLimits.DEVICES - 1);
-        Params.string(p, "expectedDeviceName");
-    }
-
-    /** A requested field needs its expected (compare-and-set) partner and vice versa. */
-    private static void pair(JsonObject p, String key, String expected, Set<String> kinds) {
-        if (p.has(key) != p.has(expected))
-            throw Errors.invalid(key + " and " + expected + " must be supplied together (" + expected
-                    + " from a fresh tracks.routing.get).");
-        if (!p.has(key)) return;
-        entry(p, key, kinds, false);
-        entry(p, expected, kinds, true);
-    }
-
     /**
-     * {kind, trackId?}: trackId exactly for track kinds. Kind "other" (only in an expected entry, copied from a get)
-     * carries its exact name and optionally nativeType.
+     * What the schema cannot say: a routing write changes the output or the input, an expect compares only those, and
+     * an entry has a trackId exactly for the track kinds and a name exactly for kind other.
      */
-    static JsonObject entry(JsonObject p, String key, Set<String> kinds, boolean expected) {
-        JsonElement value = p.get(key);
-        if (value == null || !value.isJsonObject()) throw Errors.invalid(key + " must be an object {kind, trackId?}.");
-        JsonObject e = value.getAsJsonObject();
-        String kind = e.has("kind")
-                        && e.get("kind").isJsonPrimitive()
-                        && e.get("kind").getAsJsonPrimitive().isString()
-                ? e.get("kind").getAsString()
-                : "";
-        boolean other = expected && kind.equals("other");
-        if (!kinds.contains(kind) && !other)
-            throw Errors.invalid(key + ".kind must be one of " + new TreeSet<>(kinds) + (expected ? " or other" : ""));
-        Set<String> required = new HashSet<>(Set.of("kind"));
-        if (TRACK_KINDS.contains(kind)) required.add("trackId");
-        if (other) required.add("name");
-        Params.fields(e, required, other ? Set.of("nativeType") : Set.of());
-        if (e.has("trackId")) uuid(e, "trackId");
-        if (e.has("name")) {
-            JsonElement name = e.get("name");
-            // A native bus name may be empty; it is compared exactly.
-            if (!name.isJsonPrimitive()
-                    || !name.getAsJsonPrimitive().isString()
-                    || name.getAsString().length() > 4096)
-                throw Errors.invalid(key + ".name must be a string (maximum 4096 characters).");
-        }
-        if (e.has("nativeType")) Params.string(e, "nativeType");
-        return e;
+    static void validateParams(String method, JsonObject p) {
+        if (method.equals("tracks.routing.get") || method.equals("devices.sidechain.get")) return;
+        ValueMatch.requireNamed(p);
+        if (method.equals("tracks.routing.set") && !p.has("output") && !p.has("input"))
+            throw Errors.invalid("Supply output, input or both.");
+        JsonObject expect = p.has("expect") ? p.getAsJsonObject("expect") : new JsonObject();
+        for (String key : expect.keySet())
+            if (!p.has(key)) throw Errors.invalid("expect." + key + " compares a field this call does not write.");
+        for (String key : List.of("output", "input", "source")) if (p.has(key)) entry(p.getAsJsonObject(key), key);
+        for (String key : expect.keySet()) entry(expect.getAsJsonObject(key), "expect." + key);
     }
 
-    private static void uuid(JsonObject p, String key) {
-        if (!DeviceSources.canonicalUuid(Params.string(p, key)))
-            throw Errors.invalid(key + " must be a canonical UUID");
+    private static void entry(JsonObject entry, String where) {
+        String kind = entry.get("kind").getAsString();
+        boolean track = TRACK_KINDS.contains(kind), other = kind.equals("other");
+        if (entry.has("trackId") != track)
+            throw Errors.invalid(
+                    where + ": trackId is required for " + new TreeSet<>(TRACK_KINDS) + " and not allowed otherwise.");
+        if (entry.has("name") != other)
+            throw Errors.invalid(where + ": name is required for kind other and only then.");
+        if (entry.has("nativeType") && !other) throw Errors.invalid(where + ": nativeType is only for kind other.");
     }
 
     /** v1 requestable source kinds admitted by a native kCk group set (always including none). */
@@ -291,25 +218,28 @@ final class RoutingModule implements HostModule {
                     QUARANTINE,
                     "An unresolved routing/sidechain write blocks further routing writes.",
                     "Inspect tracks.routing.get / devices.sidechain.get");
-        String id = p.get("trackId").getAsString();
-        int slot = window.trackSlot(id);
+        JsonObject ref = p.getAsJsonObject("target");
+        boolean sidechain = method.startsWith("devices.");
+        DeviceSources.Source device = sidechain ? device(ref, write) : null;
+        RequestSnapshot snapshot = sidechain ? RequestSnapshot.of(device) : null;
+        String id = sidechain ? null : ref.get("id").getAsString();
+        int slot = sidechain ? -1 : trackRefs.resolve(ref, write);
         List<TrackRef> bank = bank();
         TrackRef self = null;
-        for (TrackRef ref : bank) if (ref.id.equals(id)) self = ref;
-        if (self == null)
+        for (TrackRef track : bank) if (track.id.equals(id)) self = track;
+        if (!sidechain && self == null)
             throw Errors.notApplied(
                     Reason.OUTSIDE_WINDOW,
                     "Track UUID is absent from the current " + HostLimits.TRACKS + "-track window.");
         for (String key : List.of("output", "input", "source")) {
             if (!p.has(key) || !p.getAsJsonObject(key).has("trackId")) continue;
             String other = p.getAsJsonObject(key).get("trackId").getAsString();
-            if (bank.stream().noneMatch(ref -> ref.id.equals(other)))
+            if (bank.stream().noneMatch(track -> track.id.equals(other)))
                 throw Errors.notApplied(
                         Reason.OUTSIDE_WINDOW,
                         key + ".trackId is absent from the current " + HostLimits.TRACKS
                                 + "-track window; nothing changed.");
         }
-        DeviceSources.RootReadTicket ticket = method.startsWith("devices.") ? sources.rootRead(parent(p)) : null;
         SafetyObservation safety = write ? transportSafety.stopped(op) : null;
         if (access == null) {
             try {
@@ -325,8 +255,8 @@ final class RoutingModule implements HostModule {
             scheduler.check(op);
             if (epoch.get() != generation)
                 throw Errors.notApplied(
-                        Reason.STALE_CONTEXT, "Track bank changed while the routing operation was queued.");
-            if (ticket != null) ticket.check();
+                        Reason.TARGET_CHANGED, "Track bank changed while the routing operation was queued.");
+            if (snapshot != null) snapshot.require(op);
             if (write) transportSafety.guardStopped(safety);
         };
         Runnable beforeWrite = () -> {
@@ -351,22 +281,26 @@ final class RoutingModule implements HostModule {
                             result = bridge.trackSet(target, bank, p, check, beforeWrite);
                             break;
                         case "devices.sidechain.get":
-                            result = bridge.sidechainGet(ticket.source, bank, choices, check);
+                            result = bridge.sidechainGet(device, bank, choices, check);
                             break;
                         default:
-                            result = bridge.sidechainSet(ticket.source, bank, p, check, beforeWrite);
+                            result = bridge.sidechainSet(device, bank, p, check, beforeWrite);
                     }
                     scheduler.schedule(
                             op,
                             () -> {
                                 check.run();
-                                if (!window.trackMatches(id, window.at(slot)))
+                                if (!sidechain && !window.trackMatches(id, window.at(slot)))
                                     throw Errors.notApplied(
-                                            Reason.STALE_CONTEXT, "Track target changed after native access.");
-                                if (ticket != null) sources.guardRootRead(ticket);
+                                            Reason.TARGET_CHANGED, "Track target changed after native access.");
                                 if (write && Results.outcomeOf(result).succeeded()) holds.release(QUARANTINE);
                                 holds.release(PENDING);
                                 annotateTrackNames(result, trackNames());
+                                if (!sidechain) result.add("ref", trackRefs.ref(slot));
+                                else if (write)
+                                    result.add(
+                                            "ref",
+                                            result.getAsJsonObject("component").get("ref"));
                                 op.result.complete(result);
                             },
                             0);
@@ -380,6 +314,15 @@ final class RoutingModule implements HostModule {
             throw error;
         }
         op.result.whenComplete((r, e) -> holds.release(PENDING));
+    }
+
+    /** The top-level device a ref names (the sidechain ref's device for a write); devices inside chains are not read. */
+    private DeviceSources.Source device(JsonObject ref, boolean write) {
+        JsonObject deviceRef = write ? ref.getAsJsonObject("device") : ref;
+        if (deviceRef.has("chain"))
+            throw Errors.notApplied(
+                    Reason.UNSUPPORTED_SCOPE, "Sidechains of devices inside a chain or layer are not covered.");
+        return sources.device(deviceRef, !write);
     }
 
     private Map<String, String> trackNames() {
@@ -424,18 +367,8 @@ final class RoutingModule implements HostModule {
             if (!track.exists().get()) continue;
             String id = track.channelId().get();
             if (id == null || id.isEmpty()) continue;
-            out.add(new TrackRef(id, track.trackType().get(), track));
+            out.add(new TrackRef(id, track.name().get(), track.trackType().get(), track));
         }
         return out;
-    }
-
-    private static JsonObject parent(JsonObject p) {
-        JsonObject parent = new JsonObject();
-        for (String key : List.of("trackId", "deviceIndex", "expectedDeviceName")) parent.add(key, p.get(key));
-        return parent;
-    }
-
-    private static String text(JsonObject o, String key) {
-        return o.has(key) && o.get(key).isJsonPrimitive() ? o.get(key).getAsString() : null;
     }
 }

@@ -50,7 +50,15 @@ final class TestServices {
     }
 
     AutomationModule automation(AutomationModule.Access access) {
-        return new AutomationModule(scheduler, window, sources, transportSafety, natives, holds, access);
+        RemoteModule remotes = remote();
+        return new AutomationModule(
+                scheduler,
+                window,
+                parameterResolver(parameters(remotes), remotes),
+                transportSafety,
+                natives,
+                holds,
+                access);
     }
 
     DeviceModule device() {
@@ -116,15 +124,24 @@ final class TestServices {
     }
 
     MeterModule meter() {
-        return new MeterModule(scheduler, window, transportSafety);
+        return new MeterModule(scheduler, window, trackRefs, transportSafety);
+    }
+
+    private MixModule shared;
+
+    /** The one mix module of this fixture, for tests that read through the module the lifecycle module names tracks with. */
+    MixModule sharedMix() {
+        if (shared == null) shared = mix();
+        return shared;
     }
 
     MixModule mix() {
-        return mix(null);
+        return new MixModule(host, scheduler, window, trackRefs, selection);
     }
 
-    MixModule mix(MixModule.GroupAccess access) {
-        return new MixModule(host, scheduler, window, application, transportSafety, selection, natives, holds, access);
+    TrackLifecycleModule trackLifecycle(MixModule mix, TrackLifecycleModule.GroupAccess access) {
+        return new TrackLifecycleModule(
+                scheduler, window, trackRefs, application, transportSafety, selection, natives, holds, mix, access);
     }
 
     ModulatorEditModule modulatorEdits(ModulatorEditor editor) {
@@ -157,7 +174,7 @@ final class TestServices {
     }
 
     RoutingModule routing(MethodSpecs specs, RoutingModule.Access access) {
-        return new RoutingModule(scheduler, window, sources, transportSafety, natives, holds, specs, access);
+        return new RoutingModule(scheduler, window, trackRefs, sources, transportSafety, natives, holds, specs, access);
     }
 
     SceneModule scene() {

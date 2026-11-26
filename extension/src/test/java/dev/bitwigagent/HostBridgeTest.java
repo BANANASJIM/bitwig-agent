@@ -375,7 +375,6 @@ public final class HostBridgeTest {
         HostBridge bridge = f.bridge();
         JsonObject create = new JsonObject();
         create.addProperty("type", "audio");
-        create.addProperty("position", -1);
         create.addProperty("name", "x");
         f.projectName.emit("Fixture2");
         JsonObject status = call(f, bridge, "status", new JsonObject());
@@ -388,7 +387,7 @@ public final class HostBridgeTest {
                         .get("projectReady")
                         .getAsBoolean(),
                 "context.get carries projectReady");
-        CompletableFuture<JsonObject> refused = bridge.handle("tracks.create", create, f.deadline());
+        CompletableFuture<JsonObject> refused = bridge.handle("tracks.insert", create, f.deadline());
         f.next();
         assertRpcError("not_ready", refused);
         {
@@ -646,10 +645,11 @@ public final class HostBridgeTest {
                         && out.getAsJsonArray("tracks")
                                 .get(0)
                                 .getAsJsonObject()
-                                .get("trackId")
+                                .getAsJsonObject("ref")
+                                .get("id")
                                 .getAsString()
                                 .equals(Fake.TRACK_ID),
-                "tracks carry the observed UUID");
+                "tracks carry the observed UUID in their ref");
         assertTrue(HostFixture.SPECS.methods().contains("context.get"), "method is registered with the bridge");
         JsonObject bad = new JsonObject();
         bad.addProperty("x", 1);

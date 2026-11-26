@@ -684,6 +684,10 @@ class FakeProc:
         self.returncode = -9
 
 
+def track_ref(tid, name=None):
+    return {"kind": "track", "id": tid, "name": name or tid}
+
+
 class FakeBridge:
     def __init__(self, playing=(), engine=True, solo=None):
         self.calls = []
@@ -699,17 +703,23 @@ class FakeBridge:
         if method == "context.get":
             return {
                 "tracks": [
-                    {"trackId": tid, "name": name, "launcherSlots": [{"slotIndex": 0, "playing": True}]}
+                    {"ref": track_ref(tid, name), "name": name, "launcherSlots": [{"slotIndex": 0, "playing": True}]}
                     for tid, name in self.playing
                 ]
-                + [{"trackId": "idle", "name": "Idle", "launcherSlots": [{"slotIndex": 0, "playing": False}]}]
+                + [
+                    {
+                        "ref": track_ref("idle", "Idle"),
+                        "name": "Idle",
+                        "launcherSlots": [{"slotIndex": 0, "playing": False}],
+                    }
+                ]
             }
         if method == "tracks.list":
-            return {"tracks": [{"trackId": t, "index": i, "name": t} for i, t in enumerate(self.solo)]}
+            return {"tracks": [{"ref": track_ref(t), "index": i} for i, t in enumerate(self.solo)]}
         if method == "tracks.get":
-            return {"trackId": params["trackId"], "solo": self.solo[params["trackId"]]}
-        if method == "tracks.set" and not (params["trackId"] == self.fail_set and params["solo"] is False):
-            self.solo[params["trackId"]] = params["solo"]
+            return {"ref": params["target"], "solo": self.solo[params["target"]["id"]]}
+        if method == "tracks.set" and not (params["target"]["id"] == self.fail_set and params["solo"] is False):
+            self.solo[params["target"]["id"]] = params["solo"]
         elif method == "tracks.set":
             return unknown_result("deadline", "boom")
         return {"outcome": "applied"}

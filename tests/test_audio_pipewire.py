@@ -19,6 +19,7 @@ from fakes import (
     overlapping,
     parse_arguments,
     spawn_dead,
+    track_ref,
     write_wav,
 )
 from fakes import (
@@ -290,13 +291,16 @@ def test_capture_reports_other_playing_tracks(tmp_path, monkeypatch, pw):
     assert asyncio.run(composed.run("audio.capture", bridge, params, timeout))["otherTracksPlaying"] == []
 
 
+PAD = "00000000-0000-0000-0000-00000000000b"
+
+
 def capture_solo_with_pad(tmp_path, monkeypatch, solo, **extra):
     return capture(
         tmp_path,
         monkeypatch,
-        playing=[(solo, "Kick"), ("b", "Pad")],
-        solo={solo: False, "b": False},
-        soloTrack=solo,
+        playing=[(solo, "Kick"), (PAD, "Pad")],
+        solo={solo: False, PAD: False},
+        soloTrack=track_ref(solo),
         **extra,
     )
 
@@ -312,7 +316,7 @@ def test_capture_solo_track_refuses_while_others_play(tmp_path, monkeypatch, pw)
     assert e.value.error["details"]["otherTracksPlaying"] == ["Pad"]
     assert not [m for m, _ in bridge.calls if m == "tracks.set"]
     # the solo track needs no playing launcher clip (a Poly Grid sounds without one)
-    bridge, spawned, params, timeout = capture(tmp_path, monkeypatch, solo={solo: False}, soloTrack=solo)
+    bridge, spawned, params, timeout = capture(tmp_path, monkeypatch, solo={solo: False}, soloTrack=track_ref(solo))
     result = asyncio.run(composed.run("audio.capture", bridge, params, timeout))
     assert result["otherTracksPlaying"] == []
     assert "warnings" not in result
@@ -323,7 +327,7 @@ def test_capture_solo_really_solos_and_restores(tmp_path, monkeypatch, pw):
     route("silent")
     solo = "00000000-0000-0000-0000-000000000001"
     states = {solo: False, "b": True, "c": False}
-    bridge, _spawned, params, timeout = capture(tmp_path, monkeypatch, solo=states, soloTrack=solo)
+    bridge, _spawned, params, timeout = capture(tmp_path, monkeypatch, solo=states, soloTrack=track_ref(solo))
     seen = []
     inner = bridge.call
 
@@ -337,10 +341,13 @@ def test_capture_solo_really_solos_and_restores(tmp_path, monkeypatch, pw):
     result = asyncio.run(composed.run("audio.capture", bridge, params, timeout))
     assert seen == [{solo: True, "b": False, "c": False}]
     assert bridge.solo == states  # restored
-    assert result["soloed"] == solo
-    assert result["previousSolo"] == ["b"]
-    assert result["unsoloed"] == ["b"]
-    assert result["restored"] == [{"trackId": "b", "solo": True}, {"trackId": solo, "solo": False}]
+    assert result["soloed"] == track_ref(solo)
+    assert result["previousSolo"] == [track_ref("b")]
+    assert result["unsoloed"] == [track_ref("b")]
+    assert result["restored"] == [
+        {"ref": track_ref("b"), "solo": True},
+        {"ref": track_ref(solo), "solo": False},
+    ]
     assert "restoreFailed" not in result
 
 
@@ -348,7 +355,7 @@ def test_capture_solo_restores_on_failure_and_reports_restore_errors(tmp_path, m
     route("silent")
     solo = "00000000-0000-0000-0000-000000000001"
     states = {solo: False, "b": True}
-    bridge, _spawned, params, timeout = capture(tmp_path, monkeypatch, solo=states, soloTrack=solo)
+    bridge, _spawned, params, timeout = capture(tmp_path, monkeypatch, solo=states, soloTrack=track_ref(solo))
     inner = bridge.call
 
     async def broken(method, p, t=5000):
@@ -362,22 +369,24 @@ def test_capture_solo_restores_on_failure_and_reports_restore_errors(tmp_path, m
     result = changed.value.result
     assert (result["outcome"], result["reason"], result["transportStopped"]) == ("not_applied", "host_refused", True)
     assert bridge.solo == states
-    bridge, _spawned, params, timeout = capture(tmp_path, monkeypatch, solo=states, soloTrack=solo, overwrite=True)
+    bridge, _spawned, params, timeout = capture(
+        tmp_path, monkeypatch, solo=states, soloTrack=track_ref(solo), overwrite=True
+    )
     bridge.fail_set = solo  # restoring the target (solo off) fails
     result = asyncio.run(composed.run("audio.capture", bridge, params, timeout))
-    assert result["restoreFailed"][0]["trackId"] == solo
+    assert result["restoreFailed"][0]["ref"] == track_ref(solo)
     assert (result["outcome"], result["reason"]) == ("unknown", "job_failed")
 
 
 def test_capture_solo_refuses_unreadable_or_unknown_tracks(tmp_path, monkeypatch, pw):
     route("silent")
     solo = "00000000-0000-0000-0000-000000000001"
-    bridge, spawned, params, timeout = capture(tmp_path, monkeypatch, solo={"b": False}, soloTrack=solo)
+    bridge, spawned, params, timeout = capture(tmp_path, monkeypatch, solo={"b": False}, soloTrack=track_ref(solo))
     with pytest.raises(BridgeError) as e:
         asyncio.run(composed.run("audio.capture", bridge, params, timeout))
     assert e.value.error["reason"] == "target_not_found"
     assert not spawned
-    bridge, spawned, params, timeout = capture(tmp_path, monkeypatch, solo={solo: None}, soloTrack=solo)
+    bridge, spawned, params, timeout = capture(tmp_path, monkeypatch, solo={solo: None}, soloTrack=track_ref(solo))
     with pytest.raises(BridgeError) as e:
         asyncio.run(composed.run("audio.capture", bridge, params, timeout))
     assert e.value.error["reason"] == "not_ready"
@@ -389,8 +398,10 @@ def test_capture_stop_others_stops_then_records(tmp_path, monkeypatch, pw):
     solo = "00000000-0000-0000-0000-000000000001"
     bridge, spawned, params, timeout = capture_solo_with_pad(tmp_path, monkeypatch, solo, stopOthers=True)
     result = asyncio.run(composed.run("audio.capture", bridge, params, timeout))
-    assert ("launcher.stop", {"target": {"kind": "track", "id": "b", "name": "Pad"}}) in bridge.calls
-    assert not [call for call in bridge.calls if call[0] == "launcher.stop" and call[1]["target"]["id"] == solo]
+    stops = [params for method, params in bridge.calls if method == "launcher.stop"]
+    assert stops == [{"target": track_ref(PAD, "Pad")}]
+    for params in stops:
+        validate_call("launcher.stop", params)  # the real method schema, not the fake bridge
     assert result["stoppedTracks"] == ["Pad"]
     assert result["otherTracksPlaying"] == []
     assert spawned
@@ -406,7 +417,7 @@ def test_capture_resolves_the_solo_target_before_stopping_anything(tmp_path, mon
         monkeypatch,
         playing=[("b", "Pad")],
         solo={"b": False},
-        soloTrack="00000000-0000-0000-0000-00000000000f",
+        soloTrack=track_ref("00000000-0000-0000-0000-00000000000f"),
         stopOthers=True,
     )
     with pytest.raises(BridgeError) as e:
@@ -432,14 +443,16 @@ def test_a_refusal_after_stopping_tracks_is_a_result_naming_them(tmp_path, monke
 def test_a_refusal_after_a_failed_solo_restore_is_an_unknown_result(tmp_path, monkeypatch, pw):
     route("silent")
     solo = "00000000-0000-0000-0000-000000000001"
-    bridge, _spawned, params, timeout = capture(tmp_path, monkeypatch, solo={solo: False, "b": True}, soloTrack=solo)
+    bridge, _spawned, params, timeout = capture(
+        tmp_path, monkeypatch, solo={solo: False, "b": True}, soloTrack=track_ref(solo)
+    )
     monkeypatch.setattr(pipewire, "spawn", spawn_dead)
     bridge.fail_set = solo  # putting the target's solo back fails
     with pytest.raises(HostChanged) as changed:
         asyncio.run(composed.run("audio.capture", bridge, params, timeout))
     result = changed.value.result
     assert (result["outcome"], result["reason"]) == ("unknown", "job_failed")
-    assert result["restoreFailed"][0]["trackId"] == solo
+    assert result["restoreFailed"][0]["ref"] == track_ref(solo)
     assert "tracks.set" in result["next"]
 
 

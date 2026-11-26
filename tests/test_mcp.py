@@ -11,7 +11,8 @@ pytestmark = pytest.mark.anyio
 
 TRACK = "12345678-1234-1234-1234-123456789abc"
 TARGET = {"trackId": TRACK, "deviceIndex": 2, "expectedDeviceName": "Polymer"}
-DEVICE = {"kind": "device", "track": {"kind": "track", "id": TRACK, "name": "Lead"}, "index": 2, "name": "Polymer"}
+TRACK_REF = {"kind": "track", "id": TRACK, "name": "Lead"}
+DEVICE = {"kind": "device", "track": TRACK_REF, "index": 2, "name": "Polymer"}
 MODULATOR = {"kind": "modulator", "device": DEVICE, "id": TRACK, "name": "LFO"}
 SET = {"target": {"kind": "parameter", "owner": DEVICE, "id": "cutoff"}, "value": 0.75}
 
@@ -126,9 +127,9 @@ async def test_unknown_action_id_preserves_host_rejection(mcp_session, host):
 
 
 async def test_absent_fields_and_explicit_nullable_fields_remain_distinct_over_mcp(mcp_session, host):
-    response = await mcp_session.call_tool("tracks.set", {"trackId": TRACK, "mute": True})
+    response = await mcp_session.call_tool("tracks.set", {"target": TRACK_REF, "mute": True})
     assert not response.is_error
-    assert host.requests[-1]["params"] == {"trackId": TRACK, "mute": True}
+    assert host.requests[-1]["params"] == {"target": TRACK_REF, "mute": True}
     response = await mcp_session.call_tool(
         "notes.edit", {**NOTE_WINDOW, "edits": [{"op": "clear", "beat": 0, "pitch": 60}]}
     )
@@ -143,9 +144,9 @@ async def test_absent_fields_and_explicit_nullable_fields_remain_distinct_over_m
         ("transport.set", {"playing": "false"}),
         ("transport.set", {"tempoBpm": 667}),
         ("transport.set", {"playing": None}),
-        ("tracks.set", {"trackId": TRACK}),
-        ("tracks.set", {"trackId": TRACK, "volumeNormalized": -1}),
-        ("tracks.create", {"type": "audio", "position": True, "name": "x"}),
+        ("tracks.set", {"target": TRACK_REF}),
+        ("tracks.set", {"target": TRACK_REF, "volume": -1}),
+        ("tracks.insert", {"type": "audio", "position": True, "name": "x"}),
         ("devices.set", {"target": DEVICE, "enabled": 1}),
         ("devices.set", {"target": DEVICE}),
         (

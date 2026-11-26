@@ -231,14 +231,14 @@ def route(args: dict[str, Any]) -> dict[str, Any]:
     return _route_restore(links, saved)
 
 
-async def playing_tracks(bridge: Any, timeout_ms: int) -> list[dict[str, str]] | None:
-    """Tracks with a playing launcher clip as [{trackId, name}] (one context.get), or None when it cannot be read."""
+async def playing_tracks(bridge: Any, timeout_ms: int) -> list[dict[str, Any]] | None:
+    """Tracks with a playing launcher clip as [{ref, name}] (one context.get), or None when it cannot be read."""
     try:
         ctx = await bridge.call("context.get", {}, timeout_ms)
     except BridgeError:
         return None
     return [
-        {"trackId": t.get("trackId", ""), "name": t.get("name", "")}
+        {"ref": t.get("ref", {}), "name": t.get("name", "")}
         for t in ctx.get("tracks") or []
         if any(s.get("playing") for s in t.get("launcherSlots") or [])
     ]
@@ -254,11 +254,10 @@ async def isolate(bridge: Any, args: dict[str, Any], timeout_ms: int, stopped: l
                 "could not read which tracks are playing (context.get failed): the recording may mix several tracks"
             ]
         }
-    others = [t for t in playing if t["trackId"] != solo]
+    others = [t for t in playing if t["ref"].get("id") != (solo or {}).get("id")]
     if stop_others and solo:
         for t in others:
-            target = {"kind": "track", "id": t["trackId"], "name": t["name"]}
-            require_success("launcher.stop", await bridge.call("launcher.stop", {"target": target}, timeout_ms))
+            require_success("launcher.stop", await bridge.call("launcher.stop", {"target": t["ref"]}, timeout_ms))
             stopped.append(t["name"])
         others = []
     if (
@@ -266,7 +265,7 @@ async def isolate(bridge: Any, args: dict[str, Any], timeout_ms: int, stopped: l
     ):  # the solo track itself may sound without a launcher clip (a Poly Grid, a held note): the real solo covers that
         raise bridge_error(
             "not_isolated",
-            f"soloTrack {solo} is not the only playing track (other tracks are playing: {[t['name'] for t in others]}); "
+            f"soloTrack {solo['name']} is not the only playing track (other tracks are playing: {[t['name'] for t in others]}); "
             "stop the others or pass stopOthers:true",
             otherTracksPlaying=[t["name"] for t in others],
         )
@@ -281,66 +280,79 @@ async def isolate(bridge: Any, args: dict[str, Any], timeout_ms: int, stopped: l
     return out
 
 
-async def read_solo_states(bridge: Any, timeout_ms: int) -> dict[str, bool]:
-    """trackId -> solo state of every track in the bank (tracks.list + tracks.get); not_ready when any state cannot be read."""
+@dataclass(frozen=True)
+class SoloStates:
+    """The track refs of the bank by track id, and each track's solo state before a capture changes any."""
+
+    refs: dict[str, dict[str, Any]]
+    solo: dict[str, bool]
+
+
+async def read_solo_states(bridge: Any, timeout_ms: int) -> SoloStates:
+    """Every track's solo state (tracks.list + tracks.get); not_ready when any state cannot be read."""
     listed = await bridge.call("tracks.list", {}, timeout_ms)
-    states: dict[str, bool] = {}
+    refs: dict[str, dict[str, Any]] = {}
+    solo: dict[str, bool] = {}
     for row in listed.get("tracks") or []:
-        tid = row.get("trackId")
-        got = await bridge.call("tracks.get", {"trackId": tid}, timeout_ms)
+        ref = row["ref"]
+        got = await bridge.call("tracks.get", {"target": ref}, timeout_ms)
         if not isinstance(got.get("solo"), bool):
             raise bridge_error(
                 "not_ready",
-                f"Cannot read the solo state of track {row.get('name') or tid}; refusing to change solos it could not restore.",
+                f"Cannot read the solo state of track {ref['name']}; refusing to change solos it could not restore.",
             )
-        states[tid] = got["solo"]
-    return states
+        refs[ref["id"]] = ref
+        solo[ref["id"]] = got["solo"]
+    return SoloStates(refs, solo)
 
 
-async def restore_solo(bridge: Any, previous: dict[str, bool], changed: list[str], timeout_ms: int) -> dict[str, Any]:
+async def restore_solo(bridge: Any, previous: SoloStates, changed: list[str], timeout_ms: int) -> dict[str, Any]:
     """Put back the solo state of every track this capture changed, in reverse order; failures are reported, not raised."""
     restored, failed = [], []
     for tid in reversed(changed):
+        ref, was = previous.refs[tid], previous.solo[tid]
         try:
-            put_back = await bridge.call("tracks.set", {"trackId": tid, "solo": previous[tid]}, timeout_ms)
+            put_back = await bridge.call("tracks.set", {"target": ref, "solo": was}, timeout_ms)
             require_success("tracks.set", put_back)
-            restored.append({"trackId": tid, "solo": previous[tid]})
+            restored.append({"ref": ref, "solo": was})
         except (BridgeError, HostChanged) as exc:
-            failed.append({"trackId": tid, "solo": previous[tid], "error": str(exc)})
+            failed.append({"ref": ref, "solo": was, "error": str(exc)})
     return {"restored": restored, **({"restoreFailed": failed} if failed else {})}
 
 
-async def solo_states(bridge: Any, solo: str, timeout_ms: int) -> dict[str, bool]:
+async def solo_states(bridge: Any, solo: dict[str, Any], timeout_ms: int) -> SoloStates:
     """Every track's solo state, refusing a solo target outside the bank; reads only."""
     previous = await read_solo_states(bridge, timeout_ms)
-    if solo not in previous:
-        raise bridge_error("target_not_found", f"soloTrack {solo} is not in the track bank (tracks.list)")
+    if solo["id"] not in previous.solo:
+        raise bridge_error("target_not_found", f"soloTrack {solo['name']} is not in the track bank (tracks.list)")
     return previous
 
 
 async def apply_solo(
-    bridge: Any, solo: str, previous: dict[str, bool], timeout_ms: int, writes: _Writes
+    bridge: Any, solo: dict[str, Any], previous: SoloStates, timeout_ms: int, writes: _Writes
 ) -> tuple[list[str], dict[str, Any]]:
     """Solo `solo` exclusively (the host has no exclusive-solo write): set it on the target and clear every other soloed track.
 
     Returns (tracks changed so far, result block); a failure part-way restores what was changed.
     """
+    target = solo["id"]
     block: dict[str, Any] = {
-        "soloed": solo,
-        "previousSolo": sorted(t for t, v in previous.items() if v),
+        "soloed": previous.refs[target],
+        "previousSolo": [previous.refs[t] for t, v in previous.solo.items() if v],
         "unsoloed": [],
     }
     changed: list[str] = []
     try:
-        for tid in [solo, *[t for t in previous if t != solo]]:  # the target first, then clear every other soloed track
-            want = tid == solo
-            if previous[tid] != want:
+        for tid in [target, *[t for t in previous.solo if t != target]]:  # the target first, then every other soloed
+            want = tid == target
+            if previous.solo[tid] != want:
                 changed.append(tid)
                 require_success(
-                    "tracks.set", await bridge.call("tracks.set", {"trackId": tid, "solo": want}, timeout_ms)
+                    "tracks.set",
+                    await bridge.call("tracks.set", {"target": previous.refs[tid], "solo": want}, timeout_ms),
                 )
-                if tid != solo:
-                    block["unsoloed"].append(tid)
+                if tid != target:
+                    block["unsoloed"].append(previous.refs[tid])
     except BaseException:
         writes.restore_failed = (await restore_solo(bridge, previous, changed, timeout_ms)).get("restoreFailed", [])
         raise
@@ -405,7 +417,7 @@ async def capture(bridge: Any, args: dict[str, Any], timeout_ms: int) -> dict[st
     check_capture_target(args["outPath"], args.get("overwrite", False), args.get("allowAudible", False))
     await require_engine(bridge, timeout_ms)
     solo = args.get("soloTrack")
-    previous_solo = await solo_states(bridge, solo, timeout_ms) if solo else {}
+    previous_solo = await solo_states(bridge, solo, timeout_ms) if solo else None
     writes = _Writes()
     try:
         return await _record(bridge, args, timeout_ms, previous_solo, writes)
@@ -432,7 +444,7 @@ class _Writes:
 
 
 async def _record(
-    bridge: Any, args: dict[str, Any], timeout_ms: int, previous_solo: dict[str, bool], writes: _Writes
+    bridge: Any, args: dict[str, Any], timeout_ms: int, previous_solo: SoloStates | None, writes: _Writes
 ) -> dict[str, Any]:
     """Isolate, solo, record and put everything back."""
     seconds, path = args["seconds"], args["outPath"]
@@ -442,7 +454,7 @@ async def _record(
     solo = args.get("soloTrack")
     changed: list[str] = []
     solo_block: dict[str, Any] = {}
-    if solo:
+    if solo and previous_solo:
         changed, solo_block = await apply_solo(bridge, solo, previous_solo, timeout_ms, writes)
     from_start = args.get("fromStart", True)
     transport_started = False
@@ -490,7 +502,7 @@ async def _record(
         for src, dst in created:
             with contextlib.suppress(BridgeError):
                 run(["pw-link", "-d", src, dst])
-        if solo:
+        if previous_solo:
             solo_block.update(await restore_solo(bridge, previous_solo, changed, timeout_ms))
             writes.restore_failed = solo_block.get("restoreFailed", [])
     stats = await asyncio.to_thread(analysis.analyze, {"path": path, "mode": "level", "windowSeconds": 60})

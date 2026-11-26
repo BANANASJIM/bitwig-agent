@@ -30,6 +30,8 @@ public final class DisplayScaleTest {
         eq(DisplayScale.parse(DisplayScale.Kind.PERCENT, "50% left"), -50, "word left");
         eq(DisplayScale.parse(DisplayScale.Kind.PERCENT, "Center"), 0, "center");
         eq(DisplayScale.parse(DisplayScale.Kind.PERCENT, "C"), 0, "C");
+        eq(DisplayScale.parse(DisplayScale.Kind.PERCENT, "0.00 %"), 0, "host centre");
+        eq(DisplayScale.parse(DisplayScale.Kind.PERCENT, "-25.0 %"), -25, "host left");
         eq(DisplayScale.parse(DisplayScale.Kind.PERCENT, "-30%"), -30, "signed percent");
         eq(DisplayScale.parse(DisplayScale.Kind.PERCENT, "100% R"), 100, "full right");
         nan(DisplayScale.parse(DisplayScale.Kind.PERCENT, "25"), "bare number is ambiguous");

@@ -4,28 +4,27 @@ import com.bitwig.extension.callback.IntegerValueChangedCallback;
 import com.bitwig.extension.controller.api.Track;
 import com.google.gson.*;
 import java.util.*;
-import java.util.regex.Pattern;
 
 /**
  * Track VU meters over a bounded window, from the public Channel.addVuMeterObserver (left/right, peak and RMS).
  * The API publishes the 0..RANGE-1 step count but no dB mapping, so values are reported as steps, never as dB.
  */
 final class MeterModule implements HostModule {
-    static final Set<String> METHODS = Set.of("tracks.meters");
+    static final Set<String> METHODS = Set.of("meters.get");
     static final int RANGE = 128, MIN_WINDOW_MS = 50, MAX_WINDOW_MS = 5000;
-    private static final Pattern UUID =
-            Pattern.compile("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}");
     private final Scheduler scheduler;
     private final TrackWindow window;
+    private final TrackRefs trackRefs;
     private final TransportSafety transportSafety;
     // [track][channel] last callback value: observers only fire on change, so these are the standing levels.
     private final int[][] peak = new int[HostLimits.TRACKS][2], rms = new int[HostLimits.TRACKS][2];
     private final List<Window> windows = new ArrayList<>();
     private String unavailable;
 
-    MeterModule(Scheduler scheduler, TrackWindow window, TransportSafety transportSafety) {
+    MeterModule(Scheduler scheduler, TrackWindow window, TrackRefs trackRefs, TransportSafety transportSafety) {
         this.scheduler = scheduler;
         this.window = window;
+        this.trackRefs = trackRefs;
         this.transportSafety = transportSafety;
         for (int t = 0; t < HostLimits.TRACKS; t++) {
             Track track = window.at(t);
@@ -58,40 +57,27 @@ final class MeterModule implements HostModule {
         validateParams(method, p);
     }
 
+    /** What the schema cannot say: each track is metered once. */
     static void validateParams(String method, JsonObject p) {
-        if (!method.equals("tracks.meters")) throw Errors.notApplied(Reason.UNKNOWN_METHOD, "Unknown meter method.");
-        Params.fields(p, Set.of("trackIds", "windowMs"), Set.of());
-        Params.integer(p, "windowMs", MIN_WINDOW_MS, MAX_WINDOW_MS);
-        JsonElement ids = p.get("trackIds");
-        if (!ids.isJsonArray()
-                || ids.getAsJsonArray().size() < 1
-                || ids.getAsJsonArray().size() > HostLimits.TRACKS)
-            throw Errors.notApplied(
-                    Reason.INVALID_PARAMS, "trackIds must hold 1.." + HostLimits.TRACKS + " track UUIDs.");
         Set<String> seen = new HashSet<>();
-        for (JsonElement id : ids.getAsJsonArray()) {
-            if (!id.isJsonPrimitive()
-                    || !id.getAsJsonPrimitive().isString()
-                    || !UUID.matcher(id.getAsString()).matches())
-                throw Errors.notApplied(Reason.INVALID_PARAMS, "trackIds entries must be canonical UUIDs.");
-            if (!seen.add(id.getAsString().toLowerCase(Locale.ROOT)))
-                throw Errors.notApplied(Reason.INVALID_PARAMS, "trackIds must be unique.");
-        }
+        for (JsonElement target : p.getAsJsonArray("targets"))
+            if (!seen.add(target.getAsJsonObject().get("id").getAsString().toLowerCase(Locale.ROOT)))
+                throw Errors.invalid("targets must be unique.");
     }
 
     private static final class Window {
         final HostOperation op;
         final int[] slots;
-        final String[] ids;
+        final JsonObject[] refs;
         final int[][] peakMax = new int[HostLimits.TRACKS][2], rmsMax = new int[HostLimits.TRACKS][2];
         final long[][] rmsSum = new long[HostLimits.TRACKS][2];
         final int[] callbacks = new int[HostLimits.TRACKS];
         int ticks;
 
-        Window(HostOperation op, int[] slots, String[] ids) {
+        Window(HostOperation op, int[] slots, JsonObject[] refs) {
             this.op = op;
             this.slots = slots;
-            this.ids = ids;
+            this.refs = refs;
         }
 
         void add(int t, int c, boolean isPeak, int value) {
@@ -110,12 +96,12 @@ final class MeterModule implements HostModule {
     public void dispatch(HostOperation op, String method, JsonObject p) {
         scheduler.check(op);
         if (unavailable != null) throw Errors.notApplied(Reason.UNSUPPORTED_SCOPE, unavailable);
-        JsonArray requested = p.getAsJsonArray("trackIds");
+        JsonArray requested = p.getAsJsonArray("targets");
         int[] slots = new int[requested.size()];
-        String[] ids = new String[requested.size()];
+        JsonObject[] refs = new JsonObject[requested.size()];
         for (int i = 0; i < slots.length; i++) {
-            ids[i] = requested.get(i).getAsString();
-            slots[i] = window.trackSlot(ids[i]);
+            refs[i] = requested.get(i).getAsJsonObject();
+            slots[i] = trackRefs.resolve(refs[i], false);
         }
         int windowMs = p.get("windowMs").getAsInt();
         long end = scheduler.now() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(windowMs);
@@ -123,7 +109,7 @@ final class MeterModule implements HostModule {
             throw Errors.notApplied(
                     Reason.INVALID_PARAMS, "timeoutMs is too short for windowMs; allow windowMs plus about 200 ms.");
         windows.removeIf(old -> old.op.result.isDone());
-        Window w = new Window(op, slots, ids);
+        Window w = new Window(op, slots, refs);
         // Standing levels count: a steady meter fires no callback during the window.
         for (int t : slots)
             for (int c = 0; c < 2; c++) {
@@ -151,8 +137,8 @@ final class MeterModule implements HostModule {
         for (int i = 0; i < w.slots.length; i++) {
             int t = w.slots[i];
             JsonObject row = new JsonObject();
-            row.addProperty("trackId", w.ids[i]);
-            boolean same = window.trackMatches(w.ids[i], window.at(t));
+            boolean same = window.trackMatches(w.refs[i].get("id").getAsString(), window.at(t));
+            row.add("ref", same ? trackRefs.ref(t) : w.refs[i]);
             row.addProperty("targetUnchanged", same);
             if (same) {
                 row.add("peakMax", pair(w.peakMax[t]));
