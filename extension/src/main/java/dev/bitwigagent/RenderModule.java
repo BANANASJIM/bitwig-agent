@@ -3,6 +3,7 @@ package dev.bitwigagent;
 import com.bitwig.extension.controller.api.Project;
 import com.bitwig.extension.controller.api.Track;
 import com.google.gson.*;
+import dev.bitwigagent.core.Refs;
 import java.nio.file.Path;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
@@ -16,9 +17,7 @@ final class RenderModule implements HostModule, JobsModule.Source {
     static final String EXPORT = "export.audio", BOUNCE = "tracks.bounce";
     static final Set<String> METHODS = Set.of(EXPORT, BOUNCE);
     static final String MASTER = "master";
-    static final double MAX_BEATS = 4194304, MAX_LENGTH = 65536, EPS = 1e-6;
-    static final Set<String> EXPORT_TAPS = Set.of("post_fader", "pre_fader"),
-            BOUNCE_TAPS = Set.of("pre_fx", "pre_fader", "post_fader");
+    static final double MAX_LENGTH = 65536, EPS = 1e-6;
     /** After the latch, how long the bounce's undoable content replacement may take to show in the lane. */
     long applyGraceNanos = TimeUnit.SECONDS.toNanos(2);
 
@@ -254,7 +253,6 @@ final class RenderModule implements HostModule, JobsModule.Source {
                 return;
             }
             case BOUNCE:
-                if (!p.get("inPlace").getAsBoolean()) throw Errors.invalid("inPlace must be true.");
                 distinct(p.getAsJsonArray("targets"));
                 range(p);
                 return;
@@ -346,7 +344,7 @@ final class RenderModule implements HostModule, JobsModule.Source {
         for (int i = 0; i < slots.length; i++) {
             JsonElement item = requested.get(i);
             boolean master = master(item);
-            slots[i] = master ? -1 : trackRefs.resolve(item.getAsJsonObject(), true);
+            slots[i] = master ? -1 : trackRefs.resolve(item.getAsJsonObject(), !export);
             ids.add(id(item));
             sources.add(master ? item : trackRefs.ref(slots[i]));
             proxies.add(master ? null : window.bank().getItemAt(slots[i]));
@@ -531,7 +529,15 @@ final class RenderModule implements HostModule, JobsModule.Source {
                 changed |= trackChanged;
                 if (added == null) problem = trackChanged ? "no_new_audio_clip_at_requested_range" : "lane_unchanged";
                 else if (inRange != 1) problem = "range_still_overlapped_by_another_clip";
-                if (added != null) row.add("clip", added);
+                if (added != null) {
+                    row.add("clip", added);
+                    row.add(
+                            "clipRef",
+                            Refs.arrangerClip(
+                                    current.sources.get(i).getAsJsonObject(),
+                                    added.get("startBeats").getAsDouble(),
+                                    str(added, "name") == null ? "" : str(added, "name")));
+                }
                 if (problem != null) {
                     row.addProperty("problem", problem);
                     verified = false;

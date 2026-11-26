@@ -106,7 +106,7 @@ public final class RenderModuleTest {
     }
 
     @Test
-    void aTrackRefThatNoLongerMatchesIsRefusedWithTheCurrentOne() throws IOException {
+    void aRenamedTrackRefStopsABounceButNotAnExport() throws IOException {
         Sim sim = new Sim();
         JsonObject renamed = bounce(A);
         renamed.getAsJsonArray("targets").get(0).getAsJsonObject().addProperty("name", "Old name");
@@ -115,10 +115,14 @@ public final class RenderModuleTest {
         assertEquals(ref(A), assertRpcError("target_changed", op).current, "the error carries the current ref");
         JsonObject export = export(sim.dir.toString(), "master", A);
         export.getAsJsonArray("sources").get(1).getAsJsonObject().addProperty("name", "Old name");
+        assertTrue(sim.dispatches == 0, "a stale ref is refused before dispatch");
         op = sim.start("export.audio", export, 5000);
         sim.drainUntil(op);
-        assertRpcError("target_changed", op);
-        assertTrue(sim.dispatches == 0, "a stale ref is refused before dispatch");
+        JsonObject result = assertOutcome("applied", op);
+        assertEquals(
+                ref(A),
+                result.getAsJsonArray("files").get(1).getAsJsonObject().get("source"),
+                "an export source is identified by its id: a renamed track still renders, and the row has the current ref");
     }
 
     @Test
@@ -421,6 +425,10 @@ public final class RenderModuleTest {
         assertTrue(sim.dispatches == 1 && sim.tap.equals("pre_fader"), "one bounce dispatch with the requested tap");
         JsonObject track = result.getAsJsonArray("tracks").get(0).getAsJsonObject();
         assertEquals(ref(A), track.get("track"), "the row names the track by its ref");
+        assertEquals(
+                Refs.arrangerClip(ref(A), 0, "Bounce"),
+                track.get("clipRef"),
+                "the new clip is named by its arranger ref");
         assertTrue(
                 track.get("trackTypeBefore").getAsString().equals("Instrument")
                         && track.get("trackTypeAfter").getAsString().equals("Hybrid")

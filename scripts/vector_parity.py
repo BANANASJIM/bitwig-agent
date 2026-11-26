@@ -34,16 +34,6 @@ SAMPLE_UUID = "12345678-1234-1234-1234-123456789abc"
 # for cross-field rules the two sides legitimately express differently.
 SKIPS: dict[tuple[str, str, str], str] = {
     (
-        "export.audio",
-        "sources.0.id",
-        "all",
-    ): 'a source is a track ref or "master": the extension names the union, not the field; the same ref fields are proven on tracks.bounce.targets',
-    (
-        "export.audio",
-        "sources.0.name",
-        "all",
-    ): 'a source is a track ref or "master": the extension names the union, not the field; the same ref fields are proven on tracks.bounce.targets',
-    (
         "tracks.bounce",
         "targets.0.name",
         "reject",
@@ -281,6 +271,8 @@ def vary(item, i):
 def generate(schema, defs):  # noqa: PLR0911
     """A minimal valid value for a schema node (cross-field rules are not modelled)."""
     schema = variants(schema, defs)[0]
+    if "const" in schema:
+        return schema["const"]
     if "enum" in schema:
         return schema["enum"][0]
     kind = schema.get("type")

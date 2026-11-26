@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Annotated, Literal, Self
 
-from pydantic import Field, model_validator
+from pydantic import BeforeValidator, Field, model_validator
 
 from bitwig_agent.protocol.annotations import EDIT
 from bitwig_agent.protocol.base import (
@@ -75,12 +75,18 @@ class ExportAudioArgs(RenderRangeArgs):
         return self
 
 
+def only_true(value: object) -> object:
+    if value is not True:
+        raise ValueError("must be true")
+    return value
+
+
 class TracksBounceArgs(RenderRangeArgs):
     targets: Annotated[list[TrackRef], Field(min_length=1, max_length=TRACK_WINDOW)] = Field(
         description="Audio/instrument track refs from tracks.list whose main arranger lane gets the bounced audio."
     )
     tap: Literal["pre_fx", "pre_fader", "post_fader"]
-    inPlace: bool = Field(
+    inPlace: Annotated[Literal[True], BeforeValidator(only_true)] = Field(
         default=True, description="Only true: the bounced audio replaces the range in the track's own lane."
     )
 
@@ -88,8 +94,6 @@ class TracksBounceArgs(RenderRangeArgs):
     def validate_distinct(self) -> Self:
         if len({target.id.lower() for target in self.targets}) != len(self.targets):
             raise ValueError("targets must be distinct")
-        if not self.inPlace:
-            raise ValueError("inPlace must be true")
         return self
 
 
@@ -99,7 +103,7 @@ EXPORT_AUDIO_DESCRIPTION = (
     + " ms; a longer render returns outcome unknown, reason deadline and job: follow it with jobs.get; further renders are busy until it completes or you ack its job hold after inspecting. Never retry unknown."
 )
 TRACKS_BOUNCE_DESCRIPTION = (
-    "Bounce a beat range of audio/instrument tracks in place (6.1.4-gated; Bitwig's Bounce in Place shows no dialog): each track's main arranger lane gets one audio clip over [startBeats, endBeats) replacing what was there, in one undoable action; the audio lives in the project's managed audio folder. Same refusals as export.audio before dispatch (group tracks: unsupported_scope). outcome applied only after the job's completion latch and arranger readback of every track: exactly one new audio clip at the range and nothing else overlapping it (the new clip is in tracks[].clip, the track in tracks[].track). An instrument track becomes Hybrid (tracks[].trackTypeBefore/trackTypeAfter, warning); Undo reverts that, deleting the clip does not. Completed with no lane changed: job_failed (an error, nothing changed); any other readback difference: outcome unknown, reason readback_mismatch, and further bounces are refused until you inspect arranger.list and ack the hold. The call waits up to "
+    "Bounce a beat range of audio/instrument tracks in place (6.1.4-gated; Bitwig's Bounce in Place shows no dialog): each track's main arranger lane gets one audio clip over [startBeats, endBeats) replacing what was there, in one undoable action; the audio lives in the project's managed audio folder. Same refusals as export.audio before dispatch (group tracks: unsupported_scope). outcome applied only after the job's completion latch and arranger readback of every track: exactly one new audio clip at the range and nothing else overlapping it (the new clip is in tracks[].clip, its ref in tracks[].clipRef, the track in tracks[].track). An instrument track becomes Hybrid (tracks[].trackTypeBefore/trackTypeAfter, warning); Undo reverts that, deleting the clip does not. Completed with no lane changed: job_failed (an error, nothing changed); any other readback difference: outcome unknown, reason readback_mismatch, and further bounces are refused until you inspect arranger.list and ack the hold. The call waits up to "
     + str(LONG_DEFAULT_TIMEOUT_MS)
     + " ms; a longer job returns outcome unknown, reason deadline and job: follow it with jobs.get, which also verifies it. Never retry unknown; undo with the Undo action."
 )
