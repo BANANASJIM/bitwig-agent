@@ -309,6 +309,7 @@ public final class RpcServer implements AutoCloseable {
         }
     }
 
+    /** Returns once the port is released: the blocked accept call holds the listening socket until it returns. */
     @Override
     public synchronized void close() {
         if (closed) return;
@@ -318,6 +319,14 @@ public final class RpcServer implements AutoCloseable {
                 listener.close();
             } catch (IOException ignored) {
             }
+        boolean interrupted = false;
+        while (acceptThread != null && acceptThread.isAlive())
+            try {
+                acceptThread.join();
+            } catch (InterruptedException e) {
+                interrupted = true;
+            }
+        if (interrupted) Thread.currentThread().interrupt();
         for (Socket socket : clients) closeSocket(socket);
         clients.clear();
         workers.shutdownNow();
