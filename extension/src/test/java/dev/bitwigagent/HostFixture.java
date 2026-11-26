@@ -315,8 +315,32 @@ final class HostFixture {
         }
     }
 
-    /** Track 0's first root device, its track carrying {@code track}: the Source a native-reader fake stands behind. */
-    static DeviceSources.Source rootSource(UUID track) {
+    /** One simulated window lent to native-reader fakes, one track per UUID. */
+    private static final class Roots {
+        final HostFixture host = new HostFixture();
+        final Map<UUID, DeviceSources.Source> byTrack = new HashMap<>();
+    }
+
+    private static java.lang.ref.SoftReference<Roots> roots = new java.lang.ref.SoftReference<>(null);
+
+    /**
+     * The first root device of a track carrying {@code track}: the Source a native-reader fake stands behind. Callers
+     * share one window, softly held: each holds tens of thousands of proxies, so the suite keeps at most one it does
+     * not use. A test that changes the Source takes a {@link #freshRootSource} instead.
+     */
+    static synchronized DeviceSources.Source rootSource(UUID track) {
+        Roots shared = roots.get();
+        if (shared == null) roots = new java.lang.ref.SoftReference<>(shared = new Roots());
+        Roots window = shared;
+        return window.byTrack.computeIfAbsent(track, id -> {
+            int slot = window.byTrack.size();
+            if (slot >= DETAILED_TRACKS) throw new IllegalStateException("more shared tracks than detailed slots");
+            window.host.tracks[slot].child("channelId").emit(id.toString());
+            return window.host.services.sources.roots[slot][0];
+        });
+    }
+
+    static DeviceSources.Source freshRootSource(UUID track) {
         HostFixture f = withoutServices();
         f.tracks[0].child("channelId").data = track.toString();
         return new TestServices(f.host.proxy(ControllerHost.class), f.tasks::now).sources.roots[0][0];

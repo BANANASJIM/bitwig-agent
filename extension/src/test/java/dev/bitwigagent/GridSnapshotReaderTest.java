@@ -511,6 +511,7 @@ public final class GridSnapshotReaderTest {
                 "catalog is independent of native device ownership");
         Fixture absentRequest = new Fixture();
         assertRpcError("native_unavailable", () -> {
+            absentRequest.source = HostFixture.freshRootSource(TRACK_ID);
             absentRequest.source.track.id = null;
             absentRequest.reader.snapshot(absentRequest.source, 0, 64, true, () -> {});
         });
@@ -1277,6 +1278,7 @@ public final class GridSnapshotReaderTest {
         Fixture f = new Fixture();
         Node floating = f.parameter(FLOAT, f.first);
         f.first.put(CHILDREN, List.of(floating));
+        f.source = HostFixture.freshRootSource(TRACK_ID);
         GridSnapshotReader.NativeTarget target = f.reader.target(f.source);
         f.source.track.id = new UUID(9, 9).toString();
         assertRpcError("stale_context", () -> f.reader.guardTarget(target));
@@ -2323,6 +2325,7 @@ public final class GridSnapshotReaderTest {
         project.context.values.put(NativeReadContext.Field.PROJECT, new Object());
         assertRpcError("stale_context", project.start(null));
         ModuleWriterFixture wrongTrack = new ModuleWriterFixture();
+        wrongTrack.model.source = HostFixture.freshRootSource(TRACK_ID);
         wrongTrack.model.source.track.id = new UUID(99, 99).toString();
         assertRpcError("stale_context", wrongTrack.start(null));
         ModuleWriterFixture moved = new ModuleWriterFixture();
@@ -3625,7 +3628,7 @@ public final class GridSnapshotReaderTest {
     static final class Fixture implements GridSnapshotReader.Access {
         final GridSnapshotReader reader = new GridSnapshotReader(this);
         final Node proxy = new Node(), device = new Node(DEVICE), graph = new Node();
-        final DeviceSources.Source source = HostFixture.rootSource(TRACK_ID);
+        DeviceSources.Source source = HostFixture.rootSource(TRACK_ID);
         final Node owner = new Node(TRACK).put(TRACK_UUID, TRACK_ID);
         final Map<UUID, Node> types = new HashMap<>();
         final Set<GridSnapshotReader.Metadata> unavailable = EnumSet.noneOf(GridSnapshotReader.Metadata.class);
