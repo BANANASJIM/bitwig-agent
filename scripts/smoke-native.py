@@ -225,7 +225,7 @@ class NativeTarget:
 async def probe(target, report):  # noqa: PLR0915
     env = dict(os.environ, BITWIG_AGENT_PORT=str(target.config["port"]))
     server = StdioServerParameters(
-        command=sys.executable, args=["-c", "from bitwig_agent.server import main; main()"], env=env
+        command=sys.executable, args=["-c", "from bitwig_agent.frontends.mcp import main; main()"], env=env
     )
     calls_path = target.artifacts / "calls.jsonl"
     raw_results_path = target.artifacts / "mcp-results.jsonl"

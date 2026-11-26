@@ -3,7 +3,7 @@
 from bitwig_agent.protocol.base import MAX_TIMEOUT_MS, ToolSpec
 from bitwig_agent.protocol.bundle import export_bundle
 from bitwig_agent.protocol.messages import invalid_params_message, unknown_arguments_message
-from bitwig_agent.protocol.registry import CLIENT_SIDE, TOOLS, validate_call
+from bitwig_agent.protocol.registry import CLIENT_SIDE, TOOLS, unknown_method_message, validate_call
 
 __all__ = [
     "CLIENT_SIDE",
@@ -13,5 +13,6 @@ __all__ = [
     "export_bundle",
     "invalid_params_message",
     "unknown_arguments_message",
+    "unknown_method_message",
     "validate_call",
 ]

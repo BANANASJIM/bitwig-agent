@@ -4,9 +4,10 @@ import os
 import sys
 
 import pytest
+from fakes import parse_arguments
 from pydantic import ValidationError
 
-from bitwig_agent.cli import execute, main, parse_arguments, parser
+from bitwig_agent.frontends.cli import execute, main, parser
 from bitwig_agent.protocol import TOOLS, invalid_params_message, validate_call
 from bitwig_agent.protocol.base import TARGET, TRACK
 from bitwig_agent.protocol.launcher import NOTE_WINDOW
@@ -374,7 +375,7 @@ def test_main_prints_one_exact_json_envelope(capsys, monkeypatch):
 
 
 async def test_offline_entrypoint_and_client_do_not_import_mcp():
-    script = "import sys; import bitwig_agent.cli; import bitwig_agent.client; assert not any(n == 'mcp' or n.startswith('mcp.') for n in sys.modules)"
+    script = "import sys; import bitwig_agent.frontends.cli; import bitwig_agent.client; assert not any(n == 'mcp' or n.startswith('mcp.') for n in sys.modules)"
     process = await asyncio.create_subprocess_exec(
         sys.executable, "-c", script, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
     )
@@ -384,7 +385,7 @@ async def test_offline_entrypoint_and_client_do_not_import_mcp():
     process = await asyncio.create_subprocess_exec(
         sys.executable,
         "-m",
-        "bitwig_agent.cli",
+        "bitwig_agent.frontends.cli",
         "describe",
         "notes.edit",
         env={**os.environ, "BITWIG_AGENT_PORT": "bad"},

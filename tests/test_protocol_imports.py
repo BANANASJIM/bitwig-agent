@@ -25,3 +25,13 @@ def test_protocol_imports_only_stdlib_pydantic_and_itself(path):
         own = name == OWN or name.startswith(f"{OWN}.")
         top = name.split(".")[0]
         assert own or top in ALLOWED_THIRD_PARTY or top in sys.stdlib_module_names, f"{path.name} imports {name}"
+
+
+FRONTENDS = PROTOCOL.parent / "frontends"
+
+
+@pytest.mark.parametrize("path", sorted(FRONTENDS.glob("[!_]*.py")), ids=lambda p: p.name)
+def test_frontends_import_only_core_among_internal_modules(path):
+    for name in imported_modules(path):
+        if name.split(".")[0] == "bitwig_agent":
+            assert name == "bitwig_agent.core" or name.startswith("bitwig_agent.core."), f"{path.name} imports {name}"

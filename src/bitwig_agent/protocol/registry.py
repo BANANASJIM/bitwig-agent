@@ -170,8 +170,12 @@ TOOLS: dict[str, ToolSpec] = _collect()
 CLIENT_SIDE = frozenset(name for name, spec in TOOLS.items() if not spec.host)
 
 
+def unknown_method_message(method: str) -> str:
+    return f"Unknown method: {method}. Use list or describe <method> offline."
+
+
 def validate_call(method: str, arguments: dict[str, Any]) -> tuple[dict[str, Any], int]:
     if method not in TOOLS:
-        raise ValueError(f"Unknown method: {method}. Use list or describe <method> offline.")
+        raise ValueError(unknown_method_message(method))
     args: Any = TOOLS[method].model.model_validate(arguments)
     return args.model_dump(exclude={"timeoutMs"}, exclude_unset=True, by_alias=True), args.timeoutMs

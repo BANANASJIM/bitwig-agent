@@ -8,17 +8,15 @@ import json
 import sys
 from typing import Any, NoReturn
 
-from bitwig_agent.client import BridgeClient, configured_port, load_json
-from bitwig_agent.client_side import run as run_client_side
-from bitwig_agent.errors import BridgeError
-from bitwig_agent.protocol import CLIENT_SIDE, TOOLS, invalid_params_message, unknown_arguments_message, validate_call
+from bitwig_agent.core import views
+from bitwig_agent.core.invoke import Error, decode, invalid_params, invoke
 
 
 def load_file(value: str) -> Any:
     """Strict JSON from '@path'."""
     try:
         with open(value[1:], encoding="utf-8") as handle:
-            return load_json(handle.read())
+            return decode(handle.read())
     except OSError as exc:
         raise ValueError(f"Cannot read {value[1:]}: {exc.strerror}") from exc
 
@@ -65,23 +63,21 @@ def help_payload() -> dict[str, Any]:
             "1": "host/transport error",
             "2": "invalid arguments/configuration; not dispatched",
         },
-        "methods": list(TOOLS),
+        "methods": views.names(),
     }
 
 
 def parse_arguments(  # noqa: C901, PLR0912
     method: str, pairs: list[str], raw: str | None, timeout_ms: int | None
-) -> tuple[dict[str, Any], int]:
-    if method not in TOOLS:
-        raise ValueError(f"Unknown method: {method}. Use list or describe <method> offline.")
+) -> dict[str, Any]:
+    types = views.field_types(method)
     if raw is not None:
         if pairs:
             raise ValueError("--params cannot be mixed with key=value arguments")
-        values = load_file(raw) if raw.startswith("@") else load_json(raw)
+        values = load_file(raw) if raw.startswith("@") else decode(raw)
         if not isinstance(values, dict):
             raise ValueError("--params must be a JSON object")
     else:
-        properties = TOOLS[method].model.model_json_schema()["properties"]
         values = {}
         for pair in pairs:
             key, separator, value = pair.partition("=")
@@ -89,25 +85,40 @@ def parse_arguments(  # noqa: C901, PLR0912
                 raise ValueError(f"Expected key=value, got {pair!r}")
             if key in values:
                 raise ValueError(f"Duplicate argument: {key}")
-            if key == "spec" and method in CLIENT_SIDE and value.startswith("@"):
+            if key == "spec" and views.is_composed(method) and value.startswith("@"):
                 spec = load_file(value)
                 if not isinstance(spec, dict) or set(spec) & set(values):
                     raise ValueError("spec must be a JSON object whose fields are not also given as key=value")
                 values.update(spec)
                 continue
-            if key not in properties:
-                raise ValueError(unknown_arguments_message(method, [key]))
-            if properties[key].get("type") == "string":
-                values[key] = load_json(value) if value.startswith('"') else value
+            if key not in types:
+                raise ValueError(views.unknown_field_message(method, key))
+            if types[key] == "string":
+                values[key] = decode(value) if value.startswith('"') else value
             elif value.startswith("@"):
                 values[key] = load_file(value)
             else:
-                values[key] = load_json(value)
+                values[key] = decode(value)
     if timeout_ms is not None:
         if "timeoutMs" in values:
             raise ValueError("Specify timeout once: timeoutMs or --timeout-ms")
         values["timeoutMs"] = timeout_ms
-    return validate_call(method, values)
+    return values
+
+
+def discover(command: str, arguments: list[str]) -> dict[str, Any]:
+    if command == "list":
+        if len(arguments) > 1:
+            raise ValueError("Usage: list [domain]")
+        entries = views.index(arguments[0] + "." if arguments else "")
+        if not entries:
+            raise ValueError(f"Unknown domain: {arguments[0]}")
+        return {"methods": entries}
+    if command == "help" and not arguments:
+        return help_payload()
+    if len(arguments) != 1 or not views.exists(arguments[0]):
+        raise ValueError("Usage: describe <known-method> (use list to discover methods)")
+    return views.method(arguments[0])
 
 
 async def execute(argv: list[str]) -> tuple[dict[str, Any], int]:
@@ -123,42 +134,13 @@ async def execute(argv: list[str]) -> tuple[dict[str, Any], int]:
         if command in {"help", "list", "describe"}:
             if args.params is not None or args.timeout_ms is not None:
                 raise ValueError("Offline discovery does not accept --params or --timeout-ms")
-            if command == "list":
-                if len(arguments) > 1:
-                    raise ValueError("Usage: list [domain]")
-                prefix = arguments[0] + "." if arguments else ""
-                entries = {
-                    name: {"description": spec.description, "readOnly": spec.read_only}
-                    for name, spec in TOOLS.items()
-                    if not prefix or name.startswith(prefix)
-                }
-                if not entries:
-                    raise ValueError(f"Unknown domain: {arguments[0]}")
-                return {"result": {"methods": entries}}, 0
-            if command == "help" and not arguments:
-                return {"result": help_payload()}, 0
-            if len(arguments) != 1 or arguments[0] not in TOOLS:
-                raise ValueError("Usage: describe <known-method> (use list to discover methods)")
-            name = arguments[0]
-            return {"result": {"method": name, **TOOLS[name].describe()}}, 0
-        params, timeout_ms = parse_arguments(command, arguments, args.params, args.timeout_ms)
-        client = BridgeClient(configured_port())
-        result = await (
-            run_client_side(command, client, params, timeout_ms)
-            if command in CLIENT_SIDE
-            else client.call(command, params, timeout_ms)
-        )
-        return {"result": result}, 0
-    except BridgeError as exc:
-        return {"error": exc.error}, 1
+            return {"result": discover(command, arguments)}, 0
+        envelope = await invoke(command, parse_arguments(command, arguments, args.params, args.timeout_ms))
     except (ValueError, TypeError, RecursionError) as exc:
-        return {
-            "error": {
-                "code": "invalid_params",
-                "message": invalid_params_message(command, exc),
-                "outcome": "not_dispatched",
-            }
-        }, 2
+        envelope = invalid_params(command, exc)
+    if isinstance(envelope, Error):
+        return envelope.payload, 2 if envelope.usage else 1
+    return envelope.payload, 0
 
 
 def main(argv: list[str] | None = None) -> int:

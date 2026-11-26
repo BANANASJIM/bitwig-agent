@@ -6,8 +6,8 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from bitwig_agent import client_side
 from bitwig_agent.client import MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, BridgeClient, configured_port, package_version
+from bitwig_agent.core import composed
 from bitwig_agent.errors import BridgeError
 from bitwig_agent.protocol import CLIENT_SIDE, TOOLS, validate_call
 from bitwig_agent.protocol.parameters import SetArgs
@@ -205,4 +205,4 @@ async def test_oversized_grid_get_response_says_to_lower_module_limit(host):
 
 
 def test_client_side_set_matches_handlers():
-    assert frozenset(client_side.HANDLERS) == CLIENT_SIDE
+    assert frozenset(composed.HANDLERS) == CLIENT_SIDE
