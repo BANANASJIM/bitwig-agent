@@ -32,7 +32,6 @@ class Scale:
     suffixes: dict[str, Callable[[float], float]]  # display unit suffix (lower case) -> base value
     to_raw: Callable[[float], float]
     from_raw: Callable[[float], float]
-    client: bool = True  # False: the host's own display write already matches this scale
     example: str = ""  # a display write to suggest when a raw value was written to this non-linear scale
 
 
@@ -99,7 +98,6 @@ SCALES = {
             {"hz": _ident, "khz": lambda n: n * 1000},
             lambda f: 69 + 12 * math.log2(f / 440) if f > 0 else math.nan,
             lambda r: 440 * 2 ** ((r - 69) / 12),
-            client=False,
             example='{"display": "800 Hz"}',
         ),
     )
@@ -208,7 +206,7 @@ _add(
         "midi_pitch_hz",
         "verified",
         ((60.0, "262 Hz"), (96.0, "2.09 kHz"), (102.8, "3.10 kHz")),
-        "the host's own Hz display write already handles this",
+        "raw is a MIDI note number; display writes are converted client-side",
     ),
 )
 _add(
@@ -320,7 +318,7 @@ def effective(scale: Scale, raw: float) -> str:
 
 def is_client(type_name: str | None, pid: str, context: dict[str, Any] | None = None) -> bool:
     found = scale_for(type_name, pid, context)
-    return bool(found and found[1].client)
+    return found is not None
 
 
 def parse(scale: Scale, text: str | None) -> tuple[float, float, float] | None:
@@ -373,7 +371,7 @@ def describe(type_name: str, pid: str) -> dict[str, Any] | None:
         units = sorted({u for s in entry.scale["options"].values() for u in SCALES[s].suffixes})
     else:
         scale = SCALES[entry.scale]
-        block = {"scale": scale.name, "formula": scale.formula, "displayWrites": scale.client or "host"}
+        block = {"scale": scale.name, "formula": scale.formula, "displayWrites": True}
         units = sorted(scale.suffixes)
     shown = {"db": "dB", "hz": "Hz", "khz": "kHz"}
     block.update(

@@ -1,5 +1,7 @@
 """Help topics: guidance that spans methods; each method's own long text is its doc."""
 
+from bitwig_agent.protocol.recipes import RECIPES
+
 LOOP = (
     "Discover with status and tracks.list; indices are zero-based; use exact discovered targets. "
     "Every write returns outcome: applied, already_matched, sent (dispatched, nothing to observe), "
@@ -64,4 +66,11 @@ VALUES = (
     "writes in order and stops at the first entry that is neither applied, already_matched nor sent."
 )
 
-TOPICS: dict[str, str] = {"loop": LOOP, "outcomes": OUTCOMES, "recovery": RECOVERY, "refs": REFS, "values": VALUES}
+TOPICS: dict[str, str] = {
+    "loop": LOOP,
+    "outcomes": OUTCOMES,
+    "recovery": RECOVERY,
+    "refs": REFS,
+    "values": VALUES,
+    "recipes": RECIPES,
+}

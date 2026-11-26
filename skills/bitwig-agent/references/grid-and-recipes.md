@@ -5,12 +5,12 @@ Spec syntax, value forms, units and limits are in `bitwig-agent help grid.apply`
 ## Start here
 
 1. **Preset first if one fits.** `presets search`, then the part workflow in [midi-and-clips](midi-and-clips.md#make-a-new-part). Finish a small instrument-and-notes loop before researching a custom Grid graph.
-2. **Otherwise build a Grid instrument.** `tracks insert` an instrument track, `devices insert` the Poly Grid whose path `devices catalog` lists, then write the patch with `grid apply --dryRun` and apply it for real once the plan reads right.
+2. **Otherwise build a Grid instrument.** `tracks insert` an instrument track, `devices insert` the Poly Grid whose path `devices catalog` lists, then apply the subtractive bass spec from `bitwig-agent help recipes` (edit its names, values and cables) with `grid apply`; its `pruneAll` replaces the new device's whole graph, so use it only on a device you just inserted.
 
 ## Work loop
 
 1. **Read the docs before using an unfamiliar module.** `bitwig-agent grid describe` gives Bitwig's own description of each port and parameter, offline; follow its `--help` for how names are matched.
-2. **Write the patch as one spec, dry run first.** A spec is code: modules, cables and parameters in a file, `bitwig-agent grid apply @patch.json --dryRun`, read `warnings` and `wouldFail`, then apply without `--dryRun`. Applying again is a diff, so tune the file instead of poking the live device.
+2. **Write the patch as one spec.** A spec is code: modules, cables and parameters in a file, `bitwig-agent grid apply @patch.json`. A spec that fails validation writes nothing, so apply it directly and read `warnings`; applying again is a diff, so tune the file instead of poking the live device. Use `--dryRun` before `prune`, `pruneAll` or `replace`, which delete, and read its `plan`, `warnings` and `wouldFail` (a certain refusal such as the transport state; a display the host converts itself is only a warning).
 3. **Start from the live device.** `bitwig-agent grid export` returns a spec of what is there, with refs. Edit it and apply it back; unchanged parts write nothing.
 4. **Look at the layout.** `bitwig-agent grid render` draws the device and summarizes overlaps, unconnected modules and sections. Read the summary; open the image only when you can see it.
 5. **Check for silent drops.** After topology writes run `bitwig-agent diagnostics get` and look for `grid_rejected`. A device missing a required input is dropped from the audio network and just goes silent, with no sign in the API. Pass the apply result's `diagnosticsMarker` as `sinceMarker` so you see only what your write caused. Modal dialogs are not in the log: take a screenshot.
@@ -23,7 +23,7 @@ Spec syntax, value forms, units and limits are in `bitwig-agent help grid.apply`
 - **Stored cables are not the active graph.** A readable graph does not prove sound; a moving meter does not prove the intended sound.
 - **Do not stop at the first working patch.** Build the smallest signal path (see [sound-design](sound-design.md#grid-build-the-smallest-signal-path)) and audition it before adding modules.
 - **A failed or `unknown` apply stops.** Inspect with `grid export`, fix the cause, apply again; a topology hold on a device is released with `ack` after inspection.
-- **Topology edits need a stopped, non-recording state.** Value writes may run while playing.
+- **Transport: inserting, deleting, renaming, moving or rewiring modules needs a stopped transport; changing parameter values, step arrays, voicing or partial entries works while playing.** Recording and automation write must be off for both.
 
 ## Controls without ports: device modulators
 

@@ -9,7 +9,9 @@ MCP clients should inspect their current server's tool list, then load only the 
 ```sh
 bitwig-agent --help
 bitwig-agent parameters set --help
-bitwig-agent help grid.apply
+bitwig-agent help grid.apply            # description, fields, example
+bitwig-agent help grid.apply --schema   # the full JSON schema
+bitwig-agent help recipes               # a working Poly Grid bass
 ```
 
 Then call `status` (its `extension:{version,build}` identifies the loaded build; the client flags `extensionMismatch`; `detail=full` adds the implemented methods, windows, units and binding availability) against the running extension; use `status detail=full` (its `grid` section) before private Grid work. Invalid-argument errors name the closest valid field. Offline schema discovery does not prove host availability. Use schemas from the installed version and keep its extension matched; do not copy example UUIDs or infer argument names from a different Bitwig integration.
@@ -49,7 +51,7 @@ Version `0.2.0` gates private Grid/modulator access to the mapped **Bitwig 6.1.4
 
 1. Discover with one `context.get` (project and transport safety, `sceneCount`, tracks with `selected` and the occupied `launcherSlots` of scenes 0–15, `selectedTrack`, `cursorClip`); it replaces `tracks.list`, per-track `launcher.list` and `transport.get` for most tasks (`launcherSlotsComplete:false` means more scenes: read them with `launcher.list`). Add `devices.list parent=<track ref>` for devices. Use the returned refs (track, scene, slot, clip, device) unchanged—not a remembered GUI selection.
 2. Device methods take refs: a device ref comes from `devices.list` (a track ref or chain ref as `target`); a parameter ref comes from `parameters.list`, a Remote Controls control from `devices.remote.get`, a modulator control from `modulators.list`. Send a ref back unchanged; no listing is needed before a write, and a changed name or position is `stale` with `current` (what is there now). Chain refs come from `chains.list`.
-3. For Grid work, read the device with `grid.export` (one call: a `grid.apply` spec of the whole device, plus `refs` and measured `sizes` per module name) and change it with `grid.apply`: the spec's `target` is the device ref from `devices.list`, modules go by unique `customName`, params take raw values, `{display}` (`Hz`, `kHz`, `%`, `dB`; converted only after per-parameter calibration, else `unsupported_unit`), `{label}` or `{steps}`, and `dryRun` plans first. One change to a live patch is a partial entry, `{name, params}` only, for example `{name:"F: lp", params:{CUTOFF:{display:"800 Hz"}}}`; it never inserts, moves or retypes. Poly Grid voices and mono mode are the spec's `voicing`. `grid.describe` documents module types offline and names their ports and parameters. A saved export replays after an extension restart. A Remote Controls page of Grid parameters is `devices.remote.define` (parameter refs from the export's `refs`; the same call again is `already_matched`), removed by `devices.remote.delete`. See [PROTOCOL.md](PROTOCOL.md).
+3. For Grid work, read the device with `grid.export` (one call: a `grid.apply` spec of the whole device, plus `refs` and measured `sizes` per module name) and change it with `grid.apply`: the spec's `target` is the device ref from `devices.list`, modules go by unique `customName`, params take raw values, `{display}` (`Hz`, `kHz`, `%`, `dB`; converted only after per-parameter calibration, else `unsupported_unit`), `{label}` or `{steps}`, and `dryRun` plans a prune or replace first. One change to a live patch is a partial entry, `{name, params}` only, for example `{name:"F: lp", params:{CUTOFF:{display:"800 Hz"}}}`; it never inserts, moves or retypes. Poly Grid voices and mono mode are the spec's `voicing`. `grid.describe` documents module types offline and names their ports and parameters. A saved export replays after an extension restart. A Remote Controls page of Grid parameters is `devices.remote.define` (parameter refs from the export's `refs`; the same call again is `already_matched`), removed by `devices.remote.delete`. See [PROTOCOL.md](PROTOCOL.md).
 4. For `tracks.set`, send only changed fields from a fresh readable snapshot and inspect each field's `outcome`. For every write, read the top-level `outcome` (`applied`, `already_matched`, `sent`, `not_applied` or `unknown`), not merely the existence of a result; `sent` means dispatched with no observation. The words and the reason table are in [PROTOCOL.md](PROTOCOL.md#results-errors-and-recovery).
 
 Before dispatch, keep an **agent-side write guard**: explicit permission for the requested changes; one designated writer; fresh project/target observations; and the applicable recording, playback and automation conditions established rather than assumed. For native experiments use a disposable fixture. Unknown/null safety fields are not false. Do not invent a universal `allowWrite` RPC argument: inspect each method's schema and its actual guards. The example recipe has its own explicit `--allow-write` CLI switch.
@@ -130,11 +132,11 @@ The install is found from `--installationRoot`, `$BITWIG_INSTALLATION_ROOT`, the
 
 ## Apply a Grid patch from a spec
 
-`grid.apply` builds or updates one Grid device from a JSON spec (named modules, params, connections) and is safe to re-run: existing named modules are reused and only differences are written. Preview with `dryRun`, then apply:
+`grid.apply` builds or updates one Grid device from a JSON spec (named modules, params, connections) and is safe to re-run: existing named modules are reused and only differences are written. A spec that fails validation writes nothing, so apply it directly (`bitwig-agent help recipes` has a working Poly Grid bass spec); preview with `dryRun` before `--prune`, `pruneAll` or `replace`. Inserting, moving or rewiring modules needs a stopped transport; a spec that only changes parameter values, voicing or partial entries works while playing.
 
 ```sh
-bitwig-agent grid apply @patch.json --dryRun
 bitwig-agent grid apply @patch.json
+bitwig-agent grid apply @patch.json --dryRun   # before prune/replace
 ```
 
 Keep one spec per Grid device (sections as name prefixes inside it); two specs sharing a namespace with `prune` delete each other's modules. Use a `namespace` prefix (e.g. `"H: "`) plus `--prune` to also remove stale modules and cables you own. It stops at the first error or unknown outcome and reports what was and was not done; fix the cause and re-apply. See [PROTOCOL](PROTOCOL.md#gridapply-declarative-patch-client-side).

@@ -81,6 +81,11 @@ public final class RenderModule implements HostModule, JobsModule.Source {
         }
     }
 
+    /** What the launcher holds, observed: true when the track in this bank slot has any launcher clip, null when unobserved. */
+    public interface LauncherContent {
+        Boolean hasContent(int slot);
+    }
+
     public interface Access {
         void execute(Runnable work);
 
@@ -119,6 +124,7 @@ public final class RenderModule implements HostModule, JobsModule.Source {
         final RenderPlan plan;
         final Export export;
         final Map<String, Clips> before = new LinkedHashMap<>();
+        final List<String> warnings = new ArrayList<>();
         final Map<String, String> typesBefore = new LinkedHashMap<>();
         volatile boolean dispatched, settled, reported, returned, abandoned;
         volatile Handle handle;
@@ -173,6 +179,7 @@ public final class RenderModule implements HostModule, JobsModule.Source {
     private final TrackEpochs epochs;
 
     private Access access;
+    private final LauncherContent launcher;
     private volatile Job job;
     private int sequence;
     private static final String JOB = "render.job", QUARANTINE = "render.quarantine", FINISHED = "render.finished";
@@ -185,7 +192,7 @@ public final class RenderModule implements HostModule, JobsModule.Source {
             TransportSafety transportSafety,
             NativeRuntime natives,
             Holds holds) {
-        this(scheduler, window, trackRefs, project, transportSafety, natives, holds, null);
+        this(scheduler, window, trackRefs, project, transportSafety, natives, holds, null, null);
     }
 
     public RenderModule(
@@ -197,6 +204,20 @@ public final class RenderModule implements HostModule, JobsModule.Source {
             NativeRuntime natives,
             Holds holds,
             Access access) {
+        this(scheduler, window, trackRefs, project, transportSafety, natives, holds, access, null);
+    }
+
+    public RenderModule(
+            Scheduler scheduler,
+            TrackWindow window,
+            TrackRefs trackRefs,
+            Project project,
+            TransportSafety transportSafety,
+            NativeRuntime natives,
+            Holds holds,
+            Access access,
+            LauncherContent launcher) {
+        this.launcher = launcher;
         this.scheduler = scheduler;
         this.window = window;
         this.trackRefs = trackRefs;
@@ -421,6 +442,16 @@ public final class RenderModule implements HostModule, JobsModule.Source {
                         next.dispatched = true;
                     };
                     if (export) {
+                        for (int i = 0; i < ids.size(); i++)
+                            if (slots[i] >= 0
+                                    && launcher != null
+                                    && Boolean.TRUE.equals(launcher.hasContent(slots[i]))) {
+                                Clips lane = bridge.clips(proxies.get(i), ids.get(i), check);
+                                if (!overlaps(lane.rows, start, end))
+                                    next.warnings.add(
+                                            ids.get(i)
+                                                    + " has launcher clips but no arranger clip in the exported range, so it renders silent: clips.copy its launcher clip onto the arranger (to {track, startBeats}) first");
+                            }
                         next.plan.refresh(next.export.overwrite);
                         next.handle =
                                 bridge.export(project, proxies, ids, next.plan.basePaths(), next.export, check, before);
@@ -439,6 +470,16 @@ public final class RenderModule implements HostModule, JobsModule.Source {
             settle(next, previous);
             throw error;
         }
+    }
+
+    /** Whether any arranger.list row of a lane overlaps [start, end). */
+    static boolean overlaps(JsonArray rows, double start, double end) {
+        for (JsonElement element : rows) {
+            JsonObject row = element.getAsJsonObject();
+            double from = row.get("startBeats").getAsDouble();
+            if (from < end && from + row.get("lengthBeats").getAsDouble() > start) return true;
+        }
+        return false;
     }
 
     /** A job that failed before dispatch gives the status slot back; after dispatch without a handle it is unknown. */
@@ -636,6 +677,11 @@ public final class RenderModule implements HostModule, JobsModule.Source {
         } else {
             result.add("files", evaluation.get("files"));
             result.addProperty("mayOpenFileManager", true);
+            if (!current.warnings.isEmpty()) {
+                JsonArray warnings = new JsonArray();
+                for (String warning : current.warnings) warnings.add(warning);
+                result.add("warnings", warnings);
+            }
             result.addProperty("verification", "native_job_latch_and_file_headers");
         }
         op.result.complete(result);

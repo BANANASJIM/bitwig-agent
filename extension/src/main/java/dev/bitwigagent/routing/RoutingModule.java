@@ -15,6 +15,7 @@ import dev.bitwigagent.core.Reason;
 import dev.bitwigagent.core.Results;
 import dev.bitwigagent.core.SafetyObservation;
 import dev.bitwigagent.core.Scheduler;
+import dev.bitwigagent.core.SharedData;
 import dev.bitwigagent.core.ValueMatch;
 import dev.bitwigagent.host.DeviceSources;
 import dev.bitwigagent.host.NativeRuntime;
@@ -314,6 +315,7 @@ public final class RoutingModule implements HostModule {
                                 if (write && Results.outcomeOf(result).succeeded()) holds.release(QUARANTINE);
                                 holds.release(PENDING);
                                 annotateTrackNames(result, trackNames());
+                                if (method.equals("devices.sidechain.get")) hintWhenEmpty(result);
                                 if (!sidechain) result.add("ref", trackRefs.ref(slot));
                                 else if (write)
                                     result.add(
@@ -355,6 +357,29 @@ public final class RoutingModule implements HostModule {
 
     /** Native names of track buses are blank or generic ("Pre-Fader"): next to every {kind, trackId} entry put the track's public
      *  name as a sibling (entry -> trackName, source -> sourceTrackName, ...). Entries themselves stay verbatim, copyable into expected*. */
+    static final String NO_SIDECHAIN_HINT = noSidechainHint(SharedData.read("sidechain"));
+
+    static String noSidechainHint(JsonObject shared) {
+        return "This device has no sidechain input. Stock devices with an audio sidechain input: "
+                + join(shared.getAsJsonArray("audioSidechainDevices")) + " (the plain "
+                + join(shared.getAsJsonArray("withoutSidechain"))
+                + " has none). Insert one of them, then read this again.";
+    }
+
+    private static String join(JsonArray names) {
+        List<String> out = new ArrayList<>();
+        for (JsonElement name : names) out.add(name.getAsString());
+        return String.join(", ", out);
+    }
+
+    /** A device that reports no component gets the names of the stock devices that have an audio sidechain. */
+    static void hintWhenEmpty(JsonObject result) {
+        JsonElement components = result.get("components");
+        if (components != null
+                && components.isJsonArray()
+                && components.getAsJsonArray().size() == 0) result.addProperty("hint", NO_SIDECHAIN_HINT);
+    }
+
     static void annotateTrackNames(JsonElement element, Map<String, String> names) {
         if (element == null) return;
         if (element.isJsonArray()) {

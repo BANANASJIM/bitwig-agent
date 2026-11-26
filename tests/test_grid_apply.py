@@ -14,7 +14,10 @@ from pydantic import ValidationError
 from bitwig_agent.errors import BridgeError, bridge_error, unknown_result
 from bitwig_agent.grid import apply as grid_apply
 from bitwig_agent.grid import bundled, display, execute, layout, problems, raw_scales, values
-from bitwig_agent.protocol import validate_call
+from bitwig_agent.protocol import TOOLS, validate_call
+from bitwig_agent.protocol.grid import DEVICE as EXAMPLE_DEVICE
+from bitwig_agent.protocol.recipes import BASS_MODULES, BASS_SPEC, BASS_TWEAK
+from bitwig_agent.protocol.topics import TOPICS
 
 
 def test_fresh_build_then_idempotent_reapply_writes_nothing():
@@ -1266,13 +1269,21 @@ def test_structural_apply_names_playing_as_the_blocker():
     assert "stop playback" in message
 
 
-def test_dry_run_would_fail_flags_host_converted_display_and_missing_target():
+def test_dry_run_warns_about_host_converted_display_and_would_fail_on_missing_target():
     spec = {
         "target": DEVICE,
         "modules": [{"name": "f", "type": "SVF", "x": 0, "y": 0, "params": {"CUTOFF": {"display": "800 Hz"}}}],
     }
-    result = apply_grid(FakeGrid(), spec, dryRun=True)
-    assert [f["reason"] for f in result["wouldFail"]] == ["unsupported_unit"]
+    result = apply_grid(FakeGrid(), spec, dryRun=True)  # a recorded scale is converted here: nothing to refuse
+    assert "wouldFail" not in result
+    assert not messages(result, "may refuse")
+    host_converted = {
+        "target": DEVICE,
+        "modules": [{"name": "e", "type": "ADSR", "x": 0, "y": 0, "params": {"SUSTAIN": {"display": "50 %"}}}],
+    }
+    result = apply_grid(FakeGrid(), host_converted, dryRun=True)
+    assert "wouldFail" not in result
+    assert messages(result, "may refuse it (unsupported_unit)")
     host = FakeGrid()
     host.fail["grid.get"] = bridge_error("target_not_found", "no device")
     result = apply_grid(host, spec, dryRun=True)
@@ -1514,3 +1525,61 @@ def test_partial_dry_run_reports_an_unreachable_device_like_whole_entries():
     assert result["wouldFail"][0]["reason"] == "target_not_found"
     with pytest.raises(BridgeError):
         apply_grid(host, {**spec, "dryRun": False})
+
+
+# --- the documented Poly Grid bass recipe plans cleanly against a fresh Poly Grid -----------------------------------
+
+
+def fresh_poly_grid():
+    host = FakeGrid()
+    osc, env, out = host.add("Union", "", -2, -1), host.add("ADSR", "", 1, -1), host.add("Audio Out", "", 4, -1)
+    host.conns[(env, "IN")] = (osc, "OUT")
+    host.conns[(out, "IN")] = (env, "OUT")
+    return host
+
+
+def test_bass_recipe_plans_applies_and_converges_on_a_fresh_poly_grid():
+    spec = {"target": DEVICE, **BASS_SPEC}
+    host = fresh_poly_grid()
+    plan = apply_grid(host, spec, dryRun=True)
+    assert "wouldFail" not in plan
+    assert [w[:30] for w in plan["warnings"]] == ["pruneAll: deleting 3 module(s)"]  # the only one
+    assert plan["planned"]["inserted"] == 4
+    assert plan["planned"]["deleted"] == 3  # the default Union, ADSR and Audio Out go: the spec is the whole graph
+    assert [p["parameterId"] for p in plan["plan"]["params"]] == ["TYPE", "KEYTRACK", "CUTOFF", "RESONANCE", "RELEASE"]
+    result = apply_grid(host, spec)
+    assert result["outcome"] == "applied"
+    assert sorted(m["customName"] for m in host.mods.values()) == ["B: env", "B: lp", "B: osc", "B: out"]
+    assert host.source("B: lp", "IN") == ("B: osc", "OUT")
+    assert host.source("B: env", "IN") == ("B: lp", "OUT")
+    assert host.source("B: out", "IN") == ("B: env", "OUT")
+    assert host.param("B: lp", "KEYTRACK") == 0
+    assert apply_grid(host, spec)["outcome"] == "already_matched"
+
+
+def test_bass_recipe_tweak_is_a_partial_apply_that_may_run_while_playing():
+    host = fresh_poly_grid()
+    apply_grid(host, {"target": DEVICE, **BASS_SPEC})
+    host.transport = {"playing": True}
+    tweak = {"target": DEVICE, **BASS_TWEAK}
+    assert "wouldFail" not in apply_grid(host, tweak, dryRun=True)
+    assert apply_grid(host, tweak)["applied"]["paramsWritten"] == 2
+
+
+def test_a_move_only_spec_is_structural_and_refused_dry_run_while_playing():
+    host = fresh_poly_grid()
+    apply_grid(host, {"target": DEVICE, **BASS_SPEC})
+    host.transport = {"playing": True}
+    moved = {**BASS_SPEC, "modules": [BASS_MODULES[0], {**BASS_MODULES[1], "y": 6}, *BASS_MODULES[2:]]}
+    plan = apply_grid(host, {"target": DEVICE, **moved}, dryRun=True)
+    assert plan["planned"]["moved"] == 1
+    assert plan["planned"]["inserted"] == 0
+    refused = plan["wouldFail"]
+    assert [f["reason"] for f in refused] == ["unsafe_state"]
+    assert "playing" in refused[0]["message"]
+
+
+def test_the_recipes_topic_embeds_the_tested_spec_and_the_apply_example_is_it():
+    assert json.dumps(BASS_MODULES, separators=(",", ":"), ensure_ascii=False) in TOPICS["recipes"]
+    assert TOOLS["grid.apply"].examples[0] == {"target": EXAMPLE_DEVICE, **BASS_SPEC}
+    assert "grid.apply" in TOPICS["recipes"]

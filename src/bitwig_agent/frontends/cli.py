@@ -247,7 +247,7 @@ def method_help(name: str) -> str:
             "",
             f"Rows: --format=jsonl|csv|tsv [--fields=a,b.c] prints the {views.records(name)} records, one per line",
         ]
-    return "\n".join([*lines, "", f"Full schema: bitwig-agent help {name}"])
+    return "\n".join([*lines, "", f"Full JSON schema: bitwig-agent help {name} --schema"])
 
 
 @dataclass
@@ -585,7 +585,7 @@ async def dispatch(argv: list[str], inputs: Inputs, pretty: bool, progress: Prog
     if argv[:1] == ["batch"] and not wants_help(argv, argv[1:]):
         return await batch(argv[1:], inputs, progress)
     if start or wants_help(argv, rest):
-        return describe(path, bool(start), pretty)
+        return describe(path, "--schema" in rest, pretty)
     if is_resource(path):
         return failure(verb_needed(path))
     if not views.exists(path):

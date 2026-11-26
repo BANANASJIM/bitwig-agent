@@ -228,6 +228,11 @@ public final class TestServices {
         return new RenderModule(scheduler, window, trackRefs, project, transportSafety, natives, holds, access);
     }
 
+    public RenderModule render(RenderModule.Access access, RenderModule.LauncherContent launcher) {
+        return new RenderModule(
+                scheduler, window, trackRefs, project, transportSafety, natives, holds, access, launcher);
+    }
+
     public RoutingModule routing(MethodSpecs specs, RoutingModule.Access access) {
         return new RoutingModule(scheduler, window, trackRefs, sources, transportSafety, natives, holds, specs, access);
     }

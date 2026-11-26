@@ -233,6 +233,46 @@ public final class RenderModuleTest {
     }
 
     @Test
+    void exportWarnsWhenALauncherTrackHasNoArrangerClipInTheRange() throws IOException {
+        Sim bare = new Sim();
+        bare.launcherContent = true;
+        HostOperation op = bare.start("export.audio", export(bare.dir.toString(), "master", A), 5000);
+        bare.drainUntil(op);
+        JsonArray warnings = assertOutcome("applied", op).getAsJsonArray("warnings");
+        assertTrue(
+                warnings.size() == 1
+                        && warnings.get(0).getAsString().contains(A)
+                        && warnings.get(0).getAsString().contains("clips.copy"),
+                "launcher clips and an empty arranger lane warn, naming the track and the fix");
+
+        Sim covered = new Sim();
+        covered.launcherContent = true;
+        covered.clips.put(A, lanes(clip(8, 16, "Verse", "instrument")));
+        HostOperation fine = covered.start("export.audio", export(covered.dir.toString(), "master", A), 5000);
+        covered.drainUntil(fine);
+        assertFalse(assertOutcome("applied", fine).has("warnings"), "an overlapping arranger clip is enough");
+
+        for (Boolean content : new Boolean[] {false, null}) {
+            Sim quiet = new Sim();
+            quiet.launcherContent = content;
+            HostOperation none = quiet.start("export.audio", export(quiet.dir.toString(), "master", A), 5000);
+            quiet.drainUntil(none);
+            assertFalse(
+                    assertOutcome("applied", none).has("warnings"),
+                    "no launcher content, or none observed: no warning");
+        }
+    }
+
+    @Test
+    void overlapIsHalfOpen() {
+        JsonArray rows = new JsonArray();
+        rows.add(clip(0, 8, "a", "audio"));
+        assertTrue(RenderModule.overlaps(rows, 4, 16));
+        assertTrue(!RenderModule.overlaps(rows, 8, 16), "a clip ending at the start does not overlap");
+        assertTrue(!RenderModule.overlaps(rows, -4, 0), "a clip starting at the end does not overlap");
+    }
+
+    @Test
     void exportIsAppliedOnlyWithLatchAndValidFiles() throws IOException {
         Sim sim = new Sim();
         JsonObject p = export(sim.dir.toString(), "master", A);
@@ -655,6 +695,9 @@ public final class RenderModuleTest {
 
         java.util.function.Function<List<JsonObject>, List<JsonObject>> afterBounce = before -> new ArrayList<>();
         boolean finish = true, write = true, garbage, deleteOld, done, lost;
+        /** What the launcher reports for every track: null = unobserved. */
+        Boolean launcherContent;
+
         Reason refusal;
         String tap;
         int dispatches;
@@ -670,64 +713,66 @@ public final class RenderModuleTest {
 
         Sim() throws IOException {
             dir = temp("bwa-render-sim");
-            module = fixture.services.render(new RenderModule.Access() {
-                public void execute(Runnable work) {
-                    document.add(work);
-                }
+            module = fixture.services.render(
+                    new RenderModule.Access() {
+                        public void execute(Runnable work) {
+                            document.add(work);
+                        }
 
-                public String nativeJarSha256() {
-                    return "simulated";
-                }
+                        public String nativeJarSha256() {
+                            return "simulated";
+                        }
 
-                public RenderModule.Handle export(
-                        Object project,
-                        List<Object> s,
-                        List<String> ids,
-                        String[] basePaths,
-                        RenderModule.Export o,
-                        Runnable check,
-                        Runnable before) {
-                    check.run();
-                    if (refusal != null) throw Errors.notApplied(refusal, "simulated refusal");
-                    before.run();
-                    dispatches++;
-                    if (lost) throw Errors.unknown(Reason.JOB_FAILED, "simulated: no job registered");
-                    sources = s;
-                    paths = basePaths;
-                    options = o;
-                    done = false;
-                    if (finish) complete();
-                    return () -> done;
-                }
+                        public RenderModule.Handle export(
+                                Object project,
+                                List<Object> s,
+                                List<String> ids,
+                                String[] basePaths,
+                                RenderModule.Export o,
+                                Runnable check,
+                                Runnable before) {
+                            check.run();
+                            if (refusal != null) throw Errors.notApplied(refusal, "simulated refusal");
+                            before.run();
+                            dispatches++;
+                            if (lost) throw Errors.unknown(Reason.JOB_FAILED, "simulated: no job registered");
+                            sources = s;
+                            paths = basePaths;
+                            options = o;
+                            done = false;
+                            if (finish) complete();
+                            return () -> done;
+                        }
 
-                public RenderModule.Handle bounce(
-                        Object project,
-                        List<Object> tracks,
-                        List<String> ids,
-                        double start,
-                        double end,
-                        String t,
-                        Runnable check,
-                        Runnable before) {
-                    check.run();
-                    before.run();
-                    dispatches++;
-                    if (lost) throw Errors.unknown(Reason.JOB_FAILED, "simulated: no job registered");
-                    tap = t;
-                    done = false;
-                    bounced = ids;
-                    if (finish) completeBounce();
-                    return () -> done;
-                }
+                        public RenderModule.Handle bounce(
+                                Object project,
+                                List<Object> tracks,
+                                List<String> ids,
+                                double start,
+                                double end,
+                                String t,
+                                Runnable check,
+                                Runnable before) {
+                            check.run();
+                            before.run();
+                            dispatches++;
+                            if (lost) throw Errors.unknown(Reason.JOB_FAILED, "simulated: no job registered");
+                            tap = t;
+                            done = false;
+                            bounced = ids;
+                            if (finish) completeBounce();
+                            return () -> done;
+                        }
 
-                public RenderModule.Clips clips(Object track, String id, Runnable check) {
-                    check.run();
-                    List<JsonObject> lane = new ArrayList<>(clips.getOrDefault(id, new ArrayList<>()));
-                    JsonArray rows = new JsonArray();
-                    for (JsonObject c : lane) rows.add(c.deepCopy());
-                    return new RenderModule.Clips(new ArrayList<>(lane), rows);
-                }
-            });
+                        public RenderModule.Clips clips(Object track, String id, Runnable check) {
+                            check.run();
+                            List<JsonObject> lane = new ArrayList<>(clips.getOrDefault(id, new ArrayList<>()));
+                            JsonArray rows = new JsonArray();
+                            for (JsonObject c : lane) rows.add(c.deepCopy());
+                            return new RenderModule.Clips(new ArrayList<>(lane), rows);
+                        }
+                    },
+                    slot -> launcherContent);
             jobs = new JobsModule(module);
         }
 

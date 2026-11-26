@@ -307,7 +307,7 @@ async def test_grid_insert_cli_rejects_non_int32_tokens_before_tcp(host, monkeyp
 
 async def test_grid_insert_offline_schema_exposes_complete_contract(monkeypatch):
     monkeypatch.setenv("BITWIG_AGENT_PORT", "not-a-port")
-    out = await cli.execute(["help", "grid.modules.insert"])
+    out = await cli.execute(["help", "grid.modules.insert", "--schema"])
     assert out.code == 0
     description = json.loads(out.stdout)
     assert description["readOnly"] is False
@@ -342,6 +342,7 @@ async def test_offline_entrypoint_and_client_do_not_import_mcp():
         "bitwig_agent.frontends.cli",
         "help",
         "notes.edit",
+        "--schema",
         env={**os.environ, "BITWIG_AGENT_PORT": "bad"},
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
@@ -404,7 +405,7 @@ async def test_ref_methods_generated_help_and_parse_work_offline(monkeypatch, me
     out = await cli.execute([*method.split("."), "--help"])
     assert out.code == 0
     assert "(read-only)" in out.stdout
-    schema = json.loads((await cli.execute(["help", method])).stdout)
+    schema = json.loads((await cli.execute(["help", method, "--schema"])).stdout)
     assert schema == views.method(method)
     args = schema["examples"][0]
     assert parse_arguments(method, flags(method, args)) == (args, 5000)
@@ -851,7 +852,11 @@ async def test_help_layers_are_plain_text_on_stdout_and_exit_zero(monkeypatch):
     assert "(required)" in method
     assert "Example:\n  bitwig-agent tracks set --target=" in method
     assert (await cli.execute(["help", "tracks"])).stdout == resource
-    assert json.loads((await cli.execute(["help", "tracks.set"])).stdout)["method"] == "tracks.set"
+    assert json.loads((await cli.execute(["help", "tracks.set", "--schema"])).stdout)["method"] == "tracks.set"
+    lean = (await cli.execute(["help", "tracks.set"])).stdout
+    assert lean == method
+    assert "inputSchema" not in lean
+    assert "Full JSON schema: bitwig-agent help tracks.set --schema" in lean
 
 
 async def test_version_and_unknown_help_target():
