@@ -9,6 +9,7 @@ Counted from the transcript, not from the agent's own account:
   learning bytes   result bytes of `--help`/`help`/old `list`/`describe`/MCP `help` calls, plus everything read
                    from skills/** (Read, a shell cat/head/sed/grep, the Skill tool and the text it injects)
   total read bytes result bytes of every tool call
+  segments.json    optional per run {"1": first call index of task 1, ...}, when the agent skipped or misplaced markers
   verdicts.json    optional per run {"t3": {"status": "pass"|"fail", "reason": ...}}; replaces a `review` only
   failures         a Bash call with exit != 0, or any call with is_error; each labelled `tool` (the Bitwig tool or
                    host answered with an error) or `agent` (the agent's own shell script, file or command broke)
@@ -263,10 +264,26 @@ def self_corrections(calls: list[Call], failures: list[dict[str, Any]]) -> tuple
     return corrected, sorted(set(abandoned))
 
 
-def analyze(events: Iterable[dict[str, Any]], overrides: dict[str, str] | None = None) -> dict[str, Any]:
+def apply_segments(calls: list[Call], segments: dict[str, int]) -> None:
+    """Hand-set task boundaries {"1": first call index of task 1, ...} for a run whose markers are missing or misplaced."""
+    starts = sorted((first, task) for task, first in segments.items())
+    for call in calls:
+        call.task = "pre"
+        for first, task in starts:
+            if call.index >= first:
+                call.task = task
+
+
+def analyze(
+    events: Iterable[dict[str, Any]],
+    overrides: dict[str, Any] | None = None,
+    segments: dict[str, int] | None = None,
+) -> dict[str, Any]:
     events = list(events)
     calls, marked = parse(events)
-    if not marked:
+    if segments:
+        apply_segments(calls, segments)
+    elif not marked:
         for call in calls:
             call.task = keyword_task(call)
     failures = []
@@ -297,7 +314,7 @@ def analyze(events: Iterable[dict[str, Any]], overrides: dict[str, str] | None =
         "calls": len(calls),
         "calls_by_tool": by_tool,
         "calls_by_task": {t: sum(1 for c in calls if c.task == t) for t in ("pre", *map(str, TASKS))},
-        "task_split": "markers" if marked else "keywords",
+        "task_split": "segments.json" if segments else "markers" if marked else "keywords",
         "learning_calls": sum(is_learning(c) for c in calls),
         "learning_bytes": sum(c.bytes for c in calls if is_learning(c)),
         "total_read_bytes": sum(c.bytes for c in calls),
@@ -503,7 +520,8 @@ def main() -> int:
     if not args.transcript:
         parser.error("give a transcript or --report")
     labels = args.labels or args.transcript.with_name("labels.json")
-    text = json.dumps(analyze(load(args.transcript), read_json(labels)), indent=2)
+    segments = read_json(args.transcript.with_name("segments.json"))
+    text = json.dumps(analyze(load(args.transcript), read_json(labels), segments), indent=2)
     if args.out:
         args.out.write_text(text + "\n", encoding="utf-8")
     else:

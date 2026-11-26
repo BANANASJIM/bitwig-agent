@@ -339,3 +339,10 @@ def test_error_answer_behind_a_pipe_is_a_failure() -> None:
     assert [f["index"] for f in out["failures"]] == [1, 3]
     assert out["tool_failures"] == 2
     assert out["self_corrections"] == 1
+
+
+def test_segments_set_task_boundaries() -> None:
+    events = [use(str(i), "Bash", command="bitwig-agent status") for i in range(1, 6)]
+    out = metrics.analyze(events, segments={"1": 2, "2": 4})
+    assert out["calls_by_task"] == {"pre": 1, "1": 2, "2": 2, "3": 0, "4": 0, "5": 0}
+    assert out["task_split"] == "segments.json"

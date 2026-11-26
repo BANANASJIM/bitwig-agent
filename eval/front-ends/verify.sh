@@ -85,7 +85,7 @@ while read -r device; do
   name="$(jq -r .name <<<"$device")"
   slug="${name//[^A-Za-z0-9]/_}"
   # the compressor's own detection filter has a "frequency" too; T3 is about the sound's filter
-  if [[ "$name" =~ [Cc]ompressor ]]; then continue; fi
+  if [[ "$name" =~ [Cc]ompressor|[Dd]ynamics ]]; then continue; fi
   params="$(read_state "parameters-$slug" parameters.list "$(parameter_args "$bass" "$device")")"
   candidates="$(jq -c --argjson more "$params" '. + [$more | .. | objects | select(has("name") or has("parameterId"))]' <<<"$candidates")"
   if jq -e '.name | test("grid"; "i")' <<<"$device" >/dev/null; then
@@ -107,13 +107,14 @@ t3="$(jq -c --arg cut "$CUTOFF" --arg res "$RESONANCE" '
               elif ($c | unknown) or ($r | unknown) then "review" else "fail" end)}' <<<"$candidates")"
 put t3 "$(jq -r .status <<<"$t3")" "$(jq -c 'del(.status)' <<<"$t3")"
 
-# T4: a compressor on Bass whose sidechain source is the Drums track
+# T4: a compressor (Bitwig's Compressor+ or Dynamics) on Bass whose sidechain source is the Drums track.
+# Plain Compressor has no sidechain input; Dynamics is Bitwig's compressor/expander/limiter with one.
 sidechain_ok=false
 if [[ -n "$drums" ]]; then
   drums_id="$(track_id "$drums")"
   while read -r device; do
     [[ -n "$device" ]] || continue
-    jq -e '.name | test("compressor"; "i")' <<<"$device" >/dev/null || continue
+    jq -e '.name | test("compressor|dynamics"; "i")' <<<"$device" >/dev/null || continue
     slug="$(jq -r '.name | gsub("[^A-Za-z0-9]"; "_")' <<<"$device")"
     sc="$(read_state "sidechain-$slug" devices.sidechain.get "$(device_args "$bass" "$device")")"
     if jq -e --arg id "$drums_id" '[.. | strings] | any(. == $id or . == "Drums")' <<<"$sc" >/dev/null; then sidechain_ok=true; fi
