@@ -31,7 +31,7 @@ public final class GridModuleNameWriterTest {
         Fixture f = new Fixture();
         f.model.first.put(CUSTOM_NAME, "raw").put(MODULE_NAME, "Native effective");
         HostOperation op = f.start(new GridModuleNameWriter.Request("raw", "changed"));
-        assertTrue(f.calls == 1 && op.dispatched && !op.result.isDone(), "single setter dispatch is not completion");
+        assertTrue(f.calls == 1 && op.dispatched() && !op.result.isDone(), "single setter dispatch is not completion");
         f.next();
         JsonObject result = op.result.join();
         assertTrue(
@@ -72,7 +72,7 @@ public final class GridModuleNameWriterTest {
         f.model.first.put(MODULE_NAME, "Distinct effective");
         HostOperation op = f.start(new GridModuleNameWriter.Request("", ""));
         assertTrue(
-                f.calls == 0 && !op.dispatched && !op.result.isDone(),
+                f.calls == 0 && !op.dispatched() && !op.result.isDone(),
                 "authorized no-op skips setter but waits for later observation");
         f.next();
         JsonObject result = op.result.join();
@@ -121,7 +121,7 @@ public final class GridModuleNameWriterTest {
             f.beforePrepare = () -> changeMembership(f, kind);
             HostOperation op = f.start(new GridModuleNameWriter.Request("", "new"));
             assertTrue(
-                    op.result.isCompletedExceptionally() && !op.dispatched && f.calls == 0,
+                    op.result.isCompletedExceptionally() && !op.dispatched() && f.calls == 0,
                     "late predispatch membership/currentUUID/CAS changes reject without setter");
             f.quarantine.requireAvailable(GridInsertionWriterTest.ANY);
         }
@@ -131,7 +131,7 @@ public final class GridModuleNameWriterTest {
             changeMembership(f, change);
             f.next();
             assertTrue(
-                    op.dispatched && Results.outcomeOf(op.result.join()) == Outcome.UNKNOWN,
+                    op.dispatched() && Results.outcomeOf(op.result.join()) == Outcome.UNKNOWN,
                     "later changed membership/currentUUID/raw never becomes observed success");
             f.quarantine.requireAvailable(GridInsertionWriterTest.ANY);
         }
@@ -211,7 +211,7 @@ public final class GridModuleNameWriterTest {
                 if (invalid == 12) f.context.values.put(GridTopologyContext.Field.LOCK_OWNER, new Object());
                 HostOperation op = f.start(new GridModuleNameWriter.Request("", noop ? "" : "new"));
                 assertTrue(
-                        op.result.isCompletedExceptionally() && !op.dispatched && f.calls == 0,
+                        op.result.isCompletedExceptionally() && !op.dispatched() && f.calls == 0,
                         "all-member lifecycle/context/idle guards apply equally to no-op");
             }
         }

@@ -536,7 +536,7 @@ final class MixModule implements HostModule {
                 }
             }
         } catch (RpcException error) {
-            if (!op.dispatched) throw error;
+            if (!op.dispatched()) throw error;
             finish(op, target, changes, writes, created, createdKey, error.reason);
             return;
         }
@@ -707,7 +707,7 @@ final class MixModule implements HostModule {
                 // explicit enabled write is dispatched regardless of what it currently shows.
                 if (p.has("enabled")) write("enabled", p.get("enabled"), level);
             } catch (RpcException error) {
-                if (!op.dispatched) throw error;
+                if (!op.dispatched()) throw error;
                 finish(error.reason);
                 return;
             }

@@ -208,7 +208,7 @@ public final class RoutingModuleTest {
         thrown.adapter.failAfterWrite = true;
         HostOperation failed = thrown.start("tracks.routing.set", outputTo(B));
         thrown.drain();
-        assertTrue(failed.dispatched, "failure happened after dispatch");
+        assertTrue(failed.dispatched(), "failure happened after dispatch");
         assertUnknown("native_unavailable", failed);
         assertRpcError("unresolved", thrown.start("devices.sidechain.set", sidechain()));
     }
@@ -221,7 +221,7 @@ public final class RoutingModuleTest {
         f.drain();
         assertRpcError("kind_mismatch", op);
         assertTrue(
-                !op.dispatched && f.host.services.holds.list().isEmpty(),
+                !op.dispatched() && f.host.services.holds.list().isEmpty(),
                 "pre-dispatch refusal is not_applied and does not quarantine");
         assertTrue(!rejection(op).unknown, "refusal is an error: nothing changed");
     }

@@ -120,7 +120,7 @@ final class ActionModule implements HostModule {
         scheduler.check(request);
         // Host actions can retarget the launcher cursor clip (select clip/track); never mid launcher edit.
         selection.requireFree();
-        request.dispatched = true;
+        request.markDispatched();
         action.invoke();
         JsonObject result = Results.outcome(Outcome.SENT);
         result.addProperty("actionId", actionId);

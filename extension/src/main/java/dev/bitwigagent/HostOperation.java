@@ -7,8 +7,7 @@ import java.util.concurrent.CompletableFuture;
 final class HostOperation {
     final long deadline;
     final CompletableFuture<JsonObject> result = new Result();
-    /** Read freely; written only through {@link #markDispatched}. */
-    volatile boolean dispatched;
+    private volatile boolean dispatched;
 
     private boolean expired;
     volatile SafetyObservation safetyAtEnqueue;
@@ -31,6 +30,10 @@ final class HostOperation {
                     Errors.notApplied(Reason.DEADLINE, "Nothing was dispatched before the deadline; nothing changed."));
             return true;
         }
+    }
+
+    boolean dispatched() {
+        return dispatched;
     }
 
     /** Called right before the native call; an operation the transport already expired never dispatches. */

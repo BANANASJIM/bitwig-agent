@@ -92,12 +92,12 @@ final class Scheduler implements AutoCloseable {
     }
 
     void check(HostOperation operation) {
-        if (closed) throw Errors.of(Reason.NOT_READY, "Extension has stopped.", operation.dispatched);
+        if (closed) throw Errors.of(Reason.NOT_READY, "Extension has stopped.", operation.dispatched());
         if (operation.result.isDone())
-            throw Errors.of(Reason.CANCELLED, "Operation is no longer awaiting a result.", operation.dispatched);
+            throw Errors.of(Reason.CANCELLED, "Operation is no longer awaiting a result.", operation.dispatched());
         if (now() >= operation.deadline)
             throw Errors.of(
-                    Reason.DEADLINE, "Deadline expired; inspect state before another write.", operation.dispatched);
+                    Reason.DEADLINE, "Deadline expired; inspect state before another write.", operation.dispatched());
     }
 
     @Override

@@ -52,7 +52,7 @@ public final class GridRemotePageWriterTest {
         final Set<Object> unmappable = Collections.newSetFromMap(new IdentityHashMap<>());
         final Set<Object> ineligible = Collections.newSetFromMap(new IdentityHashMap<>());
         final List<String> calls = new ArrayList<>();
-        final HostOperation op = new HostOperation(Long.MAX_VALUE);
+        HostOperation op = new HostOperation(Long.MAX_VALUE);
         final GridRemotePageWriter writer;
         boolean licensed = true, visible = true, apply = true, createNothing, listsMissing;
         Runnable afterCall = () -> {};
@@ -258,7 +258,7 @@ public final class GridRemotePageWriterTest {
         JsonObject result = f.define(TWO);
         Page page = f.pages.get(0);
         assertTrue(
-                f.calls.equals(List.of("create", "rename", "map0", "map1")) && f.op.dispatched,
+                f.calls.equals(List.of("create", "rename", "map0", "map1")) && f.op.dispatched(),
                 "create, name, then map each slot in order");
         assertTrue(
                 page.name.equals("Macros")
@@ -322,7 +322,7 @@ public final class GridRemotePageWriterTest {
                         && !error.unknown
                         && error.getMessage().contains("replace")
                         && f.calls.isEmpty()
-                        && !f.op.dispatched,
+                        && !f.op.dispatched(),
                 "create over an existing preset page is refused");
         RemoteFixture preset = new RemoteFixture();
         preset.others.add(new Page("Macros", preset.otherPages, preset.host));
@@ -368,13 +368,13 @@ public final class GridRemotePageWriterTest {
                         && result.get("verification").getAsString().equals("exact_native_remote_page_readback"),
                 "replace maps changed slots and clears slots the request leaves empty, keeping matching ones");
         f.calls.clear();
-        f.op.dispatched = false;
+        f.op = new HostOperation(Long.MAX_VALUE);
         result = f.define(
                 "{\"pageName\":\"Macros\",\"mode\":\"replace\",\"slots\":[{\"moduleId\":\"" + FIRST
                         + "\",\"parameterId\":\"VALUE\",\"label\":\"darkness\"},{\"moduleName\":\"Mx: grit\",\"parameterId\":\"VALUE\"}]}");
         assertTrue(
                 f.calls.isEmpty()
-                        && !f.op.dispatched
+                        && !f.op.dispatched()
                         && !result.get("mutationDispatched").getAsBoolean()
                         && result.get("outcome").getAsString().equals("already_matched"),
                 "an identical replace is a verified no-op");
@@ -505,7 +505,7 @@ public final class GridRemotePageWriterTest {
         };
         RpcException error = thrown.defineFailure(TWO);
         assertTrue(
-                error.unknown && thrown.calls.equals(List.of("create", "rename", "map0")) && thrown.op.dispatched,
+                error.unknown && thrown.calls.equals(List.of("create", "rename", "map0")) && thrown.op.dispatched(),
                 "a native failure after dispatch is unknown and nothing is retried or rolled back");
         RemoteFixture unread = new RemoteFixture();
         unread.apply = false;
@@ -602,7 +602,7 @@ public final class GridRemotePageWriterTest {
                 f.calls.equals(List.of("delete"))
                         && !f.pages.contains(doomed)
                         && f.pages.size() == 1
-                        && f.op.dispatched
+                        && f.op.dispatched()
                         && result.get("deletedPage").getAsString().equals("Macros")
                         && result.get("verification").getAsString().equals("native_page_absent_after_delete")
                         && result.getAsJsonArray("pages").size() == 2,

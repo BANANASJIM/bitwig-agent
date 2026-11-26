@@ -116,7 +116,7 @@ public final class ErrorsTest {
                         .getCause())
                 .is(Reason.DEADLINE));
         assertThrows(RpcException.class, expiring::markDispatched, "an expired operation never dispatches");
-        assertFalse(expiring.dispatched);
+        assertFalse(expiring.dispatched());
         assertFalse(((RpcServer.Expiring) job.result).expire(), "a dispatched operation does not expire");
 
         HostOperation flagged = new HostOperation(Long.MAX_VALUE);

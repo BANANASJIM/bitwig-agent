@@ -163,7 +163,7 @@ public final class ArrangerModuleTest {
         f.failAfterWrite = true;
         HostOperation failed = f.start("arranger.clips.create", create(0, 4));
         f.drain();
-        assertTrue(failed.dispatched, "failure happened after dispatch");
+        assertTrue(failed.dispatched(), "failure happened after dispatch");
         assertUnknown("readback_mismatch", failed);
         String next = assertRpcError("unresolved", f.start("arranger.clips.create", create(8, 4))).next;
         assertTrue(
@@ -189,7 +189,7 @@ public final class ArrangerModuleTest {
         before.drain();
         assertRpcError("overlap", rejected);
         assertTrue(
-                !rejected.dispatched && before.host.services.holds.list().isEmpty(),
+                !rejected.dispatched() && before.host.services.holds.list().isEmpty(),
                 "pre-dispatch refusal holds nothing");
     }
 

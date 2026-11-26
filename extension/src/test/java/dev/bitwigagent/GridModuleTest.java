@@ -82,7 +82,7 @@ public final class GridModuleTest {
         assertTrue(!op.result.isDone() && f.adapter.reads == 1, "document read waits for controller target recheck");
         f.host.next();
         op.result.join();
-        assertTrue(!op.dispatched, "native read never marks a host mutation dispatched");
+        assertTrue(!op.dispatched(), "native read never marks a host mutation dispatched");
     }
 
     @Test
@@ -427,7 +427,7 @@ public final class GridModuleTest {
             queued.host.transport.child(key).emit(true);
             queued.adapter.next();
             assertTrue(
-                    !assertRpcError("unsafe_state", op).unknown && queued.adapter.writer.calls == 0 && !op.dispatched,
+                    !assertRpcError("unsafe_state", op).unknown && queued.adapter.writer.calls == 0 && !op.dispatched(),
                     "recording enabled in document queue prevents invocation");
         }
         Fixture started = new Fixture();
@@ -460,7 +460,7 @@ public final class GridModuleTest {
         op.result.cancel(false);
         cancelled.adapter.next();
         assertTrue(
-                cancelled.adapter.writer.calls == 0 && !op.dispatched,
+                cancelled.adapter.writer.calls == 0 && !op.dispatched(),
                 "cancelled native queue entry does not invoke setter");
     }
 
@@ -481,7 +481,7 @@ public final class GridModuleTest {
         document.start();
         document.join();
         assertTrue(
-                op.dispatched && !op.result.isDone() && f.adapter.writer.calls == 1,
+                op.dispatched() && !op.result.isDone() && f.adapter.writer.calls == 1,
                 "native callback mutates but awaits controller delivery");
         f.host.next();
         assertTrue(
@@ -541,7 +541,7 @@ public final class GridModuleTest {
         op.result.cancel(false);
         late.host.next();
         assertTrue(
-                op.result.isCancelled() && op.dispatched && late.adapter.writer.calls == 1,
+                op.result.isCancelled() && op.dispatched() && late.adapter.writer.calls == 1,
                 "late cancellation does not claim native rollback");
         Fixture noop = new Fixture();
         JsonObject p = writeTarget();
@@ -552,7 +552,7 @@ public final class GridModuleTest {
         noop.device.child("position").emit(1);
         noop.host.next();
         assertTrue(
-                !assertRpcError("stale_context", op).unknown && !op.dispatched && noop.adapter.writer.calls == 0,
+                !assertRpcError("stale_context", op).unknown && !op.dispatched() && noop.adapter.writer.calls == 0,
                 "late error after no-op does not invent a dispatched mutation");
         HostOperation expired = new HostOperation(0);
         expired.markDispatched();
@@ -612,10 +612,11 @@ public final class GridModuleTest {
                     f.host.submit(f.module, move ? "grid.modules.move" : "grid.modules.delete", moduleTarget(move));
             f.host.next();
             assertTrue(
-                    !op.dispatched && !op.result.isDone(), "queued topology request has not invoked native operation");
+                    !op.dispatched() && !op.result.isDone(),
+                    "queued topology request has not invoked native operation");
             f.adapter.next();
             assertTrue(
-                    op.dispatched && !op.result.isDone() && f.host.tasks.isEmpty() && f.adapter.topology.calls == 1,
+                    op.dispatched() && !op.result.isDone() && f.host.tasks.isEmpty() && f.adapter.topology.calls == 1,
                     "native return does not deliver topology result before later document event");
             f.adapter.next();
             assertTrue(!op.result.isDone(), "later document observation still requires controller handoff");
@@ -642,7 +643,7 @@ public final class GridModuleTest {
             notStopped.host.next();
             assertRpcError("unsafe_state", early);
             assertTrue(
-                    notStopped.adapter.topology.calls == 0 && !early.dispatched,
+                    notStopped.adapter.topology.calls == 0 && !early.dispatched(),
                     "topology requires observed stopped safety before native queue");
             for (int boundary = 0; boundary < 3; boundary++) {
                 Fixture f = new Fixture();
@@ -754,10 +755,10 @@ public final class GridModuleTest {
         Fixture f = new Fixture();
         HostOperation op = f.host.submit(f.module, "grid.connections.set", connectionTarget());
         f.host.next();
-        assertTrue(!op.dispatched && !op.result.isDone(), "cable controller dispatch is not native invocation");
+        assertTrue(!op.dispatched() && !op.result.isDone(), "cable controller dispatch is not native invocation");
         f.adapter.next();
         assertTrue(
-                op.dispatched && !op.result.isDone() && f.host.tasks.isEmpty() && f.adapter.connections.calls == 1,
+                op.dispatched() && !op.result.isDone() && f.host.tasks.isEmpty() && f.adapter.connections.calls == 1,
                 "setter return queues later document observation, never immediate completion");
         f.adapter.next();
         assertTrue(!op.result.isDone(), "later observation still waits for controller target recheck");
@@ -816,7 +817,7 @@ public final class GridModuleTest {
         noop.host.next();
         result = op.result.join();
         assertTrue(
-                !op.dispatched
+                !op.dispatched()
                         && noop.adapter.connections.calls == 0
                         && result.get("actualSource").isJsonNull()
                         && result.get("requestedSource").isJsonNull()
@@ -963,12 +964,12 @@ public final class GridModuleTest {
                 "invalid batch and read options reject before scheduling");
         HostOperation op = f.host.submit(f.module, "grid.parameters.set", batchTarget("LOCAL_ID"));
         f.host.next();
-        assertTrue(!op.dispatched && !op.result.isDone(), "batch controller dispatch is not native invocation");
+        assertTrue(!op.dispatched() && !op.result.isDone(), "batch controller dispatch is not native invocation");
         f.adapter.next();
         f.host.next();
         JsonObject result = op.result.join();
         assertTrue(
-                op.dispatched
+                op.dispatched()
                         && result.get("outcome").getAsString().equals("applied")
                         && result.get("written").getAsInt() == 1
                         && result.getAsJsonArray("writes").size() == 1
@@ -1193,7 +1194,7 @@ public final class GridModuleTest {
         f.host.next();
         f.adapter.next();
         assertTrue(
-                op.dispatched && f.adapter.insertion.loads == 1 && !op.result.isDone(),
+                op.dispatched() && f.adapter.insertion.loads == 1 && !op.result.isDone(),
                 "first entry loads; a controller dispatch is not completion");
         f.adapter.insertion.deliver();
         f.adapter.next();
@@ -1295,7 +1296,7 @@ public final class GridModuleTest {
                                 .get("trackId")
                                 .getAsString()
                                 .equals(HostFixture.A)
-                        && !acked.dispatched,
+                        && !acked.dispatched(),
                 "ack is a document-queue read that releases a consistent mismatch");
         f.adapter.insertion.guard.requireAvailable(GridInsertionWriterTest.ANY);
         HostOperation again = f.host.submit(ack, "ack", id);
@@ -1339,7 +1340,7 @@ public final class GridModuleTest {
         f.host.next();
         f.adapter.next();
         assertTrue(
-                op.dispatched && f.adapter.insertion.loads == 1 && !op.result.isDone() && f.host.tasks.isEmpty(),
+                op.dispatched() && f.adapter.insertion.loads == 1 && !op.result.isDone() && f.host.tasks.isEmpty(),
                 "loader dispatch has its own native lifetime, not controller completion");
         for (String key : List.of(
                 "isPlaying",
@@ -1511,7 +1512,7 @@ public final class GridModuleTest {
             };
         f.adapter.next();
         assertTrue(
-                op.dispatched && f.adapter.naming.calls == 1 && !op.result.isDone() && f.host.tasks.isEmpty(),
+                op.dispatched() && f.adapter.naming.calls == 1 && !op.result.isDone() && f.host.tasks.isEmpty(),
                 "real native name setter does not complete before later document observation");
         f.adapter.next();
         assertTrue(
@@ -1543,7 +1544,8 @@ public final class GridModuleTest {
         HostOperation noop = f.host.submit(f.module, "grid.modules.rename", renameTarget("", ""));
         f.host.next();
         f.adapter.next();
-        assertTrue(!noop.dispatched && f.adapter.naming.calls == 2, "authorized no-op never calls native name setter");
+        assertTrue(
+                !noop.dispatched() && f.adapter.naming.calls == 2, "authorized no-op never calls native name setter");
         while (!f.adapter.tasks.isEmpty()) f.adapter.next();
         f.host.next();
         assertTrue(
@@ -1626,7 +1628,7 @@ public final class GridModuleTest {
         noop.device.child("position").emit(1);
         noop.host.next();
         assertTrue(
-                !assertRpcError("stale_context", op).unknown && !op.dispatched,
+                !assertRpcError("stale_context", op).unknown && !op.dispatched(),
                 "late no-op delivery still checks explicit target without claiming a write");
     }
 
@@ -1644,7 +1646,7 @@ public final class GridModuleTest {
                 if (boundary < 2) f.adapter.next();
                 else f.host.next();
                 assertTrue(
-                        f.adapter.naming.calls == (boundary == 0 ? 0 : 1) && op.dispatched == (boundary > 0),
+                        f.adapter.naming.calls == (boundary == 0 ? 0 : 1) && op.dispatched() == (boundary > 0),
                         "cancel/close before native dispatch prevents setter; after dispatch never rolls back or retries");
                 if (close)
                     assertTrue(
@@ -1729,7 +1731,7 @@ public final class GridModuleTest {
             f.adapter.next();
             f.host.next();
             assertTrue(
-                    op.result.join().has("target") && op.dispatched == !call[0].equals("grid.voicing.get"),
+                    op.result.join().has("target") && op.dispatched() == !call[0].equals("grid.voicing.get"),
                     call[0] + " reaches the adapter once and dispatches only when it writes");
         }
         assertTrue(f.adapter.reads == 1 && f.adapter.remoteCalls == 2, "each call reached its adapter method");

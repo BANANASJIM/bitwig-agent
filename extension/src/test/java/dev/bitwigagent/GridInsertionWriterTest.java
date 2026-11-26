@@ -129,7 +129,7 @@ public final class GridInsertionWriterTest {
         HostOperation op = f.start(new GridInsertionWriter.Request(
                 TYPE, 8, 3)); // Anchor is inside existing footprint: legal for insertion.
         assertTrue(
-                op.dispatched && f.loads == 1 && f.placements == 0 && !op.result.isDone(),
+                op.dispatched() && f.loads == 1 && f.placements == 0 && !op.result.isDone(),
                 "loader dispatch precedes callback and is not completion");
         assertRpcError("busy", () -> f.guard.requireAvailable(device(f)));
         f.deliver();
@@ -600,7 +600,7 @@ public final class GridInsertionWriterTest {
             g.catalogNames("Low-pass", "Low-pass LD", "Oscillator");
             HostOperation op = g.start(new GridInsertionWriter.Request(null, name, 8, 3));
             assertTrue(
-                    op.dispatched && g.loads == 1,
+                    op.dispatched() && g.loads == 1,
                     "typeName '" + name + "' resolves case/space/hyphen-insensitively to the exact entry");
             g.deliver();
             g.next();
@@ -741,7 +741,7 @@ public final class GridInsertionWriterTest {
                 new GridInsertionWriter.Request(new UUID(2, 101), 12, 3));
         HostOperation op = f.startAll(requests);
         assertTrue(
-                op.dispatched && f.loads == 1 && !op.result.isDone(),
+                op.dispatched() && f.loads == 1 && !op.result.isDone(),
                 "first entry loads through the single path and is not completion");
         f.deliver();
         assertTrue(f.loads == 1 && !op.result.isDone(), "second entry waits for the first native settlement");
@@ -808,7 +808,7 @@ public final class GridInsertionWriterTest {
             HostOperation op = f.startAll(bad);
             RpcException error = failed(op);
             assertTrue(
-                    !error.unknown && f.loads == 0 && !op.dispatched && f.guard.blockedReason() == null,
+                    !error.unknown && f.loads == 0 && !op.dispatched() && f.guard.blockedReason() == null,
                     "any bad type or geometry rejects the whole batch before reservation, dispatch or loading");
         }
         RpcException named = null;

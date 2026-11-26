@@ -164,7 +164,7 @@ final class TransportModule implements HostModule {
         try {
             if (stopping) write(request, "playing");
         } catch (RpcException error) {
-            if (!op.dispatched) throw error;
+            if (!op.dispatched()) throw error;
             finish(request, error.reason);
             return;
         }
@@ -205,7 +205,7 @@ final class TransportModule implements HostModule {
                 if (request.p.has(key)
                         && !(key.equals("playing") && !request.p.get(key).getAsBoolean())) write(request, key);
         } catch (RpcException error) {
-            if (!request.op.dispatched) throw error;
+            if (!request.op.dispatched()) throw error;
             finish(request, error.reason);
             return;
         }

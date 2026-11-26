@@ -541,7 +541,7 @@ public final class MixModuleTest {
         assertTrue(
                 !assertRpcError("not_ready", rejected).unknown, "incomplete16-track baseline rejects before mutation");
         assertTrue(
-                outside.application.actions == 0 && !rejected.dispatched,
+                outside.application.actions == 0 && !rejected.dispatched(),
                 "known unobservable baseline must never invoke a factory");
     }
 
@@ -563,7 +563,7 @@ public final class MixModuleTest {
                         !assertRpcError("unsupported_scope", rejected).unknown,
                         "known grouped baseline explicitly rejects as not applied");
                 assertTrue(
-                        !rejected.dispatched && f.application.actions == 0,
+                        !rejected.dispatched() && f.application.actions == 0,
                         "known grouped baseline never dispatches any native track factory");
                 assertTrue(
                         count.equals(f.bank.child("itemCount").data)
@@ -602,7 +602,7 @@ public final class MixModuleTest {
         f.next();
         JsonObject result = op.result.join();
         assertTrue(
-                op.dispatched && f.application.actions == 1, "concurrent grouping occurs after one factory dispatch");
+                op.dispatched() && f.application.actions == 1, "concurrent grouping occurs after one factory dispatch");
         assertTrue(
                 result.get("outcome").getAsString().equals("unknown")
                         && result.get("reason").getAsString().equals("side_effect")
@@ -617,7 +617,7 @@ public final class MixModuleTest {
         HostOperation later = f.submit(module, "tracks.create", create("audio", -1));
         f.next();
         assertTrue(
-                !assertRpcError("unresolved", later).unknown && !later.dispatched && f.application.actions == 1,
+                !assertRpcError("unresolved", later).unknown && !later.dispatched() && f.application.actions == 1,
                 "concurrent structural unknown retains quarantine even when the group disappears");
     }
 
@@ -824,7 +824,7 @@ public final class MixModuleTest {
                 !assertRpcError("not_ready", rejected).unknown,
                 "missing type baseline rejects before dispatch despite complete track count");
         assertTrue(
-                f.application.actions == 0 && !rejected.dispatched,
+                f.application.actions == 0 && !rejected.dispatched(),
                 "no unnamed native creation on known incomplete readiness");
         f.tracks[1].child("trackType").emit("Audio");
         f.create = factory -> f.addTrack(2, HostFixture.C, "Audio");

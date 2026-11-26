@@ -307,7 +307,7 @@ public final class GridStepsVoicingTest {
         float[] after = f.live();
         assertTrue(
                 f.calls == 1
-                        && f.op.dispatched
+                        && f.op.dispatched()
                         && after.length == 256
                         && after[0] == 0.5f
                         && after[1] == 0.1f
@@ -338,7 +338,7 @@ public final class GridStepsVoicingTest {
         result = noop.set(steps(noop.json(0, 4), noop.json(0, 4), false));
         assertTrue(
                 noop.calls == 0
-                        && !noop.op.dispatched
+                        && !noop.op.dispatched()
                         && !result.get("mutationDispatched").getAsBoolean()
                         && result.get("outcome").getAsString().equals("already_matched"),
                 "an identical write is a verified no-op without dispatch");
@@ -360,7 +360,7 @@ public final class GridStepsVoicingTest {
         StepFixture f = new StepFixture(256, 4);
         RpcException error = f.failure(steps("[0.9,0.9,0.9,0.9]", "[0.5]", false));
         assertTrue(
-                error.reason.wire().equals("stale_context") && !error.unknown && f.calls == 0 && !f.op.dispatched,
+                error.reason.wire().equals("stale_context") && !error.unknown && f.calls == 0 && !f.op.dispatched(),
                 "a stale expectation is rejected before dispatch, even for a no-op");
         StepFixture shortArray = new StepFixture(4, 4);
         error = shortArray.failure(steps("[0,0,0,0,0]", "[0.5]", false));
@@ -480,7 +480,7 @@ public final class GridStepsVoicingTest {
         };
         error = partial.failure(steps(partial.json(0, 4), "[0.5]", false));
         assertTrue(
-                partial.calls == 1 && partial.op.dispatched,
+                partial.calls == 1 && partial.op.dispatched(),
                 "a native exception after dispatch is not retried (the host operation reports unknown)");
         StepFixture absent = new StepFixture(256, 4);
         GridParameterWriter none =
@@ -670,7 +670,7 @@ public final class GridStepsVoicingTest {
                 f.set("{\"expected\":{\"voices\":1,\"voiceStacking\":1},\"set\":{\"voiceStacking\":3,\"voices\":16}}");
         assertTrue(
                 f.calls.equals(List.of("voices", "voiceStacking"))
-                        && f.op.dispatched
+                        && f.op.dispatched()
                         && result.getAsJsonObject("voicing").get("voices").getAsInt() == 16
                         && result.get("mode").getAsString().equals("poly")
                         && result.getAsJsonObject("previousVoicing")
@@ -686,7 +686,7 @@ public final class GridStepsVoicingTest {
         result = noop.set("{\"expected\":{\"voices\":1},\"set\":{\"voices\":1}}");
         assertTrue(
                 noop.calls.isEmpty()
-                        && !noop.op.dispatched
+                        && !noop.op.dispatched()
                         && !result.get("mutationDispatched").getAsBoolean()
                         && result.get("outcome").getAsString().equals("already_matched"),
                 "an identical voicing write is a verified no-op");
@@ -720,7 +720,10 @@ public final class GridStepsVoicingTest {
         VoicingFixture f = new VoicingFixture();
         RpcException error = f.failure("{\"expected\":{\"voices\":2},\"set\":{\"voices\":3}}");
         assertTrue(
-                error.reason.wire().equals("stale_context") && !error.unknown && f.calls.isEmpty() && !f.op.dispatched,
+                error.reason.wire().equals("stale_context")
+                        && !error.unknown
+                        && f.calls.isEmpty()
+                        && !f.op.dispatched(),
                 "a stale voicing expectation is rejected before dispatch");
         VoicingFixture unread = new VoicingFixture();
         unread.apply = false;
@@ -737,7 +740,7 @@ public final class GridStepsVoicingTest {
                     RpcException.class,
                     () -> thrown.set(
                             "{\"expected\":{\"voices\":1,\"voiceStacking\":1},\"set\":{\"voices\":4,\"voiceStacking\":2}}"));
-            assertTrue(thrown.calls.size() == 1 && thrown.op.dispatched, "no retry after a native failure");
+            assertTrue(thrown.calls.size() == 1 && thrown.op.dispatched(), "no retry after a native failure");
         }
         VoicingFixture absent = new VoicingFixture();
         absent.present = false;

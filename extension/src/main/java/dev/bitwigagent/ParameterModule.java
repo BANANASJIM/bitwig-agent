@@ -191,7 +191,7 @@ final class ParameterModule implements HostModule {
         scheduler.check(request);
         if (!matches(target))
             throw Errors.notApplied(Reason.STALE_CONTEXT, "Target changed before parameter dispatch.");
-        request.dispatched = true;
+        request.markDispatched();
         source.identity.device.setDirectParameterValueNormalized(
                 id, Math.round(requestedValue * (RESOLUTION - 1)), RESOLUTION);
         scheduler.poll(

@@ -188,7 +188,7 @@ public final class AutomationModuleTest {
         f.failAfterWrite = true;
         HostOperation failed = f.start("automation.points.set", set(points(point(0, 0.5, "hold"))));
         f.drain();
-        assertTrue(failed.dispatched, "failure happened after dispatch");
+        assertTrue(failed.dispatched(), "failure happened after dispatch");
         assertUnknown("readback_mismatch", failed);
         String next = assertRpcError("unresolved", f.start("automation.points.set", set(new JsonArray()))).next;
         assertTrue(
@@ -212,7 +212,7 @@ public final class AutomationModuleTest {
         before.drain();
         assertRpcError("stale_target", rejected);
         assertTrue(
-                !rejected.dispatched && before.host.services.holds.list().isEmpty(),
+                !rejected.dispatched() && before.host.services.holds.list().isEmpty(),
                 "pre-dispatch refusal holds nothing");
     }
 

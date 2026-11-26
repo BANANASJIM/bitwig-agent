@@ -704,7 +704,7 @@ public final class GridSnapshotReaderTest {
                     error.reason.wire().equals("unsupported_unit")
                             && !error.unknown
                             && bad.calls == 0
-                            && !bad.op.dispatched,
+                            && !bad.op.dispatched(),
                     "unverified unit or a row that does not reproduce the model is unsupported_unit before any write");
         }
         WriterFixture suffix = unitFixture("hertz", 84.0, "1.05 kHz", 0.0, 127.0);
@@ -1192,7 +1192,7 @@ public final class GridSnapshotReaderTest {
                 error.reason.wire().equals("stale_context")
                         && !error.unknown
                         && stale.calls == 0
-                        && !stale.op.dispatched
+                        && !stale.op.dispatched()
                         && error.getMessage().contains("#1")
                         && error.getMessage().contains("#2")
                         && !error.getMessage().contains("#0"),
@@ -1372,7 +1372,7 @@ public final class GridSnapshotReaderTest {
                     broken.model.proxy, TRACK_ID, List.of(panel), () -> {}, () -> broken.op.markDispatched());
         });
         assertTrue(
-                !error.unknown && broken.calls == 0 && !broken.op.dispatched,
+                !error.unknown && broken.calls == 0 && !broken.op.dispatched(),
                 "an unresolvable panel coupling fails the batch before any write");
     }
 
@@ -1435,7 +1435,7 @@ public final class GridSnapshotReaderTest {
         JsonObject noop = f.set(request("boolean", "true", "true"));
         assertTrue(
                 f.calls == 0
-                        && !f.op.dispatched
+                        && !f.op.dispatched()
                         && !noop.get("nativeMutation").getAsBoolean()
                         && !noop.get("nativeUndo").getAsBoolean(),
                 "same-value CAS performs no native operation");
@@ -1445,7 +1445,7 @@ public final class GridSnapshotReaderTest {
         JsonObject result = f.set(request("float", "0", "0.75"));
         assertTrue(
                 f.calls == 1
-                        && f.op.dispatched
+                        && f.op.dispatched()
                         && result.get("mutationDispatched").getAsBoolean(),
                 "distinct raw value invokes exactly once");
         assertTrue(
@@ -1487,7 +1487,8 @@ public final class GridSnapshotReaderTest {
             };
             assertRpcError("unsafe_state", () -> f.set(request("boolean", "true", "false")));
             assertTrue(
-                    f.calls == 0 && !f.op.dispatched, "live predicate transition before invocation prevents dispatch");
+                    f.calls == 0 && !f.op.dispatched(),
+                    "live predicate transition before invocation prevents dispatch");
         }
         for (Enum<?> field : List.of(
                 GridParameterContext.Field.UNDO,
@@ -1521,7 +1522,7 @@ public final class GridSnapshotReaderTest {
         };
         assertRpcError("invalid_params", () -> rangeChanged.set(request("float", "0.5", "-0.5")));
         assertTrue(
-                rangeChanged.calls == 0 && !rangeChanged.op.dispatched,
+                rangeChanged.calls == 0 && !rangeChanged.op.dispatched(),
                 "in-place live range contraction rejects a formerly valid negative value before dispatch");
         WriterFixture unknown = new WriterFixture();
         unknown.supported = false;
@@ -1875,7 +1876,7 @@ public final class GridSnapshotReaderTest {
         assertTrue(
                 f.calls == 1
                         && text.equals(f.last)
-                        && f.op.dispatched
+                        && f.op.dispatched()
                         && text.equals(
                                 result.getAsJsonObject("parameter").get("value").getAsString())
                         && result.get("previousValue").getAsString().equals("before")
@@ -1889,7 +1890,7 @@ public final class GridSnapshotReaderTest {
         result = noop.set(stringRequest("before", "before"));
         assertTrue(
                 noop.calls == 0
-                        && !noop.op.dispatched
+                        && !noop.op.dispatched()
                         && !result.get("mutationDispatched").getAsBoolean()
                         && result.get("outcome").getAsString().equals("already_matched"),
                 "matching string write is a verified no-op without native dispatch");
@@ -1902,7 +1903,7 @@ public final class GridSnapshotReaderTest {
                 error.reason.wire().equals("stale_context")
                         && !error.unknown
                         && stale.calls == 0
-                        && !stale.op.dispatched,
+                        && !stale.op.dispatched(),
                 "stale string expectation is rejected before dispatch, even for a no-op");
         error = stale.failure(request("boolean", "true", "false"));
         assertTrue(
@@ -1942,7 +1943,7 @@ public final class GridSnapshotReaderTest {
         };
         error = partial.failure(stringRequest("before", "x"));
         assertTrue(
-                partial.calls == 1 && partial.op.dispatched,
+                partial.calls == 1 && partial.op.dispatched(),
                 "native exception after dispatch is not retried or rolled back");
         StringFixture absent = new StringFixture();
         GridParameterWriter none =
@@ -2084,7 +2085,7 @@ public final class GridSnapshotReaderTest {
         result = noop.set(request("boolean", "false", "false"));
         assertTrue(
                 noop.calls == 0
-                        && !noop.op.dispatched
+                        && !noop.op.dispatched()
                         && !result.get("mutationDispatched").getAsBoolean()
                         && result.getAsJsonObject("coupledParameter")
                                         .get("value")
@@ -2194,7 +2195,8 @@ public final class GridSnapshotReaderTest {
                 "CAS precedes no-op and never quarantines");
         ModuleWriterFixture noop = new ModuleWriterFixture();
         op = noop.start(new GridModuleWriter.Move(7, 3, 7, 3));
-        assertTrue(!op.result.isDone() && !op.dispatched && noop.calls == 0, "validated no-op skips native operation");
+        assertTrue(
+                !op.result.isDone() && !op.dispatched() && noop.calls == 0, "validated no-op skips native operation");
         noop.next();
         assertTrue(
                 !op.result.join().get("mutationDispatched").getAsBoolean(),
@@ -2209,7 +2211,7 @@ public final class GridSnapshotReaderTest {
         };
         op = moved.start(new GridModuleWriter.Move(7, 3, 11, 3));
         assertTrue(
-                op.dispatched && moved.calls == 1 && !op.result.isDone(),
+                op.dispatched() && moved.calls == 1 && !op.result.isDone(),
                 "native return only queues later document observation");
         moved.next();
         JsonObject result = op.result.join();
@@ -2242,7 +2244,7 @@ public final class GridSnapshotReaderTest {
         f.afterMutation = () -> thirdInput.put(INPUT_SOURCE, f.model.output);
         HostOperation op = f.start(null);
         assertTrue(
-                !op.result.isDone() && f.calls == 1 && op.dispatched,
+                !op.result.isDone() && f.calls == 1 && op.dispatched(),
                 "selective delete waits for later graph rather than void return");
         f.next();
         JsonObject result = op.result.join(), graph = result.getAsJsonObject("graph");
@@ -2476,7 +2478,7 @@ public final class GridSnapshotReaderTest {
                 HostOperation op = f.start(new GridModuleWriter.Move(7, 3, destination[0], destination[1]));
                 assertTrue(
                         unsuccessful(op)
-                                && !op.dispatched
+                                && !op.dispatched()
                                 && f.calls == 0
                                 && !f.writer.quarantined()
                                 && f.events.isEmpty(),
@@ -2492,7 +2494,7 @@ public final class GridSnapshotReaderTest {
                 f.model.second.put(X, 10).put(Y, 4).put(WIDTH, 4).put(HEIGHT, 3);
                 HostOperation op = f.start(new GridModuleWriter.Move(7, 3, destination[0], destination[1]));
                 assertTrue(
-                        op.dispatched && f.calls == 1 && !op.result.isDone(),
+                        op.dispatched() && f.calls == 1 && !op.result.isDone(),
                         "half-open right/bottom boundaries and rectangle overlap with an outside anchor remain allowed");
                 f.next();
                 assertTrue(
@@ -2514,7 +2516,7 @@ public final class GridSnapshotReaderTest {
                     HostOperation op = f.start(deleting ? null : new GridModuleWriter.Move(7, 3, 11, 5));
                     assertTrue(
                             unsuccessful(op)
-                                    && !op.dispatched
+                                    && !op.dispatched()
                                     && f.calls == 0
                                     && !f.writer.quarantined()
                                     && f.events.isEmpty(),
@@ -2527,7 +2529,7 @@ public final class GridSnapshotReaderTest {
                     ModuleWriterFixture f = new ModuleWriterFixture();
                     HostOperation op = f.start(deleting ? null : new GridModuleWriter.Move(7, 3, 11, 5));
                     assertTrue(
-                            op.dispatched && f.calls == 1 && !op.result.isDone(),
+                            op.dispatched() && f.calls == 1 && !op.result.isDone(),
                             "native operation precedes later survivor checks");
                     f.context.override(
                             f.model.second,
@@ -2549,7 +2551,8 @@ public final class GridSnapshotReaderTest {
             topologyRegression(failures, "invalid native reflow " + change, () -> {
                 ModuleWriterFixture f = new ModuleWriterFixture();
                 HostOperation op = f.start(new GridModuleWriter.Move(7, 3, 11, 5));
-                assertTrue(op.dispatched && !op.result.isDone(), "move has returned before independent layout change");
+                assertTrue(
+                        op.dispatched() && !op.result.isDone(), "move has returned before independent layout change");
                 switch (change) {
                     case "selected_y":
                         f.model.first.put(Y, 6);
@@ -2654,14 +2657,14 @@ public final class GridSnapshotReaderTest {
         JsonObject result = op.result.join();
         assertTrue(
                 noop.calls == 0
-                        && !op.dispatched
+                        && !op.dispatched()
                         && !result.get("nativeUndo").getAsBoolean()
                         && result.get("actualSource").isJsonNull(),
                 "explicit null no-op skips setter and native undo entirely");
         ConnectionFixture connected = new ConnectionFixture();
         op = connected.start(connected.request(null, connected.output()));
         assertTrue(
-                op.dispatched && !op.result.isDone() && connected.calls == 1,
+                op.dispatched() && !op.result.isDone() && connected.calls == 1,
                 "same-module cable uses native setter without invented cycle ban");
         connected.next();
         result = op.result.join();
@@ -2677,7 +2680,7 @@ public final class GridSnapshotReaderTest {
         connected.next();
         assertTrue(
                 connected.calls == 1
-                        && !op.dispatched
+                        && !op.dispatched()
                         && op.result.join().get("outcome").getAsString().equals("already_matched"),
                 "matching connected source does not begin a native undo record");
         op = connected.start(connected.request(connected.output(), null));
@@ -2726,7 +2729,7 @@ public final class GridSnapshotReaderTest {
             if (change == 6) f.model.output.threadAllowed = false;
             HostOperation op = f.start(f.request(null, f.output()));
             assertTrue(
-                    unsuccessful(op) && !op.dispatched && f.calls == 0 && !f.quarantine.quarantined(),
+                    unsuccessful(op) && !op.dispatched() && f.calls == 0 && !f.quarantine.quarantined(),
                     "missing/excluded output, ambiguous keys/UUID, owner or thread errors fail before dispatch");
         }
         for (NativeReadContext.Field field : List.of(
@@ -2798,7 +2801,7 @@ public final class GridSnapshotReaderTest {
         f.extraInputs();
         HostOperation op = f.startBatch(List.of(f.request(null, f.output()), cable(f, "in2", new UUID(1, 2), null)));
         assertTrue(
-                op.dispatched && !op.result.isDone() && f.calls == 1,
+                op.dispatched() && !op.result.isDone() && f.calls == 1,
                 "first entry dispatches and the next waits for its later observation");
         f.next();
         assertTrue(f.calls == 2 && !op.result.isDone(), "second entry starts only after the first was observed");
@@ -2839,7 +2842,7 @@ public final class GridSnapshotReaderTest {
         assertTrue(
                 !error.unknown
                         && f.calls == 0
-                        && !op.dispatched
+                        && !op.dispatched()
                         && f.events.isEmpty()
                         && error.getMessage().contains("#1")
                         && error.getMessage().contains("#2")
@@ -3424,7 +3427,7 @@ public final class GridSnapshotReaderTest {
         /** The writer's failure as the request reports it: once dispatched, unknown. */
         RpcException failure(GridParameterWriter.Request request) {
             RpcException error = assertThrows(RpcException.class, () -> set(request));
-            return op.dispatched ? Errors.unknown(error.reason, error.getMessage()) : error;
+            return op.dispatched() ? Errors.unknown(error.reason, error.getMessage()) : error;
         }
 
         @Override
@@ -3499,7 +3502,7 @@ public final class GridSnapshotReaderTest {
 
         RpcException failure() {
             RpcException error = assertThrows(RpcException.class, () -> set(request("boolean", "true", "false")));
-            return op.dispatched ? Errors.unknown(error.reason, error.getMessage()) : error;
+            return op.dispatched() ? Errors.unknown(error.reason, error.getMessage()) : error;
         }
 
         @Override

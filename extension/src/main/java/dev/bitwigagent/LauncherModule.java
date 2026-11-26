@@ -550,8 +550,8 @@ final class LauncherModule implements HostModule {
             if (slot.api.hasContent().get())
                 throw Errors.notApplied(Reason.TARGET_EXISTS, "Create only accepts an observed empty slot");
             guard(op, id, track);
-            beginMutation(id, track, slot, j, method);
             op.markDispatched();
+            beginMutation(id, track, slot, j, method);
             slot.api.createEmptyClip(Params.integer(p, "lengthBeats", 1, MAX_CLIP_BEATS));
             long end = until(op);
             JsonObject request = p;
@@ -635,8 +635,8 @@ final class LauncherModule implements HostModule {
         if (slot.api.hasContent().get())
             throw Errors.notApplied(Reason.TARGET_EXISTS, "Import only accepts an observed empty slot.");
         long before = slot.contentVersion;
-        beginMutation(id, track, slot, index, "launcher.import");
         op.markDispatched();
+        beginMutation(id, track, slot, index, "launcher.import");
         insertion.insertFile(path.toString());
         awaitGuarded(
                 op,
@@ -697,7 +697,7 @@ final class LauncherModule implements HostModule {
                     throw Errors.of(
                             Reason.NOT_OBSERVED,
                             "Cursor slot identity or clip content was not observed",
-                            op.dispatched);
+                            op.dispatched());
                 });
     }
 
@@ -991,9 +991,9 @@ final class LauncherModule implements HostModule {
                     Reason.UNSAFE_STATE, "Delete requires the clip to be neither playing, queued nor recording.");
         guard(op, id, track);
         transportSafety.guardStopped(safety);
+        op.markDispatched();
         beginMutation(id, track, slot, index, "clips.edit delete");
         long before = cursorMutation.contentBefore;
-        op.markDispatched();
         slot.api.deleteObject();
         awaitGuarded(
                 op,
@@ -1035,9 +1035,9 @@ final class LauncherModule implements HostModule {
         if (to.api.hasContent().get())
             throw Errors.notApplied(Reason.TARGET_EXISTS, "copyTo only accepts an observed empty target slot");
         guard(op, id, track);
+        op.markDispatched();
         beginMutation(id, track, to, target, "clips.edit copyTo");
         long before = cursorMutation.contentBefore;
-        op.markDispatched();
         // copySlotsOrScenes copies the supplied slots to this insertion point; copyFrom's direction is ambiguous in the
         // javadoc.
         to.api.replaceInsertionPoint().copySlotsOrScenes(slot.api);
@@ -1287,8 +1287,8 @@ final class LauncherModule implements HostModule {
                         || beforePitches.get(beforePitches.size() - 1) + semitones > 127))
             throw Errors.invalid("transpose would move a note outside MIDI 0..127 (observed pitch range "
                     + beforePitches.get(0) + ".." + beforePitches.get(beforePitches.size() - 1) + ")");
-        beginMutation(id, track, slot, index, "clips.edit " + kind);
         op.markDispatched();
+        beginMutation(id, track, slot, index, "clips.edit " + kind);
         JsonObject summary = new JsonObject();
         summary.addProperty("notesBefore", before.size());
         summary.addProperty("loopLengthBeatsBefore", loop);
@@ -1609,7 +1609,7 @@ final class LauncherModule implements HostModule {
 
     private void guard(HostOperation op, String id, Track track) {
         scheduler.check(op);
-        if (op.result.isDone()) throw Errors.of(Reason.CANCELLED, "Operation is no longer active", op.dispatched);
+        if (op.result.isDone()) throw Errors.of(Reason.CANCELLED, "Operation is no longer active", op.dispatched());
         if (selection.ownedBy(op) && cursorMutation != null && cursorMutation.rebound)
             throw Errors.unknown(
                     Reason.STALE_CONTEXT,
@@ -1617,7 +1617,7 @@ final class LauncherModule implements HostModule {
                             + " Its target binding changed; the mutation stays held until acked after inspection.");
         if (!window.trackMatches(id, track)
                 || track.clipLauncherSlotBank().scrollPosition().get() != 0)
-            throw Errors.of(Reason.STALE_CONTEXT, "Explicit track or launcher bank changed", op.dispatched);
+            throw Errors.of(Reason.STALE_CONTEXT, "Explicit track or launcher bank changed", op.dispatched());
     }
     /** Whether the launcher cursor clip is this slot's clip; null until the cursor identity has been observed. Read-only. */
     private Boolean selected(Slot slot, String trackId) {
@@ -1679,7 +1679,8 @@ final class LauncherModule implements HostModule {
     private void cursorGuard(HostOperation op, String id, Track track, Slot slot) {
         guard(op, id, track);
         if (!selection.ownedBy(op) || !bound(id, slot))
-            throw Errors.of(Reason.STALE_CONTEXT, "Launcher cursor no longer proxies the explicit slot", op.dispatched);
+            throw Errors.of(
+                    Reason.STALE_CONTEXT, "Launcher cursor no longer proxies the explicit slot", op.dispatched());
     }
 
     private static void ready(Slot slot) {

@@ -53,6 +53,30 @@ public final class LauncherModuleTest {
     }
 
     @Test
+    void anImportExpiredAtItsMutationBoundaryLeavesNoHold() throws Exception {
+        Fake f = new Fake();
+        Path file = Files.createTempFile("expired-import-", ".wav");
+        try {
+            HostOperation op = new HostOperation(Long.MAX_VALUE);
+            boolean[] armed = {false};
+            f.beforeInsertion = () -> armed[0] = true;
+            // The transport deadline fires while the import rechecks the slot, just before it would dispatch.
+            f.onContentRead = () -> {
+                if (armed[0]) ((RpcServer.Expiring) op.result).expire();
+            };
+            f.start(op, "launcher.import", importTarget(file));
+            assertRpcError("deadline", op);
+            assertTrue(f.imports == 0 && f.services.holds.list().isEmpty(), "nothing dispatched, nothing held");
+            f.beforeInsertion = () -> {};
+            f.onContentRead = () -> {};
+            f.start("launcher.import", importTarget(file));
+            assertTrue(f.imports == 1, "the slot admits the next write");
+        } finally {
+            Files.delete(file);
+        }
+    }
+
+    @Test
     void strictWindowAndBatchValidation() {
         JsonObject valid = window();
         valid.add("edits", fixture());
@@ -741,7 +765,7 @@ public final class LauncherModuleTest {
             cancelled.start(cancelledOp, "launcher.import", importTarget(file));
             assertRpcError("cancelled", cancelledOp);
             assertTrue(
-                    cancelled.imports == 0 && !cancelledOp.dispatched,
+                    cancelled.imports == 0 && !cancelledOp.dispatched(),
                     "cancellation during target resolution prevents dispatch");
             Fake expired = new Fake();
             HostOperation expiredOp = new HostOperation(expired.tasks.now() - 1);
@@ -858,7 +882,7 @@ public final class LauncherModuleTest {
                     HostOperation first =
                             f.start(method, method.equals("launcher.import") ? importTarget(file) : createTarget());
                     assertTrue(
-                            first.dispatched && !first.result.isDone(),
+                            first.dispatched() && !first.result.isDone(),
                             "fixture dispatches native mutation before request termination");
                     if (mode == 0) {
                         first.result.cancel(false);
@@ -1060,7 +1084,8 @@ public final class LauncherModuleTest {
         HostOperation op = silent.start("scenes.append", new JsonObject());
         silent.drain(op);
         assertUnknown("not_observed", op);
-        assertTrue(op.dispatched && silent.sceneAppends == 1, "unobserved count is unknown after exactly one dispatch");
+        assertTrue(
+                op.dispatched() && silent.sceneAppends == 1, "unobserved count is unknown after exactly one dispatch");
         Fake create = new Fake();
         create.scenes = 1;
         JsonObject far = createTarget();
@@ -1498,7 +1523,7 @@ public final class LauncherModuleTest {
                             && error.next.contains("ack " + LauncherStructureLock.MUTATION),
                     "error identifies the original unresolved mutation and the hold to ack");
         }
-        assertTrue(!op.dispatched, "quarantine rejects before any native content mutation");
+        assertTrue(!op.dispatched(), "quarantine rejects before any native content mutation");
     }
 
     // ---- clips.edit ----
@@ -2145,7 +2170,7 @@ public final class LauncherModuleTest {
         int launchSets;
         boolean applyScene = true, initialised;
         String importedPath;
-        Runnable beforeInsertion = () -> {};
+        Runnable beforeInsertion = () -> {}, onContentRead = () -> {};
         Runnable afterPlayStopRead = () -> {}, onSetName = () -> {}, onSelect = () -> {};
         int unreadableFromStep = -1;
         FakeHost recordNode;
@@ -2177,7 +2202,10 @@ public final class LauncherModuleTest {
                     SlotData data = slots[j];
                     FakeHost slot = FakeHost.of(ClipLauncherSlot.class, "slot");
                     FakeHost content = slot.attach("hasContent", FakeHost.of(BooleanValue.class, "hasContent"))
-                            .reading(() -> trackIndex == 0 && data.content);
+                            .reading(() -> {
+                                onContentRead.run();
+                                return trackIndex == 0 && data.content;
+                            });
                     if (trackIndex == 0) data.contentNode = content;
                     slot.live("sceneIndex", () -> index);
                     slot.live("name", () -> data.name);
