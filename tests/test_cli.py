@@ -21,7 +21,6 @@ from bitwig_agent.protocol.grid import DEVICE
 from bitwig_agent.protocol.grid import TARGET as GRID
 from bitwig_agent.protocol.launcher import SLOT_REF, TRACK_REF
 
-TRACK_REF = {"kind": "track", "id": TRACK, "name": "Lead"}
 TARGET_FLAG = "--target=" + json.dumps(TRACK_REF)
 
 pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures("all_methods")]  # parser tests cover hidden blocks too

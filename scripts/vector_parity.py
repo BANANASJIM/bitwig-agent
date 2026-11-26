@@ -324,6 +324,8 @@ def ensure(root, path, schema, defs):
         if isinstance(key, int):
             if not node:
                 node.append(generate(form, defs))
+            elif not isinstance(node[key], dict | list) or foreign(node[key], form):
+                node[key] = generate(form, defs)
         elif not isinstance(node.get(key), dict | list) or foreign(node[key], form):
             node[key] = generate(form, defs)
         node = node[key]
