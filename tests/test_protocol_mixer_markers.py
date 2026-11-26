@@ -26,7 +26,7 @@ def test_new_tools_are_registered_with_examples():
         "tracks.meters",
         "markers.list",
         "markers.insert",
-        "markers.rename",
+        "markers.set",
         "markers.delete",
     ):
         assert name in TOOLS
@@ -80,18 +80,36 @@ def test_meters_arguments():
     bad("tracks.meters", trackIds=["nope"], windowMs=100)
 
 
+def marker(index=3, name="Verse", beat=8):
+    return {"kind": "marker", "index": index, "name": name, "beat": beat}
+
+
 def test_marker_arguments():
     ok("markers.insert", beat=0)
     ok("markers.insert", beat=16.5, name="Chorus")
     bad("markers.insert", beat=-0.1)
     bad("markers.insert", beat=4, name="")
-    ok("markers.rename", markerIndex=3, expectedName="Verse", name="Verse 2", expectedBeat=8)
-    bad("markers.rename", markerIndex=3, expectedName="Verse")
-    bad("markers.rename", markerIndex=64, expectedName="Verse", name="X")
-    ok("markers.delete", markerIndex=0, expectedName="Intro")
-    bad("markers.delete", markerIndex=0)
+    ok("markers.set", target=marker(), name="Verse 2")
+    bad("markers.set", target=marker())
+    bad("markers.set", target=marker(), name="")
+    bad("markers.set", target={"kind": "marker", "index": 3, "name": "Verse"}, name="X")
+    bad("markers.set", target={**marker(), "kind": "track"}, name="X")
+    ok("markers.delete", target=marker(0, "Intro", 0))
+    bad("markers.delete")
+    for old in (
+        ("markers.set", {"markerIndex": 3, "expectedName": "Verse", "name": "V"}),
+        ("markers.delete", {"markerIndex": 0, "expectedName": "Intro"}),
+    ):
+        with pytest.raises(ValueError, match="Extra inputs are not permitted"):
+            validate_call(*old)
     ok("markers.list")
     bad("markers.list", beat=1)
+
+
+def test_a_marker_ref_survives_the_round_trip_of_its_read():
+    row = marker(2, "Drop", 32.5)
+    assert ok("markers.delete", target=row) == {"target": row}
+    assert ok("markers.set", target=row, name="Drop 2")["target"] == row
 
 
 def test_time_signature_rules():

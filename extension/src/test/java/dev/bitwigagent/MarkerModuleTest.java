@@ -8,7 +8,7 @@ import com.google.gson.*;
 import java.util.*;
 import org.junit.jupiter.api.Test;
 
-/** Marker list/insert/rename/delete against a simulated beat-sorted CueMarkerBank; no claim about native marker semantics. */
+/** Marker list/insert/set/delete against a simulated beat-sorted CueMarkerBank; no claim about native marker semantics. */
 public final class MarkerModuleTest {
 
     private static final class Mk {
@@ -89,6 +89,18 @@ public final class MarkerModuleTest {
         return HostFixture.json(t);
     }
 
+    private static String ref(int index, String name, double beat) {
+        return "{\"kind\":\"marker\",\"index\":" + index + ",\"name\":\"" + name + "\",\"beat\":" + beat + "}";
+    }
+
+    private static String set(int index, String name, double beat, String to) {
+        return "{\"target\":" + ref(index, name, beat) + ",\"name\":\"" + to + "\"}";
+    }
+
+    private static String target(int index, String name, double beat) {
+        return "{\"target\":" + ref(index, name, beat) + "}";
+    }
+
     private static JsonObject run(HostFixture f, HostOperation op) {
         for (int i = 0; i < 500 && !op.result.isDone(); i++) f.next();
         assertTrue(op.result.isDone(), "operation completed");
@@ -117,8 +129,19 @@ public final class MarkerModuleTest {
                                 .getAsString()
                                 .equals("Intro")
                         && list.get(2).getAsJsonObject().get("beat").getAsDouble() == 32
-                        && list.get(1).getAsJsonObject().get("markerIndex").getAsInt() == 1,
-                "sorted by beat with rank index");
+                        && list.get(1)
+                                        .getAsJsonObject()
+                                        .getAsJsonObject("ref")
+                                        .get("index")
+                                        .getAsInt()
+                                == 1
+                        && list.get(1)
+                                        .getAsJsonObject()
+                                        .getAsJsonObject("ref")
+                                        .get("beat")
+                                        .getAsDouble()
+                                == 8,
+                "sorted by beat, each row carrying its ref with the rank");
         assertTrue(
                 r.get("observationsComplete").getAsBoolean()
                         && r.getAsJsonObject("window").get("capacity").getAsInt() == MarkerModule.WINDOW,
@@ -135,10 +158,12 @@ public final class MarkerModuleTest {
             {"markers.insert", "{}"},
             {"markers.insert", "{\"beat\":-1}"},
             {"markers.insert", "{\"beat\":1,\"name\":\"\"}"},
-            {"markers.rename", "{\"markerIndex\":0,\"expectedName\":\"A\"}"},
-            {"markers.rename", "{\"markerIndex\":64,\"expectedName\":\"A\",\"name\":\"B\"}"},
-            {"markers.delete", "{\"markerIndex\":0}"},
-            {"markers.delete", "{\"markerIndex\":0,\"expectedName\":\"A\",\"extra\":1}"},
+            {"markers.set", target(0, "A", 0)},
+            {"markers.set", "{\"target\":{\"kind\":\"marker\",\"index\":0},\"name\":\"B\"}"},
+            {"markers.set", set(0, "A", 0, "")},
+            {"markers.delete", "{}"},
+            {"markers.delete", "{\"markerIndex\":0,\"expectedName\":\"A\"}"},
+            {"markers.delete", "{\"target\":" + ref(0, "A", 0) + ",\"extra\":1}"},
             {"markers.list", "{\"x\":1}"}
         }) {
             assertRpcError("invalid_params", f.submit(m, c[0], json(c[1])));
@@ -163,7 +188,11 @@ public final class MarkerModuleTest {
                 f.transport.actions == 1
                         && f.transport.child("playPosition").data.equals(16.0),
                 "one native add; playhead untouched");
-        assertTrue(r.getAsJsonObject("marker").get("name").getAsString().equals("Verse"), "result names the marker");
+        assertTrue(
+                r.getAsJsonObject("ref").get("name").getAsString().equals("Verse")
+                        && r.getAsJsonObject("ref").get("index").getAsInt() == 1
+                        && r.getAsJsonObject("ref").get("beat").getAsDouble() == 8,
+                "result carries the new marker's ref");
         assertTrue(r.getAsJsonArray("markers").size() == 3, "result carries the observed list");
         assertTrue(f.services.holds.list().isEmpty(), "observed insert leaves nothing unresolved");
     }
@@ -202,38 +231,32 @@ public final class MarkerModuleTest {
     }
 
     @Test
-    void renameIsCasAndVerified() {
+    void setChecksTheRefAndVerifies() {
         HostFixture f = new HostFixture();
         Bank bank = new Bank(f);
         bank.add("Intro", 0);
         bank.add("Verse", 8);
         MarkerModule m = module(f);
-        HostOperation stale =
-                f.submit(m, "markers.rename", json("{\"markerIndex\":1,\"expectedName\":\"Chorus\",\"name\":\"X\"}"));
+        HostOperation renamed = f.submit(m, "markers.set", json(set(1, "Chorus", 8, "X")));
         f.next();
-        assertRpcError("stale_target", stale);
-        HostOperation wrongBeat = f.submit(
-                m,
-                "markers.rename",
-                json("{\"markerIndex\":1,\"expectedName\":\"Verse\",\"expectedBeat\":9,\"name\":\"X\"}"));
+        RpcException changed = assertRpcError("target_changed", renamed);
+        assertEquals("Verse", changed.current.get("name").getAsString(), "the refusal names the marker now there");
+        HostOperation wrongBeat = f.submit(m, "markers.set", json(set(1, "Verse", 9, "X")));
         f.next();
-        assertRpcError("stale_target", wrongBeat);
-        HostOperation beyond =
-                f.submit(m, "markers.rename", json("{\"markerIndex\":5,\"expectedName\":\"Verse\",\"name\":\"X\"}"));
+        assertEquals(
+                8,
+                assertRpcError("target_changed", wrongBeat).current.get("beat").getAsDouble());
+        HostOperation beyond = f.submit(m, "markers.set", json(set(5, "Verse", 8, "X")));
         f.next();
-        assertRpcError("unknown_name", beyond);
+        assertEquals("markers.list", assertRpcError("target_not_found", beyond).next);
         assertTrue(bank.view().equals(List.of("Intro@0.0", "Verse@8.0")), "refusals changed nothing");
-        JsonObject r = call(
-                f,
-                m,
-                "markers.rename",
-                "{\"markerIndex\":1,\"expectedName\":\"Verse\",\"expectedBeat\":8,\"name\":\"Verse 1\"}");
+        JsonObject r = call(f, m, "markers.set", set(1, "Verse", 8, "Verse 1"));
         assertTrue(
                 r.get("outcome").getAsString().equals("applied")
-                        && bank.view().equals(List.of("Intro@0.0", "Verse 1@8.0")),
-                "renamed: " + bank.view());
-        JsonObject same =
-                call(f, m, "markers.rename", "{\"markerIndex\":1,\"expectedName\":\"Verse 1\",\"name\":\"Verse 1\"}");
+                        && bank.view().equals(List.of("Intro@0.0", "Verse 1@8.0"))
+                        && r.getAsJsonObject("ref").get("name").getAsString().equals("Verse 1"),
+                "renamed, with the marker's new ref: " + bank.view());
+        JsonObject same = call(f, m, "markers.set", set(1, "Verse 1", 8, "Verse 1"));
         assertTrue(
                 same.get("outcome").getAsString().equals("already_matched")
                         && f.services.holds.list().isEmpty(),
@@ -241,25 +264,44 @@ public final class MarkerModuleTest {
     }
 
     @Test
-    void deleteIsCasAndVerified() {
+    void aMovedMarkerMakesTheOldRefStale() {
+        HostFixture f = new HostFixture();
+        Bank bank = new Bank(f);
+        bank.add("Intro", 0);
+        bank.add("Verse", 8);
+        MarkerModule m = module(f);
+        bank.model.get(1).beat = 4;
+        bank.refresh();
+        for (String[] c :
+                new String[][] {{"markers.set", set(1, "Verse", 8, "X")}, {"markers.delete", target(1, "Verse", 8)}}) {
+            HostOperation op = f.submit(m, c[0], json(c[1]));
+            f.next();
+            JsonObject current = assertRpcError("target_changed", op).current;
+            assertTrue(
+                    current.get("name").getAsString().equals("Verse")
+                            && current.get("beat").getAsDouble() == 4,
+                    c[0] + " names where the marker is now");
+        }
+        assertTrue(bank.view().equals(List.of("Intro@0.0", "Verse@4.0")), "nothing was written");
+    }
+
+    @Test
+    void deleteChecksTheRefAndVerifies() {
         HostFixture f = new HostFixture();
         Bank bank = new Bank(f);
         bank.add("Intro", 0);
         bank.add("Verse", 8);
         bank.add("Chorus", 16);
         MarkerModule m = module(f);
-        HostOperation stale = f.submit(m, "markers.delete", json("{\"markerIndex\":0,\"expectedName\":\"Verse\"}"));
+        HostOperation stale = f.submit(m, "markers.delete", json(target(0, "Verse", 8)));
         f.next();
-        assertRpcError("stale_target", stale);
-        JsonObject r =
-                call(f, m, "markers.delete", "{\"markerIndex\":1,\"expectedName\":\"Verse\",\"expectedBeat\":8}");
+        assertRpcError("target_changed", stale);
+        JsonObject r = call(f, m, "markers.delete", target(1, "Verse", 8));
         assertTrue(
                 r.get("outcome").getAsString().equals("applied")
-                        && bank.view().equals(List.of("Intro@0.0", "Chorus@16.0")),
-                "deleted: " + bank.view());
-        assertTrue(
-                r.getAsJsonObject("deleted").get("name").getAsString().equals("Verse"),
-                "result names the deleted marker");
+                        && bank.view().equals(List.of("Intro@0.0", "Chorus@16.0"))
+                        && !r.has("ref"),
+                "deleted, and a delete returns no ref: " + bank.view());
     }
 
     @Test
@@ -296,8 +338,7 @@ public final class MarkerModuleTest {
                 return null;
             });
         MarkerModule m = module(f);
-        HostOperation op = f.submit(
-                m, "markers.delete", json("{\"markerIndex\":0,\"expectedName\":\"Intro\"}"), f.tasks.after(300));
+        HostOperation op = f.submit(m, "markers.delete", json(target(0, "Intro", 0)), f.tasks.after(300));
         while (!op.result.isDone()) f.next();
         JsonObject r = op.result.join();
         assertTrue(

@@ -401,28 +401,49 @@ public final class TransportModuleTest {
     }
 
     @Test
+    void aMetronomeDisplayIsRefusedUntilTheHostDisplayIsMeasured() {
+        HostFixture f = new HostFixture();
+        TransportModule module = f.services.transportModule();
+        HostOperation op =
+                f.submit(module, "transport.set", HostFixture.json("{\"metronomeVolume\":{\"display\":\"-6 dB\"}}"));
+        f.next();
+        assertRpcError("unsupported_unit", op);
+        assertTrue(f.transport.child("metronomeVolume").writes == 0, "nothing dispatched");
+    }
+
+    private static String value(JsonObject read, String field) {
+        return read.getAsJsonObject(field).get("value").getAsString();
+    }
+
+    @Test
     void guideSettingsAreReadWrittenAndVerified() {
         HostFixture f = new HostFixture();
         TransportModule module = f.services.transportModule();
         JsonObject read = f.call(module, "transport.get", new JsonObject());
         assertTrue(
-                read.get("metronomeVolumeNormalized").getAsDouble() == .5
-                        && read.get("preRoll").getAsString().equals("none")
+                read.getAsJsonObject("metronomeVolume").get("value").getAsDouble() == .5
+                        && value(read, "preRoll").equals("none")
                         && !read.get("punchInEnabled").getAsBoolean()
-                        && read.get("defaultLaunchQuantization").getAsString().equals("1")
-                        && read.get("recordQuantizationGrid").getAsString().equals("1/16"),
+                        && value(read, "defaultLaunchQuantization").equals("1")
+                        && value(read, "recordQuantizationGrid").equals("1/16"),
                 "new settings are read");
         assertTrue(
-                read.getAsJsonObject("options").getAsJsonArray("preRoll").size() == 4
-                        && read.getAsJsonObject("options")
-                                .getAsJsonArray("recordQuantizationGrid")
+                read.getAsJsonObject("metronomeVolume").has("display")
+                        && !read.has("options")
+                        && read.getAsJsonObject("preRoll")
+                                        .getAsJsonArray("options")
+                                        .size()
+                                == 4
+                        && read.getAsJsonObject("recordQuantizationGrid")
+                                .getAsJsonArray("options")
                                 .get(0)
                                 .getAsString()
                                 .equals("1/4"),
-                "options come from the host's enum definitions");
+                "options come from the host's enum definitions, inside the unit that carries the value");
         for (String bad : List.of(
-                "{\"metronomeVolumeNormalized\":1.01}",
-                "{\"metronomeVolumeNormalized\":\"1\"}",
+                "{\"metronomeVolume\":1.01}",
+                "{\"metronomeVolume\":\"1\"}",
+                "{\"metronomeVolume\":{\"label\":\"Loud\"}}",
                 "{\"punchInEnabled\":1}",
                 "{\"preRoll\":1}",
                 "{\"preRoll\":\"\"}",
@@ -441,7 +462,7 @@ public final class TransportModuleTest {
                 module,
                 "transport.set",
                 HostFixture.json(
-                        "{\"metronomeVolumeNormalized\":0.75,\"preRoll\":\"two_bars\",\"punchInEnabled\":true,\"punchOutEnabled\":true,"
+                        "{\"metronomeVolume\":0.75,\"preRoll\":\"two_bars\",\"punchInEnabled\":true,\"punchOutEnabled\":true,"
                                 + "\"defaultLaunchQuantization\":\"1/2\",\"recordQuantizationGrid\":\"1/8\"}"));
         assertTrue(
                 result.get("outcome").getAsString().matches("applied|already_matched")
@@ -502,7 +523,7 @@ public final class TransportModuleTest {
         node.on("get", args -> "1");
         JsonObject read = f.call(module, "transport.get", new JsonObject());
         assertTrue(
-                read.get("defaultLaunchQuantization").getAsString().equals("bar")
+                value(read, "defaultLaunchQuantization").equals("bar")
                         && read.getAsJsonArray("observedOutsideOptions")
                                 .get(0)
                                 .getAsString()
@@ -527,7 +548,7 @@ public final class TransportModuleTest {
         f.transport.child("defaultLaunchQuantization").emit("bar");
         JsonObject read = f.call(module, "transport.get", new JsonObject());
         assertTrue(
-                read.get("defaultLaunchQuantization").getAsString().equals("bar")
+                value(read, "defaultLaunchQuantization").equals("bar")
                         && read.getAsJsonArray("observedOutsideOptions").size() == 1
                         && read.getAsJsonArray("observedOutsideOptions")
                                 .get(0)

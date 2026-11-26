@@ -22,7 +22,7 @@ Start from the user's observed symptom. Do not rerun a known failing action mere
 
 Follow the smallest signal path that explains the symptom. For silence, distinguish no notes, no generated device signal, no track output, no master output and no monitored output. Each is a different layer; visible meters are observations, not proof that the user heard the intended sound. For audio recording, inspect the intended input, monitoring, arm and destination before explicitly authorized recording; do not enable it just to test an unrelated problem.
 
-Host-side faults the API cannot see (Grid device dropped from the audio network, engine flips, extension errors) show in `host.diagnostics`; check `attribution.certain` before trusting it. A blocked headless instance (Dashboard, Save?, Recover dialogs) is not in the log: use a screenshot.
+Host-side faults the API cannot see (Grid device dropped from the audio network, engine flips, extension errors) show in `diagnostics.get`; check `attribution.certain` before trusting it. A blocked headless instance (Dashboard, Save?, Recover dialogs) is not in the log: use a screenshot.
 
 ## Safe correction loop
 

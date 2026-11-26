@@ -12,7 +12,7 @@ bitwig-agent parameters set --help
 bitwig-agent help grid.parameters.set
 ```
 
-Then call `status` (its `extension:{version,build}` identifies the loaded build; the client flags `extensionMismatch`) and `capabilities` against the running extension; use `grid.capabilities` before private Grid work. Invalid-argument errors name the closest valid field. Offline schema discovery does not prove host availability. Use schemas from the installed version and keep its extension matched; do not copy example UUIDs or infer argument names from a different Bitwig integration.
+Then call `status` (its `extension:{version,build}` identifies the loaded build; the client flags `extensionMismatch`; `detail=full` adds the implemented methods, windows, units and binding availability) against the running extension; use `grid.capabilities` before private Grid work. Invalid-argument errors name the closest valid field. Offline schema discovery does not prove host availability. Use schemas from the installed version and keep its extension matched; do not copy example UUIDs or infer argument names from a different Bitwig integration.
 
 For a current-clip MIDI task, use the skill's [fast path](skills/bitwig-agent/SKILL.md#fast-path-edit-the-current-midi-clip) and [interface-specific route](skills/bitwig-agent/references/production-workflows.md#current-midi-clip-interface-route); with this bridge that is `context.get`, then `notes.read` on its `cursorClip`. Prefer an applicable already connected interface over setup or Grid research. Legacy `bitwig-midi` uses one-based track/slot numbers; this bridge uses track UUIDs and zero-based indices. Parallelize only independent side-effect-free reads, serialize writes and selection-changing reads, and inspect outcomes before dependent edits.
 
@@ -32,16 +32,16 @@ The skill supports screenshot-only guidance, delegated production and troublesho
 
 | Domain | Implemented surface |
 |---|---|
-| Discovery | Status, capabilities, `context.get` (project/transport safety, scenes, tracks with occupied slots, selection, cursor clip), tracks, root devices, fixed one-hop layers and host Actions |
+| Discovery | Status (`detail=full` adds the implemented surface), `context.get` (project/transport safety, scenes, tracks with occupied slots, selection, cursor clip), tracks, root devices, fixed one-hop layers and host Actions |
 | Transport | Play/stop, raw tempo, time signature, seek, metronome and arranger loop, with recording/automation safety guards |
-| Markers | `markers.list/insert/rename/delete`: arranger cue markers by rank + exact name, verified by whole-list readback |
+| Markers | `markers.list/insert/set/delete`: arranger cue markers by ref (rank + name + beat), verified by whole-list readback |
 | Tracks | UUID-targeted mix/name/mute/solo/arm, volume/pan by dB or percent text, send level/enable writes (`tracks.sends.set`), VU peak/RMS windows (`tracks.meters`), selection, audio/instrument/effect creation and name-guarded deletion (`tracks.delete`; one Undo restores the track with its UUID, so stepping through Undo also undoes deletes) |
 | Devices and parameters | Bypass, selection, native/plug-in/preset insertion at a chain position or layer, device delete/move, offline preset search (`presets.search`), eight Remote Controls with page/context guards, named Grid macro pages (`devices.remote.define`/`deletePage`); source-bound normalized direct parameters on roots and fixed layer children |
 | Launcher/MIDI | Empty-slot clip creation (optionally with notes), scene append, local audio/clip-file import, launch/stop, note reads and bounded edits |
 | Grid | Native catalog, bounded graph/metadata/footprint and parameter-context reads; guarded raw scalar and coupled boolean-panel writes; known-catalog insertion, move/delete, raw custom-name CAS and single-input cable CAS |
 | Modulators | Primary inventory and string-panel reads; `modulators.catalog`/`describe` (offline help), `modulators.get` (parameters, outputs, mappings), insert, delete, raw parameter set, and map/unmap an output to Grid module or modulator controls on the same device |
 
-The registry's methods are not comprehensively native-accepted tools. Track and scene windows are defined in `src/bitwig_agent/protocol/limits.py` and reported by `status` and `capabilities`; root devices are 16 per track and sends eight. Layers are one hop: two layers per root and two children per layer. Deeper device hierarchy, named slots/drum pads, project paging, arranger clip properties beyond move/resize/rename/delete, automation beyond arranger points for volume/pan/Grid float controls (launcher automation, automation clips, curve tension) and dedicated master/cue tools are outside the structured surface. Bounded reads are not lossless whole-project exports.
+The registry's methods are not comprehensively native-accepted tools. Track and scene windows are defined in `src/bitwig_agent/protocol/limits.py` and reported by `status`; root devices are 16 per track and sends eight. Layers are one hop: two layers per root and two children per layer. Deeper device hierarchy, named slots/drum pads, project paging, arranger clip properties beyond move/resize/rename/delete, automation beyond arranger points for volume/pan/Grid float controls (launcher automation, automation clips, curve tension) and dedicated master/cue tools are outside the structured surface. Bounded reads are not lossless whole-project exports.
 
 Version `0.2.0` gates private Grid/modulator access to the mapped **Bitwig 6.1.4 loaded host JAR**; the older `0.1.2` release targets 6.1.3 instead. Other versions/hashes fail closed. Read and write availability gates are separate. Real Grid-family string-panel coverage remains unestablished; Macro-modulator evidence does not establish that coverage. See [PROTOCOL.md](PROTOCOL.md) for actual schemas, limits and side effects, and [VERIFICATION.md](VERIFICATION.md) for checks and bounded coverage.
 
@@ -190,11 +190,11 @@ bitwig-agent audio route --mode=restore                         # always: re-lin
 
 `grid.probe` does the capture step for one Grid port (`audio.route mode=silent` first): it reroutes `"<module>.<OUT>"` into an Audio Out of the device, records, puts every cable back and returns the analysis, e.g. `grid.probe trackId=... deviceIndex=0 expectedDeviceName="Poly Grid" port="H: lead.OUT" seconds=4 mode=mono_pitch`. If the restore fails it says exactly which inputs are still changed.
 
-## Host problems the API cannot show (`host.diagnostics`)
+## Host problems the API cannot show (`diagnostics.get`)
 
 ```sh
-bitwig-agent host diagnostics                         # last 300 s of this instance's Bitwig log, classified
-bitwig-agent host diagnostics --sinceMarker=<marker>  # only what happened since the previous call's `marker`
+bitwig-agent diagnostics get                         # last 300 s of this instance's Bitwig log, classified
+bitwig-agent diagnostics get --sinceMarker=<marker>  # only what happened since the previous call's `marker`
 ```
 
-Client-side, read-only, reads `~/.BitwigStudio/log/BitwigStudio.log` (macOS `~/Library/Logs/Bitwig/`, Windows `%LOCALAPPDATA%\Bitwig Studio\log\`: documented, not verified; else `status:"unsupported"`; `BITWIG_LOG_PATH` overrides). Events are `grid_rejected` (a Grid device silently dropped from the audio network: it just goes silent), `engine` (`isEngineReady` flips), `extension`, `exception`, `dialog` (logged notifications only), `other`. After Grid topology writes, check `host.diagnostics` for `grid_rejected`. Modal dialogs (Dashboard, Save Project?, Recover Projects) are not in the log: use a screenshot. The log is shared by all instances: read `attribution.certain` and `uncertainty`.
+Client-side, read-only, reads `~/.BitwigStudio/log/BitwigStudio.log` (macOS `~/Library/Logs/Bitwig/`, Windows `%LOCALAPPDATA%\Bitwig Studio\log\`: documented, not verified; else `status:"unsupported"`; `BITWIG_LOG_PATH` overrides). Events are `grid_rejected` (a Grid device silently dropped from the audio network: it just goes silent), `engine` (`isEngineReady` flips), `extension`, `exception`, `dialog` (logged notifications only), `other`. After Grid topology writes, check `diagnostics.get` for `grid_rejected`. Modal dialogs (Dashboard, Save Project?, Recover Projects) are not in the log: use a screenshot. The log is shared by all instances: read `attribution.certain` and `uncertainty`.

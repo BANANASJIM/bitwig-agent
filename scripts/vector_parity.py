@@ -291,8 +291,14 @@ def generate(schema, defs):  # noqa: PLR0911
     raise AssertionError(f"no generator for {schema}")
 
 
+def container_form(schema, defs):
+    """The object or array form of a schema node, else its first form."""
+    forms = variants(schema, defs)
+    return next((f for f in forms if f.get("type") in ("object", "array")), forms[0])
+
+
 def child_schema(node, key, defs):
-    node = variants(node, defs)[0]
+    node = container_form(node, defs)
     return node["items"] if isinstance(key, int) else node["properties"][key]
 
 
@@ -303,13 +309,18 @@ def ensure(root, path, schema, defs):
         node_schema = child_schema(node_schema, key, defs)
         if isinstance(key, int):
             if not node:
-                node.append(generate(node_schema, defs))
+                node.append(container(node_schema, defs))
             node = node[key]
         else:
-            if node.get(key) is None:
-                node[key] = generate(node_schema, defs)
+            if not isinstance(node.get(key), dict | list):
+                node[key] = container(node_schema, defs)
             node = node[key]
     return node, path[-1]
+
+
+def container(schema, defs):
+    """A minimal valid value of the object or array form of a schema node: a path through it needs a container, not a scalar form."""
+    return generate(container_form(schema, defs), defs)
 
 
 def leaves(schema, defs, path=()):

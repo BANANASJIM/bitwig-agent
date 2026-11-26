@@ -8,9 +8,9 @@ import com.google.gson.*;
 import dev.bitwigagent.core.MethodSpecs;
 import java.util.*;
 
-/** status, aggregating each domain's section, and runtime discovery of implemented surfaces and windows. */
+/** status: the brief project state, and with detail full the implemented surface plus each domain's section. */
 final class DiscoveryModule implements HostModule {
-    static final Set<String> METHODS = Set.of("status", "capabilities");
+    static final Set<String> METHODS = Set.of("status");
     private static final BuildInfo BUILD = BuildInfo.load();
     private static final GridTopologyQuarantine GRID_HOLDS = new GridTopologyQuarantine();
     private final ControllerHost host;
@@ -20,8 +20,6 @@ final class DiscoveryModule implements HostModule {
     private final ProjectState projectState;
     private final MethodSpecs specs;
     private final ParameterModule parameters;
-    private final ProjectModule project;
-    private final RenderModule render;
     private final Holds holds;
     private final List<HostModule> domains;
 
@@ -34,8 +32,6 @@ final class DiscoveryModule implements HostModule {
             ProjectState projectState,
             MethodSpecs specs,
             ParameterModule parameters,
-            ProjectModule project,
-            RenderModule render,
             Holds holds,
             List<HostModule> domains) {
         this.host = host;
@@ -45,8 +41,6 @@ final class DiscoveryModule implements HostModule {
         this.projectState = projectState;
         this.specs = specs;
         this.parameters = parameters;
-        this.project = project;
-        this.render = render;
         this.holds = holds;
         this.domains = domains;
     }
@@ -58,21 +52,12 @@ final class DiscoveryModule implements HostModule {
 
     @Override
     public void validate(String method, JsonObject params) {
-        Params.fields(params, Set.of(), method.equals("status") ? Set.of("detail") : Set.of());
+        Params.fields(params, Set.of(), Set.of("detail"));
     }
 
     @Override
     public void dispatch(HostOperation operation, String method, JsonObject params) {
-        switch (method) {
-            case "status":
-                operation.result.complete(status(operation, params.has("detail")));
-                return;
-            case "capabilities":
-                operation.result.complete(capabilities(operation));
-                return;
-            default:
-                throw Errors.notApplied(Reason.UNKNOWN_METHOD, "Unsupported discovery method: " + method);
-        }
+        operation.result.complete(status(operation, params.has("detail")));
     }
 
     private JsonObject status(HostOperation operation, boolean full) {
@@ -92,6 +77,7 @@ final class DiscoveryModule implements HostModule {
         result.add("parameterBindingDiagnostics", parameters.diagnostics());
         result.add("holds", holds(holds, GRID_HOLDS));
         addDomainSections(operation, result, domains, full);
+        if (full) implementation(result);
         return result;
     }
 
@@ -124,22 +110,18 @@ final class DiscoveryModule implements HostModule {
         return out;
     }
 
-    private JsonObject capabilities(HostOperation operation) {
-        JsonObject result = new JsonObject();
-        result.addProperty("scope", "implemented_toolkit_interfaces");
-        result.addProperty("apiVersion", 25);
-        result.addProperty("hostVersion", host.getHostVersion());
-        result.add("extension", BUILD.toJson());
+    /** The implemented methods, bounded windows and units; native binding availability comes from each module's section. */
+    private void implementation(JsonObject result) {
         JsonArray methods = new JsonArray();
-        JsonObject domains = new JsonObject();
+        JsonObject byDomain = new JsonObject();
         for (String method : specs.methods()) {
             methods.add(method);
             String domain = method.contains(".") ? method.substring(0, method.indexOf('.')) : "discovery";
-            if (!domains.has(domain)) domains.add(domain, new JsonArray());
-            domains.getAsJsonArray(domain).add(method);
+            if (!byDomain.has(domain)) byDomain.add(domain, new JsonArray());
+            byDomain.getAsJsonArray(domain).add(method);
         }
         result.add("methods", methods);
-        result.add("domains", domains);
+        result.add("domains", byDomain);
         JsonObject windows = new JsonObject();
         windows.add("tracks", window(window.offset(), TRACKS, window.total()));
         windows.addProperty("devicesPerTrack", DEVICES);
@@ -147,13 +129,6 @@ final class DiscoveryModule implements HostModule {
         windows.addProperty("sendsPerTrack", SENDS);
         windows.addProperty("trackScope", "flat_track_bank");
         windows.addProperty("deviceScope", "top_level");
-        windows.addProperty("layersPerRootDevice", DeviceSources.LAYERS);
-        windows.addProperty("devicesPerLayer", DeviceSources.CHILDREN);
-        windows.addProperty(
-                "layerScope", "one_layer_hop_fixed_zero_offset_no_pads_slots_deeper_or_grid_private_targeting");
-        windows.addProperty(
-                "layerPhysicalRebindPolicy",
-                "direct_access_fail_closed_until_extension_reload_no_callback_provenance_boundary");
         windows.addProperty("indexBase", 0);
         result.add("windows", windows);
         JsonObject units = new JsonObject();
@@ -167,66 +142,11 @@ final class DiscoveryModule implements HostModule {
         units.addProperty("noteWindowPosition", "steps_at_explicit_stepSizeBeats");
         units.addProperty("noteVelocity", "midi_1_to_127_integer_same_unit_as_notes.edit");
         units.addProperty("notePitch", "midi_0_to_127");
-        units.addProperty("gridParameterValues", "native_raw_typed_values_not_normalized_or_display_units");
-        units.addProperty("gridModulePosition", "native_absolute_anchor_grid_coordinates_not_pixels");
-        units.addProperty("gridModuleFootprint", "native_primitive_width_height_in_grid_coordinates");
         result.add("units", units);
         result.addProperty("parameterIdentityScope", "observed_bank_proxy_context_not_persistent_device_identity");
         result.addProperty("writeSemantics", "absolute_or_explicit_command_no_automatic_retries");
-        JsonObject grid = new JsonObject();
-        grid.addProperty(
-                "scope",
-                "version_gated_private_grid_reads_guarded_raw_parameter_module_and_single_input_connection_writes");
-        grid.addProperty("capabilitiesMethod", "grid.capabilities");
-        grid.addProperty(
-                "reason",
-                "Query grid.capabilities for independent read/parameterWrite/moduleInsert/moduleMove/moduleDelete/moduleRename/connectionWrite bindings, read-only adapter Class identity and process topology lifetime guard, not native acceptance.");
-        JsonArray reads = new JsonArray();
-        for (String method : List.of("grid.catalog", "grid.get", "grid.parameters.get", "grid.voicing.get"))
-            reads.add(method);
-        grid.add("readMethods", reads);
-        JsonArray writes = new JsonArray();
-        for (String method : List.of(
-                "grid.parameters.set",
-                "grid.voicing.set",
-                "devices.remote.define",
-                "devices.remote.deletePage",
-                "grid.modules.insert",
-                "grid.modules.move",
-                "grid.modules.delete",
-                "grid.modules.rename",
-                "grid.connections.set")) writes.add(method);
-        grid.add("writeMethods", writes);
-        grid.addProperty(
-                "graphWriteAvailability",
-                "query_grid.capabilities_moduleInsert_moduleMove_moduleDelete_moduleRename_and_connectionWrite");
-        grid.addProperty("graphWriteScope", "module_insert_move_delete_rename_and_single_input_connection_set");
-        grid.addProperty("parameterWriteAvailability", "query_grid.capabilities_parameterWrite");
-        grid.addProperty("nativeUndoAvailable", false);
-        grid.addProperty(
-                "nativeUndoScope",
-                "native_parameter_and_topology_operations_not_an_undo_command_or_grouping_guarantee");
-        result.add("privateGridTopology", grid);
-        JsonObject modulators = new JsonObject();
-        modulators.addProperty("scope", "primary_modulators_on_root_device");
-        modulators.addProperty("capabilitiesMethod", "modulators.capabilities");
-        modulators.addProperty(
-                "readAvailability", "query_modulators.capabilities_independent_discovery_and_string_panel_bindings");
-        modulators.addProperty("writeAvailability", "query_modulators.capabilities_edit");
-        modulators.addProperty("nativeVerification", "not_established_by_binding");
-        modulators.addProperty(
-                "coverage",
-                "primary_modulators_and_their_mappings_on_one_root_device_excludes_secondary_nested_modulators_and_materialization");
-        modulators.addProperty("pagination", "independent_observations_not_revision_consistent");
-        modulators.addProperty(
-                "edits",
-                "modulators.get/insert/delete/parameters.set/map/unmap; availability in modulators.capabilities edit");
-        result.add("privateModulatorReads", modulators);
-        result.add("projectSaveAs", project.saveAsCapability(operation));
-        result.add("render", render.capability(operation));
         result.addProperty(
                 "evidence",
                 "Runtime implementation discovery only; not per-method host verification or full interface coverage.");
-        return result;
     }
 }

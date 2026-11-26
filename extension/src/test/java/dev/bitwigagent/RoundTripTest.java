@@ -36,7 +36,22 @@ public final class RoundTripTest {
 
     private static final List<Vector> VECTORS = List.of(
             new Vector(TestServices::transportModule, "transport.get", "{}", "transport.set", "{}", "tempoBpm"),
-            new Vector(TestServices::transportModule, "transport.get", "{}", "transport.set", "{}", "preRoll"));
+            new Vector(TestServices::transportModule, "transport.get", "{}", "transport.set", "{}", "preRoll"),
+            new Vector(TestServices::transportModule, "transport.get", "{}", "transport.set", "{}", "metronomeVolume"),
+            new Vector(
+                    TestServices::transportModule,
+                    "transport.get",
+                    "{}",
+                    "transport.set",
+                    "{}",
+                    "defaultLaunchQuantization"),
+            new Vector(
+                    TestServices::transportModule,
+                    "transport.get",
+                    "{}",
+                    "transport.set",
+                    "{}",
+                    "recordQuantizationGrid"));
 
     /** The field's options: inside its read unit, or where a read still lists them apart under options. */
     private static JsonArray options(JsonObject read, String field) {

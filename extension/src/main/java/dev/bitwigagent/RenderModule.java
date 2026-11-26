@@ -300,7 +300,12 @@ final class RenderModule implements HostModule, JobsModule.Source {
         return value;
     }
 
-    /** Binding availability for capabilities; binds on first use, never dispatches. */
+    @Override
+    public void status(HostOperation op, JsonObject out, boolean full) {
+        if (full) out.add("render", capability(op));
+    }
+
+    /** Binding availability for status detail full; binds on first use, never dispatches. */
     JsonObject capability(HostOperation op) {
         JsonObject result = new JsonObject();
         JsonArray methods = new JsonArray();

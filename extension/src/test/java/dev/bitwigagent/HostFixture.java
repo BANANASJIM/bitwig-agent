@@ -188,6 +188,7 @@ final class HostFixture {
                 "isClipLauncherAutomationWriteEnabled")) transport.child(key).notifyInitial = observeSafetyInitially;
         transport.child("tempo").child("value").data = 120.0;
         transport.child("metronomeVolume").data = .5;
+        transport.child("metronomeVolume").child("displayedValue").data = "-12 dB";
         transport.child("isPunchInEnabled").data = false;
         transport.child("isPunchOutEnabled").data = false;
         transport.child("preRoll").data = "none";

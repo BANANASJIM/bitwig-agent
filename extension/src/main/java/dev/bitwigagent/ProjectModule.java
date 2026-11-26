@@ -191,7 +191,12 @@ final class ProjectModule implements HostModule, JobsModule.Source {
                 });
     }
 
-    /** Binding availability for capabilities; binds on first use, never dispatches. */
+    @Override
+    public void status(HostOperation op, JsonObject out, boolean full) {
+        if (full) out.add("projectSaveAs", saveAsCapability(op));
+    }
+
+    /** Binding availability for status detail full; binds on first use, never dispatches. */
     JsonObject saveAsCapability(HostOperation op) {
         JsonObject result = new JsonObject();
         result.addProperty("method", SAVE_AS);
