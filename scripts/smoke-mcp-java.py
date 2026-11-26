@@ -29,7 +29,7 @@ build = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(build)
 
 TEST_ROOT = ROOT / "extension/src/test/java"
-FIXTURE_SOURCES = ("HostFixture.java", "FakeHost.java", "ScheduledTasks.java")
+FIXTURE_SOURCES = ("HostFixture.java", "FakeHost.java", "ScheduledTasks.java", "TestServices.java")
 FIXTURE = """
 package dev.bitwigagent;
 import com.google.gson.*;

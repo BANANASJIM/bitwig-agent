@@ -58,10 +58,15 @@ public final class SchedulerTest {
         long start = tasks.now();
         int[] samples = {0};
         List<String> log = new ArrayList<>();
-        scheduler.poll(op, tasks.after(100), () -> {
-            samples[0]++;
-            return false;
-        }, () -> log.add("done"), () -> log.add("timeout"));
+        scheduler.poll(
+                op,
+                tasks.after(100),
+                () -> {
+                    samples[0]++;
+                    return false;
+                },
+                () -> log.add("done"),
+                () -> log.add("timeout"));
         drain();
         assertEquals(List.of("timeout"), log);
         assertEquals(6, samples[0], "samples at 0, 20, ... 100 ms; the one at the limit is the last");
@@ -73,7 +78,12 @@ public final class SchedulerTest {
         HostOperation op = new HostOperation(tasks.after(1000));
         int[] samples = {0};
         List<String> log = new ArrayList<>();
-        scheduler.poll(op, tasks.after(2 * Scheduler.POLL_MS), () -> ++samples[0] == 3, () -> log.add("done"), () -> log.add("timeout"));
+        scheduler.poll(
+                op,
+                tasks.after(2 * Scheduler.POLL_MS),
+                () -> ++samples[0] == 3,
+                () -> log.add("done"),
+                () -> log.add("timeout"));
         drain();
         assertEquals(List.of("done"), log);
     }
@@ -105,7 +115,11 @@ public final class SchedulerTest {
         HostOperation op = new HostOperation(tasks.after(1000));
         int[] steps = {0};
         List<String> log = new ArrayList<>();
-        scheduler.conclude(op, tasks.after(500), () -> ++steps[0] < 3 ? null : () -> log.add("concluded " + steps[0]), () -> log.add("timeout"));
+        scheduler.conclude(
+                op,
+                tasks.after(500),
+                () -> ++steps[0] < 3 ? null : () -> log.add("concluded " + steps[0]),
+                () -> log.add("timeout"));
         drain();
         assertEquals(List.of("concluded 3"), log);
     }
@@ -131,10 +145,15 @@ public final class SchedulerTest {
     void aSettledOperationStopsBeingPolled() {
         HostOperation op = new HostOperation(tasks.after(1000));
         int[] samples = {0};
-        scheduler.poll(op, tasks.after(500), () -> {
-            if (++samples[0] == 2) op.result.complete(new JsonObject());
-            return false;
-        }, () -> fail("done"), () -> fail("timeout"));
+        scheduler.poll(
+                op,
+                tasks.after(500),
+                () -> {
+                    if (++samples[0] == 2) op.result.complete(new JsonObject());
+                    return false;
+                },
+                () -> fail("done"),
+                () -> fail("timeout"));
         drain();
         assertEquals(2, samples[0]);
     }

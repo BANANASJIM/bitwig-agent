@@ -191,9 +191,7 @@ public final class RpcServer implements AutoCloseable {
         }
     }
 
-    static final int MIN_TIMEOUT_MS = HostLimits.LIMITS.minTimeoutMs,
-            SOCKET_EXPIRY_MS = 15000,
-            SOCKET_GRACE_MS = 5000;
+    static final int MIN_TIMEOUT_MS = HostLimits.LIMITS.minTimeoutMs, SOCKET_EXPIRY_MS = 15000, SOCKET_GRACE_MS = 5000;
 
     private static JsonObject envelope(String id) {
         JsonObject response = new JsonObject();
