@@ -3,6 +3,9 @@ package dev.bitwigagent;
 import static org.junit.jupiter.api.Assertions.*;
 
 import com.google.gson.*;
+import dev.bitwigagent.core.HostModule;
+import dev.bitwigagent.core.HostOperation;
+import dev.bitwigagent.core.Outcome;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Function;

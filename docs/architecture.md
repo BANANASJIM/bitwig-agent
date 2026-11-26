@@ -38,6 +38,28 @@ Python rejects invalid arguments before dispatch, including unknown fields and i
 
 The main sources are under [`extension/src/main/java/dev/bitwigagent`](https://github.com/BANANASJIM/bitwig-agent/tree/main/extension/src/main/java/dev/bitwigagent).
 
+| Package (`dev.bitwigagent.…`) | Owns |
+|---|---|
+| (root) | Composition only: `BitwigAgentExtension`, its definition and `HostBridge` wire services, modules and adapters |
+| `rpc` | `RpcServer`: framing, bounds, admission; imports only `core` |
+| `core` | Shared mechanisms: `MethodSpecs`, `SchemaValidator`, `Refs`, `Errors`/`ErrorCode`/`Reason`/`Outcome`, `Params`, `Results`, `Batch`, `Scheduler`, `HostOperation`, `HostModule`, `Holds`, value/match/position rules, display solving |
+| `host` | Shared host observations and services: `TrackWindow`, `TrackRefs`, `ProjectState`, `TransportSafety`, `SelectionLease`, `LauncherStructureLock`, `NativeRuntime`, `DeviceSources`, `RequestSnapshot`, `NativeReadContext` |
+| `grid`, `device`, `launcher`, `arranger`, `mix`, `project`, `render`, `routing`, `automation`, `transport`, `actions`, `recovery` | Domain modules and their host-free rules, one package per domain |
+| `bitwig614` | Exact-version native bindings: the only package that reflects into the host |
+
+Tests mirror these packages. Domain packages mirror the Python `protocol/` modules, grouped as `device` (devices, chains, parameters, modulators), `launcher` (launcher, scenes, clips, notes), `arranger` (arranger, markers), `mix` (tracks, meters) and `project` (status, context, project).
+
+Java `core` holds the extension's shared protocol mechanisms; Python `core` is the front-end-independent invoke/views layer.
+
+Known couplings (follow-up; `tests/test_java_packages.py` is tightened once they are gone):
+
+- Domain packages still name `Bitwig614*` classes directly instead of going only through their ports.
+- `bitwig614` still builds JSON and calls domain rules (for example `AutomationModule` helpers).
+- `core.HostOperation` implements `rpc.RpcServer.Expiring`.
+- `core.Results` takes `host.ProjectState.Readiness`.
+- `host.DeviceSources` calls `device.NativeChains.nested`.
+- `bitwig614.Bitwig614GridInsertionAccess` checks the origin of the root `BitwigAgentExtension`.
+
 - `BitwigAgentExtension` creates the bridge/listener, forwards controller flushes and closes services on exit.
 - `RpcServer` owns transport framing, admission and bounded response delivery. It does not own project state, selection or domain business logic.
 - `core.MethodSpecs` reads the `protocol.json` bundle generated from the Python `protocol/` package (method names, timeouts, write/engine flags). `HostBridge` registers each `HostModule` by method name, fails at start-up if the bundle and the registered handlers differ, checks every request against the method's exported JSON Schema (`core.SchemaValidator`, which also fills schema defaults and refuses to load a schema using a keyword it does not implement), routes validation to the owning module and schedules each `HostOperation` through the `Scheduler`. Each module still validates its own parameters in `HostModule.validate`.
@@ -101,7 +123,7 @@ The agent can explicitly use separately authorized Computer Use for an unsupport
 | Path | Responsibility |
 |---|---|
 | `src/bitwig_agent/` | Protocol and catalog, transport client, core call path, composed tools, MCP and CLI front ends, release installer |
-| `extension/src/main/java/dev/bitwigagent/` | Host services, domains and bounded native adapters |
+| `extension/src/main/java/dev/bitwigagent/` | Composition root; `rpc`, `core`, `host`, domain packages and `bitwig614` native adapters |
 | `extension/src/test/`, `tests/` | Simulated-host Java checks and host-free Python regressions |
 | `scripts/` | Source builds/checks and offline evidence helpers |
 | `examples/` | Client configuration and explicit opt-in music recipes |
@@ -121,15 +143,16 @@ flowchart LR
         CO --> F[frontends/mcp, frontends/cli]
     end
     subgraph Java
-        R[RpcServer] --> H[HostBridge]
-        M[core.MethodSpecs] --> H
-        H --> D[domain modules]
-        D --> N[Bitwig614 access classes]
+        R[rpc] --> H[HostBridge]
+        M[core] --> H
+        H --> D[domain packages]
+        D --> HS[host]
+        D --> N[bitwig614]
     end
     C -- "loopback TCP" --> R
 ```
 
-Enforced by tests: `protocol/` imports only the standard library, pydantic and itself; front ends import only `core` among internal modules. The Java sources are one package, `dev.bitwigagent`, plus `core`; the layering is by role, not by subpackage. Splitting the flat Java package and the top-level audio modules into narrower packages is planned and not yet done.
+Enforced by tests: `protocol/` imports only the standard library, pydantic and itself; front ends import only `core` among internal modules. Java layering is by package (`tests/test_java_packages.py`): the root holds only composition, `rpc` imports only `core`, only `bitwig614` reflects into the host, and the unnamed package holds only `BitwigAgent614GridInsertion`; javac enforces package-private boundaries.
 
 ## Evidence is layered
 

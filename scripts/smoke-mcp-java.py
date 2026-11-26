@@ -29,11 +29,20 @@ build = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(build)
 
 TEST_ROOT = ROOT / "extension/src/test/java"
-FIXTURE_SOURCES = ("HostFixture.java", "FakeHost.java", "ScheduledTasks.java", "TestServices.java", "FakeChains.java")
+FIXTURE_SOURCES = (
+    "HostFixture.java",
+    "FakeHost.java",
+    "ScheduledTasks.java",
+    "TestServices.java",
+    "device/FakeChains.java",
+)
 FIXTURE = """
 package dev.bitwigagent;
 import com.google.gson.*;
+import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.MethodSpecs;
+import dev.bitwigagent.core.Reason;
+import dev.bitwigagent.rpc.RpcServer;
 import java.util.concurrent.CompletableFuture;
 public class McpTransportFixture {
   public static void main(String[] args) throws Exception {

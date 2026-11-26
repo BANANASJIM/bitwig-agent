@@ -18,7 +18,7 @@ import java.util.function.Supplier;
  * <p>Strict by default: a call that the test did not declare throws, so a module can never lean on a silently
  * invented default. Declare a child with {@link #child}, a value with {@link #put}, behaviour with {@link #on}.
  */
-final class FakeHost implements InvocationHandler {
+public final class FakeHost implements InvocationHandler {
     private static final Object[] NO_ARGS = {};
     private static final Object NO_MATCH = new Object();
     private static final Set<String> VALUE_READS = Set.of("get", "getRaw", "getAsDouble");
@@ -28,7 +28,7 @@ final class FakeHost implements InvocationHandler {
     final String path;
     final Map<String, FakeHost> children = new LinkedHashMap<>();
     final Map<String, Integer> calls = new HashMap<>();
-    final List<Object> observers = new ArrayList<>();
+    public final List<Object> observers = new ArrayList<>();
     private final FakeHost parent;
     private final Map<Class<?>, Object> proxies = new HashMap<>();
     private final Map<String, Object> constants = new HashMap<>();
@@ -39,23 +39,23 @@ final class FakeHost implements InvocationHandler {
     private Class<?> type;
     private Supplier<Object> source;
 
-    Object data;
-    BiConsumer<String, Object[]> onCall = (method, args) -> {};
+    public Object data;
+    public BiConsumer<String, Object[]> onCall = (method, args) -> {};
     Runnable beforeWrite = () -> {};
-    Runnable afterWrite = () -> {};
-    boolean notifyInitial = true;
-    boolean notifyWrites = true;
+    public Runnable afterWrite = () -> {};
+    public boolean notifyInitial = true;
+    public boolean notifyWrites = true;
     boolean updateWrites = true;
-    boolean takeoverPending;
-    int writes;
-    int actions;
+    public boolean takeoverPending;
+    public int writes;
+    public int actions;
 
-    FakeHost(String name) {
+    public FakeHost(String name) {
         this(null, name);
     }
 
     /** A standalone node whose {@link #proxy()} implements {@code type}. */
-    static FakeHost of(Class<?> type, String name) {
+    public static FakeHost of(Class<?> type, String name) {
         FakeHost node = new FakeHost(name);
         node.type = type;
         return node;
@@ -67,18 +67,18 @@ final class FakeHost implements InvocationHandler {
     }
 
     /** Declares (or returns) the named child: a sub-object, a value, or both. */
-    FakeHost child(String name) {
+    public FakeHost child(String name) {
         return children.computeIfAbsent(name, key -> new FakeHost(this, key));
     }
 
     /** Declares a method whose behaviour (and result, null for void) is {@code handler}. */
-    FakeHost on(String method, Function<Object[], Object> handler) {
+    public FakeHost on(String method, Function<Object[], Object> handler) {
         handlers.put(method, handler);
         return this;
     }
 
     /** Declares {@code handler} for every method of {@code api} whose name passes {@code selected}. */
-    FakeHost onMethods(Class<?> api, Predicate<String> selected, BiFunction<String, Object[], Object> handler) {
+    public FakeHost onMethods(Class<?> api, Predicate<String> selected, BiFunction<String, Object[], Object> handler) {
         for (Method method : api.getMethods())
             if (selected.test(method.getName())) on(method.getName(), args -> handler.apply(method.getName(), args));
         return this;
@@ -109,37 +109,37 @@ final class FakeHost implements InvocationHandler {
     }
 
     /** Declares a separately built subtree as the named child. */
-    FakeHost attach(String name, FakeHost node) {
+    public FakeHost attach(String name, FakeHost node) {
         children.put(name, node);
         return node;
     }
 
     /** The API type of this bank's items, which {@code getItemAt} reports erased. */
-    FakeHost items(Class<?> type) {
+    public FakeHost items(Class<?> type) {
         itemType = type;
         return this;
     }
 
-    FakeHost item(int index) {
+    public FakeHost item(int index) {
         return child("item" + index);
     }
 
     /** This value reads {@code supplier} afresh each time, for state owned by the surrounding fixture. */
-    FakeHost reading(Supplier<Object> supplier) {
+    public FakeHost reading(Supplier<Object> supplier) {
         source = supplier;
         return this;
     }
 
-    FakeHost live(String name, Supplier<Object> supplier) {
+    public FakeHost live(String name, Supplier<Object> supplier) {
         return child(name).reading(supplier);
     }
 
-    Object proxy() {
+    public Object proxy() {
         return proxyOf(type);
     }
 
     /** Declares a value child holding {@code value}. */
-    FakeHost put(String name, Object value) {
+    public FakeHost put(String name, Object value) {
         FakeHost node = child(name);
         node.data = value;
         return node;
@@ -150,7 +150,7 @@ final class FakeHost implements InvocationHandler {
         writeGuard = guard;
     }
 
-    <T> T proxy(Class<T> type) {
+    public <T> T proxy(Class<T> type) {
         return type.cast(proxyOf(type));
     }
 
@@ -159,7 +159,7 @@ final class FakeHost implements InvocationHandler {
                 type, key -> Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[] {type}, this));
     }
 
-    int calls(String method) {
+    public int calls(String method) {
         return calls.getOrDefault(method, 0);
     }
 
@@ -168,7 +168,7 @@ final class FakeHost implements InvocationHandler {
         if (notifyInitial) notifyObserver(observer);
     }
 
-    void emit(Object value) {
+    public void emit(Object value) {
         boolean changed = !Objects.equals(data, value);
         data = value;
         if (unassignedObservers != null && !changed) return;

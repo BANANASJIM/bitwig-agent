@@ -3,6 +3,7 @@ package dev.bitwigagent;
 import com.bitwig.extension.controller.ControllerExtension;
 import com.bitwig.extension.controller.api.ControllerHost;
 import dev.bitwigagent.core.MethodSpecs;
+import dev.bitwigagent.rpc.RpcServer;
 import java.io.IOException;
 
 public final class BitwigAgentExtension extends ControllerExtension {

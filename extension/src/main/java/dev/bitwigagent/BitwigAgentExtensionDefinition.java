@@ -5,6 +5,7 @@ import com.bitwig.extension.controller.AutoDetectionMidiPortNamesList;
 import com.bitwig.extension.controller.ControllerExtension;
 import com.bitwig.extension.controller.ControllerExtensionDefinition;
 import com.bitwig.extension.controller.api.ControllerHost;
+import dev.bitwigagent.core.BuildInfo;
 import dev.bitwigagent.core.SharedData;
 import java.util.UUID;
 
