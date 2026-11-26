@@ -3424,7 +3424,7 @@ public final class GridSnapshotReaderTest {
         /** The writer's failure as the request reports it: once dispatched, unknown. */
         RpcException failure(GridParameterWriter.Request request) {
             RpcException error = assertThrows(RpcException.class, () -> set(request));
-            return op.dispatched ? Errors.asUnknown(error) : error;
+            return op.dispatched ? Errors.unknown(error.reason, error.getMessage()) : error;
         }
 
         @Override
@@ -3499,7 +3499,7 @@ public final class GridSnapshotReaderTest {
 
         RpcException failure() {
             RpcException error = assertThrows(RpcException.class, () -> set(request("boolean", "true", "false")));
-            return op.dispatched ? Errors.asUnknown(error) : error;
+            return op.dispatched ? Errors.unknown(error.reason, error.getMessage()) : error;
         }
 
         @Override

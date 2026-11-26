@@ -52,7 +52,7 @@ public final class HoldsTest {
     void aDescriptionThatSuppliesNullIsNotHeld() {
         Holds holds = new Holds();
         boolean[] rendering = {true};
-        holds.inFlight("render.job", () -> rendering[0] ? "A render is running." : null);
+        holds.job("render.job", () -> rendering[0] ? "A render is running." : null, () -> false, () -> {});
         assertTrue(holds.held("render.job"));
         assertEquals(1, holds.list().size());
         rendering[0] = false;
@@ -74,6 +74,25 @@ public final class HoldsTest {
         assertEquals("A routing write is unresolved.", holds.ack("routing.quarantine"));
         assertFalse(holds.held("routing.quarantine"));
         assertRpcError("unknown_hold", () -> holds.ack("routing.quarantine"));
+    }
+
+    @Test
+    void aJobHoldIsAckableOnlyAfterItsRequestReturned() {
+        Holds holds = new Holds();
+        boolean[] returned = {false}, running = {true};
+        holds.job(
+                "render.job",
+                () -> running[0] ? "A render is running." : null,
+                () -> returned[0],
+                () -> running[0] = false);
+        assertFalse(holds.list().get(0).ackable);
+        assertRpcError("busy", () -> holds.ack("render.job"));
+        returned[0] = true;
+        assertTrue(holds.list().get(0).ackable);
+        assertEquals("A render is running.", holds.ack("render.job"));
+        assertFalse(holds.held("render.job"), "the owner gave the job up");
+        running[0] = true;
+        assertTrue(holds.held("render.job"), "the registration stays for the next job");
     }
 
     @Test

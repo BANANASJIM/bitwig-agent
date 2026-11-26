@@ -27,10 +27,6 @@ public final class Errors {
         return notApplied(Reason.INVALID_PARAMS, message);
     }
 
-    public static RpcException asUnknown(RpcException error) {
-        return error.unknown ? error : new RpcException(error.reason, error.getMessage(), error.next, true);
-    }
-
     /** The wire error: {code, reason, message, next?}. */
     static JsonObject error(RpcException error) {
         JsonObject out = new JsonObject();

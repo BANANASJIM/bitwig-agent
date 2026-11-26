@@ -91,7 +91,7 @@ EXPORT_AUDIO_DESCRIPTION = (
     + str(LONG_DEFAULT_TIMEOUT_MS)
     + ", up to "
     + str(LONG_TIMEOUT_MS)
-    + "; a longer render returns outcome unknown, reason deadline and job: follow it with jobs.get; further renders are busy until it completes. Never retry unknown."
+    + "; a longer render returns outcome unknown, reason deadline and job: follow it with jobs.get; further renders are busy until it completes or you ack its job hold after inspecting. Never retry unknown."
 )
 BOUNCE_IN_PLACE_DESCRIPTION = (
     "Bounce a beat range of audio/instrument tracks in place (6.1.4-gated; Bitwig's Bounce in Place shows no dialog): each track's main arranger lane gets one audio clip over [startBeats, endBeats) replacing what was there, in one undoable action; the audio lives in the project's managed audio folder. Same refusals as export.audio before dispatch (group tracks: unsupported_scope). outcome applied only after the job's completion latch and arranger readback of every track: exactly one new audio clip at the range and nothing else overlapping it (the new clips are in tracks[].clip). An instrument track becomes Hybrid (tracks[].trackTypeBefore/trackTypeAfter, warning); Undo reverts that, deleting the clip does not. Completed with no lane changed: job_failed (an error, nothing changed); any other readback difference: outcome unknown, reason readback_mismatch, and further bounces are refused until you inspect arranger.clips.list and ack the hold. timeoutMs default "

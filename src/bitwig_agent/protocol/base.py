@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import PurePath, PurePosixPath, PureWindowsPath
@@ -31,11 +30,6 @@ class Outcome(StrEnum):
 
 
 SUCCEEDED = frozenset({Outcome.ALREADY_MATCHED, Outcome.APPLIED, Outcome.SENT})
-
-
-def worst(outcomes: Iterable[str]) -> Outcome:
-    order = list(Outcome)
-    return max((Outcome(o) for o in outcomes), key=order.index, default=Outcome.ALREADY_MATCHED)
 
 
 class ErrorCode(StrEnum):

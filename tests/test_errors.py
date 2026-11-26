@@ -2,8 +2,8 @@ import pytest
 
 from bitwig_agent.core import composed
 from bitwig_agent.core.invoke import Error, Result, invoke
-from bitwig_agent.errors import UnknownOutcome, bridge_error, unknown_result
-from bitwig_agent.protocol.base import REASONS, SUCCEEDED, ErrorCode, Outcome, vocabulary, worst
+from bitwig_agent.errors import HostChanged, bridge_error, unknown_result
+from bitwig_agent.protocol.base import REASONS, SUCCEEDED, ErrorCode, Outcome, vocabulary
 
 pytestmark = pytest.mark.anyio
 
@@ -14,11 +14,7 @@ def test_every_reason_belongs_to_one_of_the_ten_codes():
     assert vocabulary()["outcomes"] == ["already_matched", "applied", "sent", "not_applied", "unknown"]
 
 
-def test_the_worst_outcome_wins():
-    assert worst(["applied", "already_matched"]) == Outcome.APPLIED
-    assert worst(["sent", "not_applied", "applied"]) == Outcome.NOT_APPLIED
-    assert worst(["unknown", "not_applied"]) == Outcome.UNKNOWN
-    assert worst([]) == Outcome.ALREADY_MATCHED
+def test_success_is_three_outcomes():
     assert {Outcome.ALREADY_MATCHED, Outcome.APPLIED, Outcome.SENT} == SUCCEEDED
 
 
@@ -49,7 +45,7 @@ def test_an_unknown_result_names_a_closed_reason():
 
 async def test_a_composed_step_that_may_have_changed_state_returns_its_unknown_result(monkeypatch):
     async def step(client, args, timeout_ms):
-        raise UnknownOutcome(unknown_result("job_failed", "pw-link may have run"))
+        raise HostChanged(unknown_result("job_failed", "pw-link may have run"))
 
     monkeypatch.setitem(composed.HANDLERS, "audio.analyze", step)
     envelope = await invoke("audio.analyze", {"path": "/tmp/x.wav", "mode": "level"})

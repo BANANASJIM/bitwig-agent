@@ -584,6 +584,12 @@ def overlapping(midis, step=0.1, decay=0.26, total=None):
     return _voices(midis, step, total or 0.1 + step * len(midis) + 0.6, RATE, pluck)
 
 
+def spawn_dead(args):
+    """A pw-record that exits at once."""
+    NODES.append(args[2].split("node.name=")[1].split()[0])
+    return type("Dead", (FakeProc,), {"poll": lambda self: 1})(args[-1])
+
+
 class FakePW:
     """Mimics pw-link/pactl output and state; records every call."""
 

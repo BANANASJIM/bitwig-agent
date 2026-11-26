@@ -100,7 +100,7 @@ final class RenderModule implements HostModule, JobsModule.Source {
         final Export export;
         final Map<String, Clips> before = new LinkedHashMap<>();
         final Map<String, String> typesBefore = new LinkedHashMap<>();
-        volatile boolean dispatched, settled, reported;
+        volatile boolean dispatched, settled, reported, returned, abandoned;
         volatile Handle handle;
         volatile long doneAt;
 
@@ -178,8 +178,8 @@ final class RenderModule implements HostModule, JobsModule.Source {
         this.transportSafety = transportSafety;
         this.natives = natives;
         this.holds = holds;
-        holds.inFlight(JOB, this::rendering);
-        holds.inFlight(FINISHED, this::finishedUnverified);
+        holds.job(JOB, this::rendering, this::returned, this::abandon);
+        holds.job(FINISHED, this::finishedUnverified, this::returned, this::abandon);
         this.access = access;
         this.epochs = new TrackEpochs(window);
     }
@@ -199,7 +199,7 @@ final class RenderModule implements HostModule, JobsModule.Source {
 
     private String rendering() {
         Job current = job;
-        return current != null && current.dispatched && !current.done()
+        return current != null && current.dispatched && !current.done() && !current.abandoned
                 ? "A " + current.describe() + " is still rendering natively; follow it with jobs.get " + current.id
                         + "."
                 : null;
@@ -211,6 +211,18 @@ final class RenderModule implements HostModule, JobsModule.Source {
                 ? "A bounce.inPlace finished after its request returned and is not verified yet; call jobs.get "
                         + current.id + "."
                 : null;
+    }
+
+    private boolean returned() {
+        Job current = job;
+        return current != null && current.returned;
+    }
+
+    /** After ack: further renders are admitted; the native job may still finish, jobs.get keeps reporting it. */
+    private void abandon() {
+        Job current = job;
+        current.abandoned = true;
+        current.reported = true;
     }
 
     private static boolean unverified(Job current) {
@@ -316,7 +328,7 @@ final class RenderModule implements HostModule, JobsModule.Source {
     public void dispatch(HostOperation op, String method, JsonObject p) {
         scheduler.check(op);
         Job previous = job;
-        if (previous != null && !previous.done())
+        if (previous != null && !previous.done() && !previous.abandoned)
             throw Errors.notApplied(
                     Reason.BUSY,
                     "A " + previous.describe() + " is still rendering natively; no request was queued.",
@@ -382,6 +394,7 @@ final class RenderModule implements HostModule, JobsModule.Source {
                             "Track bank changed while the render was queued (" + ids.get(i) + ").");
         };
         job = next;
+        op.result.whenComplete((result, error) -> next.returned = true);
         try {
             bridge.execute(() -> {
                 try {
@@ -389,6 +402,7 @@ final class RenderModule implements HostModule, JobsModule.Source {
                     Runnable before = () -> {
                         check.run();
                         op.dispatched = true;
+                        op.job = next.id;
                         next.dispatched = true;
                     };
                     if (export) {
@@ -417,7 +431,10 @@ final class RenderModule implements HostModule, JobsModule.Source {
         next.settled = true;
         if (!next.dispatched) {
             if (job == next) job = previous;
-        } else if (next.bounce()) holds.place(QUARANTINE, QUARANTINED);
+        } else if (next.bounce()) {
+            next.reported = true;
+            holds.place(QUARANTINE, QUARANTINED);
+        }
     }
 
     private void await(HostOperation op, Job current, Access bridge, long until) {
@@ -668,6 +685,7 @@ final class RenderModule implements HostModule, JobsModule.Source {
         Access bridge = access(op);
         JsonObject row = new JsonObject();
         row.addProperty("id", current.id);
+        if (current.abandoned) row.addProperty("acknowledged", true);
         common(row, current, bridge);
         if (current.handle == null) {
             row.addProperty("state", current.settled ? "unknown" : "dispatching");

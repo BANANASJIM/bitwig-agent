@@ -111,13 +111,16 @@ def _parse_response(raw: bytes, request_id: str, method: str) -> dict[str, Any]:
         raise ValueError("Response must contain exactly one of result or error")
     if "error" in response:
         error = response["error"]
-        if (
-            not isinstance(error, dict)
-            or not isinstance(error.get("code"), str)
-            or not isinstance(error.get("message"), str)
-            or REASONS.get(str(error.get("reason"))) != error.get("code")
-        ):
+        if not isinstance(error, dict) or not all(isinstance(error.get(k), str) for k in ("code", "message")):
             raise ValueError("Malformed host error")
+        if REASONS.get(str(error.get("reason"))) != error.get("code"):
+            # Only a peer on another protocol answers without a 0.5 reason; it refused the envelope unread.
+            raise bridge_error(
+                "protocol_mismatch",
+                f"The extension answered in another protocol ({error.get('code')}: {error['message']}); "
+                f"this client speaks {PROTOCOL}.",
+                "Install the matching client and extension, then restart Bitwig.",
+            )
         raise BridgeError(error)
     if not isinstance(response["result"], dict):
         raise ValueError("Host result must be an object")

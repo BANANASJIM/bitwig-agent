@@ -222,7 +222,7 @@ final class ProjectModule implements HostModule, JobsModule.Source {
         final String id = JobsModule.id(kind(), ++sequence);
         final Path path;
         volatile ProjectSaveAsPlan plan;
-        volatile boolean dispatched, done, refused;
+        volatile boolean dispatched, done, refused, returned;
         volatile String failure;
 
         SaveJob(Path path) {
@@ -255,10 +255,10 @@ final class ProjectModule implements HostModule, JobsModule.Source {
         Path home = Path.of(System.getProperty("user.home"));
         SaveJob previous = job, next = new SaveJob(path);
         job = next;
-        holds.inFlight(
-                PENDING,
-                "A project.saveAs to " + path + " has no native completion callback yet; follow it with jobs.get "
-                        + next.id + ".");
+        String held = "A project.saveAs to " + path + " has no native completion callback yet; follow it with jobs.get "
+                + next.id + ".";
+        holds.job(PENDING, () -> held, () -> next.returned, () -> holds.release(PENDING));
+        op.result.whenComplete((result, error) -> next.returned = true);
         try {
             bridge.execute(() -> {
                 try {
@@ -270,13 +270,19 @@ final class ProjectModule implements HostModule, JobsModule.Source {
                             () -> {
                                 scheduler.check(op);
                                 op.dispatched = true;
+                                op.job = next.id;
                                 next.dispatched = true;
                             },
                             next);
                     scheduler.schedule(op, () -> awaitSaveAs(op, next, bridge), 0);
                 } catch (RuntimeException | Error error) {
-                    if (!op.dispatched) abandon(next, previous);
-                    op.fail(error);
+                    if (!next.dispatched) {
+                        abandon(next, previous);
+                        op.fail(error);
+                        return;
+                    }
+                    next.failed(Bitwig614Runtime.diagnostic(error), false);
+                    finishSaveAs(op, next, bridge);
                 }
             });
         } catch (RuntimeException | Error error) {

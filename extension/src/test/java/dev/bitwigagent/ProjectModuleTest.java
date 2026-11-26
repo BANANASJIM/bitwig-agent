@@ -72,6 +72,38 @@ public final class ProjectModuleTest {
     }
 
     @Test
+    void aNativeSaveThatThrowsAfterDispatchEndsItsJob() throws IOException {
+        Sim sim = new Sim();
+        sim.throwAfter = true;
+        HostOperation op = sim.start(sim.root.resolve("Song/Song.bwproject"), false);
+        sim.drain();
+        JsonObject result = assertUnknown("job_failed", op);
+        assertEquals("saveAs:1", result.get("job").getAsString(), "the unknown result names its job");
+        assertTrue(sim.holds().isEmpty(), "the failed job holds nothing");
+        JsonObject job = sim.job("saveAs:1");
+        assertEquals("unknown", job.get("outcome").getAsString());
+        assertEquals("job_failed", job.get("reason").getAsString());
+        HostOperation save = sim.call("project.save", 5000);
+        assertFalse(save.result.isCompletedExceptionally(), "project.save is admitted again");
+    }
+
+    @Test
+    void ackGivesUpAJobWhoseRequestReturned() throws IOException {
+        Sim silent = new Sim();
+        silent.silent = true;
+        HostOperation running = silent.start(silent.root.resolve("Song/Song.bwproject"), false, 5000);
+        silent.step();
+        assertRpcError("busy", () -> silent.fixture.services.holds.ack("project.saveAs"));
+        silent.drainUntil(running);
+        assertUnknown("deadline", running);
+        silent.fixture.services.holds.ack("project.saveAs");
+        assertTrue(silent.holds().isEmpty(), "ack released the save hold");
+        HostOperation save = silent.call("project.save", 5000);
+        assertFalse(save.result.isCompletedExceptionally(), "project.save is no longer busy");
+        assertEquals("running", silent.job("saveAs:1").get("state").getAsString(), "jobs.get still follows it");
+    }
+
+    @Test
     void executeFailureGivesTheJobSlotBack() throws IOException {
         Sim sim = new Sim();
         sim.executeFails = true;
@@ -266,8 +298,8 @@ public final class ProjectModuleTest {
         assertTrue(
                 silent.dispatches == 1
                         && silent.holds().size() == 1
-                        && !silent.holds().get(0).ackable,
-                "a pending native save is an in-flight hold");
+                        && silent.holds().get(0).ackable,
+                "a pending native save whose request returned is a job hold ack may give up");
         HostOperation busy = silent.start(silent.root.resolve("Again/Again.bwproject"), false);
         silent.drain();
         assertTrue(assertRpcError("busy", busy).next.contains("jobs.get saveAs:1"), "busy points at jobs.get");
@@ -342,7 +374,7 @@ public final class ProjectModuleTest {
         final JobsModule jobs;
         Path dispatched;
         int dispatches;
-        boolean renames = true, silent, executeFails;
+        boolean renames = true, silent, executeFails, throwAfter;
         String refusal, failure;
         ProjectModule.Completion late;
 
@@ -368,6 +400,7 @@ public final class ProjectModuleTest {
                     beforeDispatch.run();
                     dispatches++;
                     dispatched = path;
+                    if (throwAfter) throw new IllegalStateException("simulated native save threw");
                     if (refusal != null) {
                         done.failed(refusal, true);
                         return;

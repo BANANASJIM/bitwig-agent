@@ -78,7 +78,6 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
         register(new AckModule(holds, grid));
         register(new JobsModule(render, projectModule));
         requireHandlersMatch();
-        Reason.check(specs.vocabulary());
     }
 
     private void register(HostModule module) {

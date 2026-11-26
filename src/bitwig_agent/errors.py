@@ -15,8 +15,8 @@ class BridgeError(Exception):
         super().__init__(error["message"])
 
 
-class UnknownOutcome(Exception):
-    """A composed step that may have changed state; the call returns its unknown result instead of an error."""
+class HostChanged(Exception):
+    """A composed step after which the host has, or may have, changed: the call returns this result, never an error."""
 
     def __init__(self, result: dict[str, Any]):
         self.result = result
@@ -30,6 +30,15 @@ def bridge_error(reason: str, message: str, next: str | None = None, **details: 
     if details:
         error["details"] = details
     return BridgeError(error)
+
+
+def changed_before(error: BridgeError, **changed: Any) -> HostChanged:
+    """A refusal that came after this call already changed host state: not applied, plus what did change."""
+    refusal = error.error
+    result = {"outcome": Outcome.NOT_APPLIED.value, "reason": refusal["reason"], "message": refusal["message"]}
+    if "next" in refusal:
+        result["next"] = refusal["next"]
+    return HostChanged({**result, **changed})
 
 
 def unknown_result(reason: str, message: str, next: str | None = None, **fields: Any) -> dict[str, Any]:

@@ -46,12 +46,6 @@ async def test_write_timeout_is_an_unknown_result_and_never_retried(host):
         lambda request: {"id": request["id"]},
         lambda request: {"id": request["id"], "result": []},
         lambda request: {"id": request["id"], "error": {"code": 1, "message": "bad"}},
-        lambda request: {"id": request["id"], "error": {"code": "stale", "message": "missing reason"}},
-        lambda request: {
-            "id": request["id"],
-            "error": {"code": "stale", "reason": "busy", "message": "reason of another code"},
-        },
-        lambda request: {"id": request["id"], "error": {"code": "x", "reason": "x", "message": "unknown reason"}},
         lambda request: ('{"id":"' + request["id"] + '","result":{"value":1e9999}}\n').encode(),
         lambda request: b"not JSON\n",
         lambda request: b"\xff\n",
@@ -66,6 +60,32 @@ async def test_untrustworthy_response_rejected_without_retry(host, reply):
     host.reply = reply
     result = await BridgeClient(host.port).call("parameters.set", SET)
     assert (result["outcome"], result["reason"]) == ("unknown", "transport")
+    assert host.connections == 1
+
+
+OLD_EXTENSION_ERROR = {
+    "code": "invalid_request",
+    "message": "Unknown request field: protocol",
+    "outcome": "not_dispatched",
+}
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        OLD_EXTENSION_ERROR,
+        {"code": "stale", "message": "missing reason"},
+        {"code": "stale", "reason": "busy", "message": "reason of another code"},
+        {"code": "x", "reason": "x", "message": "unknown reason"},
+    ],
+)
+@pytest.mark.parametrize(("method", "params"), [("parameters.set", SET), ("status", {})])
+async def test_an_error_without_a_current_reason_is_a_protocol_mismatch(host, error, method, params):
+    host.reply = lambda request: {"id": request["id"], "error": error}
+    with pytest.raises(BridgeError) as caught:
+        await BridgeClient(host.port).call(method, params)
+    assert (caught.value.error["code"], caught.value.error["reason"]) == ("incompatible", "protocol_mismatch")
+    assert error["message"] in caught.value.error["message"]
     assert host.connections == 1
 
 

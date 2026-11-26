@@ -6,11 +6,11 @@ import re
 from typing import Any
 
 import pytest
-from fakes import NODES, SINK_LINKS, TARGET, FakeGrid, FakeProc, FakePW
+from fakes import NODES, SINK_LINKS, TARGET, FakeGrid, FakeProc, FakePW, spawn_dead
 
 from bitwig_agent.audio import pipewire
 from bitwig_agent.audio.analysis import FFT_SIZE, spectral_peaks
-from bitwig_agent.errors import BridgeError, UnknownOutcome, unknown_result
+from bitwig_agent.errors import BridgeError, HostChanged, unknown_result
 from bitwig_agent.grid import probe as grid_probe
 from bitwig_agent.protocol import CLIENT_SIDE, validate_call
 
@@ -182,6 +182,7 @@ def test_unknown_module_or_port_writes_nothing(rig, port, fragment):
     assert e.value.error["reason"] == "invalid_params"
     assert fragment in e.value.error["message"]
     assert host.sets() == []
+    assert host.transport["playing"] is True, "an error means the transport was not stopped either"
 
 
 def test_no_audio_out_is_refused(rig):
@@ -192,27 +193,26 @@ def test_no_audio_out_is_refused(rig):
         probe(host)
     assert e.value.error["reason"] == "invalid_params"
     assert "Audio Out" in e.value.error["message"]
-
-
-def spawn_dead(args):
-    NODES.append(args[2].split("node.name=")[1].split()[0])
-    return type("Dead", (FakeProc,), {"poll": lambda self: 1})(args[-1])
+    assert host.transport["playing"] is True
 
 
 def test_capture_failure_still_restores_and_reports_the_capture_error(rig, monkeypatch):
     host, _ = rig
 
     monkeypatch.setattr(pipewire, "spawn", spawn_dead)
-    with pytest.raises(BridgeError) as e:
+    with pytest.raises(HostChanged) as changed:
         probe(host)
-    assert e.value.error["reason"] == "job_failed"
+    result = changed.value.result
+    assert (result["outcome"], result["reason"]) == ("not_applied", "job_failed")
+    assert result["transportStopped"] is True
+    assert result["restored"] is True
     assert host.conns == host.original
 
 
 def test_failed_restore_reports_exactly_what_is_left(rig):
     host, _ = rig
     host.fail_on_set = 2
-    with pytest.raises(UnknownOutcome) as e:
+    with pytest.raises(HostChanged) as e:
         probe(host)
     err = e.value.result
     assert (err["outcome"], err["reason"]) == ("unknown", "job_failed")
@@ -231,7 +231,7 @@ def test_restore_leaves_foreign_edits_alone_and_names_them(rig):
         host.conns[(host.out2, "IN")] = (host.mix, "OUT")
 
     host.after_spawn = meanwhile
-    with pytest.raises(UnknownOutcome) as e:
+    with pytest.raises(HostChanged) as e:
         probe(host)
     d = e.value.result
     assert d["reason"] == "job_failed"
@@ -249,7 +249,7 @@ def test_partial_rewire_is_restored_from_the_real_state(rig):
         return {"outcome": "not_applied", "connections": []}
 
     host.h_connections_set = lambda p: half(p) if host.set_calls == 1 else original_set(p)
-    with pytest.raises(UnknownOutcome) as e:
+    with pytest.raises(HostChanged) as e:
         probe(host)
     assert e.value.result["outcome"] == "not_applied"
     assert host.conns == host.original
@@ -313,7 +313,7 @@ def test_failed_restore_after_a_capture_error_reports_both(rig, monkeypatch):
     host.fail_on_set = 2
 
     monkeypatch.setattr(pipewire, "spawn", spawn_dead)
-    with pytest.raises(UnknownOutcome) as e:
+    with pytest.raises(HostChanged) as e:
         probe(host)
     assert e.value.result["probeError"]["reason"] == "job_failed"
     assert e.value.result["restoreError"]["reason"] == "deadline"

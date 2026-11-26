@@ -2,11 +2,13 @@ package dev.bitwigagent;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 
 /**
  * Every domain's unresolved or in-flight write, in one place. An unresolved hold stays until the agent inspects state
- * and calls {@code ack} with its id; an in-flight hold is released only by its owner when the work settles.
+ * and calls {@code ack} with its id; an in-flight hold is released only by its owner when the work settles; a job hold
+ * is in flight until its request has returned, then {@code ack} gives up on it through its owner.
  */
 final class Holds {
     /** What {@code status} lists: the id {@code ack} takes, whether it accepts it and what is held. */
@@ -25,14 +27,22 @@ final class Holds {
         final String domain, id;
         final Object key;
         final Supplier<String> description;
-        final boolean ackable;
+        final BooleanSupplier ackable;
+        final Runnable abandon;
 
-        Hold(String domain, String id, Object key, Supplier<String> description, boolean ackable) {
+        Hold(
+                String domain,
+                String id,
+                Object key,
+                Supplier<String> description,
+                BooleanSupplier ackable,
+                Runnable abandon) {
             this.domain = domain;
             this.id = id;
             this.key = key;
             this.description = description;
             this.ackable = ackable;
+            this.abandon = abandon;
         }
     }
 
@@ -41,33 +51,35 @@ final class Holds {
 
     /** An unresolved hold identified by its domain alone; its id is the domain. */
     void place(String domain, String description) {
-        put(domain, domain, () -> description, true);
+        put(domain, domain, () -> description, () -> true, null);
     }
 
     /** An unresolved hold per {@code key}; a description that supplies null counts as released. */
     void place(String domain, Object key, Supplier<String> description) {
-        put(domain, key, description, true);
+        put(domain, key, description, () -> true, null);
     }
 
     /** An in-flight hold: {@code ack} refuses it, its owner releases it when the work settles. */
     void inFlight(String domain, String description) {
-        put(domain, domain, () -> description, false);
+        put(domain, domain, () -> description, () -> false, null);
     }
 
-    void inFlight(String domain, Supplier<String> description) {
-        put(domain, domain, description, false);
+    /** A long job: in flight while {@code returned} is false; then {@code ack} calls {@code abandon} instead of waiting. */
+    void job(String domain, Supplier<String> description, BooleanSupplier returned, Runnable abandon) {
+        put(domain, domain, description, returned, abandon);
     }
 
-    private synchronized void put(String domain, Object key, Supplier<String> description, boolean ackable) {
+    private synchronized void put(
+            String domain, Object key, Supplier<String> description, BooleanSupplier ackable, Runnable abandon) {
         for (int i = 0; i < holds.size(); i++) {
             Hold existing = holds.get(i);
             if (existing.domain.equals(domain) && existing.key.equals(key)) {
-                holds.set(i, new Hold(domain, existing.id, key, description, ackable));
+                holds.set(i, new Hold(domain, existing.id, key, description, ackable, abandon));
                 return;
             }
         }
         String id = key.equals(domain) ? domain : domain + ":" + ++sequence;
-        holds.add(new Hold(domain, id, key, description, ackable));
+        holds.add(new Hold(domain, id, key, description, ackable, abandon));
     }
 
     void release(String domain) {
@@ -101,7 +113,7 @@ final class Holds {
         List<View> out = new ArrayList<>();
         for (Hold hold : holds) {
             String text = hold.description.get();
-            if (text != null) out.add(new View(hold.id, text, hold.ackable));
+            if (text != null) out.add(new View(hold.id, text, hold.ackable.getAsBoolean()));
         }
         return out;
     }
@@ -111,10 +123,11 @@ final class Holds {
         for (Hold hold : holds) {
             String text = hold.description.get();
             if (!hold.id.equals(id) || text == null) continue;
-            if (!hold.ackable)
+            if (!hold.ackable.getAsBoolean())
                 throw Errors.notApplied(
-                        Reason.BUSY, text, "Wait for it to settle; ack releases only unresolved holds.");
-            holds.remove(hold);
+                        Reason.BUSY, text, "Wait for its request to return; ack releases only unresolved holds.");
+            if (hold.abandon == null) holds.remove(hold);
+            else hold.abandon.run();
             return text;
         }
         throw Errors.notApplied(Reason.UNKNOWN_HOLD, "No current hold has id " + id + ".", "status lists the holds.");

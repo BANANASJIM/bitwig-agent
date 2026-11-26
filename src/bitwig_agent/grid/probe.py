@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from bitwig_agent.audio import pipewire
-from bitwig_agent.errors import BridgeError, UnknownOutcome, bridge_error, unknown_result
+from bitwig_agent.errors import BridgeError, HostChanged, bridge_error, changed_before, unknown_result
 from bitwig_agent.grid.read import GridCall, device_target, host_call, module_names, read_graph
 from bitwig_agent.grid.safety import RECORDING_FLAGS
 from bitwig_agent.protocol.limits import MAX_TIMEOUT_MS
@@ -116,7 +116,7 @@ class _Rewire:
                 if current[k] != original[k]
             ]
             return {"restored": not left, "left": left, "changedMeanwhile": foreign}
-        except (BridgeError, UnknownOutcome) as exc:
+        except (BridgeError, HostChanged) as exc:
             return {
                 "restored": False,
                 "error": exc.error if isinstance(exc, BridgeError) else exc.result,
@@ -156,8 +156,8 @@ def _checked_keep_path(args: dict[str, Any]) -> str | None:
     return keep
 
 
-async def _ensure_transport_stopped(client: Any, timeout_ms: int) -> None:
-    """Rewiring cables is a structural write and needs a stopped transport; audio.capture stops it again afterwards, so this leaves it stopped too."""
+async def _playing(client: Any, timeout_ms: int) -> bool:
+    """Whether the transport plays; refuses recording or automation write. Reads only."""
     transport = await client.call("transport.get", {}, timeout_ms)
     unsafe = [k for k in RECORDING_FLAGS if transport.get(k) is not False]
     if unsafe:
@@ -165,8 +165,7 @@ async def _ensure_transport_stopped(client: Any, timeout_ms: int) -> None:
             "unsafe_state",
             f"Rewiring cables needs recording and automation write observed off; not confirmed off: {', '.join(unsafe)}",
         )
-    if transport.get("playing") is True:
-        pipewire.require_success("transport.set", await client.call("transport.set", {"playing": False}, timeout_ms))
+    return transport.get("playing") is True
 
 
 def _source_row(
@@ -221,14 +220,14 @@ async def _capture(
         if rewire.edits:  # even a failed batch may have applied entries: restore reads the real state
             await rewire.listen()
         return pipewire.require_success("audio.capture", await pipewire.capture(client, capture_args, timeout_ms)), None
-    except (BridgeError, UnknownOutcome, asyncio.CancelledError) as exc:
+    except (BridgeError, HostChanged, asyncio.CancelledError) as exc:
         return None, exc
 
 
 def _error_of(error: BaseException | None) -> dict[str, Any] | None:
     if isinstance(error, BridgeError):
         return error.error
-    return error.result if isinstance(error, UnknownOutcome) else None
+    return error.result if isinstance(error, HostChanged) else None
 
 
 async def _put_back(rewire: _Rewire, capture_error: BaseException | None) -> dict[str, Any]:
@@ -236,7 +235,7 @@ async def _put_back(rewire: _Rewire, capture_error: BaseException | None) -> dic
         return {"restored": True, "left": [], "changedMeanwhile": []}
     restored: dict[str, Any] = await asyncio.shield(rewire.restore())
     if not restored["restored"]:
-        raise UnknownOutcome(
+        raise HostChanged(
             unknown_result(
                 "job_failed",
                 "The probe could not put every Audio Out cable back; the listed inputs are still changed. "
@@ -259,7 +258,7 @@ async def probe(client: Any, args: dict[str, Any], timeout_ms: int) -> dict[str,
     keep = _checked_keep_path(args)
     await pipewire.require_engine(client, timeout_ms)  # before any cable is touched
     short = min(timeout_ms, MAX_TIMEOUT_MS)  # only topology edits may wait longer
-    await _ensure_transport_stopped(client, short)
+    playing = await _playing(client, short)
     target = device_target(args)
     read = host_call(client, target, short)
     rows, cables = await read_graph(read)
@@ -267,6 +266,8 @@ async def probe(client: Any, args: dict[str, Any], timeout_ms: int) -> dict[str,
     source = _source_row(rows, names, duplicates, module, port_key)
     chosen, original, probing = _plan_rewire(rows, cables, source, port_key)
     rewire = _Rewire(read, host_call(client, target, timeout_ms), names, original, probing)
+    if playing:  # rewiring is a structural write; audio.capture stops the transport again afterwards
+        pipewire.require_success("transport.set", await client.call("transport.set", {"playing": False}, short))
     workdir = Path(tempfile.mkdtemp(prefix="bitwig-probe-"))
     wav = keep or str(workdir / "probe.wav")
     capture_args = {
@@ -284,6 +285,13 @@ async def probe(client: Any, args: dict[str, Any], timeout_ms: int) -> dict[str,
         assert captured is not None
         analysis_args = {"path": wav, "mode": args["mode"], **{k: args[k] for k in PASS_THROUGH if k in args}}
         analysis = await pipewire.analyze(analysis_args)
+    except BridgeError as exc:
+        if not (playing or rewire.edits):
+            raise
+        raise changed_before(exc, transportStopped=playing, cablesChanged=len(rewire.edits), restored=True) from exc
+    except HostChanged as exc:
+        exc.result.setdefault("transportStopped", playing)
+        raise
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
     analysis.pop("path", None)

@@ -17,7 +17,8 @@ ACK_DESCRIPTION = (
     "leaves a hold that refuses further writes in its domain (the refusal's next names the id; status lists every "
     "hold). ack does not undo or repeat anything; it records that you looked. A Grid device hold (id grid:...) "
     "first re-reads the device graph and stays if it is inconsistent. In-flight holds (ackable=false) are refused "
-    "as busy: wait for them, or follow a job with jobs.get."
+    "as busy. A long job's hold becomes ackable once its request returned: ack then gives the job up so the domain "
+    "admits writes again (jobs.get keeps reporting it)."
 )
 JOBS_GET_DESCRIPTION = (
     "State of a long operation (export.audio, bounce.inPlace, project.saveAs) that outlived its request: the request "

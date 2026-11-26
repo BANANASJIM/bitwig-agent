@@ -74,12 +74,14 @@ public final class ErrorsTest {
         RpcException unknown = Errors.unknown(Reason.NOT_OBSERVED, "m");
         assertTrue(unknown.unknown && Errors.of(Reason.DEADLINE, "m", true).unknown);
         assertFalse(Errors.of(Reason.DEADLINE, "m", false).unknown);
-        RpcException promoted = Errors.asUnknown(Errors.notApplied(Reason.BUSY, "m", "n"));
-        assertTrue(promoted.unknown && promoted.is(Reason.BUSY) && promoted.next.equals("n"));
-        assertSame(unknown, Errors.asUnknown(unknown));
         assertEquals(
-                "{\"outcome\":\"unknown\",\"reason\":\"busy\",\"message\":\"m\",\"next\":\"n\"}",
-                Errors.unknownResult(promoted).toString());
+                "{\"outcome\":\"unknown\",\"reason\":\"not_observed\",\"message\":\"m\"}",
+                Errors.unknownResult(unknown).toString());
+        assertEquals(
+                "n",
+                Errors.unknownResult(Errors.notApplied(Reason.BUSY, "m", "n"))
+                        .get("next")
+                        .getAsString());
     }
 
     @Test
@@ -101,6 +103,12 @@ public final class ErrorsTest {
         JsonObject result = after.result.join();
         assertEquals("unknown", result.get("outcome").getAsString());
         assertEquals("internal", result.get("reason").getAsString());
+
+        HostOperation job = new HostOperation(Long.MAX_VALUE);
+        job.dispatched = true;
+        job.job = "render:1";
+        job.fail(Errors.notApplied(Reason.DEADLINE, "late"));
+        assertEquals("render:1", job.result.join().get("job").getAsString(), "an unknown result names its job");
 
         HostOperation flagged = new HostOperation(Long.MAX_VALUE);
         flagged.fail(Errors.unknown(Reason.READBACK_MISMATCH, "differs"));

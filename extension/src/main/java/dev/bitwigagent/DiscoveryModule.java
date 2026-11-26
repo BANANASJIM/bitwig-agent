@@ -187,7 +187,6 @@ final class DiscoveryModule implements HostModule {
         result.add("units", units);
         result.addProperty("parameterIdentityScope", "observed_bank_proxy_context_not_persistent_device_identity");
         result.addProperty("writeSemantics", "absolute_or_explicit_command_no_automatic_retries");
-        result.addProperty("completionSemantics", "dispatched_is_not_completed_read_verification_fields");
         JsonObject grid = new JsonObject();
         grid.addProperty(
                 "scope",

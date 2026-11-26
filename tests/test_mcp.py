@@ -69,7 +69,7 @@ async def test_grid_host_unknown_error_survives_mcp_without_retry(mcp_session, h
 @pytest.mark.parametrize(
     "reply",
     [
-        lambda request: {"id": request["id"], "error": {"code": "stale", "message": "missing reason"}},
+        lambda request: {"id": request["id"], "error": {"code": 1, "message": "malformed code"}},
         lambda request: ('{"id":"' + request["id"] + '","result":{"observedValue":1e9999}}\n').encode(),
     ],
 )

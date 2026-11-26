@@ -17,11 +17,12 @@ import sys
 import tempfile
 import time
 import uuid
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from bitwig_agent.audio import analysis
-from bitwig_agent.errors import BridgeError, UnknownOutcome, bridge_error, unknown_result
+from bitwig_agent.errors import BridgeError, HostChanged, bridge_error, changed_before, unknown_result
 from bitwig_agent.protocol.base import SUCCEEDED
 
 NODE = "Bitwig Studio"
@@ -36,15 +37,15 @@ def require_success(method: str, result: dict[str, Any]) -> dict[str, Any]:
     """A host write that ended anything but a success stops the composed call with that result."""
     outcome = result.get("outcome")
     if outcome not in SUCCEEDED:
-        raise UnknownOutcome(
+        raise HostChanged(
             {**result, "outcome": outcome or "unknown", "message": result.get("message", f"{method} ended {outcome}")}
         )
     return result
 
 
-def _failure(exc: BridgeError | UnknownOutcome) -> dict[str, Any]:
+def _failure(exc: BridgeError | HostChanged) -> dict[str, Any]:
     """The unknown result for a cleanup step that failed after the main flow was done."""
-    if isinstance(exc, UnknownOutcome):
+    if isinstance(exc, HostChanged):
         return exc.result
     return unknown_result(exc.error["reason"], exc.error["message"])
 
@@ -152,9 +153,9 @@ def link(args: list[str], what: str) -> None:
     try:
         code, _, err = run(["pw-link", *args])
     except BridgeError as exc:
-        raise UnknownOutcome(_failure(exc)) from exc
+        raise HostChanged(_failure(exc)) from exc
     if code != 0 and "exists" not in err.lower():
-        raise UnknownOutcome(
+        raise HostChanged(
             unknown_result(
                 "job_failed",
                 f"pw-link {what} failed: {err.strip() or code}",
@@ -243,8 +244,8 @@ async def playing_tracks(bridge: Any, timeout_ms: int) -> list[dict[str, str]] |
     ]
 
 
-async def isolate(bridge: Any, args: dict[str, Any], timeout_ms: int) -> dict[str, Any]:
-    """Which other tracks would end up in the recording; optionally refuse or stop them first. Raises not_isolated before any recording."""
+async def isolate(bridge: Any, args: dict[str, Any], timeout_ms: int, stopped: list[str]) -> dict[str, Any]:
+    """Which other tracks would end up in the recording; optionally refuse, or stop them (appended to `stopped`)."""
     solo, stop_others = args.get("soloTrack"), args.get("stopOthers", False)
     playing = await playing_tracks(bridge, timeout_ms)
     if playing is None:
@@ -254,7 +255,6 @@ async def isolate(bridge: Any, args: dict[str, Any], timeout_ms: int) -> dict[st
             ]
         }
     others = [t for t in playing if t["trackId"] != solo]
-    stopped: list[str] = []
     if stop_others and solo:
         for t in others:
             require_success("launcher.stop", await bridge.call("launcher.stop", {"trackId": t["trackId"]}, timeout_ms))
@@ -304,19 +304,26 @@ async def restore_solo(bridge: Any, previous: dict[str, bool], changed: list[str
             put_back = await bridge.call("tracks.set", {"trackId": tid, "solo": previous[tid]}, timeout_ms)
             require_success("tracks.set", put_back)
             restored.append({"trackId": tid, "solo": previous[tid]})
-        except (BridgeError, UnknownOutcome) as exc:
+        except (BridgeError, HostChanged) as exc:
             failed.append({"trackId": tid, "solo": previous[tid], "error": str(exc)})
     return {"restored": restored, **({"restoreFailed": failed} if failed else {})}
 
 
-async def apply_solo(bridge: Any, solo: str, timeout_ms: int) -> tuple[dict[str, bool], list[str], dict[str, Any]]:
-    """Solo `solo` exclusively (the host has no exclusive-solo write): set it on the target and clear every other soloed track.
-
-    Returns (previous states of every track, tracks changed so far, result block); a failure part-way restores what was changed.
-    """
+async def solo_states(bridge: Any, solo: str, timeout_ms: int) -> dict[str, bool]:
+    """Every track's solo state, refusing a solo target outside the bank; reads only."""
     previous = await read_solo_states(bridge, timeout_ms)
     if solo not in previous:
         raise bridge_error("target_not_found", f"soloTrack {solo} is not in the track bank (tracks.list)")
+    return previous
+
+
+async def apply_solo(
+    bridge: Any, solo: str, previous: dict[str, bool], timeout_ms: int
+) -> tuple[list[str], dict[str, Any]]:
+    """Solo `solo` exclusively (the host has no exclusive-solo write): set it on the target and clear every other soloed track.
+
+    Returns (tracks changed so far, result block); a failure part-way restores what was changed.
+    """
     block: dict[str, Any] = {
         "soloed": solo,
         "previousSolo": sorted(t for t, v in previous.items() if v),
@@ -336,7 +343,7 @@ async def apply_solo(bridge: Any, solo: str, timeout_ms: int) -> tuple[dict[str,
     except BaseException:
         await restore_solo(bridge, previous, changed, timeout_ms)
         raise
-    return previous, changed, block
+    return changed, block
 
 
 def bitwig_outputs() -> list[str]:
@@ -394,19 +401,40 @@ async def stop_recorder(proc: Any) -> None:
 
 async def capture(bridge: Any, args: dict[str, Any], timeout_ms: int) -> dict[str, Any]:
     check_platform()
-    seconds = args["seconds"]
-    path = args["outPath"]
-    allow_audible = args.get("allowAudible", False)
-    check_capture_target(path, args.get("overwrite", False), allow_audible)
-    sources = bitwig_outputs()
+    check_capture_target(args["outPath"], args.get("overwrite", False), args.get("allowAudible", False))
     await require_engine(bridge, timeout_ms)
-    isolation = await isolate(bridge, args, timeout_ms)
     solo = args.get("soloTrack")
-    previous_solo: dict[str, bool] = {}
+    previous_solo = await solo_states(bridge, solo, timeout_ms) if solo else {}
+    writes = _Writes()
+    try:
+        return await _record(bridge, args, timeout_ms, previous_solo, writes)
+    except BridgeError as exc:
+        if writes.stopped or writes.transport:
+            raise changed_before(exc, stoppedTracks=writes.stopped, transportStopped=writes.transport) from exc
+        raise
+
+
+@dataclass
+class _Writes:
+    """The host writes a capture made so far, for a refusal that comes after them."""
+
+    stopped: list[str] = field(default_factory=list)
+    transport: bool = False
+
+
+async def _record(
+    bridge: Any, args: dict[str, Any], timeout_ms: int, previous_solo: dict[str, bool], writes: _Writes
+) -> dict[str, Any]:
+    """Isolate, solo, record and put everything back."""
+    seconds, path = args["seconds"], args["outPath"]
+    allow_audible = args.get("allowAudible", False)
+    sources = bitwig_outputs()
+    isolation = await isolate(bridge, args, timeout_ms, writes.stopped)
+    solo = args.get("soloTrack")
     changed: list[str] = []
     solo_block: dict[str, Any] = {}
     if solo:
-        previous_solo, changed, solo_block = await apply_solo(bridge, solo, timeout_ms)
+        changed, solo_block = await apply_solo(bridge, solo, previous_solo, timeout_ms)
     from_start = args.get("fromStart", True)
     transport_started = False
     unsettled: dict[str, Any] = {}
@@ -437,7 +465,7 @@ async def capture(bridge: Any, args: dict[str, Any], timeout_ms: int) -> dict[st
             link([src, dst], "connect")
             created.append((src, dst))
         if from_start:
-            transport_started = True
+            transport_started = writes.transport = True
             for change in ({"playing": False}, {"positionBeats": 0}, {"playing": True}):
                 require_success("transport.set", await bridge.call("transport.set", change, timeout_ms))
         started = time.monotonic()
@@ -447,7 +475,7 @@ async def capture(bridge: Any, args: dict[str, Any], timeout_ms: int) -> dict[st
         if transport_started:
             try:
                 require_success("transport.set", await bridge.call("transport.set", {"playing": False}, timeout_ms))
-            except (BridgeError, UnknownOutcome) as exc:  # the main flow's error is more useful; reported below
+            except (BridgeError, HostChanged) as exc:  # the main flow's error is more useful; reported below
                 unsettled = _failure(exc)
         await stop_recorder(proc)
         for src, dst in created:

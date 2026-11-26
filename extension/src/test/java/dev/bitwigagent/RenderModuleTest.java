@@ -266,10 +266,9 @@ public final class RenderModuleTest {
                 "no latch within the deadline: unknown/deadline with the job id");
         assertTrue(
                 sim.holds().size() == 1
-                        && !sim.holds().get(0).ackable
+                        && sim.holds().get(0).ackable
                         && sim.holds().get(0).description.contains("jobs.get render:1"),
-                "a running job is an in-flight hold");
-        assertRpcError("busy", () -> sim.fixture.services.holds.ack(sim.holds().get(0).id));
+                "a running job whose request returned is a job hold ack may give up");
         HostOperation busy = sim.start("bounce.inPlace", bounce(A), 5000);
         sim.drainUntil(busy);
         assertTrue(assertRpcError("busy", busy).next.contains("jobs.get render:1"), "busy points at jobs.get");
@@ -325,6 +324,22 @@ public final class RenderModuleTest {
                         && bounce.holds().size() == 1
                         && bounce.holds().get(0).ackable,
                 "a lost bounce quarantines bounces");
+    }
+
+    @Test
+    void aLostBounceReleasedByAckAdmitsTheNextRender() throws IOException {
+        Sim bounce = new Sim();
+        bounce.lost = true;
+        HostOperation op = bounce.start("bounce.inPlace", bounce(A), 5000);
+        bounce.drainUntil(op);
+        assertEquals("render:1", assertUnknown("job_failed", op).get("job").getAsString(), "it names its job");
+        bounce.fixture.services.holds.ack("render.quarantine");
+        bounce.lost = false;
+        bounce.job("render:1");
+        assertTrue(bounce.holds().isEmpty(), "nothing is held after the ack");
+        HostOperation export = bounce.start("export.audio", export(bounce.dir.toString(), "master"), 5000);
+        bounce.drainUntil(export);
+        assertOutcome("applied", export);
     }
 
     @Test
@@ -469,6 +484,22 @@ public final class RenderModuleTest {
     }
 
     @Test
+    void ackGivesUpARunningJobWhoseRequestReturned() throws IOException {
+        Sim sim = new Sim();
+        sim.finish = false;
+        HostOperation op = sim.start("export.audio", export(sim.dir.toString(), "master"), 200);
+        sim.drainUntil(op);
+        assertUnknown("deadline", op);
+        sim.fixture.services.holds.ack("render.job");
+        assertTrue(sim.holds().isEmpty(), "ack released the running job");
+        assertTrue(sim.job("render:1").get("acknowledged").getAsBoolean(), "jobs.get still reports it");
+        sim.finish = true;
+        HostOperation next = sim.start("export.audio", export(sim.dir.toString(), "master"), 5000);
+        sim.drainUntil(next);
+        assertTrue(sim.dispatches == 2, "the next render is admitted");
+    }
+
+    @Test
     void lateBounceMustBeVerifiedBeforeAnother() throws IOException {
         Sim sim = new Sim();
         sim.finish = false;
@@ -481,9 +512,9 @@ public final class RenderModuleTest {
         sim.completeBounce();
         assertTrue(
                 sim.holds().size() == 1
-                        && !sim.holds().get(0).ackable
+                        && sim.holds().get(0).ackable
                         && sim.holds().get(0).description.contains("jobs.get render:1"),
-                "a finished but unverified bounce stays in flight");
+                "a finished but unverified bounce is held until jobs.get or ack");
         HostOperation again = sim.start("bounce.inPlace", bounce(B), 5000);
         sim.drainUntil(again);
         assertTrue(assertRpcError("busy", again).next.contains("jobs.get render:1"), "verify first");
