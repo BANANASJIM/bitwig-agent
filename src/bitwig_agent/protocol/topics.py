@@ -30,25 +30,36 @@ REFS = (
     "A ref is a JSON object with a kind that names one host object: track, scene, slot, clip, device, chain, "
     "parameter, remotePage, send, sidechain, modulator, gridModule or marker. Take refs from read (or write) results "
     "and pass them back unchanged; never build one, except a Grid parameter: {kind: parameter, owner: <a gridModule "
-    "ref as read>, id: <the parameter key in its exported spec>}. A ref holds no session state, so it stays valid "
-    "across sessions until its object changes. Errors: stale with target_not_found when the object is gone (read "
-    "again); stale with target_changed when another object now sits there, with current = the ref found there "
-    "(decide whether your intent still holds; nothing is retried); unavailable with not_ready while the host has not "
-    "observed it yet. Names of positional objects (scene, slot, clip, device, remotePage, send, marker) are always "
-    "compared; renaming a track, chain, modulator or Grid module only invalidates refs that write that object itself. "
-    "An unnamed scene has no rename protection: name scenes you address repeatedly. A Remote Control remapped to "
-    "another parameter of the same name, and a device replaced by one of the same type and name, are not detected."
+    "ref as read>, id: <the parameter key in its exported spec>}. A ref carries the fields that find the object "
+    "(locate) and the ones the host re-checks against what it finds there (compared). A ref nests its ancestors "
+    "(a device holds its track or chain, a parameter its owner) and each ancestor is compared on identity: "
+    "a scene, device, remotePage, send or marker by its position and name (a marker also by beat), a clip by where "
+    "it sits (slot, or lane and startBeats) and its name, a slot by its track and scene, tracks, chains, modulators "
+    "and Grid modules by id. The name of a track, chain, modulator, Grid module or parameter is compared only when "
+    "that object is itself the target, so renaming a track does not invalidate the refs of its devices. Errors: stale with target_not_found when nothing "
+    "is at the location (next names the read to repeat); stale with target_changed when another object now sits "
+    "there, with current = the ref found there (decide whether your intent still holds; nothing is retried); "
+    "unavailable with not_ready while the host has not observed it yet. Keep refs within one working session and "
+    "read again after reopening a project: a chain ref from an earlier session is target_not_found "
+    "(next: chains.list), because Bitwig assigns new layer ids per session. An unnamed scene has no rename "
+    "protection: name scenes you address repeatedly. What refs cannot detect: a Remote Control remapped to another "
+    "parameter of the same name; a device replaced by one of the same type and name; a preset loaded onto a layer "
+    "device, which keeps its chains and their ids, so a chain ref read before the load resolves to the new content. "
+    "Read again after you or the user changed such things."
 )
 
 VALUES = (
     "Write the bare value a read returned as value: a host parameter (volume, pan, send, device or Remote Control "
-    "parameter) is normalized 0..1, so pan 0.5 is centre and pan 0 is hard left. Where the read carries display you "
-    'may write {display: "-6 dB"} instead; a text display ("LP 24") is unsupported_unit, so write the value you '
-    'read. Where the read carries options, write one option value; {label: "Bipolar"} only for enums whose label '
-    "differs from their value. Beats, tempo, booleans, names and colours are bare scalars. A write may carry expect "
-    "with bare current values keyed like the write; a mismatch is stale with target_changed and observed. A batch "
-    "checks every entry first and refuses all of them, entry by entry in entries, if any fails; then it writes in "
-    "order and stops at the first entry that is neither applied, already_matched nor sent."
+    "parameter) is normalized 0..1, so pan 0.5 is centre and pan 0 is hard left; Bitwig displays centre as "
+    '"0.00 %". Where the read carries display you may write {display: "-6 dB"} instead (pan: "C", "25% L" and "-25 %" all parse); a '
+    'text display ("LP 24") is unsupported_unit, so write the value you read. Where the read carries options, write '
+    'one option value; {label: "Bipolar"} only for enums whose label differs from their value. Beats, tempo, '
+    "booleans, names and colours are bare scalars. expect is optional: pass it, with the bare current values you "
+    "last read keyed like the write, when someone else may have changed them since: the user turning a knob while "
+    "you work, a lane or a mapping edited by hand. A mismatch is stale with target_changed and observed, and nothing "
+    "is written, so a manual change is not overwritten; skip it when you just read the value and nothing else moves "
+    "it. A batch checks every entry first and refuses all of them, entry by entry in entries, if any fails; then it "
+    "writes in order and stops at the first entry that is neither applied, already_matched nor sent."
 )
 
 TOPICS: dict[str, str] = {"loop": LOOP, "outcomes": OUTCOMES, "recovery": RECOVERY, "refs": REFS, "values": VALUES}

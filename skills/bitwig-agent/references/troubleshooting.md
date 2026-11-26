@@ -1,43 +1,51 @@
 # Troubleshooting a production session
 
-Start from the user's observed symptom. Do not rerun a known failing action merely to confirm their report. Separate **observation**, **hypothesis**, **authorized correction** and **new verification**. Check current version/platform and the relevant [official changes](version-and-sources.md); do not diagnose from a remembered screenshot or an installed package version alone.
+Start from the user's symptom; do not rerun a known failing action just to confirm it. Separate observation, hypothesis, authorized correction and new verification. Check the actual running version before diagnosing from a remembered screenshot ([versions](version-and-sources.md)).
+
+## Contents
+
+- Locate the failed layer
+- Safe correction loop
+- Unknown is not a retry condition
+- Escalate with evidence
+- Honest handoff
 
 ## Locate the failed layer
 
-| Symptom | First useful observations | Avoid |
+| Symptom | Look at first | Avoid |
 | --- | --- | --- |
-| Bitwig will not open | Whether a process/window already exists; the exact launch error and relevant application/crash-log excerpt; display/session access, graphics backend, package/runtime and audio initialization messages | Killing all Bitwig processes, deleting the profile, inspecting license secrets, forcing a backend change or opening on an unauthorized compositor |
-| UI works but agent cannot connect | Correct MCP server and executable, installed extension enabled in this host, configured loopback endpoint, ownership of the listening process, client/extension versions | Treating a pipx installation as extension installation; exposing the unauthenticated port; switching to another integration with different schemas |
-| Wrong project, track or device | Controlled project provenance, actual active window/header, fresh UUID/name/index and relevant tokens, completeness of the returned window | Treating project-name equality as full-path identity, reusing old IDs, or assuming API clip selection changes the visible device panel |
-| MIDI exists but no sound | Audio engine active, track/clip playback actually active rather than queued, note channel/range, device enabled, instrument chain, mute/solo/output routing and meters along the signal path | Raising master gain first, disabling protection, enabling recording, or claiming a waveform/peak proves audible quality |
-| Chords lose notes or pads cut off | Actual mono/poly mode and voice count, overlapping releases, note lengths, Grid gate/envelope and voice-lifetime path | Assuming four MIDI notes guarantee four sounding voices; increasing unison or level instead of checking voice allocation |
-| Parameter snaps back or edits fight the song | Selected owner, active automation/overrides, modulation and remote mappings, clip/Arranger control, recording/automation-write flags | Repeated writes, silently disabling automation, or confusing normalized values, raw values and display units |
-| Launch/stop seems ignored or late | Global transport, launch quantization, queued versus playing/stopped slot state, Launcher/Arranger ownership and the intended musical boundary | Blindly issuing the command again, treating queued as completed, or assuming stopping one clip stops the global transport |
-| Clip edit changes another candidate | Alias/shared-content indicators, actual clip identity, loop/start/end and independent candidate state | Assuming a different slot/name makes an independent A/B; overwriting A to repair B |
-| Behavior differs from the docs or a fix is missing | `status.extension.build` against the expected build (`extensionMismatch` from the client); a replaced `.bwextension` is loaded only by a Bitwig restart, not the Settings toggle | Assuming the replaced file is running |
-| Unsaved work at risk (restart, Quit/Close) | `projectModified` (current tab only; null = unobserved); `project.save` once; a Save As or crash-recovery dialog blocks it and needs the GUI/user, so save an untitled project with `project.saveAs` instead. `Quit` always, `Close` unless observed saved, need user consent via `discardUnsavedChanges`; save every tab or get consent before restarting Bitwig. After a forced exit Bitwig shows "Recover Projects": in an isolated headless display dismiss it with `xdotool windowactivate` + Escape (keys work, clicks do not) | Calling `project.save` again, passing `discardUnsavedChanges` without the user's consent |
-| Writes refused with `pending` / `unresolved` | The holds in `status.holds` and the refusal's `next` (which read to inspect with and which id to release). Inspect that state, then `ack <id>`; a Grid topology hold is per device, inspect with `grid.export` and `ack` re-checks it (`status` holds). `busy` is an in-flight job or request: wait or `jobs.get`; `project.save` stays allowed | Acking without inspecting, restarting Bitwig to clear it |
-| Grid control/API is unavailable | `status detail:"full"` (its `grid` section), running host version, supported loaded-JAR gate, actual control kind/coverage and selected device | Bypassing the gate, inventing a parameter or treating read-only inventory as write support |
-| Bounce/export is silent, clipped or wrong length | Actual source selection, routing/mute state, requested range, tails, loop region versus full event/file extent, export format/rate/normalization and output file (`export.audio` files rows, `tracks.bounce` tracks rows, `jobs.get`) | Replacing the original, changing the acceptance range after seeing a failure, or treating export-dialog closure as successful audio output |
+| Bitwig will not open | An existing process or window, the exact launch error and crash-log excerpt, display and graphics backend, audio initialization | Killing all Bitwig processes, deleting the profile, forcing a backend, opening on an unauthorized compositor |
+| UI works, agent cannot connect | `bitwig-agent status`, the extension enabled in this host, the loopback endpoint and who owns it, client and extension versions | Treating a pip install as an extension install, exposing the port |
+| Wrong project, track or device | Which project is open, a fresh `tracks list` or `context get`, whether the window you read was complete | Treating a project name as full-path identity, reusing old refs, assuming API selection moved the visible device panel |
+| MIDI but no sound | Start at `context get` (engine, transport, what is playing), then `meters get` or an `audio capture` along the path; clip actually playing not queued, note channel and range, device enabled, mute/solo/output routing. After Grid writes also `diagnostics get` | Raising master gain, claiming a peak proves audible quality |
+| Chords lose notes, pads cut off | Mono or poly mode and voice count, overlapping releases, note lengths, Grid gate and envelope | Assuming four notes mean four voices; more unison or level |
+| Parameter snaps back | Automation and overrides, modulation and Remote mappings, controlling sequencer, recording and automation-write flags | Repeated writes, silently disabling automation, mixing normalized, raw and display values |
+| Launch or stop ignored or late | Transport, launch quantization, queued versus playing slot, launcher/arranger ownership | Re-sending, treating queued as done |
+| Clip edit changed another candidate | Alias or shared-pattern indicators, loop and start/end | Assuming a different slot or name means an independent clip |
+| Behavior differs from docs, a fix is missing | `bitwig-agent status`: `extension.build` against the expected build | Assuming the replaced file is running |
+| Unsaved work at risk | `projectModified` (current tab only, null is unobserved); `project save` once; an untitled project needs `project saveAs`; Quit and Close need the user's consent (`actions invoke --help`); a Save As or Recover dialog blocks saving and needs the GUI. After a forced exit Bitwig shows Recover Projects: on an isolated headless display dismiss it with `xdotool windowactivate` plus Escape (keys work, clicks do not) | Calling `project save` again, passing consent the user did not give |
+| Writes refused with `pending` or `unresolved` | `status.holds` and the refusal's `next` (which read to inspect, which id to release); inspect, then `ack` that id. `busy` is a job in flight: wait or `jobs get` | Acking without inspecting, restarting Bitwig to clear it |
+| Grid access unavailable | `bitwig-agent status --detail=full` (its `grid` section), the running host version | Bypassing a version gate, treating read-only inventory as write support |
+| Bounce or export silent, clipped, wrong length | Source selection, routing and mute, the requested range and tails, loop region versus file extent, the output files and `jobs get` | Replacing the original, changing the acceptance range after a failure |
 
-Follow the smallest signal path that explains the symptom. For silence, distinguish no notes, no generated device signal, no track output, no master output and no monitored output. Each is a different layer; visible meters are observations, not proof that the user heard the intended sound. For audio recording, inspect the intended input, monitoring, arm and destination before explicitly authorized recording; do not enable it just to test an unrelated problem.
-
-Host-side faults the API cannot see (Grid device dropped from the audio network, engine flips, extension errors) show in `diagnostics.get`; check `attribution.certain` before trusting it. A blocked headless instance (Dashboard, Save?, Recover dialogs) is not in the log: use a screenshot.
+For silence, tell apart no notes, no generated signal, no track output, no master output and no monitored output; each is a different layer. Host faults the API cannot see (a Grid device dropped from the audio network, engine flips, extension errors) appear in `bitwig-agent diagnostics get`; check `attribution.certain` before trusting it. A blocked headless instance (Dashboard, Save?, Recover dialogs) is not in the log: use a screenshot.
 
 ## Safe correction loop
 
-1. Record the symptom, relevant version, exact target and available evidence. Read only the narrow log/state window needed; exclude credentials, license/account data and unrelated project material from shared artifacts.
-2. Inspect current safety and ownership. If required values are unknown or the target changed, stop the proposed write and resolve that prerequisite.
-3. Choose one correction addressing the supported cause. Preserve original content/state where useful; use [A/B](sound-design.md#controlled-ab) for creative alternatives, not arbitrary alternatives to an objective repair.
-4. Perform only the authorized change. Then exercise the original user-visible scenario and inspect its actual result. A passing unit test or healthy connection does not establish music-production success.
-5. Report what changed, what was observed, what remains unsupported and whether audition/persistence were actually checked. Keep the earlier failure in the record.
+1. Record the symptom, version, exact target and evidence. Read only the narrow log or state window you need, leaving out credentials and unrelated project material.
+2. Check safety and ownership. If a needed value is unknown or the target changed, stop and resolve that first.
+3. Choose one correction for the supported cause. Preserve the original where useful; objective repairs do not need an A/B.
+4. Make only the authorized change, then run the user's original scenario and look at the actual result. A healthy connection or green test is not music-production success.
+5. Report what changed, what you saw, what stays unsupported and whether audition and persistence were checked. Keep the earlier failure in the record.
 
-## Unknown is not a normal retry condition
+## Unknown is not a retry condition
 
-Read the `outcome` of every write. An error means nothing changed; `outcome: unknown` stops the writer. A write's timeout can follow an applied change and is reported as `unknown`, and a request ID is not an idempotency key. Preserve raw responses, intended targets and partial owned outputs. Do not automatically retry, Undo, delete, reload, restart or replay through GUI. A long export, bounce or save returns `unknown` / `deadline` with a `job`: follow it with `jobs.get`.
+Read every write's `outcome`. An error means nothing changed; `unknown` stops the writer, and a timeout can follow an applied change, so it is `unknown` too. A request id is not an idempotency key. Keep the raw responses, intended targets and partial outputs. Do not retry, Undo, delete, reload, restart or replay through the GUI. Read the state, then `ack` the hold; a long export, bounce or save returns `unknown` with a `job` for `jobs get`. A read does not itself authorize continuing, and an unreleased hold still refuses writes. Meanings: `bitwig-agent help outcomes`, `bitwig-agent help recovery`.
 
-Authorized read-only inspection may establish the current state, but does not acknowledge the original operation or itself authorize continuation. Release the hold with `ack <id>` once inspected. A subsequent plan must explicitly address the uncertainty, scope and safety; unreleased holds still refuse writes. See [targeting and evidence](targeting-and-evidence.md) and the [reason table](https://github.com/BANANASJIM/bitwig-agent/blob/main/PROTOCOL.md#results-errors-and-recovery).
+## Escalate with evidence
 
-## Escalate with useful evidence
+Over MCP, an invalid-argument error names the closest valid field, and a tool result with `isError` set must be read as an error before you parse its content. Give the exact symptom and error, host, client and extension versions, platform, target, the smallest raw response or log excerpt, a screenshot when allowed and the steps already tried. Say whether it is a host or UI problem, a bridge contract bug, an unsupported capability or a musical choice. Do not propose a reinstall or profile reset first, and do not claim the whole interface is controllable because one path worked.
 
-Invalid-argument errors name the closest valid field; read it before re-checking schemas. Provide the exact symptom and error, running host/client/extension versions, platform, target scope, smallest relevant raw response/log excerpt, actual screenshot when permitted, and the already-observed steps. Distinguish a host/UI problem, a bridge contract bug, an unsupported capability and a musical choice. Do not propose a reinstall/profile reset as the first diagnostic step, silently move the user's session to another display, or claim the entire interface is controllable because one path worked.
+## Honest handoff
+
+Close a task by reporting: the requested change and the observed target scope (not remembered GUI selection); what was dispatched and each outcome, including partial ownership; any `unknown`, failed criterion, bounded or unreadable coverage; which of GUI, audio, listening, Undo/Redo and save/reopen evidence was actually obtained, and which was not; and the next action that needs explicit permission, without doing it silently. A later success does not retroactively pass an earlier failed criterion.

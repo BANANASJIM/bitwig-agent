@@ -2,11 +2,18 @@
 
 Use this reference to translate a musical goal into a small, inspectable change. The recipes below are **starting hypotheses**, not claims that a sound has been heard or improved. Confirm the target instrument, musical passage, intended result and permission before editing; prefer [Controlled A/B](#controlled-ab) for creative changes.
 
-## Knowledge is not native capability
+## Contents
 
-The official [6.1.4 release notes](https://www.bitwig.com/dl/Bitwig%20Studio/6.1.4/release_notes/) include the 6.1 Sampler/Tuner changes below. The online base manual identifies as 5.3; use it for underlying concepts, with newer release notes taking precedence. Public product features do not establish bridge support.
+- Knowledge is not bridge support
+- Start with the audible job
+- Chain order and modulation
+- Sampler in 6.1: choose the behavior first
+- Grid: build the smallest signal path
+- Controlled A/B
 
-Version `0.3.x` maps private Grid/modulator access to **Bitwig Studio 6.1.4 / API 25** and its exact loaded-JAR hash; the older `0.1.2` release retains its 6.1.3 gate. Native evidence remains scoped to exercised Linux cases. Public SDK operations have a different compatibility boundary and need their own native verification. Follow [versions and sources](version-and-sources.md), [Grid and recipe boundaries](grid-and-recipes.md), current capabilities and fresh guarded targets. Modulator inventory is not mapping/edit support. A known API gap can use GUI work within the user's authorized scope, never to replay an uncertain native operation. Product knowledge alone grants no permission to play, render, save or upgrade.
+## Knowledge is not bridge support
+
+Release-note features below (Sampler modes, Tuner) are product knowledge, not proof the bridge can edit them: check `bitwig-agent --help` and the method's `--help`. The online base manual identifies as 5.3, so newer [release notes](https://www.bitwig.com/dl/Bitwig%20Studio/6.1.4/release_notes/) take precedence ([versions](version-and-sources.md)). For Grid construction see [grid-and-recipes](grid-and-recipes.md). Product knowledge grants no permission to play, render, save or upgrade.
 
 ## Start with the audible job
 
@@ -65,7 +72,7 @@ For slices:
 
 ## Grid: build the smallest signal path
 
-Use Poly Grid for an instrument, FX Grid for audio processing, and Note Grid for note processing/generation. A practical initial instrument is **oscillator audio → envelope's audio input/output → Audio Out**, with note pitch to oscillator pitch and note gate to the envelope. This is a conceptual patch, not a guaranteed callable recipe; the supported scratch recipe and its voice-count gap remain in [Grid and recipes](grid-and-recipes.md).
+Use Poly Grid for an instrument, FX Grid for audio processing, and Note Grid for note processing/generation. A practical initial instrument is **oscillator audio → envelope's audio input/output → Audio Out**, with note pitch to oscillator pitch and note gate to the envelope. This is a conceptual patch, not a guaranteed callable recipe; how to apply it is in [grid-and-recipes](grid-and-recipes.md).
 
 - **Pitch is not audio or MIDI note number.** The Grid pitch signal uses 0 for C3 and 0.1 per octave. Confirm pitch input attenuation and tracking. Do not apply this signal convention to raw parameter values.
 - **Gate is not pitch.** A gate keeps an envelope held; a trigger is a low-to-high transition. Logic inputs treat values at/above 0.5 as high. Inspect actual gate changes when repeated notes fail to retrigger.
@@ -85,7 +92,7 @@ Use the selected module's real Inspector scopes and F1/help view to explain what
 
 ## Controlled A/B
 
-Prefer this for a creative timbre, arrangement or mix change. Mechanical work such as naming or moving an already-approved object does **not** require an A/B experiment.
+Prefer this for a creative timbre, arrangement or mix change: the user owns the taste decision, and a write replaces the original. Mechanical work such as naming or moving an already-approved object does **not** require an A/B experiment.
 
 1. **Preserve independent A and B before editing.** A is the original; B is the candidate. Choose a proportional method: an independent device/preset copy for a contained patch change, an independent track/chain and necessary clip material for routing or performance changes, or a separately authorized project copy for wider state. Capture all state that the proposed change can affect, including automation, mappings and routing. Labels or a screenshot alone do not preserve a patch. Do not create project copies or save presets outside permission.
 2. **Check independence.** A/B chains must not share the control being changed. For clip-content edits, 6.0 aliases share a pattern: use **Make Unique** or a verified independent duplicate before editing B. Do not rely on different clip names as proof. Keep A untouched and select only one audible candidate at a time; do not sum both. Source: [6.0 release notes](https://downloads.bitwig.com/6.0/Release-Notes-6.0.html).
@@ -95,4 +102,4 @@ Prefer this for a creative timbre, arrangement or mix change. Mechanical work su
 6. **Show actual evidence.** Present real before/after screenshots with the target visible and a short value/routing diff; never substitute a mockup for the current patch. Where authorized and supported, provide clearly labeled A/B renders of the same passage with comparable export settings and full relevant tails. Check actual render/event extent rather than assuming loop length equals file length. Dispatch is not proof that a render exists or contains the intended signal.
 7. **Let the user decide.** Summarize observed changes, remaining uncertainty and the next listening choice. If only numbers/images were inspected, explicitly report **“No audio audition performed.”** An audio file's existence or numerical analysis is not an audition. Do not claim B sounds better, warmer or cleaner without the corresponding listening evidence; user preference determines which version to retain. Preserve A until that decision and any authorized cleanup.
 
-If any write returns `outcome: unknown`, **stop and retain the evidence**. Do not blind Undo, retry, restart or replay through GUI to recover the comparison. A later matching value does not acknowledge the earlier write. Report what is known and the uncertain boundary for coordinator recovery (inspect, then `ack` the hold).
+If any write returns `outcome: unknown`, **stop and retain the evidence**. Do not Undo, retry, restart or replay through the GUI to recover the comparison; see `bitwig-agent help recovery`. Report what is known and where the uncertainty is.

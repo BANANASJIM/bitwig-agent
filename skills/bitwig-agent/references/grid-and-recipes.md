@@ -1,71 +1,51 @@
-# Grid and music recipe boundaries
+# Grid patching judgment and recipes
 
-Use this reference before native Grid edits or the public scratch-music recipe. It does not grant permission to operate a DAW. Exact schemas remain in live tool discovery and the version-matched public [protocol](https://github.com/BANANASJIM/bitwig-agent/blob/main/PROTOCOL.md).
+Spec syntax, value forms, units and limits are in `bitwig-agent help grid.apply` and `bitwig-agent grid describe --help`; do not restate them from memory. This page is how to work, and why.
 
-## Compatibility and discovery
+## Start here
 
-Version **`0.3.x`** maps private Grid/modulator access to **Bitwig Studio 6.1.4 / API 25** and the exact supported **loaded host-JAR** SHA-256; the older `0.1.2` release retains its 6.1.3 gate. Linux native evidence remains bounded to exercised cases. Another JAR on disk, successful Python installation or a passing package smoke does not extend this private binding's compatibility. Public SDK operations and separately authorized GUI work have different scopes; verify each independently. Do not bypass a mismatch. See [versions and sources](version-and-sources.md).
+1. **Preset first if one fits.** `presets search`, then the part workflow in [midi-and-clips](midi-and-clips.md#make-a-new-part). Finish a small instrument-and-notes loop before researching a custom Grid graph.
+2. **Otherwise build a Grid instrument.** `tracks insert` an instrument track, `devices insert` the Poly Grid whose path `devices catalog` lists, then write the patch with `grid apply --dryRun` and apply it for real once the plan reads right.
 
-Call `status` with `detail:"full"` and read its `grid` section: separate read/write availability and topology admission. Availability means a binding is present, not that every module/type has native acceptance. Read a device with `grid.export` (a `grid.apply` spec, `refs` per module name and measured `sizes`); `grid.describe` finds module types by keyword (name-only, loose: case/space/hyphen-insensitive, every word must match; search "low pass", not "Filter"). Stored cables are not proof of the active signal graph.
+## Work loop
 
-Module instance IDs are the `id` of the gridModule refs in the export; type IDs are not module instance IDs. Module/modulator UUIDs may change on reopen. Unknown native children remain unsupported. Grid-family string panels lack a real fixture; Macro-modulator observations do not establish that coverage. Modulator inventory and exact string-panel values are read-only, not loading/mapping/editing support.
+1. **Read the docs before using an unfamiliar module.** `bitwig-agent grid describe` gives Bitwig's own description of each port and parameter, offline; follow its `--help` for how names are matched.
+2. **Write the patch as one spec, dry run first.** A spec is code: modules, cables and parameters in a file, `bitwig-agent grid apply @patch.json --dryRun`, read `warnings` and `wouldFail`, then apply without `--dryRun`. Applying again is a diff, so tune the file instead of poking the live device.
+3. **Start from the live device.** `bitwig-agent grid export` returns a spec of what is there, with refs. Edit it and apply it back; unchanged parts write nothing.
+4. **Look at the layout.** `bitwig-agent grid render` draws the device and summarizes overlaps, unconnected modules and sections. Read the summary; open the image only when you can see it.
+5. **Check for silent drops.** After topology writes run `bitwig-agent diagnostics get` and look for `grid_rejected`. A device missing a required input is dropped from the audio network and just goes silent, with no sign in the API. Pass the apply result's `diagnosticsMarker` as `sinceMarker` so you see only what your write caused. Modal dialogs are not in the log: take a screenshot.
 
-## Guarded raw changes
+## Judgment
 
-Parameter changes go through `grid.apply`: a module entry with only `name` and `params` (a partial entry) sets those params on the live module, e.g. `{name:"F: lp", params:{CUTOFF:{display:"800 Hz"}}}`; it never inserts, moves or retypes, and `prune`, `pruneAll`, `replace`, `x` and `y` are refused with it. Numeric raw values are not normalized/display values or automatically seconds, hertz or decibels. Enum values are actual option values, not their list positions; write them as `{label}`. No guessing or clamping. A `display` write is the only display conversion.
+- **Change one value with a partial entry** (`name` and `params` only): it never inserts, moves or retypes, which is why it is the safe way to tune a running patch.
+- **One spec per Grid device, one namespace per section.** `prune` deletes modules in its namespace that the spec omits, so two specs sharing a namespace delete each other's modules. Keep `prune` out of the first draft.
+- **Write values the way the spec allows, never by guess.** Which parameters accept `{display}` and which need a raw value is in `grid apply --help` (per-parameter `rawScale`). Raw numbers are not seconds, hertz or decibels, and enum values are option values, not list positions. Never clamp: an `unsupported_unit` error means write the raw value.
+- **Stored cables are not the active graph.** A readable graph does not prove sound; a moving meter does not prove the intended sound.
+- **Do not stop at the first working patch.** Build the smallest signal path (see [sound-design](sound-design.md#grid-build-the-smallest-signal-path)) and audition it before adding modules.
+- **A failed or `unknown` apply stops.** Inspect with `grid export`, fix the cause, apply again; a topology hold on a device is released with `ack` after inspection.
+- **Topology edits need a stopped, non-recording state.** Value writes may run while playing.
 
-String panels (e.g. Comment text) take a string param (at most 1024 UTF-16 units, verbatim). Step tables (Steps, Pitches, Gates, Probabilities, Accents) take `{steps:[...]}`: entries from step 0 within -128..128, the rest kept. Observed natively: Pitches in Grid pitch units, Gates 1/0, Accents 0/0.5/1, Probabilities 0..1. Device voicing is the spec's top-level `voicing:{...}` (Poly Grid only: `voices`, `voiceStacking`, `monoMode` true_mono|digi_mono, retrigger, priority, ...). Topology writers have their own lifecycle/quarantine checks; a `grid.apply` run stops at a failure or a native-repair `mismatch`, and only a native setter failure latches the topology quarantine (`unknown`). Do not assume a readable graph authorizes insert/move/delete/rename/cable edits.
+## Controls without ports: device modulators
 
-Native context, license/property and undo observations do not constitute user permission, a global lock or engine acknowledgement. Check applicable stopped/nonrecording/nonautomation conditions and current ownership, and stop on any `unknown` outcome. Native undo-aware dispatch does not promise grouping, rollback or saved persistence.
+Many controls have no input port (envelope times, step counts, oscillator timbre, drive, pulse width). Vary them with a modulator instead of more modules.
 
-## Fast patch building
+1. `modulators describe` picks a type and explains its controls (offline).
+2. `modulators insert` on the device ref returns the modulator ref with its outputs and parameters.
+3. `modulators map` connects a modulator to a parameter ref from `grid export`; map again to change the amount, `modulators unmap` to remove it. Its `--help` says what an omitted field keeps.
+4. Shape the source with `parameters set` on a parameter ref from `modulators list`. Polarity is a parameter of the modulator, not of the mapping.
 
-`grid.describe` (or `type` directly) → one `grid.apply` spec (modules, connections, params by `display`; `dryRun` first). Details in [PROTOCOL](https://github.com/BANANASJIM/bitwig-agent/blob/main/PROTOCOL.md).
+Modulator topology edits need a stopped, non-recording transport; `parameters set` on a modulator control may run while playing. After `unknown`, inspect `modulators list`; never repeat.
 
-**Read the docs first:** before using an unfamiliar module run `bitwig-agent grid describe --type="<module>"` (or `--query="<keywords>"`): Bitwig's own description and per-port/parameter notes, read offline from the local install. Check `rawEntries` when a port has no `description`.
+## Macro knobs
 
-**Patch as code:** for more than a handful of modules use `grid.apply` (client-side; `bitwig-agent grid apply @patch.json`): `modules:[{name,type,x,y,params}]` + `connections:[{from:"name.OUT",to:"name.IN"}]`, `dryRun` first. Name is the unique `customName` identity, so re-applying is a diff and repeated blocks stay identical. `params` take raw values, `{label}` (enum) or `{display}`. Step arrays: `params:{DATA:{steps:[1,0,0.5]}}` on Steps/Pitches/Gates/Probabilities/Accents (id from the module's exported params; first entries written, rest unchanged; equal arrays skipped; block arg may be a list via `{steps:"${row}"}`). Poly Grid voicing: top-level `voicing:{voices:8,voiceStacking:1,monoMode:"true_mono"}` writes only differing fields; Note/FX Grid is refused before any write. **Grid pitch units** (defined here and in the apply notes): 0 = MIDI 60, 1 semitone = 1/120, 1 octave = 0.1; Pitches steps and oscillator PITCH_IN use them (PITCH_IN is scaled by PITCH_MOD).
+`devices remote define` sets a named Remote Controls page whose knobs drive chosen scalar Grid parameters (refs from the export). It is an upsert; `devices remote delete` removes the page. Pages live in the device's preset-page list, which is what the UI's Add New Page creates.
 
-**Preflight:** `dryRun` is read-only and returns `warnings` (ignored PHASE_IN cable while DEVICE_PHASE is on, filter KEYTRACK in a Poly Grid, unconnected or dead-end modules, PITCH_MOD 0) and `wouldFail` (transport playing/recording, host-converted display writes, unreachable target). Unknown parameter/port errors list the valid ids. `namespace`+`prune` removes stale owned modules/cables only. One spec per Grid device (sections as prefixes inside it); two specs sharing a namespace with prune delete each other's modules. `{display}` only for hertz/percent/decibel params whose default display is nonzero, else write the raw value; time params of envelopes/Logic Delay/Gate Length/Lag etc. take `{display:"3 ms"}` or `"0.5 s"` (client converts to raw; others, e.g. Long Delay TIME, need raw: cbrt(seconds) for AD/ADSR, log10(seconds) for Logic Delay/Gate Length). Repeated sub-patches: `blocks:{voice:{params:{atk:0.2},modules:[{name:"osc",type,x,y,params:{ATTACK:"${atk}"}}],connections:[{from:"osc.OUT",to:"env.IN"}]}}` + `instances:[{block:"voice",prefix:"D1: ",dy:12,args:{atk:0.1}}]`; local names inside the block, expanded names (`"D1: osc.OUT"`) for cables to the rest; no nesting; `dryRun` shows the expansion. It stops at the first error/unknown/partial (see `failure`, `notReached`); do not retry blindly, inspect then re-apply.
+## Debug silent patches
 
-**Work on an existing patch:** `grid.export` returns a `grid.apply` spec of the live device (names, types, positions, changed params, cables, voicing) plus `refs` and `sizes` per module name; edit it and apply it back (unchanged = no writes; a saved export replays after an extension restart). In a spec for one section use `external:["X: sum"]` to wire into modules you do not declare; `prune` never cuts inputs of declared modules outside `namespace` unless `allowOutsideDisconnect:true`.
+Trace notes, source, envelope and gate, output, track routing, mute and level, and find the first point where the signal vanishes. `bitwig-agent grid probe` listens to one Grid output port and analyzes it, so you can bisect a patch port by port. Typical causes: a missing required input, an envelope never gated, too few voices for chord releases (mono Poly Grid pad), a keytrack filter in a Poly Grid, an ignored phase cable. Deleting a through-processing module can reconnect its neighbours and create a drone. More in [sound-design](sound-design.md).
 
-**Macro knobs:** `devices.remote.define` sets a named Remote Controls page on the device whose knobs drive chosen scalar Grid parameters: `name:"Macros"`, `slots:[<parameter ref from the export refs>, ...]` (up to 8, slot k = entry k, null = empty) over Value modules. It is an upsert: the same call again is `already_matched`, a changed slot is `applied`; `devices.remote.delete` removes the page by its ref. Pages go in the device's preset-page list (what the UI's Add New Page creates; device pages cannot hold Grid module parameters); each step is its own Undo step.
+## Scratch recipe and pad voices
 
-**See the layout:** `grid.render` (client-side, read-only; `outPath` absolute, `fileType` svg|png, `overwrite`, `namespace`, `scale`) draws the device and returns a summary: `overlaps`, `unconnected`, `sections` (by `"H: "` prefix, with bounding boxes), `density`, `categories`. Read the summary to judge layout; open the image only when you can view it. Render after each `grid.apply` while tuning positions.
+`examples/grid_music.py` in the repository builds two disposable instrument tracks (pluck and pad) from a factory Poly Grid. It is a source-checkout script, not an installed tool: do not invent an executable, and do not run it without permission, a disposable project and its explicit write flag. It stops on `unknown` and never retries.
 
-**Check silent drops:** after Grid topology writes, run `diagnostics.get` (a real `grid.apply` returns `diagnosticsMarker`: pass it as `sinceMarker`; `grid_rejected` bursts while a build is still inserting are expected, only events after the build matter) and look for `grid_rejected` (a device missing a required in-port is dropped from the audio network and just goes silent; the API shows nothing). Pass the previous call's `marker` as `sinceMarker` to see only what your write caused. Modal dialogs are not in the log: take a screenshot.
-
-- `typeName` must match exactly one catalog name (case/space/hyphen-insensitive); zero or several reject with candidates. Batch insert stops at the first failure or before the deadline (partial); later inserts can push earlier modules right, so use the reported final positions.
-- `display` writes (`Hz`/`kHz`, `%`, `dB`) work only after per-parameter calibration, else `unsupported_unit` (a Drive with dB display but linear raw was refused natively). Pitch-like parameters are MIDI-note raw (84 = 1.05 kHz). `displayMismatch` is reported, never corrected.
-
-## Device modulators for controls without ports
-
-Many Grid controls have no input port (envelope times, Gates STEPS, Chance PROBABILITY, oscillator TIMBRE, Distortion DRIVE, pulse width). Vary them with a device modulator instead of more modules:
-
-1. `modulators.describe query="random"` (offline) picks a type; `modulators.describe type=Random` explains its controls.
-2. `modulators.insert parent=<device ref> typeName=Random` returns the new modulator's `ref` with its `outputs` and `parameters`.
-3. `modulators.map source=<modulator ref> target=<parameter ref of the AD module, from grid.export refs, id DECAY> amount=0.5`; the result's `mapping` is the readback. Change the amount later with `amount=0.3` (an omitted `transfer` or `enabled` keeps the mapping's); remove it with `modulators.unmap`.
-4. Shape the modulator with `parameters.set target=<a parameter ref from modulators.list> value=...` (raw value, `{display}` or an enum `{label}`). Polarity is a modulator parameter, not a mapping option.
-
-Insert, delete, map and unmap need a stopped transport; `parameters.set` on a modulator control works while playing. Recording or automation write on blocks all of them. An `unknown` outcome means inspect `modulators.list`, never repeat. Native acceptance of these edits is not yet recorded in VERIFICATION.
-
-## Scratch recipe: explicit agent workflow
-
-The public [usage guide](https://github.com/BANANASJIM/bitwig-agent/blob/main/USAGE.md#make-grid-instruments-without-preset-files) and [recipe source](https://github.com/BANANASJIM/bitwig-agent/blob/main/examples/grid_music.py) contain the complete source-checkout commands. The wheel does not install the recipe as a tool, and this copied skill does not bundle it. Do not invent a missing executable or download/run it without permission.
-
-The recipe requires an explicitly named disposable project, fresh safety observations, a new evidence directory and explicit `--allow-write`. It creates two muted/disarmed instrument tracks and eight beats of pluck notes/pad chords. In `--from-scratch` mode it discovers the factory Poly Grid/catalog and constructs Union → ADSR → Audio Out without caller-supplied preset files. Fixed Analog ADSR settings are bounded native-observed calibrations, not a general physical-unit conversion. Alternatively omit `--from-scratch` and provide **both** host-authored pluck and pad presets; mixed/incomplete modes reject, and presets must never be fabricated.
-
-Only `report.json`'s `createdTracks` and their slot-0 clips/devices are owned outputs; existing tracks are not edited. A project name is not full-path identity or an atomic lock. Use a complete ungrouped track window. The recipe retains full responses and partial ownership, stops on an `unknown` outcome, and does not play, render, save, undo or retry. Do not rerun it after uncertainty. A null note count is unverified, not empty.
-
-### Pad voice count
-
-The original factory Pad was **Mono / 1 voice** and four-note chords need polyphony. Set the voice count through the API: `grid.apply` with `voicing:{voices:8}` (Poly Grid only); read it back with `grid.export` (its spec carries `voicing`). Eight voices permit overlapping releases. The recipe script itself still reports a GUI step in its stdout `next`; that step is only needed when you drive the recipe, not for a patch built with `grid.apply`.
-
-The recipe uses Pad Triangle Level **0.125 per voice** for headroom and Pluck Level **1.0**. The original Mono case lacked three chord fundamentals; a later corrected case does not retroactively pass it, uniquely isolate simultaneous voice/level changes, or establish whole-recipe persistence/listening acceptance.
-
-### Render and completion boundaries
-
-Graph/control/MIDI readback establishes bounded authoring observations, not sound or persistence. Playback, bounce, save and reopen are separate authorized actions. For GUI Bounce, select the actual owned Launcher clip and inspect its context before invoking **Bounce...**; an Action/selection response does not prove the dialog target or result.
-
-For looping bounces inspect the full audio-event/file extent, initial Start and repeating loop region separately: they can differ. An earlier maximum-seven-second criterion failed; observing a sixteen-beat event with an eight-beat loop does not change that failure or prove a universal generation rule. No automatic rendering/saving workflow is supplied. Use the public [verification limits](https://github.com/BANANASJIM/bitwig-agent/blob/main/VERIFICATION.md#coverage-limits-and-unresolved-results) rather than promoting later corrections into blanket native acceptance.
+A pad needs polyphony: four-note chords were missing fundamentals on a mono Poly Grid. Set `voicing` in the spec, for example eight voices, and read it back with `grid export`. Keep per-voice level low for headroom. Neither a corrected case nor a clean readback proves the patch sounds right: audition it.

@@ -287,3 +287,11 @@ async def test_grid_apply_still_reaches_the_hidden_blocks_through_the_client():
 async def test_timeout_ms_does_not_change_how_an_unknown_or_hidden_name_is_refused(name):
     with pytest.raises(MCPError, match="Unknown method"):
         await call_tool(NO_CONTEXT, CallToolRequestParams(name=name, arguments={"timeoutMs": 5000}))
+
+
+def test_refs_and_values_topics_state_what_the_skill_relies_on():
+    refs, values = TOPICS["refs"], TOPICS["values"]
+    for fact in ("identity", "target_not_found", "chains.list", "same name", "same type and name", "preset"):
+        assert fact in refs
+    for fact in ("0.00 %", "pan 0.5 is centre", "expect is optional", "{display", "{label"):
+        assert fact in values
