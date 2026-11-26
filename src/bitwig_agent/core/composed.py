@@ -52,7 +52,7 @@ HANDLERS = {
     "audio.route": audio_route,
     "audio.capture": pipewire.capture,
     "audio.analyze": audio_analyze,
-    "host.diagnostics": diagnostics,
+    "diagnostics.get": diagnostics,
     "presets.search": presets_search,
 }
 

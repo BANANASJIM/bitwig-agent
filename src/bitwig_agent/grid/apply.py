@@ -104,7 +104,7 @@ class Session:
 
 
 async def with_marker(client: Any, result: dict[str, Any], wrote: bool, timeout_ms: int) -> dict[str, Any]:
-    """After a build, attach a host.diagnostics marker: sinceMarker=<it> shows only rejections that happened after the build."""
+    """After a build, attach a diagnostics.get marker: sinceMarker=<it> shows only rejections that happened after the build."""
     if not wrote:
         return result
     try:

@@ -1,4 +1,4 @@
-"""host.diagnostics against synthetic Bitwig logs (no real log, no Bitwig)."""
+"""diagnostics.get against synthetic Bitwig logs (no real log, no Bitwig)."""
 
 import asyncio
 import re
@@ -43,8 +43,8 @@ def log(tmp_path, monkeypatch):
 
 
 def run(args=None, bridge=None):
-    params, timeout = validate_call("host.diagnostics", args or {})
-    return asyncio.run(composed.run("host.diagnostics", bridge or Bridge({"pid": 1}), params, timeout))
+    params, timeout = validate_call("diagnostics.get", args or {})
+    return asyncio.run(composed.run("diagnostics.get", bridge or Bridge({"pid": 1}), params, timeout))
 
 
 NOW = datetime.now().replace(microsecond=0)
@@ -55,10 +55,10 @@ def header(t):
 
 
 def test_registered():
-    assert "host.diagnostics" in CLIENT_SIDE
+    assert "diagnostics.get" in CLIENT_SIDE
     for bad in ({"sinceSeconds": 0}, {"sinceSeconds": 5, "sinceMarker": "x"}, {"maxEvents": 0}):
-        with pytest.raises(ValueError, match=re.escape("1 validation error for HostDiagnosticsArgs")):
-            validate_call("host.diagnostics", bad)
+        with pytest.raises(ValueError, match=re.escape("1 validation error for DiagnosticsGetArgs")):
+            validate_call("diagnostics.get", bad)
 
 
 def test_missing_log_is_unsupported(log):

@@ -284,14 +284,15 @@ async def probe(target, report):  # noqa: PLR0915
         report["beforeStatus"] = before
         if before.get("projectName") != target.fixture.stem:
             raise RuntimeError("Observed project name differs from explicit fixture; refusing further queries")
-        capabilities = await call("capabilities")
-        if not registry_matches(capabilities["methods"], advertised):
+        implemented = await call("status", {"detail": "full"})
+        if not registry_matches(implemented["methods"], advertised):
             raise RuntimeError("Native Java registry differs from the installed MCP adapter")
         report["beforeTransport"] = await call("transport.get")
         tracks = await call("tracks.list")
         report["trackWindow"] = tracks.get("window")
         await call("devices.catalog")
         await call("actions.list")
+        await call("markers.list")
         report["deviceReadScope"] = (
             "First observed top-level device per returned track; not all devices or private Grid topology"
         )

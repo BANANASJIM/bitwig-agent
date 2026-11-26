@@ -16,7 +16,7 @@ final class TransportModule implements HostModule {
         "timeSignature",
         "positionBeats",
         "metronome",
-        "metronomeVolumeNormalized",
+        "metronomeVolume",
         "loopStartBeats",
         "loopDurationBeats",
         "loopEnabled",
@@ -27,11 +27,8 @@ final class TransportModule implements HostModule {
         "recordQuantizationGrid",
         "playing"
     };
-    /** Host-listed enums: the API's own option list validates them at dispatch. */
-    private static final Set<String> ENUM_FIELDS =
-            Set.of("preRoll", "defaultLaunchQuantization", "recordQuantizationGrid");
 
-    private static final Set<String> FIELDS = Set.of(ORDER);
+    private static final ValueMatch BEATS_AND_TEMPO = ValueMatch.raw(1e-6);
     /** Fields every host reports at startup; a newer field that is not (yet) observed reads null instead of blocking the rest. */
     private static final Set<String> BASE = Set.of(
             "tempoBpm",
@@ -50,6 +47,7 @@ final class TransportModule implements HostModule {
     private final ProjectState projectState;
     private final Map<String, Sample> values = new LinkedHashMap<>();
     private final Map<String, SettableEnumValue> enums = new LinkedHashMap<>();
+    private final Sample volumeDisplay = new Sample();
 
     TransportModule(
             Transport transport,
@@ -74,8 +72,11 @@ final class TransportModule implements HostModule {
         observe("loopEnabled", transport.isArrangerLoopEnabled());
         observe("loopStartBeats", transport.arrangerLoopStart());
         observe("loopDurationBeats", transport.arrangerLoopDuration());
-        Sample volume = sample("metronomeVolumeNormalized");
+        Sample volume = sample("metronomeVolume");
         transport.metronomeVolume().addValueObserver((DoubleValueChangedCallback) volume::number);
+        transport.metronomeVolume().displayedValue().markInterested();
+        transport.metronomeVolume().displayedValue().addValueObserver((StringValueChangedCallback)
+                v -> volumeDisplay.set(new JsonPrimitive((String) v)));
         observe("punchInEnabled", transport.isPunchInEnabled());
         observe("punchOutEnabled", transport.isPunchOutEnabled());
         observe("preRoll", transport.preRoll());
@@ -94,24 +95,12 @@ final class TransportModule implements HostModule {
     }
 
     static void validateParams(String method, JsonObject p) {
-        if (method.equals("transport.get")) {
-            Params.fields(p, Set.of(), Set.of());
-            return;
-        }
+        if (method.equals("transport.get")) return;
         if (!method.equals("transport.set"))
             throw Errors.notApplied(Reason.UNKNOWN_METHOD, "Unknown transport method.");
-        Params.fields(p, Set.of(), FIELDS);
         if (p.size() == 0) throw Errors.notApplied(Reason.INVALID_PARAMS, "At least one transport field is required.");
-        for (String key : List.of("playing", "metronome", "loopEnabled", "punchInEnabled", "punchOutEnabled"))
-            if (p.has(key)) Params.bool(p, key);
-        if (p.has("metronomeVolumeNormalized")) Params.number(p, "metronomeVolumeNormalized", 0, 1);
-        for (String key : ENUM_FIELDS) if (p.has(key)) Params.string(p, key);
-        // The installed Maschine JAM/MainKnobControl.js uses raw BPM 20..666.
-        // RangedValue Javadoc leaves raw limits undefined: these are toolkit-supported bounds.
-        if (p.has("tempoBpm")) Params.number(p, "tempoBpm", 20, 666);
-        for (String key : List.of("positionBeats", "loopStartBeats", "loopDurationBeats")) {
-            if (p.has(key)) Params.number(p, key, 0, Double.MAX_VALUE);
-        }
+        if (p.has("metronomeVolume"))
+            ValueInput.parse("metronomeVolume", p.get("metronomeVolume")).normalized("metronomeVolume");
         if (p.has("timeSignature") && !validSignature(Params.string(p, "timeSignature")))
             throw Errors.notApplied(
                     Reason.INVALID_PARAMS,
@@ -248,7 +237,7 @@ final class TransportModule implements HostModule {
                 transport.isArrangerLoopEnabled().set(value.getAsBoolean());
                 break;
             // Absolute RPC target: no physical-controller pickup.
-            case "metronomeVolumeNormalized":
+            case "metronomeVolume":
                 transport.metronomeVolume().setImmediately(value.getAsDouble());
                 break;
             case "punchInEnabled":
@@ -349,8 +338,9 @@ final class TransportModule implements HostModule {
         result.addProperty("projectName", application.projectName().get());
         result.addProperty("scope", "project_transport_observed_values");
         for (Map.Entry<String, Sample> entry : values.entrySet()) {
-            if (BASE.contains(entry.getKey())) require(entry.getKey());
-            result.add(entry.getKey(), entry.getValue().value);
+            String key = entry.getKey();
+            if (BASE.contains(key)) require(key);
+            result.add(key, unit(key, entry.getValue().value));
         }
         JsonObject units = new JsonObject();
         units.addProperty("tempoBpm", "bpm_raw");
@@ -358,14 +348,10 @@ final class TransportModule implements HostModule {
                 "timeSignature",
                 "numerator/denominator as the host reports it; time-signature change markers are not in the public API");
         units.addProperty("positionBeats", "quarter_note_beats_current_play_position");
-        units.addProperty("metronomeVolumeNormalized", "normalized_0_1_not_db");
+        units.addProperty("metronomeVolume", "normalized_0_1_not_db");
         units.addProperty("loopStartBeats", "quarter_note_beats");
         units.addProperty("loopDurationBeats", "quarter_note_beats");
         result.add("units", units);
-        JsonObject options = new JsonObject();
-        for (Map.Entry<String, SettableEnumValue> entry : enums.entrySet())
-            options.add(entry.getKey(), EnumOptions.json(entry.getValue()));
-        result.add("options", options);
         JsonArray outside = new JsonArray();
         for (Map.Entry<String, SettableEnumValue> entry : enums.entrySet())
             if (EnumOptions.outsideOptions(entry.getValue(), observedString(entry.getKey())))
@@ -378,6 +364,17 @@ final class TransportModule implements HostModule {
         result.add("tempoRange", tempoRange);
         Results.addPlaybackSafety(result, transportSafety.observation());
         return result;
+    }
+
+    /** A host-parameter read unit: the bare value, with its display or its option list. */
+    private JsonElement unit(String key, JsonElement value) {
+        boolean volume = key.equals("metronomeVolume");
+        if (!volume && !enums.containsKey(key)) return value;
+        JsonObject unit = new JsonObject();
+        unit.add("value", value);
+        if (volume) unit.add("display", volumeDisplay.value);
+        else unit.add("options", EnumOptions.json(enums.get(key)));
+        return unit;
     }
 
     private void require(String key) {
@@ -412,12 +409,14 @@ final class TransportModule implements HostModule {
         source.addValueObserver((EnumValueChangedCallback) v -> value.set(new JsonPrimitive((String) v)));
     }
 
-    private static boolean matches(String key, JsonElement a, JsonElement b) {
-        if (a.isJsonNull()) return false;
-        if (key.equals("metronomeVolumeNormalized"))
-            return Math.abs(a.getAsDouble() - b.getAsDouble()) <= HostLimits.TOLERANCE;
-        if (key.equals("tempoBpm") || key.endsWith("Beats")) return Math.abs(a.getAsDouble() - b.getAsDouble()) <= 1e-6;
-        return a.equals(b);
+    private static ValueMatch rule(String key) {
+        if (key.equals("metronomeVolume")) return ValueMatch.NORMALIZED;
+        if (key.equals("tempoBpm") || key.endsWith("Beats")) return BEATS_AND_TEMPO;
+        return ValueMatch.EXACT;
+    }
+
+    private static boolean matches(String key, JsonElement observed, JsonElement requested) {
+        return rule(key).matches(requested, observed);
     }
 
     private static final class Sample {

@@ -225,18 +225,19 @@ public final class HostBridgeTest {
                 HostFixture.SPECS.methods().contains("project.save")
                         && HostFixture.SPECS.methods().contains("project.saveAs"),
                 "project.save and project.saveAs registered");
-        JsonObject saveAs = call(host, bridge, "capabilities", new JsonObject()).getAsJsonObject("projectSaveAs");
+        JsonObject full = call(host, bridge, "status", HostFixture.json("{\"detail\":\"full\"}"));
+        JsonObject saveAs = full.getAsJsonObject("projectSaveAs");
         assertTrue(
                 saveAs.get("method").getAsString().equals("project.saveAs")
                         && !saveAs.get("available").getAsBoolean()
                         && saveAs.has("reason"),
-                "capabilities reports the saveAs binding separately and fails closed off the gated host");
-        JsonObject render = call(host, bridge, "capabilities", new JsonObject()).getAsJsonObject("render");
+                "full status reports the saveAs binding separately and fails closed off the gated host");
+        JsonObject render = full.getAsJsonObject("render");
         assertTrue(
                 render.getAsJsonArray("methods").size() == 2
                         && !render.get("available").getAsBoolean()
                         && render.has("reason"),
-                "capabilities reports the render binding and fails closed off the gated host");
+                "full status reports the render binding and fails closed off the gated host");
     }
 
     @Test
@@ -347,14 +348,15 @@ public final class HostBridgeTest {
     }
 
     @Test
-    void fullStatusAddsOnlyTheSectionsDomainsContribute() {
+    void fullStatusAddsTheImplementedSurfaceToTheBriefState() {
         Fake f = new Fake();
         HostBridge bridge = f.bridge();
         JsonObject brief = call(f, bridge, "status", new JsonObject());
-        assertEquals(
-                brief,
-                call(f, bridge, "status", HostFixture.json("{\"detail\":\"full\"}")),
-                "no domain contributes a section yet");
+        JsonObject full = call(f, bridge, "status", HostFixture.json("{\"detail\":\"full\"}"));
+        for (String key : brief.keySet()) assertEquals(brief.get(key), full.get(key), key);
+        for (String key : List.of("methods", "domains", "windows", "units", "projectSaveAs", "render")) {
+            assertTrue(full.has(key) && !brief.has(key), key + " only with detail full");
+        }
         assertRpcError(
                 "invalid_params", bridge.handle("status", HostFixture.json("{\"detail\":\"some\"}"), f.deadline()));
     }
@@ -889,11 +891,12 @@ public final class HostBridgeTest {
     }
 
     @Test
-    void capabilitiesDescribeBoundedImplementedSurfaces() {
+    void fullStatusDescribesBoundedImplementedSurfaces() {
         Fake host = new Fake();
         HostBridge bridge = host.bridge();
-        CompletableFuture<JsonObject> pending = bridge.handle("capabilities", new JsonObject(), host.deadline());
-        assertTrue(!pending.isDone(), "capabilities must read host windows on the scheduled host thread");
+        CompletableFuture<JsonObject> pending =
+                bridge.handle("status", HostFixture.json("{\"detail\":\"full\"}"), host.deadline());
+        assertTrue(!pending.isDone(), "status must read host windows on the scheduled host thread");
         host.next();
         JsonObject result = pending.join();
         assertTrue(
@@ -908,12 +911,10 @@ public final class HostBridgeTest {
                         .getAsJsonObject("tracks")
                         .get("complete")
                         .getAsBoolean(),
-                "capabilities cannot promise a full project beyond the bounded bank");
-        JsonObject modulators = result.getAsJsonObject("privateModulatorReads");
+                "status cannot promise a full project beyond the bounded bank");
         assertTrue(
-                modulators.get("writeAvailability").getAsString().equals("query_modulators.capabilities_edit")
-                        && modulators.get("nativeVerification").getAsString().equals("not_established_by_binding"),
-                "modulator write availability is delegated to capabilities and discovery is not native acceptance");
+                !result.getAsJsonObject("windows").has("layersPerRootDevice") && !result.has("privateGridTopology"),
+                "sections owned by other domains arrive with their slices");
         Set<String> reads = new HashSet<>();
         for (JsonElement method : result.getAsJsonObject("domains").getAsJsonArray("modulators"))
             reads.add(method.getAsString());
@@ -928,7 +929,7 @@ public final class HostBridgeTest {
     void strictValidationPrecedesAllDomainScheduling() {
         Fake host = new Fake();
         HostBridge bridge = host.bridge();
-        for (String method : List.of("capabilities", "transport.get", "devices.catalog", "modulators.capabilities")) {
+        for (String method : List.of("status", "transport.get", "devices.catalog", "modulators.capabilities")) {
             JsonObject extra = new JsonObject();
             extra.addProperty("unexpected", true);
             assertRpcError("invalid_params", bridge.handle(method, extra, host.deadline()));
@@ -939,7 +940,7 @@ public final class HostBridgeTest {
         JsonObject nullName = target();
         nullName.add("expectedDeviceName", JsonNull.INSTANCE);
         assertRpcError("invalid_params", bridge.handle("parameters.list", nullName, host.deadline()));
-        assertRpcError("invalid_params", bridge.handle("capabilities", null, host.deadline()));
+        assertRpcError("invalid_params", bridge.handle("status", null, host.deadline()));
         JsonObject modulators = new JsonObject();
         modulators.add("parent", target());
         modulators.add("offset", JsonNull.INSTANCE);

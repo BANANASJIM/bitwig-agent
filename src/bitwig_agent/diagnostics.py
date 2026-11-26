@@ -1,4 +1,4 @@
-"""host.diagnostics: classify the Bitwig log for host problems the API cannot show.
+"""diagnostics.get: classify the Bitwig log for host problems the API cannot show.
 
 Reads only the log file (plus one `status` call for attribution). The log is shared by every
 Bitwig instance of the user, so the section of the connected instance is chosen by matching its

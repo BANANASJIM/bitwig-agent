@@ -7,6 +7,7 @@ from bitwig_agent.protocol import (
     audio,
     automation,
     devices,
+    diagnostics,
     grid,
     grid_workflow,
     launcher,
@@ -25,6 +26,7 @@ from bitwig_agent.protocol.base import ToolSpec
 
 _DOMAINS = (
     project,
+    diagnostics,
     recovery,
     tracks,
     markers,

@@ -48,8 +48,6 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
                 projectState,
                 specs,
                 parameters,
-                projectModule,
-                render,
                 holds,
                 domains));
         register(new TrackListModule(window));

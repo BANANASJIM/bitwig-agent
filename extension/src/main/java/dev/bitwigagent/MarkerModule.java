@@ -3,15 +3,16 @@ package dev.bitwigagent;
 import com.bitwig.extension.callback.IntegerValueChangedCallback;
 import com.bitwig.extension.controller.api.*;
 import com.google.gson.*;
+import dev.bitwigagent.core.Refs;
 import java.util.*;
 
 /**
- * Arranger cue markers through the public CueMarkerBank. Markers have no stable id: they are addressed by their rank in
- * the beat-sorted list plus an exact expected name (and optionally beat), and every write is verified by comparing the
- * whole observed marker multiset with the one the write should produce.
+ * Arranger cue markers through the public CueMarkerBank. Markers have no stable id: a marker ref is its rank in the
+ * beat-sorted list plus its name and beat, all compared, and every write is verified by comparing the whole observed
+ * marker multiset with the one the write should produce.
  */
 final class MarkerModule implements HostModule {
-    static final Set<String> METHODS = Set.of("markers.list", "markers.insert", "markers.rename", "markers.delete");
+    static final Set<String> METHODS = Set.of("markers.list", "markers.insert", "markers.set", "markers.delete");
     static final int WINDOW = 64;
     static final double BEAT_TOLERANCE = 1e-6;
     private final Scheduler scheduler;
@@ -56,31 +57,7 @@ final class MarkerModule implements HostModule {
     }
 
     static void validateParams(String method, JsonObject p) {
-        switch (method) {
-            case "markers.list":
-                Params.fields(p, Set.of(), Set.of());
-                return;
-            case "markers.insert":
-                Params.fields(p, Set.of("beat"), Set.of("name"));
-                Params.number(p, "beat", 0, 1e7);
-                if (p.has("name")) Params.string(p, "name");
-                return;
-            case "markers.rename":
-                Params.fields(p, Set.of("markerIndex", "expectedName", "name"), Set.of("expectedBeat"));
-                Params.integer(p, "markerIndex", 0, WINDOW - 1);
-                Params.string(p, "expectedName");
-                Params.string(p, "name");
-                if (p.has("expectedBeat")) Params.number(p, "expectedBeat", 0, 1e7);
-                return;
-            case "markers.delete":
-                Params.fields(p, Set.of("markerIndex", "expectedName"), Set.of("expectedBeat"));
-                Params.integer(p, "markerIndex", 0, WINDOW - 1);
-                Params.string(p, "expectedName");
-                if (p.has("expectedBeat")) Params.number(p, "expectedBeat", 0, 1e7);
-                return;
-            default:
-                throw Errors.notApplied(Reason.UNKNOWN_METHOD, "Unknown marker method.");
-        }
+        if (!METHODS.contains(method)) throw Errors.notApplied(Reason.UNKNOWN_METHOD, "Unknown marker method.");
     }
 
     private static final class Marker {
@@ -130,7 +107,7 @@ final class MarkerModule implements HostModule {
         JsonArray list = new JsonArray();
         for (int i = 0; i < snap.markers.size(); i++) {
             JsonObject row = new JsonObject();
-            row.addProperty("markerIndex", i);
+            row.add("ref", ref(snap, i));
             row.addProperty("name", snap.markers.get(i).name);
             row.addProperty("beat", snap.markers.get(i).beat);
             list.add(row);
@@ -140,9 +117,13 @@ final class MarkerModule implements HostModule {
         out.addProperty("observationsComplete", snap.complete);
         JsonObject units = new JsonObject();
         units.addProperty("beat", "quarter_note_beats");
-        units.addProperty("markerIndex", "rank in the beat-sorted list; not a stable id, pair it with the exact name");
         out.add("units", units);
         return out;
+    }
+
+    private static JsonObject ref(Snapshot snap, int rank) {
+        Marker marker = snap.markers.get(rank);
+        return Refs.marker(rank, marker.name, marker.beat);
     }
 
     @Override
@@ -165,11 +146,11 @@ final class MarkerModule implements HostModule {
             insert(op, p, before);
             return;
         }
-        Marker target = locate(before, p);
+        Marker target = locate(before, p.getAsJsonObject("target"));
         Map<String, Integer> expected = before.multiset();
         expected.merge(target.key(), -1, Integer::sum);
         String newName = target.name;
-        if (method.equals("markers.rename")) {
+        if (method.equals("markers.set")) {
             newName = p.get("name").getAsString();
             expected.merge(new Marker(0, newName, target.beat).key(), 1, Integer::sum);
             if (newName.equals(target.name)) {
@@ -180,25 +161,20 @@ final class MarkerModule implements HostModule {
         op.markDispatched();
         holds.place(UNRESOLVED, "A markers.* write was dispatched and its outcome was not observed.");
         CueMarker marker = items[target.slot];
-        if (method.equals("markers.rename")) marker.name().set(newName);
+        if (method.equals("markers.set")) marker.name().set(newName);
         else marker.deleteObject();
         awaitMulti(op, method, expected, target.beat, newName);
     }
 
-    private Marker locate(Snapshot snap, JsonObject p) {
-        int rank = p.get("markerIndex").getAsInt();
+    private Marker locate(Snapshot snap, JsonObject ref) {
+        int rank = ref.get("index").getAsInt();
         if (rank >= snap.markers.size())
-            throw Errors.notApplied(Reason.UNKNOWN_NAME, "markerIndex is beyond the observed marker list.");
-        Marker m = snap.markers.get(rank);
-        if (!m.name.equals(p.get("expectedName").getAsString()))
-            throw Errors.notApplied(
-                    Reason.STALE_TARGET,
-                    "Marker " + rank + " is named " + m.name + ", not the expected name; list again.");
-        if (p.has("expectedBeat") && Math.abs(m.beat - p.get("expectedBeat").getAsDouble()) > BEAT_TOLERANCE)
-            throw Errors.notApplied(
-                    Reason.STALE_TARGET,
-                    "Marker " + rank + " is at beat " + m.beat + ", not the expected beat; list again.");
-        return m;
+            throw Errors.targetNotFound(ref, "The marker is beyond the observed marker list.");
+        JsonObject current = ref(snap, rank);
+        if (!Refs.matches(ref, current, true))
+            throw Errors.targetChanged(
+                    "The marker at that rank was renamed, moved or replaced since it was read.", current);
+        return snap.markers.get(rank);
     }
 
     private void insert(HostOperation op, JsonObject p, Snapshot before) {
@@ -278,14 +254,19 @@ final class MarkerModule implements HostModule {
     }
 
     private void finish(HostOperation op, String method, double beat, String name, Outcome outcome, Reason reason) {
-        // An already-satisfied rename dispatched nothing, so it leaves no unresolved write behind.
+        // An already-satisfied set dispatched nothing, so it leaves no unresolved write behind.
         if (outcome.succeeded()) holds.release(UNRESOLVED);
-        JsonObject result = describe(read());
+        Snapshot now = read();
+        JsonObject result = describe(now);
         result.addProperty("outcome", outcome.wire());
-        JsonObject marker = new JsonObject();
-        marker.addProperty("name", name);
-        marker.addProperty("beat", beat);
-        result.add(method.equals("markers.delete") ? "deleted" : "marker", marker);
+        if (outcome.succeeded() && !method.equals("markers.delete")) {
+            String key = new Marker(0, name, beat).key();
+            for (int i = 0; i < now.markers.size(); i++)
+                if (now.markers.get(i).key().equals(key)) {
+                    result.add("ref", ref(now, i));
+                    break;
+                }
+        }
         if (reason != null) {
             result.addProperty("reason", reason.wire());
             result.addProperty("message", "The marker list did not reach the expected state.");
