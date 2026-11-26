@@ -121,7 +121,7 @@ lint = "python scripts/lint.py"
 fmt = "python scripts/lint.py --fix"
 cpd-baseline = "python scripts/lint.py --update-cpd-baseline"
 test-java = "python scripts/test-java.py"
-coverage = "python scripts/coverage.py"
+coverage = "python scripts/coverage-gate.py"
 fixture = "python scripts/smoke-mcp-java.py"
 extension = "python scripts/build.py"
 

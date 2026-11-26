@@ -68,7 +68,7 @@ def main() -> int:
                 "offline": [sys.executable, "-m", "pytest", "-q"],
                 "java": [sys.executable, str(ROOT / "scripts/test-java.py")],
                 "fixture": [sys.executable, str(ROOT / "scripts/smoke-mcp-java.py")],
-                "coverage": [sys.executable, str(ROOT / "scripts/coverage.py")],
+                "coverage": [sys.executable, str(ROOT / "scripts/coverage-gate.py")],
                 "native": [
                     sys.executable,
                     str(ROOT / "scripts/smoke-native.py"),

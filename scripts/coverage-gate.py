@@ -5,19 +5,18 @@ Runs the offline Python tests and the Java simulated-host tests under coverage, 
 diff-cover reports changed executable lines (Python and Java together) that no test ran.
 No global percentage; native bindings are excluded because only native E2E can run them.
 
-  python scripts/coverage.py [--compare-branch origin/main]
+  python scripts/coverage-gate.py [--compare-branch origin/main]
 """
 
 import argparse
 import subprocess
 import sys
 
-from tooling import dependency
-
-from build import BUILD, ROOT
+from tooling import ROOT, dependency
 
 THRESHOLD = 90
 EXCLUDE = ("**/Bitwig614*.java", "**/BitwigAgent614GridInsertion.java", "tests/**", "extension/src/test/**")
+BUILD = ROOT / "build"
 OUT = BUILD / "coverage"
 
 
