@@ -28,12 +28,11 @@ final class HostOperation {
         if (dispatched) {
             if (error instanceof RpcException) {
                 RpcException rpc = (RpcException) error;
-                error = new RpcException(rpc.code, rpc.getMessage(), "unknown");
+                error = Errors.withOutcome(rpc, Outcome.UNKNOWN);
             } else {
-                error = new RpcException(
-                        "internal_error",
-                        "Failure after native dispatch; outcome unknown. Inspect state before another write.",
-                        "unknown");
+                error = Errors.unknown(
+                        ErrorCode.INTERNAL_ERROR,
+                        "Failure after native dispatch; outcome unknown. Inspect state before another write.");
             }
         }
         result.completeExceptionally(error);

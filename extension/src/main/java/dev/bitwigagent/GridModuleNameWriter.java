@@ -52,7 +52,7 @@ final class GridModuleNameWriter {
         check.run();
         if (!values.metadataAvailable(GridSnapshotReader.Metadata.MODULE_NAMES))
             throw failure(
-                    "grid_unavailable",
+                    ErrorCode.GRID_UNAVAILABLE,
                     "Native raw custom-name and effective-name readers are required for module naming.");
         GridSnapshotReader.NativeTarget target = snapshots.target(proxy, trackId);
         JsonObject graphBefore = snapshots.snapshot(proxy, trackId, 0, MAX_MODULES, false, false, null, check);
@@ -69,7 +69,7 @@ final class GridModuleNameWriter {
         Names ready = names(selected);
         request.requireExpected(ready.custom);
         if (!previous.effective.equals(ready.effective))
-            throw failure("stale_context", "Native effective module name changed before dispatch.");
+            throw failure(ErrorCode.STALE_CONTEXT, "Native effective module name changed before dispatch.");
         check.run();
         quarantine.requireAvailable();
         if (changed) {
@@ -90,7 +90,8 @@ final class GridModuleNameWriter {
                 requireActual(finalNames, request);
                 if (!actual.effective.equals(finalNames.effective))
                     throw failure(
-                            "stale_context", "Native effective module name changed during later graph observation.");
+                            ErrorCode.STALE_CONTEXT,
+                            "Native effective module name changed during later graph observation.");
                 check.run();
                 JsonObject result = HostServices.observed();
                 result.addProperty("moduleId", moduleId.toString());
@@ -152,7 +153,7 @@ final class GridModuleNameWriter {
             check.run();
             Object id = values.read(INSTANCE_ID, module);
             if (!(id instanceof UUID) || byId.put((UUID) id, module) != null)
-                throw failure("grid_unavailable", "Module naming requires unique native current UUIDs.");
+                throw failure(ErrorCode.GRID_UNAVAILABLE, "Module naming requires unique native current UUIDs.");
         }
         return new Members(modules, byId);
     }
@@ -164,17 +165,17 @@ final class GridModuleNameWriter {
     private String name(GridSnapshotReader.Field field, Object module) {
         Object value = values.read(field, module);
         if (!(value instanceof String))
-            throw failure("grid_unavailable", "Native module name reader did not return a String: " + field);
+            throw failure(ErrorCode.GRID_UNAVAILABLE, "Native module name reader did not return a String: " + field);
         String text = (String) value;
         if (text.length() > MAX_NAME)
-            throw failure("grid_bounds_exceeded", "Native module name exceeds 1024 UTF-16 units.");
+            throw failure(ErrorCode.GRID_BOUNDS_EXCEEDED, "Native module name exceeds 1024 UTF-16 units.");
         return text;
     }
 
     private static void requireActual(Names actual, Request request) {
         if (!actual.custom.equals(request.customName))
             throw failure(
-                    "grid_verification_failed",
+                    ErrorCode.GRID_VERIFICATION_FAILED,
                     "Later raw native customName differs from the request; inspect state before another write.");
     }
 
@@ -200,18 +201,19 @@ final class GridModuleNameWriter {
             Object module = byId.get(id);
             if (module == null)
                 throw failure(
-                        "stale_context",
+                        ErrorCode.STALE_CONTEXT,
                         "Requested current module UUID is absent; reacquire grid.get after edits or reopen.");
             return module;
         }
 
         void requireSame(Members current) {
             if (byId.size() != current.byId.size())
-                throw failure("stale_context", "Native Grid membership changed during module naming.");
+                throw failure(ErrorCode.STALE_CONTEXT, "Native Grid membership changed during module naming.");
             for (Map.Entry<UUID, Object> entry : byId.entrySet())
                 if (current.byId.get(entry.getKey()) != entry.getValue())
                     throw failure(
-                            "stale_context", "Native module identity or current UUID changed during module naming.");
+                            ErrorCode.STALE_CONTEXT,
+                            "Native module identity or current UUID changed during module naming.");
         }
     }
 
@@ -232,20 +234,21 @@ final class GridModuleNameWriter {
             if (value == null
                     || !value.isJsonPrimitive()
                     || !value.getAsJsonPrimitive().isString())
-                throw failure("invalid_params", key + " must be a JSON string; empty is allowed.");
+                throw failure(ErrorCode.INVALID_PARAMS, key + " must be a JSON string; empty is allowed.");
             return bounded(value.getAsString(), key);
         }
 
         private static String bounded(String value, String key) {
             if (value == null || value.length() > MAX_NAME)
-                throw failure("invalid_params", key + " must contain at most 1024 UTF-16 units; empty is allowed.");
+                throw failure(
+                        ErrorCode.INVALID_PARAMS, key + " must contain at most 1024 UTF-16 units; empty is allowed.");
             return value;
         }
 
         void requireExpected(String actual) {
             if (!expectedCustomName.equals(actual))
                 throw failure(
-                        "stale_context",
+                        ErrorCode.STALE_CONTEXT,
                         "Raw native customName differs from expectedCustomName; effective and type names are not CAS values.");
         }
     }

@@ -29,7 +29,7 @@ final class ExtensionModule implements HostModule {
     }
 
     static void validateParams(String method, JsonObject params) {
-        if (!METHODS.contains(method)) throw failure("unknown_method", "Unknown extension method.");
+        if (!METHODS.contains(method)) throw failure(ErrorCode.UNKNOWN_METHOD, "Unknown extension method.");
         Params.fields(params, Set.of(), Set.of("discardUnresolved"));
         if (params.has("discardUnresolved")) Params.bool(params, "discardUnresolved");
     }
@@ -42,7 +42,7 @@ final class ExtensionModule implements HostModule {
                 && params.get("discardUnresolved").getAsBoolean();
         if (!unresolved.isEmpty() && !discard)
             throw failure(
-                    "unresolved_mutation",
+                    ErrorCode.UNRESOLVED_MUTATION,
                     "Unresolved mutations exist; inspect them or pass discardUnresolved:true. Unresolved: "
                             + String.join(" | ", unresolved));
         JsonArray list = new JsonArray();

@@ -55,7 +55,7 @@ final class ParameterModule implements HostModule {
     }
 
     static void validateParams(String method, JsonObject params) {
-        if (!METHODS.contains(method)) throw failure("unknown_method", "Unknown parameter method.");
+        if (!METHODS.contains(method)) throw failure(ErrorCode.UNKNOWN_METHOD, "Unknown parameter method.");
         if (method.startsWith("parameters.layer.")) {
             DeviceSources.validateLayer(params, method.endsWith(".set"), false);
             return;
@@ -80,7 +80,7 @@ final class ParameterModule implements HostModule {
     @Override
     public void dispatch(HostOperation request, String method, JsonObject params) {
         if (parameterRequest != null && !parameterRequest.result.isDone())
-            throw failure("busy", "Another parameter operation is awaiting host observations.");
+            throw failure(ErrorCode.BUSY, "Another parameter operation is awaiting host observations.");
         parameterRequest = request;
         if (method.endsWith(".list")) bind(request, params);
         else setParameter(request, params);
@@ -126,7 +126,7 @@ final class ParameterModule implements HostModule {
 
     private void awaitDevice(HostOperation request, Binding target) {
         if (binding != target || !bankTargetMatches(target))
-            throw failure("stale_target", "Target changed during binding.");
+            throw failure(ErrorCode.STALE_TARGET, "Target changed during binding.");
         if (!matches(target) || !target.source.idsObserved) {
             s.schedule(request, () -> awaitDevice(request, target), 20);
             return;
@@ -164,15 +164,17 @@ final class ParameterModule implements HostModule {
                 || !target.token.equals(token)
                 || target.source != requested
                 || !matches(target)) {
-            throw failure("stale_context", "Read the matching parameter list method again before writing this target.");
+            throw failure(
+                    ErrorCode.STALE_CONTEXT,
+                    "Read the matching parameter list method again before writing this target.");
         }
         String id = params.get("parameterId").getAsString();
         ParameterSource source = target.source;
         if (!source.parameterIds.contains(id))
-            throw failure("unknown_parameter", "Parameter is not in the observed ID list.");
+            throw failure(ErrorCode.UNKNOWN_PARAMETER, "Parameter is not in the observed ID list.");
         ParameterState parameter = source.parameters == null ? null : source.parameters.get(id);
         if (parameter == null || parameter.value == null)
-            throw failure("not_ready", "Parameter has no readable value.");
+            throw failure(ErrorCode.NOT_READY, "Parameter has no readable value.");
         double requestedValue = params.get("value").getAsDouble();
         double applied = Math.round(requestedValue * (RESOLUTION - 1)) / (double) (RESOLUTION - 1);
         if (Math.abs(parameter.value - applied) <= TOLERANCE) {
@@ -182,7 +184,7 @@ final class ParameterModule implements HostModule {
         }
         long before = parameter.sequence;
         s.check(request);
-        if (!matches(target)) throw failure("stale_context", "Target changed before parameter dispatch.");
+        if (!matches(target)) throw failure(ErrorCode.STALE_CONTEXT, "Target changed before parameter dispatch.");
         request.dispatched = true;
         source.identity.device.setDirectParameterValueNormalized(
                 id, Math.round(requestedValue * (RESOLUTION - 1)), RESOLUTION);
@@ -200,7 +202,7 @@ final class ParameterModule implements HostModule {
             long before,
             long observeUntil) {
         if (binding != target || !target.token.equals(token) || !matches(target)) {
-            throw new RpcException("stale_context", "Target changed after dispatch; outcome unknown.", "unknown");
+            throw Errors.unknown(ErrorCode.STALE_CONTEXT, "Target changed after dispatch; outcome unknown.");
         }
         ParameterSource source = target.source;
         ParameterState parameter = source.parameters == null ? null : source.parameters.get(id);

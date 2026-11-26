@@ -384,14 +384,14 @@ public final class ModulatorSnapshotReaderTest {
     private static void errorsAndCancellationAreNotHidden() {
         Fixture f = new Fixture();
         f.onRead = (field, object) -> {
-            if (field == VALUE) throw HostServices.failure("modulator_unavailable", "native getter failed");
+            if (field == VALUE) throw HostServices.failure(ErrorCode.MODULATOR_UNAVAILABLE, "native getter failed");
         };
         expect("modulator_unavailable", f::get);
         Fixture cancelled = new Fixture();
         expect(
                 "cancelled",
                 () -> cancelled.reader.list(cancelled.proxy, TRACK, 0, 64, () -> {
-                    throw HostServices.failure("cancelled", "cancelled");
+                    throw HostServices.failure(ErrorCode.CANCELLED, "cancelled");
                 }));
         check(cancelled.indexReads == 0, "cancellation precedes native collection work");
         Fixture deadline = new Fixture();
@@ -399,13 +399,13 @@ public final class ModulatorSnapshotReaderTest {
         expect(
                 "deadline",
                 () -> deadline.reader.parameter(deadline.proxy, TRACK, deadline.id(deadline.first), "TEXT", () -> {
-                    if (deadline.expired) throw HostServices.failure("deadline", "expired");
+                    if (deadline.expired) throw Errors.of("deadline", "expired", Outcome.NOT_APPLIED);
                 }));
     }
 
     private static void runtimeGateIsReadOnlyAndDoesNotClaimAcceptance() {
         Bitwig614ModulatorAdapter adapter = new Bitwig614ModulatorAdapter(
-                new Bitwig614Runtime(new Object(), "6.1.2", () -> {}).access("modulator_unavailable"));
+                new Bitwig614Runtime(new Object(), "6.1.2", () -> {}).access(ErrorCode.MODULATOR_UNAVAILABLE));
         JsonObject capabilities = adapter.capabilities();
         check(
                 !capabilities.getAsJsonObject("runtimeGate").get("available").getAsBoolean(),
@@ -570,7 +570,7 @@ public final class ModulatorSnapshotReaderTest {
         @Override
         public void requireModelThread(Object object) {
             if (!(object instanceof Node) || !((Node) object).thread)
-                throw HostServices.failure("modulator_unavailable", "model thread");
+                throw HostServices.failure(ErrorCode.MODULATOR_UNAVAILABLE, "model thread");
         }
 
         @Override
@@ -610,8 +610,8 @@ public final class ModulatorSnapshotReaderTest {
         public void documentThread() {}
 
         @Override
-        public String unavailableCode() {
-            return "modulator_unavailable";
+        public ErrorCode unavailableCode() {
+            return ErrorCode.MODULATOR_UNAVAILABLE;
         }
 
         @Override

@@ -288,7 +288,7 @@ public final class GridStepsVoicingTest {
 
         @Override
         public void requireSupported(Object parameter) {
-            if (parameter != steps) throw HostServices.failure("grid_unavailable", "unmapped step array");
+            if (parameter != steps) throw HostServices.failure(ErrorCode.GRID_UNAVAILABLE, "unmapped step array");
         }
 
         @Override
@@ -476,7 +476,7 @@ public final class GridStepsVoicingTest {
                 "a native side effect outside the prefix fails the whole-array readback");
         StepFixture partial = new StepFixture(256, 4);
         partial.afterMutation = () -> {
-            throw HostServices.failure("grid_unavailable", "native array failure");
+            throw HostServices.failure(ErrorCode.GRID_UNAVAILABLE, "native array failure");
         };
         error = partial.failure(steps(partial.json(0, 4), "[0.5]", false));
         check(
@@ -728,7 +728,7 @@ public final class GridStepsVoicingTest {
                 "an unobserved requested voicing is unknown, never retried");
         VoicingFixture thrown = new VoicingFixture();
         thrown.afterSet = () -> {
-            throw HostServices.failure("grid_unavailable", "native voicing failure");
+            throw HostServices.failure(ErrorCode.GRID_UNAVAILABLE, "native voicing failure");
         };
         try {
             thrown.set("{\"expected\":{\"voices\":1,\"voiceStacking\":1},\"set\":{\"voices\":4,\"voiceStacking\":2}}");

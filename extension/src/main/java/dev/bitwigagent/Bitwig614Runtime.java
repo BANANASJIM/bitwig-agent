@@ -20,20 +20,20 @@ final class Bitwig614Runtime {
     Bitwig614Runtime(Object host, String version, Runnable check) {
         hostVersion = version;
         loader = host.getClass().getClassLoader();
-        Access binding = access("native_unavailable");
+        Access binding = access(ErrorCode.NATIVE_UNAVAILABLE);
         try {
             check.run();
             if (!VERSION.equals(version))
                 throw failure(
-                        "native_unavailable",
+                        ErrorCode.NATIVE_UNAVAILABLE,
                         "Native access requires exactly Bitwig " + VERSION + "; running " + version + ".");
             hostJar = source(host.getClass());
             if (!Files.isRegularFile(hostJar))
-                throw failure("native_unavailable", "Loaded host CodeSource is not a regular JAR file.");
+                throw failure(ErrorCode.NATIVE_UNAVAILABLE, "Loaded host CodeSource is not a regular JAR file.");
             actualHash = hash(hostJar, check);
             if (!SHA256.equals(actualHash))
                 throw failure(
-                        "native_unavailable",
+                        ErrorCode.NATIVE_UNAVAILABLE,
                         "Loaded host JAR SHA-256 is not the inspected " + VERSION
                                 + " binary; obtain a matching adapter, do not bypass this gate.");
             Class<?> app = binding.type("com.bitwig.flt.app.TL");
@@ -44,7 +44,7 @@ final class Bitwig614Runtime {
             modelThread = binding.exactMethod(scopedExecutor, "isEventDispatchThread", boolean.class, false);
             check.run();
         } catch (RuntimeException | ReflectiveOperationException | java.io.IOException error) {
-            if (error instanceof RpcException && !"native_unavailable".equals(((RpcException) error).code))
+            if (error instanceof RpcException && !((RpcException) error).is(ErrorCode.NATIVE_UNAVAILABLE))
                 throw (RpcException) error;
             gateError = diagnostic(error);
         } catch (LinkageError error) {
@@ -60,18 +60,18 @@ final class Bitwig614Runtime {
         check.run();
     }
 
-    Access access(String unavailableCode) {
+    Access access(ErrorCode unavailableCode) {
         return new Access(unavailableCode);
     }
 
     final class Access {
-        private final String unavailableCode;
+        private final ErrorCode unavailableCode;
 
-        private Access(String unavailableCode) {
+        private Access(ErrorCode unavailableCode) {
             this.unavailableCode = unavailableCode;
         }
 
-        String unavailableCode() {
+        ErrorCode unavailableCode() {
             return unavailableCode;
         }
 
@@ -157,7 +157,7 @@ final class Bitwig614Runtime {
         }
     }
 
-    static Object invoke(String errorCode, Method method, Object object, Object... args) {
+    static Object invoke(ErrorCode errorCode, Method method, Object object, Object... args) {
         try {
             return method.invoke(object, args);
         } catch (ReflectiveOperationException | IllegalArgumentException error) {

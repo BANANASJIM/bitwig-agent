@@ -115,7 +115,7 @@ final class Bitwig614VoicingAccess implements GridVoicingWriter.Access {
     public Object model(Object device) {
         Object value = bindings.invoke(model, device);
         if (value != null && value.getClass() != voicing)
-            throw failure("grid_unavailable", "Native voicing model is not the exact inspected jBG.");
+            throw failure(ErrorCode.GRID_UNAVAILABLE, "Native voicing model is not the exact inspected jBG.");
         return value;
     }
 
@@ -131,12 +131,12 @@ final class Bitwig614VoicingAccess implements GridVoicingWriter.Access {
                     if (entry.getValue() == value) text = entry.getKey();
                 if (text == null)
                     throw failure(
-                            "grid_unavailable",
+                            ErrorCode.GRID_UNAVAILABLE,
                             "Native voicing " + field.name + " is outside the inspected enum values.");
                 result.addProperty(field.name, text);
             } else if (value instanceof Boolean) result.addProperty(field.name, (Boolean) value);
             else if (value instanceof Integer) result.addProperty(field.name, (Integer) value);
-            else throw failure("grid_unavailable", "Native voicing " + field.name + " has an unexpected type.");
+            else throw failure(ErrorCode.GRID_UNAVAILABLE, "Native voicing " + field.name + " has an unexpected type.");
         }
         return result;
     }
@@ -145,14 +145,14 @@ final class Bitwig614VoicingAccess implements GridVoicingWriter.Access {
     public void set(Object voicingModel, String name, JsonElement value) {
         requireModel(voicingModel);
         Field field = fields.get(name);
-        if (field == null) throw failure("invalid_params", "Unknown voicing field: " + name);
+        if (field == null) throw failure(ErrorCode.INVALID_PARAMS, "Unknown voicing field: " + name);
         if (field.setter == null)
             throw failure(bindings.unavailableCode(), "Voicing write operation is not bound: " + setterError);
         Object argument;
         if (field.enumType != null) argument = enums.get(name).get(value.getAsString());
         else if (field.getter.getReturnType() == boolean.class) argument = value.getAsBoolean();
         else argument = value.getAsInt();
-        if (argument == null) throw failure("invalid_params", "Unknown voicing value for " + name + ".");
+        if (argument == null) throw failure(ErrorCode.INVALID_PARAMS, "Unknown voicing value for " + name + ".");
         bindings.invoke(field.setter, voicingModel, argument);
     }
 

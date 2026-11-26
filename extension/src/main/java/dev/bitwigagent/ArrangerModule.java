@@ -116,7 +116,7 @@ final class ArrangerModule implements HostModule {
                 double length = Params.number(p, "lengthBeats", GRID, MAX_LENGTH);
                 name(p, "name", 1, 128);
                 if (p.has("notes")) notes(p, length);
-                else if (p.has("channel")) throw invalid("channel is only valid together with notes");
+                else if (p.has("channel")) throw Errors.invalid("channel is only valid together with notes");
                 if (p.has("channel")) Params.integer(p, "channel", 0, 15);
                 break;
             case "arranger.clips.copyFromLauncher":
@@ -128,7 +128,7 @@ final class ArrangerModule implements HostModule {
             case "arranger.clips.edit": {
                 String op = p.has("op") ? Params.string(p, "op") : "";
                 Set<String> payload = EDIT_OPS.get(op);
-                if (payload == null) throw invalid("op must be one of " + new TreeSet<>(EDIT_OPS.keySet()));
+                if (payload == null) throw Errors.invalid("op must be one of " + new TreeSet<>(EDIT_OPS.keySet()));
                 Set<String> required = new HashSet<>(payload);
                 required.addAll(Set.of("trackId", "clipIndex", "expectedStartBeats", "expectedName", "op"));
                 Params.fields(p, required, Set.of());
@@ -141,10 +141,10 @@ final class ArrangerModule implements HostModule {
                 break;
             }
             default:
-                throw failure("unknown_method", "Unknown arranger method.");
+                throw failure(ErrorCode.UNKNOWN_METHOD, "Unknown arranger method.");
         }
         if (!DeviceSources.canonicalUuid(Params.string(p, "trackId")))
-            throw invalid("trackId must be a canonical UUID");
+            throw Errors.invalid("trackId must be a canonical UUID");
     }
 
     /** UTF-16 length bounds; expectedName may be empty because arranger clips often have no name. */
@@ -152,22 +152,22 @@ final class ArrangerModule implements HostModule {
         JsonElement value = p.get(key);
         if (value == null
                 || !value.isJsonPrimitive()
-                || !value.getAsJsonPrimitive().isString()) throw invalid(key + " must be a string");
+                || !value.getAsJsonPrimitive().isString()) throw Errors.invalid(key + " must be a string");
         String text = value.getAsString();
         if (text.length() < min || text.length() > max)
-            throw invalid(key + " must contain " + min + ".." + max + " characters");
+            throw Errors.invalid(key + " must contain " + min + ".." + max + " characters");
         return text;
     }
 
     /** Notes are {beat, pitch, velocity, durationBeats}; beats are relative to the clip start, on a 1/128-beat grid. */
     static List<double[]> notes(JsonObject p, double length) {
         JsonElement value = p.get("notes");
-        if (!value.isJsonArray()) throw invalid("notes must be an array");
+        if (!value.isJsonArray()) throw Errors.invalid("notes must be an array");
         JsonArray array = value.getAsJsonArray();
-        if (array.size() < 1 || array.size() > 256) throw invalid("notes must contain 1..256 entries");
+        if (array.size() < 1 || array.size() > 256) throw Errors.invalid("notes must contain 1..256 entries");
         List<double[]> out = new ArrayList<>();
         for (JsonElement item : array) {
-            if (!item.isJsonObject()) throw invalid("each note must be an object");
+            if (!item.isJsonObject()) throw Errors.invalid("each note must be an object");
             JsonObject n = item.getAsJsonObject();
             Params.fields(n, Set.of("beat", "pitch", "velocity", "durationBeats"), Set.of());
             double beat = Params.number(n, "beat", 0, MAX_BEATS);
@@ -176,14 +176,14 @@ final class ArrangerModule implements HostModule {
             aligned(n.get("beat"), "beat");
             aligned(n.get("durationBeats"), "durationBeats");
             for (double[] o : out) {
-                if (o[1] == pitch && o[0] == beat) throw invalid("duplicate note cell (same beat and pitch)");
+                if (o[1] == pitch && o[0] == beat) throw Errors.invalid("duplicate note cell (same beat and pitch)");
                 if (o[1] == pitch && beat < o[0] + o[3] && o[0] < beat + duration)
-                    throw invalid("same-pitch note durations overlap");
+                    throw Errors.invalid("same-pitch note durations overlap");
             }
             if (new BigDecimal(n.get("beat").getAsString())
                             .add(new BigDecimal(n.get("durationBeats").getAsString()))
                             .compareTo(new BigDecimal(p.get("lengthBeats").getAsString()))
-                    > 0) throw invalid("notes must fit inside lengthBeats");
+                    > 0) throw Errors.invalid("notes must fit inside lengthBeats");
             out.add(new double[] {beat, pitch, velocity, duration});
         }
         return out;
@@ -194,17 +194,17 @@ final class ArrangerModule implements HostModule {
                         .divide(new BigDecimal("0.0078125"))
                         .stripTrailingZeros()
                         .scale()
-                > 0) throw invalid(key + " must be a multiple of 1/128 beat");
+                > 0) throw Errors.invalid(key + " must be a multiple of 1/128 beat");
     }
 
     @Override
     public void dispatch(HostOperation op, String method, JsonObject p) {
         s.check(op);
         boolean write = !method.equals("arranger.clips.list");
-        if (pending) throw failure("busy", "Another native arranger operation is pending.");
+        if (pending) throw failure(ErrorCode.BUSY, "Another native arranger operation is pending.");
         if (write && quarantined)
             throw failure(
-                    "unresolved_mutation",
+                    ErrorCode.UNRESOLVED_MUTATION,
                     "An unresolved arranger write requires inspection (arranger.clips.list) and extension.restart before further arranger writes.");
         String id = p.get("trackId").getAsString();
         int index = s.trackSlot(id);
@@ -213,35 +213,39 @@ final class ArrangerModule implements HostModule {
         if (method.equals("arranger.clips.create")
                 && !"Instrument".equals(track.trackType().get()))
             throw failure(
-                    "unsupported_scope",
+                    ErrorCode.UNSUPPORTED_SCOPE,
                     "arranger.clips.create makes MIDI note clips and needs an instrument track; use copyFromLauncher for audio.");
         if (method.equals("arranger.clips.copyFromLauncher")) {
             int number = p.get("slotIndex").getAsInt();
             String expected = p.get("expectedClipName").getAsString();
             ClipLauncherSlotBank bank = track.clipLauncherSlotBank();
             if (bank.scrollPosition().get() != 0 || number >= bank.itemCount().get())
-                throw failure("slot_out_of_range", "Launcher slot is outside the current zero-offset scene window.");
+                throw failure(
+                        ErrorCode.SLOT_OUT_OF_RANGE, "Launcher slot is outside the current zero-offset scene window.");
             ClipLauncherSlot launcherSlot = (ClipLauncherSlot) bank.getItemAt(number);
             if (!launcherSlot.hasContent().get()
                     || !expected.equals(launcherSlot.name().get())
                     || launcherSlot.sceneIndex().get() != number)
                 throw failure(
-                        "stale_target", "Observe the exact occupied slot name and index with launcher.list first.");
+                        ErrorCode.STALE_TARGET,
+                        "Observe the exact occupied slot name and index with launcher.list first.");
             slot = launcherSlot;
         }
         HostServices.SafetyObservation safety = write ? s.stoppedSafety(op) : null;
         if (access == null) {
             try {
-                access = new Bitwig614ArrangerAccess(s.nativeRuntime(op).access("arranger_unavailable"));
+                access = new Bitwig614ArrangerAccess(s.nativeRuntime(op).access(ErrorCode.ARRANGER_UNAVAILABLE));
             } catch (ReflectiveOperationException error) {
-                throw failure("arranger_unavailable", "Exact arranger descriptors unavailable: " + error.getMessage());
+                throw failure(
+                        ErrorCode.ARRANGER_UNAVAILABLE,
+                        "Exact arranger descriptors unavailable: " + error.getMessage());
             }
         }
         long epoch = epochs.get(index);
         Runnable check = () -> {
             s.check(op);
             if (epochs.get(index) != epoch)
-                throw failure("stale_context", "Track bank changed while the arranger operation was queued.");
+                throw failure(ErrorCode.STALE_CONTEXT, "Track bank changed while the arranger operation was queued.");
             if (write) s.guardStoppedSafety(safety);
         };
         Runnable beforeWrite = () -> {
@@ -307,7 +311,7 @@ final class ArrangerModule implements HostModule {
                             () -> {
                                 check.run();
                                 if (!s.trackMatches(id, track))
-                                    throw failure("stale_context", "Track target changed after native access.");
+                                    throw failure(ErrorCode.STALE_CONTEXT, "Track target changed after native access.");
                                 if (write) quarantined = false;
                                 pending = false;
                                 op.result.complete(result);
@@ -323,9 +327,5 @@ final class ArrangerModule implements HostModule {
             throw error;
         }
         op.result.whenComplete((r, e) -> pending = false);
-    }
-
-    private static RpcException invalid(String message) {
-        return new RpcException("invalid_params", message, "not_applied");
     }
 }

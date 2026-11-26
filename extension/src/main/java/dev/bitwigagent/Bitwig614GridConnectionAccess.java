@@ -19,7 +19,7 @@ final class Bitwig614GridConnectionAccess implements GridConnectionWriter.Access
         undoClass = bindings.type("com.bitwig.flt.document.core.master.tj2");
         setter = bindings.exactMethod(bindings.type(D + "cXR"), "cfM", void.class, false, bindings.type("led"));
         if (!Modifier.isFinal(setter.getModifiers()))
-            throw failure("grid_unavailable", "Inspected public connection setter is no longer final.");
+            throw failure(ErrorCode.GRID_UNAVAILABLE, "Inspected public connection setter is no longer final.");
     }
 
     @Override
@@ -31,7 +31,7 @@ final class Bitwig614GridConnectionAccess implements GridConnectionWriter.Access
     static void requireExact(Object model, Class<?> inspected, String label) {
         if (model == null || model.getClass() != inspected)
             throw failure(
-                    "grid_unavailable",
+                    ErrorCode.GRID_UNAVAILABLE,
                     "Connection writing requires the inspected exact " + label + " class "
                             + inspected.getName() + "; observed "
                             + (model == null ? "null" : model.getClass().getName())

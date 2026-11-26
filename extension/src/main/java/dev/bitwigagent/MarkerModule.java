@@ -73,7 +73,7 @@ final class MarkerModule implements HostModule {
                 if (p.has("expectedBeat")) Params.number(p, "expectedBeat", 0, 1e7);
                 return;
             default:
-                throw HostServices.failure("unknown_method", "Unknown marker method.");
+                throw HostServices.failure(ErrorCode.UNKNOWN_METHOD, "Unknown marker method.");
         }
     }
 
@@ -142,7 +142,8 @@ final class MarkerModule implements HostModule {
     @Override
     public void dispatch(HostOperation op, String method, JsonObject p) {
         s.check(op);
-        if (!observed) throw HostServices.failure("not_ready", "Cue marker bank has not reported its size yet.");
+        if (!observed)
+            throw HostServices.failure(ErrorCode.NOT_READY, "Cue marker bank has not reported its size yet.");
         Snapshot before = read();
         if (method.equals("markers.list")) {
             op.result.complete(describe(before));
@@ -150,14 +151,14 @@ final class MarkerModule implements HostModule {
         }
         if (!before.complete)
             throw HostServices.failure(
-                    "unsupported_scope",
+                    ErrorCode.UNSUPPORTED_SCOPE,
                     "Marker edits need the whole marker list inside the " + WINDOW + "-marker window.");
         if (unresolved)
             throw HostServices.failure(
-                    "unresolved_mutation",
+                    ErrorCode.UNRESOLVED_MUTATION,
                     "A prior marker write was not observed; inspect markers.list or restart the extension first.");
         if (active != null && !active.result.isDone())
-            throw HostServices.failure("busy", "Another marker write awaits observation.");
+            throw HostServices.failure(ErrorCode.BUSY, "Another marker write awaits observation.");
         s.requirePlaybackSafe();
         if (method.equals("markers.insert")) {
             insert(op, p, before);
@@ -187,14 +188,15 @@ final class MarkerModule implements HostModule {
     private Marker locate(Snapshot snap, JsonObject p) {
         int rank = p.get("markerIndex").getAsInt();
         if (rank >= snap.markers.size())
-            throw HostServices.failure("unknown_marker", "markerIndex is beyond the observed marker list.");
+            throw HostServices.failure(ErrorCode.UNKNOWN_MARKER, "markerIndex is beyond the observed marker list.");
         Marker m = snap.markers.get(rank);
         if (!m.name.equals(p.get("expectedName").getAsString()))
             throw HostServices.failure(
-                    "stale_target", "Marker " + rank + " is named " + m.name + ", not the expected name; list again.");
+                    ErrorCode.STALE_TARGET,
+                    "Marker " + rank + " is named " + m.name + ", not the expected name; list again.");
         if (p.has("expectedBeat") && Math.abs(m.beat - p.get("expectedBeat").getAsDouble()) > BEAT_TOLERANCE)
             throw HostServices.failure(
-                    "stale_target",
+                    ErrorCode.STALE_TARGET,
                     "Marker " + rank + " is at beat " + m.beat + ", not the expected beat; list again.");
         return m;
     }
@@ -205,8 +207,10 @@ final class MarkerModule implements HostModule {
         for (Marker m : before.markers)
             if (Math.abs(m.beat - beat) <= BEAT_TOLERANCE)
                 throw HostServices.failure(
-                        "marker_exists_at_beat", "A marker named " + m.name + " is already at beat " + m.beat + ".");
-        if (before.total >= WINDOW) throw HostServices.failure("unsupported_scope", "The marker window is full.");
+                        ErrorCode.MARKER_EXISTS_AT_BEAT,
+                        "A marker named " + m.name + " is already at beat " + m.beat + ".");
+        if (before.total >= WINDOW)
+            throw HostServices.failure(ErrorCode.UNSUPPORTED_SCOPE, "The marker window is full.");
         active = op;
         op.dispatched = true;
         unresolved = true;

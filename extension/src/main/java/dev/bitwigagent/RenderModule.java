@@ -19,7 +19,8 @@ import java.util.concurrent.atomic.AtomicLongArray;
 final class RenderModule implements HostModule {
     static final String EXPORT = "export.audio", BOUNCE = "bounce.inPlace", STATUS = "render.status";
     static final Set<String> METHODS = Set.of(EXPORT, BOUNCE, STATUS), LONG = Set.of(EXPORT, BOUNCE);
-    static final String UNAVAILABLE = "render_unavailable", MASTER = "master";
+    static final ErrorCode UNAVAILABLE = ErrorCode.RENDER_UNAVAILABLE;
+    static final String MASTER = "master";
     static final double MAX_BEATS = 4194304, MAX_LENGTH = 65536, EPS = 1e-6;
     static final Set<String> EXPORT_TAPS = Set.of("post_fader", "pre_fader"),
             BOUNCE_TAPS = Set.of("pre_fx", "pre_fader", "post_fader");
@@ -213,11 +214,11 @@ final class RenderModule implements HostModule {
                 if (p.has("bitDepth")) {
                     int depth = Params.integer(p, "bitDepth", 16, 32);
                     if (!(format.equals("wav") ? Set.of(16, 24, 32) : Set.of(16, 24)).contains(depth))
-                        throw invalid("bitDepth must be 16, 24 or 32 (float) for wav, 16 or 24 for flac.");
+                        throw Errors.invalid("bitDepth must be 16, 24 or 32 (float) for wav, 16 or 24 for flac.");
                 }
                 if (p.has("sampleRate")
                         && !Set.of(44100, 48000).contains(Params.integer(p, "sampleRate", 44100, 48000)))
-                    throw invalid("sampleRate must be 44100 or 48000 (omit for the current rate).");
+                    throw Errors.invalid("sampleRate must be 44100 or 48000 (omit for the current rate).");
                 if (p.has("tap")) choice(p, "tap", EXPORT_TAPS);
                 if (p.has("dither")) Params.bool(p, "dither");
                 if (p.has("overwrite")) Params.bool(p, "overwrite");
@@ -230,7 +231,7 @@ final class RenderModule implements HostModule {
                 choice(p, "tap", BOUNCE_TAPS);
                 return;
             default:
-                throw failure("unknown_method", "Unknown render method.");
+                throw failure(ErrorCode.UNKNOWN_METHOD, "Unknown render method.");
         }
     }
 
@@ -239,14 +240,15 @@ final class RenderModule implements HostModule {
         if (!value.isJsonArray()
                 || value.getAsJsonArray().size() < 1
                 || value.getAsJsonArray().size() > HostServices.TRACKS)
-            throw invalid(key + " must be an array of 1.." + HostServices.TRACKS + " entries.");
+            throw Errors.invalid(key + " must be an array of 1.." + HostServices.TRACKS + " entries.");
         List<String> out = new ArrayList<>();
         Set<String> seen = new HashSet<>();
         for (JsonElement item : value.getAsJsonArray()) {
             String id = item.isJsonPrimitive() && item.getAsJsonPrimitive().isString() ? item.getAsString() : "";
             if (!(allowMaster && id.equals(MASTER)) && !DeviceSources.canonicalUuid(id))
-                throw invalid(key + " entries must be canonical track UUIDs" + (allowMaster ? " or \"master\"." : "."));
-            if (!seen.add(id.toLowerCase(Locale.ROOT))) throw invalid(key + " entries must be distinct.");
+                throw Errors.invalid(
+                        key + " entries must be canonical track UUIDs" + (allowMaster ? " or \"master\"." : "."));
+            if (!seen.add(id.toLowerCase(Locale.ROOT))) throw Errors.invalid(key + " entries must be distinct.");
             out.add(id);
         }
         return out;
@@ -256,12 +258,12 @@ final class RenderModule implements HostModule {
         double start = Params.number(p, "startBeats", 0, MAX_BEATS),
                 end = Params.number(p, "endBeats", 0, MAX_BEATS + MAX_LENGTH);
         if (end <= start || end - start > MAX_LENGTH)
-            throw invalid("endBeats must be after startBeats, at most " + (int) MAX_LENGTH + " beats later.");
+            throw Errors.invalid("endBeats must be after startBeats, at most " + (int) MAX_LENGTH + " beats later.");
     }
 
     private static String choice(JsonObject p, String key, Set<String> allowed) {
         String value = Params.string(p, key);
-        if (!allowed.contains(value)) throw invalid(key + " must be one of " + new TreeSet<>(allowed) + ".");
+        if (!allowed.contains(value)) throw Errors.invalid(key + " must be one of " + new TreeSet<>(allowed) + ".");
         return value;
     }
 
@@ -275,7 +277,7 @@ final class RenderModule implements HostModule {
             access(op);
             result.addProperty("available", true);
         } catch (RpcException error) {
-            if (!UNAVAILABLE.equals(error.code)) throw error;
+            if (!error.is(UNAVAILABLE)) throw error;
             result.addProperty("available", false);
             result.addProperty("reason", error.getMessage());
         }
@@ -309,12 +311,12 @@ final class RenderModule implements HostModule {
         Job previous = job;
         if (previous != null && !previous.done())
             throw failure(
-                    "busy",
+                    ErrorCode.BUSY,
                     "A " + previous.describe()
                             + " is still rendering natively; poll render.status. No request was queued.");
         if (method.equals(BOUNCE) && quarantined)
             throw failure(
-                    "unresolved_mutation",
+                    ErrorCode.UNRESOLVED_MUTATION,
                     "An earlier bounce.inPlace has an unknown outcome; inspect arranger.clips.list on its tracks, then extension.restart.");
         if (previous != null
                 && previous.kind.equals(BOUNCE)
@@ -322,7 +324,7 @@ final class RenderModule implements HostModule {
                 && !previous.reported
                 && !quarantined)
             throw failure(
-                    "unresolved_mutation",
+                    ErrorCode.UNRESOLVED_MUTATION,
                     "The previous bounce.inPlace returned before it was verified; call render.status first.");
         HostServices.SafetyObservation safety = s.stoppedSafety(op);
         boolean export = method.equals(EXPORT);
@@ -371,7 +373,8 @@ final class RenderModule implements HostModule {
             for (int i = 0; i < ids.size(); i++)
                 if (slots[i] >= 0 && epochs.get(slots[i]) != seen[i])
                     throw failure(
-                            "stale_context", "Track bank changed while the render was queued (" + ids.get(i) + ").");
+                            ErrorCode.STALE_CONTEXT,
+                            "Track bank changed while the render was queued (" + ids.get(i) + ").");
         };
         job = next;
         try {
@@ -550,22 +553,22 @@ final class RenderModule implements HostModule {
             String detail = (export ? evaluation.get("files") : evaluation.get("tracks")).toString();
             op.result.completeExceptionally(
                     export
-                            ? new RpcException(
-                                    "export_failed",
+                            ? Errors.of(
+                                    ErrorCode.EXPORT_FAILED,
                                     "Bitwig finished the export job but the files did not verify"
                                             + (changed
                                                     ? ""
                                                     : "; nothing was written (Bitwig reports the reason as a notification)")
                                             + ": " + detail,
-                                    changed ? "unknown" : "not_applied")
-                            : new RpcException(
-                                    changed ? "bounce_verification_failed" : "bounce_failed",
+                                    changed ? Outcome.UNKNOWN : Outcome.NOT_APPLIED)
+                            : Errors.of(
+                                    changed ? ErrorCode.BOUNCE_VERIFICATION_FAILED : ErrorCode.BOUNCE_FAILED,
                                     changed
                                             ? "Bitwig finished the bounce but the arranger readback differs from one new audio clip over the range; inspect arranger.clips.list, never retry: "
                                                     + detail
                                             : "Bitwig finished the bounce job without changing any lane (Bitwig reports the reason as a notification): "
                                                     + detail,
-                                    changed ? "unknown" : "not_applied"));
+                                    changed ? Outcome.UNKNOWN : Outcome.NOT_APPLIED));
             return;
         }
         JsonObject result = HostServices.observed();
@@ -689,9 +692,5 @@ final class RenderModule implements HostModule {
         }
         result.add("job", row);
         op.result.complete(result);
-    }
-
-    private static RpcException invalid(String message) {
-        return new RpcException("invalid_params", message, "not_applied");
     }
 }

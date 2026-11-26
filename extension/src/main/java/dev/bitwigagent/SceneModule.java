@@ -69,7 +69,7 @@ final class SceneModule implements HostModule {
             case "scenes.rename":
                 Params.fields(p, Set.of("sceneIndex", "expectedName", "name"), Set.of());
                 if (Params.string(p, "name").length() > 128)
-                    throw HostServices.failure("invalid_params", "name must contain 1..128 characters.");
+                    throw HostServices.failure(ErrorCode.INVALID_PARAMS, "name must contain 1..128 characters.");
                 break;
             case "scenes.launch":
             case "scenes.duplicate":
@@ -77,7 +77,7 @@ final class SceneModule implements HostModule {
                 Params.fields(p, Set.of("sceneIndex", "expectedName"), Set.of());
                 break;
             default:
-                throw HostServices.failure("unknown_method", "Unknown scene method.");
+                throw HostServices.failure(ErrorCode.UNKNOWN_METHOD, "Unknown scene method.");
         }
         Params.integer(p, "sceneIndex", 0, HostServices.SCENES - 1);
         expected(p);
@@ -90,7 +90,7 @@ final class SceneModule implements HostModule {
                 || !value.getAsJsonPrimitive().isString()
                 || value.getAsString().length() > 256)
             throw HostServices.failure(
-                    "invalid_params",
+                    ErrorCode.INVALID_PARAMS,
                     "expectedName must be a string of at most 256 characters (empty for an unnamed scene).");
         return value.getAsString();
     }
@@ -99,9 +99,9 @@ final class SceneModule implements HostModule {
     public void dispatch(HostOperation op, String method, JsonObject p) {
         s.check(op);
         if (!s.tracksObserved || count < 0)
-            throw HostServices.failure("not_ready", "Scene bank has not reported its size yet.");
+            throw HostServices.failure(ErrorCode.NOT_READY, "Scene bank has not reported its size yet.");
         if (bank.scrollPosition().get() != 0)
-            throw HostServices.failure("stale_context", "Scene bank is not at offset zero.");
+            throw HostServices.failure(ErrorCode.STALE_CONTEXT, "Scene bank is not at offset zero.");
         if (method.equals("scenes.list")) {
             op.result.complete(list());
             return;
@@ -109,13 +109,13 @@ final class SceneModule implements HostModule {
         int index = p.get("sceneIndex").getAsInt();
         if (index >= count)
             throw HostServices.failure(
-                    "scene_out_of_range",
+                    ErrorCode.SCENE_OUT_OF_RANGE,
                     "sceneIndex " + index + " does not exist: the project has " + count + " scene(s).");
         String actual = names[index];
-        if (actual == null) throw HostServices.failure("not_ready", "Scene name has not been observed yet.");
+        if (actual == null) throw HostServices.failure(ErrorCode.NOT_READY, "Scene name has not been observed yet.");
         if (!actual.equals(expected(p)))
             throw HostServices.failure(
-                    "stale_target",
+                    ErrorCode.STALE_TARGET,
                     "Scene " + index + " is named \"" + actual + "\", not expectedName; re-read scenes.list.");
         switch (method) {
             case "scenes.rename":
@@ -226,11 +226,12 @@ final class SceneModule implements HostModule {
         structureGuard.run();
         if (count + 1 > HostServices.SCENES)
             throw HostServices.failure(
-                    "scene_limit",
+                    ErrorCode.SCENE_LIMIT,
                     "The project has " + count + " scene(s); the launcher tools address at most " + HostServices.SCENES
                             + ", so one more cannot be added.");
         List<String> before = snapshotNames();
-        if (before == null) throw HostServices.failure("not_ready", "Not every scene name has been observed yet.");
+        if (before == null)
+            throw HostServices.failure(ErrorCode.NOT_READY, "Not every scene name has been observed yet.");
         s.check(op);
         op.dispatched = true;
         scenes[index].duplicateObject();
@@ -275,20 +276,21 @@ final class SceneModule implements HostModule {
         HostServices.SafetyObservation safety = s.stoppedSafety(op);
         if (count > HostServices.SCENES)
             throw HostServices.failure(
-                    "outside_window",
+                    ErrorCode.OUTSIDE_WINDOW,
                     "The project has " + count + " scenes; scene edits that need every name address at most "
                             + HostServices.SCENES + ".");
-        if (count <= 1) throw HostServices.failure("last_scene", "A project keeps at least one scene.");
+        if (count <= 1) throw HostServices.failure(ErrorCode.LAST_SCENE, "A project keeps at least one scene.");
         List<ClipLauncherSlot> clips = occupied(index);
         for (ClipLauncherSlot slot : clips)
             if (slot.isPlaying().get()
                     || slot.isPlaybackQueued().get()
                     || slot.isRecording().get())
                 throw HostServices.failure(
-                        "unsafe_state",
+                        ErrorCode.UNSAFE_STATE,
                         "Delete requires the scene's clips to be neither playing, queued nor recording.");
         List<String> before = snapshotNames();
-        if (before == null) throw HostServices.failure("not_ready", "Not every scene name has been observed yet.");
+        if (before == null)
+            throw HostServices.failure(ErrorCode.NOT_READY, "Not every scene name has been observed yet.");
         s.guardStoppedSafety(safety);
         s.check(op);
         op.dispatched = true;

@@ -30,7 +30,7 @@ final class NativeDeviceTarget {
 
         void requireModelThread(Object object);
 
-        String unavailableCode();
+        ErrorCode unavailableCode();
     }
 
     private final Access a;
@@ -45,9 +45,9 @@ final class NativeDeviceTarget {
         if (expected == null) throw failure(a.unavailableCode(), "Expected owning-track UUID is required.");
         Object device = a.read(Field.TARGET, proxy);
         if (device == null)
-            throw failure("missing_target", "Explicit device proxy has no native target; refresh devices.get.");
+            throw failure(ErrorCode.MISSING_TARGET, "Explicit device proxy has no native target; refresh devices.get.");
         if (!a.is(Kind.DEVICE, device))
-            throw failure("unsupported_scope", "Explicit native target is not a mapped root device.");
+            throw failure(ErrorCode.UNSUPPORTED_SCOPE, "Explicit native target is not a mapped root device.");
         a.requireModelThread(device);
         Object owner = owningTrack(device), identity = trackIdentity(owner);
         requireTrackUuid(owner, identity, expected);
@@ -59,12 +59,13 @@ final class NativeDeviceTarget {
         a.documentThread();
         check.run();
         if (a.read(Field.TARGET, proxy) != before.device)
-            throw failure("stale_context", "Explicit native device changed during the read.");
+            throw failure(ErrorCode.STALE_CONTEXT, "Explicit native device changed during the read.");
         a.requireModelThread(before.device);
         Object owner = owningTrack(before.device), identity = trackIdentity(owner);
         requireTrackUuid(owner, identity, before.trackId);
         if (owner != before.owner || identity != before.identity)
-            throw failure("stale_context", "Explicit native owning track or channel alias changed during the read.");
+            throw failure(
+                    ErrorCode.STALE_CONTEXT, "Explicit native owning track or channel alias changed during the read.");
         check.run();
     }
 
@@ -90,7 +91,8 @@ final class NativeDeviceTarget {
         if (!(value instanceof UUID))
             throw failure(a.unavailableCode(), "Native owning-track channel UUID is missing or unsupported.");
         if (!expected.equals(value))
-            throw failure("stale_context", "Native device owning-track channel UUID differs from requested trackId.");
+            throw failure(
+                    ErrorCode.STALE_CONTEXT, "Native device owning-track channel UUID differs from requested trackId.");
     }
 
     static final class Capture {

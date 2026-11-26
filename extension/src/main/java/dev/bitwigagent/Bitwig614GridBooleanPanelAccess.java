@@ -67,14 +67,14 @@ final class Bitwig614GridBooleanPanelAccess implements GridBooleanPanelWriter.Ac
 
     Object linkedPanel(Object object) {
         if (!isBipolar(object))
-            throw failure("grid_unavailable", "Bipolar reference requires the exact inspected Hgx model.");
+            throw failure(ErrorCode.GRID_UNAVAILABLE, "Bipolar reference requires the exact inspected Hgx model.");
         return bindings.invoke(linkedPanel, object);
     }
 
     @Override
     public void requireSupported(Object object) {
         if (!isPanel(object))
-            throw failure("grid_unavailable", "Boolean panel requires the exact inspected BMo model.");
+            throw failure(ErrorCode.GRID_UNAVAILABLE, "Boolean panel requires the exact inspected BMo model.");
     }
 
     @Override

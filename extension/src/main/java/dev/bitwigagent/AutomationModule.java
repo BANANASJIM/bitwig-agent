@@ -157,29 +157,29 @@ final class AutomationModule implements HostModule {
                 if (!hash.isJsonPrimitive()
                         || !hash.getAsJsonPrimitive().isString()
                         || !HASH.matcher(hash.getAsString()).matches())
-                    throw invalid(
+                    throw Errors.invalid(
                             "expectedHash must be the 64-character lowercase hex pointsHash from automation.points.get");
                 points(p);
                 break;
             default:
-                throw failure("unknown_method", "Unknown automation method.");
+                throw failure(ErrorCode.UNKNOWN_METHOD, "Unknown automation method.");
         }
         if (!DeviceSources.canonicalUuid(Params.string(p, "trackId")))
-            throw invalid("trackId must be a canonical UUID");
+            throw Errors.invalid("trackId must be a canonical UUID");
         target(p);
         range(p);
     }
 
     private static void target(JsonObject p) {
         JsonElement value = p.get("target");
-        if (!value.isJsonObject()) throw invalid("target must be an object");
+        if (!value.isJsonObject()) throw Errors.invalid("target must be an object");
         JsonObject t = value.getAsJsonObject();
         JsonElement kind = t.get("kind");
         if (kind == null
                 || !kind.isJsonPrimitive()
                 || !kind.getAsJsonPrimitive().isString()
                 || !KINDS.contains(kind.getAsString()))
-            throw invalid("target.kind must be one of " + new TreeSet<>(KINDS));
+            throw Errors.invalid("target.kind must be one of " + new TreeSet<>(KINDS));
         if (!kind.getAsString().equals("grid")) {
             Params.fields(t, Set.of("kind"), Set.of());
             return;
@@ -188,35 +188,36 @@ final class AutomationModule implements HostModule {
         Params.integer(t, "deviceIndex", 0, HostServices.DEVICES - 1);
         Params.string(t, "expectedDeviceName");
         if (!UUID_PATTERN.matcher(Params.string(t, "moduleId")).matches())
-            throw invalid("target.moduleId must be a canonical UUID");
+            throw Errors.invalid("target.moduleId must be a canonical UUID");
         JsonElement id = t.get("parameterId");
         if (!id.isJsonPrimitive()
                 || !id.getAsJsonPrimitive().isString()
                 || id.getAsString().length() > MAX_PARAMETER_ID)
-            throw invalid("target.parameterId must be a string of at most " + MAX_PARAMETER_ID + " UTF-16 code units");
+            throw Errors.invalid(
+                    "target.parameterId must be a string of at most " + MAX_PARAMETER_ID + " UTF-16 code units");
     }
 
     static double[] range(JsonObject p) {
         if (!p.has("range")) return null;
         JsonElement value = p.get("range");
-        if (!value.isJsonObject()) throw invalid("range must be an object");
+        if (!value.isJsonObject()) throw Errors.invalid("range must be an object");
         JsonObject r = value.getAsJsonObject();
         Params.fields(r, Set.of("startBeat", "endBeat"), Set.of());
         double start = Params.number(r, "startBeat", 0, MAX_BEATS), end = Params.number(r, "endBeat", 0, MAX_BEATS);
-        if (start > end) throw invalid("range.startBeat must not exceed range.endBeat");
+        if (start > end) throw Errors.invalid("range.startBeat must not exceed range.endBeat");
         return new double[] {start, end};
     }
 
     /** Requested points: strictly increasing beats, normalized values, inside range when one is given. */
     static List<Point> points(JsonObject p) {
         JsonElement value = p.get("points");
-        if (!value.isJsonArray()) throw invalid("points must be an array");
+        if (!value.isJsonArray()) throw Errors.invalid("points must be an array");
         JsonArray array = value.getAsJsonArray();
-        if (array.size() > MAX_WRITE) throw invalid("points must contain at most " + MAX_WRITE + " entries");
+        if (array.size() > MAX_WRITE) throw Errors.invalid("points must contain at most " + MAX_WRITE + " entries");
         double[] range = range(p);
         List<Point> out = new ArrayList<>();
         for (JsonElement item : array) {
-            if (!item.isJsonObject()) throw invalid("each point must be an object");
+            if (!item.isJsonObject()) throw Errors.invalid("each point must be an object");
             JsonObject n = item.getAsJsonObject();
             Params.fields(n, Set.of("beat", "value", "interpolation"), Set.of());
             double beat = Params.number(n, "beat", 0, MAX_BEATS), v = Params.number(n, "value", 0, 1);
@@ -224,11 +225,11 @@ final class AutomationModule implements HostModule {
             if (!interpolation.isJsonPrimitive()
                     || !interpolation.getAsJsonPrimitive().isString()
                     || !Set.of("linear", "hold").contains(interpolation.getAsString()))
-                throw invalid("interpolation must be linear or hold");
+                throw Errors.invalid("interpolation must be linear or hold");
             if (!out.isEmpty() && beat <= out.get(out.size() - 1).beat)
-                throw invalid("point beats must be strictly increasing");
+                throw Errors.invalid("point beats must be strictly increasing");
             if (range != null && (beat < range[0] || beat > range[1]))
-                throw invalid("every point must lie inside range");
+                throw Errors.invalid("every point must lie inside range");
             out.add(new Point(beat, v, interpolation.getAsString().equals("linear"), 0));
         }
         return out;
@@ -283,24 +284,22 @@ final class AutomationModule implements HostModule {
     /** Exact readback: same count, order, beats, values (within 1e-9), interpolation and curve. */
     static void verify(List<Point> expected, List<Point> actual) {
         if (actual.size() != expected.size())
-            throw new RpcException(
-                    "automation_verification_failed",
+            throw Errors.unknown(
+                    ErrorCode.AUTOMATION_VERIFICATION_FAILED,
                     "Native lane holds " + actual.size() + " points after the write, expected " + expected.size()
-                            + "; inspect automation.points.get before another write.",
-                    "unknown");
+                            + "; inspect automation.points.get before another write.");
         for (int i = 0; i < expected.size(); i++)
             if (!same(expected.get(i), actual.get(i)))
-                throw new RpcException(
-                        "automation_verification_failed",
+                throw Errors.unknown(
+                        ErrorCode.AUTOMATION_VERIFICATION_FAILED,
                         "Native point " + i + " reads back as " + actual.get(i).json() + ", expected "
-                                + expected.get(i).json() + "; inspect automation.points.get before another write.",
-                        "unknown");
+                                + expected.get(i).json() + "; inspect automation.points.get before another write.");
     }
 
     static void requireExpected(List<Point> current, int expectedCount, String expectedHash) {
         if (current.size() != expectedCount || !hash(current).equals(expectedHash))
             throw failure(
-                    "stale_target",
+                    ErrorCode.STALE_TARGET,
                     "The lane holds " + current.size()
                             + " points with a different pointsHash than expected; re-read automation.points.get.");
     }
@@ -341,10 +340,10 @@ final class AutomationModule implements HostModule {
     public void dispatch(HostOperation op, String method, JsonObject p) {
         s.check(op);
         boolean write = method.equals("automation.points.set");
-        if (pending) throw failure("busy", "Another native automation operation is pending.");
+        if (pending) throw failure(ErrorCode.BUSY, "Another native automation operation is pending.");
         if (write && quarantined)
             throw failure(
-                    "unresolved_mutation",
+                    ErrorCode.UNRESOLVED_MUTATION,
                     "An unresolved automation write requires inspection (automation.points.get) and extension.restart before further automation writes.");
         String id = p.get("trackId").getAsString();
         int index = s.trackSlot(id);
@@ -363,15 +362,16 @@ final class AutomationModule implements HostModule {
         HostServices.SafetyObservation safety = write ? s.stoppedSafety(op) : null;
         if (access == null) {
             try {
-                access = new Bitwig614AutomationAccess(s.nativeRuntime(op).access("automation_unavailable"));
+                access = new Bitwig614AutomationAccess(s.nativeRuntime(op).access(ErrorCode.AUTOMATION_UNAVAILABLE));
             } catch (ReflectiveOperationException error) {
                 throw failure(
-                        "automation_unavailable", "Exact automation descriptors unavailable: " + error.getMessage());
+                        ErrorCode.AUTOMATION_UNAVAILABLE,
+                        "Exact automation descriptors unavailable: " + error.getMessage());
             }
         }
         if (target.grid()) {
             if (gridAdapter == null && access instanceof Bitwig614AutomationAccess)
-                gridAdapter = new Bitwig614GridAdapter(s.nativeRuntime(op).access("grid_unavailable"));
+                gridAdapter = new Bitwig614GridAdapter(s.nativeRuntime(op).access(ErrorCode.GRID_UNAVAILABLE));
             target.grid = gridAdapter;
         }
         long epoch = epochs.get(index);
@@ -379,7 +379,7 @@ final class AutomationModule implements HostModule {
         Runnable check = () -> {
             s.check(op);
             if (epochs.get(index) != epoch)
-                throw failure("stale_context", "Track bank changed while the automation operation was queued.");
+                throw failure(ErrorCode.STALE_CONTEXT, "Track bank changed while the automation operation was queued.");
             if (ticket != null) ticket.check();
             if (write) s.guardStoppedSafety(safety);
         };
@@ -410,14 +410,14 @@ final class AutomationModule implements HostModule {
                     String serialized = BoundedJson.serialize(
                             result,
                             240000,
-                            "automation_bounds_exceeded",
+                            ErrorCode.AUTOMATION_BOUNDS_EXCEEDED,
                             "Automation response exceeds the bounded transport size; pass a smaller range.");
                     s.schedule(
                             op,
                             () -> {
                                 check.run();
                                 if (!s.trackMatches(id, track))
-                                    throw failure("stale_context", "Track target changed after native access.");
+                                    throw failure(ErrorCode.STALE_CONTEXT, "Track target changed after native access.");
                                 if (ticket != null) s.sources.guardRootRead(ticket);
                                 if (write) quarantined = false;
                                 pending = false;
@@ -435,9 +435,5 @@ final class AutomationModule implements HostModule {
             throw error;
         }
         op.result.whenComplete((r, e) -> pending = false);
-    }
-
-    private static RpcException invalid(String message) {
-        return new RpcException("invalid_params", message, "not_applied");
     }
 }

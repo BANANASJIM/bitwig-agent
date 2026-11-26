@@ -59,10 +59,10 @@ final class GridStepArrayWriter {
         JsonObject current = values.parameterValue(binding);
         float[] after = nativeWriter.current(binding.parameter);
         if (!same(after, next))
-            throw new RpcException(
-                    changed ? "grid_verification_failed" : "stale_context",
+            throw Errors.of(
+                    changed ? ErrorCode.GRID_VERIFICATION_FAILED : ErrorCode.STALE_CONTEXT,
                     "Native step array readback differs from the requested values; inspect state before another write.",
-                    changed ? "unknown" : "not_applied");
+                    changed ? Outcome.UNKNOWN : Outcome.NOT_APPLIED);
         check.run();
         JsonObject result = values.parameterResult(binding, current);
         result.add("previousValues", request.expectedValues);
@@ -88,20 +88,22 @@ final class GridStepArrayWriter {
     private static void validate(JsonObject current, float[] live, GridParameterWriter.Request request) {
         if (!"steps".equals(request.kind) || !"steps".equals(current.get("kind").getAsString()))
             throw HostServices.failure(
-                    "stale_context",
+                    ErrorCode.STALE_CONTEXT,
                     "Parameter kind differs from the expected precondition; reacquire grid.parameters.get.");
         JsonArray expected = request.expectedValues;
         if (expected.size() > live.length)
             throw HostServices.failure(
-                    "stale_context",
+                    ErrorCode.STALE_CONTEXT,
                     "expectedValues is longer than the native array (" + live.length + "); reacquire grid.get.");
         for (int i = 0; i < expected.size(); i++)
             if ((float) expected.get(i).getAsDouble() != live[i])
                 throw HostServices.failure(
-                        "stale_context", "Step values differ from the expected precondition; reacquire grid.get.");
+                        ErrorCode.STALE_CONTEXT,
+                        "Step values differ from the expected precondition; reacquire grid.get.");
         if (request.values.size() > expected.size())
             throw HostServices.failure(
-                    "invalid_params", "values must not be longer than expectedValues (" + expected.size() + ").");
+                    ErrorCode.INVALID_PARAMS,
+                    "values must not be longer than expectedValues (" + expected.size() + ").");
     }
 
     /** Element-wise float equality (so -0.0 equals 0.0), same length. */

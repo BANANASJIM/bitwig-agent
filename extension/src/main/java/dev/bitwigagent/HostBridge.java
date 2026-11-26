@@ -135,7 +135,7 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
 
     static void validate(String method, JsonObject params) {
         BiConsumer<String, JsonObject> validator = VALIDATORS.get(method);
-        if (validator == null) throw failure("unknown_method", "Unsupported method: " + method);
+        if (validator == null) throw failure(ErrorCode.UNKNOWN_METHOD, "Unsupported method: " + method);
         validator.accept(method, params);
     }
 

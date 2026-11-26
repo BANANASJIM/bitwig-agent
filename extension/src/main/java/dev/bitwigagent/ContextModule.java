@@ -31,7 +31,7 @@ final class ContextModule implements HostModule {
     }
 
     static void validateParams(String method, JsonObject p) {
-        if (!METHODS.contains(method)) throw HostServices.failure("unknown_method", "Unknown context method.");
+        if (!METHODS.contains(method)) throw HostServices.failure(ErrorCode.UNKNOWN_METHOD, "Unknown context method.");
         Params.fields(p, Set.of(), Set.of());
     }
 

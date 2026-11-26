@@ -87,7 +87,7 @@ final class Bitwig614StringPanelAccess implements GridStringPanelWriter.Access {
         requireSupported(object);
         if (setter == null)
             throw failure(bindings.unavailableCode(), "String panel write operation is not bound: " + setterError);
-        if (text == null) throw failure("invalid_params", "String panel text must not be null.");
+        if (text == null) throw failure(ErrorCode.INVALID_PARAMS, "String panel text must not be null.");
         bindings.invoke(setter, object, text);
     }
 

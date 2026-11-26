@@ -163,7 +163,7 @@ final class Bitwig614RenderAccess implements RenderModule.Access {
             throw failure(RenderModule.UNAVAILABLE, "Controller Project is not the native project proxy.");
         Object project = a.invoke(target, projectProxy);
         if (!projectType.isInstance(project))
-            throw failure("not_ready", "Controller Project proxy is not bound to an open project.");
+            throw failure(ErrorCode.NOT_READY, "Controller Project proxy is not bound to an open project.");
         a.requireModelThread(project);
         return project;
     }
@@ -172,22 +172,23 @@ final class Bitwig614RenderAccess implements RenderModule.Access {
     private void preflight(Object project) {
         if (Boolean.TRUE.equals(a.invoke(remote, project)))
             throw failure(
-                    "unsupported_scope",
+                    ErrorCode.UNSUPPORTED_SCOPE,
                     "This project is driven by a remote session; its render job would run elsewhere.");
         if (a.invoke(current, project) != null)
-            throw failure("busy", "Bitwig is already exporting or bouncing (possibly from the GUI).");
+            throw failure(ErrorCode.BUSY, "Bitwig is already exporting or bouncing (possibly from the GUI).");
         String reason = (String) a.invoke(blocked, project);
-        if (reason != null) throw failure("render_refused", "Bitwig refuses to render: " + reason + ".");
+        if (reason != null) throw failure(ErrorCode.RENDER_REFUSED, "Bitwig refuses to render: " + reason + ".");
         if (!Boolean.TRUE.equals(a.invoke(engineActive, project)))
             throw failure(
-                    "render_refused", "The project's audio engine is not active; Bitwig would ignore the request.");
+                    ErrorCode.RENDER_REFUSED,
+                    "The project's audio engine is not active; Bitwig would ignore the request.");
         int files = (Integer) a.invoke(missingCount, a.invoke(missingFiles, project)), plugins = 0;
         for (Object chain : (List<?>) a.invoke(chains, a.invoke(devices, project)))
             for (Object device : (List<?>) a.invoke(chainDevices, chain))
                 if (hostedDevice.isInstance(device) && a.invoke(deviceState, device) == pluginMissing) plugins++;
         if (files > 0 || plugins > 0)
             throw failure(
-                    "render_needs_confirmation",
+                    ErrorCode.RENDER_NEEDS_CONFIRMATION,
                     "Project has " + files + " missing file(s) and " + plugins
                             + " missing plugin(s); Bitwig would ask for confirmation in a dialog. Fix them first.");
     }
@@ -198,10 +199,11 @@ final class Bitwig614RenderAccess implements RenderModule.Access {
         if (proxy == null) channel = a.invoke(groupMaster, a.invoke(root, project));
         else channel = trackChannel(proxy, id);
         if (!playerTrack.isInstance(channel))
-            throw failure("stale_context", "No native channel for " + (proxy == null ? "the master" : id) + ".");
+            throw failure(
+                    ErrorCode.STALE_CONTEXT, "No native channel for " + (proxy == null ? "the master" : id) + ".");
         a.requireModelThread(channel);
         if (a.invoke(owner, channel, projectType) != project)
-            throw failure("stale_context", "Source " + id + " belongs to another project.");
+            throw failure(ErrorCode.STALE_CONTEXT, "Source " + id + " belongs to another project.");
         return channel;
     }
 
@@ -211,25 +213,24 @@ final class Bitwig614RenderAccess implements RenderModule.Access {
         Object channel;
         if (playerTrack.isInstance(track)) {
             if (!expected.equals(a.invoke(uuid, track)))
-                throw failure("stale_context", "Native track UUID differs from " + id + ".");
+                throw failure(ErrorCode.STALE_CONTEXT, "Native track UUID differs from " + id + ".");
             channel = track;
         } else if (groupTrack.isInstance(track)) {
             channel = a.invoke(groupMaster, track);
             if (!playerTrack.isInstance(channel)
                     || !(expected.equals(a.invoke(uuid, track)) || expected.equals(a.invoke(groupUuid, channel))))
-                throw failure("stale_context", "Native group track does not match " + id + ".");
-        } else throw failure("stale_context", "Track proxy has no attached native track: " + id);
+                throw failure(ErrorCode.STALE_CONTEXT, "Native group track does not match " + id + ".");
+        } else throw failure(ErrorCode.STALE_CONTEXT, "Track proxy has no attached native track: " + id);
         return channel;
     }
 
     private RenderModule.Handle started(Object project, Class<?> kind) {
         Object job = a.invoke(current, project);
         if (!kind.isInstance(job))
-            throw new RpcException(
-                    "render_not_started",
+            throw Errors.unknown(
+                    ErrorCode.RENDER_NOT_STARTED,
                     "Bitwig accepted the call but no " + (kind == exportJob ? "export" : "bounce")
-                            + " job was registered; inspect the output before another attempt.",
-                    "unknown");
+                            + " job was registered; inspect the output before another attempt.");
         CountDownLatch done = (CountDownLatch) a.invoke(latch, job);
         return () -> done.getCount() == 0;
     }
@@ -251,7 +252,7 @@ final class Bitwig614RenderAccess implements RenderModule.Access {
         for (int i = 0; i < sources.size(); i++) {
             Object channel = channel(project, sources.get(i), ids.get(i));
             if (channels.contains(channel))
-                throw failure("invalid_params", "Two sources resolve to the same native channel.");
+                throw failure(ErrorCode.INVALID_PARAMS, "Two sources resolve to the same native channel.");
             channels.add(channel);
         }
         boolean wav = o.format.equals("wav");
@@ -302,7 +303,7 @@ final class Bitwig614RenderAccess implements RenderModule.Access {
             Object channel = channel(project, tracks.get(i), ids.get(i));
             if (channel != a.invoke(deepest, tracks.get(i)))
                 throw failure(
-                        "unsupported_scope",
+                        ErrorCode.UNSUPPORTED_SCOPE,
                         "bounce.inPlace needs audio/instrument tracks with a main clip lane, not group tracks: "
                                 + ids.get(i));
             channels.add(channel);

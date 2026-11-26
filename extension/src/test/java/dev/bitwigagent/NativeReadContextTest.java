@@ -102,7 +102,7 @@ public final class NativeReadContextTest {
                         cancelled.models,
                         cancelled.labels,
                         () -> {
-                            throw HostServices.failure("cancelled", "request ended");
+                            throw HostServices.failure(ErrorCode.CANCELLED, "request ended");
                         },
                         false));
     }
@@ -166,8 +166,8 @@ public final class NativeReadContextTest {
         }
 
         @Override
-        public String unavailableCode() {
-            return "modulator_unavailable";
+        public ErrorCode unavailableCode() {
+            return ErrorCode.MODULATOR_UNAVAILABLE;
         }
     }
 

@@ -79,12 +79,12 @@ final class Bitwig614LauncherSettingsAccess implements LauncherSettingsModule.Ac
         check.run();
         Object nativeSlot = a.invoke(target, proxy), value = a.invoke(clip, proxy);
         if (!slotType.isInstance(nativeSlot) || !event.isInstance(value) || a.invoke(slot, value) != nativeSlot)
-            throw failure("stale_context", "Launcher proxy does not resolve to one attached native clip slot.");
+            throw failure(ErrorCode.STALE_CONTEXT, "Launcher proxy does not resolve to one attached native clip slot.");
         Object track = a.invoke(owner, nativeSlot);
         if (track == null || !UUID.fromString(trackId).equals(a.invoke(uuid, track)))
-            throw failure("stale_context", "Native owning track UUID differs.");
+            throw failure(ErrorCode.STALE_CONTEXT, "Native owning track UUID differs.");
         if (!expectedName.equals(a.invoke(name, value)))
-            throw failure("stale_context", "Native clip name differs from expectedClipName.");
+            throw failure(ErrorCode.STALE_CONTEXT, "Native clip name differs from expectedClipName.");
         Object owningProject = a.invoke(project, value, projectType);
         Object[] models = {value, nativeSlot, track};
         String[] labels = {"clipDeleted", "slotDeleted", "trackDeleted", "projectDeleted"};
@@ -106,7 +106,7 @@ final class Bitwig614LauncherSettingsAccess implements LauncherSettingsModule.Ac
                     || a.invoke(clip, proxy) != value
                     || a.invoke(slot, value) != nativeSlot
                     || !UUID.fromString(trackId).equals(a.invoke(uuid, a.invoke(owner, nativeSlot))))
-                throw failure("stale_context", "Launcher target changed during native operation.");
+                throw failure(ErrorCode.STALE_CONTEXT, "Launcher target changed during native operation.");
         };
         guard.run();
         JsonObject fields = new JsonObject();
@@ -122,7 +122,7 @@ final class Bitwig614LauncherSettingsAccess implements LauncherSettingsModule.Ac
                     else if (key.equals("nextActionLoopCount")) input = Integer.valueOf(requested.getAsInt());
                     else if (key.equals("nextActionDelayBeats")) input = Double.valueOf(requested.getAsDouble());
                     else input = Boolean.valueOf(requested.getAsBoolean());
-                    if (input == null) throw failure("invalid_params", "Unsupported native nextAction");
+                    if (input == null) throw failure(ErrorCode.INVALID_PARAMS, "Unsupported native nextAction");
                     a.invoke(setters.get(key), value, input);
                 }
             }
@@ -131,8 +131,8 @@ final class Bitwig614LauncherSettingsAccess implements LauncherSettingsModule.Ac
         JsonObject after = read(value, properties);
         for (var e : before.entrySet())
             if (!changes.has(e.getKey()) && !LauncherSettingsModule.matches(e.getValue(), after.get(e.getKey())))
-                throw new RpcException(
-                        "unexpected_side_effect", "Native write changed omitted setting: " + e.getKey(), "unknown");
+                throw Errors.unknown(
+                        ErrorCode.UNEXPECTED_SIDE_EFFECT, "Native write changed omitted setting: " + e.getKey());
         for (var e : changes.entrySet()) {
             JsonObject f = new JsonObject();
             f.add("requested", e.getValue());
@@ -146,8 +146,8 @@ final class Bitwig614LauncherSettingsAccess implements LauncherSettingsModule.Ac
                             : "native_model_read_after_write");
             fields.add(e.getKey(), f);
             if (!match)
-                throw new RpcException(
-                        "write_not_observed", "Native clip setting readback differs: " + e.getKey(), "unknown");
+                throw Errors.unknown(
+                        ErrorCode.WRITE_NOT_OBSERVED, "Native clip setting readback differs: " + e.getKey());
         }
         after.addProperty("status", "observed");
         after.addProperty("name", (String) a.invoke(name, value));

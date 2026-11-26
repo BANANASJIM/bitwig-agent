@@ -40,7 +40,7 @@ final class Bitwig614ReadContextAccess implements NativeReadContext.Access {
     }
 
     @Override
-    public String unavailableCode() {
+    public ErrorCode unavailableCode() {
         return bindings.unavailableCode();
     }
 

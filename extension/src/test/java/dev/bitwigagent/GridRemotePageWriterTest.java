@@ -480,7 +480,7 @@ public final class GridRemotePageWriterTest {
     private static void failuresAfterDispatchAreUnknown() {
         RemoteFixture thrown = new RemoteFixture();
         thrown.afterCall = () -> {
-            if (thrown.calls.size() == 3) throw HostServices.failure("grid_unavailable", "native map failure");
+            if (thrown.calls.size() == 3) throw HostServices.failure(ErrorCode.GRID_UNAVAILABLE, "native map failure");
         };
         RpcException error = thrown.defineFailure(TWO);
         check(

@@ -84,7 +84,8 @@ final class GridConnectionWriter {
         snapshots.guardTarget(target, proxy, trackId);
         if (values.read(INPUT_SOURCE, input.model) != input.source)
             throw failure(
-                    "stale_context", "Native input source changed immediately before dispatch; reacquire grid.get.");
+                    ErrorCode.STALE_CONTEXT,
+                    "Native input source changed immediately before dispatch; reacquire grid.get.");
         check.run();
         quarantine.requireAvailable();
         if (changed) {
@@ -184,11 +185,11 @@ final class GridConnectionWriter {
             }
         }
         if (failures > 0)
-            throw new RpcException(
+            throw Errors.of(
                     code,
                     "No connection was written; " + failures + " of " + requests.size()
                             + " entries failed their checks: " + rejected + (failures > 8 ? "; ..." : ""),
-                    "not_applied");
+                    Outcome.NOT_APPLIED);
         snapshots.guardTarget(target, proxy, trackId);
     }
 
@@ -301,15 +302,16 @@ final class GridConnectionWriter {
         }
 
         private void failed(int i, JsonObject item, Throwable error, boolean dispatched) {
-            boolean unknown =
-                    dispatched || error instanceof RpcException && "unknown".equals(((RpcException) error).outcome);
+            boolean unknown = dispatched || error instanceof RpcException && ((RpcException) error).is(Outcome.UNKNOWN);
             if (completed == 0 && !unknown || !(error instanceof RuntimeException) && !unknown) {
                 fail.accept(error);
                 return;
             }
             item.addProperty("status", unknown ? "unknown" : "failed");
             JsonObject why = new JsonObject();
-            why.addProperty("code", error instanceof RpcException ? ((RpcException) error).code : "internal_error");
+            why.addProperty(
+                    "code",
+                    error instanceof RpcException ? ((RpcException) error).code : ErrorCode.INTERNAL_ERROR.wire());
             why.addProperty("message", error.getMessage());
             item.add("error", why);
             stop(i, unknown ? "unknown" : written > 0 ? "partial" : "failed");
@@ -357,7 +359,7 @@ final class GridConnectionWriter {
             // An xb1-like object with the same owner/key is not membership (pS excludes qXr).
             if (source == null)
                 throw failure(
-                        "stale_context",
+                        ErrorCode.STALE_CONTEXT,
                         "Current native source is not an exact enumerated output of this bounded graph.");
             input.sourceEndpoint = source.endpoint;
         }
@@ -371,17 +373,19 @@ final class GridConnectionWriter {
             state.check();
             if (!values.is(input ? GridSnapshotReader.Kind.INPUT : GridSnapshotReader.Kind.OUTPUT, model))
                 throw failure(
-                        "grid_unavailable",
+                        ErrorCode.GRID_UNAVAILABLE,
                         "Connection editing requires every enumerated port to have its mapped direction.");
             values.requireModelThread(model);
             if (values.read(OWNER_MODULE, model) != module)
                 throw failure(
-                        "stale_context", "Native port owner differs from its direction-specific module membership.");
+                        ErrorCode.STALE_CONTEXT,
+                        "Native port owner differs from its direction-specific module membership.");
             Endpoint endpoint =
                     new Endpoint(id, GridSnapshotReader.text(values.read(input ? INPUT_KEY : OUTPUT_KEY, model)));
             Port port = new Port(endpoint, model);
             if (ports.put(endpoint, port) != null || !graph.portIdentities.add(model))
-                throw failure("grid_unavailable", "Duplicate native direction-specific port key or port identity.");
+                throw failure(
+                        ErrorCode.GRID_UNAVAILABLE, "Duplicate native direction-specific port key or port identity.");
             graph.members.add(model);
             if (!input) graph.outputsByIdentity.put(model, port);
         }
@@ -410,7 +414,7 @@ final class GridConnectionWriter {
             Port port = (input ? inputs : outputs).get(endpoint);
             if (port == null)
                 throw failure(
-                        "stale_context",
+                        ErrorCode.STALE_CONTEXT,
                         "Requested exact native " + (input ? "input" : "output")
                                 + " is absent; reacquire grid.get. Matching owner/key without stream membership is insufficient.");
             return port;
@@ -421,10 +425,12 @@ final class GridConnectionWriter {
                     || inputs.size() != after.inputs.size()
                     || outputs.size() != after.outputs.size())
                 throw failure(
-                        "stale_context", "Native graph or port membership changed during the connection operation.");
+                        ErrorCode.STALE_CONTEXT,
+                        "Native graph or port membership changed during the connection operation.");
             for (Map.Entry<UUID, Object> module : modules.entrySet())
                 if (after.modules.get(module.getKey()) != module.getValue())
-                    throw failure("stale_context", "Native module identity changed during the connection operation.");
+                    throw failure(
+                            ErrorCode.STALE_CONTEXT, "Native module identity changed during the connection operation.");
             samePorts(inputs, after.inputs, sources);
             samePorts(outputs, after.outputs, false);
         }
@@ -434,7 +440,7 @@ final class GridConnectionWriter {
                 Port actual = after.get(port.endpoint);
                 if (actual == null || actual.model != port.model || (sources && actual.source != port.source))
                     throw failure(
-                            "stale_context",
+                            ErrorCode.STALE_CONTEXT,
                             "Native port identity or captured source changed during the connection observation.");
             }
         }
@@ -455,20 +461,24 @@ final class GridConnectionWriter {
                     || value.getAsJsonArray().size() < 1
                     || value.getAsJsonArray().size() > MAX_BATCH)
                 throw failure(
-                        "invalid_params", "connections must be an array of 1.." + MAX_BATCH + " connection edits.");
+                        ErrorCode.INVALID_PARAMS,
+                        "connections must be an array of 1.." + MAX_BATCH + " connection edits.");
             java.util.List<Request> result = new ArrayList<>();
             Set<Endpoint> seen = new HashSet<>();
             for (JsonElement element : value.getAsJsonArray()) {
-                if (!element.isJsonObject()) throw failure("invalid_params", "Each connection must be an object.");
+                if (!element.isJsonObject())
+                    throw failure(ErrorCode.INVALID_PARAMS, "Each connection must be an object.");
                 JsonObject entry = element.getAsJsonObject();
                 // Source fields are explicitly nullable, so the generic null-rejecting field check does not apply.
                 if (!entry.keySet().equals(Set.of("targetModuleId", "targetPortKey", "expectedSource", "source")))
                     throw failure(
-                            "invalid_params",
+                            ErrorCode.INVALID_PARAMS,
                             "Each connection requires exactly targetModuleId, targetPortKey, expectedSource and source.");
                 Request request = parse(entry);
                 if (!seen.add(request.target))
-                    throw failure("invalid_params", "connections must not repeat a targetModuleId/targetPortKey pair.");
+                    throw failure(
+                            ErrorCode.INVALID_PARAMS,
+                            "connections must not repeat a targetModuleId/targetPortKey pair.");
                 result.add(request);
             }
             return result;
@@ -484,17 +494,18 @@ final class GridConnectionWriter {
         void requireExpected(Endpoint actual) {
             if (!Objects.equals(expectedSource, actual))
                 throw failure(
-                        "stale_context",
+                        ErrorCode.STALE_CONTEXT,
                         "Exact native input source differs from expectedSource; reacquire grid.get before editing.");
         }
 
         private static Endpoint endpoint(JsonObject p, String name) {
             JsonElement value = p.get(name);
             if (value == null)
-                throw failure("invalid_params", name + " is required, including explicit null for disconnected.");
+                throw failure(
+                        ErrorCode.INVALID_PARAMS, name + " is required, including explicit null for disconnected.");
             if (value.isJsonNull()) return null;
             if (!value.isJsonObject())
-                throw failure("invalid_params", name + " must be null or an exact moduleId/portKey object.");
+                throw failure(ErrorCode.INVALID_PARAMS, name + " must be null or an exact moduleId/portKey object.");
             JsonObject endpoint = value.getAsJsonObject();
             Params.fields(endpoint, Set.of("moduleId", "portKey"), Set.of());
             return new Endpoint(uuid(endpoint, "moduleId"), key(endpoint, "portKey"));
@@ -511,7 +522,7 @@ final class GridConnectionWriter {
                     || !value.isJsonPrimitive()
                     || !value.getAsJsonPrimitive().isString()
                     || value.getAsString().length() > GridSnapshotReader.MAX_TEXT)
-                throw failure("invalid_params", name + " must be a string of at most 1024 UTF-16 units.");
+                throw failure(ErrorCode.INVALID_PARAMS, name + " must be a string of at most 1024 UTF-16 units.");
             return value.getAsString();
         }
     }

@@ -123,7 +123,7 @@ final class RoutingModule implements HostModule {
                 break;
             case "tracks.routing.set": {
                 Params.fields(p, Set.of("trackId"), Set.of("output", "input", "expectedOutput", "expectedInput"));
-                if (!p.has("output") && !p.has("input")) throw invalid("Supply output, input or both.");
+                if (!p.has("output") && !p.has("input")) throw Errors.invalid("Supply output, input or both.");
                 pair(p, "output", "expectedOutput", OUTPUT_KINDS);
                 pair(p, "input", "expectedInput", SOURCE_KINDS);
                 break;
@@ -145,9 +145,10 @@ final class RoutingModule implements HostModule {
                                 "expectedModuleId"));
                 device(p);
                 if (p.has("componentIndex") == p.has("componentId"))
-                    throw invalid("Supply exactly one of componentIndex or componentId.");
+                    throw Errors.invalid("Supply exactly one of componentIndex or componentId.");
                 if (p.has("componentIndex") != p.has("expectedComponentId"))
-                    throw invalid("componentIndex needs expectedComponentId (that row's componentId), and only it.");
+                    throw Errors.invalid(
+                            "componentIndex needs expectedComponentId (that row's componentId), and only it.");
                 if (p.has("componentIndex")) {
                     Params.integer(p, "componentIndex", 0, MAX_COMPONENTS - 1);
                     Params.string(p, "expectedComponentId");
@@ -158,7 +159,7 @@ final class RoutingModule implements HostModule {
                 entry(p, "expectedSource", SOURCE_KINDS, true);
                 break;
             default:
-                throw failure("unknown_method", "Unknown routing method.");
+                throw failure(ErrorCode.UNKNOWN_METHOD, "Unknown routing method.");
         }
         uuid(p, "trackId");
     }
@@ -171,7 +172,7 @@ final class RoutingModule implements HostModule {
     /** A requested field needs its expected (compare-and-set) partner and vice versa. */
     private static void pair(JsonObject p, String key, String expected, Set<String> kinds) {
         if (p.has(key) != p.has(expected))
-            throw invalid(key + " and " + expected + " must be supplied together (" + expected
+            throw Errors.invalid(key + " and " + expected + " must be supplied together (" + expected
                     + " from a fresh tracks.routing.get).");
         if (!p.has(key)) return;
         entry(p, key, kinds, false);
@@ -184,7 +185,7 @@ final class RoutingModule implements HostModule {
      */
     static JsonObject entry(JsonObject p, String key, Set<String> kinds, boolean expected) {
         JsonElement value = p.get(key);
-        if (value == null || !value.isJsonObject()) throw invalid(key + " must be an object {kind, trackId?}.");
+        if (value == null || !value.isJsonObject()) throw Errors.invalid(key + " must be an object {kind, trackId?}.");
         JsonObject e = value.getAsJsonObject();
         String kind = e.has("kind")
                         && e.get("kind").isJsonPrimitive()
@@ -193,7 +194,7 @@ final class RoutingModule implements HostModule {
                 : "";
         boolean other = expected && kind.equals("other");
         if (!kinds.contains(kind) && !other)
-            throw invalid(key + ".kind must be one of " + new TreeSet<>(kinds) + (expected ? " or other" : ""));
+            throw Errors.invalid(key + ".kind must be one of " + new TreeSet<>(kinds) + (expected ? " or other" : ""));
         Set<String> required = new HashSet<>(Set.of("kind"));
         if (TRACK_KINDS.contains(kind)) required.add("trackId");
         if (other) required.add("name");
@@ -205,14 +206,15 @@ final class RoutingModule implements HostModule {
             if (!name.isJsonPrimitive()
                     || !name.getAsJsonPrimitive().isString()
                     || name.getAsString().length() > 4096)
-                throw invalid(key + ".name must be a string (maximum 4096 characters).");
+                throw Errors.invalid(key + ".name must be a string (maximum 4096 characters).");
         }
         if (e.has("nativeType")) Params.string(e, "nativeType");
         return e;
     }
 
     private static void uuid(JsonObject p, String key) {
-        if (!DeviceSources.canonicalUuid(Params.string(p, key))) throw invalid(key + " must be a canonical UUID");
+        if (!DeviceSources.canonicalUuid(Params.string(p, key)))
+            throw Errors.invalid(key + " must be a canonical UUID");
     }
 
     /** v1 requestable source kinds admitted by a native kCk group set (always including none). */
@@ -266,33 +268,34 @@ final class RoutingModule implements HostModule {
     public void dispatch(HostOperation op, String method, JsonObject p) {
         s.check(op);
         boolean write = WRITES.contains(method);
-        if (pending) throw failure("busy", "Another native routing operation is pending.");
+        if (pending) throw failure(ErrorCode.BUSY, "Another native routing operation is pending.");
         if (write && quarantined)
             throw failure(
-                    "unresolved_mutation",
+                    ErrorCode.UNRESOLVED_MUTATION,
                     "An unresolved routing/sidechain write requires inspection (tracks.routing.get / devices.sidechain.get) and extension.restart before further routing writes.");
         String id = p.get("trackId").getAsString();
         int slot = s.trackSlot(id);
         List<TrackRef> bank = bank();
         TrackRef self = null;
         for (TrackRef ref : bank) if (ref.id.equals(id)) self = ref;
-        if (self == null) throw failure("outside_window", "Track UUID is absent from the current 16-track window.");
+        if (self == null)
+            throw failure(ErrorCode.OUTSIDE_WINDOW, "Track UUID is absent from the current 16-track window.");
         for (String key : List.of("output", "input", "source")) {
             if (!p.has(key) || !p.getAsJsonObject(key).has("trackId")) continue;
             String other = p.getAsJsonObject(key).get("trackId").getAsString();
             if (bank.stream().noneMatch(ref -> ref.id.equals(other)))
                 throw failure(
-                        "outside_window",
+                        ErrorCode.OUTSIDE_WINDOW,
                         key + ".trackId is absent from the current 16-track window; nothing was dispatched.");
         }
         DeviceSources.RootReadTicket ticket = method.startsWith("devices.") ? s.sources.rootRead(parent(p)) : null;
         HostServices.SafetyObservation safety = write ? s.stoppedSafety(op) : null;
         if (access == null) {
             try {
-                access = new Bitwig614RoutingAccess(s.nativeRuntime(op).access("routing_unavailable"));
+                access = new Bitwig614RoutingAccess(s.nativeRuntime(op).access(ErrorCode.ROUTING_UNAVAILABLE));
             } catch (ReflectiveOperationException | LinkageError error) {
                 throw failure(
-                        "routing_unavailable",
+                        ErrorCode.ROUTING_UNAVAILABLE,
                         "Exact routing descriptors unavailable: " + Bitwig614Runtime.diagnostic(error));
             }
         }
@@ -300,7 +303,7 @@ final class RoutingModule implements HostModule {
         Runnable check = () -> {
             s.check(op);
             if (epoch.get() != generation)
-                throw failure("stale_context", "Track bank changed while the routing operation was queued.");
+                throw failure(ErrorCode.STALE_CONTEXT, "Track bank changed while the routing operation was queued.");
             if (ticket != null) ticket.check();
             if (write) s.guardStoppedSafety(safety);
         };
@@ -336,7 +339,7 @@ final class RoutingModule implements HostModule {
                             () -> {
                                 check.run();
                                 if (!s.trackMatches(id, (Track) s.tracks.getItemAt(slot)))
-                                    throw failure("stale_context", "Track target changed after native access.");
+                                    throw failure(ErrorCode.STALE_CONTEXT, "Track target changed after native access.");
                                 if (ticket != null) s.sources.guardRootRead(ticket);
                                 if (write && !"unknown".equals(text(result, "completion"))) quarantined = false;
                                 pending = false;
@@ -411,9 +414,5 @@ final class RoutingModule implements HostModule {
 
     private static String text(JsonObject o, String key) {
         return o.has(key) && o.get(key).isJsonPrimitive() ? o.get(key).getAsString() : null;
-    }
-
-    private static RpcException invalid(String message) {
-        return new RpcException("invalid_params", message, "not_applied");
     }
 }
