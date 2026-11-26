@@ -239,7 +239,7 @@ async def _put_back(rewire: _Rewire, capture_error: BaseException | None) -> dic
             unknown_result(
                 "job_failed",
                 "The probe could not put every Audio Out cable back; the listed inputs are still changed. "
-                "Reconnect them with grid.connections.set (or grid.apply) before anything else.",
+                "Reconnect them with grid.apply before anything else.",
                 left=restored.get("left"),
                 originally=restored.get("originally"),
                 restoreError=restored.get("error"),

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -15,7 +16,6 @@ from bitwig_agent.protocol import (
     unknown_method_message,
 )
 from bitwig_agent.protocol.annotations import READ, Annotations, resolve
-from bitwig_agent.protocol.base import HELP_POINTER
 from bitwig_agent.protocol.limits import DESCRIPTION_LIMIT
 from bitwig_agent.protocol.topics import TOPICS
 
@@ -56,10 +56,6 @@ def exists(name: str) -> bool:
     return name in _exposed()
 
 
-def unknown_tool_message(name: str) -> str:
-    return unknown_method_message(name)
-
-
 def is_composed(name: str) -> bool:
     return name in CLIENT_SIDE
 
@@ -78,10 +74,36 @@ def method(name: str) -> dict[str, Any]:
     return {"method": name, **TOOLS[name].describe()}
 
 
+HELP_POINTER = " Full guide: help {name}."
+_SENTENCE_END = re.compile(r"(?<!e\.g)(?<!i\.e)\.\s+(?=[A-Z])")
+
+
+def _lead(name: str, text: str, budget: int) -> str:
+    """The leading whole sentences of text that fit budget."""
+    lead = ""
+    start = 0
+    for match in _SENTENCE_END.finditer(text):
+        sentence = text[start : match.end()].strip()
+        if len(lead) + len(sentence) + 1 > budget:
+            break
+        lead = f"{lead} {sentence}".strip()
+        start = match.end()
+    if not lead:
+        raise ValueError(f"No whole sentence of {name} fits {budget} characters: give it a summary")
+    return lead
+
+
 def _advertised(name: str, spec: ToolSpec) -> str:
-    text = spec.description + (HELP_POINTER.format(name=name) if spec.doc else "")
-    example = f" Example arguments: {json.dumps(spec.examples[0], ensure_ascii=False)}"
-    return text + example if len(text) + len(example) <= DESCRIPTION_LIMIT else text
+    """What the agent reads with the tool: the description, or its summary and a help pointer, then the example."""
+    example = f" Example arguments: {json.dumps(spec.examples[0], ensure_ascii=False)}" if spec.examples[0] else ""
+    if len(spec.description) + len(example) <= DESCRIPTION_LIMIT:
+        return spec.description + example
+    pointer = HELP_POINTER.format(name=name)
+    budget = DESCRIPTION_LIMIT - len(pointer) - len(example)
+    lead = spec.summary or _lead(name, spec.description, budget)
+    if len(lead) > budget:
+        raise ValueError(f"The summary of {name} is {len(lead)} characters, over its {budget} budget")
+    return lead + pointer + example
 
 
 def _without_timeout(schema: dict[str, Any]) -> dict[str, Any]:
@@ -121,7 +143,7 @@ def help(topic: str | None = None) -> dict[str, Any]:
     spec = TOOLS[topic]
     return {
         "tool": topic,
-        "description": spec.full_description,
+        "description": spec.description,
         "example": spec.examples[0],
         "requires": list(spec.requires),
         "readOnly": spec.read_only,

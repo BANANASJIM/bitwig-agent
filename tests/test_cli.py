@@ -12,7 +12,7 @@ from bitwig_agent.protocol import TOOLS, invalid_params_message, validate_call
 from bitwig_agent.protocol.base import REASONS, TARGET, TRACK
 from bitwig_agent.protocol.launcher import NOTE_WINDOW
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures("all_methods")]  # parser tests cover hidden blocks too
 
 
 @pytest.mark.parametrize(

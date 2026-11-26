@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pydantic import Field
 
-from bitwig_agent.protocol.base import Nonempty, StatusArgs, ToolSpec, omitted, tool
+from bitwig_agent.protocol.base import Nonempty, StatusArgs, ToolSpec, omitted
 
 
 class MarkerInsertArgs(StatusArgs):
@@ -30,15 +30,17 @@ MARKERS_DELETE_DESCRIPTION = "Delete one cue marker from a fresh markers.list: m
 
 
 SPECS: dict[str, ToolSpec] = {
-    "markers.list": tool(StatusArgs, MARKERS_LIST_DESCRIPTION, True),
-    "markers.insert": tool(MarkerInsertArgs, MARKERS_INSERT_DESCRIPTION, False, {"beat": 16, "name": "Verse"}),
-    "markers.rename": tool(
+    "markers.list": ToolSpec(StatusArgs, MARKERS_LIST_DESCRIPTION, True),
+    "markers.insert": ToolSpec(
+        MarkerInsertArgs, MARKERS_INSERT_DESCRIPTION, False, examples=({"beat": 16, "name": "Verse"},)
+    ),
+    "markers.rename": ToolSpec(
         MarkerRenameArgs,
         MARKERS_RENAME_DESCRIPTION,
         False,
-        {"markerIndex": 1, "expectedName": "Verse", "name": "Verse 1"},
+        examples=({"markerIndex": 1, "expectedName": "Verse", "name": "Verse 1"},),
     ),
-    "markers.delete": tool(
-        MarkerDeleteArgs, MARKERS_DELETE_DESCRIPTION, False, {"markerIndex": 1, "expectedName": "Verse"}
+    "markers.delete": ToolSpec(
+        MarkerDeleteArgs, MARKERS_DELETE_DESCRIPTION, False, examples=({"markerIndex": 1, "expectedName": "Verse"},)
     ),
 }

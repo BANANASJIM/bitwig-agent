@@ -25,7 +25,7 @@ from mcp.types import (
 )
 
 from bitwig_agent.core import views
-from bitwig_agent.core.invoke import Envelope, Error, ask_help, invoke
+from bitwig_agent.core.invoke import Envelope, Error, ask_help, invoke, refuse_timeout
 
 
 def text_result(payload: dict[str, Any], is_error: bool) -> CallToolResult:
@@ -64,10 +64,13 @@ async def list_tools(ctx: ServerRequestContext, params: PaginatedRequestParams |
 async def call_tool(ctx: ServerRequestContext, params: CallToolRequestParams) -> CallToolResult:
     arguments = params.arguments or {}
     if params.name == views.HELP_NAME:
-        return envelope_result(ask_help(arguments.get("topic")))
-    if not views.exists(params.name):
-        raise MCPError(INVALID_PARAMS, views.unknown_tool_message(params.name))
-    return envelope_result(await invoke(params.name, arguments))
+        return envelope_result(ask_help(arguments))
+    if "timeoutMs" in arguments:
+        return envelope_result(refuse_timeout(params.name))
+    envelope = await invoke(params.name, arguments)
+    if isinstance(envelope, Error) and envelope.error["code"] == "unknown_method":
+        raise MCPError(INVALID_PARAMS, envelope.error["message"])
+    return envelope_result(envelope)
 
 
 def create_server() -> Server:

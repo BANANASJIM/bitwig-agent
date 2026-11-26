@@ -18,6 +18,7 @@ ADD = Annotations(read_only=False, destructive=False, idempotent=False)
 SET = Annotations(read_only=False, destructive=True, idempotent=True)
 STEER = Annotations(read_only=False, destructive=False, idempotent=True)
 REMOVE = Annotations(read_only=False, destructive=True, idempotent=True)
+RETRIGGER = Annotations(read_only=False, destructive=False, idempotent=False)
 EDIT = Annotations(read_only=False, destructive=True, idempotent=False)
 
 VERBS: dict[str, Annotations] = {
@@ -34,14 +35,12 @@ VERBS: dict[str, Annotations] = {
             "graph",
             "analyze",
             "diagnostics",
-            "export",
-            "render",
         ),
         READ,
     ),
     **dict.fromkeys(("insert", "create", "append", "duplicate", "import"), ADD),
     **dict.fromkeys(("set", "rename", "map", "unmap"), SET),
-    **dict.fromkeys(("select", "page", "launch", "stop"), STEER),
+    **dict.fromkeys(("select", "page", "stop"), STEER),
     **dict.fromkeys(("delete", "deletePage", "move"), REMOVE),
     "edit": EDIT,
 }

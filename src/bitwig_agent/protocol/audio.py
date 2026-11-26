@@ -4,8 +4,8 @@ from typing import Annotated, Literal, Self
 
 from pydantic import Field, field_validator, model_validator
 
-from bitwig_agent.protocol.annotations import ADD, SET
-from bitwig_agent.protocol.base import Nonempty, StatusArgs, ToolSpec, TrackId, omitted, tool, validate_local_path
+from bitwig_agent.protocol.annotations import EDIT, SET
+from bitwig_agent.protocol.base import Nonempty, StatusArgs, ToolSpec, TrackId, omitted, validate_local_path
 
 
 class AudioRouteArgs(StatusArgs):
@@ -92,22 +92,23 @@ AUDIO_ANALYZE_DESCRIPTION = "Offline WAV analysis of one absolute .wav (channel 
 
 
 SPECS: dict[str, ToolSpec] = {
-    "audio.route": tool(
-        AudioRouteArgs, AUDIO_ROUTE_DESCRIPTION, False, {"mode": "silent"}, host=False, annotations=SET
+    "audio.route": ToolSpec(
+        AudioRouteArgs, AUDIO_ROUTE_DESCRIPTION, False, examples=({"mode": "silent"},), host=False, annotations=SET
     ),
-    "audio.capture": tool(
+    "audio.capture": ToolSpec(
         AudioCaptureArgs,
         AUDIO_CAPTURE_DESCRIPTION,
         False,
-        {"seconds": 8, "outPath": "/tmp/bitwig-capture.wav"},
+        examples=({"seconds": 8, "outPath": "/tmp/bitwig-capture.wav"},),
         host=False,
-        annotations=ADD,
+        annotations=EDIT,
     ),
-    "audio.analyze": tool(
+    "audio.analyze": ToolSpec(
         AudioAnalyzeArgs,
         AUDIO_ANALYZE_DESCRIPTION,
         True,
-        {"path": "/tmp/bitwig-capture.wav", "mode": "level"},
+        examples=({"path": "/tmp/bitwig-capture.wav", "mode": "level"},),
         host=False,
+        summary="Offline analysis of one absolute .wav (no Bitwig needed). mode: level, onsets, mono_pitch, probe, loudness (LUFS, loudness range, true peak; at most 1800 s) or bands (band energy, centroid, stereo correlation, optional key). skipSeconds drops warm-up.",
     ),
 }

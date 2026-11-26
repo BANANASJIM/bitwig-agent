@@ -15,9 +15,8 @@ from bitwig_agent.protocol.base import (
     TrackId,
     UnitValue,
     omitted,
-    tool,
 )
-from bitwig_agent.protocol.limits import TRACK_WINDOW
+from bitwig_agent.protocol.limits import MAX_TIMEOUT_MS, MIN_TIMEOUT_MS, TRACK_WINDOW
 
 
 class TrackSetArgs(DeviceArgs):
@@ -84,9 +83,14 @@ class TrackSendSetArgs(DeviceArgs):
         return self
 
 
+METERS_MAX_WINDOW_MS = 5000
+METERS_SETTLE_MS = 300
+
+
 class TrackMetersArgs(StatusArgs):
     trackIds: list[TrackId] = Field(min_length=1, max_length=TRACK_WINDOW)
-    windowMs: int = Field(ge=50, le=5000)
+    windowMs: int = Field(ge=50, le=METERS_MAX_WINDOW_MS)
+    timeoutMs: int = Field(default=METERS_MAX_WINDOW_MS + METERS_SETTLE_MS, ge=MIN_TIMEOUT_MS, le=MAX_TIMEOUT_MS)
 
     @model_validator(mode="after")
     def unique_tracks(self) -> Self:
@@ -122,7 +126,7 @@ TRACKS_LIST_DESCRIPTION = "Discover real track UUIDs in the flat bounded track w
 TRACKS_GET_DESCRIPTION = "Read one track's mix state and bounded sends by UUID from tracks.list. Values explicitly named Normalized are in 0..1, not dB. Fields may be null after target changes; inspect readable, observationsComplete and sendObservationsComplete rather than treating partial observations as current values. Also reads color (#rrggbb), activated, monitorMode and crossFadeMode; options lists the host's own values for the two enums (these four never decide observationsComplete)."
 TRACKS_SET_DESCRIPTION = "Set only differing fields from a fresh tracks.get snapshot, by UUID; omitted fields stay unchanged. Returns outcome (the worst field's) and per-field outcome with reason; a field already at the value is already_matched. A redundant same-value write on a rebound proxy may remain unknown without a fresh callback; never automatically retry unknown. Values named Normalized are 0..1, not dB. volumeDb/volumeDisplay (e.g. -6 / '-6 dB') and panPercent/panDisplay (e.g. -25 / '25% L') are alternatives to the normalized fields: the API has no dB setter and no published curve, so the extension bisects the normalized value against the host's own displayed text and verifies the final display (displayWrite carries the probe count and the final observed display). An unreadable or unreachable display restores the original value, applies no other field of the call and reports outcome not_applied (unknown when the restore is not confirmed) with displayWrite.failure (display_not_reachable, display_unparseable, probe_not_observed); several fader moves are written, so expect brief level changes while it searches. color (#RRGGBB), activated (false deactivates the track), monitorMode and crossFadeMode (one of tracks.get options, the host's own list; an unlisted value is refused before any write) use the ordinary per-field readback."
 TRACKS_SENDS_SET_DESCRIPTION = "Set one send of a track by exact sendIndex or unique sendName (from tracks.get, whose send rows also name the effect track each send feeds) with optional expectedSendName compare-and-set. valueNormalized is 0..1 (not dB); display writes the level as the host shows it ('-12 dB', '-inf dB') by bisecting against the observed display, verified by display readback. enabled switches the send; a level write already turns a disabled send on (autoEnabled in the result; guide 7.1.6: new projects start with all sends disabled). Written last-wins: level first, then enabled. Inspect the outcome and fields[].outcome/reason; never retry unknown."
-TRACKS_METERS_DESCRIPTION = f"Read VU meter peak and RMS (left/right, steps 0..127; the public API publishes no dB mapping) over windowMs for 1..{TRACK_WINDOW} track UUIDs. Meters (guide 7.1.8) only move while audio renders, so start playback first (transport.set playing=true; consider audio.route silent). Returns per track peakMax, rmsMax, rmsMean, callbacks, silent. Set timeoutMs to at least windowMs + 300. Not LUFS: use audio.capture + audio.analyze mode=loudness for that."
+TRACKS_METERS_DESCRIPTION = f"Read VU meter peak and RMS (left/right, steps 0..127; the public API publishes no dB mapping) over windowMs for 1..{TRACK_WINDOW} track UUIDs. Meters (guide 7.1.8) only move while audio renders, so start playback first (transport.set playing=true; consider audio.route silent). Returns per track peakMax, rmsMax, rmsMean, callbacks, silent. Not LUFS: use audio.capture + audio.analyze mode=loudness for that."
 TRACKS_SELECT_DESCRIPTION = "Select an exact discovered track UUID in the host UI. Returns outcome sent: the command was dispatched and navigation is not observed; a selected snapshot does not acknowledge it. Inspect the actual UI and possible automatic arming before dependent edits; never blindly retry. Reads do not require selection."
 TRACKS_CREATE_DESCRIPTION = "Create and name a top-level track. position=-1 appends; otherwise a zero-based index among top-level main tracks (groups count, their children do not) for audio/instrument, among top-level effect tracks for effect. In a project with groups, tracks.list tree.complete must be true. Inspect the creation identity before using the new track. An unresolved creation holds further creates (reason unresolved); inspect actual state, never blindly retry or reset to bypass ambiguity."
 TRACKS_GROUP_DESCRIPTION = f"Put existing tracks into one new group track (the guide's select + Ctrl+G), without using the UI selection. trackIds must share one parent (top level or the same group); effect and master tracks are refused. The new group is inserted where the first of them was, their order is kept, and the native operation selects the group. Optional name is applied after the group is observed. Verified by one new Group UUID whose children are exactly trackIds (tracks.list parentId), every other parent unchanged. Needs the inspected Bitwig 6.1.4 JAR, recording/automation-write off, at most {TRACK_WINDOW - 1} tracks in the window and every parent observed (tracks.list tree.complete). Unknown outcomes hold tracks.create/tracks.group until you inspect tracks.list and ack the hold id; never retry."
@@ -130,46 +134,54 @@ TRACKS_DELETE_DESCRIPTION = f"Delete one audio/instrument/hybrid/effect track (T
 
 
 SPECS: dict[str, ToolSpec] = {
-    "tracks.list": tool(StatusArgs, TRACKS_LIST_DESCRIPTION, True),
-    "tracks.get": tool(DeviceArgs, TRACKS_GET_DESCRIPTION, True, {"trackId": TRACK}),
-    "tracks.set": tool(
+    "tracks.list": ToolSpec(StatusArgs, TRACKS_LIST_DESCRIPTION, True),
+    "tracks.get": ToolSpec(DeviceArgs, TRACKS_GET_DESCRIPTION, True, examples=({"trackId": TRACK},)),
+    "tracks.set": ToolSpec(
         TrackSetArgs,
         TRACKS_SET_DESCRIPTION,
         False,
-        {"trackId": TRACK, "mute": True},
-        {"trackId": TRACK, "color": "#ff8800", "monitorMode": "ON"},
-        {"trackId": TRACK, "volumeDb": -6, "panPercent": -25},
-        {"trackId": TRACK, "volumeDisplay": "-6 dB", "panDisplay": "25% L"},
+        examples=(
+            {"trackId": TRACK, "mute": True},
+            {"trackId": TRACK, "color": "#ff8800", "monitorMode": "ON"},
+            {"trackId": TRACK, "volumeDb": -6, "panPercent": -25},
+            {"trackId": TRACK, "volumeDisplay": "-6 dB", "panDisplay": "25% L"},
+        ),
+        summary="Set only the fields that differ, by track UUID from tracks.list; omitted fields stay unchanged. Values named Normalized are 0..1, not dB; volumeDb/volumeDisplay and panPercent/panDisplay are alternatives. Returns the worst field outcome and a per-field outcome with reason; never retry unknown.",
     ),
-    "tracks.sends.set": tool(
+    "tracks.sends.set": ToolSpec(
         TrackSendSetArgs,
         TRACKS_SENDS_SET_DESCRIPTION,
         False,
-        {"trackId": TRACK, "sendIndex": 0, "expectedSendName": "A-Reverb", "valueNormalized": 0.5},
-        {"trackId": TRACK, "sendName": "A-Reverb", "display": "-12 dB", "enabled": True},
+        examples=(
+            {"trackId": TRACK, "sendIndex": 0, "expectedSendName": "A-Reverb", "valueNormalized": 0.5},
+            {"trackId": TRACK, "sendName": "A-Reverb", "display": "-12 dB", "enabled": True},
+        ),
+        summary="Set one send of a track by sendIndex or sendName (from tracks.get). valueNormalized is 0..1, not dB; display ('-12 dB') also works. A level write turns a disabled send on. expectedSendName guards the target. Check fields[].outcome; never retry unknown.",
     ),
-    "tracks.meters": tool(TrackMetersArgs, TRACKS_METERS_DESCRIPTION, True, {"trackIds": [TRACK], "windowMs": 1000}),
-    "tracks.select": tool(DeviceArgs, TRACKS_SELECT_DESCRIPTION, False, {"trackId": TRACK}),
-    "tracks.create": tool(
+    "tracks.meters": ToolSpec(
+        TrackMetersArgs, TRACKS_METERS_DESCRIPTION, True, examples=({"trackIds": [TRACK], "windowMs": 1000},)
+    ),
+    "tracks.select": ToolSpec(DeviceArgs, TRACKS_SELECT_DESCRIPTION, False, examples=({"trackId": TRACK},)),
+    "tracks.create": ToolSpec(
         TrackCreateArgs,
         TRACKS_CREATE_DESCRIPTION,
         False,
-        {"type": "instrument", "position": -1, "name": "Agent Sketch"},
+        examples=({"type": "instrument", "position": -1, "name": "Agent Sketch"},),
         requires=PROJECT_READY,
     ),
-    "tracks.group": tool(
+    "tracks.group": ToolSpec(
         TrackGroupArgs,
         TRACKS_GROUP_DESCRIPTION,
         False,
-        {"trackIds": [TRACK, "12345678-1234-1234-1234-123456789abd"], "name": "Drums"},
+        examples=({"trackIds": [TRACK, "12345678-1234-1234-1234-123456789abd"], "name": "Drums"},),
         requires=PROJECT_READY,
         annotations=ADD,
     ),
-    "tracks.delete": tool(
+    "tracks.delete": ToolSpec(
         TrackDeleteArgs,
         TRACKS_DELETE_DESCRIPTION,
         False,
-        {"trackId": TRACK, "expectedName": "Track name"},
+        examples=({"trackId": TRACK, "expectedName": "Track name"},),
         requires=PROJECT_READY,
     ),
 }

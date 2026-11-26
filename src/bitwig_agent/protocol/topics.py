@@ -15,7 +15,6 @@ OUTCOMES = (
     "means the call was refused before anything changed; its code says what you can do: invalid_params "
     "(fix the call), stale (re-read the target), conflict, pending (wait or ack), unsafe_state (change the "
     "state it names, see next), unavailable, refused, incompatible, unknown_method, internal. "
-    "In MCP, isError is true for every error and for outcome not_applied or unknown."
 )
 
 RECOVERY = (

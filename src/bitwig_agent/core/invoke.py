@@ -55,11 +55,22 @@ def invalid_params(name: str, exc: Exception) -> Error:
     return invalid_params_error(invalid_params_message(name, exc))
 
 
-def ask_help(topic: str | None) -> Envelope:
+def ask_help(arguments: Mapping[str, Any]) -> Envelope:
+    topic = arguments.get("topic")
+    unknown = sorted(set(arguments) - {"topic"})
+    if unknown or not (topic is None or isinstance(topic, str)):
+        return invalid_params_error(
+            f"help takes only an optional string topic, got {', '.join(unknown) or type(topic).__name__}"
+        )
     try:
         return Result(views.help(topic))
     except ValueError as exc:
         return invalid_params_error(str(exc))
+
+
+def refuse_timeout(name: str) -> Error:
+    """For a front end that leaves the wait to the method's default."""
+    return invalid_params_error(views.unknown_field_message(name, "timeoutMs"))
 
 
 async def invoke(name: str, args: Mapping[str, Any], client: BridgeClient | None = None) -> Envelope:

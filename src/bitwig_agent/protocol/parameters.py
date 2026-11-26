@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pydantic import Field
 
-from bitwig_agent.protocol.base import TARGET, Nonempty, ParameterArgs, ToolSpec, TrackId, UnitValue, tool
+from bitwig_agent.protocol.base import TARGET, Nonempty, ParameterArgs, ToolSpec, TrackId, UnitValue
 from bitwig_agent.protocol.devices import LAYER_TARGET, LayerListArgs
 
 
@@ -32,23 +32,30 @@ PARAMETERS_LAYER_SET_DESCRIPTION = "Set one normalized layer-child direct parame
 
 
 SPECS: dict[str, ToolSpec] = {
-    "parameters.list": tool(ParameterArgs, PARAMETERS_LIST_DESCRIPTION, True, TARGET),
-    "parameters.set": tool(
+    "parameters.list": ToolSpec(ParameterArgs, PARAMETERS_LIST_DESCRIPTION, True, examples=(TARGET,)),
+    "parameters.set": ToolSpec(
         SetArgs,
         PARAMETERS_SET_DESCRIPTION,
         False,
-        {**TARGET, "contextToken": "from-parameters.list", "parameterId": "from-parameters.list", "value": 0.5},
+        examples=(
+            {**TARGET, "contextToken": "from-parameters.list", "parameterId": "from-parameters.list", "value": 0.5},
+        ),
     ),
-    "parameters.layer.list": tool(LayerParameterArgs, PARAMETERS_LAYER_LIST_DESCRIPTION, True, LAYER_TARGET),
-    "parameters.layer.set": tool(
+    "parameters.layer.list": ToolSpec(
+        LayerParameterArgs, PARAMETERS_LAYER_LIST_DESCRIPTION, True, examples=(LAYER_TARGET,)
+    ),
+    "parameters.layer.set": ToolSpec(
         LayerSetArgs,
         PARAMETERS_LAYER_SET_DESCRIPTION,
         False,
-        {
-            **LAYER_TARGET,
-            "contextToken": "from-parameters.layer.list",
-            "parameterId": "from-parameters.layer.list",
-            "value": 0.5,
-        },
+        examples=(
+            {
+                **LAYER_TARGET,
+                "contextToken": "from-parameters.layer.list",
+                "parameterId": "from-parameters.layer.list",
+                "value": 0.5,
+            },
+        ),
+        summary="Set one normalized (0..1) layer-child parameter using the tokens from devices.layers.list and parameters.layer.list.",
     ),
 }

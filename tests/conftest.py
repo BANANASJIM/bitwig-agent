@@ -8,6 +8,8 @@ import pytest
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+from bitwig_agent.core.invoke import invoke
+from bitwig_agent.frontends.mcp import envelope_result
 from bitwig_agent.protocol import TOOLS
 
 
@@ -62,31 +64,19 @@ async def host():
         await asyncio.gather(*pending, return_exceptions=True)
 
 
-SERVER = "from bitwig_agent.frontends.mcp import main; main()"
-SERVER_EXPOSING_ALL = (
-    "import dataclasses\n"
-    "from bitwig_agent.protocol import TOOLS\n"
-    "TOOLS.update({name: dataclasses.replace(spec, expose=True) for name, spec in TOOLS.items()})\n" + SERVER
-)
-
-
-@pytest.fixture(autouse=True)
-def every_method_exposed(request, monkeypatch):
-    """Method tests drive hidden building blocks too; tests of the surface itself ask for real_surface."""
-    if "real_surface" in request.fixturenames:
-        return
+@pytest.fixture
+def all_methods(monkeypatch):
+    """Expose every method in this process, for tests of the building blocks the surface hides."""
     for name, spec in list(TOOLS.items()):
         monkeypatch.setitem(TOOLS, name, dataclasses.replace(spec, expose=True))
 
 
 @pytest.fixture
-def real_surface():
-    """Marks a test that must see the surface exactly as the method table exposes it."""
-
-
-async def stdio_session(host, code):
+async def mcp_session(host):
     params = StdioServerParameters(
-        command=sys.executable, args=["-c", code], env=dict(os.environ, BITWIG_AGENT_PORT=str(host.port))
+        command=sys.executable,
+        args=["-c", "from bitwig_agent.frontends.mcp import main; main()"],
+        env=dict(os.environ, BITWIG_AGENT_PORT=str(host.port)),
     )
     async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
         initialized = await session.initialize()
@@ -94,13 +84,14 @@ async def stdio_session(host, code):
         yield session
 
 
-@pytest.fixture
-async def mcp_session(host):
-    async for session in stdio_session(host, SERVER_EXPOSING_ALL):
-        yield session
+class CoreCaller:
+    """Calls a method below the MCP adapter and shapes the answer as the adapter would."""
+
+    async def call_tool(self, name, arguments):
+        return envelope_result(await invoke(name, arguments))
 
 
 @pytest.fixture
-async def real_mcp_session(host, real_surface):
-    async for session in stdio_session(host, SERVER):
-        yield session
+async def core(host, all_methods, monkeypatch):
+    monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
+    return CoreCaller()

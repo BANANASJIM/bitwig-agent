@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from bitwig_agent.protocol.annotations import STEER
-from bitwig_agent.protocol.base import Nonempty, StatusArgs, ToolSpec, long_timeout, tool
+from bitwig_agent.protocol.base import Nonempty, StatusArgs, ToolSpec, long_timeout
 
 
 class IdArgs(StatusArgs):
@@ -31,6 +31,6 @@ JOBS_GET_DESCRIPTION = (
 )
 
 SPECS: dict[str, ToolSpec] = {
-    "ack": tool(AckArgs, ACK_DESCRIPTION, False, {"id": "routing.quarantine"}, annotations=STEER),
-    "jobs.get": tool(IdArgs, JOBS_GET_DESCRIPTION, True, {"id": "render:1"}),
+    "ack": ToolSpec(AckArgs, ACK_DESCRIPTION, False, examples=({"id": "routing.quarantine"},), annotations=STEER),
+    "jobs.get": ToolSpec(IdArgs, JOBS_GET_DESCRIPTION, True, examples=({"id": "render:1"},)),
 }

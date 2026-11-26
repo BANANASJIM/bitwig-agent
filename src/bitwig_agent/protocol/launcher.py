@@ -5,7 +5,7 @@ from typing import Annotated, Any, Literal, Self
 
 from pydantic import Field, model_validator
 
-from bitwig_agent.protocol.annotations import STEER
+from bitwig_agent.protocol.annotations import RETRIGGER, STEER
 from bitwig_agent.protocol.base import (
     ENGINE,
     MAX_BEAT,
@@ -17,7 +17,6 @@ from bitwig_agent.protocol.base import (
     StrictModel,
     ToolSpec,
     omitted,
-    tool,
     validate_local_path,
 )
 from bitwig_agent.protocol.limits import BEAT_GRID, BEAT_GRID_LABEL, MAX_CLIP_BEATS, SCENE_WINDOW
@@ -295,91 +294,132 @@ NOTES_EDIT_DESCRIPTION = (
 
 
 SPECS: dict[str, ToolSpec] = {
-    "launcher.list": tool(DeviceArgs, LAUNCHER_LIST_DESCRIPTION, True, {"trackId": TRACK}),
-    "launcher.get": tool(ClipSettingsArgs, LAUNCHER_GET_DESCRIPTION, True, {**CLIP, "expectedClipName": "Sketch"}),
-    "launcher.set": tool(
+    "launcher.list": ToolSpec(DeviceArgs, LAUNCHER_LIST_DESCRIPTION, True, examples=({"trackId": TRACK},)),
+    "launcher.get": ToolSpec(
+        ClipSettingsArgs, LAUNCHER_GET_DESCRIPTION, True, examples=({**CLIP, "expectedClipName": "Sketch"},)
+    ),
+    "launcher.set": ToolSpec(
         ClipSettingsSetArgs,
         LAUNCHER_SET_DESCRIPTION,
         False,
-        {
-            **CLIP,
-            "expectedClipName": "Sketch",
-            "nextAction": "play_next",
-            "nextActionEnabled": True,
-            "nextActionLinkToLoop": True,
-            "nextActionLoopCount": 1,
-            "nextActionDelayBeats": 0,
-        },
-        {
-            **CLIP,
-            "expectedClipName": "Sketch",
-            "launchQuantization": "1/4",
-            "useLoopStartAsQuantizationReference": True,
-        },
+        examples=(
+            {
+                **CLIP,
+                "expectedClipName": "Sketch",
+                "nextAction": "play_next",
+                "nextActionEnabled": True,
+                "nextActionLinkToLoop": True,
+                "nextActionLoopCount": 1,
+                "nextActionDelayBeats": 0,
+            },
+            {
+                **CLIP,
+                "expectedClipName": "Sketch",
+                "launchQuantization": "1/4",
+                "useLoopStartAsQuantizationReference": True,
+            },
+        ),
+        summary="Set Next Action fields of the occupied slot, or launchQuantization, launchMode and useLoopStartAsQuantizationReference. The quantization fields select the clip and cannot be combined with Next Action fields in one call. Needs a stopped, non-recording transport.",
     ),
-    "launcher.create": tool(
+    "launcher.create": ToolSpec(
         ClipCreateArgs,
         LAUNCHER_CREATE_DESCRIPTION,
         False,
-        {**CLIP, "lengthBeats": 4, "name": "Sketch"},
-        {
-            **CLIP,
-            "lengthBeats": 4,
-            "name": "Sketch",
-            "notes": [{"beat": 0, "pitch": 60, "velocity": 90, "durationBeats": 1}],
-        },
+        examples=(
+            {**CLIP, "lengthBeats": 4, "name": "Sketch"},
+            {
+                **CLIP,
+                "lengthBeats": 4,
+                "name": "Sketch",
+                "notes": [{"beat": 0, "pitch": 60, "velocity": 90, "durationBeats": 1}],
+            },
+        ),
         requires=PROJECT_READY,
     ),
-    "scenes.append": tool(ScenesAppendArgs, SCENES_APPEND_DESCRIPTION, False, {}, {"count": 2}, requires=PROJECT_READY),
-    "scenes.list": tool(StatusArgs, SCENES_LIST_DESCRIPTION, True),
-    "scenes.rename": tool(
-        SceneRenameArgs, SCENES_RENAME_DESCRIPTION, False, {"sceneIndex": 0, "expectedName": "", "name": "Intro"}
+    "scenes.append": ToolSpec(
+        ScenesAppendArgs,
+        SCENES_APPEND_DESCRIPTION,
+        False,
+        examples=(
+            {},
+            {"count": 2},
+        ),
+        requires=PROJECT_READY,
     ),
-    "scenes.launch": tool(
-        SceneTargetArgs, SCENES_LAUNCH_DESCRIPTION, False, {"sceneIndex": 0, "expectedName": "Intro"}, requires=ENGINE
+    "scenes.list": ToolSpec(StatusArgs, SCENES_LIST_DESCRIPTION, True),
+    "scenes.rename": ToolSpec(
+        SceneRenameArgs,
+        SCENES_RENAME_DESCRIPTION,
+        False,
+        examples=({"sceneIndex": 0, "expectedName": "", "name": "Intro"},),
     ),
-    "scenes.duplicate": tool(
+    "scenes.launch": ToolSpec(
+        SceneTargetArgs,
+        SCENES_LAUNCH_DESCRIPTION,
+        False,
+        examples=({"sceneIndex": 0, "expectedName": "Intro"},),
+        requires=ENGINE,
+        annotations=RETRIGGER,
+    ),
+    "scenes.duplicate": ToolSpec(
         SceneTargetArgs,
         SCENES_DUPLICATE_DESCRIPTION,
         False,
-        {"sceneIndex": 0, "expectedName": "Intro"},
+        examples=({"sceneIndex": 0, "expectedName": "Intro"},),
         requires=PROJECT_READY,
     ),
-    "scenes.delete": tool(
+    "scenes.delete": ToolSpec(
         SceneTargetArgs,
         SCENES_DELETE_DESCRIPTION,
         False,
-        {"sceneIndex": 0, "expectedName": "Intro"},
+        examples=({"sceneIndex": 0, "expectedName": "Intro"},),
         requires=PROJECT_READY,
     ),
-    "launcher.import": tool(
+    "launcher.import": ToolSpec(
         ClipImportArgs,
         LAUNCHER_IMPORT_DESCRIPTION,
         False,
-        {**CLIP, "path": "/absolute/path/audio.wav"},
+        examples=({**CLIP, "path": "/absolute/path/audio.wav"},),
         requires=PROJECT_READY,
     ),
-    "clips.edit": tool(
+    "clips.edit": ToolSpec(
         ClipEditArgs,
         CLIPS_EDIT_DESCRIPTION,
         False,
-        {**CLIP, "expectedClipName": "Sketch", "op": "rename", "name": "Verse"},
-        {**CLIP, "expectedClipName": "Sketch", "op": "resize", "lengthBeats": 8},
-        {**CLIP, "expectedClipName": "Sketch", "op": "color", "rgb": "#ff8800"},
-        {**CLIP, "expectedClipName": "Sketch", "op": "transpose", "semitones": -2},
-        {**CLIP, "expectedClipName": "Sketch", "op": "quantize", "amount": 0.5},
-        {**CLIP, "expectedClipName": "Sketch", "op": "duplicateContent"},
-        {**CLIP, "expectedClipName": "Sketch", "op": "delete"},
-        {**CLIP, "expectedClipName": "Sketch", "op": "copyTo", "targetSlotIndex": 1},
+        examples=(
+            {**CLIP, "expectedClipName": "Sketch", "op": "rename", "name": "Verse"},
+            {**CLIP, "expectedClipName": "Sketch", "op": "resize", "lengthBeats": 8},
+            {**CLIP, "expectedClipName": "Sketch", "op": "color", "rgb": "#ff8800"},
+            {**CLIP, "expectedClipName": "Sketch", "op": "transpose", "semitones": -2},
+            {**CLIP, "expectedClipName": "Sketch", "op": "quantize", "amount": 0.5},
+            {**CLIP, "expectedClipName": "Sketch", "op": "duplicateContent"},
+            {**CLIP, "expectedClipName": "Sketch", "op": "delete"},
+            {**CLIP, "expectedClipName": "Sketch", "op": "copyTo", "targetSlotIndex": 1},
+        ),
     ),
-    "launcher.launch": tool(ClipArgs, LAUNCHER_LAUNCH_DESCRIPTION, False, CLIP, requires=ENGINE),
-    "launcher.stop": tool(DeviceArgs, LAUNCHER_STOP_DESCRIPTION, False, {"trackId": TRACK}),
-    "notes.read": tool(NoteWindowArgs, NOTES_READ_DESCRIPTION, False, NOTE_WINDOW, CLIP, annotations=STEER),
-    "notes.edit": tool(
+    "launcher.launch": ToolSpec(
+        ClipArgs, LAUNCHER_LAUNCH_DESCRIPTION, False, examples=(CLIP,), requires=ENGINE, annotations=RETRIGGER
+    ),
+    "launcher.stop": ToolSpec(DeviceArgs, LAUNCHER_STOP_DESCRIPTION, False, examples=({"trackId": TRACK},)),
+    "notes.read": ToolSpec(
+        NoteWindowArgs,
+        NOTES_READ_DESCRIPTION,
+        False,
+        examples=(
+            NOTE_WINDOW,
+            CLIP,
+        ),
+        annotations=STEER,
+        summary="Read a clip's notes in a channel, grid and pitch window; selects the clip in the host UI. Omit the window to read the whole loop. Rows {beat, pitch, velocity, durationBeats} are what notes.edit takes. At most 2048 onsets: if completeWindow is false, subdivide.",
+    ),
+    "notes.edit": ToolSpec(
         NoteEditArgs,
         NOTES_EDIT_DESCRIPTION,
         False,
-        {**NOTE_WINDOW, "edits": [{"op": "set", "beat": 0.0, "pitch": 60, "velocity": 90, "durationBeats": 1.0}]},
-        {**CLIP, "edits": [{"op": "set", "beat": 0.0, "pitch": 60, "velocity": 90, "durationBeats": 1.0}]},
+        examples=(
+            {**NOTE_WINDOW, "edits": [{"op": "set", "beat": 0.0, "pitch": 60, "velocity": 90, "durationBeats": 1.0}]},
+            {**CLIP, "edits": [{"op": "set", "beat": 0.0, "pitch": 60, "velocity": 90, "durationBeats": 1.0}]},
+        ),
+        summary="Edit up to 256 onset cells of a clip; selects the clip in the host UI. set needs op, beat, pitch, velocity 1..127 and durationBeats; clear needs op, beat, pitch. Beats align exactly to stepSizeBeats (omit the window to derive it). Never retry unknown.",
     ),
 }
