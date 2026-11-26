@@ -226,7 +226,6 @@ final class GridTopologyQuarantine {
         }
     }
 
-    /** Recorded JSON text of the device quarantine, or null. */
     String detail(String device) {
         try {
             Properties p = properties();

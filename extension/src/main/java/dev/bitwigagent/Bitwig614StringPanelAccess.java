@@ -56,7 +56,6 @@ final class Bitwig614StringPanelAccess implements GridStringPanelWriter.Access {
         }
     }
 
-    /** Null when the write operation is bound; otherwise why not. */
     String setterError() {
         return setterError;
     }

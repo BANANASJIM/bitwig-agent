@@ -87,8 +87,8 @@ def row_rect(row: dict[str, Any]) -> Rect:
 
 @dataclass
 class Footprints:
-    size: dict[str, Cell]  # spec modules whose size is known
-    fixed: list[Rect]  # modules the spec does not manage
+    known_sizes: dict[str, Cell]
+    unmanaged: list[Rect]
     problems: list[str]
 
 

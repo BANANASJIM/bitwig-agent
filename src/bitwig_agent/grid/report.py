@@ -37,8 +37,8 @@ class Ledger:
         self.steps: list[dict[str, Any]] = []
         self.ids: dict[str, str] = {}
         self.warnings: list[str] = []
-        self.unnamed: dict[str, str] = {}  # inserted modules whose rename has not landed
-        self.pending: dict[str, int] = {}  # work not yet dispatched, by kind
+        self.awaiting_rename: dict[str, str] = {}
+        self.undispatched: dict[str, int] = {}
         self.phase = "validate"
 
     def warn(self, text: str) -> None:
@@ -76,17 +76,17 @@ class Ledger:
         out["notDispatched"] = {
             "phasesNotStarted": list(PHASES[started:]),
             "failedPhaseIncomplete": self.phase,
-            **{k: v for k, v in self.pending.items() if v},
+            **{k: v for k, v in self.undispatched.items() if v},
         }
-        if self.unnamed:
-            out["unnamedModules"] = dict(self.unnamed)
+        if self.awaiting_rename:
+            out["unnamedModules"] = dict(self.awaiting_rename)
         out["next"] = (
             "Outcome unknown: inspect with grid.get before any further write; this device may now be quarantined (grid.capabilities topologyQuarantine.devices): grid.topology.reconcile on it re-verifies and releases it, no restart."
             if status == "unknown"
             else "Fix the cause and re-apply the same spec; applied work is reused."
             + (
                 " Modules listed in unnamedModules are not renamed yet: rename them by hand (customName = value) or delete them first."
-                if self.unnamed
+                if self.awaiting_rename
                 else ""
             )
         )
@@ -104,12 +104,12 @@ class Ledger:
         steps_plan = {
             "deletes": [label_of(r) for r in plan.deletes],
             **({"replaces": plan.replaced_names} if plan.replaced_names else {}),
-            **({"droppedConnections": plan.dropped} if plan.dropped else {}),
+            **({"droppedConnections": plan.dropped_cables} if plan.dropped_cables else {}),
             "inserts": [
                 {"name": n, "type": spec.resolved[n].type_name, "x": spec.position(n)[0], "y": spec.position(n)[1]}
                 for n in plan.inserts
             ],
-            "renames": [*plan.name_existing, *plan.inserts],
+            "renames": [*plan.to_name_first, *plan.inserts],
             "moves": moves,
             "params": param_plan,
             "connections": [{k: v for k, v in e.items() if k != "write"} for e in edits],
@@ -117,7 +117,7 @@ class Ledger:
         }
         planned = {
             "inserted": len(plan.inserts),
-            "renamed": len(plan.inserts) + len(plan.name_existing),
+            "renamed": len(plan.inserts) + len(plan.to_name_first),
             "moved": len(moves),
             "paramsWritten": len(param_plan),
             "connections": sum(1 for e in edits if e["from"]),

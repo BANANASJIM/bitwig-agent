@@ -10,10 +10,11 @@ import difflib
 import os
 import re
 import sys
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
-from bitwig_agent import raw_scales
+from bitwig_agent.grid import raw_scales
 from bitwig_agent.grid.bundled import bundled_schema
 from bitwig_agent.grid.display import SECONDS_PARAMS
 from bitwig_agent.grid.names import resolve
@@ -132,6 +133,15 @@ def read_properties(path: Path) -> dict[str, str]:
     return parse_properties(text)
 
 
+def load_localized(directory: Path, stem: str, lang: str) -> dict[str, str]:
+    base = directory / f"{stem}.properties"
+    merged = read_properties(base) if base.is_file() else {}
+    localized = directory / f"{stem}_{lang}.properties"
+    if lang != "en" and localized.is_file():
+        merged = {**merged, **read_properties(localized)}
+    return merged
+
+
 def localization_dir(root: str | os.PathLike[str] | None = None) -> Path:
     """Explicit root, else BITWIG_INSTALLATION_ROOT, else the install holding BITWIG_API_JAR, else known defaults."""
     candidates: list[Path] = []
@@ -162,16 +172,8 @@ def norm(text: str) -> str:
 
 class Docs:
     def __init__(self, directory: Path, lang: str):
-        def load(stem: str) -> dict[str, str]:
-            base = directory / f"{stem}.properties"
-            merged = read_properties(base) if base.is_file() else {}
-            localized = directory / f"{stem}_{lang}.properties"
-            if lang != "en" and localized.is_file():
-                merged = {**merged, **read_properties(localized)}
-            return merged
-
-        self.descriptions = load("Module-descriptions-resources")
-        self.entries = load("Modules-resources")
+        self.descriptions = load_localized(directory, "Module-descriptions-resources", lang)
+        self.entries = load_localized(directory, "Modules-resources", lang)
         self.ids: dict[str, str] = {}  # resource id -> its `.desc` key
         self.id_category: dict[str, str | None] = {}
         category = None
@@ -205,17 +207,27 @@ class Docs:
         return found
 
 
+_T = TypeVar("_T")
 _cache: dict[tuple[str, str], Docs] = {}
 
 
-def get_docs(root: str | os.PathLike[str] | None = None, lang: str = "en") -> Docs:
+def cached_docs(
+    cache: dict[tuple[str, str], _T],
+    build: Callable[[Path, str], _T],
+    root: str | os.PathLike[str] | None,
+    lang: str,
+) -> _T:
     if lang not in LANGS:
         raise ValueError(f"lang must be one of {', '.join(LANGS)}")
     directory = localization_dir(root)
     key = (str(directory), lang)
-    if key not in _cache:
-        _cache[key] = Docs(directory, lang)
-    return _cache[key]
+    if key not in cache:
+        cache[key] = build(directory, lang)
+    return cache[key]
+
+
+def get_docs(root: str | os.PathLike[str] | None = None, lang: str = "en") -> Docs:
+    return cached_docs(_cache, Docs, root, lang)
 
 
 def _tokens(text: str) -> set[str]:

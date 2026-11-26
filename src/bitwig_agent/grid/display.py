@@ -7,7 +7,7 @@ import re
 from collections.abc import Callable
 from typing import Any, NamedTuple, cast
 
-from bitwig_agent import raw_scales
+from bitwig_agent.grid import raw_scales
 from bitwig_agent.grid.bundled import shared
 from bitwig_agent.grid.problems import SpecError
 

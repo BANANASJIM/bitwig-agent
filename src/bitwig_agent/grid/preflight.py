@@ -41,6 +41,6 @@ def _unverified_displays(spec: Spec, plan: Plan) -> list[Refusal]:
 
 
 async def preflight(channel: Channel, spec: Spec, plan: Plan, wiring: WiringPlan) -> list[Refusal]:
-    structural = bool(plan.inserts or plan.deletes or plan.name_existing or plan.pre_moves or wiring.edits)
+    structural = bool(plan.inserts or plan.deletes or plan.to_name_first or plan.pre_moves or wiring.edits)
     writes = structural or bool(plan.voicing.changes or any(plan.params[n][0] for n in spec.names))
     return [*(await _transport_blocks(channel, structural) if writes else []), *_unverified_displays(spec, plan)]

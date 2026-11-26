@@ -14,7 +14,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from bitwig_agent.grid.docs import LANGS, DocsUnavailable, _tokens, localization_dir, read_properties
+from bitwig_agent.grid.docs import DocsUnavailable, _tokens, cached_docs, load_localized
 
 GENERAL = "modulator_general"
 # Display name -> extra Modulators-resources prefixes, only where the prefix is not `<id>` or `<id>-modulator`.
@@ -49,19 +49,11 @@ def category_name(category: str) -> str:
 
 class ModulatorDocs:
     def __init__(self, directory: Path, lang: str):
-        def load(stem: str) -> dict[str, str]:
-            base = directory / f"{stem}.properties"
-            merged = read_properties(base) if base.is_file() else {}
-            localized = directory / f"{stem}_{lang}.properties"
-            if lang != "en" and localized.is_file():
-                merged = {**merged, **read_properties(localized)}
-            return merged
-
         base = directory / "Modulator-descriptions-resources.properties"
         if not base.is_file():
             raise DocsUnavailable(f"{base} not found; this Bitwig install has no modulator help resources")
-        self.descriptions = load("Modulator-descriptions-resources")
-        self.entries = load("Modulators-resources")
+        self.descriptions = load_localized(directory, "Modulator-descriptions-resources", lang)
+        self.entries = load_localized(directory, "Modulators-resources", lang)
         # Categories are the `#<category>.` comment headers that precede each group in the English file.
         self.category: dict[str, str] = {}
         current = None
@@ -122,13 +114,7 @@ _cache: dict[tuple[str, str], ModulatorDocs] = {}
 
 
 def get_docs(root: str | os.PathLike[str] | None = None, lang: str = "en") -> ModulatorDocs:
-    if lang not in LANGS:
-        raise ValueError(f"lang must be one of {', '.join(LANGS)}")
-    directory = localization_dir(root)
-    key = (str(directory), lang)
-    if key not in _cache:
-        _cache[key] = ModulatorDocs(directory, lang)
-    return _cache[key]
+    return cached_docs(_cache, ModulatorDocs, root, lang)
 
 
 def search(docs: ModulatorDocs, query: str) -> list[dict[str, Any]]:

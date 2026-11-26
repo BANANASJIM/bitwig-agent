@@ -82,7 +82,7 @@ class Executor:
         for row in self.plan.deletes:
             await self._write("grid.modules.delete", {"moduleId": row["instanceId"]})
             self.ledger.applied["deleted"] += 1
-            self.ledger.pending["deleted"] -= 1
+            self.ledger.undispatched["deleted"] -= 1
             name = label_of(row)
             self.ledger.steps.append(
                 {"op": "delete", "name": name, **({"replace": True} if name in self.plan.replaced_names else {})}
@@ -94,12 +94,12 @@ class Executor:
             "grid.modules.rename", {"moduleId": module_id, "expectedCustomName": expected, "customName": name}
         )
         self.ledger.applied["renamed"] += 1
-        self.ledger.unnamed.pop(module_id, None)
+        self.ledger.awaiting_rename.pop(module_id, None)
         self.ledger.steps.append({"op": "rename", "name": name})
 
     async def _name_existing(self) -> None:
         self.ledger.phase = "rename"
-        for name in self.plan.name_existing:
+        for name in self.plan.to_name_first:
             await self._rename(name, "")
 
     async def _move_to(self, name: str, pos: dict[str, Cell], at: Cell) -> None:
@@ -154,9 +154,9 @@ class Executor:
         for name, entry in zip(chunk, result.get("modules", []), strict=False):
             if entry.get("status") == "applied" and entry.get("moduleId"):
                 self.ledger.ids[name] = entry["moduleId"]
-                self.ledger.unnamed[entry["moduleId"]] = name
+                self.ledger.awaiting_rename[entry["moduleId"]] = name
                 self.ledger.applied["inserted"] += 1
-                self.ledger.pending["inserted"] -= 1
+                self.ledger.undispatched["inserted"] -= 1
                 fresh.append(name)
         self.ledger.steps.append({"op": "insert", "count": len(chunk), "status": result.get("batchStatus")})
         return fresh
@@ -200,13 +200,16 @@ class Executor:
                 raise _stale_stop(f"module {n!r} is missing after insertion")
         pos = {i: (r["x"], r["y"]) for i, r in by_id.items()}
         for n in spec.names:
-            if n not in layout.size and (found := size_of(by_id[ids[n]])) is not None:
-                layout.size[n] = found
+            if n not in layout.known_sizes and (found := size_of(by_id[ids[n]])) is not None:
+                layout.known_sizes[n] = found
         managed = {ids[n] for n in spec.names}
         fixed = [row_rect(r) for i, r in by_id.items() if i not in managed and has_rect(r)]
         try:
             moves = order_moves(
-                {n: pos[ids[n]] for n in spec.names}, {n: spec.position(n) for n in spec.names}, layout.size, fixed
+                {n: pos[ids[n]] for n in spec.names},
+                {n: spec.position(n) for n in spec.names},
+                layout.known_sizes,
+                fixed,
             )
         except SpecError as exc:
             raise _invalid_stop(exc) from exc
@@ -256,8 +259,8 @@ class Executor:
         by_name = {n: by_id[ids[n]] for n in spec.names if ids[n] in by_id}
         if len(by_name) != len(spec.names):
             raise _stale_stop("a declared module vanished before wiring")
-        external = {n: by_id[r["instanceId"]] for n, r in plan.ext_rows.items() if r["instanceId"] in by_id}
-        if len(external) != len(plan.ext_rows):
+        external = {n: by_id[r["instanceId"]] for n, r in plan.external_rows.items() if r["instanceId"] in by_id}
+        if len(external) != len(plan.external_rows):
             raise _stale_stop("an external module vanished before wiring")
         rows = {**by_name, **external}
         try:

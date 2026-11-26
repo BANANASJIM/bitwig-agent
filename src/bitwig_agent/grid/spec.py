@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from functools import cached_property
 from typing import Any, NamedTuple
 
-from bitwig_agent import raw_scales
+from bitwig_agent.grid import raw_scales
 from bitwig_agent.grid.display import DisplayBasis, check_display, display_want, enum_context
 from bitwig_agent.grid.names import resolve
 from bitwig_agent.grid.problems import SpecError, hint, near
@@ -58,8 +58,8 @@ class TypeCatalog:
 
 @dataclass(frozen=True)
 class ParamSpec:
-    raw: Any  # the value as written in the spec
-    want: dict[str, Any] | None  # the checked write fields; None until a live row can check it
+    written: Any
+    checked: dict[str, Any] | None
 
 
 @dataclass

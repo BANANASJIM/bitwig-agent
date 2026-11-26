@@ -129,7 +129,6 @@ final class Bitwig614TrackResolver {
         return a.invoke(parent, model);
     }
 
-    /** The nearest native ancestor of {@code type}, or null. */
     Object owner(Object model, Class<?> type) {
         return a.invoke(owner, model, type);
     }

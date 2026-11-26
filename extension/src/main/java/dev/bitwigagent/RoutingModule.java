@@ -15,12 +15,9 @@ import java.util.concurrent.atomic.AtomicLong;
 final class RoutingModule implements HostModule {
     static final Set<String> METHODS =
             Set.of("tracks.routing.get", "tracks.routing.set", "devices.sidechain.get", "devices.sidechain.set");
-    /** Entry kinds a caller may request for a track output chooser. */
     static final Set<String> OUTPUT_KINDS = Set.of("none", "track_audio_input", "track_note_input");
-    /** Entry kinds a caller may request for a track input chooser or a device sidechain source. */
     static final Set<String> SOURCE_KINDS = Set.of(
             "none", "pre_fader", "post_fader", "track_notes", "all_ins", "computer_keyboard", "onscreen_keyboard");
-    /** Kinds that name a track of the bank. */
     static final Set<String> TRACK_KINDS =
             Set.of("track_audio_input", "track_note_input", "pre_fader", "post_fader", "track_notes");
     /** Native source-kind group (kCk) that admits each requestable source kind; "none" is always admitted. */

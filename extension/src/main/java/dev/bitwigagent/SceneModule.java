@@ -149,7 +149,6 @@ final class SceneModule implements HostModule {
         return out;
     }
 
-    /** Observed tracks that hold a clip in this scene row. */
     private List<ClipLauncherSlot> occupied(int index) {
         List<ClipLauncherSlot> out = new ArrayList<>();
         for (int t = 0; t < HostServices.TRACKS; t++)

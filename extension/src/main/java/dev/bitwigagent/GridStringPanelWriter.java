@@ -20,7 +20,6 @@ final class GridStringPanelWriter {
         this.nativeWriter = nativeWriter;
     }
 
-    /** Every pre-dispatch check of set(); nothing is written. */
     void preflight(GridSnapshotReader.ParameterBinding binding, GridParameterWriter.Request request, Runnable check) {
         nativeWriter.requireSupported(binding.parameter);
         request.validateCurrent(values.parameterValue(binding));

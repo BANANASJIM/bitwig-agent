@@ -74,12 +74,12 @@ class Session:
         ledger.matched["modules"], ledger.matched["positions"] = plan.matched_modules, plan.matched_positions
         for note in plan.notes:
             ledger.warn(note)
-        ledger.warnings += measured_warnings(spec, plan.existing)
-        ledger.warnings += await trap_warnings(spec, plan.existing, graph, self._is_poly)
+        ledger.warnings += measured_warnings(spec, plan.existing_by_name)
+        ledger.warnings += await trap_warnings(spec, plan.existing_by_name, graph, self._is_poly)
         # Spec-detectable parameter problems of existing modules surface before the first write.
         rows = await self.channel.read(read_params, params_to_read(spec, plan), full=spec.has_steps, require=True)
         plan.params = plan_module_params(spec, plan, rows)
-        ledger.pending = {"deleted": len(plan.deletes), "inserted": len(plan.inserts)}
+        ledger.undispatched = {"deleted": len(plan.deletes), "inserted": len(plan.inserts)}
         return await (self._dry_run(plan) if spec.dry_run else self._write(plan))
 
     async def _dry_run(self, plan: Plan) -> dict[str, Any]:
@@ -87,7 +87,7 @@ class Session:
         for name in spec.names:
             ledger.matched["params"] += plan.params[name][1]
         wiring = plan_connections(
-            spec, {**plan.existing, **plan.ext_rows}, plan.graph.cables, plan.gone_ids, plan.graph.rows
+            spec, {**plan.existing_by_name, **plan.external_rows}, plan.graph.cables, plan.gone_ids, plan.graph.rows
         )
         ledger.absorb(wiring)
         return ledger.dry_report(plan, wiring, await preflight(self.channel, spec, plan, wiring))
