@@ -282,22 +282,6 @@ final class HostFixture {
         cursorSlot.on("createEqualsValue", args -> sameSlot.proxy());
     }
 
-    /** The one chain of a layer device, observed with this UUID and name; returns its device bank (one slot). */
-    static FakeHost observeChain(FakeHost rackNode, String layerId, String name) {
-        rackNode.child("hasLayers").emit(true);
-        FakeHost layers = rackNode.child("createLayerBank");
-        layers.child("exists").emit(true);
-        layers.child("itemCount").emit(1);
-        FakeHost layer = layers.item(0);
-        layer.child("exists").emit(true);
-        layer.child("channelId").emit(layerId);
-        layer.child("name").emit(name);
-        FakeHost children = layer.child("createDeviceBank");
-        children.child("exists").emit(true);
-        children.child("itemCount").emit(1);
-        return children;
-    }
-
     /** The cursor remote-controls page a device offers, empty and unmapped. */
     static void remotePage(FakeHost device) {
         FakeHost page = device.child("createCursorRemoteControlsPage");

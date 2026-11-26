@@ -1522,7 +1522,7 @@ public final class GridModuleTest {
     }
 
     @Test
-    void layerAddressingNeedsObservedLayersAndChildren() {
+    void rootAddressingNeedsAnObservedDeviceWindow() {
         JsonObject badParent = legacyTarget();
         badParent.addProperty("trackId", "not-a-uuid");
         HostFixture unobserved = HostFixture.withoutServices();
@@ -1537,32 +1537,11 @@ public final class GridModuleTest {
         Fixture f = new Fixture();
         DeviceSources sources = f.host.services.sources;
         assertThrows(RpcException.class, () -> sources.root(badParent));
-        JsonObject root = Refs.device(Refs.track(HostFixture.A, "Track 0"), 0, "Poly Grid");
-        FakeHost layers = f.device.child("createLayerBank");
-        f.device.child("hasLayers").emit(true);
-        layers.child("exists").emit(true);
-        layers.child("itemCount").emit(1);
-        FakeHost layer = layers.item(0);
-        String id = "00000000-0000-0000-0000-0000000000aa";
-        layer.child("exists").emit(true);
-        assertTrue(
-                assertRpcError("not_ready", () -> sources.chain(Refs.chain(root, id, "Pad"), false))
-                        .getMessage()
-                        .contains("Layer identity window"),
-                "an existing layer without an observed UUID is not addressable");
-        layer.child("channelId").emit(id);
-        assertTrue(
-                assertRpcError("not_ready", () -> sources.chain(Refs.chain(root, id, "Pad"), false))
-                        .getMessage()
-                        .contains("Layer and child window"),
-                "a layer whose child window was never observed is not addressable");
-        layer.child("createDeviceBank").child("exists").emit(true);
-        JsonObject chain = Refs.chain(root, id, "Pad");
-        assertTrue(
-                assertRpcError("target_not_found", () -> sources.device(Refs.device(chain, 0, "Child"), false))
-                        .getMessage()
-                        .contains("No device is at this index"),
-                "a chain device that is not there is not addressable");
+        JsonObject chain = Refs.chain(
+                Refs.device(Refs.track(HostFixture.A, "Track 0"), 0, "Poly Grid"),
+                "00000000-0000-0000-0000-0000000000aa",
+                "Pad");
+        assertRpcError("unsupported_scope", () -> sources.device(Refs.device(chain, 0, "Child"), false));
     }
 
     @Test

@@ -32,7 +32,7 @@ The skill supports screenshot-only guidance, delegated production and troublesho
 
 | Domain | Implemented surface |
 |---|---|
-| Discovery | Status (`detail=full` adds the implemented surface), `context.get` (project/transport safety, scenes, tracks with occupied slots, selection, cursor clip), tracks, root devices, fixed one-hop layers and host Actions |
+| Discovery | Status (`detail=full` adds the implemented surface), `context.get` (project/transport safety, scenes, tracks with occupied slots, selection, cursor clip), tracks, root devices, chains of layer devices (read natively, any depth) and host Actions |
 | Transport | Play/stop, raw tempo, time signature, seek, metronome and arranger loop, with recording/automation safety guards |
 | Markers | `markers.list/insert/set/delete`: arranger cue markers by ref (rank + name + beat), verified by whole-list readback |
 | Tracks | Ref-addressed mix/name/mute/solo/arm, volume/pan as the 0–1 value a read returned or `{display}` text (pan 0.5 is centre), send level/enable writes (`tracks.sends.set`), VU peak/RMS windows (`meters.get`), selection, audio/instrument/effect insertion at a position (`tracks.insert`) and name-guarded deletion (`tracks.delete`; one Undo restores the track with its UUID, so stepping through Undo also undoes deletes) |

@@ -11,13 +11,12 @@ import java.util.*;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Resolves device and chain refs on fixed observed device addresses and corroborates a root device's native owner.
- * Tokens describe continuity, never persistent device identity.
+ * Resolves root device refs on fixed observed device addresses and corroborates a root device's native owner. Devices
+ * inside chains are not observed here: {@link NativeChains} walks to them natively on every request.
  */
 final class DeviceSources {
-    static final int LAYERS = 2, CHILDREN = 2;
     final Source[][] roots = new Source[TRACKS][DEVICES];
-    final List<Source> all = new ArrayList<>(TRACKS * DEVICES * (1 + LAYERS * CHILDREN));
+    final List<Source> all = new ArrayList<>(TRACKS * DEVICES);
     private final TrackWindow window;
     private final TrackRefs trackRefs;
     private final TrackState[] tracks = new TrackState[TRACKS];
@@ -40,21 +39,16 @@ final class DeviceSources {
             tracks[t] = track;
             track.observe();
             for (int d = 0; d < DEVICES; d++) {
-                Source root = new Source(track, d, (Device) window.devices(t).getItemAt(d), null);
+                Source root = new Source(track, d, (Device) window.devices(t).getItemAt(d));
                 roots[t][d] = root;
                 all.add(root);
                 root.observe();
-                root.branch = new Branch(root);
             }
         }
     }
 
     interface Listener {
         void changed(boolean structural, boolean name);
-    }
-
-    interface WindowChange {
-        void changed(boolean knownDiscontinuity);
     }
 
     final class TrackState {
@@ -100,19 +94,7 @@ final class DeviceSources {
                 else changed(change);
             });
             window.devices(slot).itemCount().addValueObserver((IntegerValueChangedCallback) value -> {
-                boolean change = count != null && count != value;
-                Integer previousCount = count;
                 count = value;
-                if (change)
-                    for (Source source : roots[slot]) {
-                        if (source == null || source.branch == null) continue;
-                        boolean previouslyInRange = previousCount != null
-                                && offset != null
-                                && offset >= 0
-                                && (long) offset + source.slot < previousCount;
-                        if (previouslyInRange) source.branch.retire();
-                        else source.branch.changed(true, false);
-                    }
                 changed(false);
             });
         }
@@ -142,28 +124,23 @@ final class DeviceSources {
         final TrackState track;
         final int slot;
         final Device device;
-        final Layer layer;
         final List<Listener> listeners = new ArrayList<>(2);
-        Branch branch;
         Boolean exists;
         String name, type;
         Integer position;
         long epoch, revision, nameSequence;
-        final AtomicLong rootReadEpoch;
-        boolean established, rebound;
+        final AtomicLong rootReadEpoch = new AtomicLong();
+        boolean established;
         // Legacy root direct callbacks can precede Value callbacks. This getter snapshot
         // preserves that root-only bank-proxy policy without marking metadata observed.
         String directTrackId, directName;
         int directPosition;
 
-        Source(TrackState track, int slot, Device device, Layer layer) {
+        Source(TrackState track, int slot, Device device) {
             this.track = track;
             this.slot = slot;
             this.device = device;
-            this.layer = layer;
-            rootReadEpoch = layer == null ? new AtomicLong() : null;
-            if (layer == null) listeners.add((structural, renamed) -> rootReadEpoch.incrementAndGet());
-            if (layer != null) rebound = layer.rebound;
+            listeners.add((structural, renamed) -> rootReadEpoch.incrementAndGet());
         }
 
         void observe() {
@@ -207,15 +184,12 @@ final class DeviceSources {
                     && !name.isEmpty()
                     && !type.isEmpty()
                     && track.ready()
-                    && (layer == null
-                            ? position == track.offset + slot
-                            : layer.ready() && position == slot && slot < layer.window.count);
+                    && position == track.offset + slot;
             if (ready) established = true;
             return ready;
         }
 
         boolean directReady() {
-            if (layer != null) return present() && !rebound;
             reconcileRootDirectContext();
             return present()
                     && track.proxy.exists().get()
@@ -226,7 +200,6 @@ final class DeviceSources {
         }
 
         boolean acceptDirectObservation() {
-            if (layer != null) return directReady();
             reconcileRootDirectContext();
             if (!track.proxy.exists().get() || !device.exists().get()) return false;
             if (directTrackId == null) {
@@ -251,12 +224,7 @@ final class DeviceSources {
         }
 
         void changed(boolean structural, boolean renamed) {
-            changed(structural, renamed, false);
-        }
-
-        private void changed(boolean structural, boolean renamed, boolean knownNestedDiscontinuity) {
-            // Initial absence/default metadata is not a physical replacement. Once usable, any
-            // structural change retires nested direct access for this extension lifetime.
+            // Initial absence/default metadata is not a physical replacement.
             boolean hadDirectContext = directTrackId != null;
             if (hadDirectContext) {
                 // Before full metadata establishment, agreeing first notifications are not
@@ -269,204 +237,18 @@ final class DeviceSources {
                 } else if (renamed) directName = device.name().get();
             }
             boolean retired = structural && (established || hadDirectContext);
-            if (retired) {
-                epoch++;
-                if (layer != null) rebound = true;
-            }
+            if (retired) epoch++;
             if (retired || renamed) revision++;
             if (present()) established = true;
             for (Listener listener : listeners) listener.changed(retired, renamed);
-            if (branch != null) {
-                if (retired || knownNestedDiscontinuity) branch.retire();
-                else if (renamed) branch.changed(false, true);
-            }
         }
 
         void retire() {
-            if (layer == null) {
-                // Preserve accepted root getter tuples, but never preserve uncertain descendants.
-                changed(true, false, true);
-                return;
-            }
-            rebound = true;
-            epoch++;
-            revision++;
-            for (Listener listener : listeners) listener.changed(true, false);
+            changed(true, false);
         }
 
         JsonObject ref() {
-            return Refs.device(layer == null ? trackRefs.ref(track.slot) : layer.ref(), position, name);
-        }
-    }
-
-    final class Window {
-        final int capacity;
-        Boolean exists;
-        Integer count, offset;
-        long countSequence;
-
-        Window(int capacity) {
-            this.capacity = capacity;
-        }
-
-        void observe(BooleanValue existence, IntegerValue size, IntegerValue scroll, WindowChange changed) {
-            existence.addValueObserver((BooleanValueChangedCallback) value -> {
-                boolean change = exists != null && exists != value, removed = Boolean.TRUE.equals(exists) && !value;
-                exists = value;
-                if (change) changed.changed(removed);
-            });
-            size.addValueObserver((IntegerValueChangedCallback) value -> {
-                boolean change = count != null && count != value, populated = count != null && count > 0;
-                count = value;
-                countSequence++;
-                if (change) changed.changed(populated);
-            });
-            scroll.addValueObserver((IntegerValueChangedCallback) value -> {
-                boolean change = offset != null && offset != value;
-                offset = value;
-                if (change) changed.changed(count != null && count > 0);
-            });
-        }
-
-        boolean ready() {
-            return Boolean.TRUE.equals(exists) && count != null && count >= 0 && offset != null && offset == 0;
-        }
-
-        JsonObject json() {
-            JsonObject result = new JsonObject();
-            result.addProperty("offset", offset);
-            result.addProperty("capacity", capacity);
-            result.addProperty("total", count);
-            result.addProperty("exists", exists);
-            result.addProperty("complete", ready() && count <= capacity);
-            result.addProperty("readiness", ready() ? "ready" : "not_ready");
-            return result;
-        }
-    }
-
-    final class Branch {
-        final Source root;
-        final Window window = new Window(LAYERS);
-        final Layer[] layers = new Layer[LAYERS];
-        Boolean hasLayers;
-
-        Branch(Source root) {
-            this.root = root;
-            root.device.hasLayers().addValueObserver((BooleanValueChangedCallback) value -> {
-                boolean removed = Boolean.TRUE.equals(hasLayers) && !value;
-                boolean change = hasLayers != null && hasLayers != value;
-                hasLayers = value;
-                if (removed) retire();
-                else if (change) changed(true, false);
-            });
-            DeviceLayerBank bank = root.device.createLayerBank(LAYERS);
-            window.observe(bank.exists(), bank.itemCount(), bank.scrollPosition(), known -> {
-                if (known) retire();
-                else changed(true, false);
-            });
-            for (int i = 0; i < LAYERS; i++) layers[i] = new Layer(this, i, (DeviceLayer) bank.getItemAt(i));
-        }
-
-        boolean ready() {
-            return root.directReady()
-                    && root.position >= 0
-                    && root.position < root.track.count
-                    && Boolean.TRUE.equals(hasLayers)
-                    && window.ready();
-        }
-
-        void changed(boolean structural, boolean name) {
-            for (Layer layer : layers) if (layer != null) layer.changed(structural, name);
-        }
-
-        void retire() {
-            for (Layer layer : layers) if (layer != null) layer.retire();
-        }
-    }
-
-    final class Layer {
-        final Branch branch;
-        final int slot;
-        final DeviceLayer proxy;
-        final Window window = new Window(CHILDREN);
-        final Source[] children = new Source[CHILDREN];
-        Boolean exists;
-        String id, name;
-        Integer channelIndex;
-        boolean rebound;
-
-        Layer(Branch branch, int slot, DeviceLayer proxy) {
-            this.branch = branch;
-            this.slot = slot;
-            this.proxy = proxy;
-            proxy.exists().addValueObserver((BooleanValueChangedCallback) value -> {
-                boolean removed = Boolean.TRUE.equals(exists) && !value;
-                boolean change = exists != null && exists != value;
-                exists = value;
-                if (removed) retire();
-                else if (change) changed(true, false);
-            });
-            proxy.channelId().addValueObserver((StringValueChangedCallback) value -> {
-                boolean replaced = canonicalUuid(id) && !id.equals(value);
-                boolean change = id != null && !id.equals(value);
-                id = (String) value;
-                if (replaced) retire();
-                else if (change) changed(true, false);
-            });
-            // The ordinary observer's default zero is not an assigned index.
-            // Keep unassignment distinct without weakening observed index-change retirement.
-            proxy.channelIndex()
-                    .addValueObserver(
-                            (IntegerValueChangedCallback) value -> {
-                                boolean change = channelIndex != null && channelIndex != value;
-                                boolean moved =
-                                        change && channelIndex >= 0 && Boolean.TRUE.equals(exists) && canonicalUuid(id);
-                                channelIndex = value;
-                                if (moved) retire();
-                                else if (change) changed(true, false);
-                            },
-                            -1);
-            proxy.name().addValueObserver((StringValueChangedCallback) value -> {
-                boolean change = name != null && !name.equals(value);
-                name = (String) value;
-                if (change) changed(false, true);
-            });
-            // This bank's children have this layer as their construction-fixed device chain.
-            DeviceBank bank = proxy.createDeviceBank(CHILDREN);
-            window.observe(bank.exists(), bank.itemCount(), bank.scrollPosition(), known -> {
-                if (known) retire();
-                else changed(true, false);
-            });
-            for (int i = 0; i < CHILDREN; i++) {
-                Source child = new Source(branch.root.track, i, (Device) bank.getItemAt(i), this);
-                children[i] = child;
-                all.add(child);
-                child.observe();
-            }
-        }
-
-        boolean ready() {
-            return branch.ready()
-                    && slot < branch.window.count
-                    && Boolean.TRUE.equals(exists)
-                    && canonicalUuid(id)
-                    && name != null
-                    && channelIndex != null
-                    && channelIndex >= 0
-                    && window.ready();
-        }
-
-        void changed(boolean structural, boolean name) {
-            for (Source child : children) if (child != null) child.changed(structural, name);
-        }
-
-        JsonObject ref() {
-            return Refs.chain(branch.root.ref(), id, name);
-        }
-
-        void retire() {
-            rebound = true;
-            for (Source child : children) if (child != null) child.retire();
+            return Refs.device(trackRefs.ref(track.slot), position, name);
         }
     }
 
@@ -493,51 +275,24 @@ final class DeviceSources {
         return source;
     }
 
-    /** The chain a ref names, located by its layer UUID; its name counts only when the chain itself is the target. */
-    Layer chain(JsonObject ref, boolean target) {
-        Layer layer = locateChain(ref);
-        JsonObject current = layer.ref();
-        if (!Refs.matches(ref, current, target)) throw Errors.targetChanged("The chain is not the one read.", current);
-        return layer;
-    }
-
-    /** The device a ref locates, refused when it is gone or unobserved; its compared fields are the caller's to check. */
+    /**
+     * The root device a ref locates, refused when it is gone or unobserved; its compared fields are the caller's to
+     * check. A device inside a chain is {@link NativeChains}' to resolve; a method that does not support one gets
+     * unsupported_scope here.
+     */
     Source locate(JsonObject ref) {
+        if (NativeChains.nested(ref))
+            throw Errors.notApplied(Reason.UNSUPPORTED_SCOPE, "This method does not support a device inside a chain.");
         int index = ref.get("index").getAsInt();
-        if (!ref.has("chain")) {
-            JsonObject trackRef = ref.getAsJsonObject("track");
-            TrackState track = tracks[trackRefs.locate(trackRef)];
-            Source source = rootAt(track, index);
-            if (!trackRef.get("id").getAsString().equals(track.id))
-                throw Errors.notApplied(Reason.NOT_READY, "The track's identity has not been observed yet.");
-            if (!Boolean.TRUE.equals(source.exists) || source.position != index)
-                throw Errors.targetNotFound(ref, "No device is at this index.");
-            if (!source.present()) throw Errors.notApplied(Reason.NOT_READY, "Device name has not been observed.");
-            return source;
-        }
-        Layer layer = locateChain(ref.getAsJsonObject("chain"));
-        if (index >= CHILDREN)
-            throw Errors.notApplied(
-                    Reason.OUTSIDE_WINDOW, "The device is outside the " + CHILDREN + "-device chain window.");
-        Source child = layer.children[index];
-        if (child.rebound) throw rebound();
-        if (Boolean.FALSE.equals(child.exists) || index >= layer.window.count)
-            throw Errors.targetNotFound(ref, "No device is at this index of the chain.");
-        if (!child.present()) throw Errors.notApplied(Reason.NOT_READY, "Device metadata has not been observed.");
-        return child;
-    }
-
-    private Layer locateChain(JsonObject ref) {
-        JsonObject device = ref.getAsJsonObject("device");
-        if (device.has("chain"))
-            throw Errors.notApplied(Reason.UNSUPPORTED_SCOPE, "Chains of a device inside a chain are not observed.");
-        Source root = device(device, false);
-        requireBranch(root.branch);
-        Layer found = findLayer(root, ref.get("id").getAsString());
-        if (found == null) throw Errors.targetNotFound(ref, "The device has no chain with this id.");
-        if (!found.ready())
-            throw Errors.notApplied(Reason.NOT_READY, "Layer and child window are not ready at offset zero.");
-        return found;
+        JsonObject trackRef = ref.getAsJsonObject("track");
+        TrackState track = tracks[trackRefs.locate(trackRef)];
+        Source source = rootAt(track, index);
+        if (!trackRef.get("id").getAsString().equals(track.id))
+            throw Errors.notApplied(Reason.NOT_READY, "The track's identity has not been observed yet.");
+        if (!Boolean.TRUE.equals(source.exists) || source.position != index)
+            throw Errors.targetNotFound(ref, "No device is at this index.");
+        if (!source.present()) throw Errors.notApplied(Reason.NOT_READY, "Device name has not been observed.");
+        return source;
     }
 
     private Source rootAt(TrackState track, int index) {
@@ -550,12 +305,6 @@ final class DeviceSources {
         if (!source.metadataReady() || !track.ready())
             throw Errors.notApplied(Reason.NOT_READY, "Device metadata/window has not been observed.");
         return source;
-    }
-
-    private static RpcException rebound() {
-        return Errors.notApplied(
-                Reason.NOT_READY,
-                "Nested proxy physically rebound; direct callback provenance is unavailable until extension reload.");
     }
 
     Source root(JsonObject p) {
@@ -584,10 +333,8 @@ final class DeviceSources {
         return ticket;
     }
 
-    /** The read ticket of a resolved root device; a device inside a chain has no native target here. */
+    /** The read ticket of a resolved root device. */
     RootReadTicket rootRead(Source source) {
-        if (source.layer != null)
-            throw Errors.notApplied(Reason.UNSUPPORTED_SCOPE, "A device inside a chain has no native target here.");
         if (source.position >= source.track.count)
             throw Errors.targetNotFound(source.ref(), "The device is outside the observed device count.");
         RootReadTicket ticket = new RootReadTicket(source, trackOffset, window.total());
@@ -675,47 +422,16 @@ final class DeviceSources {
         }
     }
 
-    /** The visible layer with this UUID, or null when none has it. */
-    static Layer findLayer(Source root, String id) {
-        Layer found = null;
-        for (Layer layer : root.branch.layers) {
-            if (layer.slot >= root.branch.window.count) continue;
-            if (layer.exists == null || (Boolean.TRUE.equals(layer.exists) && !canonicalUuid(layer.id)))
-                throw Errors.notApplied(Reason.NOT_READY, "Layer identity window is not fully observed.");
-            if (Boolean.TRUE.equals(layer.exists) && id.equals(layer.id)) {
-                if (found != null)
-                    throw Errors.notApplied(Reason.NOT_READY, "Layer UUID is ambiguous in the observed window.");
-                found = layer;
-            }
-        }
-        return found;
-    }
-
-    /** The index a position names in a track's root chain or in a chain; an anchor must be a device of it. */
-    int insertionIndex(JsonObject parent, JsonElement position) {
-        if ("chain".equals(Refs.kind(parent))) {
-            Layer layer = chain(parent, false);
-            return Positions.index(position, layer.window.count, anchor -> anchorIn(anchor, s -> s.layer == layer));
-        }
-        TrackState track = tracks[trackRefs.locate(parent)];
+    /** The index a position names in a track's root chain; an anchor must be a root device of that track. */
+    int insertionIndex(JsonObject trackRef, JsonElement position) {
+        TrackState track = tracks[trackRefs.locate(trackRef)];
         if (track.count == null) throw Errors.notApplied(Reason.NOT_READY, "The device count is not observed yet.");
-        return Positions.index(
-                position, track.count, anchor -> anchorIn(anchor, s -> s.layer == null && s.track == track));
-    }
-
-    private int anchorIn(JsonObject anchor, java.util.function.Predicate<Source> inParent) {
-        Source source = device(anchor, false);
-        if (!inParent.test(source)) throw Errors.invalid("The anchor device is not in this parent.");
-        return source.position;
-    }
-
-    void requireBranch(Branch branch) {
-        if (branch.hasLayers == null)
-            throw Errors.notApplied(Reason.NOT_READY, "Parent layer support has not been observed.");
-        if (!branch.hasLayers)
-            throw Errors.notApplied(Reason.UNSUPPORTED_SCOPE, "Parent does not expose device layers.");
-        if (!branch.ready())
-            throw Errors.notApplied(Reason.NOT_READY, "Layer window has not been observed at offset zero.");
+        return Positions.index(position, track.count, anchor -> {
+            if (NativeChains.nested(anchor)) throw Errors.invalid("The anchor device is not in this parent.");
+            Source source = device(anchor, false);
+            if (source.track != track) throw Errors.invalid("The anchor device is not in this parent.");
+            return source.position;
+        });
     }
 
     static boolean canonicalUuid(String value) {
@@ -760,12 +476,10 @@ final class DeviceSources {
             a = access;
         }
 
-        /** A chain device has no native target here (unsupported_scope); the owner is the Source's observed track. */
+        /** The owner is the Source's observed track. */
         Capture capture(Source source, Runnable check) {
             a.documentThread();
             check.run();
-            if (source.layer != null)
-                throw Errors.notApplied(Reason.UNSUPPORTED_SCOPE, "A device inside a chain has no native target here.");
             UUID expected = trackUuid(source);
             Object device = a.read(Field.TARGET, source.device);
             if (device == null)

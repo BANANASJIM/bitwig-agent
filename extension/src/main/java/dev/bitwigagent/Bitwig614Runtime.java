@@ -114,9 +114,50 @@ final class Bitwig614Runtime {
             return method;
         }
 
+        /** A public constructor of a public host class with exactly these parameter types. */
+        Constructor<?> exactConstructor(Class<?> owner, Class<?>... args) throws ReflectiveOperationException {
+            requireAvailable();
+            Constructor<?> constructor = owner.getConstructor(args);
+            if (!Modifier.isPublic(owner.getModifiers()) || type(owner.getName()) != owner)
+                throw new NoSuchMethodException("Exact public constructor mismatch: " + owner.getName());
+            return constructor;
+        }
+
+        /** The value of a public static final field of a public host class, of exactly this type. */
+        Object exactConstant(Class<?> owner, String name, Class<?> type) throws ReflectiveOperationException {
+            requireAvailable();
+            Field field = owner.getField(name);
+            int modifiers = field.getModifiers();
+            if (field.getType() != type
+                    || field.getDeclaringClass() != owner
+                    || !Modifier.isStatic(modifiers)
+                    || !Modifier.isFinal(modifiers)
+                    || !Modifier.isPublic(owner.getModifiers())
+                    || type(owner.getName()) != owner)
+                throw new NoSuchFieldException("Exact public constant mismatch: " + owner.getName() + "." + name);
+            return field.get(null);
+        }
+
         Object invoke(Method method, Object object, Object... args) {
             requireAvailable();
             return Bitwig614Runtime.invoke(method, object, args);
+        }
+
+        Object construct(Constructor<?> constructor, Object... args) {
+            requireAvailable();
+            try {
+                return constructor.newInstance(args);
+            } catch (ReflectiveOperationException | IllegalArgumentException error) {
+                Throwable cause = error instanceof InvocationTargetException
+                        ? ((InvocationTargetException) error).getCause()
+                        : error;
+                RpcException translated = Errors.notApplied(
+                        Reason.NATIVE_UNAVAILABLE,
+                        "Native construction failed at "
+                                + constructor.getDeclaringClass().getName() + ": " + diagnostic(cause));
+                translated.initCause(error);
+                throw translated;
+            }
         }
 
         void execute(Runnable work) {

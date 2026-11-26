@@ -17,7 +17,7 @@ Use the installed MCP tool schemas or `bitwig-agent help METHOD` for exact argum
 
 Names and native module/modulator UUIDs are not permanent identity: reacquire refs after reopening or changing the project. Do not assume project-name equality proves which full path is loaded. Example IDs are placeholders, not targets.
 
-Tracks, root devices and Launcher slots are bounded to windows of 16; sends to eight; chains are one hop with two chains/two devices. Inspect completeness and unreadable values. `null` is not zero, false, empty or safe. MIDI reads are grid-window observations, not lossless whole-clip exports; scheduled settling is not a general acknowledgement barrier.
+Tracks, root devices and Launcher slots are bounded to windows of 16; sends to eight; chains of layer devices are read natively on each request, with every chain and every device listed. Inspect completeness and unreadable values. `null` is not zero, false, empty or safe. MIDI reads are grid-window observations, not lossless whole-clip exports; scheduled settling is not a general acknowledgement barrier.
 
 ## Before a write
 

@@ -33,13 +33,14 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
         TrackRefs trackRefs = new TrackRefs(window);
         DeviceSources sources = new DeviceSources(window, trackRefs);
         NativeRuntime natives = new NativeRuntime(host, scheduler);
+        NativeChains chains = new NativeChains(scheduler, sources, natives, null);
         SelectionLease selection = new SelectionLease();
         Holds holds = new Holds();
         LauncherStructureLock lock = new LauncherStructureLock(selection, holds);
         RemoteModule remotes = new RemoteModule(host, scheduler, window, sources, transportSafety);
         ModulatorEditModule modulatorEdits = new ModulatorEditModule(scheduler, sources, transportSafety, natives);
-        ParameterModule parameters =
-                new ParameterModule(scheduler, sources, trackRefs, window, transportSafety, remotes, modulatorEdits);
+        ParameterModule parameters = new ParameterModule(
+                scheduler, sources, chains, trackRefs, window, transportSafety, remotes, modulatorEdits);
         register(parameters);
         ParameterResolver parameterResolver = new ParameterResolver(sources, trackRefs, window, parameters, remotes);
         register(remotes);
@@ -47,8 +48,8 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
         RenderModule render = new RenderModule(scheduler, window, trackRefs, project, transportSafety, natives, holds);
         register(new DiscoveryModule(host, application, transport, window, projectState, specs, holds, domains));
         register(new TrackListModule(window, trackRefs));
-        register(new DeviceListModule(window, trackRefs, sources));
-        register(new DeviceChainModule(scheduler, window, trackRefs, sources, transportSafety));
+        register(new DeviceListModule(window, trackRefs, chains));
+        register(new DeviceChainModule(scheduler, window, trackRefs, sources, chains, transportSafety));
         register(new ActionModule(scheduler, application, projectState, selection));
         register(projectModule);
         TransportModule transportModule =
@@ -58,7 +59,7 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
         register(mix);
         register(new TrackLifecycleModule(
                 scheduler, window, trackRefs, application, transportSafety, selection, natives, holds, mix, null));
-        register(new DeviceModule(scheduler, sources, selection));
+        register(new DeviceModule(scheduler, sources, chains, selection));
         LauncherTargets launcherTargets =
                 new LauncherTargets(window, trackRefs, new SceneWindowLease(window, scheduler));
         LauncherState launcher =

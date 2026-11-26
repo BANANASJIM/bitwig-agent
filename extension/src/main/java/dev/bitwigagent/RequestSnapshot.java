@@ -13,9 +13,9 @@ final class RequestSnapshot {
     private final List<Supplier<Object>> readers = new ArrayList<>();
     private final List<Object> seen = new ArrayList<>();
 
-    /** A device proxy's revision and rebind state, which structure changes and renames move. */
+    /** A root device proxy's revision, which structure changes and renames move. */
     static RequestSnapshot of(DeviceSources.Source device) {
-        return new RequestSnapshot().with(() -> device.revision).with(() -> device.rebound);
+        return new RequestSnapshot().with(() -> device.revision);
     }
 
     /** {@code reader} returns a value compared by equality, so it copies anything mutable. */

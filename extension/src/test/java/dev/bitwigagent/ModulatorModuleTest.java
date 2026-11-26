@@ -690,14 +690,9 @@ public final class ModulatorModuleTest {
             devices.child("itemCount").emit(2);
         }
 
+        /** A chain of the rack; its devices are the native document's, never observed here. */
         void addChain() {
             addRack();
-            FakeHost children = HostFixture.observeChain(rackNode, LAYER, "Pad");
-            FakeHost child = children.item(0);
-            child.child("exists").emit(true);
-            child.child("position").emit(0);
-            child.child("deviceType").emit("instrument");
-            child.child("name").emit("Polysynth");
             chain = Refs.chain(Refs.device(Refs.track(HostFixture.A, "Track 0"), 1, "Instrument Layer"), LAYER, "Pad");
         }
 

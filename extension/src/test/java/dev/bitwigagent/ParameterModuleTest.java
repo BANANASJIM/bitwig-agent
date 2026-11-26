@@ -92,8 +92,9 @@ public final class ParameterModuleTest {
         final FakeHost bank = host.tracks[0].child("createDeviceBank");
         final FakeHost eqNode = bank.item(0), compNode = bank.item(1), rackNode = bank.item(2);
         final Direct eqParameters = new Direct(eqNode), compParameters = new Direct(compNode);
-        final Direct synthParameters;
-        final FakeHost child;
+        /** The device inside the rack's chain, in the simulated native document. */
+        final FakeChains.Node synth = new FakeChains.Node("Polysynth", "instrument");
+
         final ParameterModule parameters;
         final DeviceSources sources = host.services.sources;
 
@@ -114,13 +115,11 @@ public final class ParameterModuleTest {
             device(compNode, 1, "Comp", "audio-effect");
             device(rackNode, 2, "Instrument Layer", "instrument");
             bank.child("itemCount").emit(3);
-            FakeHost children = HostFixture.observeChain(rackNode, LAYER, "Pad");
-            child = children.item(0);
-            synthParameters = new Direct(child);
-            synthParameters.values.put("cutoff", .5);
-            synthParameters.names.put("cutoff", "Cutoff");
-            synthParameters.displays.put("cutoff", v -> String.format("%.0f Hz", 20 * Math.pow(1000, v)));
-            device(child, 0, "Polysynth", "instrument");
+            host.services
+                    .nativeChains
+                    .root(0, 2, FakeChains.device("Instrument Layer").layered())
+                    .chain(LAYER, "Pad", synth);
+            synth.param("cutoff", "Cutoff", .5).display = v -> String.format("%.0f Hz", 20 * Math.pow(1000, v));
             RemoteModule remotes = host.services.remote();
             parameters = host.services.parameters(remotes);
         }
@@ -227,12 +226,35 @@ public final class ParameterModuleTest {
     void aDeviceInsideAChainIsListedAndWrittenLikeARootDevice() {
         Fixture f = new Fixture();
         JsonObject listed = f.run("parameters.list", list(synth));
-        assertEquals(
-                Refs.parameter(synth, "cutoff", "Cutoff"),
-                listed.getAsJsonArray("parameters").get(0).getAsJsonObject().get("ref"));
+        JsonObject row = listed.getAsJsonArray("parameters").get(0).getAsJsonObject();
+        assertEquals(Refs.parameter(synth, "cutoff", "Cutoff"), row.get("ref"));
+        assertEquals(.5, row.getAsJsonObject("value").get("value").getAsDouble());
+        assertEquals("632 Hz", row.getAsJsonObject("value").get("display").getAsString(), "the host's own display");
+        FakeChains.Param cutoff = f.synth.params.get("cutoff");
         JsonObject written = f.run("parameters.set", params(Refs.parameter(synth, "cutoff", null), "0.8"));
         assertEquals("applied", written.get("outcome").getAsString());
-        assertEquals(.8, f.synthParameters.values.get("cutoff"), 1e-4);
+        assertEquals(.8, cutoff.value, 1e-4);
+        JsonObject again = f.run("parameters.set", params(Refs.parameter(synth, "cutoff", "Cutoff"), "0.8"));
+        assertEquals("already_matched", again.get("outcome").getAsString());
+        assertEquals(1, cutoff.writes, "an equal value is not written");
+        cutoff.sticks = .3;
+        JsonObject stuck = f.run("parameters.set", params(Refs.parameter(synth, "cutoff", null), "0.6"));
+        assertEquals("unknown", stuck.get("outcome").getAsString());
+        assertEquals("readback_mismatch", stuck.get("reason").getAsString());
+        cutoff.sticks = null;
+        RpcException renamed =
+                f.refused("target_changed", "parameters.set", params(Refs.parameter(synth, "cutoff", "Freq"), "0.1"));
+        assertEquals("Cutoff", renamed.current.get("name").getAsString());
+        assertEquals(
+                "parameters.list",
+                f.refused("target_not_found", "parameters.set", params(Refs.parameter(synth, "res", null), "0.1"))
+                        .next);
+        JsonObject expect = params(Refs.parameter(synth, "cutoff", null), "0.1");
+        expect.add("expect", JsonParser.parseString("{\"value\":0.9}"));
+        f.refused("target_changed", "parameters.set", expect);
+        cutoff.writable = false;
+        f.refused("invalid_target", "parameters.set", params(Refs.parameter(synth, "cutoff", null), "0.1"));
+        assertEquals(2, cutoff.writes, "a refused write sends nothing");
     }
 
     @Test
@@ -400,6 +422,7 @@ public final class ParameterModuleTest {
         assertEquals(
                 "800 Hz",
                 chained.getAsJsonObject("displayWrite").get("observedDisplay").getAsString());
+        assertEquals("800 Hz", f.synth.params.get("cutoff").display.apply(f.synth.params.get("cutoff").value));
         f.compParameters.displays.clear();
         f.refused("not_ready", "parameters.set", params(Refs.parameter(comp, "ratio", null), "{\"display\":\"2 dB\"}"));
         assertEquals(0, f.compParameters.writes);

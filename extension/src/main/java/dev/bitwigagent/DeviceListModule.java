@@ -13,12 +13,12 @@ final class DeviceListModule implements HostModule {
     static final Set<String> METHODS = Set.of("devices.list");
     private final TrackWindow window;
     private final TrackRefs trackRefs;
-    private final DeviceSources sources;
+    private final NativeChains chains;
 
-    DeviceListModule(TrackWindow window, TrackRefs trackRefs, DeviceSources sources) {
+    DeviceListModule(TrackWindow window, TrackRefs trackRefs, NativeChains chains) {
         this.window = window;
         this.trackRefs = trackRefs;
-        this.sources = sources;
+        this.chains = chains;
     }
 
     @Override
@@ -32,7 +32,8 @@ final class DeviceListModule implements HostModule {
     @Override
     public void dispatch(HostOperation operation, String method, JsonObject params) {
         JsonObject parent = params.getAsJsonObject("parent");
-        operation.result.complete("chain".equals(Refs.kind(parent)) ? listChain(parent) : listTrack(parent));
+        if ("chain".equals(Refs.kind(parent))) listChain(operation, parent);
+        else operation.result.complete(listTrack(parent));
     }
 
     private JsonObject listTrack(JsonObject parent) {
@@ -58,20 +59,32 @@ final class DeviceListModule implements HostModule {
         return result;
     }
 
-    private JsonObject listChain(JsonObject parent) {
-        DeviceSources.Layer layer = sources.chain(parent, false);
-        JsonArray items = new JsonArray();
-        for (DeviceSources.Source child : layer.children) {
-            if (!child.present() || child.slot >= layer.window.count) continue;
-            JsonObject row = row(child.ref(), child.name, child.type);
-            row.addProperty("available", !child.rebound);
-            items.add(row);
-        }
-        JsonObject result = new JsonObject();
-        result.add("parent", layer.ref());
-        result.add("devices", items);
-        result.add("window", layer.window.json());
-        result.addProperty("scope", "chain");
+    /** Every device of the chain, read natively in one pass. */
+    private void listChain(HostOperation operation, JsonObject parent) {
+        chains.run(operation, parent, walk -> {
+            NativeChains.Chain chain = walk.chain(parent, false);
+            JsonArray items = new JsonArray();
+            int shown = Math.min(chain.devices.size(), NativeChains.MAX_ITEMS);
+            for (int i = 0; i < shown; i++) {
+                NativeChains.Device device = walk.at(chain, i);
+                JsonObject row = row(device.ref, device.name, walk.a.deviceType(device.device));
+                row.addProperty("available", true);
+                items.add(row);
+            }
+            JsonObject result = new JsonObject();
+            result.add("parent", chain.ref);
+            result.add("devices", items);
+            result.add("window", nativeWindow(chain.devices.size()));
+            result.addProperty("scope", "chain");
+            return result;
+        });
+    }
+
+    /** A natively read container: everything up to {@link NativeChains#MAX_ITEMS} rows, at once. */
+    static JsonObject nativeWindow(int total) {
+        JsonObject result = window(0, NativeChains.MAX_ITEMS, total);
+        result.addProperty("exists", true);
+        result.addProperty("readiness", "ready");
         return result;
     }
 

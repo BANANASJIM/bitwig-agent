@@ -10,11 +10,15 @@ import java.util.IdentityHashMap;
 import java.util.Map;
 import java.util.Set;
 
-/** devices.get, devices.set, devices.select and devices.catalog: one device by ref, root or inside a chain. */
+/**
+ * devices.get, devices.set, devices.select and devices.catalog: one device by ref. A root device is read and written
+ * through its observed proxy, a device inside a chain natively through {@link NativeChains}.
+ */
 final class DeviceModule implements HostModule {
     static final Set<String> METHODS = Set.of("devices.get", "devices.set", "devices.select", "devices.catalog");
     private final Scheduler scheduler;
     private final DeviceSources deviceSources;
+    private final NativeChains chains;
     private final SelectionLease selection;
     private final Map<DeviceSources.Source, Enabled> enabled = new IdentityHashMap<>();
     private HostOperation mutation;
@@ -26,9 +30,10 @@ final class DeviceModule implements HostModule {
         long sequence;
     }
 
-    DeviceModule(Scheduler scheduler, DeviceSources deviceSources, SelectionLease selection) {
+    DeviceModule(Scheduler scheduler, DeviceSources deviceSources, NativeChains chains, SelectionLease selection) {
         this.scheduler = scheduler;
         this.deviceSources = deviceSources;
+        this.chains = chains;
         this.selection = selection;
         for (DeviceSources.Source source : deviceSources.all) {
             Enabled state = new Enabled();
@@ -54,7 +59,12 @@ final class DeviceModule implements HostModule {
             op.result.complete(deviceCatalog);
             return;
         }
-        DeviceSources.Source device = deviceSources.device(p.getAsJsonObject("target"), true);
+        JsonObject target = p.getAsJsonObject("target");
+        if (NativeChains.nested(target)) {
+            nested(op, method, target, p);
+            return;
+        }
+        DeviceSources.Source device = deviceSources.device(target, true);
         if (!enabled.get(device).observed)
             throw Errors.notApplied(Reason.NOT_READY, "The device's enabled state has not been observed.");
         if (method.equals("devices.get")) {
@@ -77,10 +87,64 @@ final class DeviceModule implements HostModule {
         setEnabled(op, device, p.get("enabled").getAsBoolean());
     }
 
+    /** A device inside a chain: read, enabled, or selected natively in one document-thread pass. */
+    private void nested(HostOperation op, String method, JsonObject target, JsonObject p) {
+        if (method.equals("devices.get")) {
+            chains.run(op, target, walk -> {
+                NativeChains.Device device = walk.device(target, true);
+                JsonObject result = new JsonObject();
+                result.add("ref", device.ref);
+                result.addProperty("name", device.name);
+                result.addProperty("type", walk.a.deviceType(device.device));
+                result.addProperty("enabled", on(walk, device));
+                result.addProperty("scope", "chain_device");
+                result.addProperty("remoteControlsAvailable", false);
+                result.addProperty("nameWritable", false);
+                return result;
+            });
+            return;
+        }
+        if (mutation != null && !mutation.result.isDone())
+            throw Errors.notApplied(Reason.BUSY, "Another device change is awaiting observations.");
+        mutation = op;
+        if (method.equals("devices.select")) {
+            selection.requireFree();
+            chains.run(op, target, walk -> {
+                NativeChains.Device device = walk.device(target, true);
+                walk.dispatch();
+                walk.a.select(device.device);
+                JsonObject result = Results.outcome(Outcome.SENT);
+                result.add("ref", device.ref);
+                return result;
+            });
+            return;
+        }
+        boolean wanted = p.get("enabled").getAsBoolean();
+        JsonElement asked = new JsonPrimitive(wanted);
+        chains.run(op, target, walk -> {
+            NativeChains.Device device = walk.device(target, true);
+            if (on(walk, device) == wanted) return result(device.ref, asked, wanted, Outcome.ALREADY_MATCHED, null);
+            Object onOff = walk.a.enabled(device.device);
+            if (!walk.a.writable(onOff))
+                throw Errors.notApplied(Reason.INVALID_TARGET, "The host does not let this device be bypassed.");
+            walk.dispatch();
+            walk.a.write(onOff, wanted ? 1 : 0);
+            boolean observed = on(walk, device);
+            return observed == wanted
+                    ? result(device.ref, asked, wanted, Outcome.APPLIED, null)
+                    : result(device.ref, asked, observed, Outcome.UNKNOWN, Reason.READBACK_MISMATCH);
+        });
+    }
+
+    /** Whether a device inside a chain is on: its On/Off parameter at its upper half. */
+    private static boolean on(NativeChains.Walk walk, NativeChains.Device device) {
+        return walk.a.value(walk.a.enabled(device.device)) >= .5;
+    }
+
     private void setEnabled(HostOperation op, DeviceSources.Source device, boolean wanted) {
         JsonElement asked = new JsonPrimitive(wanted);
         if (device.device.isEnabled().get() == wanted) {
-            op.result.complete(result(device, asked, wanted, Outcome.ALREADY_MATCHED, null));
+            op.result.complete(result(device.ref(), asked, wanted, Outcome.ALREADY_MATCHED, null));
             return;
         }
         Enabled state = enabled.get(device);
@@ -96,17 +160,17 @@ final class DeviceModule implements HostModule {
                 () -> {
                     snapshot.require(op);
                     if (state.sequence <= sequence || device.device.isEnabled().get() != wanted) return null;
-                    return () -> op.result.complete(result(device, asked, wanted, Outcome.APPLIED, null));
+                    return () -> op.result.complete(result(device.ref(), asked, wanted, Outcome.APPLIED, null));
                 },
-                () -> op.result.complete(
-                        result(device, asked, device.device.isEnabled().get(), Outcome.UNKNOWN, Reason.NOT_OBSERVED)));
+                () -> op.result.complete(result(
+                        device.ref(), asked, device.device.isEnabled().get(), Outcome.UNKNOWN, Reason.NOT_OBSERVED)));
     }
 
     private static JsonObject result(
-            DeviceSources.Source device, JsonElement requested, boolean observed, Outcome outcome, Reason reason) {
+            JsonObject ref, JsonElement requested, boolean observed, Outcome outcome, Reason reason) {
         JsonObject result = Results.outcome(outcome);
         if (reason != null) result.addProperty("reason", reason.wire());
-        result.add("ref", device.ref());
+        result.add("ref", ref);
         JsonObject fields = new JsonObject();
         fields.add("enabled", Results.field(requested, new JsonPrimitive(observed), outcome, reason));
         result.add("fields", fields);
@@ -120,8 +184,8 @@ final class DeviceModule implements HostModule {
         result.addProperty("name", device.name().get());
         result.addProperty("type", device.deviceType().get());
         result.addProperty("enabled", device.isEnabled().get());
-        result.addProperty("scope", source.layer == null ? "root_device" : "chain_device");
-        result.addProperty("remoteControlsAvailable", source.layer == null);
+        result.addProperty("scope", "root_device");
+        result.addProperty("remoteControlsAvailable", true);
         result.addProperty("nameWritable", false);
         return result;
     }

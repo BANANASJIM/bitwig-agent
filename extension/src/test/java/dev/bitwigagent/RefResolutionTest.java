@@ -29,7 +29,6 @@ public final class RefResolutionTest {
         final FakeHost bank = host.tracks[0].child("createDeviceBank");
         final FakeHost eqNode = bank.item(0), rackNode = bank.item(1);
         final FakeHost page = eqNode.child("createCursorRemoteControlsPage");
-        final FakeHost layer, child;
         final DeviceSources sources = host.services.sources;
         final TrackRefs tracks = host.services.trackRefs;
         StringArrayValueChangedCallback ids;
@@ -55,19 +54,6 @@ public final class RefResolutionTest {
             device(eqNode, 0, "EQ+", "audio-effect");
             device(rackNode, 1, "Instrument Layer", "instrument");
             bank.child("itemCount").emit(2);
-            rackNode.child("hasLayers").emit(true);
-            FakeHost layers = rackNode.child("createLayerBank");
-            layers.child("exists").emit(true);
-            layers.child("itemCount").emit(1);
-            layer = layers.item(0);
-            layer.child("exists").emit(true);
-            layer.child("channelId").emit(LAYER);
-            layer.child("name").emit("Pad");
-            FakeHost children = layer.child("createDeviceBank");
-            children.child("exists").emit(true);
-            children.child("itemCount").emit(1);
-            child = children.item(0);
-            device(child, 0, "Polysynth", "instrument");
             RemoteModule remotes = host.services.remote();
             resolver = host.services.parameterResolver(host.services.parameters(remotes), remotes);
         }
@@ -109,9 +95,7 @@ public final class RefResolutionTest {
         assertEquals(2, f.sources.insertionIndex(track, new JsonPrimitive("end")));
         assertEquals(1, f.sources.insertionIndex(track, json("{\"before\":" + rack + "}")));
         assertEquals(1, f.sources.insertionIndex(track, json("{\"after\":" + eq + "}")));
-        assertEquals(1, f.sources.insertionIndex(chain, null));
-        assertEquals(1, f.sources.insertionIndex(chain, json("{\"after\":" + synth + "}")));
-        assertInvalidParams(() -> f.sources.insertionIndex(chain, json("{\"before\":" + eq + "}")));
+        assertInvalidParams(() -> f.sources.insertionIndex(track, json("{\"before\":" + synth + "}")));
         f.eqNode.child("name").emit("Comp");
         RpcException changed = assertRpcError("target_changed", () -> f.sources.device(eq, false));
         assertEquals(Refs.device(track, 0, "Comp"), changed.current);
@@ -120,25 +104,16 @@ public final class RefResolutionTest {
     }
 
     @Test
-    void chainRefsLocateTheLayerByUuidAndCompareItsNameOnlyAsTheTarget() {
+    void aDeviceInsideAChainIsNotResolvedFromObservations() {
         Fixture f = new Fixture();
-        assertEquals(LAYER, f.sources.chain(chain, true).id);
-        assertEquals(synth, f.sources.device(synth, true).ref());
-        f.layer.child("name").emit("Lead Pad");
-        RpcException renamed = assertRpcError("target_changed", () -> f.sources.chain(chain, true));
-        assertEquals("Lead Pad", renamed.current.get("name").getAsString());
-        assertEquals("Polysynth", f.sources.device(synth, true).name, "a chain rename leaves its devices' refs valid");
-        JsonObject other = Refs.chain(rack, "00000000-0000-4000-8000-0000000000cc", "Pad");
-        assertEquals("chains.list", assertRpcError("target_not_found", () -> f.sources.chain(other, true)).next);
-        assertRpcError("unsupported_scope", () -> f.sources.chain(Refs.chain(synth, LAYER, "Pad"), true));
-        assertRpcError("target_not_found", () -> f.sources.device(Refs.device(chain, 1, "Delay"), true));
-        assertRpcError("outside_window", () -> f.sources.locate(Refs.device(chain, DeviceSources.CHILDREN, "X")));
-        f.child.child("deviceType").emit("audio-effect");
-        assertTrue(
-                assertRpcError("not_ready", () -> f.sources.device(synth, true))
-                        .getMessage()
-                        .contains("extension reload"),
-                "a physically rebound chain device is unavailable, not stale: reading again cannot help");
+        assertRpcError("unsupported_scope", () -> f.sources.device(synth, true));
+        assertInstanceOf(
+                ParameterResolver.Nested.class,
+                f.resolver.resolve(Refs.parameter(synth, "gain", "Gain")),
+                "a chain device's direct parameter is resolved natively by its caller");
+        assertRpcError(
+                "unsupported_scope",
+                () -> f.resolver.resolve(Refs.parameter(Refs.modulator(synth, MODULE, "LFO"), "RATE", null)));
     }
 
     @Test
@@ -273,9 +248,9 @@ public final class RefResolutionTest {
                 assertEquals(Refs.device(track, 0, "Comp"), replaced.current, ref + ", same ids " + sameIds);
             }
             f.rackNode.child("name").emit("Drum Machine");
-            RpcException chained = assertRpcError("target_changed", () -> f.sources.chain(chain, false));
+            RpcException chained =
+                    assertRpcError("target_changed", () -> f.sources.device(NativeChains.rootDevice(synth), false));
             assertEquals(Refs.device(track, 1, "Drum Machine"), chained.current, "a chain under a replaced device");
-            assertRpcError("target_changed", () -> f.sources.device(synth, false));
         }
     }
 

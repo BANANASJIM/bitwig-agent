@@ -720,7 +720,7 @@ final class GridSnapshotReader implements ParameterResolver.ModuleOwners {
         try {
             capture = targets.capture(source, () -> {});
         } catch (RpcException error) {
-            if (error.is(Reason.UNSUPPORTED_SCOPE) && source.layer == null)
+            if (error.is(Reason.UNSUPPORTED_SCOPE))
                 throw Errors.notApplied(Reason.KIND_MISMATCH, "The device has no mapped Grid graph accessor.");
             throw error;
         }
