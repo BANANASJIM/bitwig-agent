@@ -24,9 +24,10 @@ The extension binds `127.0.0.1:61172`; the Python client connects to IPv4 loopba
 |---|---|
 | [`protocol/`](https://github.com/BANANASJIM/bitwig-agent/blob/main/src/bitwig_agent/protocol) | One module per domain: strict typed request models with cross-field constraints plus that domain's catalog entries (descriptions, examples, read-only hints); the registry and validation are used by both adapters |
 | [`client.py`](https://github.com/BANANASJIM/bitwig-agent/blob/main/src/bitwig_agent/client.py) | Bounded strict JSON, one-shot loopback requests, unique correlation IDs, response validation and conservative outcomes |
-| [`core/`](https://github.com/BANANASJIM/bitwig-agent/blob/main/src/bitwig_agent/core) | The one call path and discovery data both front ends use: `invoke` validates, dispatches to the host client or a composed handler and wraps the outcome in an envelope; `views` reads the method table; `composed` holds the client-side handlers |
-| [`frontends/mcp.py`](https://github.com/BANANASJIM/bitwig-agent/blob/main/src/bitwig_agent/frontends/mcp.py) | MCP tool discovery and invocation over stdio; preserves the JSON envelope as structured content and text |
-| [`frontends/cli.py`](https://github.com/BANANASJIM/bitwig-agent/blob/main/src/bitwig_agent/frontends/cli.py) | CLI argument parsing and discovery layout on top of `core`; exit code from the envelope |
+| [`core/`](https://github.com/BANANASJIM/bitwig-agent/blob/main/src/bitwig_agent/core) | The one call path and discovery data both front ends use: `invoke` validates, dispatches to the host client or a composed handler and wraps the outcome in an envelope; `views` reads the method table; `composed` maps the client-side tool names to their handlers |
+| Composed tools: [`grid/`](https://github.com/BANANASJIM/bitwig-agent/blob/main/src/bitwig_agent/grid), `audio.py`, `audio_analysis.py`, `loudness.py`, `presets.py`, `modulator_docs.py`, `diagnostics.py` | Client-side tools registered in `composed.HANDLERS`: they call the host through `BridgeClient` or read the local Bitwig install and audio files, and never touch the host model directly |
+| [`frontends/mcp.py`](https://github.com/BANANASJIM/bitwig-agent/blob/main/src/bitwig_agent/frontends/mcp.py) | MCP tool discovery and invocation over stdio (`bitwig-agent`); preserves the JSON envelope as structured content and text |
+| [`frontends/cli.py`](https://github.com/BANANASJIM/bitwig-agent/blob/main/src/bitwig_agent/frontends/cli.py) | CLI argument parsing and discovery layout on top of `core` (`bitwig-agent-rpc`); exit code from the envelope |
 | [`install.py`](https://github.com/BANANASJIM/bitwig-agent/blob/main/src/bitwig_agent/install.py) | Release-version extension download/copy, integrity check, backups and printed MCP configuration |
 
 The catalog is not a planner. Tool examples are schema examples, not live target IDs. Tool annotations are hints, not authority or a proof that a call has no side effects. For example, `notes.read` selects a clip.
@@ -39,7 +40,7 @@ The main sources are under [`extension/src/main/java/dev/bitwigagent`](https://g
 
 - `BitwigAgentExtension` creates the bridge/listener, forwards controller flushes and closes services on exit.
 - `RpcServer` owns transport framing, admission and bounded response delivery. It does not own project state, selection or domain business logic.
-- `HostBridge` composes modules, keeps dispatch and validation registries aligned, validates requests and schedules each `HostOperation` through `HostServices`.
+- `core.MethodSpecs` reads the `protocol.json` bundle generated from the Python `protocol/` package (method names, timeouts, write/engine flags). `HostBridge` registers each `HostModule` by method name, fails at start-up if the bundle and the registered handlers differ, routes validation to the owning module and schedules each `HostOperation` through `HostServices`. Each module validates its own parameters in `HostModule.validate`.
 - `HostServices` owns shared host proxies and scheduling. `HostOperation` tracks deadlines and completion. Host API work crosses the scheduler boundary rather than running on the network thread.
 - `DeviceSources` owns fixed root/layer/child addresses and continuity observations. `ParameterModule` owns continuously observed source-specific parameter data and the single shared active binding/request. Switching flat or nested targets invalidates the prior binding.
 - Discovery, Actions, transport, mix, devices and Launcher/MIDI have separate domain modules and observations. Their result semantics differ: a dispatch-only Action is not equivalent to an acknowledged parameter change.
@@ -50,7 +51,7 @@ The main sources are under [`extension/src/main/java/dev/bitwigagent`](https://g
 - `ModulatorModule` and `ModulatorSnapshotReader` own bounded, nonloading primary-modulator reads. They share root target/read-context machinery, not Grid write authority.
 - `ModulatorEditModule` (RPC boundary), `ModulatorEditor` (CAS, dispatch, readback) and `Bitwig614ModulatorEditAccess` (descriptors) own device-modulator edits. They reuse the Grid parameter reader for typed values and Grid targets, and the Grid parameter/topology context checks, but not Grid write authority or topology quarantine.
 
-`Bitwig614Runtime` is lazy and shared per `HostServices`. It checks the exact host version, loaded JAR CodeSource/hash/ClassLoader and mapped descriptors before private dispatch. Native target/read-context helpers corroborate ownership and lifecycle. Grid and modulator availability remains independently reported; successful read binding does not enable a writer.
+`Bitwig614TrackResolver` maps a public track proxy to its native track model and identity for the render and automation accessors. `Bitwig614Runtime` is lazy and shared per `HostServices`. It checks the exact host version, loaded JAR CodeSource/hash/ClassLoader and mapped descriptors before private dispatch. Native target/read-context helpers corroborate ownership and lifecycle. Grid and modulator availability remains independently reported; successful read binding does not enable a writer.
 
 The unnamed-package [`BitwigAgent614GridInsertion.java`](https://github.com/BANANASJIM/bitwig-agent/blob/main/extension/src/main/java/BitwigAgent614GridInsertion.java) is intentional: the native superclass is in that package and the loader expects the exact class name. It is a narrow insertion boundary, not another transport, planner or generic transaction framework.
 
@@ -88,7 +89,7 @@ The agent can explicitly use separately authorized Computer Use for an unsupport
 
 | Path | Responsibility |
 |---|---|
-| `src/bitwig_agent/` | Schemas/catalog, transport, MCP, CLI and release installer |
+| `src/bitwig_agent/` | Protocol and catalog, transport client, core call path, composed tools, MCP and CLI front ends, release installer |
 | `extension/src/main/java/dev/bitwigagent/` | Host services, domains and bounded native adapters |
 | `extension/src/test/`, `tests/` | Simulated-host Java checks and host-free Python regressions |
 | `scripts/` | Source builds/checks and offline evidence helpers |
@@ -97,7 +98,27 @@ The agent can explicitly use separately authorized Computer Use for an unsupport
 | `packaging/aur/` | Reviewed AUR recipe and synchronized `.SRCINFO` |
 | `skills/bitwig-agent/` | Copyable Agent Skills instructions, focused references and MIT license |
 
-Python layers import leftward (a test enforces the `protocol/` rule): `protocol/` (request models and method metadata; stdlib and pydantic only), `client`, composed tools (`grid/`, audio, presets), then `server` / `cli`. Java layers: `rpc`, `core`, `host`, domain modules, `bitwig614`.
+## Layers
+
+```mermaid
+flowchart LR
+    subgraph Python
+        P[protocol/] --> C[client.py]
+        P --> CO[core/]
+        C --> CO
+        T[composed tools] --> CO
+        CO --> F[frontends/mcp, frontends/cli]
+    end
+    subgraph Java
+        R[RpcServer] --> H[HostBridge]
+        M[core.MethodSpecs] --> H
+        H --> D[domain modules]
+        D --> N[Bitwig614 access classes]
+    end
+    C -- "loopback TCP" --> R
+```
+
+Enforced by tests: `protocol/` imports only the standard library, pydantic and itself; front ends import only `core` among internal modules. The Java sources are one package, `dev.bitwigagent`, plus `core`; the layering is by role, not by subpackage. Splitting the flat Java package and the top-level audio modules into narrower packages is planned and not yet done.
 
 ## Evidence is layered
 

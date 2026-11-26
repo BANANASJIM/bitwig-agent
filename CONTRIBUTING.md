@@ -41,7 +41,7 @@ The `lint` task needs neither the API jar nor Bitwig; it downloads only the chec
 
 `config/cpd-baseline.json` lists existing duplicates; only new ones fail, so update it only when a refactor removes some. Ruff per-file ignores under "refactor debt" in `pyproject.toml` may shrink, never grow. `git config blame.ignoreRevsFile .git-blame-ignore-revs` hides the mechanical format commit from blame.
 
-The default checks do not launch Bitwig. See [VERIFICATION.md](VERIFICATION.md) for layer boundaries. CI covers host-free Python checks, the static `lint` gates, minimum supported MCP, Python package consumption, skill format and a reachable-history secret scan; local Arch packaging is a separate downstream check. None claims to build against or test a live proprietary host. Consult actual workflow output rather than treating configured jobs as passing evidence.
+The default checks do not launch Bitwig. See [VERIFICATION.md](VERIFICATION.md) for layer boundaries. CI ([workflow](.github/workflows/ci.yml)) runs: `Lint` (`pixi run lint`); `Java tests and fixture` (`pixi run test-java`, `pixi run fixture`); the Python matrix (`py311`, `py314`, `py311-mcp-min`) running `test`; `Check` (`pixi run check`) on Linux x64/arm64, Windows and two macOS runners; `Package` (distribution build, `smoke-dist`, `validate-skills`); and a reachable-history secret scan. Arch packaging is a separate downstream check ([`aur.yml`](.github/workflows/aur.yml), on release). None claims to build against or test a live proprietary host. Consult actual workflow output rather than treating configured jobs as passing evidence.
 
 ## Code style
 
