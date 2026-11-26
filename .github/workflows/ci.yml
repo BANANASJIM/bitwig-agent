@@ -58,10 +58,11 @@ jobs:
   java:
     name: Java tests and fixture
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
       - uses: prefix-dev/setup-pixi@9936258fee697aff89b3fed6ca1f80a382ef694e # v0.11.3
         with:
@@ -75,6 +76,9 @@ jobs:
         run: pixi run test-java
       - name: Run the Python/Java fixture
         run: pixi run fixture
+      - name: Require 90% coverage of changed lines
+        if: github.event_name == 'pull_request'
+        run: pixi run coverage --compare-branch origin/${{ github.base_ref }}
 
   check:
     name: Check / ${{ matrix.os }}
