@@ -43,6 +43,60 @@ It runs `ruff check`, `ruff format --check`, strict `mypy` on `src/bitwig_agent`
 
 The default checks do not launch Bitwig. See [VERIFICATION.md](VERIFICATION.md) for layer boundaries. CI covers host-free Python checks, the static `lint` gates, minimum supported MCP, Python package consumption, skill format and a reachable-history secret scan; local Arch packaging is a separate downstream check. None claims to build against or test a live proprietary host. Consult actual workflow output rather than treating configured jobs as passing evidence.
 
+## Code style
+
+When rules conflict, earlier wins:
+
+1. **Correct and fail-closed.**
+2. **Optimal design.** Never keep a worse design for temporary or historical reasons; diff size, old wording and existing call sites are not reasons.
+3. **Minimal.** The least code that is clear, correct and complete. Not terse, not clever.
+4. **One responsibility** per module, class and function.
+5. **One source per fact.** No duplicated logic, no hardcoded values.
+6. **Decoupled.** Depend inward through narrow interfaces.
+
+### Structure
+
+- The directory tree is documentation: it mirrors layers and domains. Put new code where its layer and domain live. If nothing fits, fix the structure instead of adding a misc module.
+- Python layers, imports pointing left only (a test enforces the `protocol/` rule): `protocol/` (request models and method metadata; stdlib and pydantic only) ← `client` ← composed tools (`grid/`, audio, presets) ← `server` / `cli`.
+- Java target layers: `rpc`, `core`, `host`, domain modules, `bitwig614`. Native bindings return plain data; they do not parse requests, build JSON or apply domain rules.
+
+### One source per fact
+
+- Method metadata and request shapes are defined once in `protocol/`; Java consumes the generated `protocol.json`. Never restate a method list, timeout, enum or limit elsewhere: derive it.
+- A number in a message comes from the constant that enforces it.
+- One concept has one name across Python, Java and the wire.
+
+### Changing code
+
+- Refactor fully to the right design: update every call site. No shims, aliases, re-exports or legacy paths.
+- A behaviour-preserving refactor proves it (for example: exported schemas byte-identical, error codes unchanged). A behaviour change is explicit and versioned.
+
+### Comments
+
+- None unless the code cannot say it: reverse-engineered native facts, measured host behaviour, a non-obvious external constraint.
+- Never restate code, narrate reasoning or add section banners. Delete stale comments.
+
+### Errors and writes
+
+- Writes compare-and-set, read back, and report `applied`, `already_matched`, `not_applied` or `unknown`. Never retry `unknown`.
+- Build errors only through `Errors` / `ErrorCode` (Java) and `bridge_error` (Python).
+- A safety gate must answer a failure that was actually observed; no gates against imagined ones.
+
+### Tooling decides formatting
+
+- Run `pixi run fmt` before committing; `pixi run check` must pass: ruff, mypy strict, palantir-java-format, `javac -Xlint:all -Werror`, CPD (duplicates may only shrink), Python and Java tests, the Python/Java fixture.
+- Fix the cause. A `noqa` or suppression needs a reason the tool cannot infer.
+
+### Tests
+
+- Test every layer. Shared fakes live in one place (`tests/fakes.py`; one strict fake host in Java); never import from another test file.
+- A change to native bindings needs native E2E on an isolated test instance.
+
+### Language and commits
+
+- English everywhere in this repository.
+- Commit subjects are imperative. No AI attribution in commits or PRs.
+
 ## Changes and bug reports
 
 Pull requests follow [the template](.github/pull_request_template.md): why, a before/after diagram, what changes for users, evidence, risks. Write for a human reader; leave exhaustive detail to the code and tests. Evidence must be reproducible: link the CI run or give the command and its key output; never pipe a check through `tail` or similar without preserving its exit status.
