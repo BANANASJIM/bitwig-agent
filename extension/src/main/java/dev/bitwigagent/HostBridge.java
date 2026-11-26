@@ -2,7 +2,7 @@ package dev.bitwigagent;
 
 import com.bitwig.extension.controller.api.*;
 import com.google.gson.JsonObject;
-import dev.bitwigagent.action.ActionModule;
+import dev.bitwigagent.actions.ActionModule;
 import dev.bitwigagent.arranger.ArrangerModule;
 import dev.bitwigagent.arranger.MarkerModule;
 import dev.bitwigagent.automation.AutomationModule;

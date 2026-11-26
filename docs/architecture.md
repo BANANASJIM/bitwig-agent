@@ -44,10 +44,21 @@ The main sources are under [`extension/src/main/java/dev/bitwigagent`](https://g
 | `rpc` | `RpcServer`: framing, bounds, admission; imports only `core` |
 | `core` | Shared mechanisms: `MethodSpecs`, `SchemaValidator`, `Refs`, `Errors`/`ErrorCode`/`Reason`/`Outcome`, `Params`, `Results`, `Batch`, `Scheduler`, `HostOperation`, `HostModule`, `Holds`, value/match/position rules, display solving |
 | `host` | Shared host observations and services: `TrackWindow`, `TrackRefs`, `ProjectState`, `TransportSafety`, `SelectionLease`, `LauncherStructureLock`, `NativeRuntime`, `DeviceSources`, `RequestSnapshot`, `NativeReadContext` |
-| `grid`, `device`, `launcher`, `arranger`, `mix`, `project`, `render`, `routing`, `automation`, `transport`, `action`, `recovery` | Domain modules and their host-free rules, one package per domain |
+| `grid`, `device`, `launcher`, `arranger`, `mix`, `project`, `render`, `routing`, `automation`, `transport`, `actions`, `recovery` | Domain modules and their host-free rules, one package per domain |
 | `bitwig614` | Exact-version native bindings: the only package that reflects into the host |
 
 Tests mirror these packages. Domain packages mirror the Python `protocol/` modules, grouped as `device` (devices, chains, parameters, modulators), `launcher` (launcher, scenes, clips, notes), `arranger` (arranger, markers), `mix` (tracks, meters) and `project` (status, context, project).
+
+Java `core` holds the extension's shared protocol mechanisms; Python `core` is the front-end-independent invoke/views layer.
+
+Known couplings (follow-up; `tests/test_java_packages.py` is tightened once they are gone):
+
+- Domain packages still name `Bitwig614*` classes directly instead of going only through their ports.
+- `bitwig614` still builds JSON and calls domain rules (for example `AutomationModule` helpers).
+- `core.HostOperation` implements `rpc.RpcServer.Expiring`.
+- `core.Results` takes `host.ProjectState.Readiness`.
+- `host.DeviceSources` calls `device.NativeChains.nested`.
+- `bitwig614.Bitwig614GridInsertionAccess` checks the origin of the root `BitwigAgentExtension`.
 
 - `BitwigAgentExtension` creates the bridge/listener, forwards controller flushes and closes services on exit.
 - `RpcServer` owns transport framing, admission and bounded response delivery. It does not own project state, selection or domain business logic.

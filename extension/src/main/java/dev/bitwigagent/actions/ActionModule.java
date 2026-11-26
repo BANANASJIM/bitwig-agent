@@ -1,4 +1,4 @@
-package dev.bitwigagent.action;
+package dev.bitwigagent.actions;
 
 import static dev.bitwigagent.core.HostLimits.*;
 import static dev.bitwigagent.core.Results.*;
