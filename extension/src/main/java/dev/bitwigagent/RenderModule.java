@@ -8,12 +8,12 @@ import java.util.*;
 import java.util.concurrent.TimeUnit;
 
 /**
- * export.audio and bounce.inPlace: Bitwig 6.1.4's own render jobs (the Export Audio dialog's call and Bounce in
+ * export.audio and tracks.bounce: Bitwig 6.1.4's own render jobs (the Export Audio dialog's call and Bounce in
  * Place), dispatched once without a dialog. Completion is the job's native latch; success is the files' headers
  * (export) or the arranger readback (bounce). A job that outlives its request is followed with jobs.get.
  */
 final class RenderModule implements HostModule, JobsModule.Source {
-    static final String EXPORT = "export.audio", BOUNCE = "bounce.inPlace";
+    static final String EXPORT = "export.audio", BOUNCE = "tracks.bounce";
     static final Set<String> METHODS = Set.of(EXPORT, BOUNCE);
     static final String MASTER = "master";
     static final double MAX_BEATS = 4194304, MAX_LENGTH = 65536, EPS = 1e-6;
@@ -23,13 +23,13 @@ final class RenderModule implements HostModule, JobsModule.Source {
     long applyGraceNanos = TimeUnit.SECONDS.toNanos(2);
 
     static final class Export {
-        final String format, tap;
+        final String fileType, tap;
         final int bitDepth, sampleRate;
         final boolean dither, overwrite;
         final double start, end;
 
         Export(
-                String format,
+                String fileType,
                 int bitDepth,
                 int sampleRate,
                 String tap,
@@ -37,7 +37,7 @@ final class RenderModule implements HostModule, JobsModule.Source {
                 boolean overwrite,
                 double start,
                 double end) {
-            this.format = format;
+            this.fileType = fileType;
             this.bitDepth = bitDepth;
             this.sampleRate = sampleRate;
             this.tap = tap;
@@ -51,7 +51,7 @@ final class RenderModule implements HostModule, JobsModule.Source {
     interface Handle {
         boolean done();
     }
-    /** One lane read: native clip objects (compared by identity) and their arranger.clips.list rows, same order. */
+    /** One lane read: native clip objects (compared by identity) and their arranger.list rows, same order. */
     static final class Clips {
         final List<Object> natives;
         final JsonArray rows;
@@ -93,6 +93,7 @@ final class RenderModule implements HostModule, JobsModule.Source {
         final String id = JobsModule.id(kind(), ++sequence), method;
         final long started = scheduler.now();
         final List<String> ids;
+        final List<JsonElement> sources;
         final List<Object> proxies;
         final double start, end;
         final String tap;
@@ -107,6 +108,7 @@ final class RenderModule implements HostModule, JobsModule.Source {
         Job(
                 String method,
                 List<String> ids,
+                List<JsonElement> sources,
                 List<Object> proxies,
                 double start,
                 double end,
@@ -115,6 +117,7 @@ final class RenderModule implements HostModule, JobsModule.Source {
                 Export export) {
             this.method = method;
             this.ids = ids;
+            this.sources = sources;
             this.proxies = proxies;
             this.start = start;
             this.end = end;
@@ -143,6 +146,7 @@ final class RenderModule implements HostModule, JobsModule.Source {
 
     private final Scheduler scheduler;
     private final TrackWindow window;
+    private final TrackRefs trackRefs;
     private final Project project;
     private final TransportSafety transportSafety;
     private final NativeRuntime natives;
@@ -157,16 +161,18 @@ final class RenderModule implements HostModule, JobsModule.Source {
     RenderModule(
             Scheduler scheduler,
             TrackWindow window,
+            TrackRefs trackRefs,
             Project project,
             TransportSafety transportSafety,
             NativeRuntime natives,
             Holds holds) {
-        this(scheduler, window, project, transportSafety, natives, holds, null);
+        this(scheduler, window, trackRefs, project, transportSafety, natives, holds, null);
     }
 
     RenderModule(
             Scheduler scheduler,
             TrackWindow window,
+            TrackRefs trackRefs,
             Project project,
             TransportSafety transportSafety,
             NativeRuntime natives,
@@ -174,6 +180,7 @@ final class RenderModule implements HostModule, JobsModule.Source {
             Access access) {
         this.scheduler = scheduler;
         this.window = window;
+        this.trackRefs = trackRefs;
         this.project = project;
         this.transportSafety = transportSafety;
         this.natives = natives;
@@ -195,7 +202,7 @@ final class RenderModule implements HostModule, JobsModule.Source {
     }
 
     private static final String QUARANTINED =
-            "A bounce.inPlace has an unknown outcome; inspect arranger.clips.list on its tracks.";
+            "A tracks.bounce has an unknown outcome; inspect arranger.list on its tracks.";
 
     private String rendering() {
         Job current = job;
@@ -208,7 +215,7 @@ final class RenderModule implements HostModule, JobsModule.Source {
     private String finishedUnverified() {
         Job current = job;
         return !holds.held(QUARANTINE) && current != null && unverified(current)
-                ? "A bounce.inPlace finished after its request returned and is not verified yet; call jobs.get "
+                ? "A tracks.bounce finished after its request returned and is not verified yet; call jobs.get "
                         + current.id + "."
                 : null;
     }
@@ -232,72 +239,49 @@ final class RenderModule implements HostModule, JobsModule.Source {
         return current.bounce() && current.dispatched && current.done() && !current.reported;
     }
 
+    /** What the schema cannot say: distinct sources, the range, the file type's bit depths and the file names. */
     static void validateParams(String method, JsonObject p) {
         switch (method) {
             case EXPORT: {
-                Params.fields(
-                        p,
-                        Set.of("sources", "directory", "baseName", "startBeats", "endBeats", "format"),
-                        Set.of("bitDepth", "sampleRate", "tap", "dither", "overwrite"));
-                ids(p, "sources", true);
+                distinct(p.getAsJsonArray("sources"));
                 Params.absoluteFilePath(p, "directory");
                 RenderPlan.baseName(Params.string(p, "baseName"));
                 range(p);
-                String format = choice(p, "format", Set.of("wav", "flac"));
-                if (p.has("bitDepth")) {
-                    int depth = Params.integer(p, "bitDepth", 16, 32);
-                    if (!(format.equals("wav") ? Set.of(16, 24, 32) : Set.of(16, 24)).contains(depth))
-                        throw Errors.invalid("bitDepth must be 16, 24 or 32 (float) for wav, 16 or 24 for flac.");
-                }
-                if (p.has("sampleRate")
-                        && !Set.of(44100, 48000).contains(Params.integer(p, "sampleRate", 44100, 48000)))
-                    throw Errors.invalid("sampleRate must be 44100 or 48000 (omit for the current rate).");
-                if (p.has("tap")) choice(p, "tap", EXPORT_TAPS);
-                if (p.has("dither")) Params.bool(p, "dither");
-                if (p.has("overwrite")) Params.bool(p, "overwrite");
+                if (p.has("bitDepth")
+                        && p.get("fileType").getAsString().equals("flac")
+                        && p.get("bitDepth").getAsInt() == 32)
+                    throw Errors.invalid("bitDepth must be 16 or 24 for flac.");
                 return;
             }
             case BOUNCE:
-                Params.fields(p, Set.of("trackIds", "startBeats", "endBeats", "tap"), Set.of());
-                ids(p, "trackIds", false);
+                if (!p.get("inPlace").getAsBoolean()) throw Errors.invalid("inPlace must be true.");
+                distinct(p.getAsJsonArray("targets"));
                 range(p);
-                choice(p, "tap", BOUNCE_TAPS);
                 return;
             default:
                 throw Errors.notApplied(Reason.UNKNOWN_METHOD, "Unknown render method.");
         }
     }
 
-    private static List<String> ids(JsonObject p, String key, boolean allowMaster) {
-        JsonElement value = p.get(key);
-        if (!value.isJsonArray()
-                || value.getAsJsonArray().size() < 1
-                || value.getAsJsonArray().size() > HostLimits.TRACKS)
-            throw Errors.invalid(key + " must be an array of 1.." + HostLimits.TRACKS + " entries.");
-        List<String> out = new ArrayList<>();
+    private static boolean master(JsonElement item) {
+        return item.isJsonPrimitive();
+    }
+
+    private static String id(JsonElement item) {
+        return master(item) ? MASTER : item.getAsJsonObject().get("id").getAsString();
+    }
+
+    private static void distinct(JsonArray items) {
         Set<String> seen = new HashSet<>();
-        for (JsonElement item : value.getAsJsonArray()) {
-            String id = item.isJsonPrimitive() && item.getAsJsonPrimitive().isString() ? item.getAsString() : "";
-            if (!(allowMaster && id.equals(MASTER)) && !DeviceSources.canonicalUuid(id))
-                throw Errors.invalid(
-                        key + " entries must be canonical track UUIDs" + (allowMaster ? " or \"master\"." : "."));
-            if (!seen.add(id.toLowerCase(Locale.ROOT))) throw Errors.invalid(key + " entries must be distinct.");
-            out.add(id);
-        }
-        return out;
+        for (JsonElement item : items)
+            if (!seen.add(id(item).toLowerCase(Locale.ROOT))) throw Errors.invalid("Entries must be distinct.");
     }
 
     private static void range(JsonObject p) {
-        double start = Params.number(p, "startBeats", 0, MAX_BEATS),
-                end = Params.number(p, "endBeats", 0, MAX_BEATS + MAX_LENGTH);
+        double start = p.get("startBeats").getAsDouble(),
+                end = p.get("endBeats").getAsDouble();
         if (end <= start || end - start > MAX_LENGTH)
             throw Errors.invalid("endBeats must be after startBeats, at most " + (int) MAX_LENGTH + " beats later.");
-    }
-
-    private static String choice(JsonObject p, String key, Set<String> allowed) {
-        String value = Params.string(p, key);
-        if (!allowed.contains(value)) throw Errors.invalid(key + " must be one of " + new TreeSet<>(allowed) + ".");
-        return value;
     }
 
     @Override
@@ -344,22 +328,27 @@ final class RenderModule implements HostModule, JobsModule.Source {
         if (method.equals(BOUNCE) && holds.held(QUARANTINE))
             throw holds.blocked(
                     QUARANTINE,
-                    "An earlier bounce.inPlace has an unknown outcome; bounces are refused.",
-                    "Inspect arranger.clips.list on its tracks");
+                    "An earlier tracks.bounce has an unknown outcome; bounces are refused.",
+                    "Inspect arranger.list on its tracks");
         if (previous != null && unverified(previous) && !holds.held(QUARANTINE))
             throw Errors.notApplied(
                     Reason.BUSY,
-                    "The previous bounce.inPlace returned before it was verified; no request was queued.",
+                    "The previous tracks.bounce returned before it was verified; no request was queued.",
                     "Verify it with jobs.get " + previous.id + ".");
         SafetyObservation safety = transportSafety.stopped(op);
         boolean export = method.equals(EXPORT);
-        List<String> ids = ids(p, export ? "sources" : "trackIds", export);
+        List<JsonElement> sources = new ArrayList<>();
+        List<String> ids = new ArrayList<>();
         List<Object> proxies = new ArrayList<>();
-        int[] slots = new int[ids.size()];
-        long[] seen = new long[ids.size()];
-        for (int i = 0; i < ids.size(); i++) {
-            boolean master = ids.get(i).equals(MASTER);
-            slots[i] = master ? -1 : window.trackSlot(ids.get(i));
+        JsonArray requested = p.getAsJsonArray(export ? "sources" : "targets");
+        int[] slots = new int[requested.size()];
+        long[] seen = new long[slots.length];
+        for (int i = 0; i < slots.length; i++) {
+            JsonElement item = requested.get(i);
+            boolean master = master(item);
+            slots[i] = master ? -1 : trackRefs.resolve(item.getAsJsonObject(), true);
+            ids.add(id(item));
+            sources.add(master ? item : trackRefs.ref(slots[i]));
             proxies.add(master ? null : window.bank().getItemAt(slots[i]));
             if (!master) seen[i] = epochs.get(slots[i]);
         }
@@ -368,9 +357,9 @@ final class RenderModule implements HostModule, JobsModule.Source {
         String tap = p.has("tap") ? p.get("tap").getAsString() : "post_fader";
         Job next;
         if (export) {
-            String format = p.get("format").getAsString();
+            String fileType = p.get("fileType").getAsString();
             Export options = new Export(
-                    format,
+                    fileType,
                     p.has("bitDepth") ? p.get("bitDepth").getAsInt() : 24,
                     p.has("sampleRate") ? p.get("sampleRate").getAsInt() : 0,
                     tap,
@@ -382,11 +371,11 @@ final class RenderModule implements HostModule, JobsModule.Source {
                     Path.of(p.get("directory").getAsString()),
                     p.get("baseName").getAsString(),
                     ids.size(),
-                    format,
+                    fileType,
                     options.overwrite);
-            next = new Job(EXPORT, ids, proxies, start, end, tap, plan, options);
+            next = new Job(EXPORT, ids, sources, proxies, start, end, tap, plan, options);
         } else {
-            next = new Job(BOUNCE, ids, proxies, start, end, tap, null, null);
+            next = new Job(BOUNCE, ids, sources, proxies, start, end, tap, null, null);
             for (int i = 0; i < ids.size(); i++)
                 next.typesBefore.put(
                         ids.get(i), ((Track) proxies.get(i)).trackType().get());
@@ -493,10 +482,10 @@ final class RenderModule implements HostModule, JobsModule.Source {
                 JsonObject row = RenderPlan.inspect(
                         current.plan.files.get(i),
                         current.plan.before.get(i),
-                        current.export.format,
+                        current.export.fileType,
                         current.export.bitDepth,
                         current.export.sampleRate);
-                row.addProperty("source", current.ids.get(i));
+                row.add("source", current.sources.get(i));
                 verified &= row.get("valid").getAsBoolean();
                 ProjectSaveAsPlan.Stat was = current.plan.before.get(i),
                         now = ProjectSaveAsPlan.Stat.of(current.plan.files.get(i));
@@ -508,7 +497,7 @@ final class RenderModule implements HostModule, JobsModule.Source {
             for (int i = 0; i < current.ids.size(); i++) {
                 String id = current.ids.get(i);
                 JsonObject row = new JsonObject();
-                row.addProperty("trackId", id);
+                row.add("track", current.sources.get(i));
                 Clips before = current.before.get(id), after;
                 try {
                     after = bridge.clips(current.proxies.get(i), id, check);
@@ -597,7 +586,7 @@ final class RenderModule implements HostModule, JobsModule.Source {
         if (outcome != Outcome.APPLIED) {
             String message = bounce
                     ? outcome == Outcome.UNKNOWN
-                            ? "Bitwig finished the bounce but the arranger readback differs from one new audio clip over the range; inspect arranger.clips.list on its tracks, then ack "
+                            ? "Bitwig finished the bounce but the arranger readback differs from one new audio clip over the range; inspect arranger.list on its tracks, then ack "
                                     + QUARANTINE + ". Never retry: "
                             : "Bitwig finished the bounce job without changing any lane (Bitwig reports the reason as a notification): "
                     : "Bitwig finished the export job but the files did not verify"
@@ -667,7 +656,7 @@ final class RenderModule implements HostModule, JobsModule.Source {
         result.addProperty("endBeats", current.end);
         result.addProperty("tap", current.tap);
         if (current.export != null) {
-            result.addProperty("format", current.export.format);
+            result.addProperty("fileType", current.export.fileType);
             result.addProperty("bitDepth", current.export.bitDepth);
             result.addProperty(
                     "sampleRate",
@@ -699,7 +688,7 @@ final class RenderModule implements HostModule, JobsModule.Source {
             row.addProperty("state", current.settled ? "unknown" : "dispatching");
             if (current.settled)
                 row.addProperty(
-                        "hint", "Dispatched but no native job was observed; inspect the files or arranger.clips.list.");
+                        "hint", "Dispatched but no native job was observed; inspect the files or arranger.list.");
         } else if (!current.done()) row.addProperty("state", "running");
         else {
             bridge.execute(() -> {

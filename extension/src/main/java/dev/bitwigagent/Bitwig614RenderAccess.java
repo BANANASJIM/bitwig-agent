@@ -226,7 +226,7 @@ final class Bitwig614RenderAccess implements RenderModule.Access {
                 throw Errors.notApplied(Reason.INVALID_PARAMS, "Two sources resolve to the same native channel.");
             channels.add(channel);
         }
-        boolean wav = o.format.equals("wav");
+        boolean wav = o.fileType.equals("wav");
         Object flacDepth = flacDepths.getOrDefault(String.valueOf(o.bitDepth), flacDepths.get("24"));
         Object wavDepth =
                 wavDepths.get(String.valueOf(o.bitDepth)); // flac: the intermediate WAV is rendered at the same depth

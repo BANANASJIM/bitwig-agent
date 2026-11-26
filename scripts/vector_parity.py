@@ -34,6 +34,21 @@ SAMPLE_UUID = "12345678-1234-1234-1234-123456789abc"
 # for cross-field rules the two sides legitimately express differently.
 SKIPS: dict[tuple[str, str, str], str] = {
     (
+        "export.audio",
+        "sources.0.id",
+        "all",
+    ): 'a source is a track ref or "master": the extension names the union, not the field; the same ref fields are proven on tracks.bounce.targets',
+    (
+        "export.audio",
+        "sources.0.name",
+        "all",
+    ): 'a source is a track ref or "master": the extension names the union, not the field; the same ref fields are proven on tracks.bounce.targets',
+    (
+        "tracks.bounce",
+        "targets.0.name",
+        "reject",
+    ): "ref names are capped in UTF-16 units by the Python Ref validator, but the extension schema counts code points (P2-0 gap)",
+    (
         "devices.insert",
         "id",
         "accept",
@@ -74,7 +89,7 @@ SKIPS: dict[tuple[str, str, str], str] = {
             f,
             "accept",
         ): "endBeats must exceed startBeats by at most 65536, so a bound on one side is reachable only with a matching partner; rejects still run"
-        for m in ("export.audio", "bounce.inPlace")
+        for m in ("export.audio", "tracks.bounce")
         for f in ("startBeats", "endBeats")
     },
 }
@@ -310,6 +325,8 @@ def ensure(root, path, schema, defs):
         if isinstance(key, int):
             if not node:
                 node.append(container(node_schema, defs))
+            elif not isinstance(node[key], dict | list):
+                node[key] = container(node_schema, defs)
             node = node[key]
         else:
             if not isinstance(node.get(key), dict | list):

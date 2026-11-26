@@ -4,6 +4,7 @@ import static dev.bitwigagent.RpcAssert.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 import com.google.gson.*;
+import dev.bitwigagent.core.Refs;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -12,7 +13,7 @@ import java.util.*;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 
-/** Host-free export.audio/bounce.inPlace: planning, header checks and a simulated native job; not native acceptance. */
+/** Host-free export.audio/tracks.bounce: planning, header checks and a simulated native job; not native acceptance. */
 public final class RenderModuleTest {
     static final String A = HostFixture.A, B = HostFixture.B;
     private static final List<Path> temporary = new ArrayList<>();
@@ -24,12 +25,12 @@ public final class RenderModuleTest {
 
     @Test
     void validationIsStrict() {
-        RenderModule.validateParams("export.audio", export(TestPaths.absolute("/tmp"), "master"));
-        RenderModule.validateParams("bounce.inPlace", bounce(A));
+        valid("export.audio", export(TestPaths.absolute("/tmp"), "master"));
+        valid("tracks.bounce", bounce(A));
         JsonObject flac24 = export(TestPaths.absolute("/tmp"), A);
-        flac24.addProperty("format", "flac");
+        flac24.addProperty("fileType", "flac");
         flac24.addProperty("bitDepth", 24);
-        RenderModule.validateParams("export.audio", flac24);
+        valid("export.audio", flac24);
         List<JsonObject> bad = new ArrayList<>();
         JsonObject p;
         p = export(TestPaths.absolute("/tmp"), "master");
@@ -57,7 +58,7 @@ public final class RenderModuleTest {
         p.addProperty("endBeats", 65537);
         bad.add(p);
         p = export(TestPaths.absolute("/tmp"), "master");
-        p.addProperty("format", "mp3");
+        p.addProperty("fileType", "mp3");
         bad.add(p);
         p = export(TestPaths.absolute("/tmp"), "master");
         p.addProperty("bitDepth", 20);
@@ -78,16 +79,46 @@ public final class RenderModuleTest {
         p.addProperty("realtime", true);
         bad.add(p);
         for (JsonObject b : bad) invalid("export.audio", b);
-        invalid("bounce.inPlace", bounce("master"));
+        p = bounce(A);
+        p.getAsJsonArray("targets").set(0, new JsonPrimitive("master"));
+        invalid("tracks.bounce", p);
+        p = export(TestPaths.absolute("/tmp"), "master");
+        p.getAsJsonArray("sources").set(0, new JsonPrimitive(A));
+        invalid("export.audio", p);
+        p = export(TestPaths.absolute("/tmp"), "master");
+        p.addProperty("format", "wav");
+        invalid("export.audio", p);
+        p = bounce(A);
+        p.addProperty("inPlace", false);
+        invalid("tracks.bounce", p);
+        p = bounce(A);
+        p.remove("inPlace");
+        valid("tracks.bounce", p);
         p = bounce(A);
         p.addProperty("tap", "custom");
-        invalid("bounce.inPlace", p);
+        invalid("tracks.bounce", p);
         p = bounce(A);
         p.remove("tap");
-        invalid("bounce.inPlace", p);
+        invalid("tracks.bounce", p);
         p = bounce(A, A);
-        invalid("bounce.inPlace", p);
+        invalid("tracks.bounce", p);
         assertTrue(HostFixture.SPECS.methods().containsAll(RenderModule.METHODS), "render methods registered");
+    }
+
+    @Test
+    void aTrackRefThatNoLongerMatchesIsRefusedWithTheCurrentOne() throws IOException {
+        Sim sim = new Sim();
+        JsonObject renamed = bounce(A);
+        renamed.getAsJsonArray("targets").get(0).getAsJsonObject().addProperty("name", "Old name");
+        HostOperation op = sim.start("tracks.bounce", renamed, 5000);
+        sim.drainUntil(op);
+        assertEquals(ref(A), assertRpcError("target_changed", op).current, "the error carries the current ref");
+        JsonObject export = export(sim.dir.toString(), "master", A);
+        export.getAsJsonArray("sources").get(1).getAsJsonObject().addProperty("name", "Old name");
+        op = sim.start("export.audio", export, 5000);
+        sim.drainUntil(op);
+        assertRpcError("target_changed", op);
+        assertTrue(sim.dispatches == 0, "a stale ref is refused before dispatch");
     }
 
     @Test
@@ -220,8 +251,7 @@ public final class RenderModuleTest {
                         .get(1)
                         .getAsJsonObject()
                         .get("source")
-                        .getAsString()
-                        .equals(A),
+                        .equals(ref(A)),
                 "rows keep source order");
         assertTrue(sim.holds().isEmpty(), "a completed job holds nothing");
         JsonObject job = sim.job("render:1");
@@ -269,7 +299,7 @@ public final class RenderModuleTest {
                         && sim.holds().get(0).ackable
                         && sim.holds().get(0).description.contains("jobs.get render:1"),
                 "a running job whose request returned is a job hold ack may give up");
-        HostOperation busy = sim.start("bounce.inPlace", bounce(A), 5000);
+        HostOperation busy = sim.start("tracks.bounce", bounce(A), 5000);
         sim.drainUntil(busy);
         assertTrue(assertRpcError("busy", busy).next.contains("jobs.get render:1"), "busy points at jobs.get");
         assertTrue(sim.job("render:1").get("state").getAsString().equals("running"), "jobs.get reports running");
@@ -317,7 +347,7 @@ public final class RenderModuleTest {
 
         Sim bounce = new Sim();
         bounce.lost = true;
-        op = bounce.start("bounce.inPlace", bounce(A), 5000);
+        op = bounce.start("tracks.bounce", bounce(A), 5000);
         bounce.drainUntil(op);
         assertTrue(
                 assertUnknown("job_failed", op) != null
@@ -330,7 +360,7 @@ public final class RenderModuleTest {
     void aLostBounceReleasedByAckAdmitsTheNextRender() throws IOException {
         Sim bounce = new Sim();
         bounce.lost = true;
-        HostOperation op = bounce.start("bounce.inPlace", bounce(A), 5000);
+        HostOperation op = bounce.start("tracks.bounce", bounce(A), 5000);
         bounce.drainUntil(op);
         assertEquals("render:1", assertUnknown("job_failed", op).get("job").getAsString(), "it names its job");
         bounce.fixture.services.holds.ack("render.quarantine");
@@ -385,11 +415,12 @@ public final class RenderModuleTest {
             sim.fixture.tracks[0].child("trackType").emit("Hybrid");
             return lanes(clip(0, 16, "Bounce", "audio"), tail);
         };
-        HostOperation op = sim.start("bounce.inPlace", bounce(A), 5000);
+        HostOperation op = sim.start("tracks.bounce", bounce(A), 5000);
         sim.drainUntil(op);
         JsonObject result = assertOutcome("applied", op);
         assertTrue(sim.dispatches == 1 && sim.tap.equals("pre_fader"), "one bounce dispatch with the requested tap");
         JsonObject track = result.getAsJsonArray("tracks").get(0).getAsJsonObject();
+        assertEquals(ref(A), track.get("track"), "the row names the track by its ref");
         assertTrue(
                 track.get("trackTypeBefore").getAsString().equals("Instrument")
                         && track.get("trackTypeAfter").getAsString().equals("Hybrid")
@@ -414,27 +445,27 @@ public final class RenderModuleTest {
         partial.clips.put(A, lanes(longClip));
         partial.afterBounce = before -> lanes(
                 clip(-8, 8, "Long", "instrument"), clip(0, 16, "Long", "audio"), clip(16, 16, "Long", "instrument"));
-        op = partial.start("bounce.inPlace", bounce(A), 5000);
+        op = partial.start("tracks.bounce", bounce(A), 5000);
         partial.drainUntil(op);
         assertOutcome("applied", op);
 
         Sim again = new Sim();
         again.clips.put(A, lanes(clip(0, 16, "Bounce", "audio")));
         again.afterBounce = before -> lanes(clip(0, 16, "Bounce", "audio"));
-        op = again.start("bounce.inPlace", bounce(A), 5000);
+        op = again.start("tracks.bounce", bounce(A), 5000);
         again.drainUntil(op);
         assertOutcome("applied", op);
 
         Sim none = new Sim();
         none.module.applyGraceNanos = 0;
-        op = none.start("bounce.inPlace", bounce(A), 5000);
+        op = none.start("tracks.bounce", bounce(A), 5000);
         none.drainUntil(op);
         assertTrue(
                 !assertRpcError("job_failed", op).unknown && none.holds().isEmpty(),
                 "a finished job that changed nothing is an error");
 
         Sim slow = new Sim();
-        op = slow.start("bounce.inPlace", bounce(A), 200);
+        op = slow.start("tracks.bounce", bounce(A), 200);
         slow.drainUntil(op);
         assertTrue(
                 assertUnknown("deadline", op)
@@ -454,7 +485,7 @@ public final class RenderModuleTest {
     void unverifiedBounceHoldsBouncesUntilAck() throws IOException {
         Sim sim = new Sim();
         sim.afterBounce = before -> lanes(clip(0, 8, "Half", "audio"));
-        HostOperation op = sim.start("bounce.inPlace", bounce(A), 5000);
+        HostOperation op = sim.start("tracks.bounce", bounce(A), 5000);
         sim.drainUntil(op);
         assertTrue(
                 assertUnknown("readback_mismatch", op)
@@ -467,18 +498,18 @@ public final class RenderModuleTest {
                         && sim.holds().get(0).ackable
                         && sim.holds().get(0).id.equals("render.quarantine"),
                 "the unknown bounce is an unresolved hold");
-        HostOperation again = sim.start("bounce.inPlace", bounce(A), 5000);
+        HostOperation again = sim.start("tracks.bounce", bounce(A), 5000);
         sim.drainUntil(again);
         String next = assertRpcError("unresolved", again).next;
         assertTrue(
-                next.contains("arranger.clips.list") && next.contains("ack render.quarantine"),
+                next.contains("arranger.list") && next.contains("ack render.quarantine"),
                 "the refusal says what to inspect and what to ack");
         HostOperation export = sim.start("export.audio", export(sim.dir.toString(), "master"), 5000);
         sim.drainUntil(export);
         assertTrue(assertOutcome("applied", export) != null && sim.dispatches == 2, "exports stay available");
         sim.fixture.services.holds.ack("render.quarantine");
         sim.afterBounce = before -> lanes(clip(0, 16, "Bounce", "audio"));
-        again = sim.start("bounce.inPlace", bounce(A), 5000);
+        again = sim.start("tracks.bounce", bounce(A), 5000);
         sim.drainUntil(again);
         assertTrue(assertOutcome("applied", again) != null && sim.dispatches == 3, "ack lifts the hold");
     }
@@ -515,7 +546,7 @@ public final class RenderModuleTest {
         Sim sim = new Sim();
         sim.finish = false;
         sim.afterBounce = before -> lanes(clip(0, 16, "Bounce", "audio"));
-        HostOperation op = sim.start("bounce.inPlace", bounce(A), 200);
+        HostOperation op = sim.start("tracks.bounce", bounce(A), 200);
         sim.drainUntil(op);
         assertTrue(
                 assertUnknown("deadline", op).get("next").getAsString().contains("jobs.get render:1"),
@@ -526,13 +557,13 @@ public final class RenderModuleTest {
         assertTrue(
                 sim.holds().size() == 1 && sim.holds().get(0).id.equals("render.finished"),
                 "its late finish raises the finished hold");
-        HostOperation again = sim.start("bounce.inPlace", bounce(B), 5000);
+        HostOperation again = sim.start("tracks.bounce", bounce(B), 5000);
         sim.drainUntil(again);
         assertRpcError("busy", again);
         assertTrue(sim.job("render:1").get("outcome").getAsString().equals("applied"), "jobs.get verifies it");
         assertTrue(sim.holds().isEmpty(), "verification clears the hold");
         sim.finish = true;
-        again = sim.start("bounce.inPlace", bounce(B), 5000);
+        again = sim.start("tracks.bounce", bounce(B), 5000);
         sim.drainUntil(again);
         assertOutcome("applied", again);
     }
@@ -542,18 +573,23 @@ public final class RenderModuleTest {
         Sim sim = new Sim();
         sim.finish = false;
         sim.afterBounce = before -> lanes(clip(0, 16, "Bounce", "audio"));
-        HostOperation op = sim.start("bounce.inPlace", bounce(A), 200);
+        HostOperation op = sim.start("tracks.bounce", bounce(A), 200);
         sim.drainUntil(op);
         assertTrue(
                 assertUnknown("deadline", op).get("job").getAsString().equals("render:1"),
                 "bounce without latch by the deadline returns its job");
+        JsonObject running = sim.job("render:1");
+        assertTrue(
+                running.get("method").getAsString().equals("tracks.bounce")
+                        && running.get("state").getAsString().equals("running"),
+                "jobs.get reports the new method name while the job runs");
         sim.completeBounce();
         assertTrue(
                 sim.holds().size() == 1
                         && sim.holds().get(0).ackable
                         && sim.holds().get(0).description.contains("jobs.get render:1"),
                 "a finished but unverified bounce is held until jobs.get or ack");
-        HostOperation again = sim.start("bounce.inPlace", bounce(B), 5000);
+        HostOperation again = sim.start("tracks.bounce", bounce(B), 5000);
         sim.drainUntil(again);
         assertTrue(assertRpcError("busy", again).next.contains("jobs.get render:1"), "verify first");
         HostOperation export = sim.start("export.audio", export(sim.dir.toString(), "master"), 5000);
@@ -564,7 +600,7 @@ public final class RenderModuleTest {
                         && sim.holds().isEmpty(),
                 "jobs.get verifies and clears it");
         sim.finish = true;
-        again = sim.start("bounce.inPlace", bounce(B), 5000);
+        again = sim.start("tracks.bounce", bounce(B), 5000);
         sim.drainUntil(again);
         assertTrue(
                 assertOutcome("applied", again) != null && sim.dispatches == 2,
@@ -573,7 +609,7 @@ public final class RenderModuleTest {
         Sim wrong = new Sim();
         wrong.finish = false;
         wrong.afterBounce = before -> lanes(clip(0, 8, "Half", "audio"));
-        op = wrong.start("bounce.inPlace", bounce(A), 200);
+        op = wrong.start("tracks.bounce", bounce(A), 200);
         wrong.drainUntil(op);
         wrong.completeBounce();
         JsonObject job = wrong.job("render:1");
@@ -675,10 +711,10 @@ public final class RenderModuleTest {
 
         void complete() {
             try {
-                if (deleteOld) for (String base : paths) Files.deleteIfExists(Path.of(base + "." + options.format));
+                if (deleteOld) for (String base : paths) Files.deleteIfExists(Path.of(base + "." + options.fileType));
                 if (write)
                     for (String base : paths) {
-                        Path file = Path.of(base + "." + options.format);
+                        Path file = Path.of(base + "." + options.fileType);
                         if (garbage) Files.write(file, new byte[64]);
                         else
                             wav(
@@ -727,25 +763,30 @@ public final class RenderModuleTest {
     private static JsonObject export(String dir, String... sources) {
         JsonObject p = new JsonObject();
         JsonArray list = new JsonArray();
-        for (String source : sources) list.add(source);
+        for (String source : sources) list.add(source.equals("master") ? new JsonPrimitive(source) : ref(source));
         p.add("sources", list);
         p.addProperty("directory", dir);
         p.addProperty("baseName", "Mix");
         p.addProperty("startBeats", 0);
         p.addProperty("endBeats", 16);
-        p.addProperty("format", "wav");
+        p.addProperty("fileType", "wav");
         return p;
     }
 
     private static JsonObject bounce(String... ids) {
         JsonObject p = new JsonObject();
         JsonArray list = new JsonArray();
-        for (String id : ids) list.add(id);
-        p.add("trackIds", list);
+        for (String id : ids) list.add(ref(id));
+        p.add("targets", list);
+        p.addProperty("inPlace", true);
         p.addProperty("startBeats", 0);
         p.addProperty("endBeats", 16);
         p.addProperty("tap", "pre_fader");
         return p;
+    }
+
+    private static JsonObject ref(String id) {
+        return Refs.track(id, id.equals(A) ? "Track 0" : "Track 1");
     }
 
     private static JsonObject clip(double start, double length, String name, String kind) {
@@ -803,7 +844,11 @@ public final class RenderModuleTest {
         }
     }
 
+    private static void valid(String method, JsonObject params) {
+        RenderModule.validateParams(method, HostBridge.checkSchema(HostFixture.SPECS, method, params));
+    }
+
     private static void invalid(String method, JsonObject params) {
-        assertRpcError("invalid_params", () -> RenderModule.validateParams(method, params));
+        assertRpcError("invalid_params", () -> valid(method, params));
     }
 }

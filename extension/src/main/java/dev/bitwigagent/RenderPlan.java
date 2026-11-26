@@ -9,18 +9,18 @@ import java.util.List;
 
 /**
  * Host-free export.audio targets and output checks. Bitwig 6.1.4 is given extensionless base paths: the WAV writer
- * (WuK) appends ".wav" and the encoder (dip) appends "." + format, so the files are base + ".wav" / ".flac".
+ * (WuK) appends ".wav" and the encoder (dip) appends "." + fileType, so the files are base + ".wav" / ".flac".
  */
 final class RenderPlan {
     static final int MAX_NAME = 128;
     final Path directory;
     final List<Path> bases = new ArrayList<>(), files = new ArrayList<>();
     final List<ProjectSaveAsPlan.Stat> before = new ArrayList<>();
-    final String format;
+    final String fileType;
 
-    private RenderPlan(Path directory, String format) {
+    private RenderPlan(Path directory, String fileType) {
         this.directory = directory;
-        this.format = format;
+        this.fileType = fileType;
     }
 
     static String baseName(String name) {
@@ -37,16 +37,16 @@ final class RenderPlan {
     }
 
     /** One file per source: baseName for one source, baseName-01, -02, ... in source order for several. */
-    static RenderPlan export(Path directory, String baseName, int sources, String format, boolean overwrite) {
+    static RenderPlan export(Path directory, String baseName, int sources, String fileType, boolean overwrite) {
         if (!Files.isDirectory(directory))
             throw Errors.notApplied(
                     Reason.INVALID_TARGET, "directory " + directory + " does not exist or is not a directory.");
         if (!Files.isWritable(directory))
             throw Errors.notApplied(Reason.INVALID_TARGET, "directory " + directory + " is not writable.");
-        RenderPlan plan = new RenderPlan(directory, format);
+        RenderPlan plan = new RenderPlan(directory, fileType);
         for (int i = 0; i < sources; i++) {
             Path base = directory.resolve(sources == 1 ? baseName : baseName + String.format("-%02d", i + 1));
-            Path file = directory.resolve(base.getFileName() + "." + format);
+            Path file = directory.resolve(base.getFileName() + "." + fileType);
             plan.bases.add(base);
             plan.files.add(file);
         }
@@ -75,7 +75,7 @@ final class RenderPlan {
     }
 
     /** Header facts of one output; problem is null only for a new/changed, nonempty, parseable file of the expected kind. */
-    static JsonObject inspect(Path file, ProjectSaveAsPlan.Stat before, String format, int bitDepth, int sampleRate) {
+    static JsonObject inspect(Path file, ProjectSaveAsPlan.Stat before, String fileType, int bitDepth, int sampleRate) {
         JsonObject out = new JsonObject();
         out.addProperty("file", file.toString());
         ProjectSaveAsPlan.Stat now = ProjectSaveAsPlan.Stat.of(file);
@@ -86,7 +86,7 @@ final class RenderPlan {
         String problem = !now.exists ? "missing" : !written ? "not_written_by_this_export" : null;
         if (problem == null) {
             try (RandomAccessFile in = new RandomAccessFile(file.toFile(), "r")) {
-                problem = format.equals("wav") ? wav(in, out) : flac(in, out);
+                problem = fileType.equals("wav") ? wav(in, out) : flac(in, out);
             } catch (IOException error) {
                 problem = "unreadable: " + error.getMessage();
             }
@@ -130,7 +130,7 @@ final class RenderPlan {
                 if (format < 0 || block <= 0) return "data_before_fmt";
                 if (format != 1 && format != 3) return "unsupported_wav_encoding";
                 long available = Math.min(size, in.length() - start);
-                out.addProperty("format", "wav");
+                out.addProperty("fileType", "wav");
                 out.addProperty("encoding", format == 3 ? "float" : "pcm");
                 out.addProperty("channels", channels);
                 out.addProperty("sampleRate", rate);
@@ -153,7 +153,7 @@ final class RenderPlan {
                 channels = (int) ((packed >>> 41) & 7) + 1,
                 bits = (int) ((packed >>> 36) & 31) + 1;
         long frames = packed & 0xFFFFFFFFFL;
-        out.addProperty("format", "flac");
+        out.addProperty("fileType", "flac");
         out.addProperty("channels", channels);
         out.addProperty("sampleRate", rate);
         out.addProperty("bitDepth", bits);
