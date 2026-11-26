@@ -405,9 +405,7 @@ final class GridConnectionWriter {
         /** A port the write found before dispatch that a later capture no longer has. */
         Port requireSame(Endpoint endpoint, boolean input) {
             Port port = (input ? inputs : outputs).get(endpoint);
-            if (port == null)
-                throw Errors.notApplied(
-                        Reason.TARGET_CHANGED, "A requested native port left the graph during the write.");
+            if (port == null) throw Errors.notApplied(Reason.TARGET_CHANGED, "A native port left the graph.");
             return port;
         }
 

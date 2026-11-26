@@ -297,8 +297,7 @@ final class GridModuleWriter {
         /** A module the write found before dispatch that a later capture no longer has. */
         Row requireSame(UUID id) {
             Row row = find(id);
-            if (row == null)
-                throw Errors.notApplied(Reason.TARGET_CHANGED, "Module " + id + " left the graph during the write.");
+            if (row == null) throw Errors.notApplied(Reason.TARGET_CHANGED, "A module left the graph.");
             return row;
         }
 
