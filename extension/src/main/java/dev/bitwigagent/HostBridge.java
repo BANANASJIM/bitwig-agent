@@ -1,6 +1,6 @@
 package dev.bitwigagent;
 
-import com.bitwig.extension.controller.api.ControllerHost;
+import com.bitwig.extension.controller.api.*;
 import com.google.gson.JsonObject;
 import dev.bitwigagent.core.MethodSpecs;
 import java.util.*;
@@ -9,7 +9,9 @@ import java.util.concurrent.CompletableFuture;
 /** Composition and the single network-to-host boundary; domain state belongs to modules. */
 public final class HostBridge implements RpcServer.Handler, AutoCloseable {
     private final MethodSpecs specs;
-    private final HostServices services;
+    private final Scheduler scheduler;
+    private final TransportSafety transportSafety;
+    private final ProjectState projectState;
     private final Map<String, HostModule> modules = new HashMap<>();
     private final List<HostModule> domains = new ArrayList<>();
 
@@ -20,41 +22,50 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
     /** {@code clock} is the monotonic nanosecond clock that request deadlines are measured on. */
     HostBridge(ControllerHost host, MethodSpecs specs, java.util.function.LongSupplier clock) {
         this.specs = specs;
-        services = new HostServices(host, clock);
-        ParameterModule parameters = new ParameterModule(services);
+        scheduler = new Scheduler(host, clock);
+        Application application = host.createApplication();
+        Transport transport = host.createTransport();
+        Project project = host.getProject();
+        TrackWindow window = new TrackWindow(host);
+        projectState = new ProjectState(application, project, window, scheduler);
+        transportSafety = new TransportSafety(transport);
+        DeviceSources sources = new DeviceSources(window);
+        NativeRuntime natives = new NativeRuntime(host, scheduler);
+        SelectionLease selection = new SelectionLease();
+        Holds holds = new Holds();
+        LauncherStructureLock lock = new LauncherStructureLock(selection, holds);
+        ParameterModule parameters = new ParameterModule(scheduler, sources);
         register(parameters);
-        ProjectModule project = new ProjectModule(services);
-        RenderModule render = new RenderModule(services);
-        register(new DiscoveryModule(services, specs, parameters, project, render));
-        register(new ActionModule(services));
-        register(project);
-        TransportModule transport = new TransportModule(services);
-        register(transport);
-        MixModule mix = new MixModule(services);
+        ProjectModule projectModule = new ProjectModule(scheduler, application, project, projectState, natives, holds);
+        RenderModule render = new RenderModule(scheduler, window, project, transportSafety, natives, holds);
+        register(new DiscoveryModule(
+                host, application, transport, window, sources, projectState, specs, parameters, projectModule, render));
+        register(new ActionModule(scheduler, application, projectState, selection));
+        register(projectModule);
+        TransportModule transportModule =
+                new TransportModule(transport, application, scheduler, transportSafety, projectState);
+        register(transportModule);
+        MixModule mix = new MixModule(host, scheduler, window, application, transportSafety, selection, natives, holds);
         register(mix);
-        register(new DeviceModule(services));
-        LauncherModule launcher = new LauncherModule(services);
+        register(new DeviceModule(host, scheduler, window, sources, transportSafety, selection));
+        LauncherModule launcher = new LauncherModule(host, scheduler, window, transportSafety, selection, lock, holds);
         register(launcher);
-        register(new SceneModule(services, launcher::requireStructureSafe));
-        register(new LauncherSettingsModule(services, launcher));
-        register(new MarkerModule(services));
-        register(new MeterModule(services));
-        register(new ArrangerModule(services));
-        register(new AutomationModule(services));
-        register(new RoutingModule(services, specs));
+        register(new SceneModule(scheduler, window, transportSafety, lock));
+        register(new LauncherSettingsModule(scheduler, window, transportSafety, natives, holds, launcher));
+        register(new MarkerModule(host, transport, scheduler, transportSafety, holds));
+        register(new MeterModule(scheduler, window, transportSafety));
+        register(new ArrangerModule(scheduler, window, transportSafety, natives, holds, null));
+        register(new AutomationModule(scheduler, window, sources, transportSafety, natives, holds));
+        register(new RoutingModule(scheduler, window, sources, transportSafety, natives, holds, specs));
         register(render);
-        register(new ContextModule(services, transport, mix, launcher));
-        register(new GridModule(services));
-        ModulatorEditModule modulatorEdits = new ModulatorEditModule(services, specs);
-        register(new ModulatorModule(services, null, modulatorEdits));
+        register(new ContextModule(scheduler, window, projectState, transportSafety, transportModule, mix, launcher));
+        register(new GridModule(scheduler, sources, transportSafety, natives));
+        ModulatorEditModule modulatorEdits =
+                new ModulatorEditModule(scheduler, sources, transportSafety, natives, specs);
+        register(new ModulatorModule(scheduler, sources, natives, null, modulatorEdits));
         register(modulatorEdits);
-        register(new ExtensionModule(services, () -> domains));
+        register(new ExtensionModule(host, scheduler, holds));
         requireHandlersMatch();
-    }
-
-    /** Test seam. */
-    HostServices services() {
-        return services;
     }
 
     private void register(HostModule module) {
@@ -87,13 +98,11 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
             validate(method, params);
             HostModule module = modules.get(method);
             JsonObject copy = params.deepCopy();
-            services.schedule(
+            operation.safetyAtEnqueue = transportSafety.observation();
+            scheduler.schedule(
                     operation,
                     () -> {
-                        if (preflight(method, copy))
-                            operation.decorate = result -> addWarning(
-                                    result,
-                                    "Playback was started with an inactive audio engine: nothing will sound and captures will be silent. Run project.activateEngine and confirm status.engineActive=true.");
+                        preflight(method);
                         module.dispatch(operation, method, copy);
                     },
                     0);
@@ -103,21 +112,11 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
         return operation.result;
     }
 
-    /** Structure writes need a settled project; launches need an active engine. Returns whether to warn (playback start with inactive engine). */
-    boolean preflight(String method, JsonObject params) {
+    /** Structure writes need a settled project; launches need an active engine. Test seam. */
+    void preflight(String method) {
         MethodSpecs.Spec spec = specs.get(method);
-        if (spec.projectWrite) services.requireProjectReady();
-        if (spec.engineRequired) services.requireEngineActive(method);
-        return method.equals("transport.set")
-                && params.has("playing")
-                && params.get("playing").getAsBoolean()
-                && !services.engineActive();
-    }
-
-    static void addWarning(JsonObject result, String text) {
-        if (!result.has("warnings") || !result.get("warnings").isJsonArray())
-            result.add("warnings", new com.google.gson.JsonArray());
-        result.getAsJsonArray("warnings").add(text);
+        if (spec.projectWrite) projectState.requireReady();
+        if (spec.engineRequired) projectState.requireEngineActive(method);
     }
 
     /** Forward the host's output-update boundary once per domain, not once per RPC method. */
@@ -127,6 +126,6 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
 
     @Override
     public void close() {
-        services.close();
+        scheduler.close();
     }
 }

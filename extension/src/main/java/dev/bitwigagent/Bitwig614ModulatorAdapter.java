@@ -107,7 +107,7 @@ final class Bitwig614ModulatorAdapter implements ModulatorAdapter, ModulatorSnap
 
     @Override
     public JsonObject capabilities() {
-        JsonObject result = HostServices.observed();
+        JsonObject result = Results.observed();
         result.addProperty("adapter", "bitwig_6_1_4_primary_modulators_read_only");
         result.addProperty("hostVersion", bindings.hostVersion());
         result.addProperty("expectedVersion", Bitwig614Runtime.VERSION);

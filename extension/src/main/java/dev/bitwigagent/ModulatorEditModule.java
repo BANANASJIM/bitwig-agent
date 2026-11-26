@@ -16,17 +16,34 @@ final class ModulatorEditModule implements HostModule {
             "modulators.map",
             "modulators.unmap");
     static final int MAX_RESPONSE_CHARS = 240000;
-    private final HostServices s;
+    private final Scheduler scheduler;
+    private final DeviceSources sources;
+    private final TransportSafety transportSafety;
+    private final NativeRuntime natives;
     private final MethodSpecs specs;
     private ModulatorEditor editor;
     private String unavailable;
 
-    ModulatorEditModule(HostServices services, MethodSpecs specs) {
-        this(services, specs, null);
+    ModulatorEditModule(
+            Scheduler scheduler,
+            DeviceSources sources,
+            TransportSafety transportSafety,
+            NativeRuntime natives,
+            MethodSpecs specs) {
+        this(scheduler, sources, transportSafety, natives, specs, null);
     }
 
-    ModulatorEditModule(HostServices services, MethodSpecs specs, ModulatorEditor injected) {
-        s = services;
+    ModulatorEditModule(
+            Scheduler scheduler,
+            DeviceSources sources,
+            TransportSafety transportSafety,
+            NativeRuntime natives,
+            MethodSpecs specs,
+            ModulatorEditor injected) {
+        this.scheduler = scheduler;
+        this.sources = sources;
+        this.transportSafety = transportSafety;
+        this.natives = natives;
         this.specs = specs;
         editor = injected;
     }
@@ -95,15 +112,14 @@ final class ModulatorEditModule implements HostModule {
     private ModulatorEditor editor(HostOperation op) {
         if (editor != null) return editor;
         if (unavailable != null) throw Errors.notApplied(ErrorCode.MODULATOR_UNAVAILABLE, unavailable);
-        Bitwig614Runtime.Access bindings = s.nativeRuntime(op).access(ErrorCode.MODULATOR_UNAVAILABLE);
+        Bitwig614Runtime.Access bindings = natives.get(op).access(ErrorCode.MODULATOR_UNAVAILABLE);
         if (bindings.gateError() != null)
             throw Errors.notApplied(
                     ErrorCode.MODULATOR_UNAVAILABLE, "Exact runtime gate is unavailable: " + bindings.gateError());
         try {
             // The Grid reader keeps its own error code: it downgrades optional metadata failures only for
             // grid_unavailable.
-            Bitwig614GridAdapter grid =
-                    new Bitwig614GridAdapter(s.nativeRuntime(op).access(ErrorCode.GRID_UNAVAILABLE));
+            Bitwig614GridAdapter grid = new Bitwig614GridAdapter(natives.get(op).access(ErrorCode.GRID_UNAVAILABLE));
             editor = new ModulatorEditor(new Bitwig614ModulatorEditAccess(bindings, grid));
         } catch (ReflectiveOperationException | RuntimeException | LinkageError error) {
             unavailable = "Device-modulator edit bindings unavailable: " + Bitwig614Runtime.diagnostic(error);
@@ -136,11 +152,12 @@ final class ModulatorEditModule implements HostModule {
 
     @Override
     public void dispatch(HostOperation op, String method, JsonObject p) {
-        s.check(op);
+        scheduler.check(op);
         ModulatorEditor edits = editor(op);
         final boolean writing = !specs.get(method).readOnly;
-        final Runnable safety = writing ? s.writeGuard(op, !method.equals("modulators.parameters.set")) : null;
-        final DeviceSources.RootReadTicket target = s.sources.rootRead(p.getAsJsonObject("parent"));
+        final Runnable safety =
+                writing ? transportSafety.writeGuard(op, !method.equals("modulators.parameters.set")) : null;
+        final DeviceSources.RootReadTicket target = sources.rootRead(p.getAsJsonObject("parent"));
         final UUID trackId = UUID.fromString(target.trackId);
         final UUID modulatorId =
                 p.has("modulatorId") ? UUID.fromString(p.get("modulatorId").getAsString()) : null;
@@ -157,7 +174,7 @@ final class ModulatorEditModule implements HostModule {
         edits.execute(() -> {
             try {
                 Runnable check = () -> {
-                    s.check(op);
+                    scheduler.check(op);
                     target.check();
                     if (writing) safety.run();
                 };
@@ -236,7 +253,7 @@ final class ModulatorEditModule implements HostModule {
                 MAX_RESPONSE_CHARS,
                 ErrorCode.MODULATOR_BOUNDS_EXCEEDED,
                 "Modulator response exceeds bounded transport size; pass modulatorId. Values are never truncated.");
-        s.schedule(
+        scheduler.schedule(
                 op,
                 () -> {
                     guard(op, target);
@@ -250,7 +267,7 @@ final class ModulatorEditModule implements HostModule {
     }
 
     private void guard(HostOperation op, DeviceSources.RootReadTicket target) {
-        s.check(op);
-        s.sources.guardRootRead(target);
+        scheduler.check(op);
+        sources.guardRootRead(target);
     }
 }

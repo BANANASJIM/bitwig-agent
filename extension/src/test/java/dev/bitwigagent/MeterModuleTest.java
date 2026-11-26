@@ -41,7 +41,7 @@ public final class MeterModuleTest {
     @Test
     void invalidRequestsNeverSchedule() {
         HostFixture f = fixture(false);
-        MeterModule m = new MeterModule(f.services);
+        MeterModule m = f.services.meter();
         String a = HostFixture.A;
         for (String text : List.of(
                 "{}",
@@ -62,7 +62,7 @@ public final class MeterModuleTest {
     @Test
     void windowAggregatesPeakAndRms() throws InterruptedException {
         HostFixture f = fixture(false);
-        MeterModule m = new MeterModule(f.services);
+        MeterModule m = f.services.meter();
         f.transport.child("isPlaying").emit(true);
         fire(0, 0, "peak", 40); // standing level before the window counts as the baseline
         HostOperation op = f.submit(
@@ -109,7 +109,7 @@ public final class MeterModuleTest {
     @Test
     void shortTimeoutIsRefused() {
         HostFixture f = fixture(false);
-        MeterModule m = new MeterModule(f.services);
+        MeterModule m = f.services.meter();
         HostOperation op = f.submit(
                 m,
                 "tracks.meters",
@@ -122,7 +122,7 @@ public final class MeterModuleTest {
     @Test
     void unknownTrackAndMissingObserverFailClosed() {
         HostFixture f = fixture(false);
-        MeterModule m = new MeterModule(f.services);
+        MeterModule m = f.services.meter();
         HostOperation op = f.submit(
                 m,
                 "tracks.meters",
@@ -130,7 +130,7 @@ public final class MeterModuleTest {
         f.next();
         assertRpcError("outside_window", op);
         HostFixture g = fixture(true);
-        MeterModule broken = new MeterModule(g.services);
+        MeterModule broken = g.services.meter();
         HostOperation unavailable = g.submit(
                 broken, "tracks.meters", params("{\"trackIds\":[\"" + HostFixture.A + "\"],\"windowMs\":100}"));
         g.next();

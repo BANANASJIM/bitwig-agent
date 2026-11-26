@@ -1,6 +1,7 @@
 package dev.bitwigagent;
 
-import static dev.bitwigagent.HostServices.*;
+import static dev.bitwigagent.HostLimits.*;
+import static dev.bitwigagent.Results.*;
 
 import com.bitwig.extension.callback.*;
 import com.bitwig.extension.controller.api.*;
@@ -11,15 +12,17 @@ import java.util.*;
 final class ParameterModule implements HostModule {
     static final Set<String> METHODS =
             Set.of("parameters.list", "parameters.set", "parameters.layer.list", "parameters.layer.set");
-    private final HostServices s;
+    private final Scheduler scheduler;
+    private final DeviceSources sources;
     private final Map<DeviceSources.Source, ParameterSource> parameterSources = new IdentityHashMap<>();
     private long valueSequence;
     private Binding binding;
     private HostOperation parameterRequest;
 
-    ParameterModule(HostServices s) {
-        this.s = s;
-        for (DeviceSources.Source identity : s.sources.all) {
+    ParameterModule(Scheduler scheduler, DeviceSources sources) {
+        this.scheduler = scheduler;
+        this.sources = sources;
+        for (DeviceSources.Source identity : sources.all) {
             ParameterSource source = new ParameterSource(identity);
             parameterSources.put(identity, source);
             identity.listeners.add((structural, name) -> {
@@ -120,19 +123,22 @@ final class ParameterModule implements HostModule {
         }
         Binding target = new Binding(source);
         binding = target;
-        s.check(request);
+        scheduler.check(request);
         awaitDevice(request, target);
     }
 
     private void awaitDevice(HostOperation request, Binding target) {
-        if (binding != target || !bankTargetMatches(target))
-            throw Errors.notApplied(ErrorCode.STALE_TARGET, "Target changed during binding.");
-        if (!matches(target) || !target.source.idsObserved) {
-            s.schedule(request, () -> awaitDevice(request, target), 20);
-            return;
-        }
-        target.established = true;
-        request.result.complete(listParameters());
+        scheduler.await(
+                request,
+                () -> {
+                    if (binding != target || !bankTargetMatches(target))
+                        throw Errors.notApplied(ErrorCode.STALE_TARGET, "Target changed during binding.");
+                    return matches(target) && target.source.idsObserved;
+                },
+                () -> {
+                    target.established = true;
+                    request.result.complete(listParameters());
+                });
     }
 
     private JsonObject listParameters() {
@@ -183,48 +189,46 @@ final class ParameterModule implements HostModule {
             return;
         }
         long before = parameter.sequence;
-        s.check(request);
+        scheduler.check(request);
         if (!matches(target))
             throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Target changed before parameter dispatch.");
         request.dispatched = true;
         source.identity.device.setDirectParameterValueNormalized(
                 id, Math.round(requestedValue * (RESOLUTION - 1)), RESOLUTION);
-        long observeUntil = s.observeUntil(request);
-        awaitValue(request, target, token, id, requestedValue, applied, before, observeUntil);
+        scheduler.poll(
+                request,
+                scheduler.observeUntil(request),
+                () -> {
+                    if (binding != target || !target.token.equals(token) || !matches(target))
+                        throw Errors.unknown(
+                                ErrorCode.STALE_CONTEXT, "Target changed after dispatch; outcome unknown.");
+                    Double seen = observedAfter(target, id, before);
+                    return seen != null && Math.abs(seen - applied) <= TOLERANCE;
+                },
+                () -> request.result.complete(writeResult(
+                        target,
+                        id,
+                        requestedValue,
+                        applied,
+                        observedAfter(target, id, before),
+                        "observer_after_write")),
+                () -> {
+                    Double seen = observedAfter(target, id, before);
+                    request.result.complete(writeResult(
+                            target,
+                            id,
+                            requestedValue,
+                            applied,
+                            seen,
+                            seen != null ? "readback_mismatch" : "not_observed"));
+                });
     }
 
-    private void awaitValue(
-            HostOperation request,
-            Binding target,
-            String token,
-            String id,
-            double requested,
-            double applied,
-            long before,
-            long observeUntil) {
-        if (binding != target || !target.token.equals(token) || !matches(target)) {
-            throw Errors.unknown(ErrorCode.STALE_CONTEXT, "Target changed after dispatch; outcome unknown.");
-        }
+    /** The parameter's value if its observer fired after {@code before}; null while that has not happened. */
+    private Double observedAfter(Binding target, String id, long before) {
         ParameterSource source = target.source;
         ParameterState parameter = source.parameters == null ? null : source.parameters.get(id);
-        boolean fresh = parameter != null && parameter.sequence > before && parameter.value != null;
-        if (fresh && Math.abs(parameter.value - applied) <= TOLERANCE) {
-            request.result.complete(
-                    writeResult(target, id, requested, applied, parameter.value, "observer_after_write"));
-        } else if (s.now() >= observeUntil) {
-            request.result.complete(writeResult(
-                    target,
-                    id,
-                    requested,
-                    applied,
-                    fresh ? parameter.value : null,
-                    fresh ? "readback_mismatch" : "not_observed"));
-        } else {
-            s.schedule(
-                    request,
-                    () -> awaitValue(request, target, token, id, requested, applied, before, observeUntil),
-                    20);
-        }
+        return parameter != null && parameter.sequence > before && parameter.value != null ? parameter.value : null;
     }
 
     private static JsonObject writeResult(
@@ -271,7 +275,7 @@ final class ParameterModule implements HostModule {
     }
 
     private ParameterSource resolve(JsonObject params) {
-        DeviceSources.Source identity = params.has("parent") ? s.sources.child(params) : s.sources.root(params);
+        DeviceSources.Source identity = params.has("parent") ? sources.child(params) : sources.root(params);
         return parameterSources.get(identity);
     }
 

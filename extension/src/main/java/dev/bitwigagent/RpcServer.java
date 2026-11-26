@@ -17,8 +17,8 @@ public final class RpcServer implements AutoCloseable {
         CompletableFuture<JsonObject> handle(String method, JsonObject params, long deadlineNanos);
     }
 
-    public static final int MAX_REQUEST_BYTES = HostServices.LIMITS.maxRequestBytes;
-    public static final int MAX_RESPONSE_BYTES = HostServices.LIMITS.maxResponseBytes;
+    public static final int MAX_REQUEST_BYTES = HostLimits.LIMITS.maxRequestBytes;
+    public static final int MAX_RESPONSE_BYTES = HostLimits.LIMITS.maxResponseBytes;
     private static final Set<String> FIELDS =
             Collections.unmodifiableSet(new HashSet<>(Arrays.asList("id", "method", "params", "timeoutMs")));
     private static final Gson GSON = new GsonBuilder().serializeNulls().create();
@@ -191,9 +191,7 @@ public final class RpcServer implements AutoCloseable {
         }
     }
 
-    static final int MIN_TIMEOUT_MS = HostServices.LIMITS.minTimeoutMs,
-            SOCKET_EXPIRY_MS = 15000,
-            SOCKET_GRACE_MS = 5000;
+    static final int MIN_TIMEOUT_MS = HostLimits.LIMITS.minTimeoutMs, SOCKET_EXPIRY_MS = 15000, SOCKET_GRACE_MS = 5000;
 
     private static JsonObject envelope(String id) {
         JsonObject response = new JsonObject();

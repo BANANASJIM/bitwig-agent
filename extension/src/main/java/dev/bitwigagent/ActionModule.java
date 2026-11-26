@@ -1,6 +1,7 @@
 package dev.bitwigagent;
 
-import static dev.bitwigagent.HostServices.*;
+import static dev.bitwigagent.HostLimits.*;
+import static dev.bitwigagent.Results.*;
 
 import com.bitwig.extension.controller.api.*;
 import com.google.gson.*;
@@ -15,10 +16,16 @@ final class ActionModule implements HostModule {
     /** Closes every open tab; the bridge only observes the current one, so explicit consent is always required. */
     static final Set<String> ALWAYS_CONSENT = Set.of("Quit");
 
-    private final HostServices s;
+    private final Scheduler scheduler;
+    private final Application application;
+    private final ProjectState projectState;
+    private final SelectionLease selection;
 
-    ActionModule(HostServices s) {
-        this.s = s;
+    ActionModule(Scheduler scheduler, Application application, ProjectState projectState, SelectionLease selection) {
+        this.scheduler = scheduler;
+        this.application = application;
+        this.projectState = projectState;
+        this.selection = selection;
     }
 
     @Override
@@ -58,7 +65,7 @@ final class ActionModule implements HostModule {
         int limit = params.has("limit") ? params.get("limit").getAsInt() : 100;
         JsonArray actions = new JsonArray();
         int total = 0;
-        for (Action action : s.application.getActions()) {
+        for (Action action : application.getActions()) {
             ActionCategory category = action.getCategory();
             if (query != null
                     && !action.getId().toLowerCase(Locale.ROOT).contains(query)
@@ -92,7 +99,7 @@ final class ActionModule implements HostModule {
 
     private void invokeAction(HostOperation request, JsonObject params) {
         String actionId = params.get("actionId").getAsString();
-        Action action = s.application.getAction(actionId);
+        Action action = application.getAction(actionId);
         if (action == null)
             throw Errors.notApplied(ErrorCode.UNKNOWN_ACTION, "Action ID is absent from the host catalog.");
         boolean discard = params.has("discardUnsavedChanges")
@@ -102,18 +109,18 @@ final class ActionModule implements HostModule {
                     ErrorCode.UNSAVED_CHANGES,
                     "Action \"" + actionId
                             + "\" closes every open project tab; only the current tab's saved state is observable (projectModified="
-                            + s.projectModifiedJson()
+                            + Results.modified(projectState.modified())
                             + "). Save each tab, then pass discardUnsavedChanges:true with user consent.");
-        if (DISCARDING.contains(actionId) && !discard && !Boolean.FALSE.equals(s.projectModified()))
+        if (DISCARDING.contains(actionId) && !discard && !Boolean.FALSE.equals(projectState.modified()))
             throw Errors.notApplied(
                     ErrorCode.UNSAVED_CHANGES,
                     "Action \"" + actionId
                             + "\" closes the current project tab, which is not observed saved (projectModified="
-                            + s.projectModifiedJson()
+                            + Results.modified(projectState.modified())
                             + "). Run project.save, or pass discardUnsavedChanges:true with user consent.");
-        s.check(request);
+        scheduler.check(request);
         // Host actions can retarget the launcher cursor clip (select clip/track); never mid launcher edit.
-        s.requireSelectionFree();
+        selection.requireFree();
         request.dispatched = true;
         action.invoke();
         JsonObject result = new JsonObject();

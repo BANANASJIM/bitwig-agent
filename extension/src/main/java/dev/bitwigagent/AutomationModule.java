@@ -106,22 +106,46 @@ final class AutomationModule implements HostModule {
                 Runnable beforeWrite);
     }
 
-    private final HostServices s;
-    private final AtomicLongArray epochs = new AtomicLongArray(HostServices.TRACKS);
+    private final Scheduler scheduler;
+    private final TrackWindow window;
+    private final DeviceSources sources;
+    private final TransportSafety transportSafety;
+    private final NativeRuntime natives;
+    private final Holds holds;
+    private final AtomicLongArray epochs = new AtomicLongArray(HostLimits.TRACKS);
     private Access access;
     private Object gridAdapter;
-    private volatile boolean pending, quarantined;
+    private static final String PENDING = "automation.pending", QUARANTINE = "automation.quarantine";
+    private static final String HOLD = "An automation point write is pending or unresolved.";
 
-    AutomationModule(HostServices s) {
-        this(s, null);
+    AutomationModule(
+            Scheduler scheduler,
+            TrackWindow window,
+            DeviceSources sources,
+            TransportSafety transportSafety,
+            NativeRuntime natives,
+            Holds holds) {
+        this(scheduler, window, sources, transportSafety, natives, holds, null);
     }
 
-    AutomationModule(HostServices s, Access access) {
-        this.s = s;
+    AutomationModule(
+            Scheduler scheduler,
+            TrackWindow window,
+            DeviceSources sources,
+            TransportSafety transportSafety,
+            NativeRuntime natives,
+            Holds holds,
+            Access access) {
+        this.scheduler = scheduler;
+        this.window = window;
+        this.sources = sources;
+        this.transportSafety = transportSafety;
+        this.natives = natives;
+        this.holds = holds;
         this.access = access;
-        for (int i = 0; i < HostServices.TRACKS; i++) {
+        for (int i = 0; i < HostLimits.TRACKS; i++) {
             final int index = i;
-            Track track = (Track) s.tracks.getItemAt(i);
+            Track track = window.at(i);
             track.channelId().addValueObserver((StringValueChangedCallback) v -> epochs.incrementAndGet(index));
             track.exists().addValueObserver((BooleanValueChangedCallback) v -> epochs.incrementAndGet(index));
         }
@@ -130,11 +154,6 @@ final class AutomationModule implements HostModule {
     @Override
     public Set<String> methods() {
         return METHODS;
-    }
-
-    @Override
-    public List<String> unresolved() {
-        return pending || quarantined ? List.of("An automation point write is pending or unresolved.") : List.of();
     }
 
     @Override
@@ -183,7 +202,7 @@ final class AutomationModule implements HostModule {
             return;
         }
         Params.fields(t, Set.of("kind", "deviceIndex", "expectedDeviceName", "moduleId", "parameterId"), Set.of());
-        Params.integer(t, "deviceIndex", 0, HostServices.DEVICES - 1);
+        Params.integer(t, "deviceIndex", 0, HostLimits.DEVICES - 1);
         Params.string(t, "expectedDeviceName");
         if (!UUID_PATTERN.matcher(Params.string(t, "moduleId")).matches())
             throw Errors.invalid("target.moduleId must be a canonical UUID");
@@ -304,7 +323,7 @@ final class AutomationModule implements HostModule {
 
     /** Lane summary: whole-lane count and hash, plus the points inside range (bounded). */
     static JsonObject lane(String trackId, Target target, boolean exists, List<Point> all, double[] range) {
-        JsonObject out = HostServices.observed();
+        JsonObject out = Results.observed();
         out.addProperty("trackId", trackId);
         out.add("target", target.json());
         out.addProperty("laneExists", exists);
@@ -336,16 +355,17 @@ final class AutomationModule implements HostModule {
 
     @Override
     public void dispatch(HostOperation op, String method, JsonObject p) {
-        s.check(op);
+        scheduler.check(op);
         boolean write = method.equals("automation.points.set");
-        if (pending) throw Errors.notApplied(ErrorCode.BUSY, "Another native automation operation is pending.");
-        if (write && quarantined)
+        if (holds.held(PENDING))
+            throw Errors.notApplied(ErrorCode.BUSY, "Another native automation operation is pending.");
+        if (write && holds.held(QUARANTINE))
             throw Errors.notApplied(
                     ErrorCode.UNRESOLVED_MUTATION,
                     "An unresolved automation write requires inspection (automation.points.get) and extension.restart before further automation writes.");
         String id = p.get("trackId").getAsString();
-        int index = s.trackSlot(id);
-        Track track = (Track) s.tracks.getItemAt(index);
+        int index = window.trackSlot(id);
+        Track track = window.at(index);
         Target target = Target.parse(p);
         DeviceSources.RootReadTicket device = null;
         if (target.grid()) {
@@ -353,14 +373,14 @@ final class AutomationModule implements HostModule {
             parent.addProperty("trackId", id);
             parent.addProperty("deviceIndex", target.deviceIndex);
             parent.addProperty("expectedDeviceName", target.expectedDeviceName);
-            s.sources.requireZeroWindow(parent);
-            device = s.sources.rootRead(parent);
+            sources.requireZeroWindow(parent);
+            device = sources.rootRead(parent);
             target.deviceProxy = device.device;
         }
-        HostServices.SafetyObservation safety = write ? s.stoppedSafety(op) : null;
+        SafetyObservation safety = write ? transportSafety.stopped(op) : null;
         if (access == null) {
             try {
-                access = new Bitwig614AutomationAccess(s.nativeRuntime(op).access(ErrorCode.AUTOMATION_UNAVAILABLE));
+                access = new Bitwig614AutomationAccess(natives.get(op).access(ErrorCode.AUTOMATION_UNAVAILABLE));
             } catch (ReflectiveOperationException error) {
                 throw Errors.notApplied(
                         ErrorCode.AUTOMATION_UNAVAILABLE,
@@ -369,27 +389,27 @@ final class AutomationModule implements HostModule {
         }
         if (target.grid()) {
             if (gridAdapter == null && access instanceof Bitwig614AutomationAccess)
-                gridAdapter = new Bitwig614GridAdapter(s.nativeRuntime(op).access(ErrorCode.GRID_UNAVAILABLE));
+                gridAdapter = new Bitwig614GridAdapter(natives.get(op).access(ErrorCode.GRID_UNAVAILABLE));
             target.grid = gridAdapter;
         }
         long epoch = epochs.get(index);
         DeviceSources.RootReadTicket ticket = device;
         Runnable check = () -> {
-            s.check(op);
+            scheduler.check(op);
             if (epochs.get(index) != epoch)
                 throw Errors.notApplied(
                         ErrorCode.STALE_CONTEXT, "Track bank changed while the automation operation was queued.");
             if (ticket != null) ticket.check();
-            if (write) s.guardStoppedSafety(safety);
+            if (write) transportSafety.guardStopped(safety);
         };
         Runnable beforeWrite = () -> {
             check.run();
             op.dispatched = true;
-            quarantined = true;
+            holds.place(QUARANTINE, HOLD);
         };
         Access bridge = access;
         double[] range = range(p);
-        pending = true;
+        holds.place(PENDING, HOLD);
         try {
             bridge.execute(() -> {
                 try {
@@ -411,29 +431,29 @@ final class AutomationModule implements HostModule {
                             240000,
                             ErrorCode.AUTOMATION_BOUNDS_EXCEEDED,
                             "Automation response exceeds the bounded transport size; pass a smaller range.");
-                    s.schedule(
+                    scheduler.schedule(
                             op,
                             () -> {
                                 check.run();
-                                if (!s.trackMatches(id, track))
+                                if (!window.trackMatches(id, track))
                                     throw Errors.notApplied(
                                             ErrorCode.STALE_CONTEXT, "Track target changed after native access.");
-                                if (ticket != null) s.sources.guardRootRead(ticket);
-                                if (write) quarantined = false;
-                                pending = false;
+                                if (ticket != null) sources.guardRootRead(ticket);
+                                if (write) holds.release(QUARANTINE);
+                                holds.release(PENDING);
                                 op.result.complete(
                                         JsonParser.parseString(serialized).getAsJsonObject());
                             },
                             0);
                 } catch (RuntimeException | Error error) {
-                    pending = false;
+                    holds.release(PENDING);
                     op.fail(error);
                 }
             });
         } catch (RuntimeException | Error error) {
-            pending = false;
+            holds.release(PENDING);
             throw error;
         }
-        op.result.whenComplete((r, e) -> pending = false);
+        op.result.whenComplete((r, e) -> holds.release(PENDING));
     }
 }

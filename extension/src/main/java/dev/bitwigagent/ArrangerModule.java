@@ -59,43 +59,42 @@ final class ArrangerModule implements HostModule {
                 Runnable beforeWrite);
     }
 
-    private final HostServices s;
-    private final AtomicLongArray epochs = new AtomicLongArray(HostServices.TRACKS);
+    private final Scheduler scheduler;
+    private final TrackWindow window;
+    private final TransportSafety transportSafety;
+    private final NativeRuntime natives;
+    private final Holds holds;
+    private final AtomicLongArray epochs = new AtomicLongArray(HostLimits.TRACKS);
     private Access access;
-    private volatile boolean pending, quarantined;
+    private static final String PENDING = "arranger.pending", QUARANTINE = "arranger.quarantine";
+    private static final String HOLD = "An arranger clip write is pending or unresolved.";
 
-    ArrangerModule(HostServices s) {
-        this(s, null);
-    }
-
-    ArrangerModule(HostServices s, Access access) {
-        this.s = s;
+    ArrangerModule(
+            Scheduler scheduler,
+            TrackWindow window,
+            TransportSafety transportSafety,
+            NativeRuntime natives,
+            Holds holds,
+            Access access) {
+        this.scheduler = scheduler;
+        this.window = window;
+        this.transportSafety = transportSafety;
+        this.natives = natives;
+        this.holds = holds;
         this.access = access;
-        for (int i = 0; i < HostServices.TRACKS; i++) {
+        for (int i = 0; i < HostLimits.TRACKS; i++) {
             final int index = i;
-            Track track = (Track) s.tracks.getItemAt(i);
+            Track track = window.at(i);
             track.channelId().addValueObserver((StringValueChangedCallback) v -> epochs.incrementAndGet(index));
             track.exists().addValueObserver((BooleanValueChangedCallback) v -> epochs.incrementAndGet(index));
-            ClipLauncherSlotBank bank = track.clipLauncherSlotBank();
-            bank.scrollPosition().markInterested();
-            bank.itemCount().markInterested();
-            for (int j = 0; j < HostServices.SCENES; j++) {
-                ClipLauncherSlot slot = (ClipLauncherSlot) bank.getItemAt(j);
-                slot.name().markInterested();
-                slot.hasContent().markInterested();
-                slot.sceneIndex().markInterested();
-            }
+            track.clipLauncherSlotBank().scrollPosition().markInterested();
+            window.markSlotIdentityInterested(track);
         }
     }
 
     @Override
     public Set<String> methods() {
         return METHODS;
-    }
-
-    @Override
-    public List<String> unresolved() {
-        return pending || quarantined ? List.of("An arranger clip write is pending or unresolved.") : List.of();
     }
 
     @Override
@@ -119,7 +118,7 @@ final class ArrangerModule implements HostModule {
                 break;
             case "arranger.clips.copyFromLauncher":
                 Params.fields(p, Set.of("trackId", "slotIndex", "expectedClipName", "startBeats"), Set.of());
-                Params.integer(p, "slotIndex", 0, HostServices.SCENES - 1);
+                Params.integer(p, "slotIndex", 0, HostLimits.SCENES - 1);
                 name(p, "expectedClipName", 1, 256);
                 Params.number(p, "startBeats", 0, MAX_BEATS);
                 break;
@@ -197,16 +196,17 @@ final class ArrangerModule implements HostModule {
 
     @Override
     public void dispatch(HostOperation op, String method, JsonObject p) {
-        s.check(op);
+        scheduler.check(op);
         boolean write = !method.equals("arranger.clips.list");
-        if (pending) throw Errors.notApplied(ErrorCode.BUSY, "Another native arranger operation is pending.");
-        if (write && quarantined)
+        if (holds.held(PENDING))
+            throw Errors.notApplied(ErrorCode.BUSY, "Another native arranger operation is pending.");
+        if (write && holds.held(QUARANTINE))
             throw Errors.notApplied(
                     ErrorCode.UNRESOLVED_MUTATION,
                     "An unresolved arranger write requires inspection (arranger.clips.list) and extension.restart before further arranger writes.");
         String id = p.get("trackId").getAsString();
-        int index = s.trackSlot(id);
-        Track track = (Track) s.tracks.getItemAt(index);
+        int index = window.trackSlot(id);
+        Track track = window.at(index);
         Object slot = null;
         if (method.equals("arranger.clips.create")
                 && !"Instrument".equals(track.trackType().get()))
@@ -229,10 +229,10 @@ final class ArrangerModule implements HostModule {
                         "Observe the exact occupied slot name and index with launcher.list first.");
             slot = launcherSlot;
         }
-        HostServices.SafetyObservation safety = write ? s.stoppedSafety(op) : null;
+        SafetyObservation safety = write ? transportSafety.stopped(op) : null;
         if (access == null) {
             try {
-                access = new Bitwig614ArrangerAccess(s.nativeRuntime(op).access(ErrorCode.ARRANGER_UNAVAILABLE));
+                access = new Bitwig614ArrangerAccess(natives.get(op).access(ErrorCode.ARRANGER_UNAVAILABLE));
             } catch (ReflectiveOperationException error) {
                 throw Errors.notApplied(
                         ErrorCode.ARRANGER_UNAVAILABLE,
@@ -241,20 +241,20 @@ final class ArrangerModule implements HostModule {
         }
         long epoch = epochs.get(index);
         Runnable check = () -> {
-            s.check(op);
+            scheduler.check(op);
             if (epochs.get(index) != epoch)
                 throw Errors.notApplied(
                         ErrorCode.STALE_CONTEXT, "Track bank changed while the arranger operation was queued.");
-            if (write) s.guardStoppedSafety(safety);
+            if (write) transportSafety.guardStopped(safety);
         };
         Runnable beforeWrite = () -> {
             check.run();
             op.dispatched = true;
-            quarantined = true;
+            holds.place(QUARANTINE, HOLD);
         };
         Access bridge = access;
         Object launcherSlot = slot;
-        pending = true;
+        holds.place(PENDING, HOLD);
         try {
             bridge.execute(() -> {
                 try {
@@ -305,27 +305,27 @@ final class ArrangerModule implements HostModule {
                                     beforeWrite);
                         }
                     }
-                    s.schedule(
+                    scheduler.schedule(
                             op,
                             () -> {
                                 check.run();
-                                if (!s.trackMatches(id, track))
+                                if (!window.trackMatches(id, track))
                                     throw Errors.notApplied(
                                             ErrorCode.STALE_CONTEXT, "Track target changed after native access.");
-                                if (write) quarantined = false;
-                                pending = false;
+                                if (write) holds.release(QUARANTINE);
+                                holds.release(PENDING);
                                 op.result.complete(result);
                             },
                             0);
                 } catch (RuntimeException | Error error) {
-                    pending = false;
+                    holds.release(PENDING);
                     op.fail(error);
                 }
             });
         } catch (RuntimeException | Error error) {
-            pending = false;
+            holds.release(PENDING);
             throw error;
         }
-        op.result.whenComplete((r, e) -> pending = false);
+        op.result.whenComplete((r, e) -> holds.release(PENDING));
     }
 }

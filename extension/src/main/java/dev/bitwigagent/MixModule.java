@@ -57,31 +57,52 @@ final class MixModule implements HostModule {
     private static final Set<String> DISPLAY_WRITABLE = Set.of("volumeDb", "volumeDisplay", "panPercent", "panDisplay");
     private static final Set<String> SEND_OPTIONAL =
             Set.of("sendIndex", "sendName", "expectedSendName", "valueNormalized", "display", "enabled");
-    private final HostServices s;
-    private final State[] states = new State[HostServices.TRACKS];
+    private final Scheduler scheduler;
+    private final TrackWindow window;
+    private final Application application;
+    private final TransportSafety transportSafety;
+    private final SelectionLease selection;
+    private final NativeRuntime natives;
+    private final Holds holds;
+    private final State[] states = new State[HostLimits.TRACKS];
     private HostOperation creation;
     // A completed/cancelled RPC does not cancel a void native factory. Never reuse its attribution window.
-    private volatile boolean creationUnresolved, groupUnresolved;
+    private static final String CREATION = "tracks.create", GROUP = "tracks.group";
     private GroupAccess groupAccess;
 
-    @Override
-    public List<String> unresolved() {
-        List<String> out = new ArrayList<>();
-        if (creationUnresolved) out.add("A prior tracks.create factory remains unattributed.");
-        if (groupUnresolved) out.add("A prior tracks.group operation remains unattributed.");
-        return out;
+    MixModule(
+            ControllerHost host,
+            Scheduler scheduler,
+            TrackWindow window,
+            Application application,
+            TransportSafety transportSafety,
+            SelectionLease selection,
+            NativeRuntime natives,
+            Holds holds) {
+        this(host, scheduler, window, application, transportSafety, selection, natives, holds, null);
     }
 
-    MixModule(HostServices services) {
-        this(services, null);
-    }
-
-    MixModule(HostServices services, GroupAccess groupAccess) {
-        s = services;
+    MixModule(
+            ControllerHost host,
+            Scheduler scheduler,
+            TrackWindow window,
+            Application application,
+            TransportSafety transportSafety,
+            SelectionLease selection,
+            NativeRuntime natives,
+            Holds holds,
+            GroupAccess groupAccess) {
+        this.scheduler = scheduler;
+        this.window = window;
+        this.application = application;
+        this.transportSafety = transportSafety;
+        this.selection = selection;
+        this.natives = natives;
+        this.holds = holds;
         this.groupAccess = groupAccess;
         for (int i = 0; i < states.length; i++) {
-            Track track = (Track) s.tracks.getItemAt(i);
-            State state = new State(track, s.host);
+            Track track = window.at(i);
+            State state = new State(track, host);
             states[i] = state;
             track.channelId().addValueObserver((StringValueChangedCallback) value -> state.identity((String) value));
             track.exists().addValueObserver((BooleanValueChangedCallback) state::existence);
@@ -106,7 +127,7 @@ final class MixModule implements HostModule {
             SendBank sends = track.sendBank();
             observe(state, "sendCount", sends.itemCount());
             observe(state, "sendOffset", sends.scrollPosition());
-            for (int j = 0; j < HostServices.SENDS; j++) {
+            for (int j = 0; j < HostLimits.SENDS; j++) {
                 Send send = (Send) sends.getItemAt(j);
                 String prefix = "send" + j + ".";
                 observe(state, prefix + "exists", send.exists());
@@ -214,10 +235,9 @@ final class MixModule implements HostModule {
         JsonElement value = p.get("trackIds");
         if (!value.isJsonArray()
                 || value.getAsJsonArray().size() < 1
-                || value.getAsJsonArray().size() > HostServices.TRACKS)
+                || value.getAsJsonArray().size() > HostLimits.TRACKS)
             throw Errors.notApplied(
-                    ErrorCode.INVALID_PARAMS,
-                    "trackIds must be an array of 1.." + HostServices.TRACKS + " track UUIDs.");
+                    ErrorCode.INVALID_PARAMS, "trackIds must be an array of 1.." + HostLimits.TRACKS + " track UUIDs.");
         List<String> ids = new ArrayList<>();
         Set<String> seen = new HashSet<>();
         for (JsonElement item : value.getAsJsonArray()) {
@@ -235,7 +255,7 @@ final class MixModule implements HostModule {
 
     @Override
     public void dispatch(HostOperation op, String method, JsonObject p) {
-        s.check(op);
+        scheduler.check(op);
         if (method.equals("tracks.create")) {
             create(op, p);
             return;
@@ -245,7 +265,7 @@ final class MixModule implements HostModule {
             return;
         }
         String id = p.get("trackId").getAsString();
-        State state = states[s.trackSlot(id)];
+        State state = states[window.trackSlot(id)];
         Target target = new Target(id, state);
         if (method.equals("tracks.delete")) {
             delete(op, target, p.get("expectedName").getAsString());
@@ -261,7 +281,7 @@ final class MixModule implements HostModule {
         }
         if (method.equals("tracks.select")) {
             guard(op, target);
-            s.requireSelectionFree();
+            selection.requireFree();
             op.dispatched = true;
             target.state.track.selectInEditor();
             guard(op, target);
@@ -382,7 +402,7 @@ final class MixModule implements HostModule {
             }
         };
         try {
-            new DisplaySolver(s, op, port, solve.kind, solve.target, result -> {
+            new DisplaySolver(scheduler, op, port, solve.kind, solve.target, result -> {
                         target.extra.add(
                                 solve.displayKey.replace("Display", "DisplayWrite"),
                                 result.json(solve.text, solve.target));
@@ -414,7 +434,7 @@ final class MixModule implements HostModule {
                 Solve earlier = solves.get(i);
                 guard(op, target);
                 JsonElement now = value(target.state, earlier.field);
-                if (!now.isJsonNull() && Math.abs(now.getAsDouble() - earlier.original) <= HostServices.TOLERANCE)
+                if (!now.isJsonNull() && Math.abs(now.getAsDouble() - earlier.original) <= HostLimits.TOLERANCE)
                     continue;
                 earlier.restoreSeq = target.state.sequence[earlier.field];
                 Track track = target.state.track;
@@ -426,37 +446,28 @@ final class MixModule implements HostModule {
             done.accept(false);
             return;
         }
-        awaitEarlier(op, target, pending, done, s.now() + DisplaySolver.PROBE_TIMEOUT_NANOS);
+        scheduler.poll(
+                op,
+                scheduler.now() + DisplaySolver.PROBE_TIMEOUT_NANOS,
+                () -> restored(target, pending) || !target.matches(window),
+                finished -> done.accept(restored(target, pending)));
     }
 
-    private void awaitEarlier(
-            HostOperation op,
-            Target target,
-            List<Solve> pending,
-            java.util.function.Consumer<Boolean> done,
-            long until) {
-        boolean all = target.matches(s);
+    private boolean restored(Target target, List<Solve> pending) {
+        boolean all = target.matches(window);
         if (all)
             for (Solve earlier : pending) {
                 JsonElement now = value(target.state, earlier.field);
                 all &= target.state.sequence[earlier.field] > earlier.restoreSeq
                         && !now.isJsonNull()
-                        && Math.abs(now.getAsDouble() - earlier.original) <= HostServices.TOLERANCE;
+                        && Math.abs(now.getAsDouble() - earlier.original) <= HostLimits.TOLERANCE;
             }
-        if (all) {
-            done.accept(true);
-            return;
-        }
-        if (!target.matches(s) || s.now() >= until) {
-            done.accept(false);
-            return;
-        }
-        s.schedule(op, () -> awaitEarlier(op, target, pending, done, until), DisplaySolver.POLL_MS);
+        return all;
     }
 
     /** A failed display write applied nothing else; it either put the original back (observed) or leaves the outcome unknown. */
     private void solverFailure(HostOperation op, Target target, DisplaySolver.Result result, boolean earlierRestored) {
-        boolean current = target.matches(s);
+        boolean current = target.matches(window);
         JsonObject out = current ? snapshot(target) : scope();
         out.addProperty("trackId", target.id);
         boolean restored = (!result.dispatched || result.restored) && earlierRestored;
@@ -535,7 +546,7 @@ final class MixModule implements HostModule {
             finish(op, target, changes, writes, created, createdKey, error.code);
             return;
         }
-        await(op, target, changes, writes, created, createdKey, s.observeUntil(op));
+        await(op, target, changes, writes, created, createdKey);
     }
 
     /** Compare-and-set of one send, addressed by index or exact name; levels are verified by observed readback. */
@@ -548,11 +559,11 @@ final class MixModule implements HostModule {
         int slot = -1;
         if (p.has("sendIndex")) {
             slot = p.get("sendIndex").getAsInt() - offset.getAsInt();
-            if (slot < 0 || slot >= HostServices.SENDS)
+            if (slot < 0 || slot >= HostLimits.SENDS)
                 throw Errors.notApplied(ErrorCode.OUTSIDE_WINDOW, "sendIndex is outside the observed send window.");
         } else {
             String wanted = p.get("sendName").getAsString();
-            for (int j = 0; j < HostServices.SENDS; j++) {
+            for (int j = 0; j < HostLimits.SENDS; j++) {
                 JsonElement exists = state.meta("send" + j + ".exists"), name = state.meta("send" + j + ".name");
                 if (exists.isJsonNull() || name.isJsonNull())
                     throw Errors.notApplied(ErrorCode.NOT_READY, "Send names are not all observed yet.");
@@ -681,7 +692,7 @@ final class MixModule implements HostModule {
                 }
             };
             String text = p.get("display").getAsString();
-            new DisplaySolver(s, op, port, DisplayScale.Kind.DB, displayTarget, result -> {
+            new DisplaySolver(scheduler, op, port, DisplayScale.Kind.DB, displayTarget, result -> {
                         target.extra.add("displayWrite", result.json(text, displayTarget));
                         if (!result.ok) {
                             solverFailure(op, target, result, true);
@@ -706,7 +717,7 @@ final class MixModule implements HostModule {
                 finish(error.code);
                 return;
             }
-            await(s.observeUntil(op));
+            await();
         }
 
         boolean write(String key, JsonElement value, boolean force) {
@@ -731,18 +742,20 @@ final class MixModule implements HostModule {
                     && matches(state.meta(prefix + key), requested.get(key));
         }
 
-        void await(long until) {
-            boolean all = true;
-            for (String key : requested.keySet()) all &= verified(key);
-            if (all || s.now() >= until) {
-                finish(null);
-                return;
-            }
-            s.schedule(op, () -> await(until), 20);
+        void await() {
+            scheduler.poll(
+                    op,
+                    scheduler.observeUntil(op),
+                    () -> {
+                        boolean all = true;
+                        for (String key : requested.keySet()) all &= verified(key);
+                        return all;
+                    },
+                    done -> finish(null));
         }
 
         void finish(String reason) {
-            boolean current = target.matches(s);
+            boolean current = target.matches(window);
             JsonObject result = current ? snapshot(target) : scope();
             result.addProperty("trackId", target.id);
             result.addProperty(
@@ -813,11 +826,11 @@ final class MixModule implements HostModule {
     }
 
     private void guard(HostOperation op, Target target) {
-        if (!target.matches(s))
+        if (!target.matches(window))
             throw Errors.notApplied(ErrorCode.STALE_TARGET, "Track UUID/proxy changed during operation.");
         if (target.state.rebindPending)
             throw Errors.notApplied(ErrorCode.NOT_READY, "Track proxy rebind awaits a host flush.");
-        s.check(op);
+        scheduler.check(op);
     }
 
     private void await(
@@ -826,20 +839,26 @@ final class MixModule implements HostModule {
             JsonObject changes,
             Map<String, Long> writes,
             JsonObject created,
-            String createdKey,
-            long until) {
-        if (!target.matches(s)) {
-            finish(op, target, changes, writes, created, createdKey, "stale_target");
-            return;
-        }
-        boolean all = true;
-        for (int i = 0; i < FIELDS.length; i++)
-            if (changes.has(FIELDS[i])) all &= verified(target.state, i, changes.get(FIELDS[i]), writes.get(FIELDS[i]));
-        if (all || s.now() >= until) {
-            finish(op, target, changes, writes, created, createdKey, null);
-            return;
-        }
-        s.schedule(op, () -> await(op, target, changes, writes, created, createdKey, until), 20);
+            String createdKey) {
+        scheduler.poll(
+                op,
+                scheduler.observeUntil(op),
+                () -> {
+                    if (!target.matches(window)) return true;
+                    boolean all = true;
+                    for (int i = 0; i < FIELDS.length; i++)
+                        if (changes.has(FIELDS[i]))
+                            all &= verified(target.state, i, changes.get(FIELDS[i]), writes.get(FIELDS[i]));
+                    return all;
+                },
+                done -> finish(
+                        op,
+                        target,
+                        changes,
+                        writes,
+                        created,
+                        createdKey,
+                        target.matches(window) ? null : "stale_target"));
     }
 
     private void finish(
@@ -850,7 +869,7 @@ final class MixModule implements HostModule {
             JsonObject created,
             String createdKey,
             String reason) {
-        boolean current = target.matches(s);
+        boolean current = target.matches(window);
         JsonObject result = current ? snapshot(target) : scope();
         result.addProperty("trackId", target.id);
         boolean all = current && reason == null;
@@ -891,27 +910,27 @@ final class MixModule implements HostModule {
     }
 
     private void create(HostOperation op, JsonObject p) {
-        if (creationUnresolved)
+        if (holds.held(CREATION))
             throw Errors.notApplied(
                     ErrorCode.UNRESOLVED_CREATION,
                     "A prior native track factory remains unattributed; further automatic creation is quarantined for this extension instance.");
-        if (groupUnresolved)
+        if (holds.held(GROUP))
             throw Errors.notApplied(
                     ErrorCode.UNRESOLVED_CREATION,
                     "A prior tracks.group operation remains unattributed; track creation is quarantined for this extension instance.");
         if (creation != null && !creation.result.isDone())
             throw Errors.notApplied(ErrorCode.BUSY, "Another track creation or grouping awaits observations.");
-        if (!s.tracksObserved)
+        if (!window.observed())
             throw Errors.notApplied(ErrorCode.NOT_READY, "Track bank has not reported its size yet.");
         Creation before = capture();
         if (!before.complete)
             throw Errors.notApplied(
                     ErrorCode.NOT_READY,
                     "Creation requires a complete observed UUID/type/position baseline inside the track window.");
-        if (before.total >= HostServices.TRACKS)
+        if (before.total >= HostLimits.TRACKS)
             throw Errors.notApplied(
                     ErrorCode.OUTSIDE_WINDOW,
-                    "The " + HostServices.TRACKS
+                    "The " + HostLimits.TRACKS
                             + "-track window is full: the new track could not be observed; no factory was dispatched.");
         if (before.groups && !before.tree.complete)
             throw Errors.notApplied(
@@ -919,48 +938,48 @@ final class MixModule implements HostModule {
                     "Track creation in a grouped project needs every track's parent observed (" + before.tree.reason
                             + "); the insertion position cannot be attributed safely and no factory was dispatched.");
         creation = op;
-        s.check(op);
+        scheduler.check(op);
         op.dispatched = true;
-        creationUnresolved = true;
+        holds.place(CREATION, "A prior tracks.create factory remains unattributed.");
         int position = p.get("position").getAsInt();
         switch (p.get("type").getAsString()) {
             case "audio":
-                s.application.createAudioTrack(position);
+                application.createAudioTrack(position);
                 break;
             case "instrument":
-                s.application.createInstrumentTrack(position);
+                application.createInstrumentTrack(position);
                 break;
             case "effect":
-                s.application.createEffectTrack(position);
+                application.createEffectTrack(position);
                 break;
             default:
                 throw new IllegalArgumentException("type");
         }
-        awaitCreation(op, p, before, null, s.observeUntil(op));
+        awaitCreation(op, p, before);
     }
 
     private void group(HostOperation op, JsonObject p) {
-        if (creationUnresolved || groupUnresolved)
+        if (holds.held(CREATION) || holds.held(GROUP))
             throw Errors.notApplied(
                     ErrorCode.UNRESOLVED_CREATION,
                     "A prior track creation or grouping remains unattributed; grouping is quarantined for this extension instance.");
         if (creation != null && !creation.result.isDone())
             throw Errors.notApplied(ErrorCode.BUSY, "Another track creation or grouping awaits observations.");
-        if (!s.tracksObserved)
+        if (!window.observed())
             throw Errors.notApplied(ErrorCode.NOT_READY, "Track bank has not reported its size yet.");
-        s.recordingSafety(op);
-        s.requireSelectionFree();
+        transportSafety.recording(op);
+        selection.requireFree();
         List<String> ids = trackIds(p);
         Creation before = capture();
         if (!before.complete)
             throw Errors.notApplied(
                     ErrorCode.NOT_READY,
-                    "Grouping requires a complete observed UUID/type/position window of at most " + HostServices.TRACKS
+                    "Grouping requires a complete observed UUID/type/position window of at most " + HostLimits.TRACKS
                             + " tracks.");
-        if (before.total >= HostServices.TRACKS)
+        if (before.total >= HostLimits.TRACKS)
             throw Errors.notApplied(
                     ErrorCode.OUTSIDE_WINDOW,
-                    "The " + HostServices.TRACKS
+                    "The " + HostLimits.TRACKS
                             + "-track window is full: the new group could not be observed; nothing was dispatched.");
         if (!before.tree.complete)
             throw Errors.notApplied(
@@ -973,7 +992,7 @@ final class MixModule implements HostModule {
             if (node == null)
                 throw Errors.notApplied(
                         ErrorCode.OUTSIDE_WINDOW,
-                        "Track UUID is absent from the current " + HostServices.TRACKS + "-track window: " + id);
+                        "Track UUID is absent from the current " + HostLimits.TRACKS + "-track window: " + id);
             if (node.master() || "Effect".equals(node.type))
                 throw Errors.notApplied(
                         ErrorCode.UNSUPPORTED_SCOPE,
@@ -991,13 +1010,12 @@ final class MixModule implements HostModule {
         List<Object> proxies = new ArrayList<>();
         List<String> ordered = new ArrayList<>();
         for (TrackTree.Node node : nodes) {
-            proxies.add(s.tracks.getItemAt(node.slot));
+            proxies.add(window.bank().getItemAt(node.slot));
             ordered.add(node.id);
         }
         if (groupAccess == null) {
             try {
-                groupAccess =
-                        new Bitwig614TrackGroupAccess(s.nativeRuntime(op).access(ErrorCode.TRACK_GROUP_UNAVAILABLE));
+                groupAccess = new Bitwig614TrackGroupAccess(natives.get(op).access(ErrorCode.TRACK_GROUP_UNAVAILABLE));
             } catch (ReflectiveOperationException error) {
                 throw Errors.notApplied(
                         ErrorCode.TRACK_GROUP_UNAVAILABLE,
@@ -1006,21 +1024,21 @@ final class MixModule implements HostModule {
         }
         GroupAccess access = groupAccess;
         // The native operation selects the new group: hold the selection lease like other selection-moving calls.
-        s.acquireSelection(op);
+        selection.acquire(op);
         creation = op;
         Runnable check = () -> {
-            s.check(op);
-            s.guardRecordingSafety();
+            scheduler.check(op);
+            transportSafety.requirePlaybackSafe();
         };
         access.execute(() -> {
             try {
                 JsonObject nativeInfo = access.group(proxies, ordered, check, () -> {
                     check.run();
                     op.dispatched = true;
-                    groupUnresolved = true;
+                    holds.place(GROUP, "A prior tracks.group operation remains unattributed.");
                 });
-                long until = Math.min(op.deadline - HostServices.DEADLINE_MARGIN_NANOS, s.now() + GROUP_OBSERVE_NANOS);
-                s.schedule(op, () -> awaitGroup(op, p, before, ordered, parent, nativeInfo, null, until), 0);
+                long until = Math.min(scheduler.deadlineUntil(op), scheduler.now() + GROUP_OBSERVE_NANOS);
+                scheduler.schedule(op, () -> awaitGroup(op, p, before, ordered, parent, nativeInfo, until), 0);
             } catch (RuntimeException | Error error) {
                 op.fail(error);
             }
@@ -1034,19 +1052,31 @@ final class MixModule implements HostModule {
             List<String> ids,
             String parent,
             JsonObject nativeInfo,
-            String candidate,
             long until) {
+        String[] candidate = {null};
+        scheduler.conclude(
+                op,
+                until,
+                () -> groupStep(op, p, before, ids, parent, nativeInfo, candidate),
+                () -> unknownGroup(op, p, "group_membership_not_observed"));
+    }
+
+    /** The conclusion once the group is attributed (seen on two polls in a row) or cannot be; null to keep polling. */
+    private Runnable groupStep(
+            HostOperation op,
+            JsonObject p,
+            Creation before,
+            List<String> ids,
+            String parent,
+            JsonObject nativeInfo,
+            String[] candidate) {
         Creation after = capture();
-        if (after.offset != before.offset || !after.ids.containsAll(before.ids)) {
-            unknownGroup(op, p, "track_window_or_existing_targets_changed");
-            return;
-        }
+        if (after.offset != before.offset || !after.ids.containsAll(before.ids))
+            return () -> unknownGroup(op, p, "track_window_or_existing_targets_changed");
         Set<String> added = new HashSet<>(after.ids);
         added.removeAll(before.ids);
-        if (added.size() > 1 || after.total > before.total + 1) {
-            unknownGroup(op, p, "ambiguous_added_tracks");
-            return;
-        }
+        if (added.size() > 1 || after.total > before.total + 1)
+            return () -> unknownGroup(op, p, "ambiguous_added_tracks");
         String found = null;
         if (after.complete && after.tree.complete && added.size() == 1 && after.total == before.total + 1) {
             String id = added.iterator().next();
@@ -1061,37 +1091,38 @@ final class MixModule implements HostModule {
                 ok = after.tree.byId.get(ids.get(i - 1)).position < after.tree.byId.get(ids.get(i)).position;
             if (ok) found = id;
         }
-        if (found != null && found.equals(candidate)) {
-            groupUnresolved = false;
-            JsonObject info = nativeInfo.deepCopy();
-            info.addProperty("verification", "unique_added_group_uuid_and_every_track_parent_observed_twice");
-            JsonArray children = new JsonArray();
-            for (String id : ids) children.add(id);
-            info.add("children", children);
-            info.add("parentId", parent == null ? JsonNull.INSTANCE : new JsonPrimitive(parent));
-            info.addProperty("selectionSideEffect", "native_operation_selects_the_new_group");
-            State state = states[s.trackSlot(found)];
-            Target target = new Target(found, state);
-            if (p.has("name")) {
-                JsonObject changes = new JsonObject();
-                changes.add("name", p.get("name"));
-                set(op, target, changes, info, "group");
-                return;
-            }
-            JsonObject result = scope();
-            result.addProperty("status", "observed");
-            result.addProperty("completion", "observed");
-            result.addProperty("trackId", found);
-            result.add("group", info);
-            op.result.complete(result);
+        if (found != null && found.equals(candidate[0])) {
+            String group = found;
+            return () -> groupAttributed(op, p, ids, parent, nativeInfo, group);
+        }
+        candidate[0] = found;
+        return null;
+    }
+
+    private void groupAttributed(
+            HostOperation op, JsonObject p, List<String> ids, String parent, JsonObject nativeInfo, String found) {
+        holds.release(GROUP);
+        JsonObject info = nativeInfo.deepCopy();
+        info.addProperty("verification", "unique_added_group_uuid_and_every_track_parent_observed_twice");
+        JsonArray children = new JsonArray();
+        for (String id : ids) children.add(id);
+        info.add("children", children);
+        info.add("parentId", parent == null ? JsonNull.INSTANCE : new JsonPrimitive(parent));
+        info.addProperty("selectionSideEffect", "native_operation_selects_the_new_group");
+        State state = states[window.trackSlot(found)];
+        Target target = new Target(found, state);
+        if (p.has("name")) {
+            JsonObject changes = new JsonObject();
+            changes.add("name", p.get("name"));
+            set(op, target, changes, info, "group");
             return;
         }
-        if (s.now() >= until) {
-            unknownGroup(op, p, "group_membership_not_observed");
-            return;
-        }
-        String next = found;
-        s.schedule(op, () -> awaitGroup(op, p, before, ids, parent, nativeInfo, next, until), 20);
+        JsonObject result = scope();
+        result.addProperty("status", "observed");
+        result.addProperty("completion", "observed");
+        result.addProperty("trackId", found);
+        result.add("group", info);
+        op.result.complete(result);
     }
 
     private void unknownGroup(HostOperation op, JsonObject p, String reason) {
@@ -1111,8 +1142,8 @@ final class MixModule implements HostModule {
 
     /** Delete one audio/instrument/hybrid/effect track by Track.deleteObject (DeleteableObject), verified by bank UUID set and count. */
     private void delete(HostOperation op, Target target, String expectedName) {
-        HostServices.SafetyObservation safety = s.stoppedSafety(op);
-        if (!s.tracksObserved)
+        SafetyObservation safety = transportSafety.stopped(op);
+        if (!window.observed())
             throw Errors.notApplied(ErrorCode.NOT_READY, "Track bank has not reported its size yet.");
         guard(op, target);
         JsonElement type = target.state.meta("type"), name = value(target.state, 0), index = target.state.meta("index");
@@ -1130,10 +1161,10 @@ final class MixModule implements HostModule {
         if (!before.complete || !before.ids.contains(target.id))
             throw Errors.notApplied(
                     ErrorCode.NOT_READY,
-                    "Deletion needs the whole project observed in the " + HostServices.TRACKS
-                            + "-track bank window (offset 0, at most " + HostServices.TRACKS
+                    "Deletion needs the whole project observed in the " + HostLimits.TRACKS
+                            + "-track bank window (offset 0, at most " + HostLimits.TRACKS
                             + " tracks including group children and effect tracks, every UUID/type/position read); this project exceeds it or is not fully observed yet. Nothing was dispatched.");
-        s.guardStoppedSafety(safety);
+        transportSafety.guardStopped(safety);
         guard(op, target);
         op.dispatched = true;
         target.state.track.deleteObject();
@@ -1142,18 +1173,12 @@ final class MixModule implements HostModule {
         deleted.addProperty("name", expectedName);
         deleted.addProperty("type", type.getAsString());
         deleted.add("index", index);
-        awaitDeletion(op, target.id, deleted, before, s.observeUntil(op));
+        awaitDeletion(op, target.id, deleted, before);
     }
 
-    private void awaitDeletion(HostOperation op, String id, JsonObject deleted, Creation before, long until) {
-        Creation after = capture();
-        Set<String> others = new HashSet<>(before.ids);
-        others.remove(id);
-        boolean gone = after.complete
-                && !after.ids.contains(id)
-                && after.total == before.total - 1
-                && after.ids.equals(others);
-        if (gone || s.now() >= until) {
+    private void awaitDeletion(HostOperation op, String id, JsonObject deleted, Creation before) {
+        scheduler.poll(op, scheduler.observeUntil(op), () -> deletedFrom(capture(), before, id), gone -> {
+            Creation after = capture();
             JsonObject result = scope();
             result.addProperty("status", gone ? "observed" : "dispatched");
             result.addProperty("completion", gone ? "observed" : "unknown");
@@ -1163,33 +1188,40 @@ final class MixModule implements HostModule {
             result.addProperty("trackCountBefore", before.total);
             result.addProperty("trackCountAfter", after.total);
             op.result.complete(result);
-            return;
-        }
-        s.schedule(op, () -> awaitDeletion(op, id, deleted, before, until), 20);
+        });
     }
 
-    private void awaitCreation(HostOperation op, JsonObject p, Creation before, String previousCandidate, long until) {
+    private static boolean deletedFrom(Creation after, Creation before, String id) {
+        Set<String> others = new HashSet<>(before.ids);
+        others.remove(id);
+        return after.complete && !after.ids.contains(id) && after.total == before.total - 1 && after.ids.equals(others);
+    }
+
+    private void awaitCreation(HostOperation op, JsonObject p, Creation before) {
+        String[] candidate = {null};
+        scheduler.conclude(
+                op,
+                scheduler.observeUntil(op),
+                () -> creationStep(op, p, before, candidate),
+                () -> unknownCreation(op, p, "unique_added_track_not_observed"));
+    }
+
+    /** The conclusion once the new track is attributed (seen on two polls in a row) or cannot be; null to keep polling. */
+    private Runnable creationStep(HostOperation op, JsonObject p, Creation before, String[] candidate) {
         Creation after = capture();
-        if (after.offset != before.offset || !after.ids.containsAll(before.ids)) {
-            unknownCreation(op, p, "track_window_or_existing_targets_changed");
-            return;
-        }
+        if (after.offset != before.offset || !after.ids.containsAll(before.ids))
+            return () -> unknownCreation(op, p, "track_window_or_existing_targets_changed");
         Set<String> added = new HashSet<>(after.ids);
         added.removeAll(before.ids);
-        if (added.size() > 1 || after.total > before.total + 1) {
-            unknownCreation(op, p, "ambiguous_added_tracks");
-            return;
-        }
+        if (added.size() > 1 || after.total > before.total + 1)
+            return () -> unknownCreation(op, p, "ambiguous_added_tracks");
         if (after.complete && after.total == before.total + 1 && added.size() == 1) {
             String id = added.iterator().next();
-            State state = states[s.trackSlot(id)];
+            State state = states[window.trackSlot(id)];
             String type = p.get("type").getAsString();
             boolean effect = type.equals("effect");
             int requested = p.get("position").getAsInt();
-            if (!before.groups && after.groups) {
-                unknownCreation(op, p, "group_appeared_during_creation");
-                return;
-            }
+            if (!before.groups && after.groups) return () -> unknownCreation(op, p, "group_appeared_during_creation");
             // Application inserts into the root group's main or effect list: in a grouped project the index counts
             // only top-level tracks, so attribution needs the observed parent of the new track.
             int oldSize;
@@ -1204,31 +1236,26 @@ final class MixModule implements HostModule {
             }
             int expected = requested == -1 ? oldSize : Math.min(requested, oldSize);
             if (state.track.trackType().get().equalsIgnoreCase(type) && observed != null && observed == expected) {
-                if (id.equals(previousCandidate)) {
-                    creationUnresolved = false;
-                    JsonObject creationInfo = new JsonObject();
-                    creationInfo.addProperty("verification", "unique_added_uuid_count_type_position");
-                    creationInfo.addProperty("identityScope", "observed_addition_not_factory_return_identity");
-                    creationInfo.addProperty("requestedPosition", requested);
-                    creationInfo.addProperty(
-                            "observedPosition", state.track.position().get());
-                    creationInfo.addProperty("type", type);
-                    creationInfo.addProperty(
-                            "parentScope", before.groups ? "top_level_of_grouped_project" : "flat_project");
-                    JsonObject changes = new JsonObject();
-                    changes.add("name", p.get("name"));
-                    set(op, new Target(id, state), changes, creationInfo);
-                    return;
-                }
-                previousCandidate = id;
-            } else previousCandidate = null;
-        } else previousCandidate = null;
-        if (s.now() >= until) {
-            unknownCreation(op, p, "unique_added_track_not_observed");
-            return;
-        }
-        final String candidate = previousCandidate;
-        s.schedule(op, () -> awaitCreation(op, p, before, candidate, until), 20);
+                if (id.equals(candidate[0])) return () -> creationAttributed(op, p, before, id, state, type, requested);
+                candidate[0] = id;
+            } else candidate[0] = null;
+        } else candidate[0] = null;
+        return null;
+    }
+
+    private void creationAttributed(
+            HostOperation op, JsonObject p, Creation before, String id, State state, String type, int requested) {
+        holds.release(CREATION);
+        JsonObject creationInfo = new JsonObject();
+        creationInfo.addProperty("verification", "unique_added_uuid_count_type_position");
+        creationInfo.addProperty("identityScope", "observed_addition_not_factory_return_identity");
+        creationInfo.addProperty("requestedPosition", requested);
+        creationInfo.addProperty("observedPosition", state.track.position().get());
+        creationInfo.addProperty("type", type);
+        creationInfo.addProperty("parentScope", before.groups ? "top_level_of_grouped_project" : "flat_project");
+        JsonObject changes = new JsonObject();
+        changes.add("name", p.get("name"));
+        set(op, new Target(id, state), changes, creationInfo);
     }
 
     private int ordinal(Track candidate, boolean effect) {
@@ -1244,8 +1271,8 @@ final class MixModule implements HostModule {
 
     private Creation capture() {
         Creation out = new Creation();
-        out.offset = s.tracks.scrollPosition().get();
-        out.total = s.tracks.itemCount().get();
+        out.offset = window.offset();
+        out.total = window.total();
         boolean unique = true;
         for (State state : states)
             if (state.track.exists().get()) {
@@ -1261,8 +1288,8 @@ final class MixModule implements HostModule {
                 if (type.equals("Effect")) out.effects++;
                 else if (!type.equals("Master")) out.main++;
             }
-        out.complete = unique && out.offset == 0 && out.total <= HostServices.TRACKS && out.ids.size() == out.total;
-        out.tree = TrackTree.capture(s);
+        out.complete = unique && out.offset == 0 && out.total <= HostLimits.TRACKS && out.ids.size() == out.total;
+        out.tree = TrackTree.capture(window);
         out.groups |= out.tree.groups;
         return out;
     }
@@ -1280,15 +1307,10 @@ final class MixModule implements HostModule {
     }
 
     private JsonObject scope() {
-        JsonObject result = HostServices.observed();
+        JsonObject result = Results.observed();
         result.addProperty("scope", "flat_track_bank");
         result.addProperty("identityScope", "observed_uuid_on_bank_proxy");
-        result.add(
-                "window",
-                HostServices.window(
-                        s.tracks.scrollPosition().get(),
-                        HostServices.TRACKS,
-                        s.tracks.itemCount().get()));
+        result.add("window", Results.window(window.offset(), HostLimits.TRACKS, window.total()));
         return result;
     }
 
@@ -1338,7 +1360,7 @@ final class MixModule implements HostModule {
         JsonElement offset = state.meta("sendOffset"), count = state.meta("sendCount");
         boolean sendsComplete = !offset.isJsonNull() && !count.isJsonNull();
         JsonArray sends = new JsonArray();
-        for (int i = 0; i < HostServices.SENDS; i++) {
+        for (int i = 0; i < HostLimits.SENDS; i++) {
             String prefix = "send" + i + ".";
             JsonElement exists = state.meta(prefix + "exists");
             if (exists.isJsonNull()) {
@@ -1370,7 +1392,7 @@ final class MixModule implements HostModule {
                 "sendWindow",
                 offset.isJsonNull() || count.isJsonNull()
                         ? JsonNull.INSTANCE
-                        : HostServices.window(offset.getAsInt(), HostServices.SENDS, count.getAsInt()));
+                        : Results.window(offset.getAsInt(), HostLimits.SENDS, count.getAsInt()));
         result.addProperty("sendObservationsComplete", sendsComplete);
         result.addProperty("observationsComplete", complete && sendsComplete);
         return result;
@@ -1395,7 +1417,7 @@ final class MixModule implements HostModule {
     private static boolean matches(JsonElement a, JsonElement b) {
         if (a.isJsonNull()) return false;
         if (a.getAsJsonPrimitive().isNumber())
-            return Math.abs(a.getAsDouble() - b.getAsDouble()) <= HostServices.TOLERANCE;
+            return Math.abs(a.getAsDouble() - b.getAsDouble()) <= HostLimits.TOLERANCE;
         return a.equals(b);
     }
 
@@ -1575,8 +1597,8 @@ final class MixModule implements HostModule {
             generation = state.generation;
         }
 
-        boolean matches(HostServices s) {
-            return generation == state.generation && state.sourceMatches() && s.trackMatches(id, state.track);
+        boolean matches(TrackWindow window) {
+            return generation == state.generation && state.sourceMatches() && window.trackMatches(id, state.track);
         }
     }
 

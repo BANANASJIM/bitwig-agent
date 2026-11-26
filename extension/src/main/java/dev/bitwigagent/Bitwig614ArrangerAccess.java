@@ -184,7 +184,7 @@ final class Bitwig614ArrangerAccess implements ArrangerModule.Access {
     }
 
     private JsonObject result(Lane lane, List<Object> clips) {
-        JsonObject out = HostServices.observed();
+        JsonObject out = Results.observed();
         out.addProperty("trackId", lane.trackId);
         out.addProperty("lane", "main_clip_lane");
         JsonArray rows = new JsonArray();

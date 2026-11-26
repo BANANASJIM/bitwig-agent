@@ -40,8 +40,16 @@ The main sources are under [`extension/src/main/java/dev/bitwigagent`](https://g
 
 - `BitwigAgentExtension` creates the bridge/listener, forwards controller flushes and closes services on exit.
 - `RpcServer` owns transport framing, admission and bounded response delivery. It does not own project state, selection or domain business logic.
-- `core.MethodSpecs` reads the `protocol.json` bundle generated from the Python `protocol/` package (method names, timeouts, write/engine flags). `HostBridge` registers each `HostModule` by method name, fails at start-up if the bundle and the registered handlers differ, routes validation to the owning module and schedules each `HostOperation` through `HostServices`. Each module validates its own parameters in `HostModule.validate`.
-- `HostServices` owns shared host proxies and scheduling. `HostOperation` tracks deadlines and completion. Host API work crosses the scheduler boundary rather than running on the network thread.
+- `core.MethodSpecs` reads the `protocol.json` bundle generated from the Python `protocol/` package (method names, timeouts, write/engine flags). `HostBridge` registers each `HostModule` by method name, fails at start-up if the bundle and the registered handlers differ, routes validation to the owning module and schedules each `HostOperation` through the `Scheduler`. Each module validates its own parameters in `HostModule.validate`.
+- Shared host state is split by job, and `HostBridge` passes each module only the services it uses:
+  - `Scheduler` owns the one clock, deadlines, `schedule` and `poll`, so no module times its own loop.
+  - `TrackWindow` owns the fixed track, device and parent banks and slot lookup by track id.
+  - `ProjectState` owns project readiness, the modified flag and the audio engine.
+  - `TransportSafety` owns the single rule set for recording, automation-write and playing state.
+  - `SelectionLease` owns the editor selection that launcher cursor operations bind, and `LauncherStructureLock` says what pins launcher slot rows.
+  - `NativeRuntime` is the lazy shared gate to the native bindings.
+  - `Holds` owns every unresolved or in-flight write, which `extension.restart` lists and refuses on.
+- `HostOperation` tracks deadlines and completion. Host API work crosses the scheduler boundary rather than running on the network thread.
 - `DeviceSources` owns fixed root/layer/child addresses and continuity observations. `ParameterModule` owns continuously observed source-specific parameter data and the single shared active binding/request. Switching flat or nested targets invalidates the prior binding.
 - Discovery, Actions, transport, mix, devices and Launcher/MIDI have separate domain modules and observations. Their result semantics differ: a dispatch-only Action is not equivalent to an acknowledged parameter change.
 - `GridModule` separates target/RPC guards from bounded graph serialization and scalar, boolean-panel and topology writers. `GridTopologyQuarantine` serializes native topology lifetimes and keeps one quarantine record per Grid device, released only by `grid.topology.reconcile`.
@@ -51,7 +59,7 @@ The main sources are under [`extension/src/main/java/dev/bitwigagent`](https://g
 - `ModulatorModule` and `ModulatorSnapshotReader` own bounded, nonloading primary-modulator reads. They share root target/read-context machinery, not Grid write authority.
 - `ModulatorEditModule` (RPC boundary), `ModulatorEditor` (CAS, dispatch, readback) and `Bitwig614ModulatorEditAccess` (descriptors) own device-modulator edits. They reuse the Grid parameter reader for typed values and Grid targets, and the Grid parameter/topology context checks, but not Grid write authority or topology quarantine.
 
-`Bitwig614TrackResolver` maps a public track proxy to its native track model and identity for the render and automation accessors. `Bitwig614Runtime` is lazy and shared per `HostServices`. It checks the exact host version, loaded JAR CodeSource/hash/ClassLoader and mapped descriptors before private dispatch. Native target/read-context helpers corroborate ownership and lifecycle. Grid and modulator availability remains independently reported; successful read binding does not enable a writer.
+`Bitwig614TrackResolver` maps a public track proxy to its native track model and identity for the render and automation accessors. `Bitwig614Runtime` is lazy and shared through `NativeRuntime`. It checks the exact host version, loaded JAR CodeSource/hash/ClassLoader and mapped descriptors before private dispatch. Native target/read-context helpers corroborate ownership and lifecycle. Grid and modulator availability remains independently reported; successful read binding does not enable a writer.
 
 The unnamed-package [`BitwigAgent614GridInsertion.java`](https://github.com/BANANASJIM/bitwig-agent/blob/main/extension/src/main/java/BitwigAgent614GridInsertion.java) is intentional: the native superclass is in that package and the loader expects the exact class name. It is a narrow insertion boundary, not another transport, planner or generic transaction framework.
 

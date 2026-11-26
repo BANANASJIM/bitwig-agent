@@ -301,7 +301,7 @@ public final class ModulatorModuleTest {
                 op.result.isCancelled() && during.host.tasks.isEmpty(), "cancellation during read suppresses delivery");
         Fixture closed = new Fixture();
         op = closed.start("modulators.list", request());
-        closed.host.services.close();
+        closed.host.services.scheduler.close();
         closed.adapter.next();
         assertRpcError("unavailable", op);
         assertTrue(closed.adapter.reads == 0, "close invalidates native queue before capture");
@@ -387,12 +387,11 @@ public final class ModulatorModuleTest {
     void sharedRuntimeAndGridPolicyRemainIndependent() {
         Fixture f = new Fixture();
         HostOperation op = new HostOperation(Long.MAX_VALUE);
-        Bitwig614Runtime first = f.host.services.nativeRuntime(op);
+        Bitwig614Runtime first = f.host.services.natives.get(op);
         assertTrue(
-                first == f.host.services.nativeRuntime(new HostOperation(Long.MAX_VALUE)),
+                first == f.host.services.natives.get(new HostOperation(Long.MAX_VALUE)),
                 "services compose one lazy shared runtime gate");
-        GridModule grid =
-                new GridModule(f.host.services, new Bitwig614GridAdapter(first.access(ErrorCode.GRID_UNAVAILABLE)));
+        GridModule grid = f.host.services.grid(new Bitwig614GridAdapter(first.access(ErrorCode.GRID_UNAVAILABLE)));
         f.devices.child("scrollPosition").emit(1);
         f.devices.child("itemCount").emit(2);
         f.device.child("position").emit(1);
@@ -447,7 +446,7 @@ public final class ModulatorModuleTest {
             device.child("position").emit(0);
             device.child("deviceType").emit("AudioEffect");
             devices.child("itemCount").emit(1);
-            module = new ModulatorModule(host.services, adapter);
+            module = host.services.modulator(adapter);
         }
 
         HostOperation start(String method, JsonObject p) {
@@ -497,7 +496,7 @@ public final class ModulatorModuleTest {
             reads++;
             during.run();
             check.run();
-            JsonObject result = HostServices.observed();
+            JsonObject result = Results.observed();
             JsonArray rows = new JsonArray();
             if (offset == 0) {
                 JsonObject row = new JsonObject();
@@ -528,7 +527,7 @@ public final class ModulatorModuleTest {
             if (id.equals("UNSUPPORTED")) throw Errors.notApplied(ErrorCode.UNSUPPORTED_SCOPE, "Not a string panel.");
             if (!strings.containsKey(id))
                 throw Errors.notApplied(ErrorCode.TARGET_NOT_FOUND, "No exact parameter identifier.");
-            JsonObject result = HostServices.observed();
+            JsonObject result = Results.observed();
             result.addProperty("modulatorId", currentId.toString());
             result.addProperty("parameterId", id);
             result.addProperty("kind", "string");

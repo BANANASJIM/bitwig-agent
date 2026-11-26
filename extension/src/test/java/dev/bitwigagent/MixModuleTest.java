@@ -13,7 +13,7 @@ public final class MixModuleTest {
     @Test
     void readsExposeNormalizedUnitsAndSends() {
         HostFixture f = new HostFixture();
-        MixModule module = new MixModule(f.services);
+        MixModule module = f.services.mix();
         JsonObject result = f.call(module, "tracks.get", HostFixture.target(HostFixture.A));
         assertTrue(result.get("volumeNormalized").getAsDouble() == .5, "actual normalized volume");
         assertTrue(
@@ -33,7 +33,7 @@ public final class MixModuleTest {
         assertTrue(
                 send.get("enabled").getAsBoolean() && !send.get("preFader").getAsBoolean(), "send metadata observed");
         assertTrue(
-                result.getAsJsonObject("window").get("capacity").getAsInt() == HostServices.TRACKS
+                result.getAsJsonObject("window").get("capacity").getAsInt() == HostLimits.TRACKS
                         && result.getAsJsonObject("sendWindow").get("capacity").getAsInt() == 8,
                 "bounded observation scope explicit");
         assertTrue(f.host.calls("createTrackBank") == 1, "mix never creates a duplicate track bank");
@@ -42,7 +42,7 @@ public final class MixModuleTest {
     @Test
     void briefReportsSelectionOnlyWhenObserved() {
         HostFixture f = new HostFixture();
-        MixModule module = new MixModule(f.services);
+        MixModule module = f.services.mix();
         f.tracks[0].child("selected").emit(true);
         f.tracks[0].child("exists").emit(false);
         f.tracks[0].child("exists").emit(true);
@@ -69,7 +69,7 @@ public final class MixModuleTest {
     @Test
     void invalidRequestsNeverSchedule() {
         HostFixture f = new HostFixture();
-        MixModule module = new MixModule(f.services);
+        MixModule module = f.services.mix();
         for (String text : List.of(
                 "{\"volumeNormalized\":-0.1}",
                 "{\"panNormalized\":1.1}",
@@ -97,7 +97,7 @@ public final class MixModuleTest {
     @Test
     void writesOnlyExplicitUuidAndFields() {
         HostFixture f = new HostFixture();
-        MixModule module = new MixModule(f.services);
+        MixModule module = f.services.mix();
         JsonObject p = HostFixture.target(HostFixture.B);
         p.addProperty("volumeNormalized", .75);
         p.addProperty("mute", true);
@@ -130,7 +130,7 @@ public final class MixModuleTest {
     @Test
     void colorActivatedMonitorAndCrossFadeAreReadAndWritten() {
         HostFixture f = new HostFixture();
-        MixModule module = new MixModule(f.services);
+        MixModule module = f.services.mix();
         JsonObject read = f.call(module, "tracks.get", HostFixture.target(HostFixture.B));
         assertTrue(
                 read.get("color").getAsString().equals("#000000")
@@ -214,7 +214,7 @@ public final class MixModuleTest {
     @Test
     void colorReadbackWithinOneStepAndOutOfListEnumsRoundTrip() {
         HostFixture f = new HostFixture();
-        MixModule module = new MixModule(f.services);
+        MixModule module = f.services.mix();
         FakeHost color = f.tracks[1].child("color");
         color.afterWrite = () -> color.emit(new float[] {1f, 0x57 / 255f, 4 / 255f});
         JsonObject p = HostFixture.json("{\"color\":\"#ff5705\"}");
@@ -260,7 +260,7 @@ public final class MixModuleTest {
     @Test
     void selectionUsesUuidNotCurrentUi() {
         HostFixture f = new HostFixture();
-        MixModule module = new MixModule(f.services);
+        MixModule module = f.services.mix();
         f.tracks[0].child("selected").emit(true);
         JsonObject selected = f.call(module, "tracks.select", HostFixture.target(HostFixture.B));
         assertTrue(
@@ -280,7 +280,7 @@ public final class MixModuleTest {
     @Test
     void selectionWithoutReplayedCallbackIsDispatchOnly() {
         HostFixture f = new HostFixture();
-        MixModule module = new MixModule(f.services);
+        MixModule module = f.services.mix();
         f.tracks[0].child("selected").emit(true);
         f.tracks[0].child("exists").emit(false);
         f.tracks[0].child("exists").emit(true);
@@ -309,9 +309,9 @@ public final class MixModuleTest {
     @Test
     void selectionFailsFastWhileLauncherLeaseHeld() {
         HostFixture f = new HostFixture();
-        MixModule module = new MixModule(f.services);
+        MixModule module = f.services.mix();
         HostOperation holder = new HostOperation(Long.MAX_VALUE);
-        f.services.acquireSelection(holder);
+        f.services.selection.acquire(holder);
         HostOperation op = f.submit(module, "tracks.select", HostFixture.target(HostFixture.B));
         f.next();
         RpcException busy = assertRpcError("busy", op);
@@ -332,7 +332,7 @@ public final class MixModuleTest {
     @Test
     void selectionRespectsOperationAndIdentityGuards() {
         HostFixture f = new HostFixture();
-        MixModule module = new MixModule(f.services);
+        MixModule module = f.services.mix();
         JsonObject p = HostFixture.target(HostFixture.A);
         HostOperation expired = f.submit(module, "tracks.select", p, f.tasks.now() - 1);
         f.next();
@@ -362,7 +362,7 @@ public final class MixModuleTest {
     @Test
     void requiresMatchingFreshTargetObservation() {
         HostFixture f = new HostFixture();
-        MixModule module = new MixModule(f.services);
+        MixModule module = f.services.mix();
         FakeHost volume = f.tracks[1].child("volume").child("value");
         volume.notifyWrites = false;
         JsonObject p = HostFixture.target(HostFixture.B);
@@ -386,7 +386,7 @@ public final class MixModuleTest {
     @Test
     void targetChangePreventsRemainingWrites() {
         HostFixture f = new HostFixture();
-        MixModule module = new MixModule(f.services);
+        MixModule module = f.services.mix();
         f.tracks[0].child("name").afterWrite =
                 () -> f.tracks[0].child("channelId").emit(HostFixture.C);
         JsonObject p = HostFixture.target(HostFixture.A);
@@ -412,7 +412,7 @@ public final class MixModuleTest {
     @Test
     void expiredAndCancelledWritesAreNotApplied() {
         HostFixture f = new HostFixture();
-        MixModule module = new MixModule(f.services);
+        MixModule module = f.services.mix();
         JsonObject p = HostFixture.target(HostFixture.A);
         p.addProperty("arm", true);
         HostOperation expired = f.submit(module, "tracks.set", p, f.tasks.now() - 1);
@@ -450,7 +450,7 @@ public final class MixModuleTest {
     @Test
     void deleteIsNameGuardedAndVerifiedByUuidAndCount() {
         HostFixture f = new HostFixture();
-        MixModule module = new MixModule(f.services);
+        MixModule module = f.services.mix();
         f.delete = slot -> f.removeTrack(slot, 1);
         HostOperation wrong = f.submit(module, "tracks.delete", delete(HostFixture.B, "Nope"));
         f.next();
@@ -490,7 +490,7 @@ public final class MixModuleTest {
                         && result.get("trackCountAfter").getAsInt() == 1,
                 "deleted once, verified");
         HostFixture silent = new HostFixture();
-        MixModule other = new MixModule(silent.services);
+        MixModule other = silent.services.mix();
         HostOperation nothing = silent.submit(other, "tracks.delete", delete(HostFixture.B, "Track 1"));
         silent.next();
         while (!nothing.result.isDone() && !silent.tasks.isEmpty()) silent.next();
@@ -502,7 +502,7 @@ public final class MixModuleTest {
 
     private static void verifyCreation(String type) {
         HostFixture f = new HostFixture();
-        MixModule module = new MixModule(f.services);
+        MixModule module = f.services.mix();
         f.create = factory -> {
             String hostType = Character.toUpperCase(type.charAt(0)) + type.substring(1);
             assertTrue(factory.equals("create" + hostType + "Track"), "requested type chooses exact public factory");
@@ -535,7 +535,7 @@ public final class MixModuleTest {
     @Test
     void ambiguousCreationStaysUnknownAndIncompleteBaselineDoesNotDispatch() {
         HostFixture ambiguous = new HostFixture();
-        MixModule module = new MixModule(ambiguous.services);
+        MixModule module = ambiguous.services.mix();
         ambiguous.create = factory -> {
             ambiguous.addTrack(2, HostFixture.C, "Audio");
             ambiguous.addTrack(3, "extra-track", "Audio");
@@ -549,8 +549,8 @@ public final class MixModuleTest {
                 ambiguous.tracks[2].child("name").writes == 0 && ambiguous.tracks[3].child("name").writes == 0,
                 "ambiguous tracks never renamed");
         HostFixture outside = new HostFixture();
-        MixModule other = new MixModule(outside.services);
-        outside.bank.child("itemCount").emit(HostServices.TRACKS + 4);
+        MixModule other = outside.services.mix();
+        outside.bank.child("itemCount").emit(HostLimits.TRACKS + 4);
         HostOperation rejected = outside.submit(other, "tracks.create", create("effect", -1));
         outside.next();
         assertTrue(
@@ -565,7 +565,7 @@ public final class MixModuleTest {
     void groupedBaselineRejectsWithoutMutationOrQuarantine() {
         for (String type : List.of("audio", "instrument", "effect")) {
             HostFixture f = new HostFixture();
-            MixModule module = new MixModule(f.services);
+            MixModule module = f.services.mix();
             f.tracks[0].child("trackType").emit("Group");
             JsonObject beforeA = f.call(module, "tracks.get", HostFixture.target(HostFixture.A));
             JsonObject beforeB = f.call(module, "tracks.get", HostFixture.target(HostFixture.B));
@@ -608,7 +608,7 @@ public final class MixModuleTest {
     @Test
     void concurrentGroupAppearanceRemainsUnknownAndQuarantined() {
         HostFixture f = new HostFixture();
-        MixModule module = new MixModule(f.services);
+        MixModule module = f.services.mix();
         f.create = factory -> {
             f.tracks[0].child("trackType").emit("Group");
             f.addTrack(2, HostFixture.C, "Audio");
@@ -642,7 +642,7 @@ public final class MixModuleTest {
     void wrongTypeOrPositionCannotBeNamed() {
         for (boolean wrongType : new boolean[] {true, false}) {
             HostFixture f = new HostFixture();
-            MixModule module = new MixModule(f.services);
+            MixModule module = f.services.mix();
             f.create = factory -> f.addTrack(2, HostFixture.C, wrongType ? "Instrument" : "Audio");
             HostOperation op = f.submit(module, "tracks.create", create("audio", wrongType ? -1 : 0));
             f.next();
@@ -650,7 +650,7 @@ public final class MixModuleTest {
             assertTrue(
                     !op.result.isDone() && f.tracks[2].child("name").writes == 0,
                     "type/position mismatch is not a nameable creation");
-            f.services.close();
+            f.services.scheduler.close();
             f.next();
             assertTrue(
                     assertRpcError("unavailable", op).outcome.equals("unknown"),
@@ -661,7 +661,7 @@ public final class MixModuleTest {
     @Test
     void creationNeverNamesAfterCancellation() {
         HostFixture f = new HostFixture();
-        MixModule module = new MixModule(f.services);
+        MixModule module = f.services.mix();
         f.create = factory -> f.addTrack(2, HostFixture.C, "Audio");
         HostOperation op = f.submit(module, "tracks.create", create("audio", -1));
         f.next();
@@ -676,7 +676,7 @@ public final class MixModuleTest {
     void replacementDoesNotReuseReadiness() {
         for (boolean replaceUuid : new boolean[] {true, false}) {
             HostFixture f = new HostFixture();
-            MixModule module = new MixModule(f.services);
+            MixModule module = f.services.mix();
             f.tracks[0].child("mute").emit(true);
             f.tracks[0].child("selected").emit(true);
             String id = replaceUuid ? HostFixture.C : HostFixture.A;
@@ -737,7 +737,7 @@ public final class MixModuleTest {
         HostFixture f = new HostFixture();
         f.tracks[0].child("channelId").notifyInitial = false;
         f.tracks[0].child("exists").notifyInitial = false;
-        MixModule module = new MixModule(f.services);
+        MixModule module = f.services.mix();
         f.tracks[0].child("channelId").emit(HostFixture.A);
         f.tracks[0].child("exists").emit(true);
         JsonObject read = f.call(module, "tracks.get", HostFixture.target(HostFixture.A));
@@ -750,7 +750,7 @@ public final class MixModuleTest {
     @Test
     void unresolvedFactoryQuarantinesLaterCreation() {
         HostFixture f = new HostFixture();
-        MixModule module = new MixModule(f.services);
+        MixModule module = f.services.mix();
         HostOperation a = f.submit(module, "tracks.create", create("audio", -1));
         f.next();
         a.result.cancel(false);
@@ -771,7 +771,7 @@ public final class MixModuleTest {
         assertRpcError("unresolved_creation", c);
         assertTrue(f.application.actions == 1, "late observation alone does not silently release quarantine");
         HostFixture unknown = new HostFixture();
-        MixModule second = new MixModule(unknown.services);
+        MixModule second = unknown.services.mix();
         unknown.create = factory -> {
             unknown.addTrack(2, HostFixture.C, "Audio");
             unknown.addTrack(3, "extra-track", "Audio");
@@ -798,7 +798,7 @@ public final class MixModuleTest {
                 f.tracks[i].child("trackType").data = types[i];
             }
             f.bank.child("itemCount").emit(4);
-            MixModule module = new MixModule(f.services);
+            MixModule module = f.services.mix();
             // Native failure shape: complete4-track window includes Effect and Master.
             // Real type/position arrive before first nonempty IDs, with no replay afterward.
             for (int i = 0; i < ids.length; i++) {
@@ -836,7 +836,7 @@ public final class MixModuleTest {
     void missingCreationMetadataRejectsBeforeFactory() {
         HostFixture f = new HostFixture();
         f.tracks[1].child("trackType").notifyInitial = false;
-        MixModule module = new MixModule(f.services);
+        MixModule module = f.services.mix();
         HostOperation rejected = f.submit(module, "tracks.create", create("audio", -1));
         f.next();
         assertTrue(
@@ -858,7 +858,7 @@ public final class MixModuleTest {
     @Test
     void absoluteWritesBypassControllerPickup() {
         HostFixture f = new HostFixture();
-        MixModule module = new MixModule(f.services);
+        MixModule module = f.services.mix();
         // SettableRangedValue.set(double) may leave the value untouched under pickup;
         // setImmediately(double) applies an absolute target regardless of takeover mode.
         for (String field : List.of("volume", "pan")) {
@@ -904,7 +904,7 @@ public final class MixModuleTest {
         String added = "00000000-0000-0000-0000-000000000005";
         f.addTrack(2, HostFixture.C, "Effect");
         f.addTrack(3, master, "Master");
-        MixModule module = new MixModule(f.services);
+        MixModule module = f.services.mix();
         f.create = factory -> {
             // Existing slot 2 becomes the new main track. New fields can precede its UUID.
             f.tracks[2].child("name").emit("Created");
@@ -965,7 +965,7 @@ public final class MixModuleTest {
     void reopenedSourcesWaitForFlushAndIdentityAgreement() {
         for (boolean sameUuid : new boolean[] {true, false}) {
             HostFixture f = new HostFixture();
-            MixModule module = new MixModule(f.services);
+            MixModule module = f.services.mix();
             String id = sameUuid ? HostFixture.A : HostFixture.C;
             f.tracks[0].child("exists").emit(false);
             module.flush(); // Closing a project is not a valid readable binding.
@@ -1004,7 +1004,7 @@ public final class MixModuleTest {
     @Test
     void reboundGenerationNeverAcknowledgesOldWrite() {
         HostFixture f = new HostFixture();
-        MixModule module = new MixModule(f.services);
+        MixModule module = f.services.mix();
         FakeHost volume = f.tracks[0].child("volume").child("value");
         volume.notifyWrites = false;
         JsonObject p = HostFixture.target(HostFixture.A);
@@ -1050,7 +1050,7 @@ public final class MixModuleTest {
     void groupedCreationAttributesTopLevelIndex() {
         for (int position : new int[] {-1, 1}) {
             HostFixture f = new HostFixture();
-            MixModule module = new MixModule(f.services);
+            MixModule module = f.services.mix();
             f.tracks[0].child("trackType").emit("Group");
             f.tracks[0].child("isGroup").data = true;
             parent(f, 0, ROOT);
@@ -1078,7 +1078,7 @@ public final class MixModuleTest {
                     "only the observed top-level addition is named");
         }
         HostFixture f = new HostFixture();
-        MixModule module = new MixModule(f.services);
+        MixModule module = f.services.mix();
         f.tracks[0].child("trackType").emit("Group");
         f.tracks[0].child("isGroup").data = true;
         parent(f, 0, ROOT);
@@ -1094,7 +1094,7 @@ public final class MixModuleTest {
         assertTrue(
                 !op.result.isDone() && f.tracks[2].child("name").writes == 0,
                 "a top-level track at the wrong index is never named");
-        f.services.close();
+        f.services.scheduler.close();
         f.next();
         assertTrue(
                 assertRpcError("unavailable", op).outcome.equals("unknown"),
@@ -1104,7 +1104,7 @@ public final class MixModuleTest {
     @Test
     void groupedCreationInsideAGroupIsNeverNamed() {
         HostFixture f = new HostFixture();
-        MixModule module = new MixModule(f.services);
+        MixModule module = f.services.mix();
         f.tracks[0].child("trackType").emit("Group");
         f.tracks[0].child("isGroup").data = true;
         parent(f, 0, ROOT);
@@ -1120,7 +1120,7 @@ public final class MixModuleTest {
         assertTrue(
                 !op.result.isDone() && f.tracks[2].child("name").writes == 0,
                 "a new track observed inside a group is not the requested top-level track");
-        f.services.close();
+        f.services.scheduler.close();
         f.next();
         assertTrue(assertRpcError("unavailable", op).outcome.equals("unknown"), "it remains an unknown creation");
     }
@@ -1128,7 +1128,7 @@ public final class MixModuleTest {
     @Test
     void trackTreeResolvesParentsAndRejectsInconsistentOrder() {
         HostFixture f = new HostFixture();
-        TrackTree flat = TrackTree.capture(f.services);
+        TrackTree flat = TrackTree.capture(f.services.window);
         assertTrue(
                 flat.complete
                         && !flat.groups
@@ -1137,13 +1137,13 @@ public final class MixModuleTest {
                 "without groups every track is top-level and no parent observation is needed");
         f.tracks[0].child("trackType").emit("Group");
         f.tracks[0].child("isGroup").data = true;
-        TrackTree unobserved = TrackTree.capture(f.services);
+        TrackTree unobserved = TrackTree.capture(f.services.window);
         assertTrue(
                 !unobserved.complete && "parent_observation_missing".equals(unobserved.reason),
                 "groups without parent observations are incomplete");
         parent(f, 0, ROOT);
         parent(f, 1, HostFixture.A);
-        TrackTree tree = TrackTree.capture(f.services);
+        TrackTree tree = TrackTree.capture(f.services.window);
         TrackTree.Node child = tree.byId.get(HostFixture.B);
         assertTrue(
                 tree.complete && HostFixture.A.equals(child.parentId) && child.depth == 1 && !child.topLevel,
@@ -1163,14 +1163,14 @@ public final class MixModuleTest {
                 "group row is top-level");
         f.addTrack(2, HostFixture.C, "Audio");
         parent(f, 2, HostFixture.B);
-        TrackTree bad = TrackTree.capture(f.services);
+        TrackTree bad = TrackTree.capture(f.services.window);
         assertTrue(
                 !bad.complete && "parent_not_a_group_in_window".equals(bad.reason),
                 "a parent that is not a group in the window fails closed");
         parent(f, 2, ROOT);
         f.tracks[2].child("position").emit(1);
         f.tracks[1].child("position").emit(2);
-        TrackTree order = TrackTree.capture(f.services);
+        TrackTree order = TrackTree.capture(f.services.window);
         assertTrue(
                 !order.complete && "parent_order_inconsistent".equals(order.reason),
                 "a top-level track between a group and its child breaks pre-order");
@@ -1208,7 +1208,7 @@ public final class MixModuleTest {
     @Test
     void trackTreeInfersGroupWhoseParentProxyIsUninformative() {
         for (String raw : new String[] {G, ELSEWHERE}) {
-            TrackTree tree = TrackTree.capture(observedGroupLayout(raw).services);
+            TrackTree tree = TrackTree.capture(observedGroupLayout(raw).services.window);
             TrackTree.Node group = tree.byId.get(G);
             assertTrue(
                     tree.complete && group.topLevel && group.depth == 0 && group.parentInferred,
@@ -1240,7 +1240,7 @@ public final class MixModuleTest {
         first.tracks[1].child("position").emit(1);
         first.addTrack(2, HostFixture.C, "Audio");
         parent(first, 2, ROOT);
-        TrackTree leading = TrackTree.capture(first.services);
+        TrackTree leading = TrackTree.capture(first.services.window);
         assertTrue(
                 leading.complete
                         && leading.byId.get(G).topLevel
@@ -1257,7 +1257,7 @@ public final class MixModuleTest {
         parent(foreign, 2, G);
         foreign.addTrack(3, HostFixture.C, "Audio");
         parent(foreign, 3, ROOT);
-        TrackTree outside = TrackTree.capture(foreign.services);
+        TrackTree outside = TrackTree.capture(foreign.services.window);
         assertTrue(
                 outside.complete
                         && outside.byId.get(G).depth == 0
@@ -1272,7 +1272,7 @@ public final class MixModuleTest {
         parent(odd, 1, ELSEWHERE);
         odd.addTrack(2, E, "Audio");
         parent(odd, 2, D);
-        TrackTree noRoot = TrackTree.capture(odd.services);
+        TrackTree noRoot = TrackTree.capture(odd.services.window);
         assertTrue(
                 !noRoot.complete && "group_parent_ambiguous".equals(noRoot.reason) && !noRoot.byId.get(D).topLevel,
                 "without a root observation a group after a group is never guessed top-level");
@@ -1283,18 +1283,18 @@ public final class MixModuleTest {
         nested.tracks[3].child("position").emit(4);
         nested.tracks[4].child("position").emit(3);
         parent(nested, 4, HostFixture.C);
-        TrackTree ambiguous = TrackTree.capture(nested.services);
+        TrackTree ambiguous = TrackTree.capture(nested.services.window);
         assertTrue(
                 !ambiguous.complete
                         && "group_parent_ambiguous".equals(ambiguous.reason)
                         && ambiguous.byId.get(G).depth < 0,
                 "ambiguous group parent fails closed");
         // A group naming a non-group track in the window is inconsistent, not inferred.
-        TrackTree wrong = TrackTree.capture(observedGroupLayout(HostFixture.C).services);
+        TrackTree wrong = TrackTree.capture(observedGroupLayout(HostFixture.C).services.window);
         assertTrue(
                 !wrong.complete && "parent_not_a_group_in_window".equals(wrong.reason),
                 "a group whose parent is a plain track fails closed");
-        TrackTree missing = TrackTree.capture(observedGroupLayout(null).services);
+        TrackTree missing = TrackTree.capture(observedGroupLayout(null).services.window);
         assertTrue(
                 !missing.complete && "parent_observation_missing".equals(missing.reason),
                 "a missing group parent observation fails closed");
@@ -1304,7 +1304,7 @@ public final class MixModuleTest {
     void groupObservedWhenTheGroupParentProxyNamesItself() {
         HostFixture f = new HostFixture();
         FakeGroup access = new FakeGroup();
-        MixModule module = new MixModule(f.services, access);
+        MixModule module = f.services.mix(access);
         f.tracks[0].child("trackType").emit("Instrument");
         f.addTrack(2, D, "Audio");
         f.addTrack(3, E, "Audio");
@@ -1339,7 +1339,7 @@ public final class MixModuleTest {
                         && result.get("trackId").getAsString().equals(G)
                         && f.tracks[2].child("name").data.equals("T: Grp"),
                 "observed native grouping succeeds and names the group");
-        assertTrue(module.unresolved().isEmpty(), "no quarantine after the observed grouping");
+        assertTrue(f.services.holds.descriptions().isEmpty(), "no quarantine after the observed grouping");
     }
 
     private static JsonObject groupRequest(String... ids) {
@@ -1353,14 +1353,14 @@ public final class MixModuleTest {
     @Test
     void groupValidationRejectsBeforeScheduling() {
         HostFixture f = new HostFixture();
-        MixModule module = new MixModule(f.services);
+        MixModule module = f.services.mix();
         List<JsonObject> invalid = new java.util.ArrayList<>(List.of(
                 groupRequest(),
                 groupRequest("not-a-uuid"),
                 groupRequest(HostFixture.A, HostFixture.A),
                 groupRequest(HostFixture.A, HostFixture.A.toUpperCase())));
         JsonObject many = groupRequest();
-        for (int i = 0; i < HostServices.TRACKS + 1; i++)
+        for (int i = 0; i < HostLimits.TRACKS + 1; i++)
             many.getAsJsonArray("trackIds").add(String.format("00000000-0000-0000-0000-%012d", i));
         invalid.add(many);
         JsonObject named = groupRequest(HostFixture.A);
@@ -1401,7 +1401,7 @@ public final class MixModuleTest {
     void groupVerifiesMembershipAndNamesTheGroup() {
         HostFixture f = new HostFixture();
         FakeGroup access = new FakeGroup();
-        MixModule module = new MixModule(f.services, access);
+        MixModule module = f.services.mix(access);
         access.effect = () -> {
             group(f, 2, G, 0);
             f.tracks[0].child("position").emit(1);
@@ -1435,10 +1435,10 @@ public final class MixModuleTest {
         assertTrue(
                 f.tracks[2].child("name").data.equals("Drums") && f.tracks[0].child("name").writes == 0,
                 "only the group is renamed");
-        assertTrue(module.unresolved().isEmpty(), "observed grouping releases its quarantine");
+        assertTrue(f.services.holds.descriptions().isEmpty(), "observed grouping releases its quarantine");
         HostFixture plain = new HostFixture();
         FakeGroup quiet = new FakeGroup();
-        MixModule unnamed = new MixModule(plain.services, quiet);
+        MixModule unnamed = plain.services.mix(quiet);
         quiet.effect = () -> {
             group(plain, 2, G, 0);
             plain.tracks[0].child("position").emit(1);
@@ -1464,7 +1464,7 @@ public final class MixModuleTest {
     void groupRefusesMixedParentsEffectTracksAndRecording() {
         HostFixture f = new HostFixture();
         FakeGroup access = new FakeGroup();
-        MixModule module = new MixModule(f.services, access);
+        MixModule module = f.services.mix(access);
         f.tracks[0].child("trackType").emit("Group");
         f.tracks[0].child("isGroup").data = true;
         f.addTrack(2, HostFixture.C, "Audio");
@@ -1487,13 +1487,13 @@ public final class MixModuleTest {
         assertTrue(
                 assertRpcError("outside_window", outside).outcome.equals("not_applied"),
                 "unknown track is outside the window");
-        f.services.selectionOwner = new HostOperation(Long.MAX_VALUE);
+        f.services.selection.handOff(new HostOperation(Long.MAX_VALUE));
         HostOperation leased = f.submit(module, "tracks.group", groupRequest(HostFixture.B));
         f.next();
         assertTrue(
                 assertRpcError("busy", leased).outcome.equals("not_applied") && access.calls == 0,
                 "a held selection lease blocks grouping");
-        f.services.selectionOwner = null;
+        f.services.selection.handOff(null);
         f.transport.child("isArrangerRecordEnabled").emit(true);
         HostOperation recording = f.submit(module, "tracks.group", groupRequest(HostFixture.B));
         f.next();
@@ -1506,7 +1506,7 @@ public final class MixModuleTest {
     void unobservedGroupQuarantinesCreationAndGrouping() {
         HostFixture f = new HostFixture();
         FakeGroup access = new FakeGroup();
-        MixModule module = new MixModule(f.services, access);
+        MixModule module = f.services.mix(access);
         HostOperation op = f.submit(module, "tracks.group", groupRequest(HostFixture.A), f.tasks.after(400));
         while (!op.result.isDone() && !f.tasks.isEmpty()) f.next();
         JsonObject result = op.result.join();
@@ -1514,7 +1514,7 @@ public final class MixModuleTest {
                 result.get("completion").getAsString().equals("unknown")
                         && result.get("reason").getAsString().equals("group_membership_not_observed"),
                 "an unobserved native grouping is unknown, never success");
-        assertTrue(!module.unresolved().isEmpty(), "unknown grouping is listed for extension.restart");
+        assertTrue(!f.services.holds.descriptions().isEmpty(), "unknown grouping is listed for extension.restart");
         HostOperation create = f.submit(module, "tracks.create", create("audio", -1));
         f.next();
         assertTrue(

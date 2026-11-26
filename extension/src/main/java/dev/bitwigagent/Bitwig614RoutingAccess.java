@@ -465,7 +465,7 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
 
     private JsonObject snapshot(
             TrackView view, Object ports, Map<String, Channel> channels, boolean includeChoices, JsonArray unresolved) {
-        JsonObject out = HostServices.observed();
+        JsonObject out = Results.observed();
         out.addProperty("trackId", view.self.ref.id);
         out.addProperty("trackType", view.self.ref.type);
         out.addProperty("nativeTrackKind", view.nativeKind);
@@ -824,7 +824,7 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
         List<Component> components = components(device.device);
         JsonArray unresolved = includeChoices ? new JsonArray() : null;
         Map<String, Channel> channels = includeChoices ? channels(bank, unresolved) : Map.of();
-        JsonObject out = HostServices.observed();
+        JsonObject out = Results.observed();
         JsonArray rows = new JsonArray();
         for (Component c : components) rows.add(row(c, ports, channels, includeChoices));
         out.add("components", rows);
@@ -942,7 +942,7 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
         scope.guard(check);
         same.run();
         JsonObject fields = write(scope, changes, "Change Sidechain Source", check, beforeWrite, same, ports);
-        JsonObject out = HostServices.observed();
+        JsonObject out = Results.observed();
         out.add("component", row(c, ports, Map.of(), false));
         return finish(out, fields, changes);
     }

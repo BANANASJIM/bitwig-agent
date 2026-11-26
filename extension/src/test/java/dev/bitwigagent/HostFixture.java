@@ -22,8 +22,8 @@ final class HostFixture {
     /** Tracks past these share one empty, absent track so a window-size bank stays cheap to build. */
     static final int DETAILED_TRACKS = 16;
 
-    final FakeHost[] tracks = new FakeHost[HostServices.TRACKS];
-    final HostServices services;
+    final FakeHost[] tracks = new FakeHost[HostLimits.TRACKS];
+    final TestServices services;
     boolean onHost;
     int flushRequests;
     Consumer<String> create = type -> {};
@@ -97,8 +97,8 @@ final class HostFixture {
             track.child("endOfDeviceChainInsertionPoint");
             FakeHost slots = track.child("clipLauncherSlotBank").items(ClipLauncherSlot.class);
             slots.child("scrollPosition").data = 0;
-            slots.child("itemCount").data = HostServices.SCENES;
-            for (int s = 0; s < HostServices.SCENES; s++) {
+            slots.child("itemCount").data = HostLimits.SCENES;
+            for (int s = 0; s < HostLimits.SCENES; s++) {
                 FakeHost clip = slots.item(s);
                 for (String key : List.of("hasContent", "isPlaying", "isPlaybackQueued", "isRecording"))
                     clip.child(key).data = false;
@@ -115,7 +115,7 @@ final class HostFixture {
             devices.child("exists").data = true;
             devices.child("itemCount").data = 0;
             devices.child("scrollPosition").data = 0;
-            for (int d = 0; d < HostServices.DEVICES; d++) {
+            for (int d = 0; d < HostLimits.DEVICES; d++) {
                 FakeHost device = devices.item(d);
                 emptyDevice(device, d);
                 device.child("hasLayers").data = false;
@@ -138,7 +138,7 @@ final class HostFixture {
             sends.items(Send.class);
             sends.child("itemCount").data = i == 0 ? 1 : 0;
             sends.child("scrollPosition").data = 0;
-            for (int s = 0; s < HostServices.SENDS; s++) {
+            for (int s = 0; s < HostLimits.SENDS; s++) {
                 FakeHost send = sends.item(s);
                 boolean reverb = s == 0;
                 send.child("exists").data = reverb && i == 0;
@@ -162,7 +162,7 @@ final class HostFixture {
         FakeHost scenes = bank.child("sceneBank").items(Scene.class);
         scenes.child("itemCount").data = 0;
         scenes.child("scrollPosition").data = 0;
-        for (int s = 0; s < HostServices.SCENES; s++) {
+        for (int s = 0; s < HostLimits.SCENES; s++) {
             scenes.item(s).child("exists").data = false;
             scenes.item(s).child("name").data = "";
         }
@@ -231,7 +231,7 @@ final class HostFixture {
             tasks.schedule((Runnable) args[0], ((Number) args[1]).longValue());
             return null;
         });
-        services = createServices ? new HostServices(host.proxy(ControllerHost.class), tasks::now) : null;
+        services = createServices ? new TestServices(host.proxy(ControllerHost.class), tasks::now) : null;
     }
 
     /** The host's own enum option list, as EnumValue.enumDefinition() reports it. */
@@ -329,7 +329,7 @@ final class HostFixture {
         HostOperation op = new HostOperation(deadline);
         try {
             module.validate(method, params);
-            services.schedule(op, () -> module.dispatch(op, method, params), 0);
+            services.enqueue(op, () -> module.dispatch(op, method, params));
         } catch (RuntimeException error) {
             op.result.completeExceptionally(error);
         }

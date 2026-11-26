@@ -162,7 +162,7 @@ public final class ProjectModuleTest {
                         && result.get("projectName").getAsString().equals("Song")
                         && result.get("fileBytes").getAsLong() > 0,
                 "saved only with callback, written file, isModified=false and the new name");
-        assertTrue(sim.module.unresolved().isEmpty(), "completed callback leaves nothing pending");
+        assertTrue(sim.fixture.services.holds.descriptions().isEmpty(), "completed callback leaves nothing pending");
         HostOperation again = sim.start(sim.root.resolve("Song/Song.bwproject"), false);
         sim.drain();
         assertRpcError("target_exists", again);
@@ -199,7 +199,9 @@ public final class ProjectModuleTest {
         assertTrue(
                 error.outcome.equals("unknown") && error.getMessage().contains("disk full"),
                 "native failure after the job started is unknown");
-        assertTrue(failed.module.unresolved().isEmpty(), "a failure callback also ends the pending state");
+        assertTrue(
+                failed.fixture.services.holds.descriptions().isEmpty(),
+                "a failure callback also ends the pending state");
     }
 
     @Test
@@ -214,7 +216,8 @@ public final class ProjectModuleTest {
                         && result.get("nativeCompletion").getAsString().equals("pending"),
                 "no callback within the deadline is unknown, never retried");
         assertTrue(
-                silent.dispatches == 1 && silent.module.unresolved().size() == 1,
+                silent.dispatches == 1
+                        && silent.fixture.services.holds.descriptions().size() == 1,
                 "pending native save is listed as unresolved");
         HostOperation busy = silent.start(silent.root.resolve("Again/Again.bwproject"), false);
         silent.drain();
@@ -223,7 +226,7 @@ public final class ProjectModuleTest {
         silent.drain();
         assertRpcError("busy", save);
         silent.late.completed();
-        assertTrue(silent.module.unresolved().isEmpty(), "a late callback clears the pending state");
+        assertTrue(silent.fixture.services.holds.descriptions().isEmpty(), "a late callback clears the pending state");
     }
 
     /** Simulated native side: Bitwig's observable effects of a save, or a refusal/failure callback. */
@@ -241,7 +244,7 @@ public final class ProjectModuleTest {
         Sim() throws IOException {
             home = temp("bwa-saveas-sim");
             root = Files.createDirectories(home.resolve("Projects"));
-            module = new ProjectModule(fixture.services, new ProjectModule.SaveAsAccess() {
+            module = fixture.services.projectModule(new ProjectModule.SaveAsAccess() {
                 public void execute(Runnable work) {
                     document.add(work);
                 }

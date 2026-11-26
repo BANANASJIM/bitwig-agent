@@ -150,14 +150,15 @@ public final class ArrangerModuleTest {
                         .getAsString()
                         .equals("observed"),
                 "reads stay available");
-        assertTrue(!f.module.unresolved().isEmpty(), "unresolved write is listed for extension.restart");
+        assertTrue(!f.host.services.holds.descriptions().isEmpty(), "unresolved write is listed for extension.restart");
         Fixture before = new Fixture(false, "Instrument");
         before.failBeforeWrite = true;
         HostOperation rejected = before.start("arranger.clips.create", create(0, 4));
         before.drain();
         assertRpcError("arranger_overlap", rejected);
         assertTrue(
-                !rejected.dispatched && before.module.unresolved().isEmpty(),
+                !rejected.dispatched
+                        && before.host.services.holds.descriptions().isEmpty(),
                 "pre-dispatch refusal does not quarantine");
     }
 
@@ -236,7 +237,7 @@ public final class ArrangerModuleTest {
             host.tracks[0].child("trackType").emit(trackType);
             host.transport.child("isPlaying").emit(playing);
             host.occupySlot(0, 0, "Verse");
-            module = new ArrangerModule(host.services, new ArrangerModule.Access() {
+            module = host.services.arranger(new ArrangerModule.Access() {
                 public void execute(Runnable task) {
                     queue.add(task);
                 }
@@ -244,7 +245,7 @@ public final class ArrangerModuleTest {
                 public JsonObject list(Object track, String id, Runnable check) {
                     lists++;
                     check.run();
-                    return HostServices.observed();
+                    return Results.observed();
                 }
 
                 public JsonObject create(
@@ -301,7 +302,7 @@ public final class ArrangerModuleTest {
             writes++;
             if (failAfterWrite)
                 throw new RpcException("arranger_verification_failed", "simulated readback mismatch", "unknown");
-            return HostServices.observed();
+            return Results.observed();
         }
 
         HostOperation start(String m, JsonObject p) {

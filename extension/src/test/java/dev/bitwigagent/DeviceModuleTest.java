@@ -1313,7 +1313,7 @@ public final class DeviceModuleTest {
         final FakeHost[][] controls = new FakeHost[16][8];
         final FakeHost bank = new FakeHost("bank");
         final FakeHost transport = new FakeHost("transport");
-        final HostServices services;
+        final TestServices services;
         final DeviceModule module;
         int insertions, flushRequests, selected = -1;
         String insertMode = "one", deleteMode = "one", moveMode = "one", lastInsertion;
@@ -1340,7 +1340,7 @@ public final class DeviceModuleTest {
 
         Fake(boolean lateIdentity, boolean lateControlPresence, Set<String> unobserved) {
             FakeHost trackBank = new FakeHost("trackBank");
-            Track[] tracks = new Track[HostServices.TRACKS];
+            Track[] tracks = new Track[HostLimits.TRACKS];
             trackBank.put("scrollPosition", 0);
             trackBank.put("itemCount", 1);
             trackBank.on("getItemAt", args -> tracks[(Integer) args[0]]);
@@ -1476,8 +1476,8 @@ public final class DeviceModuleTest {
                 flushRequests++;
                 return null;
             });
-            services = new HostServices(host.proxy(ControllerHost.class), tasks::now);
-            module = new DeviceModule(services);
+            services = new TestServices(host.proxy(ControllerHost.class), tasks::now);
+            module = services.device();
             initialized = true;
         }
         /** Public insertion-point model: inserts or moves relative to an anchor slot of the track-0 chain. */
@@ -1558,7 +1558,7 @@ public final class DeviceModuleTest {
             HostOperation op = new HostOperation(deadline);
             try {
                 DeviceModule.validateParams(method, p);
-                services.schedule(op, () -> module.dispatch(op, method, p.deepCopy()), 0);
+                services.enqueue(op, () -> module.dispatch(op, method, p.deepCopy()));
             } catch (RuntimeException error) {
                 op.result.completeExceptionally(error);
             }

@@ -17,19 +17,14 @@ public final class SceneModuleTest {
         final List<String> names = new ArrayList<>();
         final SceneModule module;
         boolean applyDuplicate = true, applyDelete = true, positional;
-        Runnable guard = () -> {};
 
         Model(String... initial) {
-            this(() -> {}, initial);
-        }
-
-        Model(Runnable guard, String... initial) {
             names.addAll(Arrays.asList(initial));
             FakeHost bank = f.bank.child("sceneBank");
             bank.items(Scene.class);
             bank.child("scrollPosition").data = 0;
             bank.child("itemCount").data = names.size();
-            for (int i = 0; i < HostServices.SCENES; i++) {
+            for (int i = 0; i < HostLimits.SCENES; i++) {
                 final int index = i;
                 FakeHost scene = bank.item(i);
                 scene.child("exists").data = i < names.size();
@@ -62,7 +57,7 @@ public final class SceneModuleTest {
                     return null;
                 });
             }
-            module = new SceneModule(f.services, guard);
+            module = f.services.scene();
         }
 
         void publish(FakeHost bank) {
@@ -70,7 +65,7 @@ public final class SceneModuleTest {
             if (positional)
                 for (int i = 0; i < names.size(); i++)
                     if (names.get(i).startsWith("Scene ")) names.set(i, "Scene " + (i + 1));
-            for (int i = 0; i < HostServices.SCENES; i++)
+            for (int i = 0; i < HostLimits.SCENES; i++)
                 bank.item(i).child("name").emit(i < names.size() ? names.get(i) : "");
             bank.child("itemCount").emit(names.size());
         }
@@ -195,12 +190,8 @@ public final class SceneModuleTest {
                 out.get("newSceneName").isJsonNull()
                         || out.get("newSceneName").getAsString().equals("B"),
                 "a stale placeholder name is never reported");
-        Model pinned = new Model(
-                () -> {
-                    throw Errors.notApplied(ErrorCode.UNRESOLVED_MUTATION, "pinned");
-                },
-                "A",
-                "B");
+        Model pinned = new Model("A", "B");
+        pinned.f.services.holds.place(LauncherStructureLock.MUTATION, "A launcher mutation is pinned.");
         assertTrue(
                 assertRpcError(
                                 "unresolved_mutation",
@@ -211,7 +202,7 @@ public final class SceneModuleTest {
         assertRpcError(
                 "unresolved_mutation", pinned.start("scenes.delete", "{\"sceneIndex\":0,\"expectedName\":\"A\"}"));
         assertTrue(pinned.f.bank.child("sceneBank").item(0).actions == 0, "nothing dispatched while pinned");
-        String[] full = new String[HostServices.SCENES];
+        String[] full = new String[HostLimits.SCENES];
         Arrays.fill(full, "S");
         Model limit = new Model(full);
         assertRpcError("scene_limit", limit.start("scenes.duplicate", "{\"sceneIndex\":0,\"expectedName\":\"S\"}"));
@@ -244,7 +235,7 @@ public final class SceneModuleTest {
         Model transport = new Model("A", "B");
         transport.f.transport.child("isPlaying").emit(true);
         assertRpcError("unsafe_state", transport.start("scenes.delete", "{\"sceneIndex\":1,\"expectedName\":\"B\"}"));
-        String[] many = new String[HostServices.SCENES + 1];
+        String[] many = new String[HostLimits.SCENES + 1];
         Arrays.fill(many, "S");
         assertRpcError(
                 "outside_window", new Model(many).start("scenes.delete", "{\"sceneIndex\":0,\"expectedName\":\"S\"}"));

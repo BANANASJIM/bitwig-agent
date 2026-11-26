@@ -13,7 +13,7 @@ public final class TransportModuleTest {
     @Test
     void readsExposeActualValuesAndUnits() {
         HostFixture f = new HostFixture();
-        TransportModule module = new TransportModule(f.services);
+        TransportModule module = f.services.transportModule();
         JsonObject read = f.call(module, "transport.get", new JsonObject());
         assertTrue(read.get("tempoBpm").getAsDouble() == 120, "tempo is raw BPM, not normalized");
         assertTrue(read.get("positionBeats").getAsDouble() == 0, "current playback position read");
@@ -30,7 +30,7 @@ public final class TransportModuleTest {
     @Test
     void rejectsInvalidAndEmptyRequestsBeforeScheduling() {
         HostFixture f = new HostFixture();
-        TransportModule module = new TransportModule(f.services);
+        TransportModule module = f.services.transportModule();
         for (String text : List.of(
                 "{}",
                 "{\"tempoBpm\":19.99}",
@@ -60,7 +60,7 @@ public final class TransportModuleTest {
     @Test
     void optionalFieldsRemainUnchanged() {
         HostFixture f = new HostFixture();
-        TransportModule module = new TransportModule(f.services);
+        TransportModule module = f.services.transportModule();
         JsonObject result = f.call(module, "transport.set", HostFixture.json("{\"metronome\":true}"));
         assertTrue(result.get("matchesRequested").getAsBoolean(), "explicit metronome setter observes callback");
         assertTrue(f.transport.child("isMetronomeEnabled").writes == 1, "only supplied field written");
@@ -86,7 +86,7 @@ public final class TransportModuleTest {
                 "isArrangerAutomationWriteEnabled",
                 "isClipLauncherAutomationWriteEnabled")) {
             HostFixture f = new HostFixture();
-            TransportModule module = new TransportModule(f.services);
+            TransportModule module = f.services.transportModule();
             f.transport.child(safety).emit(true);
             HostOperation start = f.submit(module, "transport.set", HostFixture.json("{\"playing\":true}"));
             f.next();
@@ -107,7 +107,7 @@ public final class TransportModuleTest {
     @Test
     void requiresFreshObservation() {
         HostFixture f = new HostFixture();
-        TransportModule module = new TransportModule(f.services);
+        TransportModule module = f.services.transportModule();
         FakeHost tempo = f.transport.child("tempo").child("value");
         tempo.notifyWrites = false;
         HostOperation op = f.submit(module, "transport.set", HostFixture.json("{\"tempoBpm\":130}"));
@@ -136,7 +136,7 @@ public final class TransportModuleTest {
     @Test
     void expiredAndCancelledWorkNeverWrites() {
         HostFixture f = new HostFixture();
-        TransportModule module = new TransportModule(f.services);
+        TransportModule module = f.services.transportModule();
         HostOperation expired =
                 f.submit(module, "transport.set", HostFixture.json("{\"playing\":true}"), f.tasks.now() - 1);
         f.next();
@@ -166,7 +166,7 @@ public final class TransportModuleTest {
     @Test
     void stopIsObservedBeforeSeeking() {
         HostFixture f = new HostFixture();
-        TransportModule module = new TransportModule(f.services);
+        TransportModule module = f.services.transportModule();
         deferStop(f);
         HostOperation op =
                 f.submit(module, "transport.set", HostFixture.json("{\"playing\":false,\"positionBeats\":0}"));
@@ -189,12 +189,12 @@ public final class TransportModuleTest {
     @Test
     void lateStopDoesNotSeekAfterObservationBudget() {
         HostFixture f = new HostFixture();
-        TransportModule module = new TransportModule(f.services);
+        TransportModule module = f.services.transportModule();
         deferStop(f);
         HostOperation op =
                 f.submit(module, "transport.set", HostFixture.json("{\"playing\":false,\"positionBeats\":0}"));
         f.next();
-        f.tasks.advance(HostServices.OBSERVE_WINDOW_NANOS); // the fixture's hard deadline remains open
+        f.tasks.advance(Scheduler.OBSERVE_WINDOW_NANOS); // the fixture's hard deadline remains open
         f.next();
         f.next();
         JsonObject result = op.result.join();
@@ -216,14 +216,14 @@ public final class TransportModuleTest {
     @Test
     void shortTimeoutYieldsBoundedNotObservedNotDeadlineExceeded() {
         HostFixture f = new HostFixture();
-        TransportModule module = new TransportModule(f.services);
+        TransportModule module = f.services.transportModule();
         f.transport.child("tempo").child("value").notifyWrites = false;
         long deadline = f.tasks.after(300);
         HostOperation op = f.submit(module, "transport.set", HostFixture.json("{\"tempoBpm\":130}"), deadline);
         f.next();
         assertTrue(!op.result.isDone(), "unobserved write keeps polling");
         long lateInsideMargin =
-                deadline - HostServices.DEADLINE_MARGIN_NANOS + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(5);
+                deadline - Scheduler.DEADLINE_MARGIN_NANOS + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(5);
         f.tasks.advance(lateInsideMargin - f.tasks.now());
         f.next();
         JsonObject result = op.result.join();
@@ -237,7 +237,7 @@ public final class TransportModuleTest {
     @Test
     void cancelledStopDoesNotSeekLater() {
         HostFixture f = new HostFixture();
-        TransportModule module = new TransportModule(f.services);
+        TransportModule module = f.services.transportModule();
         deferStop(f);
         HostOperation op =
                 f.submit(module, "transport.set", HostFixture.json("{\"playing\":false,\"positionBeats\":0}"));
@@ -254,7 +254,7 @@ public final class TransportModuleTest {
     @Test
     void safetyChangeWhileStoppingPreventsSeek() {
         HostFixture f = new HostFixture();
-        TransportModule module = new TransportModule(f.services);
+        TransportModule module = f.services.transportModule();
         deferStop(f);
         HostOperation op =
                 f.submit(module, "transport.set", HostFixture.json("{\"playing\":false,\"positionBeats\":0}"));
@@ -282,7 +282,7 @@ public final class TransportModuleTest {
     @Test
     void midOperationGuardStopsRemainingFields() {
         HostFixture f = new HostFixture();
-        TransportModule module = new TransportModule(f.services);
+        TransportModule module = f.services.transportModule();
         f.transport.child("tempo").child("value").afterWrite =
                 () -> f.transport.child("isArrangerRecordEnabled").emit(true);
         JsonObject result = f.call(module, "transport.set", HostFixture.json("{\"tempoBpm\":130,\"playing\":true}"));
@@ -299,8 +299,8 @@ public final class TransportModuleTest {
                 "second field explicitly not sent");
         assertTrue(f.transport.actions == 0, "rechecked recording guard stops play");
         HostFixture closed = new HostFixture();
-        TransportModule second = new TransportModule(closed.services);
-        closed.transport.child("tempo").child("value").afterWrite = closed.services::close;
+        TransportModule second = closed.services.transportModule();
+        closed.transport.child("tempo").child("value").afterWrite = closed.services.scheduler::close;
         JsonObject partial =
                 closed.call(second, "transport.set", HostFixture.json("{\"tempoBpm\":130,\"metronome\":true}"));
         assertTrue(partial.get("reason").getAsString().equals("unavailable"), "close during write reported honestly");
@@ -311,7 +311,7 @@ public final class TransportModuleTest {
     @Test
     void sharedSafetyRequiresObservationsButAllowsStop() {
         HostFixture f = new HostFixture(false);
-        TransportModule module = new TransportModule(f.services);
+        TransportModule module = f.services.transportModule();
         f.transport.child("isPlaying").emit(false);
         JsonObject read = f.call(module, "transport.get", new JsonObject());
         assertTrue(
@@ -333,9 +333,22 @@ public final class TransportModuleTest {
     }
 
     @Test
+    void warnsWhenPlaybackStartsOnAnInactiveEngine() {
+        HostFixture f = new HostFixture();
+        TransportModule module = f.services.transportModule();
+        JsonObject silent = f.call(module, "transport.set", HostFixture.json("{\"playing\":true}"));
+        assertTrue(silent.getAsJsonArray("warnings").size() == 1, "an inactive engine is named in the result");
+        JsonObject stop = f.call(module, "transport.set", HostFixture.json("{\"playing\":false}"));
+        assertTrue(!stop.has("warnings"), "stopping needs no warning");
+        f.application.child("hasActiveEngine").data = true;
+        JsonObject audible = f.call(module, "transport.set", HostFixture.json("{\"playing\":true}"));
+        assertTrue(!audible.has("warnings"), "an active engine needs no warning");
+    }
+
+    @Test
     void timeSignatureIsValidatedWrittenAndReadBack() {
         HostFixture f = new HostFixture();
-        TransportModule module = new TransportModule(f.services);
+        TransportModule module = f.services.transportModule();
         assertTrue(
                 f.call(module, "transport.get", new JsonObject())
                         .get("timeSignature")
@@ -389,7 +402,7 @@ public final class TransportModuleTest {
     @Test
     void guideSettingsAreReadWrittenAndVerified() {
         HostFixture f = new HostFixture();
-        TransportModule module = new TransportModule(f.services);
+        TransportModule module = f.services.transportModule();
         JsonObject read = f.call(module, "transport.get", new JsonObject());
         assertTrue(
                 read.get("metronomeVolumeNormalized").getAsDouble() == .5
@@ -484,7 +497,7 @@ public final class TransportModuleTest {
         // Bitwig 6.1.4: the observer reported a stored project value ('bar') while EnumValue.get() returned a listed
         // one.
         HostFixture f = new HostFixture();
-        TransportModule module = new TransportModule(f.services);
+        TransportModule module = f.services.transportModule();
         FakeHost node = f.transport.child("defaultLaunchQuantization");
         node.emit("bar");
         node.on("get", args -> "1");
@@ -511,7 +524,7 @@ public final class TransportModuleTest {
     @Test
     void storedValueOutsideOptionsCanBeWrittenBack() {
         HostFixture f = new HostFixture();
-        TransportModule module = new TransportModule(f.services);
+        TransportModule module = f.services.transportModule();
         f.transport.child("defaultLaunchQuantization").emit("bar");
         JsonObject read = f.call(module, "transport.get", new JsonObject());
         assertTrue(

@@ -434,7 +434,7 @@ final class GridInsertionWriter {
             try {
                 boolean unknown = status.equals("unknown");
                 if (lastGraph != null && !unknown) refreshPositions();
-                JsonObject result = HostServices.observed();
+                JsonObject result = Results.observed();
                 result.addProperty("batchStatus", status);
                 result.addProperty("completion", unknown ? "unknown" : "observed");
                 result.addProperty("written", written);
@@ -716,7 +716,7 @@ final class GridInsertionWriter {
                 snapshots.guardTarget(target, proxy, trackId);
                 contexts.capture(target.target, target.graph, after.modules, context, check);
                 Row actual = after.find(incoming.id);
-                JsonObject result = HostServices.observed();
+                JsonObject result = Results.observed();
                 result.addProperty("operation", "insert");
                 result.addProperty("moduleId", actual.id.toString());
                 result.addProperty("typeId", actual.typeId.toString());
@@ -781,7 +781,7 @@ final class GridInsertionWriter {
         GridSnapshotReader.NativeTarget target = snapshots.target(proxy, trackId);
         String device = GridTopologyQuarantine.device(trackId, target.graph);
         String origin = quarantine.origin(device), detail = quarantine.detail(device);
-        JsonObject result = HostServices.observed();
+        JsonObject result = Results.observed();
         result.addProperty("operation", "topology_reconcile");
         result.addProperty("quarantineBefore", origin == null ? "none" : origin);
         JsonObject recorded = null;

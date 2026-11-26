@@ -75,22 +75,48 @@ final class RoutingModule implements HostModule {
         }
     }
 
-    private final HostServices s;
+    private final Scheduler scheduler;
+    private final TrackWindow window;
+    private final DeviceSources sources;
+    private final TransportSafety transportSafety;
+    private final NativeRuntime natives;
+    private final Holds holds;
     private final MethodSpecs specs;
     private final AtomicLong epoch = new AtomicLong();
     private Access access;
-    private volatile boolean pending, quarantined;
+    private static final String PENDING = "routing.pending", QUARANTINE = "routing.quarantine";
+    private static final String HOLD = "A routing or sidechain write is pending or unresolved.";
 
-    RoutingModule(HostServices s, MethodSpecs specs) {
-        this(s, specs, null);
+    RoutingModule(
+            Scheduler scheduler,
+            TrackWindow window,
+            DeviceSources sources,
+            TransportSafety transportSafety,
+            NativeRuntime natives,
+            Holds holds,
+            MethodSpecs specs) {
+        this(scheduler, window, sources, transportSafety, natives, holds, specs, null);
     }
 
-    RoutingModule(HostServices s, MethodSpecs specs, Access access) {
-        this.s = s;
+    RoutingModule(
+            Scheduler scheduler,
+            TrackWindow window,
+            DeviceSources sources,
+            TransportSafety transportSafety,
+            NativeRuntime natives,
+            Holds holds,
+            MethodSpecs specs,
+            Access access) {
+        this.scheduler = scheduler;
+        this.window = window;
+        this.sources = sources;
+        this.transportSafety = transportSafety;
+        this.natives = natives;
+        this.holds = holds;
         this.specs = specs;
         this.access = access;
-        for (int i = 0; i < HostServices.TRACKS; i++) {
-            Track track = (Track) s.tracks.getItemAt(i);
+        for (int i = 0; i < HostLimits.TRACKS; i++) {
+            Track track = window.at(i);
             track.channelId().addValueObserver((StringValueChangedCallback) v -> epoch.incrementAndGet());
             track.exists().addValueObserver((BooleanValueChangedCallback) v -> epoch.incrementAndGet());
             track.trackType().addValueObserver((StringValueChangedCallback) v -> epoch.incrementAndGet());
@@ -100,11 +126,6 @@ final class RoutingModule implements HostModule {
     @Override
     public Set<String> methods() {
         return METHODS;
-    }
-
-    @Override
-    public List<String> unresolved() {
-        return pending || quarantined ? List.of("A routing or sidechain write is pending or unresolved.") : List.of();
     }
 
     @Override
@@ -162,7 +183,7 @@ final class RoutingModule implements HostModule {
     }
 
     private static void device(JsonObject p) {
-        Params.integer(p, "deviceIndex", 0, HostServices.DEVICES - 1);
+        Params.integer(p, "deviceIndex", 0, HostLimits.DEVICES - 1);
         Params.string(p, "expectedDeviceName");
     }
 
@@ -263,36 +284,37 @@ final class RoutingModule implements HostModule {
 
     @Override
     public void dispatch(HostOperation op, String method, JsonObject p) {
-        s.check(op);
+        scheduler.check(op);
         boolean write = !specs.get(method).readOnly;
-        if (pending) throw Errors.notApplied(ErrorCode.BUSY, "Another native routing operation is pending.");
-        if (write && quarantined)
+        if (holds.held(PENDING))
+            throw Errors.notApplied(ErrorCode.BUSY, "Another native routing operation is pending.");
+        if (write && holds.held(QUARANTINE))
             throw Errors.notApplied(
                     ErrorCode.UNRESOLVED_MUTATION,
                     "An unresolved routing/sidechain write requires inspection (tracks.routing.get / devices.sidechain.get) and extension.restart before further routing writes.");
         String id = p.get("trackId").getAsString();
-        int slot = s.trackSlot(id);
+        int slot = window.trackSlot(id);
         List<TrackRef> bank = bank();
         TrackRef self = null;
         for (TrackRef ref : bank) if (ref.id.equals(id)) self = ref;
         if (self == null)
             throw Errors.notApplied(
                     ErrorCode.OUTSIDE_WINDOW,
-                    "Track UUID is absent from the current " + HostServices.TRACKS + "-track window.");
+                    "Track UUID is absent from the current " + HostLimits.TRACKS + "-track window.");
         for (String key : List.of("output", "input", "source")) {
             if (!p.has(key) || !p.getAsJsonObject(key).has("trackId")) continue;
             String other = p.getAsJsonObject(key).get("trackId").getAsString();
             if (bank.stream().noneMatch(ref -> ref.id.equals(other)))
                 throw Errors.notApplied(
                         ErrorCode.OUTSIDE_WINDOW,
-                        key + ".trackId is absent from the current " + HostServices.TRACKS
+                        key + ".trackId is absent from the current " + HostLimits.TRACKS
                                 + "-track window; nothing was dispatched.");
         }
-        DeviceSources.RootReadTicket ticket = method.startsWith("devices.") ? s.sources.rootRead(parent(p)) : null;
-        HostServices.SafetyObservation safety = write ? s.stoppedSafety(op) : null;
+        DeviceSources.RootReadTicket ticket = method.startsWith("devices.") ? sources.rootRead(parent(p)) : null;
+        SafetyObservation safety = write ? transportSafety.stopped(op) : null;
         if (access == null) {
             try {
-                access = new Bitwig614RoutingAccess(s.nativeRuntime(op).access(ErrorCode.ROUTING_UNAVAILABLE));
+                access = new Bitwig614RoutingAccess(natives.get(op).access(ErrorCode.ROUTING_UNAVAILABLE));
             } catch (ReflectiveOperationException | LinkageError error) {
                 throw Errors.notApplied(
                         ErrorCode.ROUTING_UNAVAILABLE,
@@ -301,22 +323,22 @@ final class RoutingModule implements HostModule {
         }
         long generation = epoch.get();
         Runnable check = () -> {
-            s.check(op);
+            scheduler.check(op);
             if (epoch.get() != generation)
                 throw Errors.notApplied(
                         ErrorCode.STALE_CONTEXT, "Track bank changed while the routing operation was queued.");
             if (ticket != null) ticket.check();
-            if (write) s.guardStoppedSafety(safety);
+            if (write) transportSafety.guardStopped(safety);
         };
         Runnable beforeWrite = () -> {
             check.run();
             op.dispatched = true;
-            quarantined = true;
+            holds.place(QUARANTINE, HOLD);
         };
         Access bridge = access;
         TrackRef target = self;
         boolean choices = p.has("includeChoices") && p.get("includeChoices").getAsBoolean();
-        pending = true;
+        holds.place(PENDING, HOLD);
         try {
             bridge.execute(() -> {
                 try {
@@ -335,36 +357,36 @@ final class RoutingModule implements HostModule {
                         default:
                             result = bridge.sidechainSet(ticket.device, id, bank, p, check, beforeWrite);
                     }
-                    s.schedule(
+                    scheduler.schedule(
                             op,
                             () -> {
                                 check.run();
-                                if (!s.trackMatches(id, (Track) s.tracks.getItemAt(slot)))
+                                if (!window.trackMatches(id, window.at(slot)))
                                     throw Errors.notApplied(
                                             ErrorCode.STALE_CONTEXT, "Track target changed after native access.");
-                                if (ticket != null) s.sources.guardRootRead(ticket);
-                                if (write && !"unknown".equals(text(result, "completion"))) quarantined = false;
-                                pending = false;
+                                if (ticket != null) sources.guardRootRead(ticket);
+                                if (write && !"unknown".equals(text(result, "completion"))) holds.release(QUARANTINE);
+                                holds.release(PENDING);
                                 annotateTrackNames(result, trackNames());
                                 op.result.complete(result);
                             },
                             0);
                 } catch (RuntimeException | Error error) {
-                    pending = false;
+                    holds.release(PENDING);
                     op.fail(error);
                 }
             });
         } catch (RuntimeException | Error error) {
-            pending = false;
+            holds.release(PENDING);
             throw error;
         }
-        op.result.whenComplete((r, e) -> pending = false);
+        op.result.whenComplete((r, e) -> holds.release(PENDING));
     }
 
     private Map<String, String> trackNames() {
         Map<String, String> out = new HashMap<>();
-        for (int i = 0; i < HostServices.TRACKS; i++) {
-            Track track = (Track) s.tracks.getItemAt(i);
+        for (int i = 0; i < HostLimits.TRACKS; i++) {
+            Track track = window.at(i);
             if (track.exists().get())
                 out.put(track.channelId().get(), track.name().get());
         }
@@ -398,8 +420,8 @@ final class RoutingModule implements HostModule {
 
     private List<TrackRef> bank() {
         List<TrackRef> out = new ArrayList<>();
-        for (int i = 0; i < HostServices.TRACKS; i++) {
-            Track track = (Track) s.tracks.getItemAt(i);
+        for (int i = 0; i < HostLimits.TRACKS; i++) {
+            Track track = window.at(i);
             if (!track.exists().get()) continue;
             String id = track.channelId().get();
             if (id == null || id.isEmpty()) continue;

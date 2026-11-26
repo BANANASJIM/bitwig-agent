@@ -176,7 +176,7 @@ final class GridSnapshotReader {
             item.addProperty("name", entry.name);
             entries.add(item);
         }
-        JsonObject result = HostServices.observed();
+        JsonObject result = Results.observed();
         result.add("entries", entries);
         result.add("window", window(offset, limit, matches.size()));
         if (matches.isEmpty() && !query.trim().isEmpty()) {
@@ -320,7 +320,7 @@ final class GridSnapshotReader {
         if (!parameters) state.unsupported("parameters_not_requested");
         check.run();
         guardTarget(binding, proxy, expectedTrackId);
-        JsonObject result = HostServices.observed();
+        JsonObject result = Results.observed();
         JsonObject deviceMetadata = new JsonObject(), graphMetadata = new JsonObject();
         deviceMetadata.addProperty("modelClass", text(binding.target.getClass().getName()));
         graphMetadata.addProperty("modelClass", text(graph.getClass().getName()));
@@ -544,7 +544,7 @@ final class GridSnapshotReader {
     }
 
     JsonObject parameterResult(ParameterBinding binding, JsonObject value) {
-        JsonObject result = HostServices.observed();
+        JsonObject result = Results.observed();
         result.addProperty("moduleId", binding.moduleId.toString());
         result.add("parameter", value);
         result.addProperty("complete", binding.state.unsupported.isEmpty());
@@ -1079,7 +1079,7 @@ final class GridSnapshotReader {
     }
 
     static JsonObject window(int offset, int limit, int total) {
-        JsonObject result = HostServices.window(offset, limit, total);
+        JsonObject result = Results.window(offset, limit, total);
         result.addProperty("limit", limit);
         return result;
     }

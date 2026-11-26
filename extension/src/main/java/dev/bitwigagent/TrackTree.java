@@ -52,17 +52,16 @@ final class TrackTree {
         }
     }
 
-    static TrackTree capture(HostServices s) {
+    static TrackTree capture(TrackWindow window) {
         TrackTree tree = new TrackTree();
-        int offset = s.tracks.scrollPosition().get(),
-                total = s.tracks.itemCount().get();
+        int offset = window.offset(), total = window.total();
         boolean unique = true;
-        for (int i = 0; i < HostServices.TRACKS; i++) {
-            Track track = (Track) s.tracks.getItemAt(i);
+        for (int i = 0; i < HostLimits.TRACKS; i++) {
+            Track track = window.at(i);
             if (!track.exists().get()) continue;
             String id = track.channelId().get(), type = track.trackType().get();
             int position = track.position().get();
-            Track parent = s.parents[i];
+            Track parent = window.parent(i);
             String parentRaw =
                     parent.exists().get() ? blankToNull(parent.channelId().get()) : null;
             Node node = new Node(
@@ -79,7 +78,7 @@ final class TrackTree {
             tree.groups |= node.group();
         }
         tree.nodes.sort(Comparator.comparingInt(n -> n.position));
-        tree.windowComplete = unique && offset == 0 && total <= HostServices.TRACKS && tree.nodes.size() == total;
+        tree.windowComplete = unique && offset == 0 && total <= HostLimits.TRACKS && tree.nodes.size() == total;
         tree.resolve();
         return tree;
     }
@@ -197,14 +196,14 @@ final class TrackTree {
 
     private int depth(Node node, int guard) {
         if (node.depth >= 0) return node.depth;
-        if (guard > HostServices.TRACKS) return -1;
+        if (guard > HostLimits.TRACKS) return -1;
         if (node.topLevel) return node.depth = 0;
         int parentDepth = depth(byId.get(node.parentId), guard + 1);
         return parentDepth < 0 ? -1 : (node.depth = parentDepth + 1);
     }
 
     private boolean descends(Node node, Node ancestor) {
-        for (int guard = 0; node != null && !node.topLevel && guard <= HostServices.TRACKS; guard++) {
+        for (int guard = 0; node != null && !node.topLevel && guard <= HostLimits.TRACKS; guard++) {
             if (ancestor.id.equals(node.parentId)) return true;
             node = byId.get(node.parentId);
         }

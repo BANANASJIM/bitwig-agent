@@ -2,6 +2,7 @@ package dev.bitwigagent;
 
 import com.bitwig.extension.callback.BooleanValueChangedCallback;
 import com.bitwig.extension.callback.StringValueChangedCallback;
+import com.bitwig.extension.controller.api.Project;
 import com.bitwig.extension.controller.api.Track;
 import com.google.gson.*;
 import java.nio.file.Path;
@@ -24,8 +25,6 @@ final class RenderModule implements HostModule {
             BOUNCE_TAPS = Set.of("pre_fx", "pre_fader", "post_fader");
     /** After the latch, how long the bounce's undoable content replacement may take to show in the lane. */
     long applyGraceNanos = TimeUnit.SECONDS.toNanos(2);
-    /** Poll period; at most half of HostServices.DEADLINE_MARGIN_NANOS so the last poll lands before the deadline. */
-    static final long POLL_MS = 20;
 
     static final class Export {
         final String format, tap;
@@ -96,7 +95,7 @@ final class RenderModule implements HostModule {
 
     private final class Job {
         final String kind;
-        final long started = s.now();
+        final long started = scheduler.now();
         final List<String> ids;
         final List<Object> proxies;
         final double start, end;
@@ -131,7 +130,7 @@ final class RenderModule implements HostModule {
         boolean done() {
             Handle h = handle;
             if (h != null && h.done()) {
-                if (doneAt == 0) doneAt = s.now();
+                if (doneAt == 0) doneAt = scheduler.now();
                 settled = true;
             }
             return settled;
@@ -142,25 +141,50 @@ final class RenderModule implements HostModule {
         }
     }
 
-    private final HostServices s;
+    private final Scheduler scheduler;
+    private final TrackWindow window;
+    private final Project project;
+    private final TransportSafety transportSafety;
+    private final NativeRuntime natives;
+    private final Holds holds;
     /** Per bank slot, bumped by controller observers; document-thread checks compare these instead of calling getters. */
-    private final AtomicLongArray epochs = new AtomicLongArray(HostServices.TRACKS);
+    private final AtomicLongArray epochs = new AtomicLongArray(HostLimits.TRACKS);
 
     private Access access;
     private String accessError;
     private volatile Job job;
-    private volatile boolean quarantined;
+    private static final String JOB = "render.job", QUARANTINE = "render.quarantine", FINISHED = "render.finished";
 
-    RenderModule(HostServices s) {
-        this(s, null);
+    RenderModule(
+            Scheduler scheduler,
+            TrackWindow window,
+            Project project,
+            TransportSafety transportSafety,
+            NativeRuntime natives,
+            Holds holds) {
+        this(scheduler, window, project, transportSafety, natives, holds, null);
     }
 
-    RenderModule(HostServices s, Access access) {
-        this.s = s;
+    RenderModule(
+            Scheduler scheduler,
+            TrackWindow window,
+            Project project,
+            TransportSafety transportSafety,
+            NativeRuntime natives,
+            Holds holds,
+            Access access) {
+        this.scheduler = scheduler;
+        this.window = window;
+        this.project = project;
+        this.transportSafety = transportSafety;
+        this.natives = natives;
+        this.holds = holds;
+        holds.place(JOB, JOB, this::rendering);
+        holds.place(FINISHED, FINISHED, this::finishedUnverified);
         this.access = access;
-        for (int i = 0; i < HostServices.TRACKS; i++) {
+        for (int i = 0; i < HostLimits.TRACKS; i++) {
             final int index = i;
-            Track track = (Track) s.tracks.getItemAt(i);
+            Track track = window.at(i);
             track.channelId().addValueObserver((StringValueChangedCallback) v -> epochs.incrementAndGet(index));
             track.exists().addValueObserver((BooleanValueChangedCallback) v -> epochs.incrementAndGet(index));
         }
@@ -176,22 +200,26 @@ final class RenderModule implements HostModule {
         validateParams(method, p);
     }
 
-    @Override
-    public List<String> unresolved() {
-        List<String> out = new ArrayList<>();
+    private static final String QUARANTINED =
+            "A bounce.inPlace has an unknown outcome; inspect arranger.clips.list on its tracks.";
+
+    private String rendering() {
         Job current = job;
-        if (current != null && current.dispatched && !current.done())
-            out.add("A " + current.describe()
-                    + " is still rendering natively (no completion yet); poll render.status.");
-        if (quarantined) out.add("A bounce.inPlace has an unknown outcome; inspect arranger.clips.list on its tracks.");
-        else if (current != null
-                && current.kind.equals(BOUNCE)
-                && current.dispatched
-                && current.done()
-                && !current.reported)
-            out.add(
-                    "A bounce.inPlace finished after its request returned and is not verified yet; call render.status.");
-        return out;
+        return current != null && current.dispatched && !current.done()
+                ? "A " + current.describe() + " is still rendering natively (no completion yet); poll render.status."
+                : null;
+    }
+
+    private String finishedUnverified() {
+        Job current = job;
+        return !holds.held(QUARANTINE)
+                        && current != null
+                        && current.kind.equals(BOUNCE)
+                        && current.dispatched
+                        && current.done()
+                        && !current.reported
+                ? "A bounce.inPlace finished after its request returned and is not verified yet; call render.status."
+                : null;
     }
 
     static void validateParams(String method, JsonObject p) {
@@ -237,8 +265,8 @@ final class RenderModule implements HostModule {
         JsonElement value = p.get(key);
         if (!value.isJsonArray()
                 || value.getAsJsonArray().size() < 1
-                || value.getAsJsonArray().size() > HostServices.TRACKS)
-            throw Errors.invalid(key + " must be an array of 1.." + HostServices.TRACKS + " entries.");
+                || value.getAsJsonArray().size() > HostLimits.TRACKS)
+            throw Errors.invalid(key + " must be an array of 1.." + HostLimits.TRACKS + " entries.");
         List<String> out = new ArrayList<>();
         Set<String> seen = new HashSet<>();
         for (JsonElement item : value.getAsJsonArray()) {
@@ -291,7 +319,7 @@ final class RenderModule implements HostModule {
         if (access != null) return access;
         if (accessError != null) throw Errors.notApplied(UNAVAILABLE, accessError);
         try {
-            access = new Bitwig614RenderAccess(s.nativeRuntime(op).access(UNAVAILABLE));
+            access = new Bitwig614RenderAccess(natives.get(op).access(UNAVAILABLE));
         } catch (ReflectiveOperationException | LinkageError error) {
             accessError = "Exact render bindings unavailable: " + Bitwig614Runtime.diagnostic(error);
             throw Errors.notApplied(UNAVAILABLE, accessError);
@@ -301,7 +329,7 @@ final class RenderModule implements HostModule {
 
     @Override
     public void dispatch(HostOperation op, String method, JsonObject p) {
-        s.check(op);
+        scheduler.check(op);
         if (method.equals(STATUS)) {
             status(op);
             return;
@@ -312,7 +340,7 @@ final class RenderModule implements HostModule {
                     ErrorCode.BUSY,
                     "A " + previous.describe()
                             + " is still rendering natively; poll render.status. No request was queued.");
-        if (method.equals(BOUNCE) && quarantined)
+        if (method.equals(BOUNCE) && holds.held(QUARANTINE))
             throw Errors.notApplied(
                     ErrorCode.UNRESOLVED_MUTATION,
                     "An earlier bounce.inPlace has an unknown outcome; inspect arranger.clips.list on its tracks, then extension.restart.");
@@ -320,11 +348,11 @@ final class RenderModule implements HostModule {
                 && previous.kind.equals(BOUNCE)
                 && previous.dispatched
                 && !previous.reported
-                && !quarantined)
+                && !holds.held(QUARANTINE))
             throw Errors.notApplied(
                     ErrorCode.UNRESOLVED_MUTATION,
                     "The previous bounce.inPlace returned before it was verified; call render.status first.");
-        HostServices.SafetyObservation safety = s.stoppedSafety(op);
+        SafetyObservation safety = transportSafety.stopped(op);
         boolean export = method.equals(EXPORT);
         List<String> ids = ids(p, export ? "sources" : "trackIds", export);
         List<Object> proxies = new ArrayList<>();
@@ -332,8 +360,8 @@ final class RenderModule implements HostModule {
         long[] seen = new long[ids.size()];
         for (int i = 0; i < ids.size(); i++) {
             boolean master = ids.get(i).equals(MASTER);
-            slots[i] = master ? -1 : s.trackSlot(ids.get(i));
-            proxies.add(master ? null : s.tracks.getItemAt(slots[i]));
+            slots[i] = master ? -1 : window.trackSlot(ids.get(i));
+            proxies.add(master ? null : window.bank().getItemAt(slots[i]));
             if (!master) seen[i] = epochs.get(slots[i]);
         }
         double start = p.get("startBeats").getAsDouble(),
@@ -366,8 +394,8 @@ final class RenderModule implements HostModule {
         }
         Access bridge = access(op);
         Runnable check = () -> {
-            s.check(op);
-            s.guardStoppedSafety(safety);
+            scheduler.check(op);
+            transportSafety.guardStopped(safety);
             for (int i = 0; i < ids.size(); i++)
                 if (slots[i] >= 0 && epochs.get(slots[i]) != seen[i])
                     throw Errors.notApplied(
@@ -386,14 +414,14 @@ final class RenderModule implements HostModule {
                     };
                     if (export) {
                         next.plan.refresh(next.export.overwrite);
-                        next.handle = bridge.export(
-                                s.project, proxies, ids, next.plan.basePaths(), next.export, check, before);
+                        next.handle =
+                                bridge.export(project, proxies, ids, next.plan.basePaths(), next.export, check, before);
                     } else {
                         for (int i = 0; i < ids.size(); i++)
                             next.before.put(ids.get(i), bridge.clips(proxies.get(i), ids.get(i), check));
-                        next.handle = bridge.bounce(s.project, proxies, ids, start, end, tap, check, before);
+                        next.handle = bridge.bounce(project, proxies, ids, start, end, tap, check, before);
                     }
-                    s.schedule(op, () -> await(op, next, bridge, op.deadline - HostServices.DEADLINE_MARGIN_NANOS), 0);
+                    scheduler.schedule(op, () -> await(op, next, bridge, scheduler.deadlineUntil(op)), 0);
                 } catch (RuntimeException | Error error) {
                     settle(next, previous);
                     op.fail(error);
@@ -410,31 +438,32 @@ final class RenderModule implements HostModule {
         next.settled = true;
         if (!next.dispatched) {
             if (job == next) job = previous;
-        } else if (next.kind.equals(BOUNCE)) quarantined = true;
+        } else if (next.kind.equals(BOUNCE)) holds.place(QUARANTINE, QUARANTINED);
     }
 
     private void await(HostOperation op, Job current, Access bridge, long until) {
-        if (!current.done()) {
-            if (s.now() < until) {
-                s.schedule(op, () -> await(op, current, bridge, until), POLL_MS);
-                return;
-            }
-            op.result.complete(pending(current, bridge));
-            return;
-        }
+        scheduler.poll(
+                op,
+                until,
+                current::done,
+                () -> evaluateFinished(op, current, bridge, until),
+                () -> op.result.complete(pending(current, bridge)));
+    }
+
+    private void evaluateFinished(HostOperation op, Job current, Access bridge, long until) {
         bridge.execute(() -> {
             try {
-                s.check(op);
-                JsonObject evaluation = evaluate(current, bridge, () -> s.check(op));
-                s.schedule(
+                scheduler.check(op);
+                JsonObject evaluation = evaluate(current, bridge, () -> scheduler.check(op));
+                scheduler.schedule(
                         op,
                         () -> {
                             boolean waiting = current.kind.equals(BOUNCE)
                                     && !evaluation.get("verified").getAsBoolean()
                                     && !evaluation.get("changed").getAsBoolean()
-                                    && s.now() - current.doneAt < applyGraceNanos;
-                            if (waiting && s.now() < until) {
-                                s.schedule(op, () -> await(op, current, bridge, until), POLL_MS);
+                                    && scheduler.now() - current.doneAt < applyGraceNanos;
+                            if (waiting && scheduler.now() < until) {
+                                scheduler.schedule(op, () -> await(op, current, bridge, until), Scheduler.POLL_MS);
                                 return;
                             }
                             if (waiting) {
@@ -547,7 +576,7 @@ final class RenderModule implements HostModule {
         boolean export = current.kind.equals(EXPORT);
         current.reported = true;
         if (!verified) {
-            if (!export && changed) quarantined = true;
+            if (!export && changed) holds.place(QUARANTINE, QUARANTINED);
             String detail = (export ? evaluation.get("files") : evaluation.get("tracks")).toString();
             op.result.completeExceptionally(
                     export
@@ -569,7 +598,7 @@ final class RenderModule implements HostModule {
                                     changed ? Outcome.UNKNOWN : Outcome.NOT_APPLIED));
             return;
         }
-        JsonObject result = HostServices.observed();
+        JsonObject result = Results.observed();
         result.addProperty(export ? "exported" : "bounced", true);
         result.addProperty("nativeCompletion", "completed");
         common(result, current, bridge);
@@ -638,7 +667,7 @@ final class RenderModule implements HostModule {
                     current.export.sampleRate == 0 ? "current" : String.valueOf(current.export.sampleRate));
             result.addProperty("directory", current.plan.directory.toString());
         }
-        result.addProperty("elapsedMs", TimeUnit.NANOSECONDS.toMillis(s.now() - current.started));
+        result.addProperty("elapsedMs", TimeUnit.NANOSECONDS.toMillis(scheduler.now() - current.started));
         result.addProperty("nativeVersion", Bitwig614Runtime.VERSION);
         result.addProperty("nativeJarSha256", bridge.nativeJarSha256());
     }
@@ -646,7 +675,7 @@ final class RenderModule implements HostModule {
     /** Last job: running, or completed with its verification re-evaluated now. */
     private void status(HostOperation op) {
         Job current = job;
-        JsonObject result = HostServices.observed();
+        JsonObject result = Results.observed();
         if (current == null || !current.dispatched) {
             result.add("job", JsonNull.INSTANCE);
             op.result.complete(result);
@@ -665,9 +694,9 @@ final class RenderModule implements HostModule {
             row.addProperty("state", "completed");
             bridge.execute(() -> {
                 try {
-                    s.check(op);
-                    JsonObject evaluation = evaluate(current, bridge, () -> s.check(op));
-                    s.schedule(
+                    scheduler.check(op);
+                    JsonObject evaluation = evaluate(current, bridge, () -> scheduler.check(op));
+                    scheduler.schedule(
                             op,
                             () -> {
                                 for (String key : evaluation.keySet()) row.add(key, evaluation.get(key));
@@ -676,7 +705,8 @@ final class RenderModule implements HostModule {
                                 if (!current.reported
                                         && current.kind.equals(BOUNCE)
                                         && evaluation.get("changed").getAsBoolean()
-                                        && !evaluation.get("verified").getAsBoolean()) quarantined = true;
+                                        && !evaluation.get("verified").getAsBoolean())
+                                    holds.place(QUARANTINE, QUARANTINED);
                                 current.reported = true;
                                 result.add("job", row);
                                 op.result.complete(result);

@@ -179,14 +179,15 @@ public final class AutomationModuleTest {
                         .getAsString()
                         .equals("observed"),
                 "reads stay available");
-        assertTrue(!f.module.unresolved().isEmpty(), "unresolved write is listed for extension.restart");
+        assertTrue(!f.host.services.holds.descriptions().isEmpty(), "unresolved write is listed for extension.restart");
         Fixture before = new Fixture(false);
         before.failBeforeWrite = true;
         HostOperation rejected = before.start("automation.points.set", set(new JsonArray()));
         before.drain();
         assertRpcError("stale_target", rejected);
         assertTrue(
-                !rejected.dispatched && before.module.unresolved().isEmpty(),
+                !rejected.dispatched
+                        && before.host.services.holds.descriptions().isEmpty(),
                 "pre-dispatch refusal does not quarantine");
     }
 
@@ -265,7 +266,7 @@ public final class AutomationModuleTest {
             this.playing = playing;
             host.tracks[0].child("channelId").emit(ID);
             host.transport.child("isPlaying").emit(playing);
-            module = new AutomationModule(host.services, new AutomationModule.Access() {
+            module = host.services.automation(new AutomationModule.Access() {
                 public void execute(Runnable task) {
                     queue.add(task);
                 }
@@ -277,7 +278,7 @@ public final class AutomationModuleTest {
                     lastTarget = target;
                     lastRange = range;
                     check.run();
-                    return HostServices.observed();
+                    return Results.observed();
                 }
 
                 public JsonObject set(
@@ -303,7 +304,7 @@ public final class AutomationModuleTest {
                     if (failAfterWrite)
                         throw new RpcException(
                                 "automation_verification_failed", "simulated readback mismatch", "unknown");
-                    return HostServices.observed();
+                    return Results.observed();
                 }
             });
         }

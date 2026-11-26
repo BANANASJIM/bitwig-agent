@@ -34,7 +34,7 @@ public final class MixDisplayWriteTest {
         FakeHost sendValue = send.child("value");
         sendValue.afterWrite = () -> send.child("displayedValue").emit(db(((Number) sendValue.data).doubleValue()));
         send.child("isEnabled").data = true;
-        out[0] = new MixModule(f.services);
+        out[0] = f.services.mix();
         return f;
     }
 
