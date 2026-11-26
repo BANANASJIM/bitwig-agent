@@ -626,8 +626,7 @@ final class GridSnapshotReader implements ParameterResolver.ModuleOwners {
     @Override
     public Object owner(DeviceSources.Native.Capture device, UUID id, Runnable check) {
         Object graph = a.read(Field.GRAPH, device.device);
-        if (graph == null)
-            throw Errors.notApplied(Reason.KIND_MISMATCH, "Explicit device does not contain a Grid graph.");
+        if (graph == null) throw Errors.notApplied(Reason.KIND_MISMATCH, "The device does not contain a Grid graph.");
         a.requireModelThread(graph);
         return lookupModule(graph, id, new State(check));
     }
@@ -723,13 +722,11 @@ final class GridSnapshotReader implements ParameterResolver.ModuleOwners {
             capture = targets.capture(source, () -> {});
         } catch (RpcException error) {
             if (error.is(Reason.UNSUPPORTED_SCOPE) && source.layer == null)
-                throw Errors.notApplied(
-                        Reason.KIND_MISMATCH, "Explicit native device has no mapped Grid graph accessor.");
+                throw Errors.notApplied(Reason.KIND_MISMATCH, "The device has no mapped Grid graph accessor.");
             throw error;
         }
         Object graph = a.read(Field.GRAPH, capture.device);
-        if (graph == null)
-            throw Errors.notApplied(Reason.KIND_MISMATCH, "Explicit device does not contain a Grid graph.");
+        if (graph == null) throw Errors.notApplied(Reason.KIND_MISMATCH, "The device does not contain a Grid graph.");
         a.requireModelThread(graph);
         return new NativeTarget(capture, graph);
     }
@@ -737,7 +734,7 @@ final class GridSnapshotReader implements ParameterResolver.ModuleOwners {
     void guardTarget(NativeTarget binding) {
         targets.guard(binding.ownership, () -> {});
         if (a.read(Field.GRAPH, binding.target) != binding.graph)
-            throw Errors.notApplied(Reason.STALE_CONTEXT, "Explicit native graph changed during the read.");
+            throw Errors.notApplied(Reason.STALE_CONTEXT, "The device's Grid graph changed during the read.");
         a.requireModelThread(binding.graph);
     }
 

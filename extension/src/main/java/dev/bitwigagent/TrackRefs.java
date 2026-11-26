@@ -33,12 +33,15 @@ final class TrackRefs {
         return slot;
     }
 
-    /** The track-list index a position names; an anchor must be a track of the list. */
+    /** The track-list index a position names; an anchor must be a top-level track. */
     int insertionIndex(JsonElement position) {
-        return Positions.index(
-                position,
-                window.total(),
-                anchor -> window.at(resolve(anchor, false)).position().get());
+        return Positions.index(position, window.total(), anchor -> {
+            int slot = resolve(anchor, false);
+            if (window.parent(slot).exists().get())
+                throw Errors.notApplied(
+                        Reason.UNSUPPORTED_SCOPE, "An anchor must be a top-level track, not a track inside a group.");
+            return window.at(slot).position().get();
+        });
     }
 
     JsonObject ref(int slot) {

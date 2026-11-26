@@ -122,6 +122,14 @@ final class ParameterResolver {
         return Refs.remotePage(device.ref(), page, pages[page]);
     }
 
+    /** A native device that changed under a parameter is target_changed like any other change of it. */
+    private static RpcException changed(RpcException error, HostOperation operation) {
+        if (!error.is(Reason.STALE_CONTEXT)) return error;
+        if (operation != null && operation.dispatched())
+            return Errors.unknown(Reason.TARGET_CHANGED, error.getMessage() + " Outcome unknown.");
+        return Errors.notApplied(Reason.TARGET_CHANGED, error.getMessage());
+    }
+
     private static void require(JsonObject ref, JsonObject current) {
         if (!Refs.matches(ref, current, true))
             throw Errors.targetChanged("Another parameter is at this location than the one read.", current);
@@ -211,7 +219,12 @@ final class ParameterResolver {
 
         /** On the document thread: the owner and parameter now, refused as stale when either is gone or changed. */
         NativeParameter bind(ModuleOwners owners, DeviceSources.Native natives, Runnable check) {
-            DeviceSources.Native.Capture captured = natives.capture(device, check);
+            DeviceSources.Native.Capture captured;
+            try {
+                captured = natives.capture(device, check);
+            } catch (RpcException error) {
+                throw changed(error, null);
+            }
             Object found = owners.owner(captured, ownerId, check);
             if (found == null)
                 throw Errors.targetNotFound(ref.getAsJsonObject("owner"), "The device has no such " + owner + " now.");
@@ -257,7 +270,11 @@ final class ParameterResolver {
 
         /** On the document thread: the same device, owner and parameter as at bind; else the target changed. */
         void require(HostOperation operation) {
-            natives.guard(device, check);
+            try {
+                natives.guard(device, check);
+            } catch (RpcException error) {
+                throw changed(error, operation);
+            }
             snapshot.require(operation);
         }
     }

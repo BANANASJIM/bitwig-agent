@@ -170,7 +170,7 @@ final class ModulatorSnapshotReader {
             target = targets.capture(source, check);
         } catch (RpcException error) {
             if (!error.is(Reason.INVALID_TARGET)) throw error;
-            throw Errors.notApplied(Reason.TARGET_NOT_FOUND, "Explicit device proxy has no native target.");
+            throw Errors.notApplied(Reason.TARGET_NOT_FOUND, "The device has no native target.");
         }
         Object collection = a.read(Field.COLLECTION, target.device);
         require(Kind.COLLECTION, collection);

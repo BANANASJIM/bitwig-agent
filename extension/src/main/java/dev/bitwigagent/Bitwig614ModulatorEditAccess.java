@@ -181,7 +181,7 @@ final class Bitwig614ModulatorEditAccess implements ModulatorEditor.Access {
     public void guardDevice(DeviceSources.Source source, Object device, Runnable check) {
         DeviceSources.Native.Capture now = targets.capture(source, check);
         if (now.device != device)
-            throw Errors.notApplied(Reason.STALE_CONTEXT, "Explicit native device changed during the operation.");
+            throw Errors.notApplied(Reason.STALE_CONTEXT, "The device changed during the operation.");
     }
 
     @Override

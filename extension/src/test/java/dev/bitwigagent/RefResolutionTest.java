@@ -94,6 +94,9 @@ public final class RefResolutionTest {
         assertEquals(0, f.tracks.insertionIndex(json("{\"before\":" + track + "}")));
         assertEquals(2, f.tracks.insertionIndex(null));
         assertEquals(0, f.tracks.insertionIndex(new JsonPrimitive("start")));
+        f.host.tracks[0].child("createParentTrack").child("exists").data = true;
+        assertRpcError("unsupported_scope", () -> f.tracks.insertionIndex(json("{\"after\":" + track + "}")));
+        f.host.tracks[0].child("createParentTrack").child("exists").data = false;
         f.host.bank.child("itemCount").emit(HostLimits.TRACKS + 1);
         assertRpcError("outside_window", () -> f.tracks.locate(gone));
     }
@@ -289,7 +292,7 @@ public final class RefResolutionTest {
         final Map<UUID, Object> owners = new HashMap<>();
         final Map<Object, String> names = new HashMap<>();
         final Map<Object, Map<String, Object>> parameters = new HashMap<>();
-        boolean namesReadable = true;
+        boolean namesReadable = true, retarget;
 
         Natives(DeviceSources.Source source) {
             this.source = source;
@@ -307,7 +310,7 @@ public final class RefResolutionTest {
         @Override
         public boolean is(DeviceSources.Native.Kind kind, Object object) {
             return kind == DeviceSources.Native.Kind.DEVICE
-                    ? object == device
+                    ? object != owner
                     : kind == DeviceSources.Native.Kind.TRACK && object == owner;
         }
 
@@ -315,7 +318,7 @@ public final class RefResolutionTest {
         public Object read(DeviceSources.Native.Field field, Object object) {
             switch (field) {
                 case TARGET:
-                    return object == source.device ? device : null;
+                    return object == source.device ? (retarget ? new Object() : device) : null;
                 case OWNER_TRACK:
                     return owner;
                 default:
@@ -385,6 +388,16 @@ public final class RefResolutionTest {
             natives.namesReadable = false;
             assertRpcError("native_unavailable", () -> cutoff.bind(natives, nativeDevices, () -> {}));
             natives.namesReadable = true;
+            natives.retarget = true;
+            assertRpcError("target_changed", () -> bound.require(op));
+            HostOperation sent = new HostOperation(Long.MAX_VALUE);
+            sent.markDispatched();
+            RpcException late = assertThrows(RpcException.class, () -> bound.require(sent));
+            assertTrue(late.unknown && late.is(Reason.TARGET_CHANGED), "after dispatch the outcome is unknown");
+            natives.retarget = false;
+            eqSource.track.id = HostFixture.B;
+            assertRpcError("target_changed", () -> cutoff.bind(natives, nativeDevices, () -> {}));
+            eqSource.track.id = HostFixture.A;
             natives.owners.put(UUID.fromString(MODULE), new Object());
             assertRpcError("target_changed", () -> bound.require(op));
             natives.owners.remove(UUID.fromString(MODULE));
