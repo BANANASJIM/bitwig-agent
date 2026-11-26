@@ -5,6 +5,7 @@ from typing import Annotated, Literal, Self
 from pydantic import Field, model_validator
 
 from bitwig_agent.protocol.base import (
+    PROJECT_READY,
     TRACK,
     DeviceArgs,
     Nonempty,
@@ -152,20 +153,20 @@ SPECS: dict[str, ToolSpec] = {
         TRACKS_CREATE_DESCRIPTION,
         False,
         {"type": "instrument", "position": -1, "name": "Agent Sketch"},
-        project_write=True,
+        requires=PROJECT_READY,
     ),
     "tracks.group": tool(
         TrackGroupArgs,
         TRACKS_GROUP_DESCRIPTION,
         False,
         {"trackIds": [TRACK, "12345678-1234-1234-1234-123456789abd"], "name": "Drums"},
-        project_write=True,
+        requires=PROJECT_READY,
     ),
     "tracks.delete": tool(
         TrackDeleteArgs,
         TRACKS_DELETE_DESCRIPTION,
         False,
         {"trackId": TRACK, "expectedName": "Track name"},
-        project_write=True,
+        requires=PROJECT_READY,
     ),
 }

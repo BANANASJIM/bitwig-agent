@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Literal, Self
 from pydantic import Field, model_validator
 
 from bitwig_agent.protocol.base import (
+    PROJECT_READY,
     TARGET,
     TRACK,
     DeviceArgs,
@@ -188,7 +189,7 @@ SPECS: dict[str, ToolSpec] = {
                 "nativeType": "from-tracks.routing.get",
             },
         },
-        project_write=True,
+        requires=PROJECT_READY,
     ),
     "devices.sidechain.get": tool(
         SidechainGetArgs, DEVICES_SIDECHAIN_GET_DESCRIPTION, True, {**TARGET, "expectedDeviceName": "Compressor"}
@@ -225,6 +226,6 @@ SPECS: dict[str, ToolSpec] = {
                 "nativeType": "from-devices.sidechain.get",
             },
         },
-        project_write=True,
+        requires=PROJECT_READY,
     ),
 }

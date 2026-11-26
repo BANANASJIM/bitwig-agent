@@ -10,7 +10,7 @@ def export_bundle() -> dict[str, Any]:
         "methods": {
             name: {
                 "host": spec.host,
-                "write": not spec.read_only,
+                "readOnly": spec.read_only,
                 "projectWrite": spec.project_write,
                 "requires": list(spec.requires),
                 "defaultTimeoutMs": spec.default_timeout_ms,

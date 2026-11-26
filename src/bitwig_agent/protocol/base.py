@@ -87,21 +87,22 @@ TRACK = "12345678-1234-1234-1234-123456789abc"
 TARGET = {"trackId": TRACK, "deviceIndex": 0, "expectedDeviceName": "Poly Grid"}
 
 
+PROJECT_READY = ("projectReady",)
+ENGINE = ("engine",)
+
+
 @dataclass(frozen=True)
 class ToolSpec:
     model: type[BaseModel]
     description: str
     read_only: bool
     examples: tuple[dict[str, Any], ...]
-    project_write: bool = False
-    needs_engine: bool = False
+    requires: tuple[str, ...] = ()
     host: bool = True
 
     @property
-    def requires(self) -> tuple[str, ...]:
-        return tuple(
-            name for name, needed in (("projectReady", self.project_write), ("engine", self.needs_engine)) if needed
-        )
+    def project_write(self) -> bool:
+        return PROJECT_READY[0] in self.requires
 
     @property
     def default_timeout_ms(self) -> int:
@@ -128,8 +129,7 @@ def tool(
     description: str,
     read_only: bool,
     *examples: dict[str, Any],
-    project_write: bool = False,
-    needs_engine: bool = False,
+    requires: tuple[str, ...] = (),
     host: bool = True,
 ) -> ToolSpec:
-    return ToolSpec(model, description, read_only, examples or ({},), project_write, needs_engine, host)
+    return ToolSpec(model, description, read_only, examples or ({},), requires, host)

@@ -20,7 +20,8 @@ def string_set(name: str, constant: str) -> set[str]:
     assert body, f"{name}.{constant} not found"
     constants = dict(re.findall(r'\b(\w+)\s*=\s*"([^"]*)"', text))
     return {
-        item.strip('"') if item.startswith('"') else constants[item] for item in re.findall(r'"[^"]*"|\w+', body.group(1))
+        item.strip('"') if item.startswith('"') else constants[item]
+        for item in re.findall(r'"[^"]*"|\w+', body.group(1))
     }
 
 
