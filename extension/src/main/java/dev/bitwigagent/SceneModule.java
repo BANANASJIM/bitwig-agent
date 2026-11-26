@@ -35,7 +35,7 @@ final class SceneModule implements HostModule {
         for (int i = 0; i < HostLimits.SCENES; i++) {
             final int index = i;
             window.scene(i).name().addValueObserver((StringValueChangedCallback) v -> {
-                observedNames[index] = v;
+                observedNames[index] = (String) v;
                 nameSequence[index]++;
             });
         }

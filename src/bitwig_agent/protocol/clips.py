@@ -346,7 +346,9 @@ NOTE_WINDOW = {
 CLIPS_GET_DESCRIPTION = (
     "Read exact launcher clip timing and Next Action settings of one clip: loop {lengthBeats}, play and loop starts, "
     "nextAction fields, in the shape clips.set writes. Source-bound native model access; no cursor selection. "
-    "Requires the inspected Bitwig 6.1.4 JAR. Readback is not playback or persistence proof."
+    "launchQuantization, launchMode and useLoopStartAsQuantizationReference are not read back here (they need the clip selected): "
+    "the per-field outcomes of clips.set are their evidence. Requires the inspected Bitwig 6.1.4 JAR. Readback is not "
+    "playback or persistence proof."
 )
 CLIPS_INSERT_DESCRIPTION = (
     "Create a named MIDI clip in an EMPTY launcher slot (to: a slot ref from launcher.list, scene included; loop "
@@ -370,7 +372,7 @@ CLIPS_SET_DESCRIPTION = (
     "it, then unknown/readback_mismatch), loop {lengthBeats} (also moves the play stop), Next Action fields "
     "(nextAction play_next|stop, nextActionEnabled, nextActionLinkToLoop, nextActionLoopCount, nextActionDelayBeats; "
     "native, no selection) and launchQuantization, launchMode, useLoopStartAsQuantizationReference (select the clip; "
-    "options lists the host's own values). Arranger clip: name, lengthBeats (the start stays; overlap is refused). "
+    "options lists the host's own values; clips.get does not report them, the per-field outcomes are the evidence). Arranger clip: name, lengthBeats (the start stays; overlap is refused). "
     "Next Action and launch fields need a stopped, non-recording transport. Paths run in the order next action, launch, clip; the first that does "
     "not succeed stops the rest (not_applied, not_reached). An arranger set needs a settled project and a stopped transport. Returns the new ref. Never retry unknown."
 )
