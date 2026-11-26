@@ -39,13 +39,13 @@ Everything runs through pixi tasks; the default environment includes the optiona
 
 The `lint` task needs neither the API jar nor Bitwig; it downloads only the checksum-pinned palantir-java-format (native binary, or the pinned JVM jars where none exists for the host) into `build/deps`. Run a single layer through `pixi run python scripts/check.py --layer lint`.
 
-It runs `ruff check`, `ruff format --check`, strict `mypy` on `src/bitwig_agent` (non-strict on scripts, tests and examples), the Java format check and duplicate detection. `config/cpd-baseline.json` lists existing duplicates; only new ones fail, so update it only when a refactor removes some. Ruff per-file ignores under "refactor debt" in `pyproject.toml` may shrink, never grow. Javac runs with `-Xlint:all -Werror`. `git config blame.ignoreRevsFile .git-blame-ignore-revs` hides the mechanical format commit from blame.
+`config/cpd-baseline.json` lists existing duplicates; only new ones fail, so update it only when a refactor removes some. Ruff per-file ignores under "refactor debt" in `pyproject.toml` may shrink, never grow. `git config blame.ignoreRevsFile .git-blame-ignore-revs` hides the mechanical format commit from blame.
 
 The default checks do not launch Bitwig. See [VERIFICATION.md](VERIFICATION.md) for layer boundaries. CI covers host-free Python checks, the static `lint` gates, minimum supported MCP, Python package consumption, skill format and a reachable-history secret scan; local Arch packaging is a separate downstream check. None claims to build against or test a live proprietary host. Consult actual workflow output rather than treating configured jobs as passing evidence.
 
 ## Code style
 
-When rules conflict, earlier wins:
+The tools decide formatting, types, duplicate code, the `protocol/` import direction and warnings: run `pixi run fmt`, then `pixi run check`. Fix the cause; a suppression needs a reason the tool cannot infer. Everything below is judgment the tools cannot check. When rules conflict, earlier wins:
 
 1. **Correct and fail-closed.**
 2. **Optimal design.** Never keep a worse design for temporary or historical reasons; diff size, old wording and existing call sites are not reasons.
@@ -54,48 +54,13 @@ When rules conflict, earlier wins:
 5. **One source per fact.** No duplicated logic, no hardcoded values.
 6. **Decoupled.** Depend inward through narrow interfaces.
 
-### Structure
-
-- The directory tree is documentation: it mirrors layers and domains. Put new code where its layer and domain live. If nothing fits, fix the structure instead of adding a misc module.
-- Python layers, imports pointing left only (a test enforces the `protocol/` rule): `protocol/` (request models and method metadata; stdlib and pydantic only) ← `client` ← composed tools (`grid/`, audio, presets) ← `server` / `cli`.
-- Java target layers: `rpc`, `core`, `host`, domain modules, `bitwig614`. Native bindings return plain data; they do not parse requests, build JSON or apply domain rules.
-
-### One source per fact
-
-- Method metadata and request shapes are defined once in `protocol/`; Java consumes the generated `protocol.json`. Never restate a method list, timeout, enum or limit elsewhere: derive it.
-- A number in a message comes from the constant that enforces it.
-- One concept has one name across Python, Java and the wire.
-
-### Changing code
-
-- Refactor fully to the right design: update every call site. No shims, aliases, re-exports or legacy paths.
-- A behaviour-preserving refactor proves it (for example: exported schemas byte-identical, error codes unchanged). A behaviour change is explicit and versioned.
-
-### Comments
-
-- None unless the code cannot say it: reverse-engineered native facts, measured host behaviour, a non-obvious external constraint.
-- Never restate code, narrate reasoning or add section banners. Delete stale comments.
-
-### Errors and writes
-
-- Writes compare-and-set, read back, and report `applied`, `already_matched`, `not_applied` or `unknown`. Never retry `unknown`.
-- Build errors only through `Errors` / `ErrorCode` (Java) and `bridge_error` (Python).
-- A safety gate must answer a failure that was actually observed; no gates against imagined ones.
-
-### Tooling decides formatting
-
-- Run `pixi run fmt` before committing; `pixi run check` must pass: ruff, mypy strict, palantir-java-format, `javac -Xlint:all -Werror`, CPD (duplicates may only shrink), Python and Java tests, the Python/Java fixture.
-- Fix the cause. A `noqa` or suppression needs a reason the tool cannot infer.
-
-### Tests
-
-- Test every layer. Shared fakes live in one place (`tests/fakes.py`; one strict fake host in Java); never import from another test file.
-- A change to native bindings needs native E2E on an isolated test instance.
-
-### Language and commits
-
-- English everywhere in this repository.
-- Commit subjects are imperative. No AI attribution in commits or PRs.
+- **Structure.** The directory tree is documentation ([layers and ownership](docs/architecture.md)). Put new code where its layer and domain live; if nothing fits, fix the structure instead of adding a misc module. Native bindings return plain data; they do not parse requests, build JSON or apply domain rules.
+- **Facts.** Method metadata and request shapes are defined once in `protocol/`; Java consumes the generated `protocol.json`. Derive method lists, timeouts, enums and limits instead of restating them. A number in a message comes from the constant that enforces it. One concept has one name across Python, Java and the wire.
+- **Changing code.** Refactor fully to the right design and update every call site: no shims, aliases, re-exports or legacy paths. A behaviour-preserving refactor proves it (for example, exported schemas byte-identical); a behaviour change is explicit and versioned.
+- **Comments.** None unless the code cannot say it: reverse-engineered native facts, measured host behaviour, a non-obvious external constraint. Never restate code or narrate reasoning; delete stale comments.
+- **Errors and writes.** Writes compare-and-set, read back, and never retry `unknown` (outcomes are defined in [PROTOCOL.md](PROTOCOL.md#core-discovery-and-direct-parameters)). Build errors only through `Errors` / `ErrorCode` (Java) and `bridge_error` (Python). A safety gate must answer a failure that was actually observed; no gates against imagined ones.
+- **Tests.** Test every layer. Shared fakes live in one place (`tests/fakes.py`; one strict fake host in Java); never import from another test file. A change to native bindings needs native E2E on an isolated test instance.
+- **Language.** English everywhere in this repository. Commit subjects are imperative; no AI attribution in commits or PRs.
 
 ## Changes and bug reports
 
@@ -110,27 +75,9 @@ Pull requests follow [the template](.github/pull_request_template.md): why, a be
 
 For security-sensitive issues, use the private route in [SECURITY.md](SECURITY.md), not a public issue containing exploit details or private data.
 
-## Release procedure
+## Releases
 
-See [packaging and release promotion](docs/packaging.md) for the complete artifact, Arch and PyPI contract. Releases are built locally against a maintainer's licensed Bitwig JAR; public CI does not have that dependency. The commands below use **0.4.0**; they are instructions, not evidence that any check ran.
-
-1. Start from reviewed source, align Python/MCP/extension versions and installation links, and run the applicable [layered checks](VERIFICATION.md). Keep actual results; list native checks not performed.
-2. Build the Python wheel **and sdist**, plus the matching extension:
-
-   ```sh
-   pixi install --locked
-   pixi run build
-   sha256sum dist/bitwig_agent-0.4.0-py3-none-any.whl dist/bitwig_agent-0.4.0.tar.gz build/BitwigAgent.bwextension
-   ```
-
-3. Create `SHA256SUMS` from those actual hashes with exactly three unique **bare asset filenames**, removing local `dist/` and `build/` prefixes. Inspect artifact contents and third-party notices. Never upload the proprietary host JAR, factory assets or private machine/evidence data.
-4. Finalize [the Arch recipe](https://github.com/BANANASJIM/bitwig-agent/tree/main/packaging/aur) from those exact candidate artifacts and regenerate `.SRCINFO` **before tagging**. Validate it in an isolated Arch environment; its source cache may be prefilled with the exact candidate sdist and version-aliased extension. `packaging/` is excluded from the sdist, so updating its hashes does not require rebuilding that sdist.
-5. Commit the reviewed source, recipe and metadata, then tag it as `v0.4.0`. Publish the same wheel, sdist, extension and manifest to its GitHub release. Include the actual tested platform/host scope and unresolved limitations. Do not mutate previous release artifacts.
-6. Exercise the real GitHub wheel/download path in an isolated environment outside the checkout, using an isolated extension destination, offline CLI and the generated configuration's MCP handshake. Confirm the release-triggered Arch workflow builds the matching version from published downloads. A live status/editing check is separate and requires permission, one writer and a disposable project; recipe verification is not an AUR upload.
-7. Publish the matching reviewed recipe, `.SRCINFO` and license through the separate AUR Git repository's `master` branch. Follow [AUR maintenance](docs/packaging.md#maintaining-the-recipe); confirm the public package version and maintainer before announcing helper-based installation.
-8. Run `publish-pypi.yml` on the version tag with `publish=false` for promotion validation. Only an explicitly authorized publication with the configured `pypi` environment and Trusted Publisher may use `publish=true`. Promote the same reviewed artifacts, not a separate rebuild. See [external account prerequisites](docs/packaging.md#external-accountenvironment-prerequisites).
-
-Neither a pending PyPI publisher nor an AUR recipe establishes public package availability. Confirm the intended registry project, version and isolated consumer behavior before announcing its installation commands; retain GitHub release assets as an alternative installation source.
+See the [release procedure](docs/packaging.md#release-procedure).
 
 ## Agent skill maintenance
 
@@ -144,19 +91,6 @@ pixi run validate-skills
 
 The validator is a development dependency, not a production DAW dependency. Format/frontmatter validation does **not** establish correct tool use, native behavior, compatibility, permissions or musical acceptance. Separately review the copied folder's local references and safety instructions: fresh schema/target discovery, explicit permission, unknown-stop discipline and no implicit GUI fallback.
 
-## Repository map and architecture
+## Architecture
 
-See [architecture and ownership](docs/architecture.md) for the detailed public-code walkthrough. Python MCP stdio and CLI entrypoints share a strict schema/catalog and loopback client. The Java extension dispatches bounded newline-delimited JSON requests through host scheduling into separate domains. Bitwig owns the project/audio engine; the bridge is not a complete project mirror and never automatically retries requests.
-
-| Path | Responsibility |
-|---|---|
-| `src/bitwig_agent/` | Schemas/catalog, transport, MCP, CLI and release installer |
-| `extension/src/main/java/dev/bitwigagent/` | Host services, domains and bounded native adapters |
-| `extension/src/test/`, `tests/` | Simulated-host Java checks and host-free Python regressions |
-| `scripts/` | Source builds/checks and offline evidence helpers |
-| `examples/` | Client configuration and explicit opt-in music recipes |
-| `docs/` | Public architecture, installation navigation and packaging guides |
-| `packaging/aur/` | Reviewed AUR recipe and synchronized `.SRCINFO` |
-| `skills/bitwig-agent/` | Copyable Agent Skills instructions, focused references and MIT license |
-
-The default-package `extension/src/main/java/BitwigAgent614GridInsertion.java` is intentional: its native superclass is also in the unnamed package and it is loaded by that exact class name. Historical evidence is not active test infrastructure; use [VERIFICATION.md](VERIFICATION.md) for current checks.
+See [architecture and ownership](docs/architecture.md), including the [repository map](docs/architecture.md#repository-map).

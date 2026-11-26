@@ -25,7 +25,6 @@ protocol.json
 /research/
 /review/
 /docs/history/
-/AGENTS.md
 /HANDOFF.md
 /scripts/grid-compatibility.py
 /scripts/inventory-api.py
