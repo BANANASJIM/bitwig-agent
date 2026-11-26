@@ -302,9 +302,10 @@ public final class ParameterModule implements HostModule, ParameterResolver.Dire
             ParameterState parameter) {
         DisplayScale.Quantity wanted = DisplayScale.quantity(text);
         if (wanted == null)
-            throw Errors.notApplied(
-                    Reason.UNSUPPORTED_UNIT,
-                    "A display write takes a number and its unit, like \"800 Hz\"; write the value you read.");
+            throw DisplaySolver.unsupportedUnit(
+                    unparsed(text),
+                    parameter.value == null ? null : new JsonPrimitive(parameter.value),
+                    parameter.display == null ? null : new JsonPrimitive(parameter.display));
         Runnable safety = transportSafety.writeGuard(op, true);
         if (source.displayOwner != null)
             throw Errors.notApplied(Reason.BUSY, "Another request is reading this device's display texts.");
@@ -363,6 +364,11 @@ public final class ParameterModule implements HostModule, ParameterResolver.Dire
                 });
     }
 
+    private static String unparsed(String text) {
+        return "A display write takes a number and its unit (\"800 Hz\", \"-6 dB\") or a ratio (\"1:4\"), not \"" + text
+                + "\"";
+    }
+
     private void finishSolve(
             HostOperation op,
             JsonObject ref,
@@ -416,8 +422,7 @@ public final class ParameterModule implements HostModule, ParameterResolver.Dire
         if (parameter == null) throw Errors.targetNotFound(ref, "The device has no such parameter now.");
         String name = walk.a.parameterName(parameter);
         JsonObject current = Refs.parameter(device.ref, id, name == null || name.isEmpty() ? null : name);
-        if (!Refs.matches(ref, current, true))
-            throw Errors.targetChanged("Another parameter is at this location than the one read.", current);
+        if (!Refs.matches(ref, current, true)) throw Refs.parameterChanged(ref, current);
         return parameter;
     }
 
@@ -461,10 +466,6 @@ public final class ParameterModule implements HostModule, ParameterResolver.Dire
     /** A display write on a device inside a chain: the same bisection, each probe a native write and read-back. */
     private void nestedSolve(HostOperation op, JsonObject ref, String text, JsonObject expect) {
         DisplayScale.Quantity wanted = DisplayScale.quantity(text);
-        if (wanted == null)
-            throw Errors.notApplied(
-                    Reason.UNSUPPORTED_UNIT,
-                    "A display write takes a number and its unit, like \"800 Hz\"; write the value you read.");
         Runnable safety = transportSafety.writeGuard(op, true);
         NativePort port = new NativePort(op, ref, safety);
         chains.async(
@@ -474,6 +475,8 @@ public final class ParameterModule implements HostModule, ParameterResolver.Dire
                     port.parameter = bind(walk, ref);
                     requireExpected(expect, walk.a.value(port.parameter));
                     port.read(walk);
+                    if (wanted == null)
+                        throw DisplaySolver.unsupportedUnit(unparsed(text), port.value(), port.display());
                     scheduler.schedule(
                             op,
                             () -> new DisplaySolver(

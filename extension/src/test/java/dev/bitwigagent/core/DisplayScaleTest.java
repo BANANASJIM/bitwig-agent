@@ -67,6 +67,23 @@ public final class DisplayScaleTest {
     }
 
     @Test
+    void aRatioReadsAsItsStrengthWhicheverSideTheOneIsOn() {
+        for (String text : new String[] {"1:8.00", "1:8", "8:1", "8.0:1", " 1 : 8 ", "1,00:8"}) {
+            DisplayScale.Quantity q = DisplayScale.quantity(text);
+            assertEquals(DisplayScale.RATIO_UNIT, q.unit, text);
+            eq(q.value, 8, text);
+        }
+        eq(DisplayScale.quantity("1:2.00").value, 2, "host display");
+        eq(DisplayScale.quantity("4:1").value, 4, "4:1 is 1:4");
+        eq(DisplayScale.quantity("1:1").value, 1, "no compression");
+        eq(DisplayScale.quantity("2:3").value, 1.5, "other pairs are larger over smaller");
+        near(DisplayScale.quantity("1:6.00").resolution, 0.005, "resolution of the shown digits");
+        near(DisplayScale.quantity("6.0:1").resolution, 0.05, "resolution of the larger side");
+        for (String text : new String[] {"0:4", "4:0", "1:", ":4", "1:2:3", "a:b", "1:2 dB"})
+            assertNull(DisplayScale.quantity(text), text);
+    }
+
+    @Test
     void textThatIsNotANumberWithAUnitIsNoQuantity() {
         for (String text : new String[] {"LP 24", "800", "Hz", "", "  ", "loud", "1 2 Hz", "800 Hz LP", "C#3"})
             assertNull(DisplayScale.quantity(text), text);

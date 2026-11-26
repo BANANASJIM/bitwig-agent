@@ -308,6 +308,8 @@ public final class ParameterModuleTest {
         RpcException renamed =
                 f.refused("target_changed", "parameters.set", params(Refs.parameter(eq, "gain", "Tone"), "0.5"));
         assertEquals(Refs.parameter(eq, "gain", "Gain"), renamed.current);
+        assertTrue(renamed.getMessage().contains("names \"Tone\"")
+                && renamed.getMessage().contains("here is \"Gain\""));
         f.eqNode.child("name").emit("Eq-Three");
         RpcException replaced =
                 f.refused("target_changed", "parameters.set", params(Refs.parameter(eq, "gain", null), "0.5"));
@@ -407,6 +409,16 @@ public final class ParameterModuleTest {
                 "unsupported_unit", "parameters.set", params(Refs.parameter(eq, "freq", null), "{\"display\":\"Hz\"}"));
         assertEquals(0, f.eqParameters.writes);
         assertNull(f.eqParameters.observed);
+    }
+
+    @Test
+    void anUnsupportedUnitRefusalShowsTheParametersValueAndDisplay() {
+        Fixture f = new Fixture();
+        RpcException error = f.refused(
+                "unsupported_unit",
+                "parameters.set",
+                params(Refs.parameter(eq, "mode", null), "{\"display\":\"800 Hz\"}"));
+        assertTrue(error.getMessage().contains("displaying \"LP 24\""), error.getMessage());
     }
 
     @Test

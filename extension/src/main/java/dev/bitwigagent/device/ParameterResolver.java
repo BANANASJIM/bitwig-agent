@@ -139,8 +139,7 @@ public final class ParameterResolver {
     }
 
     private static void require(JsonObject ref, JsonObject current) {
-        if (!Refs.matches(ref, current, true))
-            throw Errors.targetChanged("Another parameter is at this location than the one read.", current);
+        if (!Refs.matches(ref, current, true)) throw Refs.parameterChanged(ref, current);
     }
 
     /** One resolved parameter; its snapshot is taken right before dispatch. */
