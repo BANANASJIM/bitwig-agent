@@ -4,7 +4,7 @@
   "general": [
     "Grid pitch signal: 0 = MIDI 60, 0.1 per octave (1 semitone = 1/120).",
     "A Poly Grid voice ends immediately unless something affects voice lifetime (Note In with Affect Voice Lifetime, or an envelope with lifetime on).",
-    "Grid writes need the transport stopped.",
+    "Grid value writes (parameters, voicing, remote pages) and modulator parameter writes work while playing; module and cable edits need the transport stopped. Recording or automation write on blocks every write.",
     "A Grid with a module whose required inputs are unsatisfied can be dropped from the audio network silently (Bitwig log: 'component nitro should be rejected from the network')."
   ],
   "modules": {

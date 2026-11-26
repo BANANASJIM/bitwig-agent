@@ -68,7 +68,8 @@ final class GridStringPanelWriter {
         result.addProperty("undoGroupingVerified", false);
         result.addProperty("engineAcknowledgement", false);
         result.addProperty(
-                "safetyScope", "panel_common_context_guards_observed_stopped_not_native_transport_atomicity");
+                "safetyScope",
+                "panel_common_context_guards_observed_nonrecording_nonautomation_not_native_transport_atomicity");
         return result;
     }
 }

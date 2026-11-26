@@ -6,7 +6,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.function.Consumer;
 
-/** Device-modulator reads/edits: strict RPC boundary, stopped-transport safety, one native operation per call. */
+/** Device-modulator reads/edits: strict RPC boundary, recording-safe value writes and stopped-transport structural writes, one native operation per call. */
 final class ModulatorEditModule implements HostModule {
     static final Set<String> METHODS = Set.of(
             "modulators.get",
@@ -130,7 +130,7 @@ final class ModulatorEditModule implements HostModule {
         result.addProperty("insertion", "native_modulator_browser_insertion_point_appends_below_existing");
         result.addProperty("nativeUndo", "native_undo_transactions_not_verified_grouping");
         result.addProperty("nativeVerification", "not_established_by_binding");
-        result.addProperty("requiresStoppedTransport", true);
+        result.addProperty("structuralWritesRequireStoppedTransport", true);
         return result;
     }
 
@@ -139,7 +139,7 @@ final class ModulatorEditModule implements HostModule {
         s.check(op);
         ModulatorEditor edits = editor(op);
         final boolean writing = !specs.get(method).readOnly;
-        final HostServices.SafetyObservation safety = writing ? s.stoppedSafety(op) : null;
+        final Runnable safety = writing ? s.writeGuard(op, !method.equals("modulators.parameters.set")) : null;
         final DeviceSources.RootReadTicket target = s.sources.rootRead(p.getAsJsonObject("parent"));
         final UUID trackId = UUID.fromString(target.trackId);
         final UUID modulatorId =
@@ -159,7 +159,7 @@ final class ModulatorEditModule implements HostModule {
                 Runnable check = () -> {
                     s.check(op);
                     target.check();
-                    if (writing) s.guardStoppedSafety(safety);
+                    if (writing) safety.run();
                 };
                 check.run();
                 Runnable dispatch = () -> {
@@ -229,11 +229,7 @@ final class ModulatorEditModule implements HostModule {
     }
 
     private void deliver(
-            HostOperation op,
-            DeviceSources.RootReadTicket target,
-            HostServices.SafetyObservation safety,
-            Runnable check,
-            JsonObject value) {
+            HostOperation op, DeviceSources.RootReadTicket target, Runnable safety, Runnable check, JsonObject value) {
         check.run();
         final String serialized = BoundedJson.serialize(
                 value,
@@ -244,7 +240,7 @@ final class ModulatorEditModule implements HostModule {
                 op,
                 () -> {
                     guard(op, target);
-                    if (safety != null) s.guardStoppedSafety(safety);
+                    if (safety != null) safety.run();
                     JsonObject result = JsonParser.parseString(serialized).getAsJsonObject();
                     result.add("parent", target.parent());
                     result.addProperty("scope", "primary_modulators_on_root_device");

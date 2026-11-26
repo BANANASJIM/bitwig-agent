@@ -4,24 +4,26 @@ from __future__ import annotations
 
 from bitwig_agent.grid.channel import Channel
 from bitwig_agent.grid.plan import Plan
+from bitwig_agent.grid.safety import blocking
 from bitwig_agent.grid.spec import Spec
 from bitwig_agent.grid.wiring import WiringPlan
 
 Refusal = dict[str, str]
 
 
-async def _transport_blocks(channel: Channel) -> list[Refusal]:
+async def _transport_blocks(channel: Channel, structural: bool) -> list[Refusal]:
     try:
         state = await channel.client.call("transport.get", {}, channel.timeout_ms)
     except Exception:  # noqa: BLE001 - preflight is advisory
         return []
-    busy = [k for k in ("playing", "recording") if isinstance(state, dict) and state.get(k) is True]
+    busy = blocking(state, structural)
     if not busy:
         return []
+    fix = "stop playback and turn them off" if "playing" in busy else "turn them off"
     return [
         {
             "code": "unsafe_state",
-            "message": f"transport is {' and '.join(busy)}; Grid writes need it stopped (transport.set playing=false)",
+            "message": f"{', '.join(busy)} blocks this write; {fix} with transport.set, then retry",
         }
     ]
 
@@ -39,13 +41,6 @@ def _unverified_displays(spec: Spec, plan: Plan) -> list[Refusal]:
 
 
 async def preflight(channel: Channel, spec: Spec, plan: Plan, wiring: WiringPlan) -> list[Refusal]:
-    writes = bool(
-        plan.inserts
-        or plan.deletes
-        or plan.name_existing
-        or plan.pre_moves
-        or plan.voicing.changes
-        or wiring.edits
-        or any(plan.params[n][0] for n in spec.names)
-    )
-    return [*(await _transport_blocks(channel) if writes else []), *_unverified_displays(spec, plan)]
+    structural = bool(plan.inserts or plan.deletes or plan.name_existing or plan.pre_moves or wiring.edits)
+    writes = structural or bool(plan.voicing.changes or any(plan.params[n][0] for n in spec.names))
+    return [*(await _transport_blocks(channel, structural) if writes else []), *_unverified_displays(spec, plan)]

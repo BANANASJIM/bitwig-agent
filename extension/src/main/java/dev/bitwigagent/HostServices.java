@@ -245,15 +245,7 @@ final class HostServices implements AutoCloseable {
 
     /** Observed safety inputs are shared by transport and launcher; getter defaults are not evidence. */
     void requirePlaybackSafe() {
-        if (arrangerRecordEnabled == null
-                || arrangerAutomationWriteEnabled == null
-                || clipLauncherAutomationWriteEnabled == null)
-            throw Errors.notApplied(
-                    ErrorCode.NOT_READY, "Recording and automation safety states have not all been observed.");
-        if (arrangerRecordEnabled || arrangerAutomationWriteEnabled || clipLauncherAutomationWriteEnabled)
-            throw Errors.notApplied(
-                    ErrorCode.UNSAFE_STATE,
-                    "Recording or automation write is enabled; playback mutations are blocked.");
+        safety.requireNotRecording();
     }
 
     /** Insert-type edits need an observed stopped transport on top of the recording/automation guard. */
@@ -302,7 +294,17 @@ final class HostServices implements AutoCloseable {
 
     /** Safe from document callbacks: reads only the immutable volatile observation. */
     void guardRecordingSafety() {
-        safety.requireNotRecording();
+        requirePlaybackSafe();
+    }
+
+    /** The one gate for Grid and modulator writes: value writes may play, structural writes need a stopped transport. */
+    Runnable writeGuard(HostOperation operation, boolean structural) {
+        if (!structural) {
+            recordingSafety(operation);
+            return this::guardRecordingSafety;
+        }
+        SafetyObservation observed = stoppedSafety(operation);
+        return () -> guardStoppedSafety(observed);
     }
 
     void guardStoppedSafety(SafetyObservation before) {

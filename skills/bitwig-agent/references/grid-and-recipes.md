@@ -48,7 +48,7 @@ Many Grid controls have no input port (envelope times, Gates STEPS, Chance PROBA
 3. `modulators.map modulatorId=… target={moduleId: <AD from grid.get>, parameterId: DECAY} expectedAmount=null amount=0.5`; the result's `mapping` is the readback. Change the amount later with `expectedAmount=0.5 amount=0.3`; remove it with `modulators.unmap`.
 4. Shape the modulator with `modulators.parameters.set` (raw CAS, like `grid.parameters.set`). Polarity is a modulator parameter, not a mapping option.
 
-All edits need a stopped transport. An `unknown` outcome means inspect `modulators.get`, never repeat. Native acceptance of these edits is not yet recorded in VERIFICATION.
+Insert, delete, map and unmap need a stopped transport; `modulators.parameters.set` works while playing. Recording or automation write on blocks all of them. An `unknown` outcome means inspect `modulators.get`, never repeat. Native acceptance of these edits is not yet recorded in VERIFICATION.
 
 ## Scratch recipe: explicit agent workflow
 

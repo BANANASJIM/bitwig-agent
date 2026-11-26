@@ -347,7 +347,7 @@ public final class GridModuleTest {
     }
 
     @Test
-    void writesRequireStrictObservedStoppedInputs() {
+    void valueWritesRequireObservedRecordingAutomationOffAndMayPlay() {
         Fixture f = new Fixture();
         for (String field : List.of("expectedKind", "expectedValue", "value")) {
             JsonObject p = writeTarget();
@@ -360,13 +360,11 @@ public final class GridModuleTest {
         assertTrue(
                 f.host.tasks.isEmpty() && f.adapter.tasks.isEmpty(), "bad raw values are rejected before scheduling");
         Fixture missing = new Fixture(true, false);
-        for (String key : List.of(
-                "isArrangerRecordEnabled", "isArrangerAutomationWriteEnabled", "isClipLauncherAutomationWriteEnabled"))
+        for (String key : List.of("isArrangerRecordEnabled", "isArrangerAutomationWriteEnabled"))
             missing.host.transport.child(key).emit(false);
         assertRpcError("not_ready", missing.startWrite());
-        assertTrue(missing.adapter.tasks.isEmpty(), "default false getter is not an observed stopped state");
+        assertTrue(missing.adapter.tasks.isEmpty(), "default false getter is not an observed safe state");
         for (String key : List.of(
-                "isPlaying",
                 "isArrangerRecordEnabled",
                 "isArrangerAutomationWriteEnabled",
                 "isClipLauncherAutomationWriteEnabled")) {
@@ -375,8 +373,17 @@ public final class GridModuleTest {
             assertRpcError("unsafe_state", unsafe.startWrite());
             assertTrue(
                     unsafe.adapter.writer.calls == 0 && unsafe.adapter.tasks.isEmpty(),
-                    "active observed transport mode blocks native scheduling");
+                    "recording or automation write blocks native scheduling");
         }
+        Fixture playing = new Fixture();
+        playing.host.transport.child("isPlaying").emit(true);
+        HostOperation op = playing.startWrite();
+        playing.adapter.next();
+        playing.host.next();
+        assertTrue(
+                op.result.join().getAsJsonObject("parameter").get("value").getAsBoolean() == false
+                        && playing.adapter.writer.calls == 1,
+                "a playing transport does not block a value write");
     }
 
     @Test
@@ -407,28 +414,34 @@ public final class GridModuleTest {
     void queuedWritesRejectSafetyAndTargetTransitions() {
         Fixture controller = new Fixture();
         HostOperation op = controller.host.submit(controller.module, "grid.parameters.set", writeTarget());
-        controller.host.transport.child("isPlaying").emit(true);
-        controller.host.transport.child("isPlaying").emit(false);
+        controller.host.transport.child("isArrangerRecordEnabled").emit(true);
         controller.host.next();
         assertTrue(
-                assertRpcError("stale_context", op).outcome.equals("not_applied") && controller.adapter.tasks.isEmpty(),
-                "safety ABA in initial controller queue is rejected");
+                assertRpcError("unsafe_state", op).outcome.equals("not_applied") && controller.adapter.tasks.isEmpty(),
+                "recording enabled in initial controller queue is rejected");
         for (String key : List.of(
-                "isPlaying",
                 "isArrangerRecordEnabled",
                 "isArrangerAutomationWriteEnabled",
                 "isClipLauncherAutomationWriteEnabled")) {
             Fixture queued = new Fixture();
             op = queued.startWrite();
             queued.host.transport.child(key).emit(true);
-            queued.host.transport.child(key).emit(false);
             queued.adapter.next();
             assertTrue(
-                    assertRpcError("stale_context", op).outcome.equals("not_applied")
+                    assertRpcError("unsafe_state", op).outcome.equals("not_applied")
                             && queued.adapter.writer.calls == 0
                             && !op.dispatched,
-                    "safety ABA in document queue prevents invocation");
+                    "recording enabled in document queue prevents invocation");
         }
+        Fixture started = new Fixture();
+        op = started.startWrite();
+        started.host.transport.child("isPlaying").emit(true);
+        started.adapter.next();
+        started.host.next();
+        assertTrue(
+                op.result.join().getAsJsonObject("parameter").get("value").getAsBoolean() == false
+                        && started.adapter.writer.calls == 1,
+                "playback starting while queued does not stop a value write");
         Fixture changed = new Fixture();
         op = changed.startWrite();
         changed.device.child("name").emit("Other");
@@ -440,11 +453,10 @@ public final class GridModuleTest {
         Fixture immediate = new Fixture();
         op = immediate.startWrite();
         immediate.adapter.beforeWrite =
-                () -> immediate.host.transport.child("isPlaying").emit(true);
+                () -> immediate.host.transport.child("isArrangerRecordEnabled").emit(true);
         immediate.adapter.next();
         assertTrue(
-                assertRpcError("stale_context", op).outcome.equals("not_applied")
-                        && immediate.adapter.writer.calls == 0,
+                assertRpcError("unsafe_state", op).outcome.equals("not_applied") && immediate.adapter.writer.calls == 0,
                 "changed safety at writer entry is rechecked, not cached permission");
         Fixture cancelled = new Fixture();
         op = cancelled.startWrite();
@@ -520,12 +532,11 @@ public final class GridModuleTest {
         Fixture safety = new Fixture();
         op = safety.startWrite();
         safety.adapter.next();
-        safety.host.transport.child("isPlaying").emit(true);
-        safety.host.transport.child("isPlaying").emit(false);
+        safety.host.transport.child("isArrangerRecordEnabled").emit(true);
         safety.host.next();
         assertTrue(
-                assertRpcError("stale_context", op).outcome.equals("unknown"),
-                "post-mutation safety ABA cannot erase dispatched state");
+                assertRpcError("unsafe_state", op).outcome.equals("unknown"),
+                "post-mutation safety change cannot erase dispatched state");
         Fixture closed = new Fixture();
         op = closed.startWrite();
         closed.adapter.writer.afterMutation = closed.host.services::close;

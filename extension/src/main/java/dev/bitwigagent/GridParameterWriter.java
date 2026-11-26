@@ -116,7 +116,7 @@ final class GridParameterWriter {
                 changed ? "native_undo_aware_controller_operation_not_verified_grouping" : "no_native_operation");
         result.addProperty("undoGroupingVerified", false);
         result.addProperty("engineAcknowledgement", false);
-        result.addProperty("safetyScope", "observed_stopped_nonrecording_nonautomation_not_native_transport_atomicity");
+        result.addProperty("safetyScope", "observed_nonrecording_nonautomation_not_native_transport_atomicity");
         return result;
     }
 
