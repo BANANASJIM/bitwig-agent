@@ -213,43 +213,27 @@ public final class TransportModuleTest {
                 "late stop leaves its final position without another mutation");
     }
 
-    private static final int LATE_POLL_ATTEMPTS = 5;
-
     @Test
     void shortTimeoutYieldsBoundedNotObservedNotDeadlineExceeded() throws InterruptedException {
-        // The late poll must land inside the margin before the hard deadline; a scheduler that overshoots the
-        // sleep past it never produced the scenario, so try again.
-        for (int attempt = 0; attempt < LATE_POLL_ATTEMPTS; attempt++) {
-            if (latePollLandedInsideMargin()) return;
-        }
-        throw new AssertionError("late poll never landed inside the deadline margin");
-    }
-
-    private static boolean latePollLandedInsideMargin() throws InterruptedException {
         HostFixture f = new HostFixture();
         TransportModule module = new TransportModule(f.services);
         f.transport.child("tempo").child("value").notifyWrites = false;
-        long timeoutMs = 300;
-        HostOperation op = f.submit(
-                module,
-                "transport.set",
-                HostFixture.json("{\"tempoBpm\":130}"),
-                System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(timeoutMs));
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(300);
+        HostOperation op = f.submit(module, "transport.set", HostFixture.json("{\"tempoBpm\":130}"), deadline);
         f.next();
         assertTrue(!op.result.isDone(), "unobserved write keeps polling");
         // The controller thread is late: poll lands after the observation end but before the hard deadline.
-        // Sleep only guarantees a minimum, so aim just past the observation end to leave most of the margin for
-        // overshoot.
-        Thread.sleep(timeoutMs - HostServices.DEADLINE_MARGIN_NANOS / 1_000_000 + 5);
+        // Aim at an absolute instant just past the observation end so a slow first poll cannot eat the margin.
+        long pollAt =
+                deadline - HostServices.DEADLINE_MARGIN_NANOS + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(5);
+        Thread.sleep(java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(Math.max(0, pollAt - System.nanoTime())));
         f.next();
-        if (op.result.isCompletedExceptionally()) return false;
         JsonObject result = op.result.join();
         assertTrue(
                 result.get("status").getAsString().equals("dispatched")
                         && result.get("completion").getAsString().equals("unknown"),
                 "short timeout yields the bounded dispatched/not-observed result, not deadline_exceeded");
         assertTrue(f.transport.child("tempo").child("value").writes == 1, "no retry write");
-        return true;
     }
 
     @Test
