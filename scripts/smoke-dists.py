@@ -7,7 +7,6 @@ Defaults to every wheel and sdist in dist/. Run through the pixi environment who
 
 import argparse
 import subprocess
-import sys
 import tempfile
 import venv
 from pathlib import Path
