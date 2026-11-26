@@ -57,22 +57,7 @@ final class MarkerModule implements HostModule {
     }
 
     static void validateParams(String method, JsonObject p) {
-        switch (method) {
-            case "markers.list":
-                return;
-            case "markers.insert":
-                if (p.has("name")) Params.string(p, "name");
-                return;
-            case "markers.set":
-                Params.string(p, "name");
-                Params.text(p.getAsJsonObject("target"), "name");
-                return;
-            case "markers.delete":
-                Params.text(p.getAsJsonObject("target"), "name");
-                return;
-            default:
-                throw Errors.notApplied(Reason.UNKNOWN_METHOD, "Unknown marker method.");
-        }
+        if (!METHODS.contains(method)) throw Errors.notApplied(Reason.UNKNOWN_METHOD, "Unknown marker method.");
     }
 
     private static final class Marker {

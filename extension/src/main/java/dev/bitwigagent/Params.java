@@ -19,16 +19,6 @@ final class Params {
         }
     }
 
-    /** A string that may be empty; the schema counts code points, so the UTF-16 length is bounded here. */
-    static String text(JsonObject p, String key) {
-        JsonElement value = value(p, key);
-        if (!value.isJsonPrimitive()
-                || !value.getAsJsonPrimitive().isString()
-                || value.getAsString().length() > 4096)
-            throw Errors.invalid(key + " must be a string (maximum 4096 characters).");
-        return value.getAsString();
-    }
-
     static String string(JsonObject p, String key) {
         JsonElement value = value(p, key);
         if (!value.isJsonPrimitive()
