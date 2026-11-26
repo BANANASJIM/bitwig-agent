@@ -41,7 +41,7 @@ public final class NoteModule implements HostModule {
     public void dispatch(HostOperation op, String method, JsonObject p) {
         scheduler.check(op);
         boolean edit = method.equals("notes.edit");
-        NoteGrid.Plan plan = edit ? NoteGrid.plan(p, p.getAsJsonArray("edits"), "edits", null) : null;
+        List<NoteGrid.Part> parts = edit ? NoteGrid.plan(p, p.getAsJsonArray("edits"), "edits", null) : null;
         NoteGrid.Window explicit = edit ? null : NoteGrid.readWindow(p);
         int channel = p.has("channel") ? p.get("channel").getAsInt() : 0;
         boolean full = NoteGrid.full(p);
@@ -52,7 +52,7 @@ public final class NoteModule implements HostModule {
             if (edit) state.requireResolved(target.id(), target.scene());
             LauncherState.requireContent(target.slot);
             long end = state.until(op);
-            if (edit) write(op, target, plan, full, end);
+            if (edit) write(op, target, parts, full, end);
             else
                 state.bind(
                         op,
@@ -71,9 +71,9 @@ public final class NoteModule implements HostModule {
      * Writes the planned windows: one is an ordinary note edit; several run in order as follow-up operations and stop
      * at the first that does not succeed, the rest reported not reached.
      */
-    void write(HostOperation op, LauncherState.Target target, NoteGrid.Plan plan, boolean full, long end) {
-        if (plan.parts.size() == 1) bindAndEdit(op, target, plan.parts.get(0), plan.adjusted, full, end, true);
-        else new Windows(op, target, plan, full).run(0);
+    void write(HostOperation op, LauncherState.Target target, List<NoteGrid.Part> parts, boolean full, long end) {
+        if (parts.size() == 1) bindAndEdit(op, target, parts.get(0), full, end, true);
+        else new Windows(op, target, parts, full).run(0);
     }
 
     /** Binds the cursor clip with the part's window and writes its edits once it is settled. */
@@ -81,28 +81,24 @@ public final class NoteModule implements HostModule {
             HostOperation op,
             LauncherState.Target target,
             NoteGrid.Part part,
-            JsonArray adjusted,
             boolean full,
             long end,
             boolean dispatches) {
-        state.bind(
-                op, target, dispatches, () -> part.window, end, (o, t, e, w) -> editNotes(o, t, part, adjusted, full));
+        state.bind(op, target, dispatches, () -> part.window, end, (o, t, e, w) -> editNotes(o, t, part, full));
     }
 
     private final class Windows {
         private final HostOperation op;
         private final LauncherState.Target target;
         private final List<NoteGrid.Part> parts;
-        private final JsonArray adjusted;
         private final boolean full;
         private final JsonArray entries = new JsonArray();
         private long slowest;
 
-        Windows(HostOperation op, LauncherState.Target target, NoteGrid.Plan plan, boolean full) {
+        Windows(HostOperation op, LauncherState.Target target, List<NoteGrid.Part> parts, boolean full) {
             this.op = op;
             this.target = target;
-            this.parts = plan.parts;
-            this.adjusted = plan.adjusted;
+            this.parts = parts;
             this.full = full;
         }
 
@@ -136,7 +132,7 @@ public final class NoteModule implements HostModule {
             });
             try {
                 // Only the first window's selection counts as a write; later ones rebind the clip already selected.
-                bindAndEdit(child, target, parts.get(index), null, full, state.until(child), index == 0);
+                bindAndEdit(child, target, parts.get(index), full, state.until(child), index == 0);
             } catch (RuntimeException failure) {
                 child.fail(failure);
             }
@@ -200,7 +196,6 @@ public final class NoteModule implements HostModule {
             out.add("summary", summary);
             out.add("windows", windows);
             if (notReached.size() > 0) out.add("notReached", notReached);
-            if (adjusted.size() > 0) out.add("adjusted", adjusted);
             op.result.complete(out);
         }
     }
@@ -209,8 +204,7 @@ public final class NoteModule implements HostModule {
     private static final Set<String> WINDOW_DROPPED =
             Set.of("ref", "window", "loop", "playStartBeats", "playStopBeats", "loopEnabled");
 
-    private void editNotes(
-            HostOperation op, LauncherState.Target target, NoteGrid.Part part, JsonArray adjusted, boolean full) {
+    private void editNotes(HostOperation op, LauncherState.Target target, NoteGrid.Part part, boolean full) {
         NoteGrid.Window w = part.window;
         List<NoteGrid.Edit> changes = NoteGrid.edits(part);
         state.cursorGuard(op, target);
@@ -227,7 +221,7 @@ public final class NoteModule implements HostModule {
             else state.clip.clearStep(w.channel, e.x, e.pitch);
         }
         long end = state.until(op);
-        scheduler.schedule(op, () -> awaitNotes(op, target, w, changes, adjusted, full, end), Scheduler.POLL_MS);
+        scheduler.schedule(op, () -> awaitNotes(op, target, w, changes, full, end), Scheduler.POLL_MS);
     }
 
     private void awaitNotes(
@@ -235,7 +229,6 @@ public final class NoteModule implements HostModule {
             LauncherState.Target target,
             NoteGrid.Window w,
             List<NoteGrid.Edit> changes,
-            JsonArray adjusted,
             boolean full,
             long end) {
         scheduler.poll(
@@ -252,7 +245,7 @@ public final class NoteModule implements HostModule {
                     }
                     return all;
                 },
-                all -> finishNotes(op, target, w, changes, adjusted, full));
+                all -> finishNotes(op, target, w, changes, full));
     }
 
     private boolean fresh(NoteGrid.Edit e) {
@@ -264,7 +257,6 @@ public final class NoteModule implements HostModule {
             LauncherState.Target target,
             NoteGrid.Window w,
             List<NoteGrid.Edit> changes,
-            JsonArray adjusted,
             boolean full) {
         JsonObject out = notesResult(target, w, full);
         // The outcome always covers every edit; detail only changes how many entries are listed.
@@ -305,7 +297,6 @@ public final class NoteModule implements HostModule {
         out.add("summary", summary);
         if (full) out.add("edits", results);
         else if (results.size() > 0) out.add("unverifiedEdits", results);
-        if (adjusted != null && adjusted.size() > 0) out.add("adjusted", adjusted);
         op.result.complete(out);
     }
 

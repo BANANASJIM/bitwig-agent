@@ -19,7 +19,13 @@ from bitwig_agent.protocol.base import (
     validate_local_path,
 )
 from bitwig_agent.protocol.launcher import ARRANGER_CLIP_REF, CLIP_REF, SLOT_REF, TRACK_REF
-from bitwig_agent.protocol.limits import BEAT_GRID, BEAT_GRID_DIVISOR, BEAT_GRID_LABEL, MAX_CLIP_BEATS
+from bitwig_agent.protocol.limits import (
+    BEAT_GRID,
+    BEAT_GRID_DIVISOR,
+    BEAT_GRID_LABEL,
+    DURATION_RESOLUTION_DIVISOR,
+    MAX_CLIP_BEATS,
+)
 from bitwig_agent.protocol.refs import ArrangerClipRef, Beats, ClipRef, LauncherClipRef, SlotRef, TrackRef
 from bitwig_agent.protocol.values import Expect
 
@@ -43,10 +49,12 @@ def plain(value: Decimal) -> str:
     return format(value.normalize(), "f")
 
 
-def written_duration(duration: Decimal) -> Decimal:
-    """The duration Bitwig can read back exactly: the nearest onset-grid multiple, halves up, at least one step."""
-    steps = max((duration / ONSET_GRID).quantize(Decimal(1), rounding=ROUND_HALF_UP), Decimal(1))
-    return steps * ONSET_GRID
+DURATION_STEP = Decimal(1) / DURATION_RESOLUTION_DIVISOR
+
+
+def stored_duration(duration: Decimal) -> Decimal:
+    """The duration Bitwig stores for a requested one: the nearest multiple of its duration resolution."""
+    return (duration / DURATION_STEP).quantize(Decimal(1), rounding=ROUND_HALF_UP) * DURATION_STEP
 
 
 class NoteWindow(NamedTuple):
@@ -62,7 +70,8 @@ class Span(NamedTuple):
     pitch: int
     is_set: bool
     beat: Decimal
-    end: Decimal
+    end: Decimal  # as Bitwig stores it: what every rule judges
+    requested_end: Decimal  # what messages show
 
 
 def window_problem(at: str, span: Span, window: NoteWindow) -> str | None:
@@ -83,7 +92,7 @@ def window_problem(at: str, span: Span, window: NoteWindow) -> str | None:
         )
     if span.end > window_end:
         return (
-            f"{at} ends at beat {plain(span.end)}, past the window end {plain(window_end)}: shorten it to "
+            f"{at} ends at beat {plain(span.requested_end)}, past the window end {plain(window_end)}: shorten it to "
             f"durationBeats <= {plain(window_end - span.beat)}"
         )
     return None
@@ -102,7 +111,7 @@ def length_problem(at: str, span: Span, length: Decimal) -> str | None:
     if span.beat >= length:
         return f"{at} starts at beat {plain(span.beat)}, at or past the clip length {plain(length)}"
     return (
-        f"{at} ends at beat {plain(span.end)}, past the clip length {plain(length)}: shorten it to durationBeats <= "
+        f"{at} ends at beat {plain(span.requested_end)}, past the clip length {plain(length)}: shorten it to durationBeats <= "
         f"{plain(length - span.beat)}"
     )
 
@@ -127,7 +136,7 @@ def collision_problems(spans: list[Span], field: str) -> list[tuple[int, str]]:
                 (
                     span.position,
                     f"{field}[{span.position}] starts at beat {plain(span.beat)} before {field}[{holder.position}] on pitch "
-                    f"{span.pitch} ends at beat {plain(holder.end)}: shorten {field}[{holder.position}] to durationBeats <= "
+                    f"{span.pitch} ends at beat {plain(holder.requested_end)}: shorten {field}[{holder.position}] to durationBeats <= "
                     f"{plain(span.beat - holder.beat)}",
                 )
             )
@@ -141,14 +150,14 @@ def note_violations(
 ) -> list[str]:
     """Every grid and clip rule the entries break, in request order, with the extension's texts.
 
-    Durations count as written (snapped to the onset grid); the extension derives or checks the window itself.
+    Note ends are judged as Bitwig stores them; the extension derives or checks the window itself.
     """
     spans = []
     for index, note in enumerate(notes):
         beat = Decimal(str(note.beat))
         is_set = getattr(note, "op", "set") == "set"
-        end = beat + written_duration(Decimal(str(note.durationBeats))) if is_set else beat
-        spans.append(Span(index, note.pitch, is_set, beat, end))
+        duration = Decimal(str(note.durationBeats)) if is_set else Decimal(0)
+        spans.append(Span(index, note.pitch, is_set, beat, beat + stored_duration(duration), beat + duration))
     found: list[tuple[int, str]] = []
     for span in spans:
         at = f"{field}[{span.position}]"
@@ -435,10 +444,9 @@ CLIPS_GET_DESCRIPTION = (
     "playback or persistence proof."
 )
 NOTE_RULES = (
-    f"Note rules: beats on a {BEAT_GRID_LABEL}-beat grid; durations are snapped to it (Bitwig keeps them only to "
-    "1/1048576 beat) and each changed one is listed in adjusted {index, requested, written}; no two notes on one "
-    "beat and pitch, no same-pitch overlap. Every broken rule is refused at once (each with its index and a fix) "
-    "and nothing is written. "
+    f"Note rules: beats on a {BEAT_GRID_LABEL}-beat grid; any duration (Bitwig stores it to 1/1048576 beat, and "
+    "readback is compared at that step); no two notes on one beat and pitch, no same-pitch overlap. Every broken rule "
+    "is refused at once (each with its index and a fix) and nothing is written. "
 )
 NOTE_WINDOWS = (
     "Notes are written through 128-step windows of the finest power-of-two grid that aligns every onset; a span "
@@ -569,7 +577,7 @@ SPECS: dict[str, ToolSpec] = {
             {"to": {"track": TRACK_REF, "startBeats": 16}, "lengthBeats": 16, "name": "Verse"},
         ),
         requires=PROJECT_READY,
-        summary="Create a named MIDI clip in an empty launcher slot (to: slot ref, loop {lengthBeats}) or on an instrument track's timeline (to {track, startBeats}, lengthBeats), with optional notes (beats on the 1/128 grid, durations snapped to it). Returns the new ref. A launcher create selects it. Unobserved: unknown, ack the hold, never retry.",
+        summary="Create a named MIDI clip in an empty launcher slot (to: slot ref, loop {lengthBeats}) or on an instrument track's timeline (to {track, startBeats}, lengthBeats), with optional notes (beats on the 1/128 grid, any duration). Returns the new ref. A launcher create selects it. Unobserved: unknown, ack the hold, never retry.",
     ),
     "clips.import": ToolSpec(
         ClipImportArgs,
@@ -661,6 +669,6 @@ SPECS: dict[str, ToolSpec] = {
             {"target": CLIP_REF, "edits": [_EDIT]},
             {**NOTE_WINDOW, "edits": [_EDIT]},
         ),
-        summary="Edit up to 256 onset cells of a clip; selects the clip. set: op, beat, pitch, velocity 1..127, durationBeats (snapped to 1/128); clear: op, beat, pitch. Beats on the 1/128 grid or on stepSizeBeats of an explicit window (omit it to derive). Never retry unknown.",
+        summary="Edit up to 256 onset cells of a clip; selects the clip. set: op, beat, pitch, velocity 1..127, durationBeats (any length); clear: op, beat, pitch. Beats on the 1/128 grid or on stepSizeBeats of an explicit window (omit it to derive). Never retry unknown.",
     ),
 }

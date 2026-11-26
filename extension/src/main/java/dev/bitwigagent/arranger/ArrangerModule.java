@@ -108,13 +108,11 @@ public final class ArrangerModule implements HostModule {
     @Override
     public void validate(String method, JsonObject p) {}
 
-    /**
-     * Notes are {beat, pitch, velocity, durationBeats}; beats are relative to the clip start, on a 1/128-beat grid, and
-     * durations are snapped to it (as in a launcher clip).
-     */
+    /** Notes are {beat, pitch, velocity, durationBeats}; beats are relative to the clip start, on a 1/128-beat grid. */
     public static List<double[]> notes(JsonArray array, double length) {
+        NoteGrid.requireNoteRules(array, BigDecimal.valueOf(length));
         List<double[]> out = new ArrayList<>();
-        for (JsonElement item : NoteGrid.noteRules(array, BigDecimal.valueOf(length)).entries) {
+        for (JsonElement item : array) {
             JsonObject n = item.getAsJsonObject();
             out.add(new double[] {
                 n.get("beat").getAsDouble(),

@@ -73,6 +73,9 @@ public final class LauncherFake {
     Double pendingSize;
     Integer pendingStart;
     Double noteStorageStepSize;
+    /** When set, setStep stores durations rounded to this step, as the host does. */
+    double durationStep;
+
     long gridRefreshDelayMillis, gridReadyAt;
     int imports, importedSlot = -1, sceneAppends;
     int deletes, copies, transposes, quantizes, duplicates, colorSets, loopSets;
@@ -347,7 +350,9 @@ public final class LauncherFake {
             writes++;
             if (writes == failWriteAt) throw Errors.notApplied(Reason.HOST_REFUSED, "fixture interrupted batch");
             int c = (Integer) a[0], x = (Integer) a[1], y = (Integer) a[2];
-            put(selected, c, start + x, y, (Integer) a[3], (Double) a[4]);
+            double duration = (Double) a[4];
+            if (durationStep > 0) duration = Math.round(duration / durationStep) * durationStep;
+            put(selected, c, start + x, y, (Integer) a[3], duration);
             if (emitNotes) observer.noteStepChanged(note(c, x, y));
             return null;
         });

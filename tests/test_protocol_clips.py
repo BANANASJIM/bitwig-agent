@@ -352,13 +352,15 @@ def message(method, args):
     return str(error.value)
 
 
-def test_durations_off_the_grid_are_snapped_not_refused():
+def test_durations_need_no_grid_and_overlap_is_judged_as_stored():
     insert = {"to": SLOT, "loop": {"lengthBeats": 8}, "name": "Bass"}
     eighths = [{**NOTE, "beat": b / 2, "durationBeats": 0.45} for b in range(16)]
     params, _ = validate_call("clips.insert", {**insert, "notes": eighths})
-    assert params["notes"][0]["durationBeats"] == 0.45, "the request is sent as given; the extension snaps it"
-    # 0.503 snaps to 0.5 and so ends where the next same-pitch note starts
-    validate_call("notes.edit", {"target": CLIP_REF, "edits": [note(durationBeats=0.503), note(beat=0.5)]})
+    assert params["notes"][0]["durationBeats"] == 0.45
+    # 0.5000001 is stored as 0.5 (1/1048576-beat steps): it ends where the next same-pitch note starts
+    validate_call("notes.edit", {"target": CLIP_REF, "edits": [note(durationBeats=0.5000001), note(beat=0.5)]})
+    text = message("notes.edit", {"target": CLIP_REF, "edits": [note(durationBeats=0.5000006), note(beat=0.5)]})
+    assert "edits[1] starts at beat 0.5 before edits[0] on pitch 60 ends at beat 0.5000006" in text
 
 
 def test_every_broken_rule_is_reported_at_once_with_its_index_and_fix():

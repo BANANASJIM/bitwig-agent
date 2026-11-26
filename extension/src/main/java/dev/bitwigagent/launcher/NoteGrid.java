@@ -26,6 +26,10 @@ public final class NoteGrid {
     public static final String BEAT_GRID_LABEL = "1/" + Math.round(1 / BEAT_GRID);
     private static final int MAX_STEPS = 128;
     private static final BigDecimal ONSET_GRID = BigDecimal.valueOf(BEAT_GRID);
+    /** Bitwig 6.1.4 stores a note duration to 1/1048576 beat (native readback), so readback is compared at that step. */
+    static final double DURATION_RESOLUTION = HostLimits.LIMITS.durationResolution;
+
+    private static final BigDecimal DURATION_STEP = BigDecimal.valueOf(DURATION_RESOLUTION);
     private static final Set<String> GRID_FIELDS =
             Set.of("stepSizeBeats", "startStep", "steps", "pitchStart", "pitchCount");
     private static final BigDecimal[] DERIVED_GRIDS = {
@@ -127,18 +131,23 @@ public final class NoteGrid {
         }
     }
 
-    /** A request entry in exact beats: a set spans beat..end, a clear marks one cell. */
+    /**
+     * A request entry in exact beats: a set spans beat..end, a clear marks one cell. {@code end} is where the note ends
+     * as Bitwig stores it, which every rule judges; {@code requestedEnd} is what messages show.
+     */
     private static final class Span {
         final int index, pitch;
         final boolean set;
-        final BigDecimal beat, end;
+        final BigDecimal beat, end, requestedEnd;
 
         Span(int index, JsonObject e) {
             this.index = index;
             this.pitch = e.get("pitch").getAsInt();
             this.set = e.get("op").getAsString().equals("set");
             this.beat = e.get("beat").getAsBigDecimal();
-            this.end = set ? beat.add(e.get("durationBeats").getAsBigDecimal()) : beat;
+            BigDecimal duration = set ? e.get("durationBeats").getAsBigDecimal() : BigDecimal.ZERO;
+            this.requestedEnd = beat.add(duration);
+            this.end = beat.add(stored(duration));
         }
 
         long cell(BigDecimal grid) {
@@ -167,60 +176,18 @@ public final class NoteGrid {
         return hasGrid(p) ? Window.of(p, false) : null;
     }
 
-    /** The windows of a write and the durations it snapped to the onset grid. */
-    static final class Plan {
-        final List<Part> parts;
-        final JsonArray adjusted;
-
-        Plan(List<Part> parts, JsonArray adjusted) {
-            this.parts = parts;
-            this.adjusted = adjusted;
-        }
-    }
-
-    /** Entries whose set durations are snapped to the onset grid, and {index, requested, written} per changed one. */
-    public static final class Snapped {
-        public final JsonArray entries = new JsonArray(), adjusted = new JsonArray();
-
-        /** Bitwig keeps a duration only to 1/1048576 beat, so an exact readback needs one on the onset grid. */
-        Snapped(JsonArray array) {
-            for (int i = 0; i < array.size(); i++) {
-                JsonObject e = array.get(i).getAsJsonObject();
-                BigDecimal requested =
-                        e.has("durationBeats") ? e.get("durationBeats").getAsBigDecimal() : null;
-                BigDecimal written = requested == null ? null : written(requested);
-                if (requested == null || written.compareTo(requested) == 0) {
-                    entries.add(e);
-                    continue;
-                }
-                JsonObject copy = e.deepCopy();
-                copy.addProperty("durationBeats", written.doubleValue());
-                entries.add(copy);
-                JsonObject change = new JsonObject();
-                change.addProperty("index", i);
-                change.add("requested", e.get("durationBeats"));
-                change.addProperty("written", written.doubleValue());
-                adjusted.add(change);
-            }
-        }
-    }
-
-    /** The nearest multiple of the onset grid, halves rounded up; never below one grid step. */
-    static BigDecimal written(BigDecimal duration) {
-        BigDecimal steps =
-                duration.divide(ONSET_GRID).setScale(0, RoundingMode.HALF_UP).max(BigDecimal.ONE);
-        return steps.multiply(ONSET_GRID).stripTrailingZeros();
+    /** The duration Bitwig stores for a requested one: the nearest multiple of its duration resolution. */
+    static BigDecimal stored(BigDecimal duration) {
+        return duration.divide(DURATION_STEP).setScale(0, RoundingMode.HALF_UP).multiply(DURATION_STEP);
     }
 
     /**
-     * The windows a write runs in: the explicit one, or derived from the onsets alone. Durations are snapped to the
-     * onset grid first; every rule the entries then break is refused together, each with its index and a fix.
-     * {@code length} bounds the entries when known.
+     * The windows a write runs in: the explicit one, or derived from the onsets alone (durations need not align).
+     * Every rule the entries break is refused together, each with its index and a fix; {@code length} bounds the
+     * entries when known.
      */
-    static Plan plan(JsonObject p, JsonArray request, String field, BigDecimal length) {
-        checkShape(request);
-        Snapped snapped = new Snapped(request);
-        JsonArray array = snapped.entries;
+    static List<Part> plan(JsonObject p, JsonArray array, String field, BigDecimal length) {
+        checkShape(array);
         Window explicit = hasGrid(p) ? Window.of(p, false) : null;
         List<Span> spans = new ArrayList<>(array.size());
         for (int i = 0; i < array.size(); i++)
@@ -228,18 +195,15 @@ public final class NoteGrid {
         refuse(field, violations(spans, field, length, explicit));
         List<Integer> all = new ArrayList<>();
         for (int i = 0; i < array.size(); i++) all.add(i);
-        List<Part> parts = explicit != null ? List.of(new Part(explicit, all, array)) : derive(p, array, spans, field);
-        return new Plan(parts, snapped.adjusted);
+        return explicit != null ? List.of(new Part(explicit, all, array)) : derive(p, array, spans, field);
     }
 
-    /** Clip notes {beat, pitch, velocity, durationBeats} with snapped durations, checked within {@code length}. */
-    public static Snapped noteRules(JsonArray notes, BigDecimal length) {
-        Snapped snapped = new Snapped(notes);
-        JsonArray sets = setEdits(snapped.entries);
+    /** The rules of clip notes {beat, pitch, velocity, durationBeats} within {@code length}, without a window. */
+    public static void requireNoteRules(JsonArray notes, BigDecimal length) {
+        JsonArray sets = setEdits(notes);
         List<Span> spans = new ArrayList<>(sets.size());
         for (int i = 0; i < sets.size(); i++) spans.add(new Span(i, sets.get(i).getAsJsonObject()));
         refuse("notes", violations(spans, "notes", length, null));
-        return snapped;
     }
 
     /** A set carries velocity and duration, a clear neither: the rule the schema cannot say per op. */
@@ -292,7 +256,7 @@ public final class NoteGrid {
                     add(
                             out,
                             s.index,
-                            at + " ends at beat " + plain(s.end) + ", past the window end " + plain(windowEnd)
+                            at + " ends at beat " + plain(s.requestedEnd) + ", past the window end " + plain(windowEnd)
                                     + ": shorten it to durationBeats <= " + plain(windowEnd.subtract(s.beat)));
             } else if (s.beat.remainder(ONSET_GRID).signum() != 0) {
                 BigDecimal low =
@@ -310,8 +274,9 @@ public final class NoteGrid {
                         s.beat.compareTo(length) >= 0
                                 ? at + " starts at beat " + plain(s.beat) + ", at or past the clip length "
                                         + plain(length)
-                                : at + " ends at beat " + plain(s.end) + ", past the clip length " + plain(length)
-                                        + ": shorten it to durationBeats <= " + plain(length.subtract(s.beat)));
+                                : at + " ends at beat " + plain(s.requestedEnd) + ", past the clip length "
+                                        + plain(length) + ": shorten it to durationBeats <= "
+                                        + plain(length.subtract(s.beat)));
         }
         Map<String, Span> cells = new HashMap<>();
         for (Span s : spans) {
@@ -334,7 +299,8 @@ public final class NoteGrid {
                         out,
                         s.index,
                         field + "[" + s.index + "] starts at beat " + plain(s.beat) + " before " + field
-                                + "[" + holder.index + "] on pitch " + s.pitch + " ends at beat " + plain(holder.end)
+                                + "[" + holder.index + "] on pitch " + s.pitch + " ends at beat "
+                                + plain(holder.requestedEnd)
                                 + ": shorten " + field + "[" + holder.index + "] to durationBeats <= "
                                 + plain(s.beat.subtract(holder.beat)));
             if (holder == null || s.end.compareTo(holder.end) > 0) holders.put(s.pitch, s);
@@ -381,7 +347,7 @@ public final class NoteGrid {
                 add(
                         tooLong,
                         s.index,
-                        field + "[" + s.index + "] durationBeats " + plain(s.end.subtract(s.beat))
+                        field + "[" + s.index + "] durationBeats " + plain(s.requestedEnd.subtract(s.beat))
                                 + " spans more than " + MAX_STEPS + " steps of the " + plain(grid)
                                 + "-beat grid the onsets need: shorten it to durationBeats <= "
                                 + plain(grid.multiply(BigDecimal.valueOf(MAX_STEPS)))
@@ -489,7 +455,7 @@ public final class NoteGrid {
         if (!e.set) return hasState(note, "Empty");
         return hasState(note, "NoteOn")
                 && midiVelocity(note.velocity()) == e.velocity
-                && Math.abs(note.duration() - e.duration) <= 1e-9;
+                && Math.abs(note.duration() - e.duration) <= DURATION_RESOLUTION / 2;
     }
 
     /** One onset row in the units notes.edit accepts; channel is the window's, step is beat/stepSizeBeats. */

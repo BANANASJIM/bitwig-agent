@@ -328,29 +328,22 @@ public final class ClipModuleTest {
     }
 
     @Test
-    void insertSnapsDurationsAndReportsThemOnceAtTheTop() {
+    void insertWritesDurationsAsRequested() {
         LauncherFake f = new LauncherFake();
-        JsonObject p = insertAt(f.slot(0), 4, "Snap");
+        JsonObject p = insertAt(f.slot(0), 4, "Free");
         JsonArray notes = new JsonArray();
         notes.add(noteSet(0, 60, 100, .45));
         notes.add(noteSet(1, 60, 100, .5));
         p.add("notes", notes);
         JsonObject out = f.call("clips.insert", p);
         assertEquals("applied", out.get("outcome").getAsString());
-        assertEquals(
-                JsonParser.parseString("[{\"index\":0,\"requested\":0.45,\"written\":0.453125}]"),
-                out.getAsJsonArray("adjusted"));
-        assertFalse(out.getAsJsonObject("noteWrite").has("adjusted"), "reported once, at the top");
+        assertEquals(.45, f.notes.get(LauncherFake.key(0, 0, 0, 60)).duration);
 
         f.base.tracks[0].live("trackType", () -> "Instrument");
         JsonObject arranger = params("to", params("track", f.track(), "startBeats", 0), "lengthBeats", 4, "name", "A");
         arranger.add("notes", notes);
-        JsonObject placed = f.call("clips.insert", arranger);
-        assertEquals(1, placed.getAsJsonArray("adjusted").size());
-        assertEquals(.453125, f.lane.notes.get(0)[3], "the arranger writes the snapped duration");
-        JsonObject exact = params("to", params("track", f.track(), "startBeats", 8), "lengthBeats", 4, "name", "B");
-        exact.add("notes", threeNotes());
-        assertFalse(f.call("clips.insert", exact).has("adjusted"));
+        assertEquals("applied", f.call("clips.insert", arranger).get("outcome").getAsString());
+        assertEquals(.45, f.lane.notes.get(0)[3], "the arranger writes the requested duration");
     }
 
     @Test

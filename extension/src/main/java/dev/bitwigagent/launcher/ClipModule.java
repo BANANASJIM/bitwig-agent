@@ -137,7 +137,7 @@ public final class ClipModule implements HostModule {
     }
 
     /** The windows a launcher insert writes its notes in; every rule the notes break is refused together. */
-    private static NoteGrid.Plan noteParts(JsonObject p) {
+    private static List<NoteGrid.Part> noteParts(JsonObject p) {
         return NoteGrid.plan(
                 p,
                 NoteGrid.setEdits(p.getAsJsonArray("notes")),
@@ -243,16 +243,7 @@ public final class ClipModule implements HostModule {
                 p.get("name").getAsString(),
                 p.has("notes") ? p.getAsJsonArray("notes") : null,
                 p.has("channel") ? p.get("channel").getAsInt() : 0,
-                result -> {
-                    JsonArray adjusted = p.has("notes")
-                            ? NoteGrid.noteRules(
-                                            p.getAsJsonArray("notes"),
-                                            p.get("lengthBeats").getAsBigDecimal())
-                                    .adjusted
-                            : new JsonArray();
-                    if (adjusted.size() > 0) result.add("adjusted", adjusted);
-                    op.result.complete(result);
-                });
+                op.result::complete);
     }
 
     private void insertLauncher(HostOperation op, JsonObject p) {
@@ -328,8 +319,6 @@ public final class ClipModule implements HostModule {
                     out.addProperty(
                             "outcome",
                             Outcome.APPLIED.worst(Results.outcomeOf(written)).wire());
-                    // Snapped durations are a property of the whole insert, reported where the arranger reports them.
-                    if (written.has("adjusted")) out.add("adjusted", written.remove("adjusted"));
                     out.add("noteWrite", written);
                 } else {
                     JsonObject failure = Errors.entryResult(error);
