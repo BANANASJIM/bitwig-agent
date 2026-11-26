@@ -5,6 +5,7 @@ import hashlib
 import os
 import shutil
 import subprocess
+import sys
 import tomllib
 import zipfile
 from pathlib import Path
@@ -15,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "build"
 SOURCES = ROOT / "extension/src/main/java"
 DEPS_TABLE = ROOT / "extension/deps.toml"
+LINUX_HOST_JAR = "/opt/bitwig-studio/bin/bitwig.jar"
 
 
 def dependency(name):
@@ -93,9 +95,10 @@ def compile_java(sources, target, classpath, lint="-Xlint:all"):
 
 
 def build():
-    api = Path(os.environ.get("BITWIG_API_JAR", "/opt/bitwig-studio/bin/bitwig.jar"))
+    default = LINUX_HOST_JAR if sys.platform.startswith("linux") else None
+    api = Path(os.environ.get("BITWIG_API_JAR") or default or "")
     if not api.is_file():
-        raise RuntimeError("Set BITWIG_API_JAR to the installed Bitwig API jar")
+        raise SystemExit("Set BITWIG_API_JAR to the installed Bitwig API jar (bitwig.jar in the Bitwig Studio install)")
     dependency = gson_jar()
     classes = BUILD / "classes"
     if classes.exists():
