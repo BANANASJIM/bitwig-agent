@@ -8,8 +8,9 @@ import java.util.*;
 final class Bitwig614LauncherSettingsAccess implements LauncherSettingsModule.Access {
     private final Bitwig614Runtime.Access a;
     private final NativeReadContext context;
+    private final Bitwig614TrackResolver resolver;
     private final Class<?> event, slotType, projectType;
-    private final Method target, clip, slot, owner, uuid, project, name, time, playStart, playStop, loop, loopEnabled;
+    private final Method target, clip, slot, owner, name, time, playStart, playStop, loop, loopEnabled;
     private final Method position, duration, doubleGet, boolGet, actionString;
     private final Map<String, Method> getters = new LinkedHashMap<>(), setters = new LinkedHashMap<>();
     private final Map<String, Object> actions = new LinkedHashMap<>();
@@ -17,18 +18,16 @@ final class Bitwig614LauncherSettingsAccess implements LauncherSettingsModule.Ac
     Bitwig614LauncherSettingsAccess(Bitwig614Runtime.Access a) throws ReflectiveOperationException {
         this.a = a;
         context = new NativeReadContext(new Bitwig614ReadContextAccess(a));
+        resolver = new Bitwig614TrackResolver(a);
         event = a.type("zZi");
         slotType = a.type("Us");
         projectType = a.type("com.bitwig.flt.document.core.master.g2L");
-        Class<?> obj = a.type("com.bitwig.ramona.core.AVL"),
-                proxy = a.type("com.bitwig.flt.control_surface.proxy.ControlSurfaceProxy");
+        Class<?> proxy = a.type("com.bitwig.flt.control_surface.proxy.ControlSurfaceProxy");
         target = a.exactMethod(proxy, "getTarget", Object.class, false);
         clip = a.exactMethod(
                 a.type("com.bitwig.flt.control_surface.proxy.ClipLauncherSlotProxy"), "getClip", a.type("Ob"), false);
         slot = a.exactMethod(a.type("Ob"), "kFU", slotType, false);
         owner = a.exactMethod(a.type("PAJ"), "Z1C", a.type("com.bitwig.flt.document.core.iface.WSA"), false);
-        uuid = a.exactMethod(a.type("com.bitwig.flt.document.core.iface.RYd"), "kFU", UUID.class, false);
-        project = a.exactMethod(obj, "IwV", Object.class, false, Class.class);
         name = a.exactMethod(a.type("Ob"), "dJ_", String.class, false);
         Class<?> timing = a.type("mdC"),
                 number = a.type("com.bitwig.ramona.core.iYN"),
@@ -80,11 +79,11 @@ final class Bitwig614LauncherSettingsAccess implements LauncherSettingsModule.Ac
             throw Errors.notApplied(
                     ErrorCode.STALE_CONTEXT, "Launcher proxy does not resolve to one attached native clip slot.");
         Object track = a.invoke(owner, nativeSlot);
-        if (track == null || !UUID.fromString(trackId).equals(a.invoke(uuid, track)))
+        if (track == null || !UUID.fromString(trackId).equals(resolver.uuid(track)))
             throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Native owning track UUID differs.");
         if (!expectedName.equals(a.invoke(name, value)))
             throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Native clip name differs from expectedClipName.");
-        Object owningProject = a.invoke(project, value, projectType);
+        Object owningProject = resolver.owner(value, projectType);
         Object[] models = {value, nativeSlot, track};
         String[] labels = {"clipDeleted", "slotDeleted", "trackDeleted", "projectDeleted"};
         NativeReadContext.Capture capture = context.capture(owningProject, models, labels, check, false);
@@ -104,7 +103,7 @@ final class Bitwig614LauncherSettingsAccess implements LauncherSettingsModule.Ac
             if (a.invoke(target, proxy) != nativeSlot
                     || a.invoke(clip, proxy) != value
                     || a.invoke(slot, value) != nativeSlot
-                    || !UUID.fromString(trackId).equals(a.invoke(uuid, a.invoke(owner, nativeSlot))))
+                    || !UUID.fromString(trackId).equals(resolver.uuid(a.invoke(owner, nativeSlot))))
                 throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Launcher target changed during native operation.");
         };
         guard.run();

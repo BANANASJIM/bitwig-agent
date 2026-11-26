@@ -20,6 +20,7 @@ import java.util.concurrent.CountDownLatch;
  */
 final class Bitwig614RenderAccess implements RenderModule.Access {
     private final Bitwig614Runtime.Access a;
+    private final Bitwig614TrackResolver resolver;
     private final Class<?> projectType,
             projectProxyType,
             playerTrack,
@@ -28,17 +29,7 @@ final class Bitwig614RenderAccess implements RenderModule.Access {
             exportJob,
             bounceJob,
             hostedDevice;
-    private final Method target,
-            deepest,
-            uuid,
-            groupUuid,
-            owner,
-            exportCall,
-            bounceCall,
-            current,
-            engineActive,
-            remote,
-            blocked;
+    private final Method target, exportCall, bounceCall, current, engineActive, remote, blocked;
     private final Method missingFiles,
             missingCount,
             devices,
@@ -55,6 +46,7 @@ final class Bitwig614RenderAccess implements RenderModule.Access {
 
     Bitwig614RenderAccess(Bitwig614Runtime.Access a) throws ReflectiveOperationException {
         this.a = a;
+        resolver = new Bitwig614TrackResolver(a);
         String master = "com.bitwig.flt.document.core.master.",
                 iface = "com.bitwig.flt.document.core.iface.",
                 proxy = "com.bitwig.flt.control_surface.proxy.";
@@ -72,12 +64,7 @@ final class Bitwig614RenderAccess implements RenderModule.Access {
                 mp3Type = a.type("oXh"),
                 vorbisType = a.type("pME"),
                 opusType = a.type("oBq");
-        Class<?> surface = a.type(proxy + "ControlSurfaceProxy"), identity = a.type(iface + "RYd");
-        target = a.exactMethod(surface, "getTarget", Object.class, false);
-        deepest = a.exactMethod(surface, "getDeepestTarget", Object.class, false);
-        uuid = a.exactMethod(identity, "kFU", UUID.class, false);
-        groupUuid = a.exactMethod(a.type("iKU"), "kFU", UUID.class, false);
-        owner = a.exactMethod(a.type("com.bitwig.ramona.core.AVL"), "IwV", Object.class, false, Class.class);
+        target = a.exactMethod(a.type(proxy + "ControlSurfaceProxy"), "getTarget", Object.class, false);
         exportCall = a.exactMethod(
                 a.type(iface + "xlG"),
                 "cfM",
@@ -201,23 +188,23 @@ final class Bitwig614RenderAccess implements RenderModule.Access {
             throw Errors.notApplied(
                     ErrorCode.STALE_CONTEXT, "No native channel for " + (proxy == null ? "the master" : id) + ".");
         a.requireModelThread(channel);
-        if (a.invoke(owner, channel, projectType) != project)
+        if (resolver.owner(channel, projectType) != project)
             throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Source " + id + " belongs to another project.");
         return channel;
     }
 
     private Object trackChannel(Object proxy, String id) {
-        Object track = a.invoke(deepest, proxy);
+        Object track = resolver.target(proxy);
         UUID expected = UUID.fromString(id);
         Object channel;
         if (playerTrack.isInstance(track)) {
-            if (!expected.equals(a.invoke(uuid, track)))
+            if (!expected.equals(resolver.uuid(track)))
                 throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Native track UUID differs from " + id + ".");
             channel = track;
         } else if (groupTrack.isInstance(track)) {
             channel = a.invoke(groupMaster, track);
             if (!playerTrack.isInstance(channel)
-                    || !(expected.equals(a.invoke(uuid, track)) || expected.equals(a.invoke(groupUuid, channel))))
+                    || !(expected.equals(resolver.uuid(track)) || expected.equals(resolver.aliasUuid(channel))))
                 throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Native group track does not match " + id + ".");
         } else throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Track proxy has no attached native track: " + id);
         return channel;
@@ -300,7 +287,7 @@ final class Bitwig614RenderAccess implements RenderModule.Access {
         List<Object> channels = new ArrayList<>();
         for (int i = 0; i < tracks.size(); i++) {
             Object channel = channel(project, tracks.get(i), ids.get(i));
-            if (channel != a.invoke(deepest, tracks.get(i)))
+            if (!resolver.same(tracks.get(i), channel))
                 throw Errors.notApplied(
                         ErrorCode.UNSUPPORTED_SCOPE,
                         "bounce.inPlace needs audio/instrument tracks with a main clip lane, not group tracks: "

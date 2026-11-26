@@ -23,13 +23,8 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
     private final Bitwig614Runtime.Access a;
     private final NativeReadContext context;
     private final NativeDeviceTarget targets;
-    private final Class<?> trackType,
-            groupIface,
-            channelType,
-            projectType,
-            portsType,
-            destinationSelector,
-            sourceSelector;
+    private final Bitwig614TrackResolver resolver;
+    private final Class<?> channelType, projectType, portsType, destinationSelector, sourceSelector;
     private final Class<?> audioDestination, noteDestination, preFader, postFader, trackNotes, sourceBus;
     private final Class<?> componentType,
             audioSidechain,
@@ -39,22 +34,7 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
             deviceType,
             modulatorType,
             moduleType;
-    private final Method target,
-            channel,
-            alias,
-            uuid,
-            parent,
-            owner,
-            begin,
-            end,
-            output,
-            input,
-            audioInput,
-            noteInput,
-            pre,
-            post,
-            notes,
-            trackKind;
+    private final Method channel, begin, end, output, input, audioInput, noteInput, pre, post, notes, trackKind;
     private final Method allIns,
             keyboard,
             onscreen,
@@ -81,8 +61,8 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
         context = new NativeReadContext(new Bitwig614ReadContextAccess(a));
         targets = new NativeDeviceTarget(new Bitwig614DeviceTargetAccess(a));
         a.requireModelThreadAvailable();
-        trackType = a.type(M + "zwV");
-        groupIface = a.type(I + "kWY");
+        resolver = new Bitwig614TrackResolver(a);
+        Class<?> trackType = a.type(M + "zwV"), groupIface = a.type(I + "kWY");
         channelType = a.type("xJo");
         projectType = a.type(M + "g2L");
         portsType = a.type(I + "pHd");
@@ -139,16 +119,7 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
                 "HARDWARE_AUDIO_SOURCES",
                 "TRACK_AUDIO_SOURCES",
                 "TRACK_NOTE_SOURCES");
-        target = a.exactMethod(
-                a.type("com.bitwig.flt.control_surface.proxy.ControlSurfaceProxy"),
-                "getDeepestTarget",
-                Object.class,
-                false);
         channel = a.exactMethod(trackType, "JJY", channelType, false);
-        alias = a.exactMethod(groupIface, "TD2", a.type("iKU"), false);
-        uuid = a.exactMethod(identity, "kFU", UUID.class, false);
-        parent = a.exactMethod(identity, "QNk", groupIface, false);
-        owner = a.exactMethod(a.type(R + "AVL"), "IwV", Object.class, false, Class.class);
         begin = a.exactMethod(projectType, "cfM", void.class, false, String.class, boolean.class);
         end = a.exactMethod(projectType, "cfM", void.class, false, boolean.class);
         output = a.exactMethod(channelType, "OnS", destinationSelector, false);
@@ -210,18 +181,15 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
 
         Channel(RoutingModule.TrackRef ref) {
             this.ref = ref;
-            track = a.invoke(target, ref.proxy);
-            if (!trackType.isInstance(track))
-                throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Track proxy has no attached native track: " + ref.id);
-            a.requireModelThread(track);
+            track = resolver.track(ref.proxy, ref.id);
             Object found = a.invoke(Bitwig614RoutingAccess.this.channel, track);
             if (!channelType.isInstance(found))
                 throw Errors.notApplied(a.unavailableCode(), "Native track has no mapped channel: " + ref.id);
-            if (groupIface.isInstance(track) && a.invoke(alias, track) != found)
+            if (resolver.isGroup(track) && resolver.alias(track) != found)
                 throw Errors.notApplied(
                         a.unavailableCode(), "Native group channel alias differs from its channel: " + ref.id);
             a.requireModelThread(found);
-            if (!UUID.fromString(ref.id).equals(a.invoke(uuid, found)))
+            if (!UUID.fromString(ref.id).equals(resolver.uuid(found)))
                 throw Errors.notApplied(
                         ErrorCode.STALE_CONTEXT,
                         "Native channel UUID differs from the requested trackId " + ref.id + ".");
@@ -229,13 +197,12 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
         }
 
         boolean same() {
-            return a.invoke(target, ref.proxy) == track
-                    && a.invoke(Bitwig614RoutingAccess.this.channel, track) == channel;
+            return resolver.same(ref.proxy, track) && a.invoke(Bitwig614RoutingAccess.this.channel, track) == channel;
         }
 
         String role() {
             if (track == channel) return "track";
-            if (groupIface.isInstance(track)) return a.invoke(parent, track) == null ? "root_group" : "group";
+            if (resolver.isGroup(track)) return resolver.parent(track) == null ? "root_group" : "group";
             return "other";
         }
 
@@ -253,7 +220,7 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
         final NativeReadContext.Capture capture;
 
         Scope(Object anchor, List<Object> extra, Runnable check) {
-            project = a.invoke(owner, anchor, projectType);
+            project = resolver.owner(anchor, projectType);
             if (!projectType.isInstance(project))
                 throw Errors.notApplied(a.unavailableCode(), "Native routing target has no owning project.");
             List<Object> all = new ArrayList<>(extra);
@@ -280,7 +247,7 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
         }
 
         Object ports() {
-            Object ports = a.invoke(owner, models[models.length - 1], portsType);
+            Object ports = resolver.owner(models[models.length - 1], portsType);
             if (ports != project)
                 throw Errors.notApplied(a.unavailableCode(), "Native note-source owner is not the owning project.");
             return ports;
@@ -297,7 +264,7 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
         JsonObject out = new JsonObject();
         out.addProperty("kind", kind);
         if (channelModel != null)
-            out.addProperty("trackId", a.invoke(uuid, channelModel).toString());
+            out.addProperty("trackId", resolver.uuid(channelModel).toString());
         return out;
     }
 
@@ -779,11 +746,11 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
             a.requireModelThread(model);
             chooser = a.invoke(selector, model);
             if (chooser != null) a.requireModelThread(chooser);
-            Object grid = a.invoke(owner, model, moduleType), mod = a.invoke(owner, model, modulatorType);
-            if (grid != null && a.invoke(owner, grid, deviceType) == device) {
+            Object grid = resolver.owner(model, moduleType), mod = resolver.owner(model, modulatorType);
+            if (grid != null && resolver.owner(grid, deviceType) == device) {
                 host = "grid_module";
                 ownerId = a.invoke(moduleId, grid).toString();
-            } else if (mod != null && a.invoke(owner, mod, deviceType) == device) {
+            } else if (mod != null && resolver.owner(mod, deviceType) == device) {
                 host = "modulator";
                 ownerId = a.invoke(modulatorId, mod).toString();
             } else {
@@ -826,7 +793,7 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
                 throw Errors.notApplied(
                         ErrorCode.ROUTING_BOUNDS_EXCEEDED,
                         "Device holds more routing components than this version reads.");
-            if (!componentType.isInstance(model) || a.invoke(owner, model, deviceType) != device) continue;
+            if (!componentType.isInstance(model) || resolver.owner(model, deviceType) != device) continue;
             if (out.size() >= RoutingModule.MAX_COMPONENTS)
                 throw Errors.notApplied(
                         ErrorCode.ROUTING_BOUNDS_EXCEEDED,
