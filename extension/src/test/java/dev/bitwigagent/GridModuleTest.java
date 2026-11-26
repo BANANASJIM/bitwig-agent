@@ -297,7 +297,7 @@ public final class GridModuleTest {
                     "hash reads bytes not filename or version text");
             try {
                 Bitwig614Runtime.hash(file, () -> {
-                    throw HostServices.failure(ErrorCode.CANCELLED, "cancel hashing");
+                    throw Errors.notApplied(ErrorCode.CANCELLED, "cancel hashing");
                 });
                 throw new AssertionError("hash ignored cancellation");
             } catch (RpcException error) {
@@ -510,7 +510,7 @@ public final class GridModuleTest {
     private static void everyPostDispatchBoundaryKeepsUnknownOutcome() {
         Fixture nativeFailure = new Fixture();
         nativeFailure.adapter.writer.afterMutation = () -> {
-            throw HostServices.failure(ErrorCode.GRID_UNAVAILABLE, "native partial failure");
+            throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "native partial failure");
         };
         HostOperation op = nativeFailure.startWrite();
         nativeFailure.adapter.next();
@@ -1777,7 +1777,7 @@ public final class GridModuleTest {
                 Runnable check) {
             check.run();
             reads++;
-            if (fail) throw HostServices.failure(ErrorCode.NOT_GRID, "not a Grid device");
+            if (fail) throw Errors.notApplied(ErrorCode.NOT_GRID, "not a Grid device");
             return result(offset, limit, parameters);
         }
 

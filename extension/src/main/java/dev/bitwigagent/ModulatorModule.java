@@ -1,7 +1,5 @@
 package dev.bitwigagent;
 
-import static dev.bitwigagent.HostServices.failure;
-
 import com.google.gson.*;
 import java.util.Set;
 import java.util.UUID;
@@ -46,23 +44,24 @@ final class ModulatorModule implements HostModule {
         }
         boolean parameter = method.equals("modulators.parameters.get");
         if (!parameter && !method.equals("modulators.list"))
-            throw failure(ErrorCode.UNKNOWN_METHOD, "Unknown modulator read.");
+            throw Errors.notApplied(ErrorCode.UNKNOWN_METHOD, "Unknown modulator read.");
         Params.fields(
                 p,
                 parameter ? Set.of("parent", "modulatorId", "parameterId") : Set.of("parent"),
                 parameter ? Set.of() : Set.of("offset", "limit"));
-        if (!p.get("parent").isJsonObject()) throw failure(ErrorCode.INVALID_PARAMS, "parent must be an object.");
+        if (!p.get("parent").isJsonObject())
+            throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "parent must be an object.");
         JsonObject parent = p.getAsJsonObject("parent");
         DeviceSources.validateParent(parent);
         integer(parent, "deviceIndex", 0, HostServices.DEVICES - 1);
         if (parameter) {
             if (!DeviceSources.canonicalUuid(Params.string(p, "modulatorId")))
-                throw failure(ErrorCode.INVALID_PARAMS, "modulatorId must be a canonical current UUID.");
+                throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "modulatorId must be a canonical current UUID.");
             JsonElement id = p.get("parameterId");
             if (!id.isJsonPrimitive()
                     || !id.getAsJsonPrimitive().isString()
                     || id.getAsString().length() > 1024)
-                throw failure(
+                throw Errors.notApplied(
                         ErrorCode.INVALID_PARAMS,
                         "parameterId must be an exact string of at most 1024 UTF-16 units; empty is allowed.");
         } else {
@@ -74,7 +73,7 @@ final class ModulatorModule implements HostModule {
     private static int integer(JsonObject p, String key, int min, int max) {
         int result = Params.integer(p, key, min, max);
         if (!p.get(key).getAsString().matches("-?[0-9]+"))
-            throw failure(ErrorCode.INVALID_PARAMS, key + " must be an integer, not a decimal or exponent.");
+            throw Errors.notApplied(ErrorCode.INVALID_PARAMS, key + " must be an integer, not a decimal or exponent.");
         return result;
     }
 
@@ -142,13 +141,13 @@ final class ModulatorModule implements HostModule {
                 op.fail(
                         error instanceof RpcException
                                 ? error
-                                : failure(
+                                : Errors.notApplied(
                                         ErrorCode.MODULATOR_UNAVAILABLE,
                                         "Modulator read failed: "
                                                 + error.getClass().getSimpleName()
                                                 + "; inspect the exact host binding."));
             } catch (Error error) {
-                op.fail(failure(
+                op.fail(Errors.notApplied(
                         ErrorCode.MODULATOR_UNAVAILABLE,
                         "Native modulator read failed; inspect the loaded host binding."));
             }

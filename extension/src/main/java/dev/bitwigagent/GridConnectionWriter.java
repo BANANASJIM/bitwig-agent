@@ -1,7 +1,6 @@
 package dev.bitwigagent;
 
 import static dev.bitwigagent.GridSnapshotReader.Field.*;
-import static dev.bitwigagent.HostServices.failure;
 
 import com.google.gson.*;
 import java.util.*;
@@ -83,7 +82,7 @@ final class GridConnectionWriter {
         nativeWriter.requireSupported(input.model, context.undo());
         snapshots.guardTarget(target, proxy, trackId);
         if (values.read(INPUT_SOURCE, input.model) != input.source)
-            throw failure(
+            throw Errors.notApplied(
                     ErrorCode.STALE_CONTEXT,
                     "Native input source changed immediately before dispatch; reacquire grid.get.");
         check.run();
@@ -358,7 +357,7 @@ final class GridConnectionWriter {
             Port source = result.outputsByIdentity.get(input.source);
             // An xb1-like object with the same owner/key is not membership (pS excludes qXr).
             if (source == null)
-                throw failure(
+                throw Errors.notApplied(
                         ErrorCode.STALE_CONTEXT,
                         "Current native source is not an exact enumerated output of this bounded graph.");
             input.sourceEndpoint = source.endpoint;
@@ -372,19 +371,19 @@ final class GridConnectionWriter {
                 snapshots.collect(input ? INPUTS : OUTPUTS, module, GridSnapshotReader.MAX_CHILDREN, state)) {
             state.check();
             if (!values.is(input ? GridSnapshotReader.Kind.INPUT : GridSnapshotReader.Kind.OUTPUT, model))
-                throw failure(
+                throw Errors.notApplied(
                         ErrorCode.GRID_UNAVAILABLE,
                         "Connection editing requires every enumerated port to have its mapped direction.");
             values.requireModelThread(model);
             if (values.read(OWNER_MODULE, model) != module)
-                throw failure(
+                throw Errors.notApplied(
                         ErrorCode.STALE_CONTEXT,
                         "Native port owner differs from its direction-specific module membership.");
             Endpoint endpoint =
                     new Endpoint(id, GridSnapshotReader.text(values.read(input ? INPUT_KEY : OUTPUT_KEY, model)));
             Port port = new Port(endpoint, model);
             if (ports.put(endpoint, port) != null || !graph.portIdentities.add(model))
-                throw failure(
+                throw Errors.notApplied(
                         ErrorCode.GRID_UNAVAILABLE, "Duplicate native direction-specific port key or port identity.");
             graph.members.add(model);
             if (!input) graph.outputsByIdentity.put(model, port);
@@ -413,7 +412,7 @@ final class GridConnectionWriter {
         Port require(Endpoint endpoint, boolean input) {
             Port port = (input ? inputs : outputs).get(endpoint);
             if (port == null)
-                throw failure(
+                throw Errors.notApplied(
                         ErrorCode.STALE_CONTEXT,
                         "Requested exact native " + (input ? "input" : "output")
                                 + " is absent; reacquire grid.get. Matching owner/key without stream membership is insufficient.");
@@ -424,12 +423,12 @@ final class GridConnectionWriter {
             if (modules.size() != after.modules.size()
                     || inputs.size() != after.inputs.size()
                     || outputs.size() != after.outputs.size())
-                throw failure(
+                throw Errors.notApplied(
                         ErrorCode.STALE_CONTEXT,
                         "Native graph or port membership changed during the connection operation.");
             for (Map.Entry<UUID, Object> module : modules.entrySet())
                 if (after.modules.get(module.getKey()) != module.getValue())
-                    throw failure(
+                    throw Errors.notApplied(
                             ErrorCode.STALE_CONTEXT, "Native module identity changed during the connection operation.");
             samePorts(inputs, after.inputs, sources);
             samePorts(outputs, after.outputs, false);
@@ -439,7 +438,7 @@ final class GridConnectionWriter {
             for (Port port : before.values()) {
                 Port actual = after.get(port.endpoint);
                 if (actual == null || actual.model != port.model || (sources && actual.source != port.source))
-                    throw failure(
+                    throw Errors.notApplied(
                             ErrorCode.STALE_CONTEXT,
                             "Native port identity or captured source changed during the connection observation.");
             }
@@ -460,23 +459,23 @@ final class GridConnectionWriter {
             if (!value.isJsonArray()
                     || value.getAsJsonArray().size() < 1
                     || value.getAsJsonArray().size() > MAX_BATCH)
-                throw failure(
+                throw Errors.notApplied(
                         ErrorCode.INVALID_PARAMS,
                         "connections must be an array of 1.." + MAX_BATCH + " connection edits.");
             java.util.List<Request> result = new ArrayList<>();
             Set<Endpoint> seen = new HashSet<>();
             for (JsonElement element : value.getAsJsonArray()) {
                 if (!element.isJsonObject())
-                    throw failure(ErrorCode.INVALID_PARAMS, "Each connection must be an object.");
+                    throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "Each connection must be an object.");
                 JsonObject entry = element.getAsJsonObject();
                 // Source fields are explicitly nullable, so the generic null-rejecting field check does not apply.
                 if (!entry.keySet().equals(Set.of("targetModuleId", "targetPortKey", "expectedSource", "source")))
-                    throw failure(
+                    throw Errors.notApplied(
                             ErrorCode.INVALID_PARAMS,
                             "Each connection requires exactly targetModuleId, targetPortKey, expectedSource and source.");
                 Request request = parse(entry);
                 if (!seen.add(request.target))
-                    throw failure(
+                    throw Errors.notApplied(
                             ErrorCode.INVALID_PARAMS,
                             "connections must not repeat a targetModuleId/targetPortKey pair.");
                 result.add(request);
@@ -493,7 +492,7 @@ final class GridConnectionWriter {
 
         void requireExpected(Endpoint actual) {
             if (!Objects.equals(expectedSource, actual))
-                throw failure(
+                throw Errors.notApplied(
                         ErrorCode.STALE_CONTEXT,
                         "Exact native input source differs from expectedSource; reacquire grid.get before editing.");
         }
@@ -501,11 +500,12 @@ final class GridConnectionWriter {
         private static Endpoint endpoint(JsonObject p, String name) {
             JsonElement value = p.get(name);
             if (value == null)
-                throw failure(
+                throw Errors.notApplied(
                         ErrorCode.INVALID_PARAMS, name + " is required, including explicit null for disconnected.");
             if (value.isJsonNull()) return null;
             if (!value.isJsonObject())
-                throw failure(ErrorCode.INVALID_PARAMS, name + " must be null or an exact moduleId/portKey object.");
+                throw Errors.notApplied(
+                        ErrorCode.INVALID_PARAMS, name + " must be null or an exact moduleId/portKey object.");
             JsonObject endpoint = value.getAsJsonObject();
             Params.fields(endpoint, Set.of("moduleId", "portKey"), Set.of());
             return new Endpoint(uuid(endpoint, "moduleId"), key(endpoint, "portKey"));
@@ -522,7 +522,8 @@ final class GridConnectionWriter {
                     || !value.isJsonPrimitive()
                     || !value.getAsJsonPrimitive().isString()
                     || value.getAsString().length() > GridSnapshotReader.MAX_TEXT)
-                throw failure(ErrorCode.INVALID_PARAMS, name + " must be a string of at most 1024 UTF-16 units.");
+                throw Errors.notApplied(
+                        ErrorCode.INVALID_PARAMS, name + " must be a string of at most 1024 UTF-16 units.");
             return value.getAsString();
         }
     }

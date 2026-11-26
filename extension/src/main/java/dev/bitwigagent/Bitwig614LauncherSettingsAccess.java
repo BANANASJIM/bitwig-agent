@@ -1,7 +1,5 @@
 package dev.bitwigagent;
 
-import static dev.bitwigagent.HostServices.failure;
-
 import com.google.gson.*;
 import java.lang.reflect.Method;
 import java.util.*;
@@ -79,12 +77,13 @@ final class Bitwig614LauncherSettingsAccess implements LauncherSettingsModule.Ac
         check.run();
         Object nativeSlot = a.invoke(target, proxy), value = a.invoke(clip, proxy);
         if (!slotType.isInstance(nativeSlot) || !event.isInstance(value) || a.invoke(slot, value) != nativeSlot)
-            throw failure(ErrorCode.STALE_CONTEXT, "Launcher proxy does not resolve to one attached native clip slot.");
+            throw Errors.notApplied(
+                    ErrorCode.STALE_CONTEXT, "Launcher proxy does not resolve to one attached native clip slot.");
         Object track = a.invoke(owner, nativeSlot);
         if (track == null || !UUID.fromString(trackId).equals(a.invoke(uuid, track)))
-            throw failure(ErrorCode.STALE_CONTEXT, "Native owning track UUID differs.");
+            throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Native owning track UUID differs.");
         if (!expectedName.equals(a.invoke(name, value)))
-            throw failure(ErrorCode.STALE_CONTEXT, "Native clip name differs from expectedClipName.");
+            throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Native clip name differs from expectedClipName.");
         Object owningProject = a.invoke(project, value, projectType);
         Object[] models = {value, nativeSlot, track};
         String[] labels = {"clipDeleted", "slotDeleted", "trackDeleted", "projectDeleted"};
@@ -106,7 +105,7 @@ final class Bitwig614LauncherSettingsAccess implements LauncherSettingsModule.Ac
                     || a.invoke(clip, proxy) != value
                     || a.invoke(slot, value) != nativeSlot
                     || !UUID.fromString(trackId).equals(a.invoke(uuid, a.invoke(owner, nativeSlot))))
-                throw failure(ErrorCode.STALE_CONTEXT, "Launcher target changed during native operation.");
+                throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Launcher target changed during native operation.");
         };
         guard.run();
         JsonObject fields = new JsonObject();
@@ -122,7 +121,8 @@ final class Bitwig614LauncherSettingsAccess implements LauncherSettingsModule.Ac
                     else if (key.equals("nextActionLoopCount")) input = Integer.valueOf(requested.getAsInt());
                     else if (key.equals("nextActionDelayBeats")) input = Double.valueOf(requested.getAsDouble());
                     else input = Boolean.valueOf(requested.getAsBoolean());
-                    if (input == null) throw failure(ErrorCode.INVALID_PARAMS, "Unsupported native nextAction");
+                    if (input == null)
+                        throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "Unsupported native nextAction");
                     a.invoke(setters.get(key), value, input);
                 }
             }

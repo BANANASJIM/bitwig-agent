@@ -161,8 +161,7 @@ public final class GridInsertionWriterTest {
             HostOperation op = f.start();
             if (abandoned == 0) f.requestError = "deadline_exceeded";
             if (abandoned == 1) op.result.cancel(false);
-            if (abandoned == 2)
-                op.result.completeExceptionally(HostServices.failure(ErrorCode.UNAVAILABLE, "RPC closed"));
+            if (abandoned == 2) op.result.completeExceptionally(Errors.notApplied(ErrorCode.UNAVAILABLE, "RPC closed"));
             if (abandoned == 3) f.requestError = "unavailable";
             f.deliver();
             check(
@@ -459,7 +458,7 @@ public final class GridInsertionWriterTest {
         op = readback.start();
         readback.deliver();
         readback.model.failures.put(
-                INPUTS, HostServices.failure(ErrorCode.GRID_UNAVAILABLE, "transport graph unsupported"));
+                INPUTS, Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "transport graph unsupported"));
         readback.next();
         check(
                 op.result.isCompletedExceptionally(),
@@ -482,7 +481,7 @@ public final class GridInsertionWriterTest {
                 new LinkageError("native conversion linkage"),
                 new IllegalStateException("native conversion failure"),
                 new Exception("native checked conversion failure"),
-                HostServices.failure(ErrorCode.DEADLINE_EXCEEDED, "native code threw an RPC-shaped error"))) {
+                Errors.notApplied(ErrorCode.DEADLINE_EXCEEDED, "native code threw an RPC-shaped error"))) {
             Fixture f = new Fixture();
             f.reflectedConversion = new ReflectedConversion(cause);
             HostOperation op = f.start();
@@ -1311,7 +1310,7 @@ public final class GridInsertionWriterTest {
                         requests,
                         () -> {
                             if (op.result.isDone())
-                                throw HostServices.failure(ErrorCode.CANCELLED, "request already completed");
+                                throw Errors.notApplied(ErrorCode.CANCELLED, "request already completed");
                         },
                         () -> op.dispatched = true,
                         op.result::complete,
@@ -1350,12 +1349,12 @@ public final class GridInsertionWriterTest {
                             if (requestError != null)
                                 throw Errors.of(requestError, "request no longer admissible", Outcome.NOT_APPLIED);
                             if (op.result.isDone())
-                                throw HostServices.failure(ErrorCode.CANCELLED, "request already completed");
+                                throw Errors.notApplied(ErrorCode.CANCELLED, "request already completed");
                         },
                         () -> op.dispatched = true,
                         value -> {
                             if (failDelivery)
-                                throw HostServices.failure(ErrorCode.GRID_BOUNDS_EXCEEDED, "serialization failure");
+                                throw Errors.notApplied(ErrorCode.GRID_BOUNDS_EXCEEDED, "serialization failure");
                             op.result.complete(value);
                         },
                         error -> {
@@ -1397,13 +1396,13 @@ public final class GridInsertionWriterTest {
         @Override
         public String resolve(UUID id) {
             lastResolved = id;
-            if (failResolve) throw HostServices.failure(ErrorCode.GRID_UNAVAILABLE, "missing native resource");
+            if (failResolve) throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "missing native resource");
             return "native-resolved-resource";
         }
 
         @Override
         public Runnable prepareLoad(Object project, String path, GridInsertionBridge.Callback callback) {
-            if (failPrepare) throw HostServices.failure(ErrorCode.GRID_UNAVAILABLE, "adapter construction failed");
+            if (failPrepare) throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "adapter construction failed");
             if (fresh && created++ > 0) { // Each batch entry loads its own detached singleton.
                 incoming = model.module(1024 + created - 1, null);
                 loaded = List.of(incoming);
@@ -1431,12 +1430,12 @@ public final class GridInsertionWriterTest {
         @Override
         public void requireDetached(Object module) {
             if (deleted || parented || owned || ((Node) module).values.get(MODULE_GRAPH) != null)
-                throw HostServices.failure(ErrorCode.STALE_CONTEXT, "not detached live singleton");
+                throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "not detached live singleton");
         }
 
         @Override
         public void requirePlacementReady(Object graph) {
-            if (!placementReady) throw HostServices.failure(ErrorCode.UNSAFE_STATE, "nonempty XEl list");
+            if (!placementReady) throw Errors.notApplied(ErrorCode.UNSAFE_STATE, "nonempty XEl list");
         }
 
         @Override

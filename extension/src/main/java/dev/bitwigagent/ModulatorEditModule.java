@@ -1,7 +1,5 @@
 package dev.bitwigagent;
 
-import static dev.bitwigagent.HostServices.failure;
-
 import com.google.gson.*;
 import java.util.Set;
 import java.util.UUID;
@@ -58,12 +56,12 @@ final class ModulatorEditModule implements HostModule {
                 ModulatorEditor.validateParent(p);
                 ModulatorEditor.count(p, "expectedCount", 0);
                 if (p.has("typeId") == p.has("typeName"))
-                    throw failure(ErrorCode.INVALID_PARAMS, "Supply exactly one of typeId or typeName.");
+                    throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "Supply exactly one of typeId or typeName.");
                 if (p.has("typeId")) ModulatorEditor.uuid(p, "typeId");
                 else {
                     String name = Params.string(p, "typeName");
                     if (name.length() > 128)
-                        throw failure(ErrorCode.INVALID_PARAMS, "typeName must be 1..128 UTF-16 units.");
+                        throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "typeName must be 1..128 UTF-16 units.");
                 }
                 return;
             case "modulators.delete":
@@ -82,7 +80,8 @@ final class ModulatorEditModule implements HostModule {
                 ModulatorEditor.text(p, "parameterId");
                 String kind = Params.string(p, "expectedKind");
                 if (!Set.of("float", "integer", "enum", "boolean").contains(kind))
-                    throw failure(ErrorCode.INVALID_PARAMS, "expectedKind must be float, integer, enum or boolean.");
+                    throw Errors.notApplied(
+                            ErrorCode.INVALID_PARAMS, "expectedKind must be float, integer, enum or boolean.");
                 GridParameterWriter.Request.parse(p);
                 return;
             }
@@ -91,17 +90,17 @@ final class ModulatorEditModule implements HostModule {
                 ModulatorEditor.MapRequest.parse(p, method.equals("modulators.unmap"));
                 return;
             default:
-                throw failure(ErrorCode.UNKNOWN_METHOD, "Unknown modulator edit.");
+                throw Errors.notApplied(ErrorCode.UNKNOWN_METHOD, "Unknown modulator edit.");
         }
     }
 
     /** Lazily bound, so a binding failure surfaces as modulator_unavailable on use and in capabilities. */
     private ModulatorEditor editor(HostOperation op) {
         if (editor != null) return editor;
-        if (unavailable != null) throw failure(ErrorCode.MODULATOR_UNAVAILABLE, unavailable);
+        if (unavailable != null) throw Errors.notApplied(ErrorCode.MODULATOR_UNAVAILABLE, unavailable);
         Bitwig614Runtime.Access bindings = s.nativeRuntime(op).access(ErrorCode.MODULATOR_UNAVAILABLE);
         if (bindings.gateError() != null)
-            throw failure(
+            throw Errors.notApplied(
                     ErrorCode.MODULATOR_UNAVAILABLE, "Exact runtime gate is unavailable: " + bindings.gateError());
         try {
             // The Grid reader keeps its own error code: it downgrades optional metadata failures only for
@@ -111,7 +110,7 @@ final class ModulatorEditModule implements HostModule {
             editor = new ModulatorEditor(new Bitwig614ModulatorEditAccess(bindings, grid));
         } catch (ReflectiveOperationException | RuntimeException | LinkageError error) {
             unavailable = "Device-modulator edit bindings unavailable: " + Bitwig614Runtime.diagnostic(error);
-            throw failure(ErrorCode.MODULATOR_UNAVAILABLE, unavailable);
+            throw Errors.notApplied(ErrorCode.MODULATOR_UNAVAILABLE, unavailable);
         }
         return editor;
     }
@@ -174,7 +173,7 @@ final class ModulatorEditModule implements HostModule {
                 Consumer<Throwable> fail = error -> op.fail(
                         error instanceof RpcException
                                 ? error
-                                : failure(
+                                : Errors.notApplied(
                                         ErrorCode.MODULATOR_UNAVAILABLE,
                                         "Modulator operation failed: "
                                                 + error.getClass().getSimpleName()));
@@ -213,19 +212,19 @@ final class ModulatorEditModule implements HostModule {
                                 fail);
                         break;
                     default:
-                        throw failure(ErrorCode.UNKNOWN_METHOD, "Unknown modulator edit.");
+                        throw Errors.notApplied(ErrorCode.UNKNOWN_METHOD, "Unknown modulator edit.");
                 }
             } catch (RuntimeException error) {
                 op.fail(
                         error instanceof RpcException
                                 ? error
-                                : failure(
+                                : Errors.notApplied(
                                         ErrorCode.MODULATOR_UNAVAILABLE,
                                         "Modulator operation failed: "
                                                 + error.getClass().getSimpleName()
                                                 + "; inspect the exact host binding."));
             } catch (Error error) {
-                op.fail(failure(
+                op.fail(Errors.notApplied(
                         ErrorCode.MODULATOR_UNAVAILABLE,
                         "Native modulator operation failed; inspect the loaded host binding and current state."));
             }

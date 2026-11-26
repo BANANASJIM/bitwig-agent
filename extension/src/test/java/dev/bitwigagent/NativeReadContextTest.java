@@ -102,7 +102,7 @@ public final class NativeReadContextTest {
                         cancelled.models,
                         cancelled.labels,
                         () -> {
-                            throw HostServices.failure(ErrorCode.CANCELLED, "request ended");
+                            throw Errors.notApplied(ErrorCode.CANCELLED, "request ended");
                         },
                         false));
     }

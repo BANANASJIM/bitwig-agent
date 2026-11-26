@@ -299,12 +299,12 @@ public final class GridModuleNameWriterTest {
         Fixture readError = new Fixture();
         op = readError.start(new GridModuleNameWriter.Request("", "new"));
         readError.model.failures.put(
-                CUSTOM_NAME, HostServices.failure(ErrorCode.GRID_UNAVAILABLE, "native getter failed"));
+                CUSTOM_NAME, Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "native getter failed"));
         readError.next();
         failed(op, "grid_unavailable", "unknown");
         readError.quarantine.requireAvailable();
         Fixture enqueue = new Fixture(r -> {
-            throw HostServices.failure(ErrorCode.GRID_UNAVAILABLE, "queue failed");
+            throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "queue failed");
         });
         failed(enqueue.start(new GridModuleNameWriter.Request("", "new")), "grid_unavailable", "unknown");
         enqueue.quarantine.requireAvailable();
@@ -357,7 +357,7 @@ public final class GridModuleNameWriterTest {
         for (Throwable cause : List.of(
                 new IllegalStateException("partial native failure"),
                 new LinkageError("native linkage"),
-                HostServices.failure(ErrorCode.DEADLINE_EXCEEDED, "native RPC-shaped throwable"))) {
+                Errors.notApplied(ErrorCode.DEADLINE_EXCEEDED, "native RPC-shaped throwable"))) {
             Fixture f = new Fixture();
             f.reflectedFailure = cause;
             HostOperation op = f.start(new GridModuleNameWriter.Request("", "new"));
@@ -465,8 +465,8 @@ public final class GridModuleNameWriterTest {
                         moduleId,
                         request,
                         () -> {
-                            if (op.result.isDone()) throw HostServices.failure(ErrorCode.CANCELLED, "request ended");
-                            if (cancelled) throw HostServices.failure(ErrorCode.CANCELLED, "cancelled");
+                            if (op.result.isDone()) throw Errors.notApplied(ErrorCode.CANCELLED, "request ended");
+                            if (cancelled) throw Errors.notApplied(ErrorCode.CANCELLED, "cancelled");
                             if (requestError != null)
                                 throw Errors.of(requestError, "request changed", Outcome.NOT_APPLIED);
                         },
@@ -507,7 +507,7 @@ public final class GridModuleNameWriterTest {
         @Override
         public void requireSupported(Object module) {
             if (!supported || !model.is(GridSnapshotReader.Kind.MODULE, module))
-                throw HostServices.failure(ErrorCode.GRID_UNAVAILABLE, "not a supported native module");
+                throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "not a supported native module");
         }
 
         @Override

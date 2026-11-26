@@ -1,7 +1,5 @@
 package dev.bitwigagent;
 
-import static dev.bitwigagent.HostServices.failure;
-
 import com.google.gson.*;
 import java.util.*;
 import java.util.regex.Pattern;
@@ -84,7 +82,7 @@ final class GridRemotePageWriter {
         if (existing != null)
             for (Slot slot : wanted)
                 if (slot != null && !nativeAccess.eligible(existing, slot.binding.parameter))
-                    throw failure(
+                    throw Errors.notApplied(
                             ErrorCode.UNSUPPORTED_SCOPE,
                             "Remote Controls page refuses " + slot.describe() + " (native page eligibility).");
         GridParameterContext.Capture context =
@@ -92,7 +90,7 @@ final class GridRemotePageWriter {
         values.guardTarget(target, proxy, trackId);
         for (Slot slot : wanted) if (slot != null) values.guardParameter(slot.binding);
         if (existing != existing(host, request.pageName, request.replace))
-            throw failure(ErrorCode.STALE_CONTEXT, "The named Remote Controls page changed before dispatch.");
+            throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "The named Remote Controls page changed before dispatch.");
         contexts.requireRemoteWritable(device, host.host, host.pages, context, check);
         check.run();
 
@@ -196,7 +194,7 @@ final class GridRemotePageWriter {
                 contexts.requireRemoteWritable(target.target, host.host, host.pages, null, check);
         values.guardTarget(target, proxy, trackId);
         if (deletable(host, pageName) != page)
-            throw failure(ErrorCode.STALE_CONTEXT, "The named Remote Controls page changed before dispatch.");
+            throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "The named Remote Controls page changed before dispatch.");
         contexts.requireRemoteWritable(target.target, host.host, host.pages, context, check);
         check.run();
         dispatch.run();
@@ -245,14 +243,15 @@ final class GridRemotePageWriter {
     private Host host(Object device) {
         Object host = nativeAccess.host(device);
         if (host == null)
-            throw failure(ErrorCode.GRID_UNAVAILABLE, "Native Remote Controls host is unavailable for this device.");
+            throw Errors.notApplied(
+                    ErrorCode.GRID_UNAVAILABLE, "Native Remote Controls host is unavailable for this device.");
         values.requireModelThread(host);
         Object pages = nativeAccess.presetPages(host), devicePages = nativeAccess.devicePages(host);
         if (pages == null || devicePages == null)
-            throw failure(ErrorCode.GRID_UNAVAILABLE, "Native Remote Controls page lists are unavailable.");
+            throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Native Remote Controls page lists are unavailable.");
         values.requireModelThread(pages);
         if (!nativeAccess.licensed(device))
-            throw failure(
+            throw Errors.notApplied(
                     ErrorCode.UNSAFE_STATE,
                     "Device is not licensed: Bitwig does not create Remote Controls pages for it.");
         return new Host(host, pages, devicePages);
@@ -265,12 +264,12 @@ final class GridRemotePageWriter {
     private Object existing(Host host, String name, boolean replace) {
         Named named = named(host, name);
         if (named.otherKind != null)
-            throw failure(
+            throw Errors.notApplied(
                     ErrorCode.PAGE_EXISTS,
                     "A " + named.otherKind + " Remote Controls page is already named " + quote(name)
                             + "; only preset pages are edited here. Choose another pageName.");
         if (named.page != null && !replace)
-            throw failure(
+            throw Errors.notApplied(
                     ErrorCode.PAGE_EXISTS,
                     "A Remote Controls page is already named " + quote(name)
                             + "; pass mode \"replace\" to redefine it.");
@@ -280,12 +279,12 @@ final class GridRemotePageWriter {
     private Object deletable(Host host, String name) {
         Named named = named(host, name);
         if (named.page == null && named.otherKind != null)
-            throw failure(
+            throw Errors.notApplied(
                     ErrorCode.UNSUPPORTED_SCOPE,
                     "The page named " + quote(name) + " is a " + named.otherKind
                             + " page; only preset pages can be deleted here.");
         if (named.page == null)
-            throw failure(
+            throw Errors.notApplied(
                     ErrorCode.STALE_CONTEXT,
                     "No preset Remote Controls page is named " + quote(name) + "; reacquire devices.remote.get.");
         return named.page;
@@ -309,7 +308,7 @@ final class GridRemotePageWriter {
             } else if (result.otherKind == null) result.otherKind = kind;
         }
         if (edited > 1)
-            throw failure(
+            throw Errors.notApplied(
                     ErrorCode.STALE_CONTEXT,
                     edited + " preset Remote Controls pages are named " + quote(name)
                             + "; rename or delete the extras first.");
@@ -358,11 +357,13 @@ final class GridRemotePageWriter {
     private void verify(Host host, Object page, Request request, Slot[] wanted) {
         if (nativeAccess.pageList(page) != host.pages
                 || !nativeAccess.pages(host.pages).contains(page))
-            throw failure(ErrorCode.STALE_CONTEXT, "The defined page is no longer in the preset-page list.");
+            throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "The defined page is no longer in the preset-page list.");
         if (!request.pageName.equals(nativeAccess.pageName(page)))
-            throw failure(ErrorCode.STALE_CONTEXT, "Native page name readback differs from the requested pageName.");
+            throw Errors.notApplied(
+                    ErrorCode.STALE_CONTEXT, "Native page name readback differs from the requested pageName.");
         if (!nativeAccess.visiblePages(host.host).contains(page))
-            throw failure(ErrorCode.STALE_CONTEXT, "The defined page is not in the device's visible page list.");
+            throw Errors.notApplied(
+                    ErrorCode.STALE_CONTEXT, "The defined page is not in the device's visible page list.");
         for (int index = 0; index < SLOTS; index++) {
             Object slot = nativeAccess.slot(page, index);
             Slot want = wanted[index];
@@ -371,7 +372,8 @@ final class GridRemotePageWriter {
                     : slot == null
                             || nativeAccess.slotTarget(slot) != want.binding.parameter
                             || !want.label.equals(nativeAccess.slotLabel(slot)))
-                throw failure(ErrorCode.STALE_CONTEXT, "Native slot " + index + " readback differs from the request.");
+                throw Errors.notApplied(
+                        ErrorCode.STALE_CONTEXT, "Native slot " + index + " readback differs from the request.");
         }
     }
 
@@ -395,17 +397,17 @@ final class GridRemotePageWriter {
                     values.bindParameter(proxy, trackId, moduleId, spec.parameterId, check);
             Slot slot = new Slot(index, spec, moduleId, binding);
             if (!SCALARS.contains(binding.kind))
-                throw failure(
+                throw Errors.notApplied(
                         ErrorCode.UNSUPPORTED_SCOPE,
                         slot.describe() + " is a " + binding.kind.name().toLowerCase(Locale.ROOT)
                                 + " control; only scalar Grid parameters map to Remote Controls.");
             if (!nativeAccess.mappable(binding.parameter, device))
-                throw failure(
+                throw Errors.notApplied(
                         ErrorCode.UNSUPPORTED_SCOPE,
                         slot.describe() + " is not a remote-mappable parameter of this device.");
             Integer previous = seen.put(binding.parameter, index);
             if (previous != null)
-                throw failure(
+                throw Errors.notApplied(
                         ErrorCode.INVALID_PARAMS, "slots " + previous + " and " + index + " name the same parameter.");
             wanted[index] = slot;
         }
@@ -501,7 +503,7 @@ final class GridRemotePageWriter {
                         || !mode.getAsJsonPrimitive().isString()
                         || !(mode.getAsString().equals("create")
                                 || mode.getAsString().equals("replace")))
-                    throw failure(ErrorCode.INVALID_PARAMS, "mode must be \"create\" or \"replace\".");
+                    throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "mode must be \"create\" or \"replace\".");
                 replace = mode.getAsString().equals("replace");
             }
             JsonElement array = p.get("slots");
@@ -509,7 +511,7 @@ final class GridRemotePageWriter {
                     || !array.isJsonArray()
                     || array.getAsJsonArray().size() < 1
                     || array.getAsJsonArray().size() > SLOTS)
-                throw failure(
+                throw Errors.notApplied(
                         ErrorCode.INVALID_PARAMS,
                         "slots must be an array of 1..8 entries (slot k = entry k; null leaves it empty).");
             List<SlotSpec> slots = new ArrayList<>();
@@ -520,30 +522,33 @@ final class GridRemotePageWriter {
                     continue;
                 }
                 if (!element.isJsonObject())
-                    throw failure(ErrorCode.INVALID_PARAMS, "Each slot must be an object or null.");
+                    throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "Each slot must be an object or null.");
                 JsonObject slot = element.getAsJsonObject();
                 for (String key : slot.keySet()) {
                     if (!Set.of("moduleId", "moduleName", "parameterId", "label")
-                            .contains(key)) throw failure(ErrorCode.INVALID_PARAMS, "Unknown slot field: " + key);
+                            .contains(key))
+                        throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "Unknown slot field: " + key);
                     if (slot.get(key).isJsonNull())
-                        throw failure(ErrorCode.INVALID_PARAMS, "slot " + key + " must not be null.");
+                        throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "slot " + key + " must not be null.");
                 }
                 if (slot.has("moduleId") == slot.has("moduleName"))
-                    throw failure(ErrorCode.INVALID_PARAMS, "Each slot needs exactly one of moduleId or moduleName.");
+                    throw Errors.notApplied(
+                            ErrorCode.INVALID_PARAMS, "Each slot needs exactly one of moduleId or moduleName.");
                 UUID moduleId = null;
                 String moduleName = null;
                 if (slot.has("moduleId")) {
                     String id = text(slot, "moduleId", 0, 36);
                     if (!UUID_PATTERN.matcher(id).matches())
-                        throw failure(ErrorCode.INVALID_PARAMS, "slot moduleId must be a canonical UUID.");
+                        throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "slot moduleId must be a canonical UUID.");
                     moduleId = UUID.fromString(id);
                 } else moduleName = text(slot, "moduleName", 1, GridSnapshotReader.MAX_TEXT);
-                if (!slot.has("parameterId")) throw failure(ErrorCode.INVALID_PARAMS, "Each slot needs parameterId.");
+                if (!slot.has("parameterId"))
+                    throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "Each slot needs parameterId.");
                 String parameterId = text(slot, "parameterId", 0, GridSnapshotReader.MAX_TEXT);
                 String label = slot.has("label") ? text(slot, "label", 0, MAX_LABEL) : "";
                 String pair = (moduleId != null ? "id:" + moduleId : "name:" + moduleName) + "\n" + parameterId;
                 if (!pairs.add(pair))
-                    throw failure(ErrorCode.INVALID_PARAMS, "slots must not repeat a module/parameter pair.");
+                    throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "slots must not repeat a module/parameter pair.");
                 slots.add(new SlotSpec(moduleId, moduleName, parameterId, label));
             }
             return new Request(name, replace, slots);
@@ -560,7 +565,7 @@ final class GridRemotePageWriter {
                     || !value.getAsJsonPrimitive().isString()
                     || value.getAsString().length() < min
                     || value.getAsString().length() > max)
-                throw failure(
+                throw Errors.notApplied(
                         ErrorCode.INVALID_PARAMS, key + " must be a string of " + min + ".." + max + " UTF-16 units.");
             return value.getAsString();
         }

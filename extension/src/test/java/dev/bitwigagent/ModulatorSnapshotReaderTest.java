@@ -384,14 +384,14 @@ public final class ModulatorSnapshotReaderTest {
     private static void errorsAndCancellationAreNotHidden() {
         Fixture f = new Fixture();
         f.onRead = (field, object) -> {
-            if (field == VALUE) throw HostServices.failure(ErrorCode.MODULATOR_UNAVAILABLE, "native getter failed");
+            if (field == VALUE) throw Errors.notApplied(ErrorCode.MODULATOR_UNAVAILABLE, "native getter failed");
         };
         expect("modulator_unavailable", f::get);
         Fixture cancelled = new Fixture();
         expect(
                 "cancelled",
                 () -> cancelled.reader.list(cancelled.proxy, TRACK, 0, 64, () -> {
-                    throw HostServices.failure(ErrorCode.CANCELLED, "cancelled");
+                    throw Errors.notApplied(ErrorCode.CANCELLED, "cancelled");
                 }));
         check(cancelled.indexReads == 0, "cancellation precedes native collection work");
         Fixture deadline = new Fixture();
@@ -570,7 +570,7 @@ public final class ModulatorSnapshotReaderTest {
         @Override
         public void requireModelThread(Object object) {
             if (!(object instanceof Node) || !((Node) object).thread)
-                throw HostServices.failure(ErrorCode.MODULATOR_UNAVAILABLE, "model thread");
+                throw Errors.notApplied(ErrorCode.MODULATOR_UNAVAILABLE, "model thread");
         }
 
         @Override

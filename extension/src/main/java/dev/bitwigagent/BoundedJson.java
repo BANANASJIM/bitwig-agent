@@ -1,7 +1,5 @@
 package dev.bitwigagent;
 
-import static dev.bitwigagent.HostServices.failure;
-
 import com.google.gson.*;
 import java.io.*;
 
@@ -33,7 +31,7 @@ final class BoundedJson {
             JSON.toJson(value, bounded);
             return buffer.toString();
         } catch (JsonIOException error) {
-            throw failure(code, message);
+            throw Errors.notApplied(code, message);
         }
     }
 }

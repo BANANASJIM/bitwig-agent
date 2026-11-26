@@ -132,7 +132,7 @@ public final class ModulatorEditorTest {
 
         @Override
         public Object device(Object proxy, UUID trackId, Runnable check) {
-            if (!TRACK.equals(trackId)) throw HostServices.failure(ErrorCode.STALE_CONTEXT, "track");
+            if (!TRACK.equals(trackId)) throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "track");
             return device;
         }
 
@@ -281,7 +281,7 @@ public final class ModulatorEditorTest {
         @Override
         public Object[] gridParameter(Object proxy, UUID trackId, UUID moduleId, String parameterId, Runnable check) {
             if (!MODULE.equals(moduleId) || !parameterId.equals("DECAY"))
-                throw HostServices.failure(ErrorCode.STALE_CONTEXT, "no such grid control");
+                throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "no such grid control");
             return new Object[] {graph, module, decay};
         }
 
@@ -293,7 +293,7 @@ public final class ModulatorEditorTest {
         @Override
         public void requireParameterWritable(
                 Object device, Object container, Object owner, Object parameter, Runnable check) {
-            if (!((Param) parameter).writable) throw HostServices.failure(ErrorCode.UNSAFE_STATE, "touched");
+            if (!((Param) parameter).writable) throw Errors.notApplied(ErrorCode.UNSAFE_STATE, "touched");
         }
 
         @Override
@@ -303,7 +303,7 @@ public final class ModulatorEditorTest {
         public ModulatorEditor.Type resolveType(UUID typeId, String typeName) {
             if ("Random".equals(typeName) || RANDOM_TYPE.equals(typeId))
                 return new ModulatorEditor.Type(RANDOM_TYPE, "Random");
-            throw HostServices.failure(ErrorCode.TARGET_NOT_FOUND, "no type");
+            throw Errors.notApplied(ErrorCode.TARGET_NOT_FOUND, "no type");
         }
 
         @Override

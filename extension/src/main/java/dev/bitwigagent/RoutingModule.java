@@ -1,7 +1,5 @@
 package dev.bitwigagent;
 
-import static dev.bitwigagent.HostServices.failure;
-
 import com.bitwig.extension.callback.*;
 import com.bitwig.extension.controller.api.*;
 import com.google.gson.*;
@@ -159,7 +157,7 @@ final class RoutingModule implements HostModule {
                 entry(p, "expectedSource", SOURCE_KINDS, true);
                 break;
             default:
-                throw failure(ErrorCode.UNKNOWN_METHOD, "Unknown routing method.");
+                throw Errors.notApplied(ErrorCode.UNKNOWN_METHOD, "Unknown routing method.");
         }
         uuid(p, "trackId");
     }
@@ -268,9 +266,9 @@ final class RoutingModule implements HostModule {
     public void dispatch(HostOperation op, String method, JsonObject p) {
         s.check(op);
         boolean write = WRITES.contains(method);
-        if (pending) throw failure(ErrorCode.BUSY, "Another native routing operation is pending.");
+        if (pending) throw Errors.notApplied(ErrorCode.BUSY, "Another native routing operation is pending.");
         if (write && quarantined)
-            throw failure(
+            throw Errors.notApplied(
                     ErrorCode.UNRESOLVED_MUTATION,
                     "An unresolved routing/sidechain write requires inspection (tracks.routing.get / devices.sidechain.get) and extension.restart before further routing writes.");
         String id = p.get("trackId").getAsString();
@@ -279,12 +277,12 @@ final class RoutingModule implements HostModule {
         TrackRef self = null;
         for (TrackRef ref : bank) if (ref.id.equals(id)) self = ref;
         if (self == null)
-            throw failure(ErrorCode.OUTSIDE_WINDOW, "Track UUID is absent from the current 16-track window.");
+            throw Errors.notApplied(ErrorCode.OUTSIDE_WINDOW, "Track UUID is absent from the current 16-track window.");
         for (String key : List.of("output", "input", "source")) {
             if (!p.has(key) || !p.getAsJsonObject(key).has("trackId")) continue;
             String other = p.getAsJsonObject(key).get("trackId").getAsString();
             if (bank.stream().noneMatch(ref -> ref.id.equals(other)))
-                throw failure(
+                throw Errors.notApplied(
                         ErrorCode.OUTSIDE_WINDOW,
                         key + ".trackId is absent from the current 16-track window; nothing was dispatched.");
         }
@@ -294,7 +292,7 @@ final class RoutingModule implements HostModule {
             try {
                 access = new Bitwig614RoutingAccess(s.nativeRuntime(op).access(ErrorCode.ROUTING_UNAVAILABLE));
             } catch (ReflectiveOperationException | LinkageError error) {
-                throw failure(
+                throw Errors.notApplied(
                         ErrorCode.ROUTING_UNAVAILABLE,
                         "Exact routing descriptors unavailable: " + Bitwig614Runtime.diagnostic(error));
             }
@@ -303,7 +301,8 @@ final class RoutingModule implements HostModule {
         Runnable check = () -> {
             s.check(op);
             if (epoch.get() != generation)
-                throw failure(ErrorCode.STALE_CONTEXT, "Track bank changed while the routing operation was queued.");
+                throw Errors.notApplied(
+                        ErrorCode.STALE_CONTEXT, "Track bank changed while the routing operation was queued.");
             if (ticket != null) ticket.check();
             if (write) s.guardStoppedSafety(safety);
         };
@@ -339,7 +338,8 @@ final class RoutingModule implements HostModule {
                             () -> {
                                 check.run();
                                 if (!s.trackMatches(id, (Track) s.tracks.getItemAt(slot)))
-                                    throw failure(ErrorCode.STALE_CONTEXT, "Track target changed after native access.");
+                                    throw Errors.notApplied(
+                                            ErrorCode.STALE_CONTEXT, "Track target changed after native access.");
                                 if (ticket != null) s.sources.guardRootRead(ticket);
                                 if (write && !"unknown".equals(text(result, "completion"))) quarantined = false;
                                 pending = false;

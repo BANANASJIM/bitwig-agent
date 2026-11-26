@@ -235,7 +235,7 @@ public final class SceneModuleTest {
                 "a stale placeholder name is never reported");
         Model pinned = new Model(
                 () -> {
-                    throw HostServices.failure(ErrorCode.UNRESOLVED_MUTATION, "pinned");
+                    throw Errors.notApplied(ErrorCode.UNRESOLVED_MUTATION, "pinned");
                 },
                 "A",
                 "B");

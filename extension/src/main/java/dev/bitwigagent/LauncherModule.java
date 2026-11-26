@@ -237,7 +237,7 @@ final class LauncherModule implements HostModule {
                 break;
             }
             default:
-                throw HostServices.failure(ErrorCode.UNKNOWN_METHOD, "Unknown launcher method");
+                throw Errors.notApplied(ErrorCode.UNKNOWN_METHOD, "Unknown launcher method");
         }
         Params.string(p, "trackId");
         if (p.has("slotIndex")) Params.integer(p, "slotIndex", 0, 15);
@@ -425,10 +425,10 @@ final class LauncherModule implements HostModule {
     private void appendScenes(HostOperation op, JsonObject p) {
         int count = p.has("count") ? Params.integer(p, "count", 1, 16) : 1;
         if (!s.tracksObserved)
-            throw HostServices.failure(ErrorCode.NOT_READY, "Track bank has not reported its size yet.");
+            throw Errors.notApplied(ErrorCode.NOT_READY, "Track bank has not reported its size yet.");
         int before = sceneBank.itemCount().get();
         if (before + count > HostServices.SCENES)
-            throw HostServices.failure(
+            throw Errors.notApplied(
                     ErrorCode.SCENE_LIMIT,
                     "The project has " + before + " scene(s); the launcher tools address at most " + HostServices.SCENES
                             + ", so " + count + " more cannot be appended");
@@ -484,7 +484,7 @@ final class LauncherModule implements HostModule {
         Track track = s.track(id);
         int t = s.trackSlot(id);
         if (track.clipLauncherSlotBank().scrollPosition().get() != 0)
-            throw HostServices.failure(ErrorCode.STALE_CONTEXT, "Launcher bank is not at scene offset zero");
+            throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Launcher bank is not at scene offset zero");
         if (method.equals("launcher.list")) {
             JsonObject out = base(id, -1);
             JsonArray entries = new JsonArray();
@@ -499,8 +499,7 @@ final class LauncherModule implements HostModule {
             return;
         }
         if (method.equals("launcher.stop")) {
-            if (!stopReady[t])
-                throw HostServices.failure(ErrorCode.NOT_READY, "Track stop state has not been observed");
+            if (!stopReady[t]) throw Errors.notApplied(ErrorCode.NOT_READY, "Track stop state has not been observed");
             guard(op, id, track);
             op.dispatched = true;
             track.clipLauncherSlotBank().stop();
@@ -510,7 +509,7 @@ final class LauncherModule implements HostModule {
         int j = Params.integer(p, "slotIndex", 0, 15);
         int scenes = track.clipLauncherSlotBank().itemCount().get();
         if (j >= scenes)
-            throw HostServices.failure(
+            throw Errors.notApplied(
                     ErrorCode.SLOT_OUT_OF_RANGE,
                     "slotIndex " + j + " does not exist: the project has " + scenes
                             + " scene(s). Append scenes with scenes.append, then re-run launcher.list");
@@ -529,7 +528,7 @@ final class LauncherModule implements HostModule {
         if (!method.equals("notes.read")) requireResolved(id, slot, j);
         if (method.equals("launcher.create")) {
             if (slot.api.hasContent().get())
-                throw HostServices.failure(ErrorCode.SLOT_OCCUPIED, "Create only accepts an observed empty slot");
+                throw Errors.notApplied(ErrorCode.SLOT_OCCUPIED, "Create only accepts an observed empty slot");
             guard(op, id, track);
             beginMutation(id, track, slot, j, method);
             op.dispatched = true;
@@ -551,7 +550,7 @@ final class LauncherModule implements HostModule {
     }
 
     void requireSettingsSafe(String id, int index) {
-        if (s.selectionHeld()) throw HostServices.failure(ErrorCode.BUSY, "Launcher editor operation is still pending");
+        if (s.selectionHeld()) throw Errors.notApplied(ErrorCode.BUSY, "Launcher editor operation is still pending");
         requireResolved(id, slots[s.trackSlot(id)][index], index);
     }
 
@@ -560,7 +559,7 @@ final class LauncherModule implements HostModule {
         for (Mutation mutation : unresolvedMutations) {
             // Keep both the logical target and its native proxy quarantined across track-bank rebinding.
             if (mutation.slot == slot || mutation.trackId.equals(id) && mutation.index == index)
-                throw HostServices.failure(
+                throw Errors.notApplied(
                         ErrorCode.UNRESOLVED_MUTATION,
                         mutation.description()
                                 + " Completion remains unresolved; create/import/note writes are quarantined for this extension instance."
@@ -592,16 +591,16 @@ final class LauncherModule implements HostModule {
     private void importFile(HostOperation op, String id, Track track, Slot slot, int index, JsonObject p) {
         Path path = Params.absoluteFilePath(p, "path");
         if (!Files.isRegularFile(path) || !Files.isReadable(path))
-            throw HostServices.failure(ErrorCode.FILE_UNAVAILABLE, "Import requires a readable regular local file.");
+            throw Errors.notApplied(ErrorCode.FILE_UNAVAILABLE, "Import requires a readable regular local file.");
         if (slot.api.hasContent().get())
-            throw HostServices.failure(ErrorCode.SLOT_OCCUPIED, "Import only accepts an observed empty slot.");
+            throw Errors.notApplied(ErrorCode.SLOT_OCCUPIED, "Import only accepts an observed empty slot.");
         MidiImportPreflight.validate(path);
         InsertionPoint insertion = slot.api.replaceInsertionPoint();
         // Resolve everything first, then recheck the target, safety and deadline at the mutation boundary.
         guard(op, id, track);
         s.requirePlaybackSafe();
         if (slot.api.hasContent().get())
-            throw HostServices.failure(ErrorCode.SLOT_OCCUPIED, "Import only accepts an observed empty slot.");
+            throw Errors.notApplied(ErrorCode.SLOT_OCCUPIED, "Import only accepts an observed empty slot.");
         long before = slot.contentVersion;
         beginMutation(id, track, slot, index, "launcher.import");
         op.dispatched = true;
@@ -792,11 +791,11 @@ final class LauncherModule implements HostModule {
         Track track = s.track(id);
         int t = s.trackSlot(id);
         if (track.clipLauncherSlotBank().scrollPosition().get() != 0)
-            throw HostServices.failure(ErrorCode.STALE_CONTEXT, "Launcher bank is not at scene offset zero");
+            throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Launcher bank is not at scene offset zero");
         int j = Params.integer(p, "slotIndex", 0, 15);
         int scenes = track.clipLauncherSlotBank().itemCount().get();
         if (j >= scenes)
-            throw HostServices.failure(
+            throw Errors.notApplied(
                     ErrorCode.SLOT_OUT_OF_RANGE,
                     "slotIndex " + j + " does not exist: the project has " + scenes + " scene(s).");
         Slot slot = slots[t][j];
@@ -831,10 +830,10 @@ final class LauncherModule implements HostModule {
 
     /** Scene duplicate/delete move slot rows: refuse while a cursor operation or an unresolved launcher mutation pins them. */
     void requireStructureSafe() {
-        if (s.selectionHeld()) throw HostServices.failure(ErrorCode.BUSY, "Launcher editor operation is still pending");
+        if (s.selectionHeld()) throw Errors.notApplied(ErrorCode.BUSY, "Launcher editor operation is still pending");
         settingsWriteGuard.run();
         if (!unresolvedMutations.isEmpty())
-            throw HostServices.failure(
+            throw Errors.notApplied(
                     ErrorCode.UNRESOLVED_MUTATION,
                     "A launcher mutation is unresolved; a scene edit would shift the slot rows it is quarantined by. Inspect launcher.list first.");
     }
@@ -962,7 +961,7 @@ final class LauncherModule implements HostModule {
         if (slot.api.isPlaying().get()
                 || slot.api.isPlaybackQueued().get()
                 || slot.api.isRecording().get())
-            throw HostServices.failure(
+            throw Errors.notApplied(
                     ErrorCode.UNSAFE_STATE, "Delete requires the clip to be neither playing, queued nor recording.");
         guard(op, id, track);
         s.guardStoppedSafety(safety);
@@ -1001,16 +1000,16 @@ final class LauncherModule implements HostModule {
             int scenes,
             String name) {
         if (target >= scenes)
-            throw HostServices.failure(
+            throw Errors.notApplied(
                     ErrorCode.SLOT_OUT_OF_RANGE,
                     "targetSlotIndex " + target + " does not exist: the project has " + scenes
                             + " scene(s). Append scenes with scenes.append, then re-run launcher.list");
-        if (target == index) throw HostServices.failure(ErrorCode.SLOT_OCCUPIED, "targetSlotIndex is the source slot");
+        if (target == index) throw Errors.notApplied(ErrorCode.SLOT_OCCUPIED, "targetSlotIndex is the source slot");
         Slot to = slots[t][target];
         ready(to);
         requireResolved(id, to, target);
         if (to.api.hasContent().get())
-            throw HostServices.failure(ErrorCode.SLOT_OCCUPIED, "copyTo only accepts an observed empty target slot");
+            throw Errors.notApplied(ErrorCode.SLOT_OCCUPIED, "copyTo only accepts an observed empty target slot");
         guard(op, id, track);
         beginMutation(id, track, to, target, "clips.edit copyTo");
         long before = cursorMutation.contentBefore;
@@ -1221,7 +1220,7 @@ final class LauncherModule implements HostModule {
             for (int pitch = w.pitch; pitch < w.pitch + w.pitches; pitch++) {
                 NoteStep note = clip.getStep(w.channel, x, pitch);
                 if (note == null || note.state() == null)
-                    throw HostServices.failure(ErrorCode.NOT_READY, "Note grid is not readable");
+                    throw Errors.notApplied(ErrorCode.NOT_READY, "Note grid is not readable");
                 if (hasState(note, "NoteOn"))
                     cells.put(x * 128 + pitch, new double[] {midiVelocity(note.velocity()), note.duration()});
             }
@@ -1264,12 +1263,12 @@ final class LauncherModule implements HostModule {
         List<Integer> beforePitches = pitches(before);
         if (!kind.equals("duplicateContent")) {
             if (!covers)
-                throw HostServices.failure(
+                throw Errors.notApplied(
                         ErrorCode.UNVERIFIABLE_CLIP,
                         kind + " is verified by reading the whole loop in one window (at most 32 beats); this loop is "
                                 + loop + " beats, so the result could not be observed and nothing was changed");
             if (before.isEmpty())
-                throw HostServices.failure(
+                throw Errors.notApplied(
                         ErrorCode.NO_NOTES,
                         "No channel-0 onsets observed in the clip, so " + kind
                                 + " could not be verified; nothing was changed");
@@ -1408,9 +1407,9 @@ final class LauncherModule implements HostModule {
         for (Edit e : changes) {
             NoteStep old = clip.getStep(w.channel, e.x, e.pitch);
             if (old == null || old.state() == null)
-                throw HostServices.failure(ErrorCode.NOT_READY, "Note grid is not readable");
+                throw Errors.notApplied(ErrorCode.NOT_READY, "Note grid is not readable");
             if (hasState(old, "NoteSustain"))
-                throw HostServices.failure(ErrorCode.NOTE_COLLISION, "Edit addresses a sustained note, not its onset");
+                throw Errors.notApplied(ErrorCode.NOTE_COLLISION, "Edit addresses a sustained note, not its onset");
             double beat = (w.start + e.x) * w.size;
             if (e.set && (beat < loopStart || beat + e.duration > end))
                 throw Errors.invalid("set note must fit inside the observed clip loop start and end");
@@ -1418,9 +1417,9 @@ final class LauncherModule implements HostModule {
             for (int x = e.x + 1; x < e.x + e.durationSteps; x++) {
                 NoteStep next = clip.getStep(w.channel, x, e.pitch);
                 if (next == null || next.state() == null)
-                    throw HostServices.failure(ErrorCode.NOT_READY, "Note grid is not readable");
+                    throw Errors.notApplied(ErrorCode.NOT_READY, "Note grid is not readable");
                 if (hasState(next, "NoteOn"))
-                    throw HostServices.failure(
+                    throw Errors.notApplied(
                             ErrorCode.NOTE_COLLISION,
                             "Set duration overlaps an existing unrelated onset; clear it in a separate explicit edit first");
             }
@@ -1508,7 +1507,7 @@ final class LauncherModule implements HostModule {
             for (int pitch = w.pitch; pitch < w.pitch + w.pitches; pitch++) {
                 NoteStep note = clip.getStep(w.channel, x, pitch);
                 if (note == null || note.state() == null)
-                    throw HostServices.failure(ErrorCode.NOT_READY, "Note grid is not readable");
+                    throw Errors.notApplied(ErrorCode.NOT_READY, "Note grid is not readable");
                 if (hasState(note, "NoteOn")) {
                     total++;
                     if (list && notes.size() < NOTE_LIMIT) notes.add(noteJson(note, w, x, pitch));
@@ -1675,13 +1674,12 @@ final class LauncherModule implements HostModule {
     }
 
     private static void ready(Slot slot) {
-        if (!slot.ready())
-            throw HostServices.failure(ErrorCode.NOT_READY, "Launcher slot metadata has not been observed");
+        if (!slot.ready()) throw Errors.notApplied(ErrorCode.NOT_READY, "Launcher slot metadata has not been observed");
     }
 
     private static void requireContent(Slot slot) {
         if (!slot.api.hasContent().get())
-            throw HostServices.failure(ErrorCode.CLIP_NOT_FOUND, "Explicit launcher slot is empty");
+            throw Errors.notApplied(ErrorCode.CLIP_NOT_FOUND, "Explicit launcher slot is empty");
     }
 
     private static long until(HostOperation op) {

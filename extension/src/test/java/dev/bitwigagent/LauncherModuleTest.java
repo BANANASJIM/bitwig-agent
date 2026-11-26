@@ -75,7 +75,7 @@ public final class LauncherModuleTest {
     private static void settingsIsolationIsShared() throws Exception {
         Fake f = new Fake();
         f.module.settingsWriteGuard = () -> {
-            throw HostServices.failure(ErrorCode.UNRESOLVED_MUTATION, "settings unresolved");
+            throw Errors.notApplied(ErrorCode.UNRESOLVED_MUTATION, "settings unresolved");
         };
         expectOutcome("unresolved_mutation", "not_applied", f.start("launcher.create", createTarget()));
         check(f.creates == 0, "settings quarantine blocks launcher create before dispatch");

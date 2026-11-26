@@ -1,7 +1,5 @@
 package dev.bitwigagent;
 
-import static dev.bitwigagent.HostServices.failure;
-
 import java.lang.reflect.*;
 import java.util.*;
 
@@ -18,7 +16,7 @@ final class Bitwig614GridModuleAccess implements GridModuleWriter.Access {
         try {
             callbackType = bindings.type("com.bitwig.base.async.oRV");
             if (!callbackType.isInterface())
-                throw failure(ErrorCode.GRID_UNAVAILABLE, "Native move callback is not an interface.");
+                throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Native move callback is not an interface.");
             success = bindings.exactMethod(callbackType, "cfM", void.class, false, Object.class);
             exception = bindings.exactMethod(callbackType, "cfM", void.class, false, Exception.class);
             message = bindings.exactMethod(callbackType, "cfM", void.class, false, String.class);
@@ -45,7 +43,8 @@ final class Bitwig614GridModuleAccess implements GridModuleWriter.Access {
 
     @Override
     public Runnable prepareMove(Object graph, Object module, int x, int y) {
-        if (moveError != null) throw failure(ErrorCode.GRID_UNAVAILABLE, "Native module move binding is unavailable.");
+        if (moveError != null)
+            throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Native module move binding is unavailable.");
         List<Object> selected = Collections.singletonList(module);
         MoveCallback capture = new MoveCallback(success, exception, message);
         Object callback = Proxy.newProxyInstance(callbackType.getClassLoader(), new Class<?>[] {callbackType}, capture);
@@ -58,7 +57,7 @@ final class Bitwig614GridModuleAccess implements GridModuleWriter.Access {
     @Override
     public Runnable prepareDelete(Object graph, Object module) {
         if (deleteError != null)
-            throw failure(ErrorCode.GRID_UNAVAILABLE, "Native module delete binding is unavailable.");
+            throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Native module delete binding is unavailable.");
         List<Object> selected = Collections.singletonList(module);
         return () -> bindings.invoke(delete, graph, selected);
     }
@@ -101,7 +100,7 @@ final class Bitwig614GridModuleAccess implements GridModuleWriter.Access {
 
         void requireSuccess() {
             if (failed || successes != 1)
-                throw failure(
+                throw Errors.notApplied(
                         ErrorCode.GRID_UNAVAILABLE,
                         "Native move callback failed, was missing or had an unexpected shape; native return is not commit proof.");
         }

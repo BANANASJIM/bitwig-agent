@@ -44,9 +44,9 @@ final class EnumOptions {
     static void require(String field, EnumValue value, String requested, String observed) {
         List<String> options = ids(value);
         if (options.isEmpty())
-            throw HostServices.failure(ErrorCode.NOT_READY, field + " options are not readable from the host yet.");
+            throw Errors.notApplied(ErrorCode.NOT_READY, field + " options are not readable from the host yet.");
         if (!options.contains(requested) && !requested.equals(observed) && !requested.equals(value.get()))
-            throw HostServices.failure(
+            throw Errors.notApplied(
                     ErrorCode.INVALID_PARAMS,
                     field + " must be one of the host's options " + options + ", not " + requested + ".");
     }

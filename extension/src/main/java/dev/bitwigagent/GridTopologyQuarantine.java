@@ -1,7 +1,5 @@
 package dev.bitwigagent;
 
-import static dev.bitwigagent.HostServices.failure;
-
 import com.google.gson.JsonObject;
 import java.util.Properties;
 import java.util.UUID;
@@ -146,7 +144,7 @@ final class GridTopologyQuarantine {
 
     void requireAvailable() {
         String reason = blockedReason();
-        if (reason != null) throw failure(ErrorCode.GRID_UNAVAILABLE, reason);
+        if (reason != null) throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, reason);
     }
 
     String reserve() {
@@ -231,7 +229,7 @@ final class GridTopologyQuarantine {
             why.addProperty("message", message.substring(0, Math.min(message.length(), 512)));
             detail.add("error", why);
             poison(detail.toString());
-            RpcException translated = failure(
+            RpcException translated = Errors.notApplied(
                     ErrorCode.GRID_UNAVAILABLE,
                     "Native Grid topology operation/callback failed; outcome unknown. Process topology guard quarantined; fully restart Bitwig, inspect state and do not assume rollback.");
             translated.initCause(error);
@@ -241,7 +239,7 @@ final class GridTopologyQuarantine {
     }
 
     private static RpcException unavailable() {
-        return failure(
+        return Errors.notApplied(
                 ErrorCode.GRID_UNAVAILABLE,
                 "Native Grid topology process marker is pending, quarantined, malformed or inaccessible. Admission fails closed across extension replacement; full Bitwig JVM restart may be required.");
     }

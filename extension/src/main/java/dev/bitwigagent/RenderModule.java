@@ -1,7 +1,5 @@
 package dev.bitwigagent;
 
-import static dev.bitwigagent.HostServices.failure;
-
 import com.bitwig.extension.callback.BooleanValueChangedCallback;
 import com.bitwig.extension.callback.StringValueChangedCallback;
 import com.bitwig.extension.controller.api.Track;
@@ -231,7 +229,7 @@ final class RenderModule implements HostModule {
                 choice(p, "tap", BOUNCE_TAPS);
                 return;
             default:
-                throw failure(ErrorCode.UNKNOWN_METHOD, "Unknown render method.");
+                throw Errors.notApplied(ErrorCode.UNKNOWN_METHOD, "Unknown render method.");
         }
     }
 
@@ -291,12 +289,12 @@ final class RenderModule implements HostModule {
 
     private Access access(HostOperation op) {
         if (access != null) return access;
-        if (accessError != null) throw failure(UNAVAILABLE, accessError);
+        if (accessError != null) throw Errors.notApplied(UNAVAILABLE, accessError);
         try {
             access = new Bitwig614RenderAccess(s.nativeRuntime(op).access(UNAVAILABLE));
         } catch (ReflectiveOperationException | LinkageError error) {
             accessError = "Exact render bindings unavailable: " + Bitwig614Runtime.diagnostic(error);
-            throw failure(UNAVAILABLE, accessError);
+            throw Errors.notApplied(UNAVAILABLE, accessError);
         }
         return access;
     }
@@ -310,12 +308,12 @@ final class RenderModule implements HostModule {
         }
         Job previous = job;
         if (previous != null && !previous.done())
-            throw failure(
+            throw Errors.notApplied(
                     ErrorCode.BUSY,
                     "A " + previous.describe()
                             + " is still rendering natively; poll render.status. No request was queued.");
         if (method.equals(BOUNCE) && quarantined)
-            throw failure(
+            throw Errors.notApplied(
                     ErrorCode.UNRESOLVED_MUTATION,
                     "An earlier bounce.inPlace has an unknown outcome; inspect arranger.clips.list on its tracks, then extension.restart.");
         if (previous != null
@@ -323,7 +321,7 @@ final class RenderModule implements HostModule {
                 && previous.dispatched
                 && !previous.reported
                 && !quarantined)
-            throw failure(
+            throw Errors.notApplied(
                     ErrorCode.UNRESOLVED_MUTATION,
                     "The previous bounce.inPlace returned before it was verified; call render.status first.");
         HostServices.SafetyObservation safety = s.stoppedSafety(op);
@@ -372,7 +370,7 @@ final class RenderModule implements HostModule {
             s.guardStoppedSafety(safety);
             for (int i = 0; i < ids.size(); i++)
                 if (slots[i] >= 0 && epochs.get(slots[i]) != seen[i])
-                    throw failure(
+                    throw Errors.notApplied(
                             ErrorCode.STALE_CONTEXT,
                             "Track bank changed while the render was queued (" + ids.get(i) + ").");
         };

@@ -1,7 +1,5 @@
 package dev.bitwigagent;
 
-import static dev.bitwigagent.HostServices.failure;
-
 import com.bitwig.extension.controller.api.ControllerHost;
 import com.google.gson.JsonObject;
 import java.util.*;
@@ -135,7 +133,7 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
 
     static void validate(String method, JsonObject params) {
         BiConsumer<String, JsonObject> validator = VALIDATORS.get(method);
-        if (validator == null) throw failure(ErrorCode.UNKNOWN_METHOD, "Unsupported method: " + method);
+        if (validator == null) throw Errors.notApplied(ErrorCode.UNKNOWN_METHOD, "Unsupported method: " + method);
         validator.accept(method, params);
     }
 

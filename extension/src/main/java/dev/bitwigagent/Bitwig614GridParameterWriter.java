@@ -1,7 +1,6 @@
 package dev.bitwigagent;
 
 import static dev.bitwigagent.GridSnapshotReader.Kind.*;
-import static dev.bitwigagent.HostServices.failure;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
@@ -50,7 +49,7 @@ final class Bitwig614GridParameterWriter implements GridParameterWriter.Access {
     @Override
     public void requireSupported(Object parameter, GridSnapshotReader.Kind kind) {
         if (parameter == null || models.get(parameter.getClass()) != kind)
-            throw failure(
+            throw Errors.notApplied(
                     ErrorCode.GRID_UNAVAILABLE,
                     "Native scalar implementation is not an inspected controller-write model.");
     }

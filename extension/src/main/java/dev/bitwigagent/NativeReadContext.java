@@ -1,7 +1,5 @@
 package dev.bitwigagent;
 
-import static dev.bitwigagent.HostServices.failure;
-
 import com.google.gson.JsonNull;
 import com.google.gson.JsonObject;
 
@@ -47,23 +45,24 @@ final class NativeReadContext {
             Object model = i < models.length ? models[i] : project;
             boolean deleted = bool(Field.DELETED, model);
             if (serialize) lifecycle.addProperty(lifecycleLabels[i], deleted);
-            if (deleted) throw failure(ErrorCode.STALE_CONTEXT, "Native inspection target was deleted.");
+            if (deleted) throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Native inspection target was deleted.");
             if (attached(model) != context)
-                throw failure(
+                throw Errors.notApplied(
                         ErrorCode.STALE_CONTEXT,
                         "Native target no longer shares its owning project's attached context.");
             if (i < models.length && a.read(Field.PROJECT, model) != project)
-                throw failure(ErrorCode.STALE_CONTEXT, "Native target belongs to a different owning project.");
+                throw Errors.notApplied(
+                        ErrorCode.STALE_CONTEXT, "Native target belongs to a different owning project.");
         }
         Object root = required(a.read(Field.ROOT, context), "Attached context root");
         boolean initialized = bool(Field.INITIALIZED, context), disposed = bool(Field.DISPOSED, context);
-        if (disposed) throw failure(ErrorCode.STALE_CONTEXT, "Native target context was disposed.");
+        if (disposed) throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Native target context was disposed.");
         boolean contextThread = bool(Field.CONTEXT_THREAD, context);
-        if (!contextThread) throw failure(a.unavailableCode(), "Attached context thread predicate failed.");
+        if (!contextThread) throw Errors.notApplied(a.unavailableCode(), "Attached context thread predicate failed.");
         Object current = a.read(Field.CURRENT_DT, context);
         Object currentContext = current == null ? null : a.read(Field.DT_CONTEXT, current);
         if (current != null && currentContext != context)
-            throw failure(ErrorCode.STALE_CONTEXT, "Current native Dt belongs to a different context.");
+            throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Current native Dt belongs to a different context.");
         boolean hasDefault = a.defaultContext(context);
         Object defaultDt = hasDefault ? a.read(Field.DEFAULT_DT, context) : null;
         Object defaultDtContext = defaultDt == null ? null : a.read(Field.DT_CONTEXT, defaultDt);
@@ -109,25 +108,26 @@ final class NativeReadContext {
                 || before.currentContext != after.currentContext
                 || before.defaultDt != after.defaultDt
                 || before.defaultDtContext != after.defaultDtContext)
-            throw failure(ErrorCode.STALE_CONTEXT, "Native inspection context identity changed during capture.");
+            throw Errors.notApplied(
+                    ErrorCode.STALE_CONTEXT, "Native inspection context identity changed during capture.");
     }
 
     private Object attached(Object model) {
         Object context = a.read(Field.CONTEXT, model);
         if (context == null)
-            throw failure(ErrorCode.STALE_CONTEXT, "Native target is detached from its document context.");
+            throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Native target is detached from its document context.");
         return context;
     }
 
     private boolean bool(Field field, Object object) {
         Object value = a.read(field, object);
         if (!(value instanceof Boolean))
-            throw failure(a.unavailableCode(), "Native context predicate unavailable: " + field);
+            throw Errors.notApplied(a.unavailableCode(), "Native context predicate unavailable: " + field);
         return (Boolean) value;
     }
 
     private Object required(Object value, String label) {
-        if (value == null) throw failure(a.unavailableCode(), label + " is unavailable.");
+        if (value == null) throw Errors.notApplied(a.unavailableCode(), label + " is unavailable.");
         return value;
     }
 

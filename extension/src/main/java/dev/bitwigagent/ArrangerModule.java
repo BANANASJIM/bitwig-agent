@@ -1,7 +1,5 @@
 package dev.bitwigagent;
 
-import static dev.bitwigagent.HostServices.failure;
-
 import com.bitwig.extension.callback.*;
 import com.bitwig.extension.controller.api.*;
 import com.google.gson.*;
@@ -141,7 +139,7 @@ final class ArrangerModule implements HostModule {
                 break;
             }
             default:
-                throw failure(ErrorCode.UNKNOWN_METHOD, "Unknown arranger method.");
+                throw Errors.notApplied(ErrorCode.UNKNOWN_METHOD, "Unknown arranger method.");
         }
         if (!DeviceSources.canonicalUuid(Params.string(p, "trackId")))
             throw Errors.invalid("trackId must be a canonical UUID");
@@ -201,9 +199,9 @@ final class ArrangerModule implements HostModule {
     public void dispatch(HostOperation op, String method, JsonObject p) {
         s.check(op);
         boolean write = !method.equals("arranger.clips.list");
-        if (pending) throw failure(ErrorCode.BUSY, "Another native arranger operation is pending.");
+        if (pending) throw Errors.notApplied(ErrorCode.BUSY, "Another native arranger operation is pending.");
         if (write && quarantined)
-            throw failure(
+            throw Errors.notApplied(
                     ErrorCode.UNRESOLVED_MUTATION,
                     "An unresolved arranger write requires inspection (arranger.clips.list) and extension.restart before further arranger writes.");
         String id = p.get("trackId").getAsString();
@@ -212,7 +210,7 @@ final class ArrangerModule implements HostModule {
         Object slot = null;
         if (method.equals("arranger.clips.create")
                 && !"Instrument".equals(track.trackType().get()))
-            throw failure(
+            throw Errors.notApplied(
                     ErrorCode.UNSUPPORTED_SCOPE,
                     "arranger.clips.create makes MIDI note clips and needs an instrument track; use copyFromLauncher for audio.");
         if (method.equals("arranger.clips.copyFromLauncher")) {
@@ -220,13 +218,13 @@ final class ArrangerModule implements HostModule {
             String expected = p.get("expectedClipName").getAsString();
             ClipLauncherSlotBank bank = track.clipLauncherSlotBank();
             if (bank.scrollPosition().get() != 0 || number >= bank.itemCount().get())
-                throw failure(
+                throw Errors.notApplied(
                         ErrorCode.SLOT_OUT_OF_RANGE, "Launcher slot is outside the current zero-offset scene window.");
             ClipLauncherSlot launcherSlot = (ClipLauncherSlot) bank.getItemAt(number);
             if (!launcherSlot.hasContent().get()
                     || !expected.equals(launcherSlot.name().get())
                     || launcherSlot.sceneIndex().get() != number)
-                throw failure(
+                throw Errors.notApplied(
                         ErrorCode.STALE_TARGET,
                         "Observe the exact occupied slot name and index with launcher.list first.");
             slot = launcherSlot;
@@ -236,7 +234,7 @@ final class ArrangerModule implements HostModule {
             try {
                 access = new Bitwig614ArrangerAccess(s.nativeRuntime(op).access(ErrorCode.ARRANGER_UNAVAILABLE));
             } catch (ReflectiveOperationException error) {
-                throw failure(
+                throw Errors.notApplied(
                         ErrorCode.ARRANGER_UNAVAILABLE,
                         "Exact arranger descriptors unavailable: " + error.getMessage());
             }
@@ -245,7 +243,8 @@ final class ArrangerModule implements HostModule {
         Runnable check = () -> {
             s.check(op);
             if (epochs.get(index) != epoch)
-                throw failure(ErrorCode.STALE_CONTEXT, "Track bank changed while the arranger operation was queued.");
+                throw Errors.notApplied(
+                        ErrorCode.STALE_CONTEXT, "Track bank changed while the arranger operation was queued.");
             if (write) s.guardStoppedSafety(safety);
         };
         Runnable beforeWrite = () -> {
@@ -311,7 +310,8 @@ final class ArrangerModule implements HostModule {
                             () -> {
                                 check.run();
                                 if (!s.trackMatches(id, track))
-                                    throw failure(ErrorCode.STALE_CONTEXT, "Track target changed after native access.");
+                                    throw Errors.notApplied(
+                                            ErrorCode.STALE_CONTEXT, "Track target changed after native access.");
                                 if (write) quarantined = false;
                                 pending = false;
                                 op.result.complete(result);

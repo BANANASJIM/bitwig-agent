@@ -314,7 +314,7 @@ public final class ArrangerModuleTest {
         JsonObject write(Runnable check, Runnable before) {
             calls++;
             check.run();
-            if (failBeforeWrite) throw HostServices.failure(ErrorCode.ARRANGER_OVERLAP, "simulated overlap");
+            if (failBeforeWrite) throw Errors.notApplied(ErrorCode.ARRANGER_OVERLAP, "simulated overlap");
             before.run();
             writes++;
             if (failAfterWrite)

@@ -66,7 +66,7 @@ final class ProjectModule implements HostModule {
     }
 
     static void validateParams(String method, JsonObject params) {
-        if (!METHODS.contains(method)) throw failure(ErrorCode.UNKNOWN_METHOD, "Unknown project method.");
+        if (!METHODS.contains(method)) throw Errors.notApplied(ErrorCode.UNKNOWN_METHOD, "Unknown project method.");
         if (method.equals(SAVE) || method.equals(ACTIVATE)) {
             Params.fields(params, Set.of(), Set.of());
             return;
@@ -89,7 +89,7 @@ final class ProjectModule implements HostModule {
     public void dispatch(HostOperation op, String method, JsonObject params) {
         s.check(op);
         if (pending)
-            throw failure(
+            throw Errors.notApplied(
                     ErrorCode.BUSY,
                     "A project.saveAs is still running natively (" + pendingPath + "); no request was queued.");
         if (method.equals(SAVE_AS)) {
@@ -109,7 +109,8 @@ final class ProjectModule implements HostModule {
             return;
         }
         Action save = s.application.getAction(SAVE_ACTION);
-        if (save == null) throw failure(ErrorCode.UNKNOWN_ACTION, "Save action is absent from the host catalog.");
+        if (save == null)
+            throw Errors.notApplied(ErrorCode.UNKNOWN_ACTION, "Save action is absent from the host catalog.");
         long before = s.projectModifiedSequence();
         s.check(op);
         op.dispatched = true;
@@ -129,7 +130,7 @@ final class ProjectModule implements HostModule {
         }
         Action activate = s.application.getAction(ACTIVATE_ACTION);
         if (activate == null)
-            throw failure(
+            throw Errors.notApplied(
                     ErrorCode.UNKNOWN_ACTION,
                     "\"" + ACTIVATE_ACTION + "\" is absent from the host catalog; use actions.list query=engine.");
         s.check(op);
@@ -200,12 +201,12 @@ final class ProjectModule implements HostModule {
 
     private SaveAsAccess access(HostOperation op) {
         if (access != null) return access;
-        if (accessError != null) throw failure(UNAVAILABLE, accessError);
+        if (accessError != null) throw Errors.notApplied(UNAVAILABLE, accessError);
         try {
             access = new Bitwig614ProjectSaveAsAccess(s.nativeRuntime(op).access(UNAVAILABLE));
         } catch (ReflectiveOperationException | LinkageError error) {
             accessError = "Exact project save bindings unavailable: " + Bitwig614Runtime.diagnostic(error);
-            throw failure(UNAVAILABLE, accessError);
+            throw Errors.notApplied(UNAVAILABLE, accessError);
         }
         return access;
     }

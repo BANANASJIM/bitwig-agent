@@ -1,7 +1,5 @@
 package dev.bitwigagent;
 
-import static dev.bitwigagent.HostServices.failure;
-
 import com.google.gson.*;
 import java.lang.reflect.Method;
 import java.util.*;
@@ -214,16 +212,17 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
             this.ref = ref;
             track = a.invoke(target, ref.proxy);
             if (!trackType.isInstance(track))
-                throw failure(ErrorCode.STALE_CONTEXT, "Track proxy has no attached native track: " + ref.id);
+                throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Track proxy has no attached native track: " + ref.id);
             a.requireModelThread(track);
             Object found = a.invoke(Bitwig614RoutingAccess.this.channel, track);
             if (!channelType.isInstance(found))
-                throw failure(a.unavailableCode(), "Native track has no mapped channel: " + ref.id);
+                throw Errors.notApplied(a.unavailableCode(), "Native track has no mapped channel: " + ref.id);
             if (groupIface.isInstance(track) && a.invoke(alias, track) != found)
-                throw failure(a.unavailableCode(), "Native group channel alias differs from its channel: " + ref.id);
+                throw Errors.notApplied(
+                        a.unavailableCode(), "Native group channel alias differs from its channel: " + ref.id);
             a.requireModelThread(found);
             if (!UUID.fromString(ref.id).equals(a.invoke(uuid, found)))
-                throw failure(
+                throw Errors.notApplied(
                         ErrorCode.STALE_CONTEXT,
                         "Native channel UUID differs from the requested trackId " + ref.id + ".");
             channel = found;
@@ -256,7 +255,7 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
         Scope(Object anchor, List<Object> extra, Runnable check) {
             project = a.invoke(owner, anchor, projectType);
             if (!projectType.isInstance(project))
-                throw failure(a.unavailableCode(), "Native routing target has no owning project.");
+                throw Errors.notApplied(a.unavailableCode(), "Native routing target has no owning project.");
             List<Object> all = new ArrayList<>(extra);
             all.add(anchor);
             models = all.toArray();
@@ -283,7 +282,7 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
         Object ports() {
             Object ports = a.invoke(owner, models[models.length - 1], portsType);
             if (ports != project)
-                throw failure(a.unavailableCode(), "Native note-source owner is not the owning project.");
+                throw Errors.notApplied(a.unavailableCode(), "Native note-source owner is not the owning project.");
             return ports;
         }
     }
@@ -381,11 +380,12 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
         if (kind.equals("none")) return null;
         Channel to = find(channels, request.get("trackId").getAsString());
         if (to == null)
-            throw failure(
+            throw Errors.notApplied(
                     ErrorCode.STALE_CONTEXT,
                     "Destination track did not resolve to a native channel; refresh tracks.routing.get.");
         Object bus = a.invoke(kind.equals("track_audio_input") ? audioInput : noteInput, to.channel);
-        if (bus == null) throw failure(ErrorCode.UNSUPPORTED_SCOPE, "Destination track has no native " + kind + ".");
+        if (bus == null)
+            throw Errors.notApplied(ErrorCode.UNSUPPORTED_SCOPE, "Destination track has no native " + kind + ".");
         a.requireModelThread(bus);
         return bus;
     }
@@ -409,14 +409,14 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
             default: {
                 Channel from = find(channels, request.get("trackId").getAsString());
                 if (from == null)
-                    throw failure(
+                    throw Errors.notApplied(
                             ErrorCode.STALE_CONTEXT,
                             "Source track did not resolve to a native channel; refresh the get.");
                 bus = a.invoke(kind.equals("pre_fader") ? pre : kind.equals("post_fader") ? post : notes, from.channel);
             }
         }
         if (bus == null || !sourceBus.isInstance(bus))
-            throw failure(ErrorCode.UNSUPPORTED_SCOPE, "No native " + kind + " source is available.");
+            throw Errors.notApplied(ErrorCode.UNSUPPORTED_SCOPE, "No native " + kind + " source is available.");
         a.requireModelThread(bus);
         return bus;
     }
@@ -479,7 +479,7 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
             nativeKind = self.nativeKind();
             outputChooser = a.invoke(output, self.channel);
             if (!destinationSelector.isInstance(outputChooser))
-                throw failure(a.unavailableCode(), "Native channel has no destination selector.");
+                throw Errors.notApplied(a.unavailableCode(), "Native channel has no destination selector.");
             a.requireModelThread(outputChooser);
             String expectedKind = RoutingModule.INPUT_TRACK_TYPES.get(self.ref.type);
             Object chooser = null;
@@ -491,7 +491,7 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
             else {
                 chooser = a.invoke(input, self.channel);
                 if (!sourceSelector.isInstance(chooser))
-                    throw failure(a.unavailableCode(), "Native channel has no source selector.");
+                    throw Errors.notApplied(a.unavailableCode(), "Native channel has no source selector.");
                 a.requireModelThread(chooser);
             }
             inputChooser = chooser;
@@ -566,7 +566,8 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
         Map<String, Channel> channels = includeChoices ? channels(bank, unresolved) : Map.of();
         JsonObject out = snapshot(view, ports, channels, includeChoices, unresolved);
         scope.guard(check);
-        if (!self.same()) throw failure(ErrorCode.STALE_CONTEXT, "Native track changed during the routing read.");
+        if (!self.same())
+            throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Native track changed during the routing read.");
         return out;
     }
 
@@ -614,7 +615,7 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
         List<Change> changes = new ArrayList<>();
         if (p.has("output")) {
             if (view.outputUnavailable() != null)
-                throw failure(
+                throw Errors.notApplied(
                         ErrorCode.UNSUPPORTED_SCOPE,
                         "This track's output cannot be set in this version (" + view.outputUnavailable()
                                 + "); nothing was dispatched.");
@@ -622,20 +623,20 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
             Object current = a.invoke(outCurrent, view.outputChooser);
             JsonObject previous = describeDestination(current);
             if (!RoutingModule.sameEntry(p.getAsJsonObject("expectedOutput"), previous))
-                throw failure(
+                throw Errors.notApplied(
                         ErrorCode.STALE_TARGET,
                         "Current output is " + previous
                                 + ", not expectedOutput; re-read tracks.routing.get. Nothing was dispatched.");
             String kind = request.get("kind").getAsString();
             if (!kind.equals("none") && !RoutingModule.OUTPUT_GROUP.containsKey(kind))
-                throw failure(ErrorCode.KIND_MISMATCH, "Output kind " + kind + " is not a destination kind.");
+                throw Errors.notApplied(ErrorCode.KIND_MISMATCH, "Output kind " + kind + " is not a destination kind.");
             if (request.has("trackId") && request.get("trackId").getAsString().equalsIgnoreCase(ref.id))
-                throw failure(
+                throw Errors.notApplied(
                         ErrorCode.REJECTED_CYCLE, "A track cannot route its output to itself; nothing was dispatched.");
             Object bus = destination(request, channels);
             boolean already = bus == current;
             if (!already && bus != null && !Boolean.TRUE.equals(a.invoke(outAccepts, view.outputChooser, bus)))
-                throw failure(
+                throw Errors.notApplied(
                         ErrorCode.REJECTED_CYCLE,
                         "Bitwig's destination check rejects " + request
                                 + " (it would create a routing cycle); nothing was dispatched.");
@@ -643,7 +644,7 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
         }
         if (p.has("input")) {
             if (view.inputChooser == null)
-                throw failure(
+                throw Errors.notApplied(
                         ErrorCode.UNSUPPORTED_SCOPE,
                         "This track has no input chooser in this version (" + view.inputUnavailable
                                 + "); nothing was dispatched.");
@@ -651,22 +652,23 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
             Object current = a.invoke(inCurrent, view.inputChooser);
             JsonObject previous = describeSource(current, ports);
             if (!RoutingModule.sameEntry(p.getAsJsonObject("expectedInput"), previous))
-                throw failure(
+                throw Errors.notApplied(
                         ErrorCode.STALE_TARGET,
                         "Current input is " + previous
                                 + ", not expectedInput; re-read tracks.routing.get. Nothing was dispatched.");
             String kind = request.get("kind").getAsString();
             if (!RoutingModule.sourceKinds(view.inputGroups).contains(kind))
-                throw failure(
+                throw Errors.notApplied(
                         ErrorCode.KIND_MISMATCH,
                         "A " + self.ref.type + " track's input accepts " + RoutingModule.sourceKinds(view.inputGroups)
                                 + ", not " + kind + "; nothing was dispatched.");
             if (request.has("trackId") && request.get("trackId").getAsString().equalsIgnoreCase(ref.id))
-                throw failure(ErrorCode.REJECTED_CYCLE, "A track cannot be its own input; nothing was dispatched.");
+                throw Errors.notApplied(
+                        ErrorCode.REJECTED_CYCLE, "A track cannot be its own input; nothing was dispatched.");
             Object bus = source(request, channels, ports);
             boolean already = bus == current;
             if (!already && bus != null && !Boolean.TRUE.equals(a.invoke(inAccepts, view.inputChooser, bus)))
-                throw failure(
+                throw Errors.notApplied(
                         ErrorCode.REJECTED_CYCLE,
                         "Bitwig's source check rejects " + request
                                 + " (it would create a routing cycle); nothing was dispatched.");
@@ -681,14 +683,14 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
                         .get("trackId")
                         .getAsString()
                         .equalsIgnoreCase(changes.get(1).request.get("trackId").getAsString()))
-            throw failure(
+            throw Errors.notApplied(
                     ErrorCode.REJECTED_CYCLE,
                     "output and input name the same track, which would loop through this track; Bitwig checks each against the current graph only, so this pair is refused (set them in two calls if one is meant to replace the other). Nothing was dispatched.");
         Runnable same = () -> {
             if (!self.same()
                     || a.invoke(output, self.channel) != view.outputChooser
                     || (view.inputChooser != null && a.invoke(input, self.channel) != view.inputChooser))
-                throw failure(
+                throw Errors.notApplied(
                         ErrorCode.STALE_CONTEXT,
                         "Native track or its routing selectors changed around the routing write.");
         };
@@ -821,12 +823,12 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
         while (found.hasNext()) {
             Object model = found.next();
             if (++seen > RoutingModule.MAX_COMPONENTS * 4)
-                throw failure(
+                throw Errors.notApplied(
                         ErrorCode.ROUTING_BOUNDS_EXCEEDED,
                         "Device holds more routing components than this version reads.");
             if (!componentType.isInstance(model) || a.invoke(owner, model, deviceType) != device) continue;
             if (out.size() >= RoutingModule.MAX_COMPONENTS)
-                throw failure(
+                throw Errors.notApplied(
                         ErrorCode.ROUTING_BOUNDS_EXCEEDED,
                         "Device holds more than " + RoutingModule.MAX_COMPONENTS + " sidechain components.");
             out.add(new Component(model, device, out.size()));
@@ -890,13 +892,13 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
             String expected = expectedKey(key);
             if (key.equals(c.ownerKey())) {
                 if (!(p.has(expected) && p.get(expected).getAsString().equalsIgnoreCase(c.ownerId)))
-                    throw failure(
+                    throw Errors.notApplied(
                             ErrorCode.STALE_TARGET,
                             "Component " + c.index + " belongs to " + c.host + " " + c.ownerId + "; pass it as "
                                     + expected
                                     + " (such components shift when their owners change). Nothing was dispatched.");
             } else if (p.has(expected))
-                throw failure(
+                throw Errors.notApplied(
                         ErrorCode.STALE_TARGET,
                         "Component " + c.index + " is on " + c.host + ", but " + expected
                                 + " was given; re-read devices.sidechain.get. Nothing was dispatched.");
@@ -917,13 +919,13 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
         if (p.has("componentIndex")) {
             int index = p.get("componentIndex").getAsInt();
             if (index >= components.size())
-                throw failure(
+                throw Errors.notApplied(
                         ErrorCode.TARGET_NOT_FOUND,
                         "componentIndex " + index + " is outside the " + components.size()
                                 + " components; re-read devices.sidechain.get.");
             c = components.get(index);
             if (!p.get("expectedComponentId").getAsString().equals(c.id))
-                throw failure(
+                throw Errors.notApplied(
                         ErrorCode.STALE_TARGET,
                         "Component " + index + " has componentId " + c.id
                                 + ", not expectedComponentId; re-read devices.sidechain.get. Nothing was dispatched.");
@@ -932,20 +934,20 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
             for (Component candidate : components)
                 if (id.equals(candidate.id)) {
                     if (c != null)
-                        throw failure(
+                        throw Errors.notApplied(
                                 ErrorCode.AMBIGUOUS_TARGET,
                                 "componentId " + id
                                         + " names more than one component; use componentIndex from devices.sidechain.get.");
                     c = candidate;
                 }
             if (c == null)
-                throw failure(
+                throw Errors.notApplied(
                         ErrorCode.TARGET_NOT_FOUND,
                         "No component has componentId " + id + "; re-read devices.sidechain.get.");
         }
         guardOwner(c, p);
         if (c.unavailable != null)
-            throw failure(
+            throw Errors.notApplied(
                     ErrorCode.UNSUPPORTED_SCOPE,
                     "Component " + c.index + " cannot be set in this version (" + c.unavailable
                             + "); nothing was dispatched.");
@@ -956,20 +958,20 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
         Object current = a.invoke(inCurrent, c.chooser);
         JsonObject previous = describeSource(current, ports);
         if (!RoutingModule.sameEntry(p.getAsJsonObject("expectedSource"), previous))
-            throw failure(
+            throw Errors.notApplied(
                     ErrorCode.STALE_TARGET,
                     "Current source is " + previous
                             + ", not expectedSource; re-read devices.sidechain.get. Nothing was dispatched.");
         String kind = request.get("kind").getAsString();
         List<String> kinds = RoutingModule.sourceKinds(c.groups);
         if (!kinds.contains(kind))
-            throw failure(
+            throw Errors.notApplied(
                     ErrorCode.KIND_MISMATCH,
                     "This " + c.kind + " component accepts " + kinds + ", not " + kind + "; nothing was dispatched.");
         Object bus = source(request, channels, ports);
         boolean already = bus == current;
         if (!already && bus != null && !Boolean.TRUE.equals(a.invoke(inAccepts, c.chooser, bus)))
-            throw failure(
+            throw Errors.notApplied(
                     ErrorCode.REJECTED_CYCLE,
                     "Bitwig's source check rejects " + request
                             + " (it would create a routing cycle); nothing was dispatched.");
@@ -977,7 +979,7 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
         final Component chosen = c;
         Runnable same = () -> {
             if (a.invoke(selector, chosen.model) != chosen.chooser)
-                throw failure(ErrorCode.STALE_CONTEXT, "Component source selector changed during the write.");
+                throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Component source selector changed during the write.");
             targets.guard(device, proxy, check);
         };
         scope.guard(check);

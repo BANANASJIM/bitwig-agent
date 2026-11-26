@@ -1,7 +1,5 @@
 package dev.bitwigagent;
 
-import static dev.bitwigagent.HostServices.failure;
-
 import com.google.gson.JsonObject;
 import java.lang.reflect.Method;
 import java.util.*;
@@ -117,16 +115,18 @@ final class Bitwig614AutomationAccess implements AutomationModule.Access {
             this.trackId = trackId;
             this.spec = spec;
             track = a.invoke(target, proxy);
-            if (track == null) throw failure(ErrorCode.STALE_CONTEXT, "Track proxy has no attached native track.");
+            if (track == null)
+                throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Track proxy has no attached native track.");
             if (!player.isInstance(track))
-                throw failure(
+                throw Errors.notApplied(
                         ErrorCode.UNSUPPORTED_SCOPE,
                         "Automation points are supported on audio/instrument/hybrid tracks only (not group, effect or master tracks).");
             a.requireModelThread(track);
             if (!UUID.fromString(trackId).equals(a.invoke(trackUuid, track)))
-                throw failure(ErrorCode.STALE_CONTEXT, "Native track UUID differs from trackId.");
+                throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Native track UUID differs from trackId.");
             laneSet = a.invoke(lanes, track);
-            if (laneSet == null) throw failure(ErrorCode.AUTOMATION_UNAVAILABLE, "Track has no automation lane set.");
+            if (laneSet == null)
+                throw Errors.notApplied(ErrorCode.AUTOMATION_UNAVAILABLE, "Track has no automation lane set.");
             grid = spec.grid()
                     ? gridAdapter(spec)
                             .automationParameter(
@@ -134,12 +134,12 @@ final class Bitwig614AutomationAccess implements AutomationModule.Access {
                     : null;
             parameter = resolve();
             if (!parameterType.isInstance(parameter))
-                throw failure(ErrorCode.UNSUPPORTED_SCOPE, "Target is not an automatable native parameter.");
+                throw Errors.notApplied(ErrorCode.UNSUPPORTED_SCOPE, "Target is not an automatable native parameter.");
             if (a.invoke(nearest, parameter, player) != track)
-                throw failure(ErrorCode.STALE_CONTEXT, "Parameter does not belong to the target track.");
+                throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Parameter does not belong to the target track.");
             ref = a.invoke(reference, null, parameter);
             if (ref == null)
-                throw failure(
+                throw Errors.notApplied(
                         ErrorCode.AUTOMATION_UNAVAILABLE,
                         "Native automation reference is unavailable for this parameter.");
             project = a.invoke(nearest, track, projectType);
@@ -151,7 +151,8 @@ final class Bitwig614AutomationAccess implements AutomationModule.Access {
         private Object resolve() {
             if (spec.grid()) return grid.parameter;
             Object mixer = a.invoke(channel, track);
-            if (mixer == null) throw failure(ErrorCode.AUTOMATION_UNAVAILABLE, "Track has no native mixer channel.");
+            if (mixer == null)
+                throw Errors.notApplied(ErrorCode.AUTOMATION_UNAVAILABLE, "Track has no native mixer channel.");
             return a.invoke(spec.kind.equals("volume") ? volume : pan, mixer);
         }
 
@@ -159,7 +160,7 @@ final class Bitwig614AutomationAccess implements AutomationModule.Access {
             lane = found;
             timeline = found == null ? null : a.invoke(points, a.invoke(laneTimeline, found));
             if (found != null && timeline == null)
-                throw failure(ErrorCode.AUTOMATION_UNAVAILABLE, "Automation lane has no point timeline.");
+                throw Errors.notApplied(ErrorCode.AUTOMATION_UNAVAILABLE, "Automation lane has no point timeline.");
             if (timeline != null) a.requireModelThread(timeline);
         }
 
@@ -173,14 +174,15 @@ final class Bitwig614AutomationAccess implements AutomationModule.Access {
                     || resolve() != parameter
                     || a.invoke(findLane, laneSet, ref) != lane
                     || (lane != null && a.invoke(points, a.invoke(laneTimeline, lane)) != timeline))
-                throw failure(ErrorCode.STALE_CONTEXT, "Automation lane changed during the native operation.");
+                throw Errors.notApplied(
+                        ErrorCode.STALE_CONTEXT, "Automation lane changed during the native operation.");
         }
 
         List<Object> natives() {
             if (timeline == null) return List.of();
             List<Object> out = new ArrayList<>((List<?>) a.invoke(events, timeline));
             if (out.size() > AutomationModule.MAX_LANE)
-                throw failure(
+                throw Errors.notApplied(
                         ErrorCode.AUTOMATION_BOUNDS_EXCEEDED,
                         "Automation lane holds more than " + AutomationModule.MAX_LANE + " points.");
             return out;
@@ -189,7 +191,8 @@ final class Bitwig614AutomationAccess implements AutomationModule.Access {
         Object valueRange() {
             Object r = a.invoke(range, timeline);
             if (!rangeType.isInstance(r))
-                throw failure(ErrorCode.UNSUPPORTED_SCOPE, "Only continuous (decimal) automation lanes are supported.");
+                throw Errors.notApplied(
+                        ErrorCode.UNSUPPORTED_SCOPE, "Only continuous (decimal) automation lanes are supported.");
             return r;
         }
 
@@ -199,10 +202,10 @@ final class Bitwig614AutomationAccess implements AutomationModule.Access {
             List<AutomationModule.Point> out = new ArrayList<>();
             for (Object point : natives) {
                 if (!pointType.isInstance(point))
-                    throw failure(ErrorCode.UNSUPPORTED_SCOPE, "Automation lane holds a non-point event.");
+                    throw Errors.notApplied(ErrorCode.UNSUPPORTED_SCOPE, "Automation lane holds a non-point event.");
                 Object mode = a.invoke(interpolation, point);
                 if (mode != hold && mode != linear)
-                    throw failure(ErrorCode.AUTOMATION_UNAVAILABLE, "Unknown automation interpolation.");
+                    throw Errors.notApplied(ErrorCode.AUTOMATION_UNAVAILABLE, "Unknown automation interpolation.");
                 out.add(new AutomationModule.Point(
                         (Double) a.invoke(time, point),
                         (Double) a.invoke(normalized, r, point),
@@ -224,7 +227,7 @@ final class Bitwig614AutomationAccess implements AutomationModule.Access {
 
     private static Bitwig614GridAdapter gridAdapter(AutomationModule.Target spec) {
         if (!(spec.grid instanceof Bitwig614GridAdapter))
-            throw failure(ErrorCode.GRID_UNAVAILABLE, "Grid adapter unavailable for automation targets.");
+            throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Grid adapter unavailable for automation targets.");
         return (Bitwig614GridAdapter) spec.grid;
     }
 
@@ -256,7 +259,8 @@ final class Bitwig614AutomationAccess implements AutomationModule.Access {
         boolean existed = lane.lane != null;
         if (existed) lane.valueRange();
         else if (!rangeType.isInstance(a.invoke(referenceRange, lane.ref)))
-            throw failure(ErrorCode.UNSUPPORTED_SCOPE, "Only continuous (decimal) automation lanes are supported.");
+            throw Errors.notApplied(
+                    ErrorCode.UNSUPPORTED_SCOPE, "Only continuous (decimal) automation lanes are supported.");
         if (AutomationModule.same(current, desired)) {
             lane.guard(check);
             JsonObject out = written(lane, current, range, current, 0, 0, false);
@@ -280,7 +284,8 @@ final class Bitwig614AutomationAccess implements AutomationModule.Access {
             if (lane.lane == null) {
                 lane.attach(a.invoke(addLane, lane.laneSet, lane.ref, false, false, false));
                 if (lane.lane == null)
-                    throw failure(ErrorCode.AUTOMATION_UNAVAILABLE, "Bitwig did not create the automation lane.");
+                    throw Errors.notApplied(
+                            ErrorCode.AUTOMATION_UNAVAILABLE, "Bitwig did not create the automation lane.");
             }
             Object valueRange = lane.valueRange();
             for (Object point : removed) a.invoke(delete, lane.timeline, point);
@@ -288,7 +293,8 @@ final class Bitwig614AutomationAccess implements AutomationModule.Access {
                 AutomationModule.Point p = requested.get(i);
                 Object point = a.invoke(newPoint, valueRange, p.beat, p.value, p.linear ? linear : hold, 0.0);
                 if (point == null)
-                    throw failure(ErrorCode.AUTOMATION_UNAVAILABLE, "Bitwig did not create an automation point.");
+                    throw Errors.notApplied(
+                            ErrorCode.AUTOMATION_UNAVAILABLE, "Bitwig did not create an automation point.");
                 a.invoke(insert, lane.timeline, point, insertAt + i);
             }
         });

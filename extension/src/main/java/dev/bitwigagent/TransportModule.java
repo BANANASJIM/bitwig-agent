@@ -86,10 +86,10 @@ final class TransportModule implements HostModule {
             return;
         }
         if (!method.equals("transport.set"))
-            throw HostServices.failure(ErrorCode.UNKNOWN_METHOD, "Unknown transport method.");
+            throw Errors.notApplied(ErrorCode.UNKNOWN_METHOD, "Unknown transport method.");
         Params.fields(p, Set.of(), FIELDS);
         if (p.size() == 0)
-            throw HostServices.failure(ErrorCode.INVALID_PARAMS, "At least one transport field is required.");
+            throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "At least one transport field is required.");
         for (String key : List.of("playing", "metronome", "loopEnabled", "punchInEnabled", "punchOutEnabled"))
             if (p.has(key)) Params.bool(p, key);
         if (p.has("metronomeVolumeNormalized")) Params.number(p, "metronomeVolumeNormalized", 0, 1);
@@ -101,16 +101,16 @@ final class TransportModule implements HostModule {
             if (p.has(key)) Params.number(p, key, 0, Double.MAX_VALUE);
         }
         if (p.has("timeSignature") && !validSignature(Params.string(p, "timeSignature")))
-            throw HostServices.failure(
+            throw Errors.notApplied(
                     ErrorCode.INVALID_PARAMS,
                     "timeSignature must be numerator/denominator: numerator 1..32, denominator 1, 2, 4, 8, 16 or 32.");
         if (p.has("loopDurationBeats") && p.get("loopDurationBeats").getAsDouble() == 0)
-            throw HostServices.failure(ErrorCode.INVALID_PARAMS, "loopDurationBeats must be positive.");
+            throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "loopDurationBeats must be positive.");
         if (p.has("loopStartBeats")
                 && p.has("loopDurationBeats")
                 && !Double.isFinite(p.get("loopStartBeats").getAsDouble()
                         + p.get("loopDurationBeats").getAsDouble()))
-            throw HostServices.failure(ErrorCode.INVALID_PARAMS, "Loop end must be finite.");
+            throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "Loop end must be finite.");
     }
 
     static boolean validSignature(String text) {
@@ -142,7 +142,7 @@ final class TransportModule implements HostModule {
                 ? p.get("loopDurationBeats").getAsDouble()
                 : values.get("loopDurationBeats").value.getAsDouble();
         if (!Double.isFinite(start + duration))
-            throw HostServices.failure(ErrorCode.INVALID_PARAMS, "Loop end must be finite.");
+            throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "Loop end must be finite.");
         Map<String, Long> writes = new LinkedHashMap<>();
         long until = HostServices.observeUntil(op);
         boolean stopping = p.has("playing") && !p.get("playing").getAsBoolean();
@@ -338,7 +338,7 @@ final class TransportModule implements HostModule {
 
     private void require(String key) {
         if (values.get(key).value.isJsonNull())
-            throw HostServices.failure(ErrorCode.NOT_READY, "Transport field not observed: " + key);
+            throw Errors.notApplied(ErrorCode.NOT_READY, "Transport field not observed: " + key);
     }
 
     private String observedString(String key) {

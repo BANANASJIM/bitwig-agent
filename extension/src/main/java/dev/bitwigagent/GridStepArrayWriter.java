@@ -87,21 +87,21 @@ final class GridStepArrayWriter {
      */
     private static void validate(JsonObject current, float[] live, GridParameterWriter.Request request) {
         if (!"steps".equals(request.kind) || !"steps".equals(current.get("kind").getAsString()))
-            throw HostServices.failure(
+            throw Errors.notApplied(
                     ErrorCode.STALE_CONTEXT,
                     "Parameter kind differs from the expected precondition; reacquire grid.parameters.get.");
         JsonArray expected = request.expectedValues;
         if (expected.size() > live.length)
-            throw HostServices.failure(
+            throw Errors.notApplied(
                     ErrorCode.STALE_CONTEXT,
                     "expectedValues is longer than the native array (" + live.length + "); reacquire grid.get.");
         for (int i = 0; i < expected.size(); i++)
             if ((float) expected.get(i).getAsDouble() != live[i])
-                throw HostServices.failure(
+                throw Errors.notApplied(
                         ErrorCode.STALE_CONTEXT,
                         "Step values differ from the expected precondition; reacquire grid.get.");
         if (request.values.size() > expected.size())
-            throw HostServices.failure(
+            throw Errors.notApplied(
                     ErrorCode.INVALID_PARAMS,
                     "values must not be longer than expectedValues (" + expected.size() + ").");
     }

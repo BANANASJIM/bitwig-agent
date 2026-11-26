@@ -1,7 +1,6 @@
 package dev.bitwigagent;
 
 import static dev.bitwigagent.GridSnapshotReader.Field.*;
-import static dev.bitwigagent.HostServices.failure;
 
 import com.google.gson.*;
 import java.util.*;
@@ -50,13 +49,13 @@ final class GridInsertionWriter {
 
         static Request parse(JsonObject p) {
             if (p.has("typeId") == p.has("typeName"))
-                throw failure(
+                throw Errors.notApplied(
                         ErrorCode.INVALID_PARAMS, "Supply exactly one of typeId or typeName (a catalog module name).");
             int x = GridModuleWriter.Move.coordinate(p, "x"), y = GridModuleWriter.Move.coordinate(p, "y");
             if (p.has("typeName")) {
                 String name = Params.string(p, "typeName");
                 if (name.length() > 128 || name.isEmpty())
-                    throw failure(
+                    throw Errors.notApplied(
                             ErrorCode.INVALID_PARAMS,
                             "typeName must be a catalog module name of at most 128 UTF-16 units.");
                 return new Request(null, name, x, y);
@@ -70,10 +69,12 @@ final class GridInsertionWriter {
             if (!modules.isJsonArray()
                     || modules.getAsJsonArray().size() < 1
                     || modules.getAsJsonArray().size() > MAX_BATCH)
-                throw failure(ErrorCode.INVALID_PARAMS, "modules must be an array of 1.." + MAX_BATCH + " insertions.");
+                throw Errors.notApplied(
+                        ErrorCode.INVALID_PARAMS, "modules must be an array of 1.." + MAX_BATCH + " insertions.");
             List<Request> out = new ArrayList<>();
             for (JsonElement element : modules.getAsJsonArray()) {
-                if (!element.isJsonObject()) throw failure(ErrorCode.INVALID_PARAMS, "Each module must be an object.");
+                if (!element.isJsonObject())
+                    throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "Each module must be an object.");
                 JsonObject m = element.getAsJsonObject();
                 Params.fields(m, Set.of("x", "y"), Set.of("typeId", "typeName"));
                 out.add(parse(m));
@@ -151,10 +152,12 @@ final class GridInsertionWriter {
             if (lifetime.loaderDispatched) lifetime.adapterFailure(error);
             else {
                 if (!quarantine.release(owner))
-                    throw failure(ErrorCode.GRID_UNAVAILABLE, "Prelaunch insertion reservation changed unexpectedly.");
+                    throw Errors.notApplied(
+                            ErrorCode.GRID_UNAVAILABLE, "Prelaunch insertion reservation changed unexpectedly.");
                 if (error instanceof RuntimeException) throw (RuntimeException) error;
                 if (error instanceof Error) throw (Error) error;
-                throw failure(ErrorCode.GRID_UNAVAILABLE, "Insertion preparation failed before native launch.");
+                throw Errors.notApplied(
+                        ErrorCode.GRID_UNAVAILABLE, "Insertion preparation failed before native launch.");
             }
         }
     }
@@ -162,18 +165,19 @@ final class GridInsertionWriter {
     private List<Map.Entry<UUID, String>> moduleEntries(Runnable check) {
         Object catalog = values.read(CATALOG, null);
         if (!(catalog instanceof List<?>))
-            throw failure(ErrorCode.GRID_UNAVAILABLE, "Native module catalog is unavailable.");
+            throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Native module catalog is unavailable.");
         List<?> entries = (List<?>) catalog;
         if (entries.size() > GridSnapshotReader.MAX_CATALOG)
-            throw failure(ErrorCode.GRID_BOUNDS_EXCEEDED, "Native module catalog exceeds its bound.");
+            throw Errors.notApplied(ErrorCode.GRID_BOUNDS_EXCEEDED, "Native module catalog exceeds its bound.");
         List<Map.Entry<UUID, String>> out = new ArrayList<>();
         for (Object entry : entries) {
             check.run();
             if (!values.is(GridSnapshotReader.Kind.ENTRY, entry))
-                throw failure(ErrorCode.GRID_UNAVAILABLE, "Unknown native catalog entry.");
+                throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Unknown native catalog entry.");
             if (!"MODULE".equals(values.read(ENTRY_KIND, entry))) continue;
             Object id = values.read(ENTRY_ID, entry);
-            if (!(id instanceof UUID)) throw failure(ErrorCode.GRID_UNAVAILABLE, "Unknown native catalog entry.");
+            if (!(id instanceof UUID))
+                throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Unknown native catalog entry.");
             out.add(Map.entry((UUID) id, GridSnapshotReader.text(values.read(ENTRY_NAME, entry))));
         }
         return out;
@@ -228,7 +232,7 @@ final class GridInsertionWriter {
                             + (candidates.isEmpty() ? "" : "; candidates: " + String.join(", ", candidates)));
         }
         if (failures > 0)
-            throw failure(
+            throw Errors.notApplied(
                     ErrorCode.INVALID_PARAMS,
                     (requests.size() == 1
                                     ? ""
@@ -458,22 +462,24 @@ final class GridInsertionWriter {
     private void requireKnownModule(UUID id, Runnable check) {
         Object catalog = values.read(CATALOG, null);
         if (!(catalog instanceof List<?>))
-            throw failure(ErrorCode.GRID_UNAVAILABLE, "Native module catalog is unavailable.");
+            throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Native module catalog is unavailable.");
         List<?> entries = (List<?>) catalog;
         if (entries.size() > GridSnapshotReader.MAX_CATALOG)
-            throw failure(ErrorCode.GRID_BOUNDS_EXCEEDED, "Native module catalog exceeds its bound.");
+            throw Errors.notApplied(ErrorCode.GRID_BOUNDS_EXCEEDED, "Native module catalog exceeds its bound.");
         boolean found = false;
         for (Object entry : entries) {
             check.run();
             if (!values.is(GridSnapshotReader.Kind.ENTRY, entry))
-                throw failure(ErrorCode.GRID_UNAVAILABLE, "Unknown native catalog entry.");
+                throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Unknown native catalog entry.");
             if (!id.equals(values.read(ENTRY_ID, entry))) continue;
             if (found || !"MODULE".equals(values.read(ENTRY_KIND, entry)))
-                throw failure(ErrorCode.INVALID_PARAMS, "typeId must identify exactly one known MODULE catalog entry.");
+                throw Errors.notApplied(
+                        ErrorCode.INVALID_PARAMS, "typeId must identify exactly one known MODULE catalog entry.");
             found = true;
         }
         if (!found)
-            throw failure(ErrorCode.INVALID_PARAMS, "typeId is not a known MODULE catalog entry; use grid.catalog.");
+            throw Errors.notApplied(
+                    ErrorCode.INVALID_PARAMS, "typeId is not a known MODULE catalog entry; use grid.catalog.");
     }
 
     private final class Lifetime implements GridInsertionBridge.Callback {
@@ -520,7 +526,7 @@ final class GridInsertionWriter {
         public boolean delivered(Object result, Object completion) {
             // Claim before even checking deadline/future/target. Every first delivery owes native cleanup or placement.
             if (!claimed.compareAndSet(false, true)) {
-                adapterFailure(failure(
+                adapterFailure(Errors.notApplied(
                         ErrorCode.GRID_UNAVAILABLE,
                         "Duplicate native loader delivery; no repeated placement or cleanup is permitted."));
                 return false;
@@ -528,7 +534,7 @@ final class GridInsertionWriter {
             List<?> loaded;
             try {
                 if (lifecycleError != null)
-                    throw failure(
+                    throw Errors.notApplied(
                             ErrorCode.GRID_UNAVAILABLE, "Native loader previously reported an unacknowledged failure.");
                 values.documentThread();
                 check.run();
@@ -540,13 +546,13 @@ final class GridInsertionWriter {
                 contexts.capture(target.target, target.graph, ready.modules, context, check);
                 loaded = nativeWriter.converted(result);
                 if (loaded == null || loaded.size() != 1 || !values.is(GridSnapshotReader.Kind.MODULE, loaded.get(0)))
-                    throw failure(
+                    throw Errors.notApplied(
                             ErrorCode.GRID_UNAVAILABLE, "Native MODULE loader must deliver exactly one mapped module.");
                 Object module = loaded.get(0);
                 nativeWriter.requireDetached(module);
                 incoming = row(module, request.x, request.y);
                 if (!request.typeId.equals(incoming.typeId) || before.find(incoming.id) != null)
-                    throw failure(
+                    throw Errors.notApplied(
                             ErrorCode.STALE_CONTEXT,
                             "Loaded singleton has the wrong catalog type or a non-fresh instance UUID.");
                 ready.bounds(incoming);
@@ -595,8 +601,8 @@ final class GridInsertionWriter {
         @Override
         public void returned() {
             if (!normalHandling || !queued.compareAndSet(false, true)) {
-                adapterFailure(
-                        failure(ErrorCode.GRID_UNAVAILABLE, "Unexpected native callback return/settlement sequence."));
+                adapterFailure(Errors.notApplied(
+                        ErrorCode.GRID_UNAVAILABLE, "Unexpected native callback return/settlement sequence."));
                 return;
             }
             try {
@@ -609,7 +615,7 @@ final class GridInsertionWriter {
         @Override
         public void earlyError(String message) {
             String text = message == null ? "unspecified" : message.substring(0, Math.min(message.length(), 512));
-            adapterFailure(failure(
+            adapterFailure(Errors.notApplied(
                     ErrorCode.GRID_UNAVAILABLE, "Native loader early error is not cleanup acknowledgement: " + text));
         }
 
@@ -693,7 +699,7 @@ final class GridInsertionWriter {
                 if (lifecycleError != null)
                     return; // Early error/duplicate/cleanup failure is sticky, never normal settlement.
                 if (!quarantine.release(owner))
-                    throw failure(
+                    throw Errors.notApplied(
                             ErrorCode.GRID_UNAVAILABLE,
                             "Native insertion settlement no longer owns the process reservation.");
             } catch (Throwable error) {
@@ -837,7 +843,7 @@ final class GridInsertionWriter {
                 late.addProperty("inserted", module != null);
                 if (module != null) {
                     if (!module.typeId.toString().equals(recorded.get("typeId").getAsString()))
-                        throw failure(
+                        throw Errors.notApplied(
                                 ErrorCode.GRID_VERIFICATION_FAILED, "Recorded module UUID now has a different type.");
                     late.addProperty("typeId", module.typeId.toString());
                     late.add("actualPosition", GridModuleWriter.position(module.x, module.y));
@@ -893,14 +899,14 @@ final class GridInsertionWriter {
         Object id = values.read(INSTANCE_ID, module), descriptor = values.read(DESCRIPTOR, module);
         Object typeId = descriptor == null ? null : values.read(TYPE_ID, descriptor);
         if (!(id instanceof UUID) || !(typeId instanceof UUID))
-            throw failure(ErrorCode.GRID_UNAVAILABLE, "Insertion requires native instance and type UUIDs.");
+            throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Insertion requires native instance and type UUIDs.");
         return new Row(module, (UUID) id, (UUID) typeId, x, y, integer(WIDTH, module), integer(HEIGHT, module));
     }
 
     private int integer(GridSnapshotReader.Field field, Object module) {
         Object value = values.read(field, module);
         if (!(value instanceof Integer))
-            throw failure(ErrorCode.GRID_UNAVAILABLE, "Insertion geometry reader is unavailable: " + field);
+            throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Insertion geometry reader is unavailable: " + field);
         return (Integer) value;
     }
 
@@ -929,7 +935,7 @@ final class GridInsertionWriter {
                     || !id.equals(actual.id)
                     || !typeId.equals(actual.typeId)
                     || footprint && (width != actual.width || height != actual.height))
-                throw failure(ErrorCode.STALE_CONTEXT, "Native insertion membership/type/footprint changed.");
+                throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Native insertion membership/type/footprint changed.");
         }
     }
 
@@ -954,7 +960,7 @@ final class GridInsertionWriter {
 
         void capacity(int extra) {
             if (rows.size() + extra > GridTopologyContext.MAX_MODULES)
-                throw failure(
+                throw Errors.notApplied(
                         ErrorCode.GRID_BOUNDS_EXCEEDED,
                         "Insertion requires destination module count plus " + extra + " <="
                                 + GridTopologyContext.MAX_MODULES + " before loading and placement.");
@@ -973,25 +979,27 @@ final class GridInsertionWriter {
                 maxY = Math.max(maxY, (long) request.y + 1);
             }
             if (maxY - minY > GridModuleWriter.MAX_Y_SPAN)
-                throw failure(
+                throw Errors.notApplied(
                         ErrorCode.GRID_BOUNDS_EXCEEDED,
                         "Insertion occupied y-span exceeds 65536 before native allocation.");
         }
 
         void same(Layout actual) {
             if (rows.size() != actual.rows.size())
-                throw failure(ErrorCode.STALE_CONTEXT, "Native destination membership changed during insertion.");
+                throw Errors.notApplied(
+                        ErrorCode.STALE_CONTEXT, "Native destination membership changed during insertion.");
             for (Row row : rows) {
                 Row now = actual.find(row.id);
                 row.identity(now);
                 if (now.x != row.x || now.y != row.y)
-                    throw failure(ErrorCode.STALE_CONTEXT, "Native destination layout changed during insertion.");
+                    throw Errors.notApplied(
+                            ErrorCode.STALE_CONTEXT, "Native destination layout changed during insertion.");
             }
         }
 
         void inserted(Layout actual, Row incoming) {
             if (actual.rows.size() != rows.size() + 1)
-                throw failure(
+                throw Errors.notApplied(
                         ErrorCode.GRID_VERIFICATION_FAILED,
                         "Later graph did not contain exactly one additional module.");
             for (Row row : rows) rightward(row, actual.find(row.id), true);
@@ -1003,7 +1011,7 @@ final class GridInsertionWriter {
         private static void rightward(Row before, Row after, boolean footprint) {
             before.identity(after, footprint);
             if (after.y != before.y || after.x < before.x)
-                throw failure(
+                throw Errors.notApplied(
                         ErrorCode.GRID_VERIFICATION_FAILED,
                         "Native insertion layout violates absolute-row/rightward-reflow invariants.");
         }
@@ -1018,7 +1026,8 @@ final class GridInsertionWriter {
             for (int i = 0; i < size; i++) {
                 Row row = i == rows.size() ? incoming : rows.get(i);
                 if (row.width <= 0 || row.height <= 0)
-                    throw failure(ErrorCode.GRID_BOUNDS_EXCEEDED, "Insertion requires positive native footprints.");
+                    throw Errors.notApplied(
+                            ErrorCode.GRID_BOUNDS_EXCEEDED, "Insertion requires positive native footprints.");
                 checked((long) row.x + row.width);
                 checked((long) row.y + row.height);
                 minY = Math.min(minY, row.y);
@@ -1028,7 +1037,7 @@ final class GridInsertionWriter {
             }
             if (size == 0) return;
             if (maxY - minY > GridModuleWriter.MAX_Y_SPAN)
-                throw failure(
+                throw Errors.notApplied(
                         ErrorCode.GRID_BOUNDS_EXCEEDED,
                         "Insertion occupied y-span exceeds 65536 before native allocation.");
             if (prospectiveReflow)
@@ -1037,7 +1046,7 @@ final class GridInsertionWriter {
 
         private static void checked(long value) {
             if (value < Integer.MIN_VALUE || value > Integer.MAX_VALUE)
-                throw failure(
+                throw Errors.notApplied(
                         ErrorCode.GRID_BOUNDS_EXCEEDED,
                         "Insertion endpoint or cumulative horizontal reflow could overflow int32.");
         }

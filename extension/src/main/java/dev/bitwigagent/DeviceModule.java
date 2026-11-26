@@ -191,26 +191,26 @@ final class DeviceModule implements HostModule {
 
     private static void requireRemotePage(Source source) {
         if (source.remoteRebindPending)
-            throw HostServices.failure(ErrorCode.NOT_READY, "Remote source rebind awaits a host flush.");
+            throw Errors.notApplied(ErrorCode.NOT_READY, "Remote source rebind awaits a host flush.");
         if (!source.pageNamesObserved
                 || !source.pageCountObserved
                 || !source.pageIndexObserved
                 || !source.pageNameObserved)
-            throw HostServices.failure(ErrorCode.NOT_READY, "Remote page metadata has not been observed.");
+            throw Errors.notApplied(ErrorCode.NOT_READY, "Remote page metadata has not been observed.");
     }
 
     private void remoteWrite(HostOperation op, String method, JsonObject p, Target target) {
         Source source = target.source;
         requireRemotePage(source);
         if (!remoteToken(target).equals(p.get("contextToken").getAsString()))
-            throw HostServices.failure(
+            throw Errors.notApplied(
                     ErrorCode.STALE_CONTEXT, "Remote page/control observations changed; read a fresh context.");
         String pageName = p.get("expectedPageName").getAsString();
         if (method.equals("devices.remote.page")) {
             int index = p.get("pageIndex").getAsInt();
             String[] names = source.page.pageNames().get();
             if (index >= source.page.pageCount().get() || index >= names.length || !pageName.equals(names[index]))
-                throw HostServices.failure(
+                throw Errors.notApplied(
                         ErrorCode.STALE_CONTEXT,
                         "Requested remote page index/name is not in the observed page catalog.");
             if (source.pageIndexFresh
@@ -241,7 +241,7 @@ final class DeviceModule implements HostModule {
                 || control.isBeingMapped().get()
                 || !Double.isFinite(control.value().get())
                 || !name.equals(control.name().get()))
-            throw HostServices.failure(
+            throw Errors.notApplied(
                     ErrorCode.STALE_CONTEXT,
                     "Remote control is absent, unobserved, being remapped, or differs from its expected name/page.");
         double value = p.get("normalizedValue").getAsDouble();
@@ -255,7 +255,7 @@ final class DeviceModule implements HostModule {
         long sequence = source.controlSequences[index];
         guard(op, target);
         if (!token.equals(p.get("contextToken").getAsString()))
-            throw HostServices.failure(ErrorCode.STALE_CONTEXT, "Remote control context changed before dispatch.");
+            throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Remote control context changed before dispatch.");
         s.requirePlaybackSafe();
         op.dispatched = true;
         // Explicit absolute RPC writes must not wait for physical-controller takeover.
@@ -466,7 +466,7 @@ final class DeviceModule implements HostModule {
                 Params.number(p, "normalizedValue", 0, 1);
                 return;
             default:
-                throw HostServices.failure(ErrorCode.UNKNOWN_METHOD, "Unknown device operation.");
+                throw Errors.notApplied(ErrorCode.UNKNOWN_METHOD, "Unknown device operation.");
         }
     }
 
@@ -525,7 +525,7 @@ final class DeviceModule implements HostModule {
     }
 
     private static void invalid(String message) {
-        throw HostServices.failure(ErrorCode.INVALID_PARAMS, message);
+        throw Errors.notApplied(ErrorCode.INVALID_PARAMS, message);
     }
 
     @Override
@@ -543,7 +543,7 @@ final class DeviceModule implements HostModule {
             return;
         }
         if (mutation != null && !mutation.result.isDone())
-            throw HostServices.failure(ErrorCode.BUSY, "Another device mutation is awaiting observations.");
+            throw Errors.notApplied(ErrorCode.BUSY, "Another device mutation is awaiting observations.");
         mutation = op;
         if (method.equals("devices.insert")) {
             insert(op, p);
@@ -596,7 +596,7 @@ final class DeviceModule implements HostModule {
         s.sources.requireZeroWindow(p);
         DeviceSources.Source root = s.sources.root(p);
         Source source = sources[s.trackSlot(root.track.id)][p.get("deviceIndex").getAsInt()];
-        if (!source.ready()) throw HostServices.failure(ErrorCode.NOT_READY, "Device metadata has not been observed.");
+        if (!source.ready()) throw Errors.notApplied(ErrorCode.NOT_READY, "Device metadata has not been observed.");
         return new Target(root.track.id, root.track.slot, source.deviceIndex, root.name, source, root.revision);
     }
 
@@ -610,7 +610,7 @@ final class DeviceModule implements HostModule {
     private void guard(HostOperation op, Target target) {
         s.check(op);
         if (!matches(target))
-            throw HostServices.failure(ErrorCode.STALE_CONTEXT, "Device target changed before dispatch.");
+            throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Device target changed before dispatch.");
     }
 
     private JsonObject metadata(Target target) {
@@ -702,14 +702,14 @@ final class DeviceModule implements HostModule {
             default:
                 anchor = p.get("deviceIndex").getAsInt();
                 if (anchor >= count)
-                    throw HostServices.failure(
+                    throw Errors.notApplied(
                             ErrorCode.TARGET_NOT_FOUND, "Anchor device index is beyond the observed device count.");
                 if (!sources[t][anchor]
                         .device
                         .name()
                         .get()
                         .equals(p.get("expectedDeviceName").getAsString()))
-                    throw HostServices.failure(
+                    throw Errors.notApplied(
                             ErrorCode.STALE_TARGET,
                             "The device at index " + anchor + " is named \""
                                     + sources[t][anchor].device.name().get() + "\", not expectedDeviceName.");
@@ -720,7 +720,7 @@ final class DeviceModule implements HostModule {
                 || !prefixMatches(t, state.revisions)
                 || s.devices[t].itemCount().get() != count
                 || s.devices[t].scrollPosition().get() != 0)
-            throw HostServices.failure(ErrorCode.STALE_CONTEXT, "Insertion target changed before dispatch.");
+            throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Insertion target changed before dispatch.");
         String kind = p.get("kind").getAsString();
         String value = p.get(kind.equals("file") ? "path" : "id").getAsString();
         InsertionPoint point;
@@ -778,7 +778,7 @@ final class DeviceModule implements HostModule {
         int count = p.get("expectedChildCount").getAsInt();
         LayerView view = new LayerView(layer);
         if (view.count() != count)
-            throw HostServices.failure(ErrorCode.STALE_CONTEXT, "Layer child count differs from expectedChildCount.");
+            throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Layer child count differs from expectedChildCount.");
         DeviceChainEdit.Before before =
                 DeviceChainEdit.Before.capture(view, "Layer child count and window contents disagree.");
         boolean start = p.has("position") && p.get("position").getAsString().equals("start");
@@ -790,7 +790,7 @@ final class DeviceModule implements HostModule {
                 && Boolean.TRUE.equals(layer.exists)
                 && layerId.equals(layer.id);
         if (!context.getAsBoolean())
-            throw HostServices.failure(ErrorCode.STALE_CONTEXT, "Layer target changed before dispatch.");
+            throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Layer target changed before dispatch.");
         String kind = p.get("kind").getAsString();
         String value = p.get(kind.equals("file") ? "path" : "id").getAsString();
         Edit edit = new Edit(
@@ -822,7 +822,7 @@ final class DeviceModule implements HostModule {
         s.requirePlaybackSafe();
         TopState state = captureTop(t, -1, "Device bank contents disagree with the observed device count.");
         if (index >= state.before.count)
-            throw HostServices.failure(ErrorCode.TARGET_NOT_FOUND, "Device is beyond the observed device count.");
+            throw Errors.notApplied(ErrorCode.TARGET_NOT_FOUND, "Device is beyond the observed device count.");
         guard(op, target);
         Edit edit = topEdit(target.trackId, t, DeviceChainEdit.Plan.delete(index, state.before), state, index);
         edit.extra.add("deleted", DeviceChainEdit.summary(index, state.before.names[index], state.before.types[index]));
@@ -837,9 +837,9 @@ final class DeviceModule implements HostModule {
         TopState state = captureTop(t, -1, "Device bank contents disagree with the observed device count.");
         int n = state.before.count;
         if (from >= n)
-            throw HostServices.failure(ErrorCode.TARGET_NOT_FOUND, "Device is beyond the observed device count.");
+            throw Errors.notApplied(ErrorCode.TARGET_NOT_FOUND, "Device is beyond the observed device count.");
         if (to >= n)
-            throw HostServices.failure(ErrorCode.TARGET_NOT_FOUND, "toIndex is beyond the observed device count.");
+            throw Errors.notApplied(ErrorCode.TARGET_NOT_FOUND, "toIndex is beyond the observed device count.");
         guard(op, target);
         DeviceChainEdit.Plan plan = DeviceChainEdit.Plan.move(from, to, state.before);
         Edit edit = topEdit(target.trackId, t, plan, state, 0);
@@ -862,12 +862,12 @@ final class DeviceModule implements HostModule {
 
     /** Complete, ready top-level window: count, scroll, per-slot existence and the revisions of every present device. */
     private TopState captureTop(int t, int expectedCount, String staleMessage) {
-        if (!countObserved[t]) throw HostServices.failure(ErrorCode.NOT_READY, "Device count has not been observed.");
+        if (!countObserved[t]) throw Errors.notApplied(ErrorCode.NOT_READY, "Device count has not been observed.");
         int count = s.devices[t].itemCount().get();
         if (s.devices[t].scrollPosition().get() != 0 || (expectedCount >= 0 && count != expectedCount))
-            throw HostServices.failure(ErrorCode.STALE_CONTEXT, staleMessage);
+            throw Errors.notApplied(ErrorCode.STALE_CONTEXT, staleMessage);
         if (count > HostServices.DEVICES)
-            throw HostServices.failure(
+            throw Errors.notApplied(
                     ErrorCode.OUTSIDE_WINDOW,
                     "The chain is longer than the 16-device window; only inserts at a bounded count are supported.");
         long[] revisions = new long[count];
@@ -877,7 +877,7 @@ final class DeviceModule implements HostModule {
                     && source.identity.exists != null
                     && source.device.exists().get()
                     && source.device.position().get() != d)
-                throw HostServices.failure(ErrorCode.STALE_CONTEXT, "Device count and bank contents disagree.");
+                throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Device count and bank contents disagree.");
             if (d < count) revisions[d] = source.identity.revision;
         }
         return new TopState(count, revisions, DeviceChainEdit.Before.capture(new TopView(t), staleMessage));

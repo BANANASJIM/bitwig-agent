@@ -531,11 +531,10 @@ public final class ModulatorModuleTest {
             during.run();
             check.run();
             if (!currentId.equals(modulator))
-                throw HostServices.failure(ErrorCode.TARGET_NOT_FOUND, "Previous UUID is not current.");
-            if (id.equals("UNSUPPORTED"))
-                throw HostServices.failure(ErrorCode.UNSUPPORTED_SCOPE, "Not a string panel.");
+                throw Errors.notApplied(ErrorCode.TARGET_NOT_FOUND, "Previous UUID is not current.");
+            if (id.equals("UNSUPPORTED")) throw Errors.notApplied(ErrorCode.UNSUPPORTED_SCOPE, "Not a string panel.");
             if (!strings.containsKey(id))
-                throw HostServices.failure(ErrorCode.TARGET_NOT_FOUND, "No exact parameter identifier.");
+                throw Errors.notApplied(ErrorCode.TARGET_NOT_FOUND, "No exact parameter identifier.");
             JsonObject result = HostServices.observed();
             result.addProperty("modulatorId", currentId.toString());
             result.addProperty("parameterId", id);

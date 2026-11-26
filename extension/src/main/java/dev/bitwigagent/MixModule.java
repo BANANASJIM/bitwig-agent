@@ -145,13 +145,13 @@ final class MixModule implements HostModule {
                 Params.fields(p, Set.of("trackId"), union(WRITABLE, DISPLAY_WRITABLE));
                 Params.string(p, "trackId");
                 if (p.size() == 1)
-                    throw HostServices.failure(ErrorCode.INVALID_PARAMS, "At least one track field is required.");
+                    throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "At least one track field is required.");
                 if (p.has("name")) Params.string(p, "name");
                 for (String key : List.of("volumeNormalized", "panNormalized"))
                     if (p.has(key)) Params.number(p, key, 0, 1);
                 for (String key : List.of("mute", "solo", "arm", "activated")) if (p.has(key)) Params.bool(p, key);
                 if (p.has("color") && !RGB.matcher(Params.string(p, "color")).matches())
-                    throw HostServices.failure(ErrorCode.INVALID_PARAMS, "color must be #RRGGBB.");
+                    throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "color must be #RRGGBB.");
                 for (String key : List.of("monitorMode", "crossFadeMode")) if (p.has(key)) Params.string(p, key);
                 if (p.has("volumeDb")) Params.number(p, "volumeDb", -150, 24);
                 if (p.has("panPercent")) Params.number(p, "panPercent", -100, 100);
@@ -163,8 +163,7 @@ final class MixModule implements HostModule {
                 Params.fields(p, Set.of("trackId"), SEND_OPTIONAL);
                 Params.string(p, "trackId");
                 if (p.has("sendIndex") == p.has("sendName"))
-                    throw HostServices.failure(
-                            ErrorCode.INVALID_PARAMS, "Supply exactly one of sendIndex or sendName.");
+                    throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "Supply exactly one of sendIndex or sendName.");
                 if (p.has("sendIndex")) Params.integer(p, "sendIndex", 0, 127);
                 for (String key : List.of("sendName", "expectedSendName", "display"))
                     if (p.has(key)) Params.string(p, key);
@@ -172,14 +171,14 @@ final class MixModule implements HostModule {
                 if (p.has("enabled")) Params.bool(p, "enabled");
                 atMostOne(p, "valueNormalized", "display");
                 if (!p.has("valueNormalized") && !p.has("display") && !p.has("enabled"))
-                    throw HostServices.failure(
+                    throw Errors.notApplied(
                             ErrorCode.INVALID_PARAMS,
                             "At least one of valueNormalized, display or enabled is required.");
                 return;
             case "tracks.create":
                 Params.fields(p, Set.of("type", "position", "name"), Set.of());
                 if (!Set.of("audio", "instrument", "effect").contains(Params.string(p, "type")))
-                    throw HostServices.failure(ErrorCode.INVALID_PARAMS, "type must be audio, instrument, or effect.");
+                    throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "type must be audio, instrument, or effect.");
                 Params.integer(p, "position", -1, Integer.MAX_VALUE);
                 Params.string(p, "name");
                 return;
@@ -194,7 +193,7 @@ final class MixModule implements HostModule {
                 Params.string(p, "expectedName");
                 return;
             default:
-                throw HostServices.failure(ErrorCode.UNKNOWN_METHOD, "Unknown track method.");
+                throw Errors.notApplied(ErrorCode.UNKNOWN_METHOD, "Unknown track method.");
         }
     }
 
@@ -208,8 +207,7 @@ final class MixModule implements HostModule {
         int n = 0;
         for (String key : keys) if (p.has(key)) n++;
         if (n > 1)
-            throw HostServices.failure(
-                    ErrorCode.INVALID_PARAMS, "Supply at most one of " + String.join(", ", keys) + ".");
+            throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "Supply at most one of " + String.join(", ", keys) + ".");
     }
 
     static List<String> trackIds(JsonObject p) {
@@ -217,17 +215,17 @@ final class MixModule implements HostModule {
         if (!value.isJsonArray()
                 || value.getAsJsonArray().size() < 1
                 || value.getAsJsonArray().size() > HostServices.TRACKS)
-            throw HostServices.failure(ErrorCode.INVALID_PARAMS, "trackIds must be an array of 1..16 track UUIDs.");
+            throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "trackIds must be an array of 1..16 track UUIDs.");
         List<String> ids = new ArrayList<>();
         Set<String> seen = new HashSet<>();
         for (JsonElement item : value.getAsJsonArray()) {
             if (!item.isJsonPrimitive()
                     || !item.getAsJsonPrimitive().isString()
                     || !DeviceSources.canonicalUuid(item.getAsString()))
-                throw HostServices.failure(
+                throw Errors.notApplied(
                         ErrorCode.INVALID_PARAMS, "Each trackIds entry must be a canonical track UUID.");
             if (!seen.add(item.getAsString().toLowerCase(Locale.ROOT)))
-                throw HostServices.failure(ErrorCode.INVALID_PARAMS, "trackIds must be distinct.");
+                throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "trackIds must be distinct.");
             ids.add(item.getAsString().toLowerCase(Locale.ROOT));
         }
         return ids;
@@ -341,7 +339,7 @@ final class MixModule implements HostModule {
                 text = request.getAsString();
                 target = DisplayScale.parse(kind, text);
                 if (Double.isNaN(target))
-                    throw HostServices.failure(
+                    throw Errors.notApplied(
                             ErrorCode.INVALID_PARAMS, "Display text not understood for " + kind + ": " + text);
             }
         }
@@ -544,35 +542,35 @@ final class MixModule implements HostModule {
         State state = target.state;
         JsonElement offset = state.meta("sendOffset");
         if (offset.isJsonNull() || state.meta("sendCount").isJsonNull())
-            throw HostServices.failure(ErrorCode.NOT_READY, "Send window is not observed yet.");
+            throw Errors.notApplied(ErrorCode.NOT_READY, "Send window is not observed yet.");
         int slot = -1;
         if (p.has("sendIndex")) {
             slot = p.get("sendIndex").getAsInt() - offset.getAsInt();
             if (slot < 0 || slot >= HostServices.SENDS)
-                throw HostServices.failure(ErrorCode.OUTSIDE_WINDOW, "sendIndex is outside the observed send window.");
+                throw Errors.notApplied(ErrorCode.OUTSIDE_WINDOW, "sendIndex is outside the observed send window.");
         } else {
             String wanted = p.get("sendName").getAsString();
             for (int j = 0; j < HostServices.SENDS; j++) {
                 JsonElement exists = state.meta("send" + j + ".exists"), name = state.meta("send" + j + ".name");
                 if (exists.isJsonNull() || name.isJsonNull())
-                    throw HostServices.failure(ErrorCode.NOT_READY, "Send names are not all observed yet.");
+                    throw Errors.notApplied(ErrorCode.NOT_READY, "Send names are not all observed yet.");
                 if (exists.getAsBoolean() && name.getAsString().equals(wanted)) {
                     if (slot >= 0)
-                        throw HostServices.failure(
+                        throw Errors.notApplied(
                                 ErrorCode.AMBIGUOUS_SEND, "More than one send is named " + wanted + "; use sendIndex.");
                     slot = j;
                 }
             }
-            if (slot < 0) throw HostServices.failure(ErrorCode.UNKNOWN_SEND, "No send is named " + wanted + ".");
+            if (slot < 0) throw Errors.notApplied(ErrorCode.UNKNOWN_SEND, "No send is named " + wanted + ".");
         }
         String prefix = "send" + slot + ".";
         JsonElement exists = state.meta(prefix + "exists"), name = state.meta(prefix + "name");
         if (exists.isJsonNull() || name.isJsonNull())
-            throw HostServices.failure(ErrorCode.NOT_READY, "Send is not observed yet.");
-        if (!exists.getAsBoolean()) throw HostServices.failure(ErrorCode.UNKNOWN_SEND, "No send exists at that index.");
+            throw Errors.notApplied(ErrorCode.NOT_READY, "Send is not observed yet.");
+        if (!exists.getAsBoolean()) throw Errors.notApplied(ErrorCode.UNKNOWN_SEND, "No send exists at that index.");
         if (p.has("expectedSendName")
                 && !p.get("expectedSendName").getAsString().equals(name.getAsString()))
-            throw HostServices.failure(
+            throw Errors.notApplied(
                     ErrorCode.STALE_TARGET,
                     "Send name is " + name.getAsString() + ", not the expected "
                             + p.get("expectedSendName").getAsString() + ".");
@@ -581,7 +579,7 @@ final class MixModule implements HostModule {
             displayTarget =
                     DisplayScale.parse(DisplayScale.Kind.DB, p.get("display").getAsString());
             if (Double.isNaN(displayTarget))
-                throw HostServices.failure(
+                throw Errors.notApplied(
                         ErrorCode.INVALID_PARAMS,
                         "Send display must read like \"-12 dB\" or \"-inf dB\": "
                                 + p.get("display").getAsString());
@@ -630,7 +628,7 @@ final class MixModule implements HostModule {
             if (!state.meta(prefix + "exists").equals(new JsonPrimitive(true))
                     || now.isJsonNull()
                     || !now.getAsString().equals(name))
-                throw HostServices.failure(ErrorCode.STALE_TARGET, "Send changed during operation.");
+                throw Errors.notApplied(ErrorCode.STALE_TARGET, "Send changed during operation.");
         }
 
         void start() {
@@ -814,9 +812,9 @@ final class MixModule implements HostModule {
 
     private void guard(HostOperation op, Target target) {
         if (!target.matches(s))
-            throw HostServices.failure(ErrorCode.STALE_TARGET, "Track UUID/proxy changed during operation.");
+            throw Errors.notApplied(ErrorCode.STALE_TARGET, "Track UUID/proxy changed during operation.");
         if (target.state.rebindPending)
-            throw HostServices.failure(ErrorCode.NOT_READY, "Track proxy rebind awaits a host flush.");
+            throw Errors.notApplied(ErrorCode.NOT_READY, "Track proxy rebind awaits a host flush.");
         s.check(op);
     }
 
@@ -892,28 +890,28 @@ final class MixModule implements HostModule {
 
     private void create(HostOperation op, JsonObject p) {
         if (creationUnresolved)
-            throw HostServices.failure(
+            throw Errors.notApplied(
                     ErrorCode.UNRESOLVED_CREATION,
                     "A prior native track factory remains unattributed; further automatic creation is quarantined for this extension instance.");
         if (groupUnresolved)
-            throw HostServices.failure(
+            throw Errors.notApplied(
                     ErrorCode.UNRESOLVED_CREATION,
                     "A prior tracks.group operation remains unattributed; track creation is quarantined for this extension instance.");
         if (creation != null && !creation.result.isDone())
-            throw HostServices.failure(ErrorCode.BUSY, "Another track creation or grouping awaits observations.");
+            throw Errors.notApplied(ErrorCode.BUSY, "Another track creation or grouping awaits observations.");
         if (!s.tracksObserved)
-            throw HostServices.failure(ErrorCode.NOT_READY, "Track bank has not reported its size yet.");
+            throw Errors.notApplied(ErrorCode.NOT_READY, "Track bank has not reported its size yet.");
         Creation before = capture();
         if (!before.complete)
-            throw HostServices.failure(
+            throw Errors.notApplied(
                     ErrorCode.NOT_READY,
                     "Creation requires a complete observed UUID/type/position baseline inside the track window.");
         if (before.total >= HostServices.TRACKS)
-            throw HostServices.failure(
+            throw Errors.notApplied(
                     ErrorCode.OUTSIDE_WINDOW,
                     "The 16-track window is full: the new track could not be observed; no factory was dispatched.");
         if (before.groups && !before.tree.complete)
-            throw HostServices.failure(
+            throw Errors.notApplied(
                     ErrorCode.UNSUPPORTED_SCOPE,
                     "Track creation in a grouped project needs every track's parent observed (" + before.tree.reason
                             + "); the insertion position cannot be attributed safely and no factory was dispatched.");
@@ -940,27 +938,27 @@ final class MixModule implements HostModule {
 
     private void group(HostOperation op, JsonObject p) {
         if (creationUnresolved || groupUnresolved)
-            throw HostServices.failure(
+            throw Errors.notApplied(
                     ErrorCode.UNRESOLVED_CREATION,
                     "A prior track creation or grouping remains unattributed; grouping is quarantined for this extension instance.");
         if (creation != null && !creation.result.isDone())
-            throw HostServices.failure(ErrorCode.BUSY, "Another track creation or grouping awaits observations.");
+            throw Errors.notApplied(ErrorCode.BUSY, "Another track creation or grouping awaits observations.");
         if (!s.tracksObserved)
-            throw HostServices.failure(ErrorCode.NOT_READY, "Track bank has not reported its size yet.");
+            throw Errors.notApplied(ErrorCode.NOT_READY, "Track bank has not reported its size yet.");
         s.recordingSafety(op);
         s.requireSelectionFree();
         List<String> ids = trackIds(p);
         Creation before = capture();
         if (!before.complete)
-            throw HostServices.failure(
+            throw Errors.notApplied(
                     ErrorCode.NOT_READY,
                     "Grouping requires a complete observed UUID/type/position window of at most 16 tracks.");
         if (before.total >= HostServices.TRACKS)
-            throw HostServices.failure(
+            throw Errors.notApplied(
                     ErrorCode.OUTSIDE_WINDOW,
                     "The 16-track window is full: the new group could not be observed; nothing was dispatched.");
         if (!before.tree.complete)
-            throw HostServices.failure(
+            throw Errors.notApplied(
                     ErrorCode.UNSUPPORTED_SCOPE,
                     "Grouping needs every track's parent observed (" + before.tree.reason
                             + "); nothing was dispatched.");
@@ -968,10 +966,10 @@ final class MixModule implements HostModule {
         for (String id : ids) {
             TrackTree.Node node = before.tree.byId.get(id);
             if (node == null)
-                throw HostServices.failure(
+                throw Errors.notApplied(
                         ErrorCode.OUTSIDE_WINDOW, "Track UUID is absent from the current 16-track window: " + id);
             if (node.master() || "Effect".equals(node.type))
-                throw HostServices.failure(
+                throw Errors.notApplied(
                         ErrorCode.UNSUPPORTED_SCOPE,
                         "Only audio, instrument, hybrid and group tracks can be grouped; " + id + " is " + node.type
                                 + ".");
@@ -980,7 +978,7 @@ final class MixModule implements HostModule {
         String parent = nodes.get(0).parentId;
         for (TrackTree.Node node : nodes)
             if (!Objects.equals(node.parentId, parent))
-                throw HostServices.failure(
+                throw Errors.notApplied(
                         ErrorCode.UNSUPPORTED_SCOPE,
                         "All trackIds must share one parent (top level or the same group); nothing was dispatched.");
         nodes.sort(Comparator.comparingInt(n -> n.position));
@@ -995,7 +993,7 @@ final class MixModule implements HostModule {
                 groupAccess =
                         new Bitwig614TrackGroupAccess(s.nativeRuntime(op).access(ErrorCode.TRACK_GROUP_UNAVAILABLE));
             } catch (ReflectiveOperationException error) {
-                throw HostServices.failure(
+                throw Errors.notApplied(
                         ErrorCode.TRACK_GROUP_UNAVAILABLE,
                         "Exact track group descriptors unavailable: " + error.getMessage());
             }
@@ -1110,22 +1108,22 @@ final class MixModule implements HostModule {
     private void delete(HostOperation op, Target target, String expectedName) {
         HostServices.SafetyObservation safety = s.stoppedSafety(op);
         if (!s.tracksObserved)
-            throw HostServices.failure(ErrorCode.NOT_READY, "Track bank has not reported its size yet.");
+            throw Errors.notApplied(ErrorCode.NOT_READY, "Track bank has not reported its size yet.");
         guard(op, target);
         JsonElement type = target.state.meta("type"), name = value(target.state, 0), index = target.state.meta("index");
         if (type.isJsonNull() || name.isJsonNull())
-            throw HostServices.failure(ErrorCode.NOT_READY, "Track type/name have not been observed.");
+            throw Errors.notApplied(ErrorCode.NOT_READY, "Track type/name have not been observed.");
         if (!Set.of("Audio", "Instrument", "Hybrid", "Effect").contains(type.getAsString()))
-            throw HostServices.failure(
+            throw Errors.notApplied(
                     ErrorCode.UNSUPPORTED_SCOPE,
                     "Only Audio, Instrument, Hybrid and Effect tracks can be deleted; this track is "
                             + type.getAsString() + " (group and master are refused); nothing was dispatched.");
         if (!name.getAsString().equals(expectedName))
-            throw HostServices.failure(
+            throw Errors.notApplied(
                     ErrorCode.STALE_TARGET, "Track name differs from expectedName; no delete was dispatched.");
         Creation before = capture();
         if (!before.complete || !before.ids.contains(target.id))
-            throw HostServices.failure(
+            throw Errors.notApplied(
                     ErrorCode.NOT_READY,
                     "Deletion needs the whole project observed in the 16-track bank window (offset 0, at most 16 tracks including group children and effect tracks, every UUID/type/position read); this project exceeds it or is not fully observed yet. Nothing was dispatched.");
         s.guardStoppedSafety(safety);

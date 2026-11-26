@@ -321,7 +321,7 @@ public final class AutomationModuleTest {
                     lastHash = hash;
                     lastPoints = points;
                     lastRange = range;
-                    if (failBeforeWrite) throw HostServices.failure(ErrorCode.STALE_TARGET, "simulated hash mismatch");
+                    if (failBeforeWrite) throw Errors.notApplied(ErrorCode.STALE_TARGET, "simulated hash mismatch");
                     before.run();
                     writes++;
                     if (failAfterWrite)

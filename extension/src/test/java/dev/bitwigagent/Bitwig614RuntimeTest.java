@@ -32,7 +32,7 @@ public final class Bitwig614RuntimeTest {
         expect(
                 "cancelled",
                 () -> new Bitwig614Runtime(new Object(), "unsupported-version", () -> {
-                    throw HostServices.failure(ErrorCode.CANCELLED, "stop before binding");
+                    throw Errors.notApplied(ErrorCode.CANCELLED, "stop before binding");
                 }));
     }
 
@@ -40,7 +40,7 @@ public final class Bitwig614RuntimeTest {
         Method reader = ThrowingRead.class.getMethod("read");
         for (ErrorCode code : new ErrorCode[] {ErrorCode.GRID_UNAVAILABLE, ErrorCode.MODULATOR_UNAVAILABLE}) {
             RpcException nativeRejection =
-                    HostServices.failure(ErrorCode.CANCELLED, "native code threw an RPC-shaped error");
+                    Errors.notApplied(ErrorCode.CANCELLED, "native code threw an RPC-shaped error");
             try {
                 Bitwig614Runtime.invoke(code, reader, new ThrowingRead(nativeRejection));
                 throw new AssertionError("Expected reflected native rejection");

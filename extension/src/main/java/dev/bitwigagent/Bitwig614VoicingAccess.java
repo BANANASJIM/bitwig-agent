@@ -1,7 +1,5 @@
 package dev.bitwigagent;
 
-import static dev.bitwigagent.HostServices.failure;
-
 import com.google.gson.*;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
@@ -115,7 +113,7 @@ final class Bitwig614VoicingAccess implements GridVoicingWriter.Access {
     public Object model(Object device) {
         Object value = bindings.invoke(model, device);
         if (value != null && value.getClass() != voicing)
-            throw failure(ErrorCode.GRID_UNAVAILABLE, "Native voicing model is not the exact inspected jBG.");
+            throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Native voicing model is not the exact inspected jBG.");
         return value;
     }
 
@@ -130,13 +128,15 @@ final class Bitwig614VoicingAccess implements GridVoicingWriter.Access {
                 for (Map.Entry<String, Object> entry : enums.get(field.name).entrySet())
                     if (entry.getValue() == value) text = entry.getKey();
                 if (text == null)
-                    throw failure(
+                    throw Errors.notApplied(
                             ErrorCode.GRID_UNAVAILABLE,
                             "Native voicing " + field.name + " is outside the inspected enum values.");
                 result.addProperty(field.name, text);
             } else if (value instanceof Boolean) result.addProperty(field.name, (Boolean) value);
             else if (value instanceof Integer) result.addProperty(field.name, (Integer) value);
-            else throw failure(ErrorCode.GRID_UNAVAILABLE, "Native voicing " + field.name + " has an unexpected type.");
+            else
+                throw Errors.notApplied(
+                        ErrorCode.GRID_UNAVAILABLE, "Native voicing " + field.name + " has an unexpected type.");
         }
         return result;
     }
@@ -145,19 +145,20 @@ final class Bitwig614VoicingAccess implements GridVoicingWriter.Access {
     public void set(Object voicingModel, String name, JsonElement value) {
         requireModel(voicingModel);
         Field field = fields.get(name);
-        if (field == null) throw failure(ErrorCode.INVALID_PARAMS, "Unknown voicing field: " + name);
+        if (field == null) throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "Unknown voicing field: " + name);
         if (field.setter == null)
-            throw failure(bindings.unavailableCode(), "Voicing write operation is not bound: " + setterError);
+            throw Errors.notApplied(bindings.unavailableCode(), "Voicing write operation is not bound: " + setterError);
         Object argument;
         if (field.enumType != null) argument = enums.get(name).get(value.getAsString());
         else if (field.getter.getReturnType() == boolean.class) argument = value.getAsBoolean();
         else argument = value.getAsInt();
-        if (argument == null) throw failure(ErrorCode.INVALID_PARAMS, "Unknown voicing value for " + name + ".");
+        if (argument == null)
+            throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "Unknown voicing value for " + name + ".");
         bindings.invoke(field.setter, voicingModel, argument);
     }
 
     private void requireModel(Object object) {
         if (object == null || object.getClass() != voicing)
-            throw failure(bindings.unavailableCode(), "Voicing requires the exact inspected jBG model.");
+            throw Errors.notApplied(bindings.unavailableCode(), "Voicing requires the exact inspected jBG model.");
     }
 }

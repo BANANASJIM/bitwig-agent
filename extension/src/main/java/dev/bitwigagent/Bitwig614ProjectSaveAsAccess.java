@@ -1,7 +1,5 @@
 package dev.bitwigagent;
 
-import static dev.bitwigagent.HostServices.failure;
-
 import java.io.File;
 import java.lang.reflect.*;
 import java.nio.file.Path;
@@ -64,7 +62,7 @@ final class Bitwig614ProjectSaveAsAccess implements ProjectModule.SaveAsAccess {
 
     private Object app() {
         Object app = a.invoke(application, null);
-        if (app == null) throw failure(ErrorCode.NOT_READY, "Native application is not ready.");
+        if (app == null) throw Errors.notApplied(ErrorCode.NOT_READY, "Native application is not ready.");
         return app;
     }
 
@@ -79,14 +77,16 @@ final class Bitwig614ProjectSaveAsAccess implements ProjectModule.SaveAsAccess {
     public void saveAs(Object projectProxy, Path file, Runnable beforeDispatch, ProjectModule.Completion done) {
         a.documentThread();
         if (!projectProxyType.isInstance(projectProxy))
-            throw failure(ErrorCode.PROJECT_SAVE_AS_UNAVAILABLE, "Controller Project is not the native project proxy.");
+            throw Errors.notApplied(
+                    ErrorCode.PROJECT_SAVE_AS_UNAVAILABLE, "Controller Project is not the native project proxy.");
         Object project = a.invoke(target, projectProxy);
         if (!projectType.isInstance(project))
-            throw failure(ErrorCode.NOT_READY, "Controller Project proxy is not bound to an open project.");
+            throw Errors.notApplied(ErrorCode.NOT_READY, "Controller Project proxy is not bound to an open project.");
         Object app = app(), documentWindow = a.invoke(window, app, project);
-        if (documentWindow == null) throw failure(ErrorCode.NOT_READY, "The current project has no document window.");
+        if (documentWindow == null)
+            throw Errors.notApplied(ErrorCode.NOT_READY, "The current project has no document window.");
         if (Boolean.TRUE.equals(a.invoke(saving, project)))
-            throw failure(ErrorCode.BUSY, "Bitwig is already saving this project.");
+            throw Errors.notApplied(ErrorCode.BUSY, "Bitwig is already saving this project.");
         Object callback = Proxy.newProxyInstance(
                 callbackType.getClassLoader(), new Class<?>[] {callbackType}, (proxy, method, args) -> {
                     switch (signature(method)) {

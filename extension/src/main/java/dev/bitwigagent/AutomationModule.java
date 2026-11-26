@@ -1,7 +1,5 @@
 package dev.bitwigagent;
 
-import static dev.bitwigagent.HostServices.failure;
-
 import com.bitwig.extension.callback.*;
 import com.bitwig.extension.controller.api.*;
 import com.google.gson.*;
@@ -162,7 +160,7 @@ final class AutomationModule implements HostModule {
                 points(p);
                 break;
             default:
-                throw failure(ErrorCode.UNKNOWN_METHOD, "Unknown automation method.");
+                throw Errors.notApplied(ErrorCode.UNKNOWN_METHOD, "Unknown automation method.");
         }
         if (!DeviceSources.canonicalUuid(Params.string(p, "trackId")))
             throw Errors.invalid("trackId must be a canonical UUID");
@@ -298,7 +296,7 @@ final class AutomationModule implements HostModule {
 
     static void requireExpected(List<Point> current, int expectedCount, String expectedHash) {
         if (current.size() != expectedCount || !hash(current).equals(expectedHash))
-            throw failure(
+            throw Errors.notApplied(
                     ErrorCode.STALE_TARGET,
                     "The lane holds " + current.size()
                             + " points with a different pointsHash than expected; re-read automation.points.get.");
@@ -340,9 +338,9 @@ final class AutomationModule implements HostModule {
     public void dispatch(HostOperation op, String method, JsonObject p) {
         s.check(op);
         boolean write = method.equals("automation.points.set");
-        if (pending) throw failure(ErrorCode.BUSY, "Another native automation operation is pending.");
+        if (pending) throw Errors.notApplied(ErrorCode.BUSY, "Another native automation operation is pending.");
         if (write && quarantined)
-            throw failure(
+            throw Errors.notApplied(
                     ErrorCode.UNRESOLVED_MUTATION,
                     "An unresolved automation write requires inspection (automation.points.get) and extension.restart before further automation writes.");
         String id = p.get("trackId").getAsString();
@@ -364,7 +362,7 @@ final class AutomationModule implements HostModule {
             try {
                 access = new Bitwig614AutomationAccess(s.nativeRuntime(op).access(ErrorCode.AUTOMATION_UNAVAILABLE));
             } catch (ReflectiveOperationException error) {
-                throw failure(
+                throw Errors.notApplied(
                         ErrorCode.AUTOMATION_UNAVAILABLE,
                         "Exact automation descriptors unavailable: " + error.getMessage());
             }
@@ -379,7 +377,8 @@ final class AutomationModule implements HostModule {
         Runnable check = () -> {
             s.check(op);
             if (epochs.get(index) != epoch)
-                throw failure(ErrorCode.STALE_CONTEXT, "Track bank changed while the automation operation was queued.");
+                throw Errors.notApplied(
+                        ErrorCode.STALE_CONTEXT, "Track bank changed while the automation operation was queued.");
             if (ticket != null) ticket.check();
             if (write) s.guardStoppedSafety(safety);
         };
@@ -417,7 +416,8 @@ final class AutomationModule implements HostModule {
                             () -> {
                                 check.run();
                                 if (!s.trackMatches(id, track))
-                                    throw failure(ErrorCode.STALE_CONTEXT, "Track target changed after native access.");
+                                    throw Errors.notApplied(
+                                            ErrorCode.STALE_CONTEXT, "Track target changed after native access.");
                                 if (ticket != null) s.sources.guardRootRead(ticket);
                                 if (write) quarantined = false;
                                 pending = false;
