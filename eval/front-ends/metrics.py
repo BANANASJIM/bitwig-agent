@@ -20,7 +20,8 @@ Counted from the transcript, not from the agent's own account:
                    uses (see TASK_METHODS), and `task_split` says which rule applied
 
 The failure label is a heuristic (AGENT_SIGNS, BITWIG_ERROR); a labels file maps a 1-based call index to
-"tool" or "agent" and overrides it, recorded as label_source "override".
+"tool" or "agent" (or {"label": .., "method": ..} to also fix the failing method of a chained call) and overrides it,
+recorded as label_source "override".
 """
 
 from __future__ import annotations
@@ -49,6 +50,9 @@ SKILL_READ = re.compile(r"\b(?:cat|head|tail|sed|less|bat|grep|rg|awk)\b[^|;&\n]
 VIOLATION = re.compile(
     r"src/bitwig_agent|site-packages|PROTOCOL\.md|USAGE\.md|VERIFICATION\.md|CONTRIBUTING\.md|/docs/|git\s+(?:log|show|grep)"
 )
+# A bitwig-agent error answer on its own line: the CLI's {"code":..,"reason":..} or 0.4's {"error":{"code":..}}.
+# Agents pipe calls through `| head`, which turns the failing exit code into 0, so the text is checked as well.
+ERROR_LINE = re.compile(r'^\{"(?:code"\s*:\s*"[a-z_]+"\s*,\s*"reason"|error"\s*:\s*\{"code")', re.MULTILINE)
 AGENT_SIGNS = re.compile(
     r"jq: (?:error|\d+ compile)|parse error|Traceback \(most recent|command not found|syntax error|unexpected (?:EOF|token)"
     r"|No such file or directory|: line \d+:|JSONDecodeError|bad substitution|Permission denied",
@@ -85,8 +89,13 @@ class Call:
         return int(found.group(1)) if found else (1 if self.is_error else 0)
 
     @property
+    def masked_error(self) -> bool:
+        """A Bitwig error answer inside a Bash call whose exit status was hidden by a pipe."""
+        return self.tool == "Bash" and self.exit_code == 0 and bool(ERROR_LINE.search(self.text))
+
+    @property
     def failed(self) -> bool:
-        return self.is_error or self.exit_code != 0
+        return self.is_error or self.exit_code != 0 or self.masked_error
 
     @property
     def bytes(self) -> int:
@@ -182,12 +191,24 @@ def asks_for_help(call: Call) -> bool:
     return parsed is not None and is_help(parsed)
 
 
-def method_of(call: Call) -> str | None:
-    """The method of the last non-help bitwig-agent call in the command (an agent often chains `--help` with the call)."""
+def methods_of(call: Call) -> list[str]:
+    """Methods of every non-help bitwig-agent call in the command, in order (an agent often chains several)."""
     if call.tool.startswith("mcp__"):
-        return call.tool.split("__", 2)[-1]
-    real = [parsed for parsed in invocations(call.command) if parsed[1] and not is_help(parsed)]
-    return ".".join(real[-1][1]) if real else None
+        return [call.tool.split("__", 2)[-1]]
+    return [".".join(parsed[1]) for parsed in invocations(call.command) if parsed[1] and not is_help(parsed)]
+
+
+def method_of(call: Call) -> str | None:
+    """The call's method; for a chain, the failing one when the error text names it, else the last."""
+    methods = methods_of(call)
+    if not methods:
+        return None
+    named = [m for m in methods if call.failed and re.search(rf"\b{re.escape(m)}\b", error_text(call))]
+    return named[-1] if named else methods[-1]
+
+
+def error_text(call: Call) -> str:
+    return "\n".join(line for line in call.text.splitlines() if ERROR_LINE.match(line) or line.startswith("Exit code"))
 
 
 def is_learning(call: Call) -> bool:
@@ -231,7 +252,7 @@ def self_corrections(calls: list[Call], failures: list[dict[str, Any]]) -> tuple
     for failure in failures:
         if failure["label"] != "tool" or not failure["method"]:
             continue
-        later = [c for c in calls[failure["index"] :] if not c.failed and method_of(c) == failure["method"]]
+        later = [c for c in calls[failure["index"] :] if not c.failed and failure["method"] in methods_of(c)]
         near = [c for c in calls[failure["index"] : failure["index"] + CORRECTION_WINDOW] if c in later]
         failure["self_corrected"] = bool(near)
         corrected += bool(near)
@@ -249,14 +270,15 @@ def analyze(events: Iterable[dict[str, Any]], overrides: dict[str, str] | None =
     failures = []
     for call in (c for c in calls if c.failed):
         override = (overrides or {}).get(str(call.index))
+        decided = override if isinstance(override, dict) else {"label": override}
         failures.append(
             {
                 "index": call.index,
                 "tool": call.tool,
-                "method": method_of(call),
+                "method": decided.get("method") or method_of(call),
                 "task": call.task,
                 "exit": call.exit_code,
-                "label": override or heuristic_label(call),
+                "label": decided.get("label") or heuristic_label(call),
                 "label_source": "override" if override else "heuristic",
                 "message": call.text.strip()[:200],
             }

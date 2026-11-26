@@ -323,3 +323,19 @@ def test_human_verdict_replaces_only_review() -> None:
     merged = metrics.apply_verdicts(verify, {"t3": {"status": "pass", "reason": "r"}, "t4": {"status": "pass"}})
     assert merged["t3"]["status"] == "pass"
     assert merged["t4"]["status"] == "fail"
+
+
+def test_error_answer_behind_a_pipe_is_a_failure() -> None:
+    old = '{"error":{"code":"invalid_params","message":"x","outcome":"not_dispatched"}}'
+    events = [
+        use("1", "Bash", command="bitwig-agent-rpc parameters.set value=0.4 | head -c 300"),
+        result("1", old),
+        use("2", "Bash", command="bitwig-agent-rpc parameters.set value=0.4 | head -c 300"),
+        result("2", '{"result":{"status":"observed"}}'),
+        use("3", "Bash", command="bitwig-agent tracks insert --type=x | head -c 300"),
+        result("3", BAD_ARG),
+    ]
+    out = metrics.analyze(events)
+    assert [f["index"] for f in out["failures"]] == [1, 3]
+    assert out["tool_failures"] == 2
+    assert out["self_corrections"] == 1

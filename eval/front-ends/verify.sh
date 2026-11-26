@@ -96,8 +96,8 @@ while read -r device; do
   fi
 done <<<"$device_rows"
 t3="$(jq -c --arg cut "$CUTOFF" --arg res "$RESONANCE" '
-  def pick($re): [.[] | select(((.name // .parameterId // "") | tostring | test($re; "i")) and ((.value.value? // .value?) | type == "number"))];
-  def changed: any(.[]; .gridChanged == true or ((.default? // .defaultValue? // null) as $d | $d != null and $d != (.value.value? // .value?)));
+  def pick($re): [.[] | select(((.name // .parameterId // "") | tostring | test($re; "i")) and ((.value.value? // .value? // .normalizedValue?) | type == "number"))];
+  def changed: any(.[]; .gridChanged == true or ((.default? // .defaultValue? // null) as $d | $d != null and $d != (.value.value? // .value? // .normalizedValue?)));
   def unknown: any(.[]; (.default? // .defaultValue? // null) == null);
   pick($cut) as $c | pick($res) as $r
   | {cutoff: ($c | length), resonance: ($r | length), cutoffChanged: ($c | changed), resonanceChanged: ($r | changed),
