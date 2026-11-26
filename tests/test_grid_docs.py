@@ -11,8 +11,10 @@ from bitwig_agent.cli import execute
 from bitwig_agent.grid_apply import bundled_schema
 
 REAL_ROOT = Path("/opt/bitwig-studio")
-real = pytest.mark.skipif(not (REAL_ROOT / "resources/localization/Module-descriptions-resources.properties").is_file(),
-                          reason="Bitwig install not present")
+real = pytest.mark.skipif(
+    not (REAL_ROOT / "resources/localization/Module-descriptions-resources.properties").is_file(),
+    reason="Bitwig install not present",
+)
 
 DESCRIPTIONS = """\
 #comment
@@ -33,10 +35,18 @@ chance.extra.desc=Unmatched leftover
 math.out.desc=Shared math out
 """
 SCHEMA = {
-    "Select In": {"typeId": "1", "inputs": [{"key": "SEL", "name": "Select In"}],
-                  "outputs": [{"key": "OUT", "name": "Signal Out"}], "parameters": []},
-    "Chance": {"typeId": "2", "inputs": [{"key": "IN", "name": "Trigger In"}], "outputs": [{"key": "OUT", "name": "Trigger Out"}],
-               "parameters": [{"parameterId": "PROBABILITY", "name": "Chance"}]},
+    "Select In": {
+        "typeId": "1",
+        "inputs": [{"key": "SEL", "name": "Select In"}],
+        "outputs": [{"key": "OUT", "name": "Signal Out"}],
+        "parameters": [],
+    },
+    "Chance": {
+        "typeId": "2",
+        "inputs": [{"key": "IN", "name": "Trigger In"}],
+        "outputs": [{"key": "OUT", "name": "Trigger Out"}],
+        "parameters": [{"parameterId": "PROBABILITY", "name": "Chance"}],
+    },
     "Add": {"typeId": "3", "inputs": [], "outputs": [{"key": "OUT", "name": "A + B"}], "parameters": []},
     "Mystery": {"typeId": "4", "inputs": [], "outputs": [], "parameters": []},
 }
@@ -47,16 +57,22 @@ def root(tmp_path, monkeypatch):
     directory = tmp_path / "resources" / "localization"
     directory.mkdir(parents=True)
     (directory / "Module-descriptions-resources.properties").write_text(DESCRIPTIONS, encoding="utf-8")
-    (directory / "Modules-resources.properties").write_bytes(b"\xef\xbb\xbf" + MODULES.encode())  # real files carry a BOM
-    (directory / "Module-descriptions-resources_de.properties").write_text("module.select_in.desc=Auswahl\n", encoding="utf-8")
+    (directory / "Modules-resources.properties").write_bytes(
+        b"\xef\xbb\xbf" + MODULES.encode()
+    )  # real files carry a BOM
+    (directory / "Module-descriptions-resources_de.properties").write_text(
+        "module.select_in.desc=Auswahl\n", encoding="utf-8"
+    )
     monkeypatch.setattr(grid_docs, "_cache", {})
     monkeypatch.setenv("BITWIG_INSTALLATION_ROOT", str(tmp_path))
     return tmp_path
 
 
 def test_parse_properties_escapes_and_continuations():
-    text = ("﻿# c\n! c\na=1\nb : two words\nc\\ d=k\\=v\nlong=one \\\n    two\nu=\\u00f8 \\u2192\\n!\nempty=\nnovalue\n"
-            "back=ends\\\\\nnext=1\nsur=\\ud83d\\ude00\n")
+    text = (
+        "﻿# c\n! c\na=1\nb : two words\nc\\ d=k\\=v\nlong=one \\\n    two\nu=\\u00f8 \\u2192\\n!\nempty=\nnovalue\n"
+        "back=ends\\\\\nnext=1\nsur=\\ud83d\\ude00\n"
+    )
     got = grid_docs.parse_properties(text)
     assert got["a"] == "1" and got["b"] == "two words" and got["c d"] == "k=v"
     assert got["long"] == "one two" and got["u"] == "ø →\n!"
@@ -67,7 +83,9 @@ def test_parse_properties_escapes_and_continuations():
 def test_describe_maps_ports_and_keeps_raw_entries(root):
     docs = grid_docs.get_docs()
     select = grid_docs.describe_module(docs, "Select In", SCHEMA["Select In"])
-    assert select["resourceId"] == "select_in" and select["description"] == "Fake selector" and select["category"] == "Mix"
+    assert (
+        select["resourceId"] == "select_in" and select["description"] == "Fake selector" and select["category"] == "Mix"
+    )
     sel = next(p for p in select["ports"] if p["key"] == "SEL")
     assert sel["description"] == "Low routes 1\nhigh routes 2"
     assert select["rawEntries"] == {"select_in.logic_in.desc": "Low routes 1\nhigh routes 2"}
@@ -96,7 +114,9 @@ def test_search_ranks_name_then_keywords(root, monkeypatch):
 
 
 def test_type_resolution_by_name_loose_name_or_type_id():
-    assert grid_docs.resolve_type(SCHEMA, "select in") == "Select In" and grid_docs.resolve_type(SCHEMA, "2") == "Chance"
+    assert (
+        grid_docs.resolve_type(SCHEMA, "select in") == "Select In" and grid_docs.resolve_type(SCHEMA, "2") == "Chance"
+    )
     with pytest.raises(ValueError, match="did you mean"):
         grid_docs.resolve_type(SCHEMA, "Chanse")
 

@@ -18,19 +18,30 @@ def bad(method, **args):
 
 
 def test_new_tools_are_registered_with_examples():
-    for name in ("tracks.sends.set", "tracks.meters", "markers.list", "markers.insert", "markers.rename", "markers.delete"):
+    for name in (
+        "tracks.sends.set",
+        "tracks.meters",
+        "markers.list",
+        "markers.insert",
+        "markers.rename",
+        "markers.delete",
+    ):
         assert name in TOOLS and TOOLS[name].examples
     assert TOOLS["tracks.meters"].read_only and TOOLS["markers.list"].read_only
     assert not TOOLS["tracks.sends.set"].read_only and not TOOLS["markers.insert"].read_only
 
 
 def test_send_addressing_and_value_rules():
-    assert ok("tracks.sends.set", trackId=TRACK, sendIndex=0, valueNormalized=0.3) == {"trackId": TRACK, "sendIndex": 0, "valueNormalized": 0.3}
+    assert ok("tracks.sends.set", trackId=TRACK, sendIndex=0, valueNormalized=0.3) == {
+        "trackId": TRACK,
+        "sendIndex": 0,
+        "valueNormalized": 0.3,
+    }
     ok("tracks.sends.set", trackId=TRACK, sendName="A-Reverb", display="-12 dB", enabled=True)
     ok("tracks.sends.set", trackId=TRACK, sendIndex=2, expectedSendName="Delay", enabled=False)
-    bad("tracks.sends.set", trackId=TRACK, valueNormalized=0.3)                               # no address
-    bad("tracks.sends.set", trackId=TRACK, sendIndex=0, sendName="A", valueNormalized=0.3)    # two addresses
-    bad("tracks.sends.set", trackId=TRACK, sendIndex=0)                                       # nothing to change
+    bad("tracks.sends.set", trackId=TRACK, valueNormalized=0.3)  # no address
+    bad("tracks.sends.set", trackId=TRACK, sendIndex=0, sendName="A", valueNormalized=0.3)  # two addresses
+    bad("tracks.sends.set", trackId=TRACK, sendIndex=0)  # nothing to change
     bad("tracks.sends.set", trackId=TRACK, sendIndex=0, valueNormalized=0.3, display="-6 dB")  # two level forms
     bad("tracks.sends.set", trackId=TRACK, sendIndex=0, valueNormalized=1.1)
     bad("tracks.sends.set", trackId=TRACK, sendIndex=-1, valueNormalized=0.1)
@@ -39,7 +50,11 @@ def test_send_addressing_and_value_rules():
 
 
 def test_track_display_fields_are_alternatives():
-    assert ok("tracks.set", trackId=TRACK, volumeDb=-6, panPercent=-25) == {"trackId": TRACK, "volumeDb": -6, "panPercent": -25}
+    assert ok("tracks.set", trackId=TRACK, volumeDb=-6, panPercent=-25) == {
+        "trackId": TRACK,
+        "volumeDb": -6,
+        "panPercent": -25,
+    }
     ok("tracks.set", trackId=TRACK, volumeDisplay="-inf dB", panDisplay="Center", mute=True)
     bad("tracks.set", trackId=TRACK, volumeNormalized=0.5, volumeDb=-6)
     bad("tracks.set", trackId=TRACK, volumeDb=-6, volumeDisplay="-6 dB")

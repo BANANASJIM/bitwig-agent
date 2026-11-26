@@ -15,13 +15,20 @@ from bitwig_agent.client import BridgeError
 
 TRACK = "12345678-1234-1234-1234-123456789abc"
 TARGET = {"trackId": TRACK, "deviceIndex": 0, "expectedDeviceName": "Poly Grid"}
-WRITES = {"grid.modules.insert", "grid.modules.rename", "grid.modules.move", "grid.modules.delete",
-          "grid.parameters.set", "grid.connections.set", "grid.voicing.set"}
+WRITES = {
+    "grid.modules.insert",
+    "grid.modules.rename",
+    "grid.modules.move",
+    "grid.modules.delete",
+    "grid.parameters.set",
+    "grid.connections.set",
+    "grid.voicing.set",
+}
 
 
 def seconds_text(type_name, raw):
     """Host-style display of a seconds parameter (3 significant digits) from the natively measured mappings."""
-    seconds = raw ** 3 if type_name in ("AD", "ADSR") else 10 ** raw
+    seconds = raw**3 if type_name in ("AD", "ADSR") else 10**raw
     ms = seconds * 1000
     return f"{seconds:.2f} s" if ms >= 1000 else f"{ms:.{max(0, 2 - math.floor(math.log10(ms)))}f} ms"
 
@@ -52,8 +59,17 @@ class FakeGrid:
             params[p["parameterId"]] = {**p, "value": p["default"], "display": p.get("defaultDisplay")}
         if type_name in grid_apply.STEP_TYPES:  # the bundled schema has no step arrays; the live row carries one
             params["DATA"] = {"parameterId": "DATA", "kind": "steps", "value": [0.0] * 64, "display": None}
-        self.mods[iid] = {"instanceId": iid, "customName": custom, "name": custom or type_name, "typeId": info["typeId"],
-                          "typeName": type_name, "x": x, "y": y, "info": info, "params": params}
+        self.mods[iid] = {
+            "instanceId": iid,
+            "customName": custom,
+            "name": custom or type_name,
+            "typeId": info["typeId"],
+            "typeName": type_name,
+            "x": x,
+            "y": y,
+            "info": info,
+            "params": params,
+        }
         return iid
 
     def named(self, custom):
@@ -71,19 +87,47 @@ class FakeGrid:
 
     def row(self, m, params, full=False):
         connected = {p for (t, p) in self.conns if t == m["instanceId"]}
-        row = {"instanceId": m["instanceId"], "customName": m["customName"], "name": m["name"], "typeId": m["typeId"],
-               "typeName": m["typeName"], "x": m["x"], "y": m["y"], "width": m["info"]["width"], "height": m["info"]["height"],
-               "inputs": [{"key": i["key"], "name": i["name"], "connected": i["key"] in connected} for i in m["info"]["inputs"]],
-               "outputs": [{"key": o["key"], "name": o["name"]} for o in m["info"]["outputs"]]}
+        row = {
+            "instanceId": m["instanceId"],
+            "customName": m["customName"],
+            "name": m["name"],
+            "typeId": m["typeId"],
+            "typeName": m["typeName"],
+            "x": m["x"],
+            "y": m["y"],
+            "width": m["info"]["width"],
+            "height": m["info"]["height"],
+            "inputs": [
+                {"key": i["key"], "name": i["name"], "connected": i["key"] in connected} for i in m["info"]["inputs"]
+            ],
+            "outputs": [{"key": o["key"], "name": o["name"]} for o in m["info"]["outputs"]],
+        }
         if params:
-            row["parameters"] = [{"supported": True, "kind": p["kind"], "parameterId": pid, "value": p["value"], "display": p["display"],
-                                  **{k: p[k] for k in ("minimum", "maximum", "options", "numericUnit") if k in p}}
-                                 for pid, p in m["params"].items() if p["kind"] != "steps"]
+            row["parameters"] = [
+                {
+                    "supported": True,
+                    "kind": p["kind"],
+                    "parameterId": pid,
+                    "value": p["value"],
+                    "display": p["display"],
+                    **{k: p[k] for k in ("minimum", "maximum", "options", "numericUnit") if k in p},
+                }
+                for pid, p in m["params"].items()
+                if p["kind"] != "steps"
+            ]
             for pid, p in m["params"].items():
                 if p["kind"] == "steps":
                     count = m["params"]["STEPS"]["value"]
-                    row["parameters"].append({"supported": True, "kind": "steps", "parameterId": pid, "arrayLength": 64, "stepCount": count,
-                                              "values": list(p["value"] if full else p["value"][:count])})
+                    row["parameters"].append(
+                        {
+                            "supported": True,
+                            "kind": "steps",
+                            "parameterId": pid,
+                            "arrayLength": 64,
+                            "stepCount": count,
+                            "values": list(p["value"] if full else p["value"][:count]),
+                        }
+                    )
         return row
 
     # host
@@ -102,15 +146,25 @@ class FakeGrid:
 
     def h_catalog(self, p):
         entries = [{"typeId": m["typeId"], "name": n} for n, m in self.catalog.items()]
-        return {"status": "observed", "entries": entries[p["offset"]:p["offset"] + p["limit"]],
-                "window": {"complete": p["offset"] + p["limit"] >= len(entries)}}
+        return {
+            "status": "observed",
+            "entries": entries[p["offset"] : p["offset"] + p["limit"]],
+            "window": {"complete": p["offset"] + p["limit"] >= len(entries)},
+        }
 
     def h_get(self, p):
         mods = [m for m in self.mods.values() if m["instanceId"] in p.get("moduleIds", self.mods)]
-        page = mods[p["moduleOffset"]:p["moduleOffset"] + p["moduleLimit"]]
-        conns = [{"targetModuleId": t, "targetPortKey": tp, "sourceModuleId": s, "sourcePortKey": sp} for (t, tp), (s, sp) in self.conns.items()]
-        return {"status": "observed", "modules": [self.row(m, p["includeParameters"], p.get("full")) for m in page], "connections": conns,
-                "window": {"total": len(mods), "complete": True}}
+        page = mods[p["moduleOffset"] : p["moduleOffset"] + p["moduleLimit"]]
+        conns = [
+            {"targetModuleId": t, "targetPortKey": tp, "sourceModuleId": s, "sourcePortKey": sp}
+            for (t, tp), (s, sp) in self.conns.items()
+        ]
+        return {
+            "status": "observed",
+            "modules": [self.row(m, p["includeParameters"], p.get("full")) for m in page],
+            "connections": conns,
+            "window": {"total": len(mods), "complete": True},
+        }
 
     def h_modules_insert(self, p):
         entries, added = [], []
@@ -122,10 +176,23 @@ class FakeGrid:
             name = next(n for n, m in self.catalog.items() if m["typeId"] == spec["typeId"])
             iid = self.add(name, "", spec["x"] + self.shift, spec["y"])
             self.now += self.insert_seconds
-            entries.append({"typeId": spec["typeId"], "status": "applied", "moduleId": iid, "actualPosition": {"x": spec["x"] + self.shift, "y": spec["y"]}})
+            entries.append(
+                {
+                    "typeId": spec["typeId"],
+                    "status": "applied",
+                    "moduleId": iid,
+                    "actualPosition": {"x": spec["x"] + self.shift, "y": spec["y"]},
+                }
+            )
             added.append(self.row(self.mods[iid], False))
         batch = "applied" if cap >= len(p["modules"]) else "partial"
-        return {"status": "observed", "batchStatus": batch, "completion": "complete", "modules": entries, "modulesAdded": added}
+        return {
+            "status": "observed",
+            "batchStatus": batch,
+            "completion": "complete",
+            "modules": entries,
+            "modulesAdded": added,
+        }
 
     def h_modules_rename(self, p):
         m = self.mods[p["moduleId"]]
@@ -139,10 +206,19 @@ class FakeGrid:
         if (m["x"], m["y"]) != (p["expectedX"], p["expectedY"]):
             raise BridgeError({"code": "stale_context", "message": "moved", "outcome": "not_applied"})
         for o in self.mods.values():  # host rule: the anchor may not lie inside another module's footprint
-            if o is not m and o["x"] <= p["x"] < o["x"] + o["info"]["width"] and o["y"] <= p["y"] < o["y"] + o["info"]["height"]:
+            if (
+                o is not m
+                and o["x"] <= p["x"] < o["x"] + o["info"]["width"]
+                and o["y"] <= p["y"] < o["y"] + o["info"]["height"]
+            ):
                 raise BridgeError({"code": "invalid_params", "message": "occupied anchor", "outcome": "not_applied"})
         m["x"], m["y"] = p["x"], p["y"]
-        return {"status": "observed", "operation": "move", "actualPosition": {"x": p["x"], "y": p["y"]}, "matchesRequested": True}
+        return {
+            "status": "observed",
+            "operation": "move",
+            "actualPosition": {"x": p["x"], "y": p["y"]},
+            "matchesRequested": True,
+        }
 
     def h_modules_delete(self, p):
         self.mods.pop(p["moduleId"])
@@ -158,7 +234,7 @@ class FakeGrid:
                 assert len(w["values"]) <= n <= 64
                 if [grid_apply.f32(x) for x in par["value"][:n]] != [grid_apply.f32(x) for x in w["expectedValues"]]:
                     raise BridgeError({"code": "stale_context", "message": "stale", "outcome": "not_applied"})
-                par["value"][:len(w["values"])] = [grid_apply.f32(x) for x in w["values"]]
+                par["value"][: len(w["values"])] = [grid_apply.f32(x) for x in w["values"]]
                 entries.append({"moduleId": w["moduleId"], "parameterId": w["parameterId"], "status": "applied"})
                 continue
             if (par["kind"], par["value"]) != (w["expectedKind"], w["expectedValue"]):
@@ -166,7 +242,10 @@ class FakeGrid:
             if "display" in w:
                 par["value"], par["display"] = 99.0, w["display"]
             elif par.get("numericUnit") == "seconds":
-                par["value"], par["display"] = w["value"], seconds_text(self.mods[w["moduleId"]]["typeName"], w["value"])
+                par["value"], par["display"] = (
+                    w["value"],
+                    seconds_text(self.mods[w["moduleId"]]["typeName"], w["value"]),
+                )
             else:
                 par["value"], par["display"] = w["value"], str(w["value"])
             entries.append({"moduleId": w["moduleId"], "parameterId": w["parameterId"], "status": "applied"})
@@ -177,8 +256,17 @@ class FakeGrid:
 
     def h_voicing_get(self, p):
         if self.voicing is None:
-            return {"status": "observed", "supported": False, "reason": "no_voicing_model: only Poly Grid has device voicing"}
-        return {"status": "observed", "supported": True, "voicing": dict(self.voicing), "mode": "poly" if self.voicing["voices"] > 1 else self.voicing["monoMode"]}
+            return {
+                "status": "observed",
+                "supported": False,
+                "reason": "no_voicing_model: only Poly Grid has device voicing",
+            }
+        return {
+            "status": "observed",
+            "supported": True,
+            "voicing": dict(self.voicing),
+            "mode": "poly" if self.voicing["voices"] > 1 else self.voicing["monoMode"],
+        }
 
     def h_voicing_set(self, p):
         if any(self.voicing[k] != v for k, v in p["expected"].items()):
@@ -202,7 +290,8 @@ class FakeGrid:
 
 
 SPEC = {
-    "target": TARGET, "namespace": "H: ",
+    "target": TARGET,
+    "namespace": "H: ",
     "modules": [
         {"name": "H: mul", "type": "Multiply", "x": 0, "y": 0},
         {"name": "H: add", "type": "Add", "x": 3, "y": 0},
@@ -210,8 +299,11 @@ SPEC = {
         {"name": "H: acc", "type": "Accents", "x": 0, "y": 4, "params": {"STEPS": 4, "MODE": {"label": "Trigger"}}},
         {"name": "H: lp", "type": "Low-pass", "x": 3, "y": 4, "params": {"CUTOFF": {"display": "1.2 kHz"}}},
     ],
-    "connections": [{"from": "H: mul.OUT", "to": "H: add.IN"}, {"from": "H: add.OUT", "to": "H: env.IN"},
-                    {"from": "H: acc.OUT", "to": "H: lp.IN"}],
+    "connections": [
+        {"from": "H: mul.OUT", "to": "H: add.IN"},
+        {"from": "H: add.OUT", "to": "H: env.IN"},
+        {"from": "H: acc.OUT", "to": "H: lp.IN"},
+    ],
 }
 
 
@@ -225,11 +317,23 @@ def test_fresh_build_then_idempotent_reapply_writes_nothing():
     host.shift = 1  # native reflow: every insert lands one column right, forcing moves
     result = run(host, SPEC)
     assert result["status"] == "applied"
-    assert result["applied"] == {"inserted": 5, "renamed": 5, "moved": 5, "paramsWritten": 5, "connections": 3, "disconnected": 0, "deleted": 0}
+    assert result["applied"] == {
+        "inserted": 5,
+        "renamed": 5,
+        "moved": 5,
+        "paramsWritten": 5,
+        "connections": 3,
+        "disconnected": 0,
+        "deleted": 0,
+    }
     assert set(result["moduleIds"]) == {m["name"] for m in SPEC["modules"]}
-    assert [(m["x"], m["y"]) for m in (host.named(s["name"]) for s in SPEC["modules"])] == [(s["x"], s["y"]) for s in SPEC["modules"]]
+    assert [(m["x"], m["y"]) for m in (host.named(s["name"]) for s in SPEC["modules"])] == [
+        (s["x"], s["y"]) for s in SPEC["modules"]
+    ]
     assert host.param("H: env", "ATTACK") == 0.5 and host.param("H: acc", "STEPS") == 4
-    assert host.param("H: acc", "MODE") == next(o["value"] for o in host.catalog["Accents"]["parameters"][3]["options"] if o["label"] == "Trigger")
+    assert host.param("H: acc", "MODE") == next(
+        o["value"] for o in host.catalog["Accents"]["parameters"][3]["options"] if o["label"] == "Trigger"
+    )
     assert host.source("H: add", "IN") == ("H: mul", "OUT") and host.source("H: lp", "IN") == ("H: acc", "OUT")
     inserts = [c for m, c in host.calls if m == "grid.modules.insert"]
     assert len(inserts) == 1 and all("typeId" in e and "typeName" not in e for e in inserts[0]["modules"])
@@ -322,8 +426,16 @@ def test_dry_run_plans_without_writing():
     host = FakeGrid()
     result = run(host, SPEC, dryRun=True)
     assert result["status"] == "dryRun" and host.writes() == []
-    assert result["planned"]["inserted"] == 5 and result["planned"]["connections"] == 3 and result["planned"]["paramsWritten"] == 5
-    assert len(result["plan"]["inserts"]) == 5 and result["plan"]["connections"][0] == {"from": "H: mul.OUT", "to": "H: add.IN", "previous": None}
+    assert (
+        result["planned"]["inserted"] == 5
+        and result["planned"]["connections"] == 3
+        and result["planned"]["paramsWritten"] == 5
+    )
+    assert len(result["plan"]["inserts"]) == 5 and result["plan"]["connections"][0] == {
+        "from": "H: mul.OUT",
+        "to": "H: add.IN",
+        "previous": None,
+    }
     host2 = FakeGrid()
     run(host2, SPEC)
     host2.calls.clear()
@@ -347,7 +459,17 @@ def test_validation_failure_writes_nothing_and_suggests():
     error = err.value.error
     assert error["code"] == "invalid_spec" and error["outcome"] == "not_dispatched"
     text = " ".join(error["details"]["problems"])
-    for needle in ("Multiplyy", "Multiply'", "ATAK", "ATTACK", "boolean parameter needs", "outside 0.0..1.0", "OUTT", "'OUT'", "nope"):
+    for needle in (
+        "Multiplyy",
+        "Multiply'",
+        "ATAK",
+        "ATTACK",
+        "boolean parameter needs",
+        "outside 0.0..1.0",
+        "OUTT",
+        "'OUT'",
+        "nope",
+    ):
         assert needle in text
     assert host.writes() == []
 
@@ -362,8 +484,12 @@ def test_existing_module_of_wrong_type_is_rejected_before_any_write():
 
 def test_stop_on_unknown_never_retries_and_reports():
     host = FakeGrid()
-    raw = {"status": "observed", "batchStatus": "unknown", "completion": "unknown",
-           "writes": [{"parameterId": "ATTACK", "status": "unknown"}]}
+    raw = {
+        "status": "observed",
+        "batchStatus": "unknown",
+        "completion": "unknown",
+        "writes": [{"parameterId": "ATTACK", "status": "unknown"}],
+    }
     host.fail["grid.parameters.set"] = raw
     result = run(host, SPEC)
     assert result["status"] == "unknown"
@@ -376,8 +502,12 @@ def test_stop_on_unknown_never_retries_and_reports():
 
 def test_stop_on_partial_and_on_host_error():
     host = FakeGrid()
-    host.fail["grid.connections.set"] = {"status": "observed", "batchStatus": "partial", "completion": "complete",
-                                         "connections": [{"status": "applied"}, {"status": "mismatch"}, {"status": "not_dispatched"}]}
+    host.fail["grid.connections.set"] = {
+        "status": "observed",
+        "batchStatus": "partial",
+        "completion": "complete",
+        "connections": [{"status": "applied"}, {"status": "mismatch"}, {"status": "not_dispatched"}],
+    }
     result = run(host, SPEC)
     assert result["status"] == "partial" and result["failure"]["response"]["batchStatus"] == "partial"
     assert result["applied"]["paramsWritten"] == 5
@@ -446,7 +576,10 @@ def test_other_host_version_uses_live_catalog_and_checks_ports_after_insert():
     assert result["status"] == "partial" and result["failure"]["phase"] == "connections"
     assert "NOPE" in result["failure"]["response"]["error"]["message"]
     with pytest.raises(BridgeError):
-        run(FakeGrid(version="9.9.9"), {**SPEC, "modules": [{"name": "A", "type": "Nonsuch", "x": 0, "y": 0}], "connections": []})
+        run(
+            FakeGrid(version="9.9.9"),
+            {**SPEC, "modules": [{"name": "A", "type": "Nonsuch", "x": 0, "y": 0}], "connections": []},
+        )
 
 
 def test_schema_and_cli_surface(tmp_path):
@@ -467,17 +600,27 @@ def test_schema_and_cli_surface(tmp_path):
 
 
 def test_display_comparison_uses_live_precision():
-    assert grid_apply.display_matches("1.2 kHz", "1.20 kHz", "hertz") and grid_apply.display_matches("1200 Hz", "1.20 kHz", "hertz")
-    assert not grid_apply.display_matches("1.2 kHz", "1.19 kHz", "hertz") and not grid_apply.display_matches("50 %", None, "percent")
+    assert grid_apply.display_matches("1.2 kHz", "1.20 kHz", "hertz") and grid_apply.display_matches(
+        "1200 Hz", "1.20 kHz", "hertz"
+    )
+    assert not grid_apply.display_matches("1.2 kHz", "1.19 kHz", "hertz") and not grid_apply.display_matches(
+        "50 %", None, "percent"
+    )
 
 
 def test_partial_insert_batch_still_names_what_landed_and_reapply_converges():
-    spec = {"target": TARGET, "namespace": "G: ", "modules": [{"name": f"G: m{i}", "type": "Add", "x": i * 3, "y": 0} for i in range(20)]}
+    spec = {
+        "target": TARGET,
+        "namespace": "G: ",
+        "modules": [{"name": f"G: m{i}", "type": "Add", "x": i * 3, "y": 0} for i in range(20)],
+    }
     host = FakeGrid()
     host.insert_caps = [16, 2]
     result = run(host, spec)
     assert result["status"] == "partial" and result["applied"]["inserted"] == 18 and result["applied"]["renamed"] == 18
-    assert sorted(m["customName"] for m in host.mods.values() if m["customName"]) == sorted(f"G: m{i}" for i in range(18))
+    assert sorted(m["customName"] for m in host.mods.values() if m["customName"]) == sorted(
+        f"G: m{i}" for i in range(18)
+    )
     assert not [m for m in host.mods.values() if not m["customName"]] and "unnamedModules" not in result
     assert result["notDispatched"]["inserted"] == 2
     again = run(host, spec, prune=True)
@@ -487,20 +630,33 @@ def test_partial_insert_batch_still_names_what_landed_and_reapply_converges():
 
 def test_unsettled_insert_reports_unnamed_modules():
     host = FakeGrid()
-    host.fail["grid.modules.insert"] = {"status": "observed", "batchStatus": "unknown", "completion": "unknown",
-                                        "modules": [{"status": "applied", "moduleId": host.add("Add", "", 50, 50)}, {"status": "unknown"}]}
-    result = run(host, {"target": TARGET, "modules": [{"name": "A", "type": "Add", "x": 0, "y": 0}, {"name": "B", "type": "Add", "x": 3, "y": 0}]})
+    host.fail["grid.modules.insert"] = {
+        "status": "observed",
+        "batchStatus": "unknown",
+        "completion": "unknown",
+        "modules": [{"status": "applied", "moduleId": host.add("Add", "", 50, 50)}, {"status": "unknown"}],
+    }
+    result = run(
+        host,
+        {
+            "target": TARGET,
+            "modules": [{"name": "A", "type": "Add", "x": 0, "y": 0}, {"name": "B", "type": "Add", "x": 3, "y": 0}],
+        },
+    )
     assert result["status"] == "unknown" and list(result["unnamedModules"].values()) == ["A"]
     assert "grid.modules.rename" not in [m for m, _ in host.calls]
 
 
-@pytest.mark.parametrize("params", [
-    {"ATTACK": {"display": "10 hz"}},  # wrong unit for seconds
-    {"ATTACK": {"display": "10 s"}},  # raw 2.154 outside 0..2
-    {"ATTACK": {"display": "-1 ms"}},
-    {"SUSTAIN": {"display": "banana"}},
-    {"SUSTAIN": {"display": "500 %"}},  # raw outside range
-])
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"ATTACK": {"display": "10 hz"}},  # wrong unit for seconds
+        {"ATTACK": {"display": "10 s"}},  # raw 2.154 outside 0..2
+        {"ATTACK": {"display": "-1 ms"}},
+        {"SUSTAIN": {"display": "banana"}},
+        {"SUSTAIN": {"display": "500 %"}},  # raw outside range
+    ],
+)
 def test_unwritable_display_is_rejected_offline(params):
     host = FakeGrid()
     with pytest.raises(BridgeError) as err:
@@ -510,7 +666,10 @@ def test_unwritable_display_is_rejected_offline(params):
 
 def test_zero_default_display_is_rejected_offline_but_raw_value_works():
     host = FakeGrid()
-    bad = {"target": TARGET, "modules": [{"name": "B", "type": "Bias", "x": 0, "y": 0, "params": {"VALUE": {"display": "50 %"}}}]}
+    bad = {
+        "target": TARGET,
+        "modules": [{"name": "B", "type": "Bias", "x": 0, "y": 0, "params": {"VALUE": {"display": "50 %"}}}],
+    }
     with pytest.raises(BridgeError) as err:
         run(host, bad)
     assert "zero" in err.value.error["message"] and host.writes() == []
@@ -528,7 +687,16 @@ def test_display_parser_accepts_sign_unicode_minus_and_leading_dot():
 def test_overlapping_spec_layout_is_rejected_offline():
     host = FakeGrid()
     with pytest.raises(BridgeError) as err:
-        run(host, {"target": TARGET, "modules": [{"name": "A", "type": "ADSR", "x": 0, "y": 0}, {"name": "B", "type": "Add", "x": 1, "y": 1}]})
+        run(
+            host,
+            {
+                "target": TARGET,
+                "modules": [
+                    {"name": "A", "type": "ADSR", "x": 0, "y": 0},
+                    {"name": "B", "type": "Add", "x": 1, "y": 1},
+                ],
+            },
+        )
     assert "overlap" in err.value.error["message"] and host.writes() == []
     host.add("Add", "other", 0, 0)
     with pytest.raises(BridgeError) as err:
@@ -538,14 +706,26 @@ def test_overlapping_spec_layout_is_rejected_offline():
 
 def test_swap_is_ordered_through_a_free_anchor_and_terminates():
     host = FakeGrid()
-    spec = {"target": TARGET, "modules": [{"name": "A", "type": "Add", "x": 0, "y": 0}, {"name": "B", "type": "Add", "x": 3, "y": 0},
-                                          {"name": "C", "type": "Add", "x": 6, "y": 0}]}
+    spec = {
+        "target": TARGET,
+        "modules": [
+            {"name": "A", "type": "Add", "x": 0, "y": 0},
+            {"name": "B", "type": "Add", "x": 3, "y": 0},
+            {"name": "C", "type": "Add", "x": 6, "y": 0},
+        ],
+    }
     run(host, spec)
-    swapped = {"target": TARGET, "modules": [{**spec["modules"][0], "x": 3}, {**spec["modules"][1], "x": 0}, spec["modules"][2]]}
+    swapped = {
+        "target": TARGET,
+        "modules": [{**spec["modules"][0], "x": 3}, {**spec["modules"][1], "x": 0}, spec["modules"][2]],
+    }
     result = run(host, swapped)  # the fake host rejects any move onto an occupied anchor
     assert result["status"] == "applied" and result["applied"]["moved"] == 3
     assert (host.named("A")["x"], host.named("B")["x"], host.named("C")["x"]) == (3, 0, 6)
-    chain = {"target": TARGET, "modules": [{**spec["modules"][2], "x": 9}, {**spec["modules"][1], "x": 6}, {**spec["modules"][0], "x": 3}]}
+    chain = {
+        "target": TARGET,
+        "modules": [{**spec["modules"][2], "x": 9}, {**spec["modules"][1], "x": 6}, {**spec["modules"][0], "x": 3}],
+    }
     assert run(host, chain)["applied"]["moved"] == 2  # A already sits at 3; C and B vacate first, no parking
 
 
@@ -555,8 +735,12 @@ def test_already_matched_writes_are_reported_unchanged():
     host.calls.clear()
     spec = copy.deepcopy(SPEC)
     spec["modules"][2]["params"]["ATTACK"] = 0.9
-    host.fail["grid.parameters.set"] = {"status": "observed", "batchStatus": "applied", "completion": "complete",
-                                        "writes": [{"parameterId": "ATTACK", "status": "already_matched"}]}
+    host.fail["grid.parameters.set"] = {
+        "status": "observed",
+        "batchStatus": "applied",
+        "completion": "complete",
+        "writes": [{"parameterId": "ATTACK", "status": "already_matched"}],
+    }
     result = run(host, spec)
     assert result["status"] == "unchanged" and result["applied"]["paramsWritten"] == 0
 
@@ -573,7 +757,11 @@ def test_null_names_fail_closed_and_unexpected_errors_keep_the_report():
     host = FakeGrid()
     host.fail["grid.connections.set"] = {"status": "observed", "batchStatus": "applied", "connections": [None]}
     result = run(host, SPEC)
-    assert result["status"] == "unknown" and result["failure"]["method"] == "internal" and result["applied"]["inserted"] == 5
+    assert (
+        result["status"] == "unknown"
+        and result["failure"]["method"] == "internal"
+        and result["applied"]["inserted"] == 5
+    )
 
 
 def test_park_spot_is_always_free_and_converges():
@@ -581,8 +769,14 @@ def test_park_spot_is_always_free_and_converges():
     host.add("Add", "P", 10, 0)
     host.add("Phasor", "A", 0, 0)  # 3x1
     host.add("Add", "B", 4, 0)
-    spec = {"target": TARGET, "modules": [{"name": "P", "type": "Add", "x": 2, "y": 0}, {"name": "A", "type": "Phasor", "x": 4, "y": 0},
-                                          {"name": "B", "type": "Add", "x": 0, "y": 0}]}
+    spec = {
+        "target": TARGET,
+        "modules": [
+            {"name": "P", "type": "Add", "x": 2, "y": 0},
+            {"name": "A", "type": "Phasor", "x": 4, "y": 0},
+            {"name": "B", "type": "Add", "x": 0, "y": 0},
+        ],
+    }
     result = run(host, spec)  # the fake host rejects any move onto an occupied anchor
     assert result["status"] == "applied" and result["applied"]["moved"] <= 6
     assert [(host.named(n)["x"], host.named(n)["y"]) for n in "PAB"] == [(2, 0), (4, 0), (0, 0)]
@@ -651,7 +845,12 @@ def test_string_panel_params_are_written_with_cas_and_idempotent():
     assert run(host, spec)["status"] == "unchanged" and host.writes() == []
     run(host, {**spec, "modules": [{**spec["modules"][0], "params": {"TEXT": ""}}]})
     sent = [c for m, c in host.calls if m == "grid.parameters.set"][0]["writes"][0]
-    assert sent["expectedKind"] == "string" and sent["expectedValue"] == text and sent["value"] == "" and host.param("C", "TEXT") == ""
+    assert (
+        sent["expectedKind"] == "string"
+        and sent["expectedValue"] == text
+        and sent["value"] == ""
+        and host.param("C", "TEXT") == ""
+    )
 
 
 def test_string_param_validation():
@@ -693,9 +892,14 @@ def replace_host():
     return host
 
 
-REPLACE_SPEC = {"target": TARGET, "modules": [
-    {"name": "R: a", "type": "Multiply", "x": 0, "y": 0}, {"name": "R: src", "type": "Add", "x": 6, "y": 0}],
-    "connections": [{"from": "R: src.OUT", "to": "R: a.IN"}]}
+REPLACE_SPEC = {
+    "target": TARGET,
+    "modules": [
+        {"name": "R: a", "type": "Multiply", "x": 0, "y": 0},
+        {"name": "R: src", "type": "Add", "x": 6, "y": 0},
+    ],
+    "connections": [{"from": "R: src.OUT", "to": "R: a.IN"}],
+}
 
 
 def test_replace_default_refuses_and_opt_in_swaps_type_and_rewires():
@@ -708,7 +912,10 @@ def test_replace_default_refuses_and_opt_in_swaps_type_and_rewires():
     host.conns[(other, "IN")] = (host.named("R: a")["instanceId"], "OUT")
     plan = run(host, spec, replace=True, dryRun=True)
     assert plan["plan"]["replaces"] == ["R: a"] and host.writes() == []
-    assert plan["plan"]["droppedConnections"] == ["R: a.OUT -> Z: out.IN"] and "R: a.OUT -> Z: out.IN" in plan["warnings"][0]
+    assert (
+        plan["plan"]["droppedConnections"] == ["R: a.OUT -> Z: out.IN"]
+        and "R: a.OUT -> Z: out.IN" in plan["warnings"][0]
+    )
     result = run(host, spec, replace=True)
     assert result["status"] == "applied" and result["applied"]["deleted"] == 1 and result["applied"]["inserted"] == 1
     assert host.named("R: a")["typeName"] == "Multiply" and host.source("R: a", "IN") == ("R: src", "OUT")
@@ -732,17 +939,28 @@ def test_replace_per_module_only_affects_that_module():
 
 
 def test_notes_and_pitch_mod_warning():
-    spec = {"target": TARGET, "modules": [
-        {"name": "o", "type": "Sine", "x": 0, "y": 0}, {"name": "o2", "type": "Sine", "x": 6, "y": 0, "params": {"PITCH_MOD": 0.5}},
-        {"name": "n", "type": "Add", "x": 12, "y": 0}],
-        "connections": [{"from": "n.OUT", "to": "o.PITCH_IN"}, {"from": "n.OUT", "to": "o2.PITCH_IN"}]}
+    spec = {
+        "target": TARGET,
+        "modules": [
+            {"name": "o", "type": "Sine", "x": 0, "y": 0},
+            {"name": "o2", "type": "Sine", "x": 6, "y": 0, "params": {"PITCH_MOD": 0.5}},
+            {"name": "n", "type": "Add", "x": 12, "y": 0},
+        ],
+        "connections": [{"from": "n.OUT", "to": "o.PITCH_IN"}, {"from": "n.OUT", "to": "o2.PITCH_IN"}],
+    }
     host = FakeGrid()
     result = run(host, spec, dryRun=True)
-    assert [w for w in result["warnings"] if "PITCH_MOD" in w] == ["o: PITCH_IN is connected but PITCH_MOD is 0, so it has no effect (raw 1.0 = 120 semitones)"]
+    assert [w for w in result["warnings"] if "PITCH_MOD" in w] == [
+        "o: PITCH_IN is connected but PITCH_MOD is 0, so it has no effect (raw 1.0 = 120 semitones)"
+    ]
     result = run(host, spec)
-    assert [w for w in result["warnings"] if "PITCH_MOD" in w] == ["o: PITCH_IN is connected but PITCH_MOD is 0, so it has no effect (raw 1.0 = 120 semitones)"]
+    assert [w for w in result["warnings"] if "PITCH_MOD" in w] == [
+        "o: PITCH_IN is connected but PITCH_MOD is 0, so it has no effect (raw 1.0 = 120 semitones)"
+    ]
     assert any(n.startswith("Sine: PITCH_IN is scaled by PITCH_MOD") for n in result["notes"])
-    assert not any(n.startswith("Chance:") for n in result["notes"]) and any("voice lifetime" in n for n in result["notes"])
+    assert not any(n.startswith("Chance:") for n in result["notes"]) and any(
+        "voice lifetime" in n for n in result["notes"]
+    )
     assert len(result["notes"]) < 8
 
 
@@ -754,23 +972,34 @@ def test_notes_file_is_value_free_and_covers_catalog_types():
 
 # --- seconds display writes ----------------------------------------------------------------------------------
 def seconds_spec(params_env, params_gate=None):
-    return {"target": TARGET, "modules": [{"name": "E", "type": "ADSR", "x": 0, "y": 0, "params": params_env},
-                                          {"name": "G", "type": "Gate Length", "x": 0, "y": 8, "params": params_gate or {}}]}
+    return {
+        "target": TARGET,
+        "modules": [
+            {"name": "E", "type": "ADSR", "x": 0, "y": 0, "params": params_env},
+            {"name": "G", "type": "Gate Length", "x": 0, "y": 8, "params": params_gate or {}},
+        ],
+    }
 
 
 def test_seconds_display_writes_converted_raw_and_is_idempotent():
     host = FakeGrid()
-    spec = seconds_spec({"ATTACK": {"display": "3 ms"}, "DECAY": {"display": "0.5 s"}}, {"LENGTH": {"display": "120 ms"}})
+    spec = seconds_spec(
+        {"ATTACK": {"display": "3 ms"}, "DECAY": {"display": "0.5 s"}}, {"LENGTH": {"display": "120 ms"}}
+    )
     result = run(host, spec)
     assert result["applied"]["paramsWritten"] == 3
     writes = [w for m, c in host.calls if m == "grid.parameters.set" for w in c["writes"]]
     assert all("display" not in w and "shown" not in w for w in writes)  # the host only sees raw values
-    assert host.param("E", "ATTACK") == pytest.approx(0.003 ** (1 / 3)) and host.param("E", "DECAY") == pytest.approx(0.5 ** (1 / 3))
+    assert host.param("E", "ATTACK") == pytest.approx(0.003 ** (1 / 3)) and host.param("E", "DECAY") == pytest.approx(
+        0.5 ** (1 / 3)
+    )
     assert host.param("G", "LENGTH") == pytest.approx(math.log10(0.12))
     host.calls.clear()
     again = run(host, spec)
     assert again["status"] == "unchanged" and host.writes() == [] and again["alreadyMatched"]["params"] == 3
-    host.named("E")["params"]["ATTACK"].update(value=0.144, display="2.99 ms")  # native pair one step off: 3 ms is a change
+    host.named("E")["params"]["ATTACK"].update(
+        value=0.144, display="2.99 ms"
+    )  # native pair one step off: 3 ms is a change
     assert run(host, spec)["applied"]["paramsWritten"] == 1
 
 
@@ -780,13 +1009,22 @@ def test_seconds_dry_run_shows_the_converted_raw_value():
     assert entry["rawValue"] == pytest.approx(0.2) and entry["to"] == {"display": "8 ms"}
 
 
-@pytest.mark.parametrize("module,param,text", [
-    ("ADSR", "ATTACK", "1 kb"),
-])
+@pytest.mark.parametrize(
+    "module,param,text",
+    [
+        ("ADSR", "ATTACK", "1 kb"),
+    ],
+)
 def test_unverified_seconds_display_is_rejected_offline(module, param, text):
     host = FakeGrid()
     with pytest.raises(BridgeError) as err:
-        run(host, {"target": TARGET, "modules": [{"name": "X", "type": module, "x": 0, "y": 0, "params": {param: {"display": text}}}]})
+        run(
+            host,
+            {
+                "target": TARGET,
+                "modules": [{"name": "X", "type": module, "x": 0, "y": 0, "params": {param: {"display": text}}}],
+            },
+        )
     assert err.value.error["code"] == "invalid_spec" and host.writes() == []
 
 
@@ -799,8 +1037,21 @@ def test_seconds_table_matches_bundled_schema_and_nothing_else_fits():
                 continue
             key = (name, p["parameterId"])
             shown = grid_apply.parse_quantity("seconds", p["defaultDisplay"])
-            fits = [k for k, (_, from_raw) in grid_apply.SECONDS_SCALES.items() if abs(from_raw(p["default"]) - shown[0]) <= shown[1] * 1.000001]
-            args = (key[1], p["defaultDisplay"], "seconds", p["default"], p["defaultDisplay"], p["minimum"], p["maximum"], name)
+            fits = [
+                k
+                for k, (_, from_raw) in grid_apply.SECONDS_SCALES.items()
+                if abs(from_raw(p["default"]) - shown[0]) <= shown[1] * 1.000001
+            ]
+            args = (
+                key[1],
+                p["defaultDisplay"],
+                "seconds",
+                p["default"],
+                p["defaultDisplay"],
+                p["minimum"],
+                p["maximum"],
+                name,
+            )
             if key in grid_apply.SECONDS_PARAMS:
                 mapping, raw, display = grid_apply.SECONDS_PARAMS[key]
                 seen.add(key)
@@ -826,16 +1077,31 @@ def test_seconds_live_schema_converts_against_the_live_pair():
 
 
 # --- blocks ---------------------------------------------------------------------------------------------------
-BLOCKS = {"voice": {
-    "params": {"atk": 0.5, "gain": 0.25, "rel": "20 ms"},
-    "modules": [{"name": "mul", "type": "Bias", "x": 0, "y": 0, "params": {"VALUE": "${gain}"}},
-                {"name": "env", "type": "ADSR", "x": 4, "y": 0, "params": {"ATTACK": "${atk}", "RELEASE": {"display": "${rel}"}}}],
-    "connections": [{"from": "mul.OUT", "to": "env.IN"}]}}
+BLOCKS = {
+    "voice": {
+        "params": {"atk": 0.5, "gain": 0.25, "rel": "20 ms"},
+        "modules": [
+            {"name": "mul", "type": "Bias", "x": 0, "y": 0, "params": {"VALUE": "${gain}"}},
+            {
+                "name": "env",
+                "type": "ADSR",
+                "x": 4,
+                "y": 0,
+                "params": {"ATTACK": "${atk}", "RELEASE": {"display": "${rel}"}},
+            },
+        ],
+        "connections": [{"from": "mul.OUT", "to": "env.IN"}],
+    }
+}
 BLOCK_SPEC = {
-    "target": TARGET, "blocks": BLOCKS, "namespace": "V: ",
+    "target": TARGET,
+    "blocks": BLOCKS,
+    "namespace": "V: ",
     "modules": [{"name": "V: sum", "type": "Add", "x": 20, "y": 0}],
-    "instances": [{"block": "voice", "prefix": "V1: "},
-                  {"block": "voice", "prefix": "V2: ", "dy": 12, "args": {"atk": 0.1, "gain": 0.75}}],
+    "instances": [
+        {"block": "voice", "prefix": "V1: "},
+        {"block": "voice", "prefix": "V2: ", "dy": 12, "args": {"atk": 0.1, "gain": 0.75}},
+    ],
     "connections": [{"from": "V1: env.OUT", "to": "V: sum.IN"}, {"from": "V2: env.OUT", "to": "V: sum.IN2"}],
 }
 
@@ -844,14 +1110,22 @@ def test_blocks_expand_with_prefix_offset_and_typed_placeholders():
     host = FakeGrid()
     result = run(host, BLOCK_SPEC, dryRun=True)
     assert [i["modules"] for i in result["instances"]] == [["V1: mul", "V1: env"], ["V2: mul", "V2: env"]]
-    assert {(i["name"], i["x"], i["y"]) for i in result["plan"]["inserts"]} >= {("V1: mul", 0, 0), ("V2: env", 4, 12), ("V: sum", 20, 0)}
+    assert {(i["name"], i["x"], i["y"]) for i in result["plan"]["inserts"]} >= {
+        ("V1: mul", 0, 0),
+        ("V2: env", 4, 12),
+        ("V: sum", 20, 0),
+    }
     assert len(result["plan"]["inserts"]) == 5 and host.writes() == []
     result = run(host, BLOCK_SPEC)
     assert result["status"] == "applied" and result["instances"][1]["prefix"] == "V2: "
     assert result["applied"]["inserted"] == 5 and result["applied"]["connections"] == 4
-    assert host.param("V1: env", "ATTACK") == 0.5 and host.param("V2: env", "ATTACK") == 0.1  # default vs arg, still numbers
+    assert (
+        host.param("V1: env", "ATTACK") == 0.5 and host.param("V2: env", "ATTACK") == 0.1
+    )  # default vs arg, still numbers
     assert host.param("V2: mul", "VALUE") == 0.75 and host.param("V1: mul", "VALUE") == 0.25
-    assert host.param("V1: env", "RELEASE") == pytest.approx(0.02 ** (1 / 3))  # {display} placeholder reaches the seconds conversion
+    assert host.param("V1: env", "RELEASE") == pytest.approx(
+        0.02 ** (1 / 3)
+    )  # {display} placeholder reaches the seconds conversion
     assert (host.named("V2: env")["x"], host.named("V2: env")["y"]) == (4, 12)
     assert host.source("V1: env", "IN") == ("V1: mul", "OUT") and host.source("V: sum", "IN2") == ("V2: env", "OUT")
     host.calls.clear()
@@ -869,16 +1143,53 @@ def test_blocks_are_checked_after_expansion():
 
     fails({**BLOCK_SPEC, "instances": [{"block": "voic", "prefix": "V1: "}]}, "unknown block")
     fails({**BLOCK_SPEC, "instances": [{"block": "voice", "prefix": "V1: ", "args": {"atack": 1}}]}, "unknown args")
-    fails({**BLOCK_SPEC, "instances": [{"block": "voice", "prefix": "V1: "}, {"block": "voice", "prefix": "V1: ", "dy": 12}]}, "distinct prefixes")
-    fails({**BLOCK_SPEC, "instances": [{"block": "voice", "prefix": "V1: "}, {"block": "voice", "prefix": "V2: "}]}, "overlap")  # same dx/dy
-    fails({**BLOCK_SPEC, "instances": [{"block": "voice", "prefix": "V1: ", "args": {"atk": 9}}, {"block": "voice", "prefix": "V2: ", "dy": 12}]}, "outside")
+    fails(
+        {
+            **BLOCK_SPEC,
+            "instances": [{"block": "voice", "prefix": "V1: "}, {"block": "voice", "prefix": "V1: ", "dy": 12}],
+        },
+        "distinct prefixes",
+    )
+    fails(
+        {**BLOCK_SPEC, "instances": [{"block": "voice", "prefix": "V1: "}, {"block": "voice", "prefix": "V2: "}]},
+        "overlap",
+    )  # same dx/dy
+    fails(
+        {
+            **BLOCK_SPEC,
+            "instances": [
+                {"block": "voice", "prefix": "V1: ", "args": {"atk": 9}},
+                {"block": "voice", "prefix": "V2: ", "dy": 12},
+            ],
+        },
+        "outside",
+    )
     bad = {"voice": {**BLOCKS["voice"], "connections": [{"from": "V1: mul.OUT", "to": "env.IN"}]}}
     fails({**BLOCK_SPEC, "blocks": bad}, "local module name")
-    typo = {"voice": {**BLOCKS["voice"], "modules": [{**BLOCKS["voice"]["modules"][0], "params": {"VALUE": "${gian}"}}, BLOCKS["voice"]["modules"][1]]}}
+    typo = {
+        "voice": {
+            **BLOCKS["voice"],
+            "modules": [
+                {**BLOCKS["voice"]["modules"][0], "params": {"VALUE": "${gian}"}},
+                BLOCKS["voice"]["modules"][1],
+            ],
+        }
+    }
     fails({**BLOCK_SPEC, "blocks": typo}, "placeholder")
-    wrong_type = {"voice": {**BLOCKS["voice"], "modules": [{**BLOCKS["voice"]["modules"][0], "params": {"VALUE": "${rel}"}}, BLOCKS["voice"]["modules"][1]]}}
+    wrong_type = {
+        "voice": {
+            **BLOCKS["voice"],
+            "modules": [
+                {**BLOCKS["voice"]["modules"][0], "params": {"VALUE": "${rel}"}},
+                BLOCKS["voice"]["modules"][1],
+            ],
+        }
+    }
     fails({**BLOCK_SPEC, "blocks": wrong_type}, "needs a number")
-    fails({**BLOCK_SPEC, "connections": BLOCK_SPEC["connections"] + [{"from": "V: sum.OUT", "to": "V1: env.IN"}]}, "repeats connection target")
+    fails(
+        {**BLOCK_SPEC, "connections": BLOCK_SPEC["connections"] + [{"from": "V: sum.OUT", "to": "V1: env.IN"}]},
+        "repeats connection target",
+    )
 
 
 def test_blocks_schema_surface():
@@ -887,18 +1198,37 @@ def test_blocks_schema_surface():
     with pytest.raises(ValueError):
         validate_call("grid.apply", {"target": TARGET})  # nothing to apply
     with pytest.raises(ValueError):  # blocks do not nest
-        validate_call("grid.apply", {**BLOCK_SPEC, "blocks": {"b": {"modules": [{"name": "a", "type": "Add", "x": 0, "y": 0}], "instances": []}}})
+        validate_call(
+            "grid.apply",
+            {
+                **BLOCK_SPEC,
+                "blocks": {"b": {"modules": [{"name": "a", "type": "Add", "x": 0, "y": 0}], "instances": []}},
+            },
+        )
     args, _ = validate_call("grid.apply", {"target": TARGET, "namespace": "V: ", "prune": True})
     assert "modules" not in args
 
 
 # --- step arrays and voicing ----------------------------------------------------------------------------------
-POLY = {"voices": 1, "voiceStacking": 1, "monoMode": "true_mono", "retriggerMode": "on_note_on", "notePriority": "last",
-        "legatoGlide": False, "stealSameKey": False, "allowOverlappingNotes": False}
+POLY = {
+    "voices": 1,
+    "voiceStacking": 1,
+    "monoMode": "true_mono",
+    "retriggerMode": "on_note_on",
+    "notePriority": "last",
+    "legatoGlide": False,
+    "stealSameKey": False,
+    "allowOverlappingNotes": False,
+}
 
 
 def steps_spec(steps, count=8, type_name="Pitches"):
-    return {"target": TARGET, "modules": [{"name": "S", "type": type_name, "x": 0, "y": 0, "params": {"STEPS": count, "DATA": {"steps": steps}}}]}
+    return {
+        "target": TARGET,
+        "modules": [
+            {"name": "S", "type": type_name, "x": 0, "y": 0, "params": {"STEPS": count, "DATA": {"steps": steps}}}
+        ],
+    }
 
 
 def test_steps_are_written_with_prefix_cas_and_idempotent():
@@ -946,9 +1276,19 @@ def test_steps_longer_than_live_array_rejects_before_writing_on_existing_module(
 
 def test_steps_block_placeholder_is_a_whole_list():
     host = FakeGrid()
-    spec = {"target": TARGET,
-            "blocks": {"seq": {"params": {"row": [0.0]}, "modules": [{"name": "g", "type": "Gates", "x": 0, "y": 0, "params": {"DATA": {"steps": "${row}"}}}]}},
-            "instances": [{"block": "seq", "prefix": "A: ", "args": {"row": [1, 0, 1, 1]}}, {"block": "seq", "prefix": "B: ", "dy": 6}]}
+    spec = {
+        "target": TARGET,
+        "blocks": {
+            "seq": {
+                "params": {"row": [0.0]},
+                "modules": [{"name": "g", "type": "Gates", "x": 0, "y": 0, "params": {"DATA": {"steps": "${row}"}}}],
+            }
+        },
+        "instances": [
+            {"block": "seq", "prefix": "A: ", "args": {"row": [1, 0, 1, 1]}},
+            {"block": "seq", "prefix": "B: ", "dy": 6},
+        ],
+    }
     result = run(host, spec)
     assert result["status"] == "applied"
     assert host.param("A: g", "DATA")[:4] == [1, 0, 1, 1] and host.param("B: g", "DATA")[:2] == [0, 0]
@@ -959,8 +1299,11 @@ def test_steps_block_placeholder_is_a_whole_list():
 def test_voicing_is_written_when_different_and_idempotent():
     host = FakeGrid()
     host.voicing = dict(POLY)
-    spec = {"target": TARGET, "modules": [{"name": "A", "type": "Add", "x": 0, "y": 0}],
-            "voicing": {"voices": 8, "voiceStacking": 1, "monoMode": "true_mono"}}
+    spec = {
+        "target": TARGET,
+        "modules": [{"name": "A", "type": "Add", "x": 0, "y": 0}],
+        "voicing": {"voices": 8, "voiceStacking": 1, "monoMode": "true_mono"},
+    }
     result = run(host, spec)
     assert result["applied"]["voicingFields"] == 1 and result["alreadyMatched"]["voicingFields"] == 2
     sent = [c for m, c in host.calls if m == "grid.voicing.set"]
@@ -983,14 +1326,23 @@ def test_voicing_on_non_poly_grid_is_refused_before_any_write():
     host = FakeGrid()
     with pytest.raises(BridgeError) as err:
         run(host, {**SPEC, "voicing": {"voices": 4}})
-    assert err.value.error["code"] == "invalid_spec" and "no voicing model" in err.value.error["message"] and host.writes() == []
+    assert (
+        err.value.error["code"] == "invalid_spec"
+        and "no voicing model" in err.value.error["message"]
+        and host.writes() == []
+    )
 
 
 def test_voicing_schema_surface():
     with pytest.raises(Exception):
-        validate_call("grid.apply", {"target": TARGET, "modules": [{"name": "A", "type": "Add", "x": 0, "y": 0}], "voicing": {}})
+        validate_call(
+            "grid.apply", {"target": TARGET, "modules": [{"name": "A", "type": "Add", "x": 0, "y": 0}], "voicing": {}}
+        )
     with pytest.raises(Exception):
-        validate_call("grid.apply", {"target": TARGET, "modules": [{"name": "A", "type": "Add", "x": 0, "y": 0}], "voicing": {"voices": 65}})
+        validate_call(
+            "grid.apply",
+            {"target": TARGET, "modules": [{"name": "A", "type": "Add", "x": 0, "y": 0}], "voicing": {"voices": 65}},
+        )
 
 
 # --- preflight warnings, wouldFail and actionable errors ------------------------------------------------------
@@ -999,8 +1351,11 @@ def messages(result, text):
 
 
 def test_device_phase_cable_warning_only_while_device_phase_is_on():
-    mods = [{"name": "ph", "type": "Phasor", "x": 0, "y": 0}, {"name": "st", "type": "Steps", "x": 8, "y": 0},
-            {"name": "st2", "type": "Gates", "x": 16, "y": 0, "params": {"DEVICE_PHASE": False}}]
+    mods = [
+        {"name": "ph", "type": "Phasor", "x": 0, "y": 0},
+        {"name": "st", "type": "Steps", "x": 8, "y": 0},
+        {"name": "st2", "type": "Gates", "x": 16, "y": 0, "params": {"DEVICE_PHASE": False}},
+    ]
     conns = [{"from": "ph.OUT", "to": "st.PHASE_IN"}, {"from": "ph.OUT", "to": "st2.PHASE_IN"}]
     result = run(FakeGrid(), {"target": TARGET, "modules": mods, "connections": conns}, dryRun=True)
     assert [w.split(":")[0] for w in messages(result, "DEVICE_PHASE")] == ["st"]
@@ -1008,7 +1363,10 @@ def test_device_phase_cable_warning_only_while_device_phase_is_on():
 
 
 def test_keytrack_warning_needs_a_poly_grid_and_nonzero_keytrack():
-    mods = [{"name": "f", "type": "SVF", "x": 0, "y": 0}, {"name": "g", "type": "SVF", "x": 8, "y": 0, "params": {"KEYTRACK": 0}}]
+    mods = [
+        {"name": "f", "type": "SVF", "x": 0, "y": 0},
+        {"name": "g", "type": "SVF", "x": 8, "y": 0, "params": {"KEYTRACK": 0}},
+    ]
     conns = [{"from": "f.OUT", "to": "g.IN"}]
     spec = {"target": TARGET, "modules": mods, "connections": conns}
     note_grid = run(FakeGrid(), spec, dryRun=True)
@@ -1020,9 +1378,17 @@ def test_keytrack_warning_needs_a_poly_grid_and_nonzero_keytrack():
 
 
 def test_dangling_modules_are_flagged_but_note_in_is_not():
-    mods = [{"name": "n", "type": "Note In", "x": 0, "y": 0}, {"name": "lonely", "type": "Add", "x": 0, "y": 8},
-            {"name": "o", "type": "Sine", "x": 8, "y": 0}, {"name": "m", "type": "Add", "x": 16, "y": 0}]
-    result = run(FakeGrid(), {"target": TARGET, "modules": mods, "connections": [{"from": "m.OUT", "to": "o.PITCH_IN"}]}, dryRun=True)
+    mods = [
+        {"name": "n", "type": "Note In", "x": 0, "y": 0},
+        {"name": "lonely", "type": "Add", "x": 0, "y": 8},
+        {"name": "o", "type": "Sine", "x": 8, "y": 0},
+        {"name": "m", "type": "Add", "x": 16, "y": 0},
+    ]
+    result = run(
+        FakeGrid(),
+        {"target": TARGET, "modules": mods, "connections": [{"from": "m.OUT", "to": "o.PITCH_IN"}]},
+        dryRun=True,
+    )
     assert messages(result, "lonely: has no connections") and not messages(result, "n: ")
     assert messages(result, "o: has connected inputs but none of its outputs")
 
@@ -1038,13 +1404,20 @@ def test_raw_write_to_nonlinear_scale_warns_with_effective_display(dry):
     [w] = messages(result, "VALUE raw 0.5")
     assert "12.5 % (-18.1 dB)" in w and '{"display": "-6 dB"}' in w
     assert not messages(one("Amplify", {"VALUE": {"display": "-6 dB"}}, dryRun=dry), "raw")
-    assert not messages(one("Amplify", {"VALUE": 1.0}, dryRun=dry), "raw")        # the default
-    assert not messages(one("Attenuate", {"VALUE": 0.5}, dryRun=dry), "raw")      # linear scale
+    assert not messages(one("Amplify", {"VALUE": 1.0}, dryRun=dry), "raw")  # the default
+    assert not messages(one("Attenuate", {"VALUE": 0.5}, dryRun=dry), "raw")  # linear scale
     assert messages(one("Mixer", {"LEVEL_1": 0.5}, dryRun=dry), "LEVEL_1 raw 0.5")
 
 
-@pytest.mark.parametrize("params,warns", [({"TIME": {"display": "300 ms"}}, True), ({"TIME": 0.5}, True),
-                                          ({"TIME": 0.5, "UNIT": {"label": "Seconds"}}, False), ({"UNIT": 1}, False)])
+@pytest.mark.parametrize(
+    "params,warns",
+    [
+        ({"TIME": {"display": "300 ms"}}, True),
+        ({"TIME": 0.5}, True),
+        ({"TIME": 0.5, "UNIT": {"label": "Seconds"}}, False),
+        ({"UNIT": 1}, False),
+    ],
+)
 @pytest.mark.parametrize("module", ["Mod Delay", "Long Delay"])
 def test_time_is_ignored_while_unit_is_a_note_value(module, params, warns):
     result = one(module, params, dryRun=True)
@@ -1074,7 +1447,10 @@ def test_dry_run_would_fail_reports_transport_and_stays_read_only():
 
 
 def test_dry_run_would_fail_flags_host_converted_display_and_missing_target():
-    spec = {"target": TARGET, "modules": [{"name": "f", "type": "SVF", "x": 0, "y": 0, "params": {"CUTOFF": {"display": "800 Hz"}}}]}
+    spec = {
+        "target": TARGET,
+        "modules": [{"name": "f", "type": "SVF", "x": 0, "y": 0, "params": {"CUTOFF": {"display": "800 Hz"}}}],
+    }
     result = run(FakeGrid(), spec, dryRun=True)
     assert [f["code"] for f in result["wouldFail"]] == ["display_unverified"]
     host = FakeGrid()
@@ -1096,7 +1472,9 @@ def test_unknown_parameter_and_port_errors_list_valid_ids():
     text = error_text(FakeGrid(), low)
     assert "unknown parameter 'GAIN'" in text and "Valid: BIPOLAR, STEREOIZE, VALUE" in text
     mods = [{"name": "osc", "type": "Sine", "x": 0, "y": 0}, {"name": "t", "type": "Triggers", "x": 8, "y": 0}]
-    text = error_text(FakeGrid(), {"target": TARGET, "modules": mods, "connections": [{"from": "osc.out", "to": "t.PHASE_IN"}]})
+    text = error_text(
+        FakeGrid(), {"target": TARGET, "modules": mods, "connections": [{"from": "osc.out", "to": "t.PHASE_IN"}]}
+    )
     assert "Did you mean: 'OUT'" in text and "Valid: OUT" in text
     assert "Did you mean: 'IN'" in text and "Valid: IN" in text
 
@@ -1105,12 +1483,19 @@ def test_overlap_error_names_the_blocker():
     host = FakeGrid()
     host.add("Add", "C: bar", 0, 0)
     host.add("Add", "", 10, 0)
-    text = error_text(host, {"target": TARGET, "modules": [{"name": "a", "type": "Sine", "x": 0, "y": 0}, {"name": "b", "type": "Sine", "x": 10, "y": 0}]})
+    text = error_text(
+        host,
+        {
+            "target": TARGET,
+            "modules": [{"name": "a", "type": "Sine", "x": 0, "y": 0}, {"name": "b", "type": "Sine", "x": 10, "y": 0}],
+        },
+    )
     assert "'C: bar' (Add@0,0)" in text and "Add@10,0" in text
 
 
 def test_real_apply_returns_a_diagnostics_marker(tmp_path, monkeypatch):
     from datetime import datetime
+
     log = tmp_path / "bitwig.log"
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S.000")
     log.write_text(f"[{now} float-main-app info] Starting application version 6.1.4 revision abc\n")
@@ -1123,12 +1508,18 @@ def test_prune_all_converges_whole_device_across_prefixes():
     host = populated_namespace_host()  # H: spec modules, H: old, X: keep, one unnamed, two undeclared cables
     spec = {**SPEC}
     spec.pop("namespace")
-    spec["modules"] = [*SPEC["modules"][:1], {**SPEC["modules"][1], "type": "Multiply"}, *SPEC["modules"][2:]]  # H: add retyped
+    spec["modules"] = [
+        *SPEC["modules"][:1],
+        {**SPEC["modules"][1], "type": "Multiply"},
+        *SPEC["modules"][2:],
+    ]  # H: add retyped
     spec["modules"].append({"name": "K: new", "type": "Add", "x": 20, "y": 12})  # lands on X: keep's footprint
     plan = run(host, spec, pruneAll=True, dryRun=True)
     assert plan["plan"]["replaces"] == ["H: add"] and host.writes() == []
     assert {"H: add", "H: old", "X: keep"} <= set(plan["plan"]["deletes"]) and len(plan["plan"]["deletes"]) == 4
-    assert any("pruneAll: deleting" in w for w in plan["warnings"]) and any("pruneAll: replacing" in w for w in plan["warnings"])
+    assert any("pruneAll: deleting" in w for w in plan["warnings"]) and any(
+        "pruneAll: replacing" in w for w in plan["warnings"]
+    )
     result = run(host, spec, pruneAll=True)
     assert result["status"] == "applied" and result["applied"]["deleted"] == 4
     assert sorted(m["customName"] for m in host.mods.values()) == sorted(m["name"] for m in spec["modules"])

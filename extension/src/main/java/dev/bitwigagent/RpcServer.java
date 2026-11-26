@@ -18,15 +18,15 @@ public final class RpcServer implements AutoCloseable {
 
     public static final int MAX_BYTES = 1024 * 1024;
     private static final Set<String> METHODS = HostBridge.supportedMethods();
-    private static final Set<String> FIELDS = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(
-        "id", "method", "params", "timeoutMs")));
+    private static final Set<String> FIELDS =
+            Collections.unmodifiableSet(new HashSet<>(Arrays.asList("id", "method", "params", "timeoutMs")));
     private static final Gson GSON = new GsonBuilder().serializeNulls().create();
     private final int port;
     private final Handler handler;
-    private final ThreadPoolExecutor workers = new ThreadPoolExecutor(4, 4, 0, TimeUnit.SECONDS,
-        new ArrayBlockingQueue<Runnable>(8), daemonFactory("bitwig-agent-rpc-worker"));
-    private final ScheduledThreadPoolExecutor timer = new ScheduledThreadPoolExecutor(1,
-        daemonFactory("bitwig-agent-rpc-timeout"));
+    private final ThreadPoolExecutor workers = new ThreadPoolExecutor(
+            4, 4, 0, TimeUnit.SECONDS, new ArrayBlockingQueue<Runnable>(8), daemonFactory("bitwig-agent-rpc-worker"));
+    private final ScheduledThreadPoolExecutor timer =
+            new ScheduledThreadPoolExecutor(1, daemonFactory("bitwig-agent-rpc-timeout"));
     private final Set<Socket> clients = ConcurrentHashMap.newKeySet();
     private volatile boolean closed;
     private ServerSocket listener;
@@ -40,7 +40,11 @@ public final class RpcServer implements AutoCloseable {
     }
 
     private static ThreadFactory daemonFactory(String name) {
-        return task -> { Thread t = new Thread(task, name); t.setDaemon(true); return t; };
+        return task -> {
+            Thread t = new Thread(task, name);
+            t.setDaemon(true);
+            return t;
+        };
     }
 
     public synchronized void start() throws IOException {
@@ -48,13 +52,18 @@ public final class RpcServer implements AutoCloseable {
         ServerSocket socket = new ServerSocket();
         try {
             socket.bind(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), port), 16);
-        } catch (IOException e) { socket.close(); throw e; }
+        } catch (IOException e) {
+            socket.close();
+            throw e;
+        }
         listener = socket;
         acceptThread = daemonFactory("bitwig-agent-rpc-accept").newThread(this::acceptLoop);
         acceptThread.start();
     }
 
-    public synchronized int getPort() { return listener == null ? port : listener.getLocalPort(); }
+    public synchronized int getPort() {
+        return listener == null ? port : listener.getLocalPort();
+    }
 
     private void acceptLoop() {
         while (!closed) {
@@ -62,30 +71,45 @@ public final class RpcServer implements AutoCloseable {
             try {
                 socket = listener.accept();
                 long acceptedAt = System.nanoTime();
-                if (closed) { closeSocket(socket); break; }
+                if (closed) {
+                    closeSocket(socket);
+                    break;
+                }
                 socket.setSoTimeout(1000);
                 clients.add(socket);
                 Socket client = socket;
                 // Also bounds blocked writes, queued connections, and peers that never read.
-                java.util.concurrent.atomic.AtomicReference<ScheduledFuture<?>> expiry = new java.util.concurrent.atomic.AtomicReference<>(
-                        timer.schedule(() -> closeSocket(client), SOCKET_EXPIRY_MS, TimeUnit.MILLISECONDS));
+                java.util.concurrent.atomic.AtomicReference<ScheduledFuture<?>> expiry =
+                        new java.util.concurrent.atomic.AtomicReference<>(
+                                timer.schedule(() -> closeSocket(client), SOCKET_EXPIRY_MS, TimeUnit.MILLISECONDS));
                 // A request with a longer deadline keeps its socket until that deadline plus delivery.
                 java.util.function.IntConsumer extend = timeoutMs -> {
-                    if (timeoutMs + SOCKET_GRACE_MS > SOCKET_EXPIRY_MS && expiry.get().cancel(false))
-                        expiry.set(timer.schedule(() -> closeSocket(client), timeoutMs + SOCKET_GRACE_MS, TimeUnit.MILLISECONDS));
+                    if (timeoutMs + SOCKET_GRACE_MS > SOCKET_EXPIRY_MS
+                            && expiry.get().cancel(false))
+                        expiry.set(timer.schedule(
+                                () -> closeSocket(client), timeoutMs + SOCKET_GRACE_MS, TimeUnit.MILLISECONDS));
                 };
                 try {
                     workers.execute(() -> {
-                        try { serve(client, acceptedAt, extend); }
-                        finally { expiry.get().cancel(false); clients.remove(client); closeSocket(client); }
+                        try {
+                            serve(client, acceptedAt, extend);
+                        } finally {
+                            expiry.get().cancel(false);
+                            clients.remove(client);
+                            closeSocket(client);
+                        }
                     });
                 } catch (RejectedExecutionException e) {
                     expiry.get().cancel(false);
                     clients.remove(client);
-                    closeSocket(client); // Overload closes before dispatch; clients must not retry writes automatically.
+                    closeSocket(
+                            client); // Overload closes before dispatch; clients must not retry writes automatically.
                 }
             } catch (IOException | RejectedExecutionException e) {
-                if (socket != null) { clients.remove(socket); closeSocket(socket); }
+                if (socket != null) {
+                    clients.remove(socket);
+                    closeSocket(socket);
+                }
                 if (!closed && listener.isClosed()) break;
             }
         }
@@ -100,23 +124,33 @@ public final class RpcServer implements AutoCloseable {
             if (candidateId.isEmpty() || candidateId.codePointCount(0, candidateId.length()) > 128)
                 throw invalid("id must have 1-128 characters");
             id = candidateId;
-            for (String key : request.keySet()) if (!FIELDS.contains(key)) throw invalid("Unknown request field: " + key);
+            for (String key : request.keySet())
+                if (!FIELDS.contains(key)) throw invalid("Unknown request field: " + key);
             String method = string(request, "method");
-            if (!METHODS.contains(method)) throw new RpcException("method_not_found", "Unknown method", "not_dispatched");
-            if (!request.has("params") || !request.get("params").isJsonObject()) throw invalid("params must be an object");
+            if (!METHODS.contains(method))
+                throw new RpcException("method_not_found", "Unknown method", "not_dispatched");
+            if (!request.has("params") || !request.get("params").isJsonObject())
+                throw invalid("params must be an object");
             int timeout = 5000;
             if (request.has("timeoutMs")) {
                 JsonElement value = request.get("timeoutMs");
-                if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isNumber()) throw invalid("timeoutMs must be an integer");
-                try { timeout = value.getAsBigDecimal().intValueExact(); }
-                catch (ArithmeticException | NumberFormatException e) { throw invalid("timeoutMs must be an integer"); }
+                if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isNumber())
+                    throw invalid("timeoutMs must be an integer");
+                try {
+                    timeout = value.getAsBigDecimal().intValueExact();
+                } catch (ArithmeticException | NumberFormatException e) {
+                    throw invalid("timeoutMs must be an integer");
+                }
                 int max = maxTimeoutMs(method);
                 if (timeout < 100 || timeout > max) throw invalid("timeoutMs must be 100-" + max + " for " + method);
             }
             extendExpiry.accept(timeout);
             long deadline = acceptedAt + TimeUnit.MILLISECONDS.toNanos(timeout);
-            if (System.nanoTime() >= deadline) throw new RpcException("deadline_exceeded",
-                "Request expired before dispatch; no host operation was scheduled.", "not_dispatched");
+            if (System.nanoTime() >= deadline)
+                throw new RpcException(
+                        "deadline_exceeded",
+                        "Request expired before dispatch; no host operation was scheduled.",
+                        "not_dispatched");
             dispatched = true;
             CompletableFuture<JsonObject> pending = handler.handle(method, request.getAsJsonObject("params"), deadline);
             if (pending == null) throw new IllegalStateException("Handler returned no future");
@@ -131,10 +165,13 @@ public final class RpcServer implements AutoCloseable {
             Throwable cause = e instanceof ExecutionException && e.getCause() != null ? e.getCause() : e;
             RpcException error;
             if (cause instanceof RpcException) error = (RpcException) cause;
-            else if (cause instanceof TimeoutException) error = new RpcException("deadline_exceeded",
-                "Outcome unknown; inspect state before issuing another write.", "unknown");
+            else if (cause instanceof TimeoutException)
+                error = new RpcException(
+                        "deadline_exceeded", "Outcome unknown; inspect state before issuing another write.", "unknown");
             else if (!dispatched) error = invalid("Invalid or incomplete UTF-8 JSON request");
-            else error = new RpcException("internal_error", "Outcome unknown; inspect state before issuing another write.", "unknown");
+            else
+                error = new RpcException(
+                        "internal_error", "Outcome unknown; inspect state before issuing another write.", "unknown");
             if (e instanceof InterruptedException) Thread.currentThread().interrupt();
             JsonObject response = envelope(id);
             JsonObject detail = new JsonObject();
@@ -142,18 +179,28 @@ public final class RpcServer implements AutoCloseable {
             detail.addProperty("message", error.getMessage());
             detail.addProperty("outcome", error.outcome);
             response.add("error", detail);
-            try { send(socket, response); } catch (IOException | RuntimeException ignored) { /* Peer closed or cannot receive. */ }
+            try {
+                send(socket, response);
+            } catch (IOException | RuntimeException ignored) {
+                /* Peer closed or cannot receive. */
+            }
         }
     }
 
     static final int MAX_TIMEOUT_MS = 10000, SOCKET_EXPIRY_MS = 15000, SOCKET_GRACE_MS = 5000;
+
     static int maxTimeoutMs(String method) {
-        return GridModule.LONG_TIMEOUT_METHODS.contains(method) || ProjectModule.SAVE_AS.equals(method) || RenderModule.LONG.contains(method) ? GridModule.MAX_TOPOLOGY_TIMEOUT_MS : MAX_TIMEOUT_MS;
+        return GridModule.LONG_TIMEOUT_METHODS.contains(method)
+                        || ProjectModule.SAVE_AS.equals(method)
+                        || RenderModule.LONG.contains(method)
+                ? GridModule.MAX_TOPOLOGY_TIMEOUT_MS
+                : MAX_TIMEOUT_MS;
     }
 
     private static JsonObject envelope(String id) {
         JsonObject response = new JsonObject();
-        if (id == null) response.add("id", JsonNull.INSTANCE); else response.addProperty("id", id);
+        if (id == null) response.add("id", JsonNull.INSTANCE);
+        else response.addProperty("id", id);
         return response;
     }
 
@@ -163,8 +210,9 @@ public final class RpcServer implements AutoCloseable {
 
     private static String string(JsonObject object, String key) {
         JsonElement value = object.get(key);
-        if (value == null || !value.isJsonPrimitive() || !value.getAsJsonPrimitive().isString())
-            throw invalid(key + " must be a string");
+        if (value == null
+                || !value.isJsonPrimitive()
+                || !value.getAsJsonPrimitive().isString()) throw invalid(key + " must be a string");
         return value.getAsString();
     }
 
@@ -180,12 +228,17 @@ public final class RpcServer implements AutoCloseable {
             if (bytes.size() >= MAX_BYTES) throw invalid("Request exceeds 1 MiB");
             bytes.write(b);
         }
-        String text = StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
-            .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes.toByteArray())).toString();
+        String text = StandardCharsets.UTF_8
+                .newDecoder()
+                .onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT)
+                .decode(ByteBuffer.wrap(bytes.toByteArray()))
+                .toString();
         try (JsonReader reader = new JsonReader(new StringReader(text))) {
             reader.setLenient(false);
             JsonElement result = readJson(reader, 0);
-            if (reader.peek() != JsonToken.END_DOCUMENT || !result.isJsonObject()) throw invalid("Expected one JSON object");
+            if (reader.peek() != JsonToken.END_DOCUMENT || !result.isJsonObject())
+                throw invalid("Expected one JSON object");
             return result.getAsJsonObject();
         }
     }
@@ -202,27 +255,39 @@ public final class RpcServer implements AutoCloseable {
                     if (object.has(name)) throw invalid("Duplicate JSON field");
                     object.add(name, readJson(reader, depth + 1));
                 }
-                reader.endObject(); return object;
+                reader.endObject();
+                return object;
             case BEGIN_ARRAY:
-                JsonArray array = new JsonArray(); reader.beginArray();
+                JsonArray array = new JsonArray();
+                reader.beginArray();
                 while (reader.hasNext()) array.add(readJson(reader, depth + 1));
-                reader.endArray(); return array;
-            case STRING: return new JsonPrimitive(reader.nextString());
-            case NUMBER: return new JsonPrimitive(ToNumberPolicy.LAZILY_PARSED_NUMBER.readNumber(reader));
-            case BOOLEAN: return new JsonPrimitive(reader.nextBoolean());
-            case NULL: reader.nextNull(); return JsonNull.INSTANCE;
-            default: throw invalid("Invalid JSON token");
+                reader.endArray();
+                return array;
+            case STRING:
+                return new JsonPrimitive(reader.nextString());
+            case NUMBER:
+                return new JsonPrimitive(ToNumberPolicy.LAZILY_PARSED_NUMBER.readNumber(reader));
+            case BOOLEAN:
+                return new JsonPrimitive(reader.nextBoolean());
+            case NULL:
+                reader.nextNull();
+                return JsonNull.INSTANCE;
+            default:
+                throw invalid("Invalid JSON token");
         }
     }
 
     private static void send(Socket socket, JsonObject response) throws IOException {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         OutputStream bounded = new FilterOutputStream(bytes) {
-            @Override public void write(int b) throws IOException {
+            @Override
+            public void write(int b) throws IOException {
                 if (bytes.size() >= MAX_BYTES) throw new IOException("Response exceeds 1 MiB");
                 out.write(b);
             }
-            @Override public void write(byte[] b, int off, int len) throws IOException {
+
+            @Override
+            public void write(byte[] b, int off, int len) throws IOException {
                 if ((long) bytes.size() + len > MAX_BYTES) throw new IOException("Response exceeds 1 MiB");
                 out.write(b, off, len);
             }
@@ -235,12 +300,22 @@ public final class RpcServer implements AutoCloseable {
         socket.getOutputStream().flush();
     }
 
-    private static void closeSocket(Socket socket) { try { socket.close(); } catch (IOException ignored) { } }
+    private static void closeSocket(Socket socket) {
+        try {
+            socket.close();
+        } catch (IOException ignored) {
+        }
+    }
 
-    @Override public synchronized void close() {
+    @Override
+    public synchronized void close() {
         if (closed) return;
         closed = true;
-        if (listener != null) try { listener.close(); } catch (IOException ignored) { }
+        if (listener != null)
+            try {
+                listener.close();
+            } catch (IOException ignored) {
+            }
         for (Socket socket : clients) closeSocket(socket);
         clients.clear();
         workers.shutdownNow();

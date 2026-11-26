@@ -29,8 +29,10 @@ def _flag_extension_mismatch(result: dict[str, Any]) -> None:
     local = package_version()
     if loaded != local:
         result["extensionMismatch"] = {
-            "extensionVersion": loaded, "clientVersion": local,
-            "warning": "Loaded extension differs from this client; reinstall/restart the controller before trusting writes."}
+            "extensionVersion": loaded,
+            "clientVersion": local,
+            "warning": "Loaded extension differs from this client; reinstall/restart the controller before trusting writes.",
+        }
 
 
 class BridgeError(Exception):
@@ -63,7 +65,9 @@ def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 
 def load_json(value: str) -> Any:
     """Decode strict JSON, rejecting duplicate keys and non-finite numbers."""
-    return json.loads(value, parse_constant=_reject_constant, parse_float=_finite_float, object_pairs_hook=_unique_object)
+    return json.loads(
+        value, parse_constant=_reject_constant, parse_float=_finite_float, object_pairs_hook=_unique_object
+    )
 
 
 def configured_port() -> int:
@@ -115,7 +119,12 @@ class BridgeClient:
                     raise ValueError("Response must contain exactly one of result or error")
                 if "error" in response:
                     error = response["error"]
-                    if not isinstance(error, dict) or not isinstance(error.get("code"), str) or not isinstance(error.get("message"), str) or error.get("outcome") not in ("not_dispatched", "not_applied", "unknown"):
+                    if (
+                        not isinstance(error, dict)
+                        or not isinstance(error.get("code"), str)
+                        or not isinstance(error.get("message"), str)
+                        or error.get("outcome") not in ("not_dispatched", "not_applied", "unknown")
+                    ):
                         raise ValueError("Malformed host error")
                     raise BridgeError(error)
                 if not isinstance(response["result"], dict):
@@ -125,13 +134,26 @@ class BridgeClient:
                 return response["result"]
         except BridgeError:
             raise
-        except (TimeoutError, OSError, ValueError, RecursionError, asyncio.IncompleteReadError, asyncio.LimitOverrunError) as exc:
+        except (
+            TimeoutError,
+            OSError,
+            ValueError,
+            RecursionError,
+            asyncio.IncompleteReadError,
+            asyncio.LimitOverrunError,
+        ) as exc:
             outcome = "unknown" if dispatched else "not_dispatched"
             code = "deadline_exceeded" if isinstance(exc, TimeoutError) else "transport_error"
             hint = ""
             if method == "grid.get" and (isinstance(exc, asyncio.LimitOverrunError) or "exceeds 1 MiB" in str(exc)):
                 hint = " The grid.get response exceeded the 1 MiB client cap: lower moduleLimit (64 works with includeParameters) or set includeParameters=false."
-            raise BridgeError({"code": code, "message": f"{type(exc).__name__}: {exc}.{hint} Inspect host state before another write; request was not retried.", "outcome": outcome}) from exc
+            raise BridgeError(
+                {
+                    "code": code,
+                    "message": f"{type(exc).__name__}: {exc}.{hint} Inspect host state before another write; request was not retried.",
+                    "outcome": outcome,
+                }
+            ) from exc
         finally:
             if writer is not None:
                 writer.close()
@@ -139,5 +161,3 @@ class BridgeClient:
                     await asyncio.wait_for(writer.wait_closed(), timeout=0.2)
                 except (OSError, TimeoutError):
                     pass
-
-

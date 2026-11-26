@@ -1,8 +1,9 @@
 package dev.bitwigagent;
 
+import static dev.bitwigagent.HostServices.failure;
+
 import com.google.gson.*;
 import java.util.Objects;
-import static dev.bitwigagent.HostServices.failure;
 
 /**
  * Observed-delta verification for device-chain edits (insert, delete, move) over a window of observed slots.
@@ -11,18 +12,27 @@ import static dev.bitwigagent.HostServices.failure;
  */
 final class DeviceChainEdit {
     static final int INSERT = 0, DELETE = 1, MOVE = 2;
+
     private DeviceChainEdit() {}
 
     /** Observations of one chain: slots 0..window-1 of a bank whose total size is count(). */
     interface View {
         int count();
+
         int window();
+
         long countSequence();
+
         boolean known(int slot);
+
         boolean exists(int slot);
+
         boolean ready(int slot);
+
         String name(int slot);
+
         String type(int slot);
+
         long nameSequence(int slot);
     }
 
@@ -34,10 +44,15 @@ final class DeviceChainEdit {
         final long[] nameSequences;
 
         Before(View v) {
-            count = v.count(); countSequence = v.countSequence();
+            count = v.count();
+            countSequence = v.countSequence();
             int seen = Math.min(count, v.window());
-            names = new String[seen]; types = new String[seen];
-            for (int i = 0; i < seen; i++) { names[i] = v.name(i); types[i] = v.type(i); }
+            names = new String[seen];
+            types = new String[seen];
+            for (int i = 0; i < seen; i++) {
+                names[i] = v.name(i);
+                types[i] = v.type(i);
+            }
             nameSequences = new long[Math.min(count + 1, v.window())];
             for (int i = 0; i < nameSequences.length; i++) nameSequences[i] = v.nameSequence(i);
         }
@@ -62,20 +77,36 @@ final class DeviceChainEdit {
         final String[] expectedNames, expectedTypes;
 
         private Plan(int kind, int index, int to, Before before) {
-            this.kind = kind; this.index = index; this.to = to; this.before = before;
-            if (kind != MOVE) { expectedNames = null; expectedTypes = null; return; }
+            this.kind = kind;
+            this.index = index;
+            this.to = to;
+            this.before = before;
+            if (kind != MOVE) {
+                expectedNames = null;
+                expectedTypes = null;
+                return;
+            }
             int n = before.names.length;
             expectedNames = permuted(before.names, index, to, n);
             expectedTypes = permuted(before.types, index, to, n);
         }
 
-        static Plan insert(int index, Before before) { return new Plan(INSERT, index, index, before); }
-        static Plan delete(int index, Before before) { return new Plan(DELETE, index, index, before); }
-        static Plan move(int from, int to, Before before) { return new Plan(MOVE, from, to, before); }
+        static Plan insert(int index, Before before) {
+            return new Plan(INSERT, index, index, before);
+        }
+
+        static Plan delete(int index, Before before) {
+            return new Plan(DELETE, index, index, before);
+        }
+
+        static Plan move(int from, int to, Before before) {
+            return new Plan(MOVE, from, to, before);
+        }
 
         /** A move whose result cannot be told apart from the chain before it, by name and type alone. */
         boolean indistinguishable() {
-            return kind == MOVE && java.util.Arrays.equals(expectedNames, before.names)
+            return kind == MOVE
+                    && java.util.Arrays.equals(expectedNames, before.names)
                     && java.util.Arrays.equals(expectedTypes, before.types);
         }
 
@@ -93,19 +124,28 @@ final class DeviceChainEdit {
     static final class Outcome {
         final boolean pending, ok;
         final String verification;
+
         private Outcome(boolean pending, boolean ok, String verification) {
-            this.pending = pending; this.ok = ok; this.verification = verification;
+            this.pending = pending;
+            this.ok = ok;
+            this.verification = verification;
         }
+
         static final Outcome PENDING = new Outcome(true, false, null);
-        static Outcome ok(String verification) { return new Outcome(false, true, verification); }
-        static Outcome ambiguous() { return new Outcome(false, false, "ambiguous_chain_change"); }
+
+        static Outcome ok(String verification) {
+            return new Outcome(false, true, verification);
+        }
+
+        static Outcome ambiguous() {
+            return new Outcome(false, false, "ambiguous_chain_change");
+        }
     }
 
     static Outcome observe(View v, Plan p) {
         Before b = p.before;
         int n = b.count, w = v.window(), c = v.count();
-        boolean consistent = p.kind == INSERT ? c >= n && c <= n + 1
-                : p.kind == DELETE ? c >= n - 1 && c <= n : c == n;
+        boolean consistent = p.kind == INSERT ? c >= n && c <= n + 1 : p.kind == DELETE ? c >= n - 1 && c <= n : c == n;
         if (!consistent) return Outcome.ambiguous();
         // Slots before an edit point must be exactly what they were; a moved range has no fixed prefix.
         int fixed = p.kind == MOVE ? 0 : Math.min(p.index, Math.min(n, w));
@@ -129,14 +169,19 @@ final class DeviceChainEdit {
             if (!v.exists(i) || !v.ready(i) || !same(v, i, b, i - 1)) return Outcome.PENDING;
         for (int i = n + 1; i < w; i++) if (v.exists(i)) return Outcome.PENDING;
         if (k >= w) return Outcome.ok("observed_count_increment_beyond_window");
-        return Outcome.ok(k == n ? "observed_count_increment_and_unchanged_prefix"
-                : "observed_count_increment_shifted_suffix");
+        return Outcome.ok(
+                k == n ? "observed_count_increment_and_unchanged_prefix" : "observed_count_increment_shifted_suffix");
     }
 
     private static Outcome observeMove(View v, Plan p, int n, int w) {
         for (int i = 0; i < w; i++) {
-            if (i >= n) { if (v.exists(i)) return Outcome.PENDING; continue; }
-            if (!v.exists(i) || !v.ready(i) || !Objects.equals(v.name(i), p.expectedNames[i])
+            if (i >= n) {
+                if (v.exists(i)) return Outcome.PENDING;
+                continue;
+            }
+            if (!v.exists(i)
+                    || !v.ready(i)
+                    || !Objects.equals(v.name(i), p.expectedNames[i])
                     || !Objects.equals(v.type(i), p.expectedTypes[i])) return Outcome.PENDING;
         }
         return Outcome.ok("observed_expected_arrangement");

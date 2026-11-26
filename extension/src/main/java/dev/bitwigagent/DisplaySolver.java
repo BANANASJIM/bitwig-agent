@@ -19,13 +19,23 @@ final class DisplaySolver {
     /** One writable parameter as seen on the controller thread. */
     interface Port {
         long valueSeq();
+
         JsonElement value();
+
         JsonElement display();
+
         void write(double normalized);
+
         void guard();
         /** Enabled state of the parameter's owner when writing it can toggle it (a send); null JSON when not applicable. */
-        default JsonElement enabled() { return JsonNull.INSTANCE; }
-        default long enabledSeq() { return 0; }
+        default JsonElement enabled() {
+            return JsonNull.INSTANCE;
+        }
+
+        default long enabledSeq() {
+            return 0;
+        }
+
         default void writeEnabled(boolean enabled) {}
     }
 
@@ -39,7 +49,8 @@ final class DisplaySolver {
         JsonObject json(String requested, double target) {
             JsonObject out = new JsonObject();
             out.addProperty("requested", requested);
-            if (target <= DisplayScale.MINUS_INF) out.addProperty("target", "-inf"); else out.addProperty("target", target);
+            if (target <= DisplayScale.MINUS_INF) out.addProperty("target", "-inf");
+            else out.addProperty("target", target);
             if (observedDisplay != null) out.addProperty("observedDisplay", observedDisplay);
             if (!Double.isNaN(normalized)) out.addProperty("normalized", normalized);
             if (!Double.isNaN(original)) out.addProperty("originalNormalized", original);
@@ -61,8 +72,14 @@ final class DisplaySolver {
     private final Result result = new Result();
     private double lo = 0, hi = 1;
 
-    DisplaySolver(HostServices s, HostOperation op, Port port, DisplayScale.Kind kind, double target, Consumer<Result> done) {
-        this.s = s; this.op = op; this.port = port; this.kind = kind; this.target = target; this.done = done;
+    DisplaySolver(
+            HostServices s, HostOperation op, Port port, DisplayScale.Kind kind, double target, Consumer<Result> done) {
+        this.s = s;
+        this.op = op;
+        this.port = port;
+        this.kind = kind;
+        this.target = target;
+        this.done = done;
     }
 
     void start() {
@@ -80,20 +97,38 @@ final class DisplaySolver {
     private void probe(double x) {
         port.guard();
         // The scheduler throws deadline_exceeded once the deadline passes, so stop while a restore still fits.
-        if (op.deadline - System.nanoTime() < 2 * PROBE_TIMEOUT_NANOS + HostServices.DEADLINE_MARGIN_NANOS) { fail("deadline"); return; }
+        if (op.deadline - System.nanoTime() < 2 * PROBE_TIMEOUT_NANOS + HostServices.DEADLINE_MARGIN_NANOS) {
+            fail("deadline");
+            return;
+        }
         result.probes++;
         long before = port.valueSeq();
         boolean same = near(port.value(), x);
-        if (!same) { op.dispatched = true; result.dispatched = true; port.write(x); }
+        if (!same) {
+            op.dispatched = true;
+            result.dispatched = true;
+            port.write(x);
+        }
         awaitValue(x, before, same, System.nanoTime() + PROBE_TIMEOUT_NANOS, same ? 0 : -1);
     }
 
     /** settle < 0: waiting for the value callback; otherwise counts the polls that let the display text catch up. */
     private void awaitValue(double x, long before, boolean same, long until, int settle) {
-        try { port.guard(); } catch (RpcException error) { fail("target_changed"); return; }
+        try {
+            port.guard();
+        } catch (RpcException error) {
+            fail("target_changed");
+            return;
+        }
         if (settle < 0 && port.valueSeq() > before && near(port.value(), x)) settle = 0;
-        if (settle >= SETTLE_POLLS) { evaluate(x); return; }
-        if (settle < 0 && System.nanoTime() >= until) { fail("probe_not_observed"); return; }
+        if (settle >= SETTLE_POLLS) {
+            evaluate(x);
+            return;
+        }
+        if (settle < 0 && System.nanoTime() >= until) {
+            fail("probe_not_observed");
+            return;
+        }
         int next = settle < 0 ? -1 : settle + 1;
         s.schedule(op, () -> awaitValue(x, before, same, until, next), POLL_MS);
     }
@@ -103,41 +138,81 @@ final class DisplaySolver {
         result.normalized = x;
         result.observedDisplay = display.isJsonNull() ? null : display.getAsString();
         double number = DisplayScale.parse(kind, result.observedDisplay);
-        if (Double.isNaN(number)) { fail("display_unparseable"); return; }
+        if (Double.isNaN(number)) {
+            fail("display_unparseable");
+            return;
+        }
         boolean bottom = target <= DisplayScale.MINUS_INF;
         double tol = bottom ? 0.5 : DisplayScale.tolerance(result.observedDisplay);
-        if (Math.abs(number - target) <= tol) { result.ok = true; done.accept(result); return; }
-        if (bottom) { fail("display_not_reachable"); return; }
-        if (number < target) lo = x; else hi = x;
-        if (result.probes >= MAX_PROBES || hi - lo < 2e-5) { fail("display_not_reachable"); return; }
+        if (Math.abs(number - target) <= tol) {
+            result.ok = true;
+            done.accept(result);
+            return;
+        }
+        if (bottom) {
+            fail("display_not_reachable");
+            return;
+        }
+        if (number < target) lo = x;
+        else hi = x;
+        if (result.probes >= MAX_PROBES || hi - lo < 2e-5) {
+            fail("display_not_reachable");
+            return;
+        }
         probe((lo + hi) / 2);
     }
 
     /** Put the original value (and enabled state, which a probe write can flip) back and report whether the host showed it; never retried. */
     private void fail(String reason) {
         result.reason = reason;
-        if (!result.dispatched) { done.accept(result); return; }
+        if (!result.dispatched) {
+            done.accept(result);
+            return;
+        }
         result.restoreAttempted = true;
         try {
             port.guard();
             long before = port.valueSeq(), enabledBefore = port.enabledSeq();
             boolean value = !near(port.value(), result.original);
             JsonElement enabledNow = port.enabled();
-            boolean enabled = result.originalEnabled != null && !enabledNow.isJsonNull() && enabledNow.getAsBoolean() != result.originalEnabled;
-            if (!value && !enabled) { result.restored = true; done.accept(result); return; }
+            boolean enabled = result.originalEnabled != null
+                    && !enabledNow.isJsonNull()
+                    && enabledNow.getAsBoolean() != result.originalEnabled;
+            if (!value && !enabled) {
+                result.restored = true;
+                done.accept(result);
+                return;
+            }
             if (value) port.write(result.original);
             if (enabled) port.writeEnabled(result.originalEnabled);
             awaitRestore(before, enabledBefore, value, enabled, System.nanoTime() + PROBE_TIMEOUT_NANOS);
-        } catch (RpcException error) { done.accept(result); }
+        } catch (RpcException error) {
+            done.accept(result);
+        }
     }
 
     private void awaitRestore(long before, long enabledBefore, boolean value, boolean enabled, long until) {
-        try { port.guard(); } catch (RpcException error) { done.accept(result); return; }
+        try {
+            port.guard();
+        } catch (RpcException error) {
+            done.accept(result);
+            return;
+        }
         JsonElement enabledNow = port.enabled();
         boolean valueOk = !value || (port.valueSeq() > before && near(port.value(), result.original));
-        boolean enabledOk = !enabled || (port.enabledSeq() > enabledBefore && !enabledNow.isJsonNull() && enabledNow.getAsBoolean() == result.originalEnabled);
-        if (valueOk && enabledOk) { result.restored = true; done.accept(result); return; }
-        if (System.nanoTime() >= until) { done.accept(result); return; }
+        boolean enabledOk = !enabled
+                || (port.enabledSeq() > enabledBefore
+                        && !enabledNow.isJsonNull()
+                        && enabledNow.getAsBoolean() == result.originalEnabled);
+        if (valueOk && enabledOk) {
+            result.restored = true;
+            done.accept(result);
+            return;
+        }
+        if (System.nanoTime() >= until) {
+            done.accept(result);
+            return;
+        }
         s.schedule(op, () -> awaitRestore(before, enabledBefore, value, enabled, until), POLL_MS);
     }
 

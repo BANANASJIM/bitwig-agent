@@ -4,6 +4,7 @@
 Requires BITWIG_API_JAR pointing to the user's installed API jar and a JDK.
 Gson is checksum-verified by build.py (downloaded only when not cached).
 """
+
 import importlib.util
 import os
 from pathlib import Path
@@ -20,8 +21,10 @@ def main() -> None:
     if not api_setting or not Path(api_setting).is_file():
         raise RuntimeError("Set BITWIG_API_JAR to your installed Bitwig API jar; no host is downloaded")
     api = Path(api_setting).resolve()
-    tests = sorted(path.relative_to(TEST_ROOT).with_suffix("").as_posix().replace("/", ".")
-                   for path in TEST_ROOT.rglob("*Test.java"))
+    tests = sorted(
+        path.relative_to(TEST_ROOT).with_suffix("").as_posix().replace("/", ".")
+        for path in TEST_ROOT.rglob("*Test.java")
+    )
     missing = CORE_TESTS - set(tests)
     if missing:
         raise RuntimeError(f"Required Java tests missing: {', '.join(sorted(missing))}")
@@ -43,8 +46,7 @@ def main() -> None:
     for test in tests:
         print(f"RUN {test}", flush=True)
         try:
-            subprocess.run([os.environ.get("JAVA", "java"), "-ea", "-cp", classpath, test],
-                           check=True, timeout=60)
+            subprocess.run([os.environ.get("JAVA", "java"), "-ea", "-cp", classpath, test], check=True, timeout=60)
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
             failures.append(test)
             print(f"FAIL {test}: {error}", flush=True)

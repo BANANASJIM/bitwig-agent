@@ -1,9 +1,10 @@
 package dev.bitwigagent;
 
+import static dev.bitwigagent.HostServices.failure;
+
 import com.google.gson.JsonObject;
 import java.lang.reflect.Method;
 import java.util.*;
-import static dev.bitwigagent.HostServices.failure;
 
 /**
  * Exact 6.1.4 binding for the track-group model operation behind the track group command
@@ -26,7 +27,11 @@ final class Bitwig614TrackGroupAccess implements MixModule.GroupAccess {
         groupClass = a.type(master + "SC");
         projectType = a.type(master + "g2L");
         Class<?> identity = a.type(iface + "RYd"), channelAlias = a.type("iKU");
-        target = a.exactMethod(a.type("com.bitwig.flt.control_surface.proxy.ControlSurfaceProxy"), "getDeepestTarget", Object.class, false);
+        target = a.exactMethod(
+                a.type("com.bitwig.flt.control_surface.proxy.ControlSurfaceProxy"),
+                "getDeepestTarget",
+                Object.class,
+                false);
         uuid = a.exactMethod(identity, "kFU", UUID.class, false);
         alias = a.exactMethod(groupIface, "TD2", channelAlias, false);
         aliasUuid = a.exactMethod(channelAlias, "kFU", UUID.class, false);
@@ -35,21 +40,33 @@ final class Bitwig614TrackGroupAccess implements MixModule.GroupAccess {
         project = a.exactMethod(a.type("com.bitwig.ramona.core.AVL"), "IwV", Object.class, false, Class.class);
     }
 
-    @Override public void execute(Runnable work) { a.execute(work); }
+    @Override
+    public void execute(Runnable work) {
+        a.execute(work);
+    }
 
-    @Override public JsonObject group(List<Object> proxies, List<String> ids, Runnable check, Runnable beforeWrite) {
-        a.documentThread(); check.run();
+    @Override
+    public JsonObject group(List<Object> proxies, List<String> ids, Runnable check, Runnable beforeWrite) {
+        a.documentThread();
+        check.run();
         List<Object> tracks = resolve(proxies, ids);
         Object common = parent(tracks);
         Object owningProject = a.invoke(project, common, projectType);
         Object[] models = new Object[tracks.size() + 1];
         String[] labels = new String[models.length + 1];
-        for (int i = 0; i < tracks.size(); i++) { models[i] = tracks.get(i); labels[i] = "track" + i + "Deleted"; }
-        models[tracks.size()] = common; labels[tracks.size()] = "parentDeleted"; labels[models.length] = "projectDeleted";
+        for (int i = 0; i < tracks.size(); i++) {
+            models[i] = tracks.get(i);
+            labels[i] = "track" + i + "Deleted";
+        }
+        models[tracks.size()] = common;
+        labels[tracks.size()] = "parentDeleted";
+        labels[models.length] = "projectDeleted";
         NativeReadContext.Capture capture = context.capture(owningProject, models, labels, check, false);
         a.requireModelThread(common);
         Runnable guard = () -> {
-            check.run(); a.requireModelThread(common); context.guard(capture, models, labels, check);
+            check.run();
+            a.requireModelThread(common);
+            context.guard(capture, models, labels, check);
             if (!resolve(proxies, ids).equals(tracks) || parent(tracks) != common)
                 throw failure("stale_context", "Native track targets or their parent group changed before grouping.");
         };
@@ -68,12 +85,16 @@ final class Bitwig614TrackGroupAccess implements MixModule.GroupAccess {
         List<Object> tracks = new ArrayList<>(proxies.size());
         for (int i = 0; i < proxies.size(); i++) {
             Object track = a.invoke(target, proxies.get(i));
-            if (!trackClass.isInstance(track)) throw failure("stale_context", "Track proxy has no attached native track: " + ids.get(i));
+            if (!trackClass.isInstance(track))
+                throw failure("stale_context", "Track proxy has no attached native track: " + ids.get(i));
             a.requireModelThread(track);
-            Object identity = groupIface.isInstance(track) ? a.invoke(aliasUuid, a.invoke(alias, track)) : a.invoke(uuid, track);
+            Object identity =
+                    groupIface.isInstance(track) ? a.invoke(aliasUuid, a.invoke(alias, track)) : a.invoke(uuid, track);
             if (!UUID.fromString(ids.get(i)).equals(identity))
-                throw failure("stale_context", "Native track UUID differs from the requested trackId " + ids.get(i) + ".");
-            if (tracks.contains(track)) throw failure("stale_context", "Two trackIds resolve to the same native track.");
+                throw failure(
+                        "stale_context", "Native track UUID differs from the requested trackId " + ids.get(i) + ".");
+            if (tracks.contains(track))
+                throw failure("stale_context", "Two trackIds resolve to the same native track.");
             tracks.add(track);
         }
         return tracks;
@@ -83,8 +104,10 @@ final class Bitwig614TrackGroupAccess implements MixModule.GroupAccess {
         Object common = null;
         for (Object track : tracks) {
             Object owner = a.invoke(parent, track);
-            if (!groupClass.isInstance(owner)) throw failure("unsupported_scope", "Native parent is not a track group.");
-            if (common != null && owner != common) throw failure("unsupported_scope", "Tracks do not share one native parent group.");
+            if (!groupClass.isInstance(owner))
+                throw failure("unsupported_scope", "Native parent is not a track group.");
+            if (common != null && owner != common)
+                throw failure("unsupported_scope", "Tracks do not share one native parent group.");
             common = owner;
         }
         return common;

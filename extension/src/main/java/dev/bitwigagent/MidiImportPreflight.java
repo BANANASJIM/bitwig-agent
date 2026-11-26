@@ -30,12 +30,14 @@ final class MidiImportPreflight {
                     if (command == ShortMessage.NOTE_ON && message.getData2() > 0) return;
                     // Preserve controller/program/pitch MIDI imports; only empty or note-off-only files
                     // are known to contain no material from which to create a launcher clip.
-                    if (message.getStatus() < 0xf0 && command != ShortMessage.NOTE_ON
+                    if (message.getStatus() < 0xf0
+                            && command != ShortMessage.NOTE_ON
                             && command != ShortMessage.NOTE_OFF) return;
                 }
             }
         }
-        throw HostServices.failure("empty_midi_file",
+        throw HostServices.failure(
+                "empty_midi_file",
                 "MIDI import requires a positive-velocity note-on or another channel event; use launcher.create for an empty timed clip.");
     }
 

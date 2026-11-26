@@ -11,7 +11,9 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 Nonempty = Annotated[str, Field(min_length=1, max_length=4096)]
-TrackId = Annotated[str, Field(pattern=r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")]
+TrackId = Annotated[
+    str, Field(pattern=r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+]
 UnitValue = Annotated[float, Field(ge=0, le=1)]
 
 
@@ -22,7 +24,13 @@ def omitted(**kwargs):
 
 def validate_local_path(value: str) -> None:
     path = PurePosixPath(value)
-    if not path.is_absolute() or value.startswith("//") or str(path) != value or ".." in path.parts or any(ord(c) < 32 or 127 <= ord(c) <= 159 for c in value):
+    if (
+        not path.is_absolute()
+        or value.startswith("//")
+        or str(path) != value
+        or ".." in path.parts
+        or any(ord(c) < 32 or 127 <= ord(c) <= 159 for c in value)
+    ):
         raise ValueError("path must be an absolute normalized path without control characters")
 
 
@@ -58,7 +66,9 @@ class DeviceArgs(StatusArgs):
 
 class ActionArgs(StatusArgs):
     actionId: Nonempty
-    discardUnsavedChanges: bool = omitted(description="Only with explicit user consent: allow Quit/Close/New/Open when the project is not observed saved.")
+    discardUnsavedChanges: bool = omitted(
+        description="Only with explicit user consent: allow Quit/Close/New/Open when the project is not observed saved."
+    )
 
 
 class ActionListArgs(StatusArgs):
@@ -103,8 +113,13 @@ class ModulatorListArgs(StatusArgs):
 
 class ModulatorParameterGetArgs(StatusArgs):
     parent: DeviceParent
-    modulatorId: TrackId = Field(description="Current modulator UUID from modulators.list, not its typeId, name or index; reacquire after reopening or identity changes.")
-    parameterId: str = Field(max_length=1024, description="Exact addressable parameterId from modulators.list, not a display name; empty is valid when unique, at most 1024 UTF-16 code units.")
+    modulatorId: TrackId = Field(
+        description="Current modulator UUID from modulators.list, not its typeId, name or index; reacquire after reopening or identity changes."
+    )
+    parameterId: str = Field(
+        max_length=1024,
+        description="Exact addressable parameterId from modulators.list, not a display name; empty is valid when unique, at most 1024 UTF-16 code units.",
+    )
 
 
 MODULATOR_ID = "Current modulator UUID from modulators.get (or modulators.list), not its typeId, name or index."
@@ -116,14 +131,26 @@ MAX_APPLY_CONNECTIONS = 4096  # a full 1024-module Grid typically needs more cab
 
 class ModulatorGetArgs(StatusArgs):
     parent: DeviceParent
-    modulatorId: TrackId = omitted(description="Only this modulator; absent returns every modulator on the device (at most 64).")
+    modulatorId: TrackId = omitted(
+        description="Only this modulator; absent returns every modulator on the device (at most 64)."
+    )
 
 
 class ModulatorInsertArgs(StatusArgs):
     parent: DeviceParent
-    expectedCount: int = Field(ge=0, le=MODULATOR_COUNT, description="Current modulator count from modulators.get; a different count rejects not_applied.")
-    typeName: str = omitted(min_length=1, max_length=128, description="Modulator type name from modulators.catalog, e.g. 'Random' or 'Beat LFO'; exactly one of typeName or typeId.")
-    typeId: TrackId = omitted(description="Native modulator type UUID (the typeId of a modulators.get row); exactly one of typeName or typeId.")
+    expectedCount: int = Field(
+        ge=0,
+        le=MODULATOR_COUNT,
+        description="Current modulator count from modulators.get; a different count rejects not_applied.",
+    )
+    typeName: str = omitted(
+        min_length=1,
+        max_length=128,
+        description="Modulator type name from modulators.catalog, e.g. 'Random' or 'Beat LFO'; exactly one of typeName or typeId.",
+    )
+    typeId: TrackId = omitted(
+        description="Native modulator type UUID (the typeId of a modulators.get row); exactly one of typeName or typeId."
+    )
 
     @model_validator(mode="after")
     def validate_one_type(self):
@@ -141,23 +168,43 @@ class ModulatorDeleteArgs(StatusArgs):
 class ModulatorParameterSetArgs(StatusArgs):
     parent: DeviceParent
     modulatorId: TrackId = Field(description=MODULATOR_ID)
-    parameterId: str = Field(max_length=1024, description="Exact parameterId of a modulators.get parameters row (not an outputId).")
+    parameterId: str = Field(
+        max_length=1024, description="Exact parameterId of a modulators.get parameters row (not an outputId)."
+    )
     expectedKind: Literal["float", "integer", "enum", "boolean"] = Field(description="kind from that row.")
-    expectedValue: bool | int | float = Field(description="Exact current raw value from that row; stale rejects not_applied.")
-    value: bool | int | float = omitted(description="Requested raw value in the row's minimum..maximum (enum: a listed option value). Exactly one of value or display.")
-    display: str = omitted(min_length=1, max_length=64, description="Float only, instead of value: text with a unit such as '2 Hz' or '50 %'.")
+    expectedValue: bool | int | float = Field(
+        description="Exact current raw value from that row; stale rejects not_applied."
+    )
+    value: bool | int | float = omitted(
+        description="Requested raw value in the row's minimum..maximum (enum: a listed option value). Exactly one of value or display."
+    )
+    display: str = omitted(
+        min_length=1,
+        max_length=64,
+        description="Float only, instead of value: text with a unit such as '2 Hz' or '50 %'.",
+    )
 
     @model_validator(mode="after")
     def validate_raw(self):
-        details = {key: getattr(self, key) for key in ("expectedValue", "value", "display") if key in self.model_fields_set}
-        GridRawWrite.model_validate({"moduleId": self.modulatorId, "parameterId": self.parameterId,
-                                     "expectedKind": self.expectedKind, **details})
+        details = {
+            key: getattr(self, key) for key in ("expectedValue", "value", "display") if key in self.model_fields_set
+        }
+        GridRawWrite.model_validate(
+            {
+                "moduleId": self.modulatorId,
+                "parameterId": self.parameterId,
+                "expectedKind": self.expectedKind,
+                **details,
+            }
+        )
         return self
 
 
 class GridControlTarget(StrictModel):
     moduleId: TrackId = Field(description="Grid module instanceId from grid.get on this same device.")
-    parameterId: str = Field(max_length=1024, description="Exact parameterId of that module's control (e.g. DECAY), from grid.get.")
+    parameterId: str = Field(
+        max_length=1024, description="Exact parameterId of that module's control (e.g. DECAY), from grid.get."
+    )
 
 
 class ModulatorControlTarget(StrictModel):
@@ -171,26 +218,47 @@ MAP_TARGET = "The control to modulate: {moduleId, parameterId} for a Grid module
 class ModulatorUnmapArgs(StatusArgs):
     parent: DeviceParent
     modulatorId: TrackId = Field(description="Source modulator. " + MODULATOR_ID)
-    outputId: str = omitted(max_length=1024, description="Source output id from modulators.get outputs; may be omitted when the modulator has exactly one output.")
+    outputId: str = omitted(
+        max_length=1024,
+        description="Source output id from modulators.get outputs; may be omitted when the modulator has exactly one output.",
+    )
     target: GridControlTarget | ModulatorControlTarget = Field(description=MAP_TARGET)
     expectedAmount: ModulationAmount = Field(description="Exact current amount of the mapping, from modulators.get.")
 
 
 class ModulatorMapArgs(ModulatorUnmapArgs):
-    expectedAmount: ModulationAmount | None = Field(description="null when this output does not map to target yet (creates it); else the exact current amount (changes it).")
-    amount: ModulationAmount = Field(description="Modulation amount -1..1 (negative inverts). Not clamped: beyond the target's range rejects.")
-    transfer: TransferFunction = omitted(description="New mappings only (default linear): linear, rectify_pos/rectify_neg (keep one half), abs_linear, inv_abs_linear, cubic, inv_cubic. Polarity itself is a modulator parameter (e.g. LFO bipolar).")
+    expectedAmount: ModulationAmount | None = Field(
+        description="null when this output does not map to target yet (creates it); else the exact current amount (changes it)."
+    )
+    amount: ModulationAmount = Field(
+        description="Modulation amount -1..1 (negative inverts). Not clamped: beyond the target's range rejects."
+    )
+    transfer: TransferFunction = omitted(
+        description="New mappings only (default linear): linear, rectify_pos/rectify_neg (keep one half), abs_linear, inv_abs_linear, cubic, inv_cubic. Polarity itself is a modulator parameter (e.g. LFO bipolar)."
+    )
     enabled: bool = omitted(description="New mappings only (default true).")
 
 
 class ModulatorCatalogArgs(StatusArgs):
-    query: str = omitted(min_length=1, max_length=256, description="Keywords ranked against names, categories, descriptions and keywords; absent lists all.")
-    lang: Literal["en", "de", "es", "fr", "ja", "ko", "zh"] = omitted(description="Documentation language (default en).")
-    installationRoot: str = omitted(min_length=1, max_length=4096, description="Bitwig install directory; default $BITWIG_INSTALLATION_ROOT, the install of $BITWIG_API_JAR, then /opt/bitwig-studio.")
+    query: str = omitted(
+        min_length=1,
+        max_length=256,
+        description="Keywords ranked against names, categories, descriptions and keywords; absent lists all.",
+    )
+    lang: Literal["en", "de", "es", "fr", "ja", "ko", "zh"] = omitted(
+        description="Documentation language (default en)."
+    )
+    installationRoot: str = omitted(
+        min_length=1,
+        max_length=4096,
+        description="Bitwig install directory; default $BITWIG_INSTALLATION_ROOT, the install of $BITWIG_API_JAR, then /opt/bitwig-studio.",
+    )
 
 
 class ModulatorDescribeArgs(ModulatorCatalogArgs):
-    type: str = omitted(min_length=1, max_length=128, description="Modulator type name, e.g. 'Beat LFO'; exactly one of type or query.")
+    type: str = omitted(
+        min_length=1, max_length=128, description="Modulator type name, e.g. 'Beat LFO'; exactly one of type or query."
+    )
 
     @model_validator(mode="after")
     def validate_one_selector(self):
@@ -201,11 +269,16 @@ class ModulatorDescribeArgs(ModulatorCatalogArgs):
 
 class GridCapabilitiesArgs(StatusArgs):
     detail: Literal["summary", "full"] = omitted(
-        description="summary (default): availability booleans only. full: every binding's coverage, operation and limits.")
+        description="summary (default): availability booleans only. full: every binding's coverage, operation and limits."
+    )
 
 
 class GridCatalogArgs(StatusArgs):
-    query: str = Field(default="", max_length=128, description="Case-, space-, hyphen- and punctuation-insensitive; every word must match inside the module name, so 'lowpass' and 'low pass' both find 'Low-pass'. A miss returns up to five nearest names as suggestions.")
+    query: str = Field(
+        default="",
+        max_length=128,
+        description="Case-, space-, hyphen- and punctuation-insensitive; every word must match inside the module name, so 'lowpass' and 'low pass' both find 'Low-pass'. A miss returns up to five nearest names as suggestions.",
+    )
     offset: int = Field(default=0, ge=0, le=100000)
     limit: int = Field(default=64, ge=1, le=256)
 
@@ -214,10 +287,16 @@ class GridGetArgs(ParameterArgs):
     moduleOffset: int = Field(default=0, ge=0, le=100000)
     moduleLimit: int = Field(default=64, ge=1, le=256)
     includeParameters: bool = True
-    diagnostics: bool = Field(default=False, description="Add obfuscated native modelClass/path and constant coverage notes; no write needs them.")
+    diagnostics: bool = Field(
+        default=False,
+        description="Add obfuscated native modelClass/path and constant coverage notes; no write needs them.",
+    )
     moduleIds: Annotated[list[TrackId], Field(min_length=1, max_length=256)] = omitted(
-        description="Return only these module instanceIds (e.g. one module's parameters without paging); absent ids are listed in missingModuleIds and the read is never complete.")
-    full: bool = omitted(description="Step-array parameters (kind steps) return all 256 entries instead of the first STEPS ones.")
+        description="Return only these module instanceIds (e.g. one module's parameters without paging); absent ids are listed in missingModuleIds and the read is never complete."
+    )
+    full: bool = omitted(
+        description="Step-array parameters (kind steps) return all 256 entries instead of the first STEPS ones."
+    )
 
 
 class GridTopologyReconcileArgs(ParameterArgs):
@@ -227,7 +306,8 @@ class GridTopologyReconcileArgs(ParameterArgs):
 class GridWriteArgs(ParameterArgs):
     timeoutMs: int = Field(default=5000, ge=100, le=TOPOLOGY_TIMEOUT_MS)
     graph: Literal["diff", "full"] = omitted(
-        description="diff (default): what changed, computed from the before/after graphs. full: the whole bounded graph after the edit.")
+        description="diff (default): what changed, computed from the before/after graphs. full: the whole bounded graph after the edit."
+    )
 
 
 GRID_INSERT_FIELDS = {"x", "y"}
@@ -251,16 +331,20 @@ class GridModuleSpec(StrictModel):
 
 class GridModuleInsertArgs(GridWriteArgs):
     """One insertion (typeId|typeName, x, y) or a same-device batch (modules), never both."""
-    model_config = ConfigDict(json_schema_extra={
-        "oneOf": [{"required": ["x", "y"]}, {"required": ["modules"]}],
-    })
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "oneOf": [{"required": ["x", "y"]}, {"required": ["modules"]}],
+        }
+    )
 
     typeId: TrackId = omitted(description="Single form: " + TYPE_ID_DESCRIPTION)
     typeName: str = omitted(min_length=1, max_length=128, description="Single form: " + TYPE_NAME_DESCRIPTION)
     x: int = omitted(ge=-(2**31), le=2**31 - 1, description="Single form: " + INT32_DESCRIPTION)
     y: int = omitted(ge=-(2**31), le=2**31 - 1, description="Single form: " + INT32_DESCRIPTION)
     modules: Annotated[list[GridModuleSpec], Field(min_length=1, max_length=16)] = omitted(
-        description="Batch form: 1..16 insertions on this device, each {typeId|typeName, x, y}. All types and limits are checked first (any failure inserts nothing); then entries insert in order, each settling before the next, and stop at the first failure.")
+        description="Batch form: 1..16 insertions on this device, each {typeId|typeName, x, y}. All types and limits are checked first (any failure inserts nothing); then entries insert in order, each settling before the next, and stop at the first failure."
+    )
 
     @model_validator(mode="after")
     def validate_one_form(self):
@@ -274,44 +358,75 @@ class GridModuleInsertArgs(GridWriteArgs):
 
 
 class GridModuleArgs(ParameterArgs):
-    moduleId: TrackId = Field(description="Current module instanceId from grid.get; reacquire after reopening the project.")
+    moduleId: TrackId = Field(
+        description="Current module instanceId from grid.get; reacquire after reopening the project."
+    )
 
 
 class GridVoicingGetArgs(ParameterArgs):
-    detail: Literal["summary", "full"] = omitted(description="summary (default) omits the editContext observation; full keeps it.")
+    detail: Literal["summary", "full"] = omitted(
+        description="summary (default) omits the editContext observation; full keeps it."
+    )
 
 
 class GridModuleEditArgs(GridWriteArgs):
-    moduleId: TrackId = Field(description="Current module instanceId from grid.get; reacquire after reopening the project.")
+    moduleId: TrackId = Field(
+        description="Current module instanceId from grid.get; reacquire after reopening the project."
+    )
 
 
 class GridConnectionSource(StrictModel):
     moduleId: TrackId = Field(description="Current source module instanceId from grid.get, not a type UUID.")
-    portKey: str = Field(max_length=1024, description="Exact output port key from grid.get; empty is valid, at most 1024 UTF-16 code units.")
+    portKey: str = Field(
+        max_length=1024,
+        description="Exact output port key from grid.get; empty is valid, at most 1024 UTF-16 code units.",
+    )
 
 
 GRID_CONNECTION_FIELDS = {"targetModuleId", "targetPortKey", "expectedSource", "source"}
 
 
 class GridConnectionEdit(StrictModel):
-    targetModuleId: TrackId = Field(description="Current destination module instanceId from grid.get; reacquire after reopening the project.")
-    targetPortKey: str = Field(max_length=1024, description="Exact input port key from grid.get; empty is valid, at most 1024 UTF-16 code units.")
-    expectedSource: GridConnectionSource | None = Field(description="Required exact prior source from fresh grid.get, or explicit null for an unconnected input. Checked before even an already-matching no-op; never defaults to null.")
-    source: GridConnectionSource | None = Field(description="Required requested output endpoint, or explicit null to disconnect. Must belong to the same current graph; native repair can change the observed result.")
+    targetModuleId: TrackId = Field(
+        description="Current destination module instanceId from grid.get; reacquire after reopening the project."
+    )
+    targetPortKey: str = Field(
+        max_length=1024,
+        description="Exact input port key from grid.get; empty is valid, at most 1024 UTF-16 code units.",
+    )
+    expectedSource: GridConnectionSource | None = Field(
+        description="Required exact prior source from fresh grid.get, or explicit null for an unconnected input. Checked before even an already-matching no-op; never defaults to null."
+    )
+    source: GridConnectionSource | None = Field(
+        description="Required requested output endpoint, or explicit null to disconnect. Must belong to the same current graph; native repair can change the observed result."
+    )
 
 
 class GridConnectionSetArgs(GridWriteArgs):
     """One connection edit (the four fields) or a same-device batch (connections), never both."""
-    model_config = ConfigDict(json_schema_extra={
-        "oneOf": [{"required": sorted(GRID_CONNECTION_FIELDS)}, {"required": ["connections"]}],
-    })
 
-    targetModuleId: TrackId = omitted(description="Single form: current destination module instanceId from grid.get; reacquire after reopening the project.")
-    targetPortKey: str = omitted(max_length=1024, description="Single form: exact input port key from grid.get; empty is valid, at most 1024 UTF-16 code units.")
-    expectedSource: GridConnectionSource | None = omitted(description="Single form: required exact prior source from fresh grid.get, or explicit null for an unconnected input. Checked before even an already-matching no-op; never defaults to null.")
-    source: GridConnectionSource | None = omitted(description="Single form: required requested output endpoint, or explicit null to disconnect. Must belong to the same current graph; native repair can change the observed result.")
+    model_config = ConfigDict(
+        json_schema_extra={
+            "oneOf": [{"required": sorted(GRID_CONNECTION_FIELDS)}, {"required": ["connections"]}],
+        }
+    )
+
+    targetModuleId: TrackId = omitted(
+        description="Single form: current destination module instanceId from grid.get; reacquire after reopening the project."
+    )
+    targetPortKey: str = omitted(
+        max_length=1024,
+        description="Single form: exact input port key from grid.get; empty is valid, at most 1024 UTF-16 code units.",
+    )
+    expectedSource: GridConnectionSource | None = omitted(
+        description="Single form: required exact prior source from fresh grid.get, or explicit null for an unconnected input. Checked before even an already-matching no-op; never defaults to null."
+    )
+    source: GridConnectionSource | None = omitted(
+        description="Single form: required requested output endpoint, or explicit null to disconnect. Must belong to the same current graph; native repair can change the observed result."
+    )
     connections: Annotated[list[GridConnectionEdit], Field(min_length=1, max_length=32)] = omitted(
-        description="Batch form: 1..32 connection edits on this device, each a full single edit on a distinct input. All expectedSource checks run first; any failure writes nothing. Then edits apply in order and stop at the first failure.")
+        description="Batch form: 1..32 connection edits on this device, each a full single edit on a distinct input. All expectedSource checks run first; any failure writes nothing. Then edits apply in order and stop at the first failure."
+    )
 
     @model_validator(mode="after")
     def validate_one_form(self):
@@ -328,25 +443,54 @@ class GridConnectionSetArgs(GridWriteArgs):
 
 
 class GridModuleRenameArgs(GridModuleEditArgs):
-    expectedCustomName: str = Field(max_length=1024, description="Exact raw customName from a fresh grid.get, not effective name or typeName. Required even for no-op; empty is valid. At most 1024 UTF-16 code units; no trimming or coercion.")
-    customName: str = Field(max_length=1024, description="Requested raw custom name; empty resets the override through native semantics. Unicode and whitespace are preserved, at most 1024 UTF-16 code units.")
+    expectedCustomName: str = Field(
+        max_length=1024,
+        description="Exact raw customName from a fresh grid.get, not effective name or typeName. Required even for no-op; empty is valid. At most 1024 UTF-16 code units; no trimming or coercion.",
+    )
+    customName: str = Field(
+        max_length=1024,
+        description="Requested raw custom name; empty resets the override through native semantics. Unicode and whitespace are preserved, at most 1024 UTF-16 code units.",
+    )
 
 
 class GridModuleMoveArgs(GridModuleEditArgs):
-    expectedX: int = Field(ge=-(2**31), le=2**31 - 1, description="Fresh native anchor X; exact stale-state check precedes even a no-op. Signed int32 JSON integer token.")
-    expectedY: int = Field(ge=-(2**31), le=2**31 - 1, description="Fresh native anchor Y; exact stale-state check precedes even a no-op. Signed int32 JSON integer token.")
-    x: int = Field(ge=-(2**31), le=2**31 - 1, description="Requested absolute native anchor X, not a relative delta or pixels. Signed int32 JSON integer token; native layout bounds checked by host.")
-    y: int = Field(ge=-(2**31), le=2**31 - 1, description="Requested absolute native anchor Y, not a relative delta or pixels. Signed int32 JSON integer token; native layout bounds checked by host.")
+    expectedX: int = Field(
+        ge=-(2**31),
+        le=2**31 - 1,
+        description="Fresh native anchor X; exact stale-state check precedes even a no-op. Signed int32 JSON integer token.",
+    )
+    expectedY: int = Field(
+        ge=-(2**31),
+        le=2**31 - 1,
+        description="Fresh native anchor Y; exact stale-state check precedes even a no-op. Signed int32 JSON integer token.",
+    )
+    x: int = Field(
+        ge=-(2**31),
+        le=2**31 - 1,
+        description="Requested absolute native anchor X, not a relative delta or pixels. Signed int32 JSON integer token; native layout bounds checked by host.",
+    )
+    y: int = Field(
+        ge=-(2**31),
+        le=2**31 - 1,
+        description="Requested absolute native anchor Y, not a relative delta or pixels. Signed int32 JSON integer token; native layout bounds checked by host.",
+    )
 
 
 class GridParameterGetArgs(GridModuleArgs):
-    parameterId: str = Field(max_length=1024, description="Exact native parameter ID from grid.get, not a name; empty is valid, at most 1024 UTF-16 code units.")
-    full: bool = omitted(description="A step-array parameter (kind steps) returns all 256 entries instead of the first STEPS ones.")
+    parameterId: str = Field(
+        max_length=1024,
+        description="Exact native parameter ID from grid.get, not a name; empty is valid, at most 1024 UTF-16 code units.",
+    )
+    full: bool = omitted(
+        description="A step-array parameter (kind steps) returns all 256 entries instead of the first STEPS ones."
+    )
 
 
-DISPLAY_DESCRIPTION = ("Instead of value, for float parameters whose numericUnit has a verified conversion (hertz: raw is a MIDI note, e.g. '1.2 kHz', '440 Hz'; percent: '50 %'; decibel: '-12 dB'). "
-                       "The text needs an explicit unit; the host confirms the unit scale against the current raw/display pair, else rejects not_applied unsupported_unit. "
-                       "The result reports displayMismatch from the post-write display; it never writes again to correct it.")
+DISPLAY_DESCRIPTION = (
+    "Instead of value, for float parameters whose numericUnit has a verified conversion (hertz: raw is a MIDI note, e.g. '1.2 kHz', '440 Hz'; percent: '50 %'; decibel: '-12 dB'). "
+    "The text needs an explicit unit; the host confirms the unit scale against the current raw/display pair, else rejects not_applied unsupported_unit. "
+    "The result reports displayMismatch from the post-write display; it never writes again to correct it."
+)
 
 
 StringValue = Annotated[str, Field(max_length=1024)]
@@ -354,40 +498,61 @@ STEP_MIN, STEP_MAX, STEP_ENTRIES = -128.0, 128.0, 256
 
 
 FULL_DESCRIPTION = "steps parameters only: expose (and, on a write, compare-and-set) up to 256 step-array entries instead of the first STEPS ones. Default: the STEPS prefix."
-STEPS_EXPECTED_DESCRIPTION = ("kind steps: the exact current entries from step 0 as read by grid.get (normally the first STEPS, or all with full:true); its length is the CAS window, "
-                              "numbers as read (32-bit floats); compared after rounding to float.")
-STEPS_VALUES_DESCRIPTION = ("kind steps: the entries to write from step 0, 1..256 numbers within -128..128 (a finite sanity bound, not a per-module range: Pitches take Grid pitch units, Gates 1/0, Accents 0/0.5/1, Probabilities 0..1 as observed natively), "
-                            "stored as 32-bit floats. Not longer than expectedValues; later entries and everything beyond the prefix stay unchanged. Nothing is clamped.")
+STEPS_EXPECTED_DESCRIPTION = (
+    "kind steps: the exact current entries from step 0 as read by grid.get (normally the first STEPS, or all with full:true); its length is the CAS window, "
+    "numbers as read (32-bit floats); compared after rounding to float."
+)
+STEPS_VALUES_DESCRIPTION = (
+    "kind steps: the entries to write from step 0, 1..256 numbers within -128..128 (a finite sanity bound, not a per-module range: Pitches take Grid pitch units, Gates 1/0, Accents 0/0.5/1, Probabilities 0..1 as observed natively), "
+    "stored as 32-bit floats. Not longer than expectedValues; later entries and everything beyond the prefix stay unchanged. Nothing is clamped."
+)
 
 
 class GridRawWrite(StrictModel):
-    moduleId: TrackId = Field(description="Current module instanceId from grid.get; reacquire after reopening the project.")
-    parameterId: str = Field(max_length=1024, description="Exact native parameter ID from grid.get, not a name; empty is valid, at most 1024 UTF-16 code units.")
-    model_config = ConfigDict(json_schema_extra={
-        "oneOf": [
-            {"properties": {
-                "expectedKind": {"enum": kinds},
-                "expectedValue": value_schema,
-                "value": value_schema,
-            }}
-            for kinds, value_schema in (
-                (["boolean"], {"type": "boolean"}),
-                (["integer", "enum"], {"type": "integer", "minimum": -(2**31), "maximum": 2**31 - 1}),
-                (["float"], {"type": "number"}),
-                (["string"], {"type": "string", "maxLength": 1024}),
-            )
-        ] + [{"properties": {"expectedKind": {"enum": ["steps"]}}}],
-    })
+    moduleId: TrackId = Field(
+        description="Current module instanceId from grid.get; reacquire after reopening the project."
+    )
+    parameterId: str = Field(
+        max_length=1024,
+        description="Exact native parameter ID from grid.get, not a name; empty is valid, at most 1024 UTF-16 code units.",
+    )
+    model_config = ConfigDict(
+        json_schema_extra={
+            "oneOf": [
+                {
+                    "properties": {
+                        "expectedKind": {"enum": kinds},
+                        "expectedValue": value_schema,
+                        "value": value_schema,
+                    }
+                }
+                for kinds, value_schema in (
+                    (["boolean"], {"type": "boolean"}),
+                    (["integer", "enum"], {"type": "integer", "minimum": -(2**31), "maximum": 2**31 - 1}),
+                    (["float"], {"type": "number"}),
+                    (["string"], {"type": "string", "maxLength": 1024}),
+                )
+            ]
+            + [{"properties": {"expectedKind": {"enum": ["steps"]}}}],
+        }
+    )
 
     expectedKind: Literal["float", "integer", "enum", "boolean", "string", "steps"] = Field(
-        description="Typed kind from a recent grid.get row (or grid.parameters.get); checked before any already-matching no-op.")
+        description="Typed kind from a recent grid.get row (or grid.parameters.get); checked before any already-matching no-op."
+    )
     expectedValue: bool | int | float | StringValue = omitted(
-        description="Exact current native raw value from a recent grid.get row (or grid.parameters.get), not normalized or display units; stale is rejected not_applied. Must match expectedKind; no tolerance or coercion. Required except for kind steps.")
-    expectedValues: Annotated[list[float], Field(min_length=1, max_length=STEP_ENTRIES)] = omitted(description=STEPS_EXPECTED_DESCRIPTION)
-    values: Annotated[list[Annotated[float, Field(ge=STEP_MIN, le=STEP_MAX)]], Field(min_length=1, max_length=STEP_ENTRIES)] = omitted(description=STEPS_VALUES_DESCRIPTION)
+        description="Exact current native raw value from a recent grid.get row (or grid.parameters.get), not normalized or display units; stale is rejected not_applied. Must match expectedKind; no tolerance or coercion. Required except for kind steps."
+    )
+    expectedValues: Annotated[list[float], Field(min_length=1, max_length=STEP_ENTRIES)] = omitted(
+        description=STEPS_EXPECTED_DESCRIPTION
+    )
+    values: Annotated[
+        list[Annotated[float, Field(ge=STEP_MIN, le=STEP_MAX)]], Field(min_length=1, max_length=STEP_ENTRIES)
+    ] = omitted(description=STEPS_VALUES_DESCRIPTION)
     full: bool = omitted(description=FULL_DESCRIPTION)
     value: bool | int | float | StringValue = omitted(
-        description="Requested native raw value: boolean JSON bool; integer/enum signed int32 JSON integer token; float finite JSON number; string (string panels, e.g. Comment text) any text of at most 1024 UTF-16 units, preserved verbatim, empty allowed. Enum uses an actual listed option value, never an ordinal. Native range/representability are checked before dispatch. Exactly one of value or display.")
+        description="Requested native raw value: boolean JSON bool; integer/enum signed int32 JSON integer token; float finite JSON number; string (string panels, e.g. Comment text) any text of at most 1024 UTF-16 units, preserved verbatim, empty allowed. Enum uses an actual listed option value, never an ordinal. Native range/representability are checked before dispatch. Exactly one of value or display."
+    )
     display: str = omitted(min_length=1, max_length=64, description=DISPLAY_DESCRIPTION)
 
     @field_validator("expectedValue", "value", "expectedValues", "values", mode="before")
@@ -414,7 +579,9 @@ class GridRawWrite(StrictModel):
         given = self.model_fields_set
         if self.expectedKind == "steps":
             if {"expectedValue", "value", "display"} & given or not {"expectedValues", "values"} <= given:
-                raise ValueError("kind steps takes expectedValues and values (and optional full), not expectedValue, value or display")
+                raise ValueError(
+                    "kind steps takes expectedValues and values (and optional full), not expectedValue, value or display"
+                )
             if len(self.values) > len(self.expectedValues):
                 raise ValueError("values must not be longer than expectedValues")
             return self
@@ -454,21 +621,37 @@ WRITE_DETAILS = {"expectedValue", "value", "display", "expectedValues", "values"
 
 class GridParameterSetArgs(ParameterArgs):
     """One write (the five fields) or a same-device batch (writes), never both."""
-    model_config = ConfigDict(json_schema_extra={
-        "oneOf": [{"required": sorted(GRID_WRITE_FIELDS)}, {"required": ["writes"]}],
-    })
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "oneOf": [{"required": sorted(GRID_WRITE_FIELDS)}, {"required": ["writes"]}],
+        }
+    )
 
     moduleId: TrackId = omitted(description="Single form: current module instanceId from grid.get.")
-    parameterId: str = omitted(max_length=1024, description="Single form: exact parameterId from grid.get; empty is valid.")
-    expectedKind: Literal["float", "integer", "enum", "boolean", "string", "steps"] = omitted(description="Single form: kind from a recent grid.get row.")
-    expectedValue: bool | int | float | StringValue = omitted(description="Single form: exact current raw value from a recent grid.get row (not for kind steps).")
-    expectedValues: Annotated[list[float], Field(min_length=1, max_length=STEP_ENTRIES)] = omitted(description="Single form, kind steps: " + STEPS_EXPECTED_DESCRIPTION)
-    values: Annotated[list[Annotated[float, Field(ge=STEP_MIN, le=STEP_MAX)]], Field(min_length=1, max_length=STEP_ENTRIES)] = omitted(description="Single form, kind steps: " + STEPS_VALUES_DESCRIPTION)
+    parameterId: str = omitted(
+        max_length=1024, description="Single form: exact parameterId from grid.get; empty is valid."
+    )
+    expectedKind: Literal["float", "integer", "enum", "boolean", "string", "steps"] = omitted(
+        description="Single form: kind from a recent grid.get row."
+    )
+    expectedValue: bool | int | float | StringValue = omitted(
+        description="Single form: exact current raw value from a recent grid.get row (not for kind steps)."
+    )
+    expectedValues: Annotated[list[float], Field(min_length=1, max_length=STEP_ENTRIES)] = omitted(
+        description="Single form, kind steps: " + STEPS_EXPECTED_DESCRIPTION
+    )
+    values: Annotated[
+        list[Annotated[float, Field(ge=STEP_MIN, le=STEP_MAX)]], Field(min_length=1, max_length=STEP_ENTRIES)
+    ] = omitted(description="Single form, kind steps: " + STEPS_VALUES_DESCRIPTION)
     full: bool = omitted(description="Single form, kind steps: " + FULL_DESCRIPTION)
-    value: bool | int | float | StringValue = omitted(description="Single form: requested native raw value (or give display instead).")
+    value: bool | int | float | StringValue = omitted(
+        description="Single form: requested native raw value (or give display instead)."
+    )
     display: str = omitted(min_length=1, max_length=64, description="Single form: " + DISPLAY_DESCRIPTION)
     writes: Annotated[list[GridRawWrite], Field(min_length=1, max_length=64)] = omitted(
-        description="Batch form: 1..64 writes on this device, each a full single write. All CAS checks run first; any failure writes nothing. Then writes dispatch in order and stop at the first failure.")
+        description="Batch form: 1..64 writes on this device, each a full single write. All CAS checks run first; any failure writes nothing. Then writes dispatch in order and stop at the first failure."
+    )
 
     @model_validator(mode="after")
     def validate_one_form(self):
@@ -480,18 +663,27 @@ class GridParameterSetArgs(ParameterArgs):
             if len(set(keys)) != len(keys):
                 raise ValueError("writes must not repeat a moduleId/parameterId pair")
         elif supplied != GRID_WRITE_FIELDS:
-            raise ValueError("supply writes, or moduleId, parameterId, expectedKind, expectedValue and one of value or display (kind steps: expectedValues and values)")
+            raise ValueError(
+                "supply writes, or moduleId, parameterId, expectedKind, expectedValue and one of value or display (kind steps: expectedValues and values)"
+            )
         else:
-            GridRawWrite.model_validate({key: getattr(self, key) for key in GRID_WRITE_FIELDS | WRITE_DETAILS & self.model_fields_set})
+            GridRawWrite.model_validate(
+                {key: getattr(self, key) for key in GRID_WRITE_FIELDS | WRITE_DETAILS & self.model_fields_set}
+            )
         return self
 
 
 class GridVoicingFields(StrictModel):
     """Poly Grid device voicing fields; every one optional."""
+
     voices: int = omitted(ge=1, le=64, description="Voice count 1..64.")
     voiceStacking: int = omitted(ge=1, le=16, description="Voice stacking 1..16.")
-    monoMode: Literal["true_mono", "digi_mono"] = omitted(description="Stored mono mode: true_mono, or digi_mono (alternating voices). It is what plays when voices is 1.")
-    retriggerMode: Literal["never", "on_note_on", "always"] = omitted(description="Retrigger: never, on_note_on or always.")
+    monoMode: Literal["true_mono", "digi_mono"] = omitted(
+        description="Stored mono mode: true_mono, or digi_mono (alternating voices). It is what plays when voices is 1."
+    )
+    retriggerMode: Literal["never", "on_note_on", "always"] = omitted(
+        description="Retrigger: never, on_note_on or always."
+    )
     notePriority: Literal["last", "high", "low"] = omitted(description="Note priority: last, high or low.")
     legatoGlide: bool = omitted(description="Legato glide.")
     stealSameKey: bool = omitted(description="Steal voices on the same key.")
@@ -499,8 +691,12 @@ class GridVoicingFields(StrictModel):
 
 
 class GridVoicingSetArgs(ParameterArgs):
-    expected: GridVoicingFields = Field(description="Exact current values from a recent grid.voicing.get, at least for every field in set; stale is rejected not_applied. Extra fields are additional preconditions.")
-    set: GridVoicingFields = Field(description="New values; at least one field. Unnamed fields stay unchanged (a native change may still move them: see changedUnrequested).")
+    expected: GridVoicingFields = Field(
+        description="Exact current values from a recent grid.voicing.get, at least for every field in set; stale is rejected not_applied. Extra fields are additional preconditions."
+    )
+    set: GridVoicingFields = Field(
+        description="New values; at least one field. Unnamed fields stay unchanged (a native change may still move them: see changedUnrequested)."
+    )
 
     @model_validator(mode="after")
     def validate_voicing(self):
@@ -532,7 +728,9 @@ def validate_insertion(self):
             raise ValueError("plug-in insertion requires id and forbids path")
         if self.kind == "bitwig" and not re.fullmatch(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", self.id):
             raise ValueError("bitwig id must be a canonical UUID")
-        if self.kind == "vst2" and (not re.fullmatch(r"-?(0|[1-9][0-9]{0,9})", self.id) or not -(2**31) <= int(self.id) < 2**31):
+        if self.kind == "vst2" and (
+            not re.fullmatch(r"-?(0|[1-9][0-9]{0,9})", self.id) or not -(2**31) <= int(self.id) < 2**31
+        ):
             raise ValueError("vst2 id must be a signed int32 decimal string")
         if self.kind == "vst3" and not re.fullmatch(r"[0-9a-fA-F]{32}", self.id):
             raise ValueError("vst3 id must be 32 hexadecimal characters")
@@ -546,7 +744,9 @@ class DeviceInsertArgs(DeviceArgs):
     kind: Literal["bitwig", "vst2", "vst3", "clap", "file"]
     id: Nonempty = omitted()
     path: Nonempty = omitted()
-    position: Literal["start", "end", "before", "after"] = omitted(description="Where in the chain; default end. before/after need deviceIndex and expectedDeviceName of the anchor device.")
+    position: Literal["start", "end", "before", "after"] = omitted(
+        description="Where in the chain; default end. before/after need deviceIndex and expectedDeviceName of the anchor device."
+    )
     deviceIndex: int = omitted(ge=0, le=15, description="Anchor device for position before/after.")
     expectedDeviceName: Nonempty = omitted(description="Exact name of the anchor device.")
 
@@ -585,10 +785,24 @@ class LayerInsertArgs(LayerListArgs):
 
 
 class PresetSearchArgs(StatusArgs):
-    query: str = omitted(min_length=1, max_length=4096, description="Words that must all occur in the preset name, folders, package, creator or readable metadata; case, spaces and punctuation ignored.")
-    device: str = omitted(min_length=1, max_length=4096, description="Device name (readable metadata) or a folder named for it, e.g. Polymer, Poly Grid, Convolution.")
-    deviceType: Literal["instrument", "audio-effect", "note-effect"] = omitted(description="Only presets whose readable metadata gives this type; encrypted package presets have none.")
-    category: str = omitted(min_length=1, max_length=4096, description="Preset/device category from readable metadata, or a folder name (e.g. Synth Bass, Drums).")
+    query: str = omitted(
+        min_length=1,
+        max_length=4096,
+        description="Words that must all occur in the preset name, folders, package, creator or readable metadata; case, spaces and punctuation ignored.",
+    )
+    device: str = omitted(
+        min_length=1,
+        max_length=4096,
+        description="Device name (readable metadata) or a folder named for it, e.g. Polymer, Poly Grid, Convolution.",
+    )
+    deviceType: Literal["instrument", "audio-effect", "note-effect"] = omitted(
+        description="Only presets whose readable metadata gives this type; encrypted package presets have none."
+    )
+    category: str = omitted(
+        min_length=1,
+        max_length=4096,
+        description="Preset/device category from readable metadata, or a folder name (e.g. Synth Bass, Drums).",
+    )
     limit: int = Field(default=25, ge=1, le=200)
     offset: int = Field(default=0, ge=0, le=1000000)
 
@@ -603,7 +817,10 @@ class ScenesAppendArgs(StatusArgs):
 
 class SceneTargetArgs(StatusArgs):
     sceneIndex: int = Field(ge=0, le=15, description="Zero-based scene index from scenes.list.")
-    expectedName: str = Field(max_length=256, description="Compare-and-set guard: the scene's exact current name from scenes.list; for an unnamed scene its current positional label (\"Scene N\"), which shifts after inserts/deletes.")
+    expectedName: str = Field(
+        max_length=256,
+        description='Compare-and-set guard: the scene\'s exact current name from scenes.list; for an unnamed scene its current positional label ("Scene N"), which shifts after inserts/deletes.',
+    )
 
 
 class SceneRenameArgs(SceneTargetArgs):
@@ -671,9 +888,15 @@ class ClipSettingsSetArgs(ClipSettingsArgs):
     nextActionLinkToLoop: bool = omitted()
     nextActionLoopCount: Annotated[int, Field(ge=1, le=64)] = omitted()
     nextActionDelayBeats: Annotated[float, Field(ge=0, le=4194304)] = omitted()
-    launchQuantization: Nonempty = omitted(description="Clip launch quantization: one of the host's own options, listed in the result's options.launchQuantization. Selects the clip.")
-    launchMode: Nonempty = omitted(description="Clip launch mode: one of the host's own options, listed in the result's options.launchMode. Selects the clip.")
-    useLoopStartAsQuantizationReference: bool = omitted(description="Quantize the launch to the clip's loop start. Selects the clip.")
+    launchQuantization: Nonempty = omitted(
+        description="Clip launch quantization: one of the host's own options, listed in the result's options.launchQuantization. Selects the clip."
+    )
+    launchMode: Nonempty = omitted(
+        description="Clip launch mode: one of the host's own options, listed in the result's options.launchMode. Selects the clip."
+    )
+    useLoopStartAsQuantizationReference: bool = omitted(
+        description="Quantize the launch to the clip's loop start. Selects the clip."
+    )
 
     @model_validator(mode="after")
     def validate_settings(self):
@@ -682,12 +905,24 @@ class ClipSettingsSetArgs(ClipSettingsArgs):
             raise ValueError("supply at least one clip setting")
         launch = settings & LAUNCH_SETTINGS
         if launch and settings - launch:
-            raise ValueError("launch fields (" + ", ".join(sorted(LAUNCH_SETTINGS)) + ") use a different path from the Next Action fields: send two calls")
+            raise ValueError(
+                "launch fields ("
+                + ", ".join(sorted(LAUNCH_SETTINGS))
+                + ") use a different path from the Next Action fields: send two calls"
+            )
         return self
 
 
-CLIP_EDIT_OPS = {"rename": {"name"}, "resize": {"lengthBeats"}, "color": {"rgb"}, "transpose": {"semitones"},
-                 "quantize": {"amount"}, "duplicateContent": set(), "delete": set(), "copyTo": {"targetSlotIndex"}}
+CLIP_EDIT_OPS = {
+    "rename": {"name"},
+    "resize": {"lengthBeats"},
+    "color": {"rgb"},
+    "transpose": {"semitones"},
+    "quantize": {"amount"},
+    "duplicateContent": set(),
+    "delete": set(),
+    "copyTo": {"targetSlotIndex"},
+}
 
 
 class ClipEditArgs(ClipSettingsArgs):
@@ -710,7 +945,9 @@ class ClipEditArgs(ClipSettingsArgs):
 
 
 class ArrangerNote(StrictModel):
-    beat: float = Field(ge=0, le=4194304, description="Onset in beats from the clip start (not the arrangement), on a 1/128-beat grid.")
+    beat: float = Field(
+        ge=0, le=4194304, description="Onset in beats from the clip start (not the arrangement), on a 1/128-beat grid."
+    )
     pitch: int = Field(ge=0, le=127)
     velocity: int = Field(ge=1, le=127)
     durationBeats: float = Field(ge=1 / 128, le=4096)
@@ -734,7 +971,9 @@ class ArrangerClipCreateArgs(DeviceArgs):
                 raise ValueError("channel is only valid together with notes")
             return self
         check_note_spans(self.notes)
-        if any(Decimal(str(n.beat)) + Decimal(str(n.durationBeats)) > Decimal(str(self.lengthBeats)) for n in self.notes):
+        if any(
+            Decimal(str(n.beat)) + Decimal(str(n.durationBeats)) > Decimal(str(self.lengthBeats)) for n in self.notes
+        ):
             raise ValueError("notes must fit inside lengthBeats")
         return self
 
@@ -749,8 +988,14 @@ ARRANGER_EDIT_OPS = {"move": {"startBeats"}, "resize": {"lengthBeats"}, "rename"
 
 
 class ArrangerClipEditArgs(DeviceArgs):
-    clipIndex: int = Field(ge=0, le=4095, description="Index from a fresh arranger.clips.list (event order: creation order on 6.1.4, not start order).")
-    expectedStartBeats: float = Field(ge=0, le=4194304, description="Exact startBeats from arranger.clips.list (guard, compared within 1e-6).")
+    clipIndex: int = Field(
+        ge=0,
+        le=4095,
+        description="Index from a fresh arranger.clips.list (event order: creation order on 6.1.4, not start order).",
+    )
+    expectedStartBeats: float = Field(
+        ge=0, le=4194304, description="Exact startBeats from arranger.clips.list (guard, compared within 1e-6)."
+    )
     expectedName: str = Field(max_length=256, description="Exact current name from arranger.clips.list; may be empty.")
     op: Literal["move", "resize", "rename", "delete"]
     startBeats: Annotated[float, Field(ge=0, le=4194304)] = omitted()
@@ -766,18 +1011,24 @@ class ArrangerClipEditArgs(DeviceArgs):
 
 
 class AutomationTarget(StrictModel):
-    kind: Literal["volume", "pan", "grid"] = Field(description="Track volume, track pan, or a float Grid module parameter on a top-level device of the same track.")
+    kind: Literal["volume", "pan", "grid"] = Field(
+        description="Track volume, track pan, or a float Grid module parameter on a top-level device of the same track."
+    )
     deviceIndex: Annotated[int, Field(ge=0, le=15)] = omitted()
     expectedDeviceName: Nonempty = omitted()
     moduleId: TrackId = omitted(description="Grid module instanceId from grid.get on that device.")
-    parameterId: Annotated[str, Field(max_length=1024)] = omitted(description="Exact parameterId of that module's float control, from grid.get.")
+    parameterId: Annotated[str, Field(max_length=1024)] = omitted(
+        description="Exact parameterId of that module's float control, from grid.get."
+    )
 
     @model_validator(mode="after")
     def validate_kind_fields(self):
         grid = {"deviceIndex", "expectedDeviceName", "moduleId", "parameterId"}
         given = self.model_fields_set & grid
         if given != (grid if self.kind == "grid" else set()):
-            raise ValueError("kind grid takes exactly deviceIndex, expectedDeviceName, moduleId and parameterId; volume and pan take none")
+            raise ValueError(
+                "kind grid takes exactly deviceIndex, expectedDeviceName, moduleId and parameterId; volume and pan take none"
+            )
         return self
 
 
@@ -800,15 +1051,21 @@ class AutomationPoint(StrictModel):
 
 class AutomationPointsGetArgs(DeviceArgs):
     target: AutomationTarget
-    range: AutomationRange = omitted(description="Only list points with startBeat <= beat <= endBeat; count and pointsHash still cover the whole lane.")
+    range: AutomationRange = omitted(
+        description="Only list points with startBeat <= beat <= endBeat; count and pointsHash still cover the whole lane."
+    )
 
 
 class AutomationPointsSetArgs(DeviceArgs):
     target: AutomationTarget
     expectedCount: int = Field(ge=0, le=65536, description="count from a fresh automation.points.get.")
     expectedHash: str = Field(pattern=r"^[0-9a-f]{64}$", description="pointsHash from a fresh automation.points.get.")
-    points: Annotated[list[AutomationPoint], Field(max_length=1024)] = Field(description="Replacement points, strictly increasing beats, inside range if given.")
-    range: AutomationRange = omitted(description="Replace only points with startBeat <= beat <= endBeat; without it the whole lane is replaced.")
+    points: Annotated[list[AutomationPoint], Field(max_length=1024)] = Field(
+        description="Replacement points, strictly increasing beats, inside range if given."
+    )
+    range: AutomationRange = omitted(
+        description="Replace only points with startBeat <= beat <= endBeat; without it the whole lane is replaced."
+    )
 
     @model_validator(mode="after")
     def validate_points(self):
@@ -822,7 +1079,9 @@ class AutomationPointsSetArgs(DeviceArgs):
 
 ROUTING_TRACK_KINDS = frozenset({"track_audio_input", "track_note_input", "pre_fader", "post_fader", "track_notes"})
 OutputKind = Literal["none", "track_audio_input", "track_note_input"]
-SourceKind = Literal["none", "pre_fader", "post_fader", "track_notes", "all_ins", "computer_keyboard", "onscreen_keyboard"]
+SourceKind = Literal[
+    "none", "pre_fader", "post_fader", "track_notes", "all_ins", "computer_keyboard", "onscreen_keyboard"
+]
 ROUTING_TRACK_ID = "A track of the current 16-track window (tracks.list); for a group, its trackId."
 
 
@@ -837,17 +1096,27 @@ class RoutingEntry(StrictModel):
 
 
 class OutputEntry(RoutingEntry):
-    kind: OutputKind = Field(description="none, or the audio/note input of another track (a group, an effect track or master by its trackId).")
+    kind: OutputKind = Field(
+        description="none, or the audio/note input of another track (a group, an effect track or master by its trackId)."
+    )
 
 
 class SourceEntry(RoutingEntry):
-    kind: SourceKind = Field(description="none; pre_fader/post_fader (audio) or track_notes of another track; all_ins, computer_keyboard, onscreen_keyboard (notes).")
+    kind: SourceKind = Field(
+        description="none; pre_fader/post_fader (audio) or track_notes of another track; all_ins, computer_keyboard, onscreen_keyboard (notes)."
+    )
 
 
 class ObservedEntry(RoutingEntry):
     """An entry exactly as a fresh get reported it; kind other (hardware, device output, ...) is matched by its exact name and nativeType."""
-    name: str = omitted(max_length=4096, description="Exact (possibly empty) name of a kind other entry from the get; only with kind other.")
-    nativeType: Nonempty = omitted(description="nativeType of a kind other entry from the get; optional, only with kind other.")
+
+    name: str = omitted(
+        max_length=4096,
+        description="Exact (possibly empty) name of a kind other entry from the get; only with kind other.",
+    )
+    nativeType: Nonempty = omitted(
+        description="nativeType of a kind other entry from the get; optional, only with kind other."
+    )
 
     @model_validator(mode="after")
     def validate_name(self):
@@ -863,7 +1132,9 @@ class ExpectedOutputEntry(ObservedEntry):
 
 
 class ExpectedSourceEntry(ObservedEntry):
-    kind: Literal["none", "pre_fader", "post_fader", "track_notes", "all_ins", "computer_keyboard", "onscreen_keyboard", "other"]
+    kind: Literal[
+        "none", "pre_fader", "post_fader", "track_notes", "all_ins", "computer_keyboard", "onscreen_keyboard", "other"
+    ]
 
 
 class TrackRoutingGetArgs(DeviceArgs):
@@ -872,9 +1143,13 @@ class TrackRoutingGetArgs(DeviceArgs):
 
 class TrackRoutingSetArgs(DeviceArgs):
     output: OutputEntry = omitted()
-    expectedOutput: ExpectedOutputEntry = omitted(description="output.entry from a fresh tracks.routing.get (compare-and-set).")
+    expectedOutput: ExpectedOutputEntry = omitted(
+        description="output.entry from a fresh tracks.routing.get (compare-and-set)."
+    )
     input: SourceEntry = omitted()
-    expectedInput: ExpectedSourceEntry = omitted(description="input.entry from a fresh tracks.routing.get (compare-and-set).")
+    expectedInput: ExpectedSourceEntry = omitted(
+        description="input.entry from a fresh tracks.routing.get (compare-and-set)."
+    )
 
     @model_validator(mode="after")
     def validate_pairs(self):
@@ -888,17 +1163,33 @@ class TrackRoutingSetArgs(DeviceArgs):
 
 
 class SidechainGetArgs(ParameterArgs):
-    includeChoices: bool = omitted(description="Also list every v1 source with accepted (Bitwig's own cycle check) per writable component.")
+    includeChoices: bool = omitted(
+        description="Also list every v1 source with accepted (Bitwig's own cycle check) per writable component."
+    )
 
 
 class SidechainSetArgs(ParameterArgs):
-    componentIndex: int = omitted(ge=0, le=255, description="componentIndex from a fresh devices.sidechain.get; exactly one of componentIndex or componentId.")
-    expectedComponentId: Nonempty = omitted(description="That row's componentId; required with componentIndex (guards against shifted components).")
-    componentId: Nonempty = omitted(description="componentId from devices.sidechain.get when it is unique on the device.")
-    expectedModulatorId: TrackId = omitted(description="Required when the component's host is modulator: its modulatorId from the get.")
-    expectedModuleId: TrackId = omitted(description="Required when the component's host is grid_module: its moduleId from the get.")
+    componentIndex: int = omitted(
+        ge=0,
+        le=255,
+        description="componentIndex from a fresh devices.sidechain.get; exactly one of componentIndex or componentId.",
+    )
+    expectedComponentId: Nonempty = omitted(
+        description="That row's componentId; required with componentIndex (guards against shifted components)."
+    )
+    componentId: Nonempty = omitted(
+        description="componentId from devices.sidechain.get when it is unique on the device."
+    )
+    expectedModulatorId: TrackId = omitted(
+        description="Required when the component's host is modulator: its modulatorId from the get."
+    )
+    expectedModuleId: TrackId = omitted(
+        description="Required when the component's host is grid_module: its moduleId from the get."
+    )
     source: SourceEntry
-    expectedSource: ExpectedSourceEntry = Field(description="The component's source from a fresh devices.sidechain.get (compare-and-set).")
+    expectedSource: ExpectedSourceEntry = Field(
+        description="The component's source from a fresh devices.sidechain.get (compare-and-set)."
+    )
 
     @model_validator(mode="after")
     def validate_component(self):
@@ -938,7 +1229,9 @@ class NoteWindowArgs(ClipArgs):
     def validate_pitch_window(self):
         supplied = GRID_FIELDS & self.model_fields_set
         if supplied and supplied != GRID_FIELDS:
-            raise ValueError("stepSizeBeats, startStep, steps, pitchStart and pitchCount must be supplied together or all omitted")
+            raise ValueError(
+                "stepSizeBeats, startStep, steps, pitchStart and pitchCount must be supplied together or all omitted"
+            )
         if supplied and self.pitchStart + self.pitchCount > 128:
             raise ValueError("pitchStart + pitchCount must not exceed 128")
         return self
@@ -1008,19 +1301,29 @@ class TransportSetArgs(StatusArgs):
     loopEnabled: bool = omitted()
     loopStartBeats: Annotated[float, Field(ge=0)] = omitted()
     loopDurationBeats: Annotated[float, Field(gt=0)] = omitted()
-    timeSignature: str = omitted(description="numerator/denominator, e.g. 7/8: numerator 1..32, denominator 1, 2, 4, 8, 16 or 32.")
+    timeSignature: str = omitted(
+        description="numerator/denominator, e.g. 7/8: numerator 1..32, denominator 1, 2, 4, 8, 16 or 32."
+    )
     metronomeVolumeNormalized: UnitValue = omitted(description="Metronome volume 0..1 (not dB); read back as observed.")
     punchInEnabled: bool = omitted(description="Arranger punch-in on/off.")
     punchOutEnabled: bool = omitted(description="Arranger punch-out on/off.")
-    preRoll: Nonempty = omitted(description="Pre-roll length: one of transport.get options.preRoll (the host's own list).")
-    defaultLaunchQuantization: Nonempty = omitted(description="Project default clip launch quantization: one of transport.get options.defaultLaunchQuantization.")
-    recordQuantizationGrid: Nonempty = omitted(description="Grid for quantizing recorded notes: one of transport.get options.recordQuantizationGrid.")
+    preRoll: Nonempty = omitted(
+        description="Pre-roll length: one of transport.get options.preRoll (the host's own list)."
+    )
+    defaultLaunchQuantization: Nonempty = omitted(
+        description="Project default clip launch quantization: one of transport.get options.defaultLaunchQuantization."
+    )
+    recordQuantizationGrid: Nonempty = omitted(
+        description="Grid for quantizing recorded notes: one of transport.get options.recordQuantizationGrid."
+    )
 
     @field_validator("timeSignature")
     @classmethod
     def validate_signature(cls, value: str) -> str:
         if not re.fullmatch(r"[1-9][0-9]?/(1|2|4|8|16|32)", value, re.ASCII) or int(value.split("/")[0]) > 32:
-            raise ValueError("timeSignature must be numerator/denominator: numerator 1..32, denominator 1, 2, 4, 8, 16 or 32")
+            raise ValueError(
+                "timeSignature must be numerator/denominator: numerator 1..32, denominator 1, 2, 4, 8, 16 or 32"
+            )
         return value
 
     @model_validator(mode="after")
@@ -1040,14 +1343,22 @@ class TrackSetArgs(DeviceArgs):
     mute: bool = omitted()
     solo: bool = omitted()
     arm: bool = omitted()
-    volumeDb: Annotated[float, Field(ge=-150, le=24)] = omitted(description="Fader level in dB, reached by matching the host's own displayed value (not a computed curve). Alternative to volumeNormalized/volumeDisplay.")
+    volumeDb: Annotated[float, Field(ge=-150, le=24)] = omitted(
+        description="Fader level in dB, reached by matching the host's own displayed value (not a computed curve). Alternative to volumeNormalized/volumeDisplay."
+    )
     volumeDisplay: Nonempty = omitted(description='Fader level as the host shows it, e.g. "-6 dB" or "-inf dB".')
-    panPercent: Annotated[float, Field(ge=-100, le=100)] = omitted(description="Pan in percent, negative = left, reached by matching the host's displayed value. Alternative to panNormalized/panDisplay.")
+    panPercent: Annotated[float, Field(ge=-100, le=100)] = omitted(
+        description="Pan in percent, negative = left, reached by matching the host's displayed value. Alternative to panNormalized/panDisplay."
+    )
     panDisplay: Nonempty = omitted(description='Pan as the host shows it, e.g. "25% L", "40% R" or "Center".')
     color: Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$")] = omitted(description="Track color as #RRGGBB.")
     activated: bool = omitted(description="Track activated (false = deactivated, no processing).")
-    monitorMode: Nonempty = omitted(description="Input monitoring: one of tracks.get options.monitorMode (the host's own list).")
-    crossFadeMode: Nonempty = omitted(description="Crossfader assignment: one of tracks.get options.crossFadeMode (the host's own list).")
+    monitorMode: Nonempty = omitted(
+        description="Input monitoring: one of tracks.get options.monitorMode (the host's own list)."
+    )
+    crossFadeMode: Nonempty = omitted(
+        description="Crossfader assignment: one of tracks.get options.crossFadeMode (the host's own list)."
+    )
 
     @model_validator(mode="after")
     def require_change(self):
@@ -1060,12 +1371,22 @@ class TrackSetArgs(DeviceArgs):
 
 
 class TrackSendSetArgs(DeviceArgs):
-    sendIndex: int = omitted(ge=0, le=127, description="Zero-based send index from tracks.get; exactly one of sendIndex or sendName.")
-    sendName: Nonempty = omitted(description="Exact send name from tracks.get (the FX track it feeds); must be unique on the track.")
-    expectedSendName: Nonempty = omitted(description="Compare-and-set guard: the write is refused with stale_target if the send has another name.")
-    valueNormalized: UnitValue = omitted(description="Send level 0..1 (not dB). Exactly one of valueNormalized or display, unless only enabled is changed.")
+    sendIndex: int = omitted(
+        ge=0, le=127, description="Zero-based send index from tracks.get; exactly one of sendIndex or sendName."
+    )
+    sendName: Nonempty = omitted(
+        description="Exact send name from tracks.get (the FX track it feeds); must be unique on the track."
+    )
+    expectedSendName: Nonempty = omitted(
+        description="Compare-and-set guard: the write is refused with stale_target if the send has another name."
+    )
+    valueNormalized: UnitValue = omitted(
+        description="Send level 0..1 (not dB). Exactly one of valueNormalized or display, unless only enabled is changed."
+    )
     display: Nonempty = omitted(description='Send level as the host shows it, e.g. "-12 dB" or "-inf dB".')
-    enabled: bool = omitted(description="Turn the send on or off. A level write already turns it on (autoEnabled in the result).")
+    enabled: bool = omitted(
+        description="Turn the send on or off. A level write already turns it on (autoEnabled in the result)."
+    )
 
     @model_validator(mode="after")
     def validate_send(self):
@@ -1117,8 +1438,13 @@ PROJECT_EXTENSION = ".bwproject"
 
 class ProjectSaveAsArgs(StrictModel):
     timeoutMs: int = Field(default=30000, ge=100, le=TOPOLOGY_TIMEOUT_MS)
-    path: str = Field(max_length=4096, description="Final project file: <dir>/<Name>/<Name>.bwproject for a new project folder (Bitwig creates <Name>/), or any .bwproject inside an existing project folder. Absolute; no ~ expansion.")
-    overwrite: bool = omitted(description="Allow replacing an existing file at path (Bitwig keeps the old one in the project's auto-backups folder).")
+    path: str = Field(
+        max_length=4096,
+        description="Final project file: <dir>/<Name>/<Name>.bwproject for a new project folder (Bitwig creates <Name>/), or any .bwproject inside an existing project folder. Absolute; no ~ expansion.",
+    )
+    overwrite: bool = omitted(
+        description="Allow replacing an existing file at path (Bitwig keeps the old one in the project's auto-backups folder)."
+    )
     allowAnyPath: bool = omitted(description="Allow a path outside Bitwig's configured projects folder.")
 
     @model_validator(mode="after")
@@ -1128,8 +1454,16 @@ class ProjectSaveAsArgs(StrictModel):
         if len(path.parts) < 3 or not path.name.endswith(PROJECT_EXTENSION):
             raise ValueError(f"path must name a {PROJECT_EXTENSION} file inside a folder")
         name = path.name[: -len(PROJECT_EXTENSION)]
-        if not name or len(name.encode("utf-16-le", errors="surrogatepass")) // 2 > 128 or name != name.strip() or name.startswith(".") or name.lower() == "template":
-            raise ValueError("project name must be 1..128 characters without leading/trailing whitespace or a leading dot, and not 'template'")
+        if (
+            not name
+            or len(name.encode("utf-16-le", errors="surrogatepass")) // 2 > 128
+            or name != name.strip()
+            or name.startswith(".")
+            or name.lower() == "template"
+        ):
+            raise ValueError(
+                "project name must be 1..128 characters without leading/trailing whitespace or a leading dot, and not 'template'"
+            )
         if "auto-backups" in path.parts:
             raise ValueError("Bitwig refuses to save inside an auto-backups folder")
         return self
@@ -1141,8 +1475,14 @@ RENDER_MAX_LENGTH = 65536
 
 class RenderRangeArgs(StrictModel):
     timeoutMs: int = Field(default=30000, ge=100, le=TOPOLOGY_TIMEOUT_MS)
-    startBeats: float = Field(ge=0, le=RENDER_MAX_BEATS, description="Range start in quarter-note beats from the project start.")
-    endBeats: float = Field(ge=0, le=RENDER_MAX_BEATS + RENDER_MAX_LENGTH, description="Range end, after startBeats and at most 65536 beats later.")
+    startBeats: float = Field(
+        ge=0, le=RENDER_MAX_BEATS, description="Range start in quarter-note beats from the project start."
+    )
+    endBeats: float = Field(
+        ge=0,
+        le=RENDER_MAX_BEATS + RENDER_MAX_LENGTH,
+        description="Range end, after startBeats and at most 65536 beats later.",
+    )
 
     @model_validator(mode="after")
     def validate_range(self):
@@ -1153,9 +1493,14 @@ class RenderRangeArgs(StrictModel):
 
 class ExportAudioArgs(RenderRangeArgs):
     sources: Annotated[list[TrackId | Literal["master"]], Field(min_length=1, max_length=16)] = Field(
-        description="\"master\" and/or trackIds from tracks.list (audio, instrument, effect or group tracks); one file each, in this order.")
+        description='"master" and/or trackIds from tracks.list (audio, instrument, effect or group tracks); one file each, in this order.'
+    )
     directory: str = Field(max_length=4096, description="Existing absolute folder for the files. No ~ expansion.")
-    baseName: str = Field(min_length=1, max_length=128, description="File name without extension: <baseName>.<format> for one source, <baseName>-01, -02, ... for several.")
+    baseName: str = Field(
+        min_length=1,
+        max_length=128,
+        description="File name without extension: <baseName>.<format> for one source, <baseName>-01, -02, ... for several.",
+    )
     format: Literal["wav", "flac"]
     bitDepth: Literal[16, 24, 32] = omitted(description="Default 24; 32 = 32-bit float (wav only).")
     sampleRate: Literal[44100, 48000] = omitted(description="Omitted: the current engine rate.")
@@ -1169,8 +1514,16 @@ class ExportAudioArgs(RenderRangeArgs):
             raise ValueError("sources must be distinct")
         validate_local_path(self.directory)
         name = self.baseName
-        if name != name.strip() or name.startswith(".") or "/" in name or "\\" in name or any(ord(c) < 32 or 127 <= ord(c) <= 159 for c in name):
-            raise ValueError("baseName must not contain '/', '\\', control characters, a leading dot or surrounding whitespace")
+        if (
+            name != name.strip()
+            or name.startswith(".")
+            or "/" in name
+            or "\\" in name
+            or any(ord(c) < 32 or 127 <= ord(c) <= 159 for c in name)
+        ):
+            raise ValueError(
+                "baseName must not contain '/', '\\', control characters, a leading dot or surrounding whitespace"
+            )
         if self.format == "flac" and self.bitDepth == 32:
             raise ValueError("flac supports bitDepth 16 or 24")
         return self
@@ -1178,7 +1531,8 @@ class ExportAudioArgs(RenderRangeArgs):
 
 class BounceInPlaceArgs(RenderRangeArgs):
     trackIds: Annotated[list[TrackId], Field(min_length=1, max_length=16)] = Field(
-        description="Audio/instrument tracks (trackIds from tracks.list) whose main arranger lane gets the bounced audio.")
+        description="Audio/instrument tracks (trackIds from tracks.list) whose main arranger lane gets the bounced audio."
+    )
     tap: Literal["pre_fx", "pre_fader", "post_fader"]
 
     @model_validator(mode="after")
@@ -1196,7 +1550,8 @@ class TrackCreateArgs(StatusArgs):
 
 class TrackGroupArgs(StatusArgs):
     trackIds: Annotated[list[TrackId], Field(min_length=1, max_length=16)] = Field(
-        description="Tracks to put into one new group, all with the same parent (top level or one group); not effect or master tracks.")
+        description="Tracks to put into one new group, all with the same parent (top level or one group); not effect or master tracks."
+    )
     name: Nonempty = omitted()
 
     @model_validator(mode="after")
@@ -1226,10 +1581,20 @@ class RemoteSetArgs(ParameterArgs):
 
 class RemoteSlotSpec(StrictModel):
     """One Remote Control slot: a scalar Grid parameter by module (exactly one of moduleId or moduleName) and parameterId."""
+
     moduleId: TrackId = omitted(description="Current module instanceId from grid.get.")
-    moduleName: str = omitted(min_length=1, max_length=1024, description="Exact effective module name from grid.get; must be unique in the device.")
-    parameterId: str = Field(max_length=1024, description="Exact parameterId from grid.get (e.g. VALUE of a Value module); empty is valid.")
-    label: str = omitted(max_length=256, description="Knob label shown instead of the parameter's own name; empty or absent keeps Bitwig's default.")
+    moduleName: str = omitted(
+        min_length=1,
+        max_length=1024,
+        description="Exact effective module name from grid.get; must be unique in the device.",
+    )
+    parameterId: str = Field(
+        max_length=1024, description="Exact parameterId from grid.get (e.g. VALUE of a Value module); empty is valid."
+    )
+    label: str = omitted(
+        max_length=256,
+        description="Knob label shown instead of the parameter's own name; empty or absent keeps Bitwig's default.",
+    )
 
     @model_validator(mode="after")
     def validate_module(self):
@@ -1239,10 +1604,17 @@ class RemoteSlotSpec(StrictModel):
 
 
 class RemoteDefineArgs(ParameterArgs):
-    pageName: str = Field(min_length=1, max_length=256, description="Page name shown in the device's Remote Controls page list; kept verbatim.")
+    pageName: str = Field(
+        min_length=1,
+        max_length=256,
+        description="Page name shown in the device's Remote Controls page list; kept verbatim.",
+    )
     slots: Annotated[list[RemoteSlotSpec | None], Field(min_length=1, max_length=8)] = Field(
-        description="Slot k is entry k (0..7); null or absent trailing entries leave that slot empty (replace clears it).")
-    mode: Literal["create", "replace"] = omitted(description="create (default) refuses an existing page of that name; replace redefines the one preset page of that name, or creates it.")
+        description="Slot k is entry k (0..7); null or absent trailing entries leave that slot empty (replace clears it)."
+    )
+    mode: Literal["create", "replace"] = omitted(
+        description="create (default) refuses an existing page of that name; replace redefines the one preset page of that name, or creates it."
+    )
 
     @model_validator(mode="after")
     def validate_distinct(self):
@@ -1253,7 +1625,11 @@ class RemoteDefineArgs(ParameterArgs):
 
 
 class RemoteDeletePageArgs(ParameterArgs):
-    pageName: str = Field(min_length=1, max_length=256, description="Exact name of one preset Remote Controls page (made by devices.remote.define or Add New Page); device, module and plugin pages are refused.")
+    pageName: str = Field(
+        min_length=1,
+        max_length=256,
+        description="Exact name of one preset Remote Controls page (made by devices.remote.define or Add New Page); device, module and plugin pages are refused.",
+    )
 
 
 class GridApplyTarget(StrictModel):
@@ -1263,12 +1639,15 @@ class GridApplyTarget(StrictModel):
 
 
 class GridApplyDisplay(StrictModel):
-    display: str = Field(min_length=1, max_length=64, description="Text with explicit unit, e.g. '1.2 kHz'; float parameters only.")
+    display: str = Field(
+        min_length=1, max_length=64, description="Text with explicit unit, e.g. '1.2 kHz'; float parameters only."
+    )
 
 
 class GridApplySteps(StrictModel):
     steps: list[float] | Annotated[str, Field(pattern=r"^\$\{[A-Za-z0-9_]+\}$")] = Field(
-        description="Step-array parameter (Steps/Pitches/Gates/Probabilities/Accents): entries from step 0, 1..256 finite numbers within -128..128, at most the live arrayLength; or a whole-value '${name}' block placeholder for such a list.")
+        description="Step-array parameter (Steps/Pitches/Gates/Probabilities/Accents): entries from step 0, 1..256 finite numbers within -128..128, at most the live arrayLength; or a whole-value '${name}' block placeholder for such a list."
+    )
 
 
 class GridApplyLabel(StrictModel):
@@ -1276,14 +1655,25 @@ class GridApplyLabel(StrictModel):
 
 
 class GridApplyModule(StrictModel):
-    name: str = Field(min_length=1, max_length=1024, description="Identity: the module's customName, unique and non-empty within the device.")
-    type: str = omitted(min_length=1, max_length=128, description="Catalog module name (e.g. 'Multiply'); exactly one of type or typeId.")
+    name: str = Field(
+        min_length=1,
+        max_length=1024,
+        description="Identity: the module's customName, unique and non-empty within the device.",
+    )
+    type: str = omitted(
+        min_length=1,
+        max_length=128,
+        description="Catalog module name (e.g. 'Multiply'); exactly one of type or typeId.",
+    )
     typeId: TrackId = omitted(description=TYPE_ID_DESCRIPTION)
     x: int = Field(ge=-(2**31), le=2**31 - 1)
     y: int = Field(ge=-(2**31), le=2**31 - 1)
     params: dict[str, bool | int | float | str | GridApplyDisplay | GridApplyLabel | GridApplySteps] = omitted(
-        description="parameterId -> raw value, {display:'1.2 kHz'}, {label:'16th'}, {steps:[1,0,0.5]} (step arrays: first entries written, rest unchanged) or a string (string panels, e.g. Comment TEXT; at most 1024 UTF-16 units, multi-line ok).")
-    replace: bool = omitted(description="If a module with this name exists with another type, delete it and insert this type under the same name (default: refuse).")
+        description="parameterId -> raw value, {display:'1.2 kHz'}, {label:'16th'}, {steps:[1,0,0.5]} (step arrays: first entries written, rest unchanged) or a string (string panels, e.g. Comment TEXT; at most 1024 UTF-16 units, multi-line ok)."
+    )
+    replace: bool = omitted(
+        description="If a module with this name exists with another type, delete it and insert this type under the same name (default: refuse)."
+    )
 
     @model_validator(mode="after")
     def validate_one_type(self):
@@ -1293,29 +1683,52 @@ class GridApplyModule(StrictModel):
 
 
 class GridApplyConnection(StrictModel):
-    from_: str = Field(alias="from", min_length=3, max_length=2048, description="Source output 'module name.PORT_KEY' (split on the last '.').")
+    from_: str = Field(
+        alias="from",
+        min_length=3,
+        max_length=2048,
+        description="Source output 'module name.PORT_KEY' (split on the last '.').",
+    )
     to: str = Field(min_length=3, max_length=2048, description="Target input 'module name.PORT_KEY'.")
 
 
 class GridApplyBlock(StrictModel):
-    params: dict[str, bool | int | float | str | list[float]] = omitted(description="Parameter name -> default (a list for step arrays); params values of the form '${name}' (whole value) take it, or the instance's args value.")
-    modules: Annotated[list[GridApplyModule], Field(min_length=1, max_length=1024, description="Modules with local names and positions relative to the instance (no nesting).")]
-    connections: Annotated[list[GridApplyConnection], Field(max_length=MAX_APPLY_CONNECTIONS)] = omitted(description="Cables between the block's own modules, by local names.")
+    params: dict[str, bool | int | float | str | list[float]] = omitted(
+        description="Parameter name -> default (a list for step arrays); params values of the form '${name}' (whole value) take it, or the instance's args value."
+    )
+    modules: Annotated[
+        list[GridApplyModule],
+        Field(
+            min_length=1,
+            max_length=1024,
+            description="Modules with local names and positions relative to the instance (no nesting).",
+        ),
+    ]
+    connections: Annotated[list[GridApplyConnection], Field(max_length=MAX_APPLY_CONNECTIONS)] = omitted(
+        description="Cables between the block's own modules, by local names."
+    )
 
 
 class GridApplyInstance(StrictModel):
     block: str = Field(min_length=1, max_length=1024, description="Key of a block in blocks.")
-    prefix: str = omitted(max_length=1024, description="Prepended to every local module name (e.g. 'D1: '); instances need distinct prefixes.")
+    prefix: str = omitted(
+        max_length=1024,
+        description="Prepended to every local module name (e.g. 'D1: '); instances need distinct prefixes.",
+    )
     dx: int = omitted(ge=-(2**31), le=2**31 - 1, description="Offset added to every module x (default 0).")
     dy: int = omitted(ge=-(2**31), le=2**31 - 1, description="Offset added to every module y (default 0).")
     args: dict[str, bool | int | float | str | list[float]] = omitted(description="Values for the block's params.")
 
 
 class GridRenderArgs(ParameterArgs):
-    outPath: Nonempty = Field(description="Absolute normalized path of the image to write; refused if it exists unless overwrite=true.")
+    outPath: Nonempty = Field(
+        description="Absolute normalized path of the image to write; refused if it exists unless overwrite=true."
+    )
     format: Literal["svg", "png"] = omitted(description="svg (default) or png (needs rsvg-convert or magick on PATH).")
     overwrite: bool = omitted(description="Replace an existing file at outPath.")
-    namespace: str = omitted(min_length=1, max_length=1024, description="customName prefix to highlight; other modules are dimmed.")
+    namespace: str = omitted(
+        min_length=1, max_length=1024, description="customName prefix to highlight; other modules are dimmed."
+    )
     showConnections: bool = omitted(description="Draw cables (default true).")
     scale: float = omitted(ge=0.25, le=4, description="Image scale factor (default 1).")
 
@@ -1326,9 +1739,17 @@ class GridRenderArgs(ParameterArgs):
 
 
 class GridExportArgs(ParameterArgs):
-    namespace: str = omitted(min_length=1, max_length=1024, description="Export only modules whose customName starts with this; cables to/from other modules become `external` names.")
-    includeParams: Literal["changed", "all", "none"] = omitted(description="changed (default): params differing from the bundled 6.1.4 defaults; all; none.")
-    outPath: Nonempty = omitted(description="Absolute path to write the spec JSON to (then the result omits the spec); refused if it exists unless overwrite=true.")
+    namespace: str = omitted(
+        min_length=1,
+        max_length=1024,
+        description="Export only modules whose customName starts with this; cables to/from other modules become `external` names.",
+    )
+    includeParams: Literal["changed", "all", "none"] = omitted(
+        description="changed (default): params differing from the bundled 6.1.4 defaults; all; none."
+    )
+    outPath: Nonempty = omitted(
+        description="Absolute path to write the spec JSON to (then the result omits the spec); refused if it exists unless overwrite=true."
+    )
     overwrite: bool = omitted(description="Replace an existing file at outPath.")
 
     @model_validator(mode="after")
@@ -1339,24 +1760,41 @@ class GridExportArgs(ParameterArgs):
 
 
 class GridGraphArgs(ParameterArgs):
-    namespace: str = omitted(min_length=1, max_length=1024, description="Only modules whose customName starts with this (plus cables touching them).")
-    includeParams: Literal["changed", "all", "none"] = omitted(description="none (default), changed (differing from bundled 6.1.4 defaults) or all.")
+    namespace: str = omitted(
+        min_length=1,
+        max_length=1024,
+        description="Only modules whose customName starts with this (plus cables touching them).",
+    )
+    includeParams: Literal["changed", "all", "none"] = omitted(
+        description="none (default), changed (differing from bundled 6.1.4 defaults) or all."
+    )
 
 
 class GridProbeArgs(ParameterArgs):
     timeoutMs: int = Field(default=5000, ge=100, le=TOPOLOGY_TIMEOUT_MS)
-    port: Annotated[str, Field(min_length=3, max_length=1024)] = Field(description="'<module name>.<OUT port key>' of a module in this device, e.g. 'H: lead.OUT'; the name is the customName (or generated name) from grid.graph.")
+    port: Annotated[str, Field(min_length=3, max_length=1024)] = Field(
+        description="'<module name>.<OUT port key>' of a module in this device, e.g. 'H: lead.OUT'; the name is the customName (or generated name) from grid.graph."
+    )
     seconds: float = Field(ge=0.2, le=20, description="Recording length.")
-    mode: Literal["probe", "mono_pitch", "onsets", "level", "bands"] = Field(description="audio.analyze mode run on the recording. bands = band balance plus spectral peaks (Hz, note name, cents) for steady or noisy sources that mono_pitch cannot pitch.")
+    mode: Literal["probe", "mono_pitch", "onsets", "level", "bands"] = Field(
+        description="audio.analyze mode run on the recording. bands = band balance plus spectral peaks (Hz, note name, cents) for steady or noisy sources that mono_pitch cannot pitch."
+    )
     allowAudible: bool = omitted(description="Record without audio.route silent (the probed signal is audible).")
-    outPath: Nonempty = omitted(description="Keep the recorded WAV here (absolute .wav path); otherwise it is deleted after analysis.")
+    outPath: Nonempty = omitted(
+        description="Keep the recorded WAV here (absolute .wav path); otherwise it is deleted after analysis."
+    )
     overwrite: bool = omitted(description="With outPath: replace an existing file; refused by default.")
-    key: str = omitted(pattern=r"^[A-Ga-g][#b]?:(ionian|dorian|phrygian|lydian|mixolydian|aeolian|locrian|harmonic_minor)$", description="bands: e.g. 'F:aeolian', adds in-key chroma share.")
+    key: str = omitted(
+        pattern=r"^[A-Ga-g][#b]?:(ionian|dorian|phrygian|lydian|mixolydian|aeolian|locrian|harmonic_minor)$",
+        description="bands: e.g. 'F:aeolian', adds in-key chroma share.",
+    )
     bpm: Annotated[float, Field(ge=20, le=666)] = omitted(description="mono_pitch: adds 16th-grid positions.")
     skipSeconds: Annotated[float, Field(ge=0, le=3600)] = omitted(description="Ignore audio before this time.")
     method: Literal["flux", "envelope"] = omitted(description="onsets/mono_pitch onset detector (default flux).")
     threshold: Annotated[float, Field(ge=0.01, le=0.9)] = omitted(description="onsets/mono_pitch sensitivity.")
-    windowSeconds: Annotated[float, Field(ge=0.01, le=60)] = omitted(description="level: window length; bands: window length (default 8).")
+    windowSeconds: Annotated[float, Field(ge=0.01, le=60)] = omitted(
+        description="level: window length; bands: window length (default 8)."
+    )
 
     @field_validator("outPath")
     @classmethod
@@ -1374,30 +1812,57 @@ class GridProbeArgs(ParameterArgs):
 
 class GridApplyArgs(StatusArgs):
     target: GridApplyTarget
-    modules: Annotated[list[GridApplyModule], Field(max_length=1024, description="Declared modules; [] only with prune=true and a namespace (empties the namespace), or with instances.")] = omitted()
-    blocks: dict[str, GridApplyBlock] = omitted(description="Reusable sub-patches: {name: {params?, modules, connections?}}; expanded by instances before validation.")
+    modules: Annotated[
+        list[GridApplyModule],
+        Field(
+            max_length=1024,
+            description="Declared modules; [] only with prune=true and a namespace (empties the namespace), or with instances.",
+        ),
+    ] = omitted()
+    blocks: dict[str, GridApplyBlock] = omitted(
+        description="Reusable sub-patches: {name: {params?, modules, connections?}}; expanded by instances before validation."
+    )
     instances: Annotated[list[GridApplyInstance], Field(max_length=1024)] = omitted(
-        description="Copies of blocks: {block, prefix?, dx?, dy?, args?}. Module names become prefix+local name, positions shift by dx/dy; cables from/to an instance use the expanded names.")
+        description="Copies of blocks: {block, prefix?, dx?, dy?, args?}. Module names become prefix+local name, positions shift by dx/dy; cables from/to an instance use the expanded names."
+    )
     connections: Annotated[list[GridApplyConnection], Field(max_length=MAX_APPLY_CONNECTIONS)] = omitted(
-        description="Cables between declared modules; one source per target input.")
-    namespace: str = omitted(min_length=1, max_length=1024, description="customName prefix (e.g. 'H: ') that prune may delete from.")
-    prune: bool = omitted(description="Also disconnect unlisted inputs of declared modules inside the namespace and delete namespace modules absent from the spec. Inputs of declared modules outside the namespace are kept (warning names both ends) unless allowOutsideDisconnect.")
-    pruneAll: bool = omitted(description="Opt in to managing the WHOLE device (mutually exclusive with namespace): delete every module the spec does not declare (unnamed ones too; `external` excepted), replace same-named modules of another type (as replace:true), and disconnect every undeclared input. Deletes run first; all of it is listed in the dryRun plan and warnings. Use dryRun first.")
-    allowOutsideDisconnect: bool = omitted(description="With prune and a namespace: also disconnect unlisted inputs of declared modules outside the namespace (listed by name in warnings and the dryRun plan).")
+        description="Cables between declared modules; one source per target input."
+    )
+    namespace: str = omitted(
+        min_length=1, max_length=1024, description="customName prefix (e.g. 'H: ') that prune may delete from."
+    )
+    prune: bool = omitted(
+        description="Also disconnect unlisted inputs of declared modules inside the namespace and delete namespace modules absent from the spec. Inputs of declared modules outside the namespace are kept (warning names both ends) unless allowOutsideDisconnect."
+    )
+    pruneAll: bool = omitted(
+        description="Opt in to managing the WHOLE device (mutually exclusive with namespace): delete every module the spec does not declare (unnamed ones too; `external` excepted), replace same-named modules of another type (as replace:true), and disconnect every undeclared input. Deletes run first; all of it is listed in the dryRun plan and warnings. Use dryRun first."
+    )
+    allowOutsideDisconnect: bool = omitted(
+        description="With prune and a namespace: also disconnect unlisted inputs of declared modules outside the namespace (listed by name in warnings and the dryRun plan)."
+    )
     external: Annotated[list[Annotated[str, Field(min_length=1, max_length=1024)]], Field(max_length=1024)] = omitted(
-        description="Names of live modules this spec only wires to or from (e.g. 'X: sum'); they must exist, are used in connections like declared modules, and their type, position and params are never touched; never pruned.")
+        description="Names of live modules this spec only wires to or from (e.g. 'X: sum'); they must exist, are used in connections like declared modules, and their type, position and params are never touched; never pruned."
+    )
     dryRun: bool = omitted(description="Return the plan without writing anything.")
-    replace: bool = omitted(description="Default for every module: replace an existing same-named module of another type instead of refusing.")
-    voicing: GridVoicingFields = omitted(description="Poly Grid device voicing to converge to (voices, voiceStacking, monoMode, ...); only differing fields are written; refused before any write on Note/FX Grid.")
+    replace: bool = omitted(
+        description="Default for every module: replace an existing same-named module of another type instead of refusing."
+    )
+    voicing: GridVoicingFields = omitted(
+        description="Poly Grid device voicing to converge to (voices, voiceStacking, monoMode, ...); only differing fields are written; refused before any write on Note/FX Grid."
+    )
 
     @model_validator(mode="after")
     def validate_spec(self):
         if "voicing" in self.model_fields_set and not self.voicing.model_fields_set:
             raise ValueError("voicing must name at least one field")
         if self.pruneAll and (self.namespace or self.allowOutsideDisconnect):
-            raise ValueError("pruneAll manages the whole device: do not combine it with namespace or allowOutsideDisconnect")
+            raise ValueError(
+                "pruneAll manages the whole device: do not combine it with namespace or allowOutsideDisconnect"
+            )
         if not self.modules and not self.instances and not (self.prune and self.namespace) and not self.pruneAll:
-            raise ValueError("modules may be empty only with prune=true and a non-empty namespace, pruneAll=true, or with instances")
+            raise ValueError(
+                "modules may be empty only with prune=true and a non-empty namespace, pruneAll=true, or with instances"
+            )
         if self.instances and not self.blocks:
             raise ValueError("instances need blocks")
         names = [m.name for m in self.modules or []]
@@ -1430,10 +1895,18 @@ class AudioCaptureArgs(StatusArgs):
     seconds: float = Field(ge=0.5, le=120)
     outPath: Nonempty
     overwrite: bool = omitted(description="Replace an existing file; refused by default.")
-    fromStart: bool = omitted(description="Default true: stop transport, seek to 0, record, start transport, stop after seconds. false records without touching the transport.")
-    allowAudible: bool = omitted(description="Do not require audio.route silent (the signal stays audible). Capture always records Bitwig's own out1/out2, never the default output monitor, so other applications are not in the file.")
-    soloTrack: TrackId = omitted(description="Really solo this track for the recording: its solo is set and every other soloed track cleared, then every changed solo is restored afterwards (also on failure); the result reports soloed/unsoloed/restored. Refuses (not_applied) while other tracks have playing launcher clips unless stopOthers.")
-    stopOthers: bool = omitted(description="Stop the launcher clips of every other playing track (launcher.stop) before recording; the result lists them. Without soloTrack, nothing is spared: use it with soloTrack.")
+    fromStart: bool = omitted(
+        description="Default true: stop transport, seek to 0, record, start transport, stop after seconds. false records without touching the transport."
+    )
+    allowAudible: bool = omitted(
+        description="Do not require audio.route silent (the signal stays audible). Capture always records Bitwig's own out1/out2, never the default output monitor, so other applications are not in the file."
+    )
+    soloTrack: TrackId = omitted(
+        description="Really solo this track for the recording: its solo is set and every other soloed track cleared, then every changed solo is restored afterwards (also on failure); the result reports soloed/unsoloed/restored. Refuses (not_applied) while other tracks have playing launcher clips unless stopOthers."
+    )
+    stopOthers: bool = omitted(
+        description="Stop the launcher clips of every other playing track (launcher.stop) before recording; the result lists them. Without soloTrack, nothing is spared: use it with soloTrack."
+    )
 
     @field_validator("outPath")
     @classmethod
@@ -1445,13 +1918,25 @@ class AudioAnalyzeArgs(StatusArgs):
     path: Nonempty
     mode: Literal["level", "onsets", "mono_pitch", "probe", "loudness", "bands"]
     bpm: Annotated[float, Field(ge=20, le=666)] = omitted(description="mono_pitch: adds 16th-grid positions.")
-    skipSeconds: Annotated[float, Field(ge=0, le=3600)] = omitted(description="Ignore audio before this time; reported times stay relative to the file start.")
-    method: Literal["flux", "envelope"] = omitted(description="onsets/mono_pitch: flux (default) = spectral flux, counts overlapping notes with long decays; envelope = rising crossings of a 5 ms peak envelope.")
-    threshold: Annotated[float, Field(ge=0.01, le=0.9)] = omitted(description="onsets/mono_pitch: flux: how far a flux peak must stand above its neighbourhood, as a fraction of the strongest peak; envelope: fraction of the peak envelope that counts as an onset (default 0.15).")
-    windowSeconds: Annotated[float, Field(ge=0.01, le=60)] = omitted(description="level: window length (default 0.5); bands: window length (default 8).")
-    key: str = omitted(pattern=r"^[A-Ga-g][#b]?:(ionian|dorian|phrygian|lydian|mixolydian|aeolian|locrian|harmonic_minor)$",
-                       description="bands: e.g. 'F:aeolian'; adds per-window and overall in-key chroma share (50-1500 Hz peaks folded to pitch classes) and top pitch classes. Drums and noise pollute chroma.")
-    spectrogramPath: Nonempty = omitted(description="bands: absolute .png path to write a log-frequency spectrogram to (an existing file is replaced).")
+    skipSeconds: Annotated[float, Field(ge=0, le=3600)] = omitted(
+        description="Ignore audio before this time; reported times stay relative to the file start."
+    )
+    method: Literal["flux", "envelope"] = omitted(
+        description="onsets/mono_pitch: flux (default) = spectral flux, counts overlapping notes with long decays; envelope = rising crossings of a 5 ms peak envelope."
+    )
+    threshold: Annotated[float, Field(ge=0.01, le=0.9)] = omitted(
+        description="onsets/mono_pitch: flux: how far a flux peak must stand above its neighbourhood, as a fraction of the strongest peak; envelope: fraction of the peak envelope that counts as an onset (default 0.15)."
+    )
+    windowSeconds: Annotated[float, Field(ge=0.01, le=60)] = omitted(
+        description="level: window length (default 0.5); bands: window length (default 8)."
+    )
+    key: str = omitted(
+        pattern=r"^[A-Ga-g][#b]?:(ionian|dorian|phrygian|lydian|mixolydian|aeolian|locrian|harmonic_minor)$",
+        description="bands: e.g. 'F:aeolian'; adds per-window and overall in-key chroma share (50-1500 Hz peaks folded to pitch classes) and top pitch classes. Drums and noise pollute chroma.",
+    )
+    spectrogramPath: Nonempty = omitted(
+        description="bands: absolute .png path to write a log-frequency spectrogram to (an existing file is replaced)."
+    )
 
     @field_validator("path")
     @classmethod
@@ -1472,12 +1957,25 @@ class AudioAnalyzeArgs(StatusArgs):
             raise ValueError("key and spectrogramPath apply to mode=bands only")
         return self
 
+
 class GridDescribeArgs(StatusArgs):
-    type: str = omitted(min_length=1, max_length=128, description="Module display name (e.g. 'Select In') or typeId; exactly one of type or query.")
-    query: str = omitted(min_length=1, max_length=256, description="Keywords ranked against module names, descriptions and keywords.")
-    lang: Literal["en", "de", "es", "fr", "ja", "ko", "zh"] = omitted(description="Documentation language (default en).")
+    type: str = omitted(
+        min_length=1,
+        max_length=128,
+        description="Module display name (e.g. 'Select In') or typeId; exactly one of type or query.",
+    )
+    query: str = omitted(
+        min_length=1, max_length=256, description="Keywords ranked against module names, descriptions and keywords."
+    )
+    lang: Literal["en", "de", "es", "fr", "ja", "ko", "zh"] = omitted(
+        description="Documentation language (default en)."
+    )
     limit: int = omitted(ge=1, le=50, description="Maximum query matches (default 10).")
-    installationRoot: str = omitted(min_length=1, max_length=4096, description="Bitwig install directory containing resources/localization; default $BITWIG_INSTALLATION_ROOT, the install of $BITWIG_API_JAR, then /opt/bitwig-studio.")
+    installationRoot: str = omitted(
+        min_length=1,
+        max_length=4096,
+        description="Bitwig install directory containing resources/localization; default $BITWIG_INSTALLATION_ROOT, the install of $BITWIG_API_JAR, then /opt/bitwig-studio.",
+    )
 
     @model_validator(mode="after")
     def validate_one_selector(self):
@@ -1489,8 +1987,14 @@ class GridDescribeArgs(StatusArgs):
 
 
 class HostDiagnosticsArgs(StatusArgs):
-    sinceSeconds: int = omitted(ge=1, le=86400, description="Look back this many seconds (default 300); exclusive with sinceMarker.")
-    sinceMarker: str = omitted(min_length=1, max_length=512, description="Opaque marker from a previous host.diagnostics call: only events written after it.")
+    sinceSeconds: int = omitted(
+        ge=1, le=86400, description="Look back this many seconds (default 300); exclusive with sinceMarker."
+    )
+    sinceMarker: str = omitted(
+        min_length=1,
+        max_length=512,
+        description="Opaque marker from a previous host.diagnostics call: only events written after it.",
+    )
     maxEvents: int = omitted(ge=1, le=500, description="Keep the newest N deduplicated events (default 50).")
 
     @model_validator(mode="after")

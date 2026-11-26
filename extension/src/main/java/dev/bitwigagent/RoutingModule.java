@@ -1,11 +1,12 @@
 package dev.bitwigagent;
 
+import static dev.bitwigagent.HostServices.failure;
+
 import com.bitwig.extension.callback.*;
 import com.bitwig.extension.controller.api.*;
 import com.google.gson.*;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicLong;
-import static dev.bitwigagent.HostServices.failure;
 
 /**
  * Track input/output choosers and device sidechain sources through exact version-gated native bindings. Entries
@@ -13,37 +14,70 @@ import static dev.bitwigagent.HostServices.failure;
  * and cannot be requested in this version.
  */
 final class RoutingModule implements HostModule {
-    static final Set<String> METHODS = Set.of("tracks.routing.get", "tracks.routing.set", "devices.sidechain.get", "devices.sidechain.set");
+    static final Set<String> METHODS =
+            Set.of("tracks.routing.get", "tracks.routing.set", "devices.sidechain.get", "devices.sidechain.set");
     static final Set<String> WRITES = Set.of("tracks.routing.set", "devices.sidechain.set");
     /** Entry kinds a caller may request for a track output chooser. */
     static final Set<String> OUTPUT_KINDS = Set.of("none", "track_audio_input", "track_note_input");
     /** Entry kinds a caller may request for a track input chooser or a device sidechain source. */
-    static final Set<String> SOURCE_KINDS = Set.of("none", "pre_fader", "post_fader", "track_notes", "all_ins", "computer_keyboard", "onscreen_keyboard");
+    static final Set<String> SOURCE_KINDS = Set.of(
+            "none", "pre_fader", "post_fader", "track_notes", "all_ins", "computer_keyboard", "onscreen_keyboard");
     /** Kinds that name a track of the bank. */
-    static final Set<String> TRACK_KINDS = Set.of("track_audio_input", "track_note_input", "pre_fader", "post_fader", "track_notes");
+    static final Set<String> TRACK_KINDS =
+            Set.of("track_audio_input", "track_note_input", "pre_fader", "post_fader", "track_notes");
     /** Native source-kind group (kCk) that admits each requestable source kind; "none" is always admitted. */
-    static final Map<String, String> SOURCE_GROUP = Map.of("pre_fader", "TRACK_AUDIO_SOURCES", "post_fader", "TRACK_AUDIO_SOURCES",
-            "track_notes", "TRACK_NOTE_SOURCES", "all_ins", "HARDWARE_NOTE_SOURCES", "computer_keyboard", "HARDWARE_NOTE_SOURCES",
-            "onscreen_keyboard", "HARDWARE_NOTE_SOURCES");
+    static final Map<String, String> SOURCE_GROUP = Map.of(
+            "pre_fader",
+            "TRACK_AUDIO_SOURCES",
+            "post_fader",
+            "TRACK_AUDIO_SOURCES",
+            "track_notes",
+            "TRACK_NOTE_SOURCES",
+            "all_ins",
+            "HARDWARE_NOTE_SOURCES",
+            "computer_keyboard",
+            "HARDWARE_NOTE_SOURCES",
+            "onscreen_keyboard",
+            "HARDWARE_NOTE_SOURCES");
     /** The output chooser (Bitwig's bhF) enables every destination group for every track; v1 exposes the two track groups. */
-    static final Map<String, String> OUTPUT_GROUP = Map.of("track_audio_input", "TRACK_AUDIO_DESTINATIONS", "track_note_input", "TRACK_NOTE_DESTINATIONS");
+    static final Map<String, String> OUTPUT_GROUP =
+            Map.of("track_audio_input", "TRACK_AUDIO_DESTINATIONS", "track_note_input", "TRACK_NOTE_DESTINATIONS");
     /** Public track types whose GUI shows an input chooser, with the native track kind (fP) each must report. */
-    static final Map<String, String> INPUT_TRACK_TYPES = Map.of("Audio", "AUDIO", "Instrument", "INSTRUMENT", "Hybrid", "HYBRID");
+    static final Map<String, String> INPUT_TRACK_TYPES =
+            Map.of("Audio", "AUDIO", "Instrument", "INSTRUMENT", "Hybrid", "HYBRID");
+
     static final int MAX_COMPONENTS = 256;
 
     interface Access {
         void execute(Runnable work);
+
         JsonObject trackGet(TrackRef self, List<TrackRef> bank, boolean includeChoices, Runnable check);
-        JsonObject trackSet(TrackRef self, List<TrackRef> bank, JsonObject params, Runnable check, Runnable beforeWrite);
-        JsonObject sidechainGet(Object deviceProxy, String trackId, List<TrackRef> bank, boolean includeChoices, Runnable check);
-        JsonObject sidechainSet(Object deviceProxy, String trackId, List<TrackRef> bank, JsonObject params, Runnable check, Runnable beforeWrite);
+
+        JsonObject trackSet(
+                TrackRef self, List<TrackRef> bank, JsonObject params, Runnable check, Runnable beforeWrite);
+
+        JsonObject sidechainGet(
+                Object deviceProxy, String trackId, List<TrackRef> bank, boolean includeChoices, Runnable check);
+
+        JsonObject sidechainSet(
+                Object deviceProxy,
+                String trackId,
+                List<TrackRef> bank,
+                JsonObject params,
+                Runnable check,
+                Runnable beforeWrite);
     }
 
     /** One observed bank track: public UUID, public type and its proxy (the native side re-resolves and re-checks it). */
     static final class TrackRef {
         final String id, type;
         final Object proxy;
-        TrackRef(String id, String type, Object proxy) { this.id = id; this.type = type; this.proxy = proxy; }
+
+        TrackRef(String id, String type, Object proxy) {
+            this.id = id;
+            this.type = type;
+            this.proxy = proxy;
+        }
     }
 
     private final HostServices s;
@@ -51,9 +85,13 @@ final class RoutingModule implements HostModule {
     private Access access;
     private volatile boolean pending, quarantined;
 
-    RoutingModule(HostServices s) { this(s, null); }
+    RoutingModule(HostServices s) {
+        this(s, null);
+    }
+
     RoutingModule(HostServices s, Access access) {
-        this.s = s; this.access = access;
+        this.s = s;
+        this.access = access;
         for (int i = 0; i < HostServices.TRACKS; i++) {
             Track track = (Track) s.tracks.getItemAt(i);
             track.channelId().addValueObserver((StringValueChangedCallback) v -> epoch.incrementAndGet());
@@ -62,11 +100,20 @@ final class RoutingModule implements HostModule {
         }
     }
 
-    @Override public Set<String> methods() { return METHODS; }
-    @Override public List<String> unresolved() {
+    @Override
+    public Set<String> methods() {
+        return METHODS;
+    }
+
+    @Override
+    public List<String> unresolved() {
         return pending || quarantined ? List.of("A routing or sidechain write is pending or unresolved.") : List.of();
     }
-    @Override public void validate(String method, JsonObject p) { validateParams(method, p); }
+
+    @Override
+    public void validate(String method, JsonObject p) {
+        validateParams(method, p);
+    }
 
     static void validateParams(String method, JsonObject p) {
         switch (method) {
@@ -87,18 +134,31 @@ final class RoutingModule implements HostModule {
                 if (p.has("includeChoices")) Params.bool(p, "includeChoices");
                 break;
             case "devices.sidechain.set":
-                Params.fields(p, Set.of("trackId", "deviceIndex", "expectedDeviceName", "source", "expectedSource"),
-                        Set.of("componentIndex", "expectedComponentId", "componentId", "expectedModulatorId", "expectedModuleId"));
+                Params.fields(
+                        p,
+                        Set.of("trackId", "deviceIndex", "expectedDeviceName", "source", "expectedSource"),
+                        Set.of(
+                                "componentIndex",
+                                "expectedComponentId",
+                                "componentId",
+                                "expectedModulatorId",
+                                "expectedModuleId"));
                 device(p);
-                if (p.has("componentIndex") == p.has("componentId")) throw invalid("Supply exactly one of componentIndex or componentId.");
-                if (p.has("componentIndex") != p.has("expectedComponentId")) throw invalid("componentIndex needs expectedComponentId (that row's componentId), and only it.");
-                if (p.has("componentIndex")) { Params.integer(p, "componentIndex", 0, MAX_COMPONENTS - 1); Params.string(p, "expectedComponentId"); }
-                else Params.string(p, "componentId");
-                for (String owner : List.of("expectedModulatorId", "expectedModuleId")) if (p.has(owner)) uuid(p, owner);
+                if (p.has("componentIndex") == p.has("componentId"))
+                    throw invalid("Supply exactly one of componentIndex or componentId.");
+                if (p.has("componentIndex") != p.has("expectedComponentId"))
+                    throw invalid("componentIndex needs expectedComponentId (that row's componentId), and only it.");
+                if (p.has("componentIndex")) {
+                    Params.integer(p, "componentIndex", 0, MAX_COMPONENTS - 1);
+                    Params.string(p, "expectedComponentId");
+                } else Params.string(p, "componentId");
+                for (String owner : List.of("expectedModulatorId", "expectedModuleId"))
+                    if (p.has(owner)) uuid(p, owner);
                 entry(p, "source", SOURCE_KINDS, false);
                 entry(p, "expectedSource", SOURCE_KINDS, true);
                 break;
-            default: throw failure("unknown_method", "Unknown routing method.");
+            default:
+                throw failure("unknown_method", "Unknown routing method.");
         }
         uuid(p, "trackId");
     }
@@ -110,7 +170,9 @@ final class RoutingModule implements HostModule {
 
     /** A requested field needs its expected (compare-and-set) partner and vice versa. */
     private static void pair(JsonObject p, String key, String expected, Set<String> kinds) {
-        if (p.has(key) != p.has(expected)) throw invalid(key + " and " + expected + " must be supplied together (" + expected + " from a fresh tracks.routing.get).");
+        if (p.has(key) != p.has(expected))
+            throw invalid(key + " and " + expected + " must be supplied together (" + expected
+                    + " from a fresh tracks.routing.get).");
         if (!p.has(key)) return;
         entry(p, key, kinds, false);
         entry(p, expected, kinds, true);
@@ -124,7 +186,11 @@ final class RoutingModule implements HostModule {
         JsonElement value = p.get(key);
         if (value == null || !value.isJsonObject()) throw invalid(key + " must be an object {kind, trackId?}.");
         JsonObject e = value.getAsJsonObject();
-        String kind = e.has("kind") && e.get("kind").isJsonPrimitive() && e.get("kind").getAsJsonPrimitive().isString() ? e.get("kind").getAsString() : "";
+        String kind = e.has("kind")
+                        && e.get("kind").isJsonPrimitive()
+                        && e.get("kind").getAsJsonPrimitive().isString()
+                ? e.get("kind").getAsString()
+                : "";
         boolean other = expected && kind.equals("other");
         if (!kinds.contains(kind) && !other)
             throw invalid(key + ".kind must be one of " + new TreeSet<>(kinds) + (expected ? " or other" : ""));
@@ -136,7 +202,9 @@ final class RoutingModule implements HostModule {
         if (e.has("name")) {
             JsonElement name = e.get("name");
             // A native bus name may be empty; it is compared exactly.
-            if (!name.isJsonPrimitive() || !name.getAsJsonPrimitive().isString() || name.getAsString().length() > 4096)
+            if (!name.isJsonPrimitive()
+                    || !name.getAsJsonPrimitive().isString()
+                    || name.getAsString().length() > 4096)
                 throw invalid(key + ".name must be a string (maximum 4096 characters).");
         }
         if (e.has("nativeType")) Params.string(e, "nativeType");
@@ -150,7 +218,8 @@ final class RoutingModule implements HostModule {
     /** v1 requestable source kinds admitted by a native kCk group set (always including none). */
     static List<String> sourceKinds(Collection<String> nativeGroups) {
         List<String> out = new ArrayList<>(List.of("none"));
-        for (String kind : List.of("pre_fader", "post_fader", "track_notes", "all_ins", "computer_keyboard", "onscreen_keyboard"))
+        for (String kind :
+                List.of("pre_fader", "post_fader", "track_notes", "all_ins", "computer_keyboard", "onscreen_keyboard"))
             if (nativeGroups.contains(SOURCE_GROUP.get(kind))) out.add(kind);
         return out;
     }
@@ -158,10 +227,15 @@ final class RoutingModule implements HostModule {
     /** The input chooser's native kCk groups for a native track kind, as Bitwig's bhB.LzO derives them. */
     static List<String> trackSourceGroups(String nativeTrackKind) {
         switch (nativeTrackKind) {
-            case "AUDIO": return List.of("HARDWARE_AUDIO_SOURCES", "TRACK_AUDIO_SOURCES");
-            case "INSTRUMENT": return List.of("HARDWARE_NOTE_SOURCES", "TRACK_NOTE_SOURCES");
-            case "HYBRID": return List.of("HARDWARE_NOTE_SOURCES", "HARDWARE_AUDIO_SOURCES", "TRACK_AUDIO_SOURCES", "TRACK_NOTE_SOURCES");
-            default: return List.of();
+            case "AUDIO":
+                return List.of("HARDWARE_AUDIO_SOURCES", "TRACK_AUDIO_SOURCES");
+            case "INSTRUMENT":
+                return List.of("HARDWARE_NOTE_SOURCES", "TRACK_NOTE_SOURCES");
+            case "HYBRID":
+                return List.of(
+                        "HARDWARE_NOTE_SOURCES", "HARDWARE_AUDIO_SOURCES", "TRACK_AUDIO_SOURCES", "TRACK_NOTE_SOURCES");
+            default:
+                return List.of();
         }
     }
 
@@ -169,19 +243,34 @@ final class RoutingModule implements HostModule {
     static boolean sameEntry(JsonObject expected, JsonObject observed) {
         String kind = expected.get("kind").getAsString();
         if (!kind.equals(observed.get("kind").getAsString())) return false;
-        if (TRACK_KINDS.contains(kind)) return observed.has("trackId") && expected.get("trackId").getAsString().equalsIgnoreCase(observed.get("trackId").getAsString());
-        if (kind.equals("other")) return observed.has("name") && observed.get("name").isJsonPrimitive()
-                && expected.get("name").getAsString().equals(observed.get("name").getAsString())
-                && (!expected.has("nativeType") || observed.has("nativeType") && expected.get("nativeType").getAsString().equals(observed.get("nativeType").getAsString()));
+        if (TRACK_KINDS.contains(kind))
+            return observed.has("trackId")
+                    && expected.get("trackId")
+                            .getAsString()
+                            .equalsIgnoreCase(observed.get("trackId").getAsString());
+        if (kind.equals("other"))
+            return observed.has("name")
+                    && observed.get("name").isJsonPrimitive()
+                    && expected.get("name")
+                            .getAsString()
+                            .equals(observed.get("name").getAsString())
+                    && (!expected.has("nativeType")
+                            || observed.has("nativeType")
+                                    && expected.get("nativeType")
+                                            .getAsString()
+                                            .equals(observed.get("nativeType").getAsString()));
         return true;
     }
 
-    @Override public void dispatch(HostOperation op, String method, JsonObject p) {
+    @Override
+    public void dispatch(HostOperation op, String method, JsonObject p) {
         s.check(op);
         boolean write = WRITES.contains(method);
         if (pending) throw failure("busy", "Another native routing operation is pending.");
         if (write && quarantined)
-            throw failure("unresolved_mutation", "An unresolved routing/sidechain write requires inspection (tracks.routing.get / devices.sidechain.get) and extension.restart before further routing writes.");
+            throw failure(
+                    "unresolved_mutation",
+                    "An unresolved routing/sidechain write requires inspection (tracks.routing.get / devices.sidechain.get) and extension.restart before further routing writes.");
         String id = p.get("trackId").getAsString();
         int slot = s.trackSlot(id);
         List<TrackRef> bank = bank();
@@ -192,24 +281,34 @@ final class RoutingModule implements HostModule {
             if (!p.has(key) || !p.getAsJsonObject(key).has("trackId")) continue;
             String other = p.getAsJsonObject(key).get("trackId").getAsString();
             if (bank.stream().noneMatch(ref -> ref.id.equals(other)))
-                throw failure("outside_window", key + ".trackId is absent from the current 16-track window; nothing was dispatched.");
+                throw failure(
+                        "outside_window",
+                        key + ".trackId is absent from the current 16-track window; nothing was dispatched.");
         }
         DeviceSources.RootReadTicket ticket = method.startsWith("devices.") ? s.sources.rootRead(parent(p)) : null;
         HostServices.SafetyObservation safety = write ? s.stoppedSafety(op) : null;
         if (access == null) {
-            try { access = new Bitwig614RoutingAccess(s.nativeRuntime(op).access("routing_unavailable")); }
-            catch (ReflectiveOperationException | LinkageError error) {
-                throw failure("routing_unavailable", "Exact routing descriptors unavailable: " + Bitwig614Runtime.diagnostic(error));
+            try {
+                access = new Bitwig614RoutingAccess(s.nativeRuntime(op).access("routing_unavailable"));
+            } catch (ReflectiveOperationException | LinkageError error) {
+                throw failure(
+                        "routing_unavailable",
+                        "Exact routing descriptors unavailable: " + Bitwig614Runtime.diagnostic(error));
             }
         }
         long generation = epoch.get();
         Runnable check = () -> {
             s.check(op);
-            if (epoch.get() != generation) throw failure("stale_context", "Track bank changed while the routing operation was queued.");
+            if (epoch.get() != generation)
+                throw failure("stale_context", "Track bank changed while the routing operation was queued.");
             if (ticket != null) ticket.check();
             if (write) s.guardStoppedSafety(safety);
         };
-        Runnable beforeWrite = () -> { check.run(); op.dispatched = true; quarantined = true; };
+        Runnable beforeWrite = () -> {
+            check.run();
+            op.dispatched = true;
+            quarantined = true;
+        };
         Access bridge = access;
         TrackRef target = self;
         boolean choices = p.has("includeChoices") && p.get("includeChoices").getAsBoolean();
@@ -220,23 +319,40 @@ final class RoutingModule implements HostModule {
                     check.run();
                     JsonObject result;
                     switch (method) {
-                        case "tracks.routing.get": result = bridge.trackGet(target, bank, choices, check); break;
-                        case "tracks.routing.set": result = bridge.trackSet(target, bank, p, check, beforeWrite); break;
-                        case "devices.sidechain.get": result = bridge.sidechainGet(ticket.device, id, bank, choices, check); break;
-                        default: result = bridge.sidechainSet(ticket.device, id, bank, p, check, beforeWrite);
+                        case "tracks.routing.get":
+                            result = bridge.trackGet(target, bank, choices, check);
+                            break;
+                        case "tracks.routing.set":
+                            result = bridge.trackSet(target, bank, p, check, beforeWrite);
+                            break;
+                        case "devices.sidechain.get":
+                            result = bridge.sidechainGet(ticket.device, id, bank, choices, check);
+                            break;
+                        default:
+                            result = bridge.sidechainSet(ticket.device, id, bank, p, check, beforeWrite);
                     }
-                    s.schedule(op, () -> {
-                        check.run();
-                        if (!s.trackMatches(id, (Track) s.tracks.getItemAt(slot))) throw failure("stale_context", "Track target changed after native access.");
-                        if (ticket != null) s.sources.guardRootRead(ticket);
-                        if (write && !"unknown".equals(text(result, "completion"))) quarantined = false;
-                        pending = false;
-                        annotateTrackNames(result, trackNames());
-                        op.result.complete(result);
-                    }, 0);
-                } catch (RuntimeException | Error error) { pending = false; op.fail(error); }
+                    s.schedule(
+                            op,
+                            () -> {
+                                check.run();
+                                if (!s.trackMatches(id, (Track) s.tracks.getItemAt(slot)))
+                                    throw failure("stale_context", "Track target changed after native access.");
+                                if (ticket != null) s.sources.guardRootRead(ticket);
+                                if (write && !"unknown".equals(text(result, "completion"))) quarantined = false;
+                                pending = false;
+                                annotateTrackNames(result, trackNames());
+                                op.result.complete(result);
+                            },
+                            0);
+                } catch (RuntimeException | Error error) {
+                    pending = false;
+                    op.fail(error);
+                }
             });
-        } catch (RuntimeException | Error error) { pending = false; throw error; }
+        } catch (RuntimeException | Error error) {
+            pending = false;
+            throw error;
+        }
         op.result.whenComplete((r, e) -> pending = false);
     }
 
@@ -244,7 +360,8 @@ final class RoutingModule implements HostModule {
         Map<String, String> out = new HashMap<>();
         for (int i = 0; i < HostServices.TRACKS; i++) {
             Track track = (Track) s.tracks.getItemAt(i);
-            if (track.exists().get()) out.put(track.channelId().get(), track.name().get());
+            if (track.exists().get())
+                out.put(track.channelId().get(), track.name().get());
         }
         return out;
     }
@@ -253,18 +370,25 @@ final class RoutingModule implements HostModule {
      *  name as a sibling (entry -> trackName, source -> sourceTrackName, ...). Entries themselves stay verbatim, copyable into expected*. */
     static void annotateTrackNames(JsonElement element, Map<String, String> names) {
         if (element == null) return;
-        if (element.isJsonArray()) { for (JsonElement item : element.getAsJsonArray()) annotateTrackNames(item, names); return; }
+        if (element.isJsonArray()) {
+            for (JsonElement item : element.getAsJsonArray()) annotateTrackNames(item, names);
+            return;
+        }
         if (!element.isJsonObject()) return;
         JsonObject object = element.getAsJsonObject();
         Map<String, String> add = new LinkedHashMap<>();
         for (Map.Entry<String, JsonElement> field : object.entrySet()) {
             JsonElement value = field.getValue();
-            if (value.isJsonObject() && value.getAsJsonObject().has("kind") && value.getAsJsonObject().has("trackId")) {
+            if (value.isJsonObject()
+                    && value.getAsJsonObject().has("kind")
+                    && value.getAsJsonObject().has("trackId")) {
                 String name = names.get(value.getAsJsonObject().get("trackId").getAsString());
-                if (name != null) add.put(field.getKey().equals("entry") ? "trackName" : field.getKey() + "TrackName", name);
+                if (name != null)
+                    add.put(field.getKey().equals("entry") ? "trackName" : field.getKey() + "TrackName", name);
             } else annotateTrackNames(value, names);
         }
-        for (Map.Entry<String, String> extra : add.entrySet()) if (!object.has(extra.getKey())) object.addProperty(extra.getKey(), extra.getValue());
+        for (Map.Entry<String, String> extra : add.entrySet())
+            if (!object.has(extra.getKey())) object.addProperty(extra.getKey(), extra.getValue());
     }
 
     private List<TrackRef> bank() {
@@ -289,5 +413,7 @@ final class RoutingModule implements HostModule {
         return o.has(key) && o.get(key).isJsonPrimitive() ? o.get(key).getAsString() : null;
     }
 
-    private static RpcException invalid(String message) { return new RpcException("invalid_params", message, "not_applied"); }
+    private static RpcException invalid(String message) {
+        return new RpcException("invalid_params", message, "not_applied");
+    }
 }

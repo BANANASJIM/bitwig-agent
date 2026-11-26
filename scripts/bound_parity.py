@@ -7,6 +7,7 @@ catalog examples never include is sent once. The raw TCP request bypasses the
 Python adapter, so the JVM's own validator decides; its verdict must equal
 pydantic's. No codegen: vectors are derived from the schema at run time.
 """
+
 import asyncio
 import copy
 import json
@@ -25,15 +26,50 @@ SAMPLE_UUID = "12345678-1234-1234-1234-123456789abc"
 # skips that vector kind for the field; "all" skips every vector for it. Use only
 # for cross-field rules the two sides legitimately express differently.
 SKIPS: dict[tuple[str, str, str], str] = {
-    ("devices.insert", "id", "accept"): "per-kind id caps (clap 256, vst3 32) make the shared 4096 unreachable; rejects still run",
-    ("devices.layers.insert", "id", "accept"): "per-kind id caps (clap 256, vst3 32) make the shared 4096 unreachable; rejects still run",
-    ("launcher.create", "notes.0.beat", "accept"): "a note must fit lengthBeats (max 4096), so beat 4194304 is unreachable here",
-    ("notes.edit", "edits.0.beat", "accept"): "no explicit window: the host derives a grid of <=128 steps (step<=4 beats, startStep<=1048576) and rejects extremes the schema allows; error names the fix",
-    ("launcher.create", "notes.0.durationBeats", "accept"): "same derived-grid limit (a 4096-beat note needs >128 steps)",
-    ("arranger.clips.create", "notes.0.beat", "accept"): "a note must fit lengthBeats (max 65536), so beat 4194304 is unreachable here",
-    ("notes.edit", "edits.0.durationBeats", "accept"): "same derived-grid limit as edits.0.beat (duration 4096 beats needs >128 steps)",
-    **{(m, f, "accept"): "endBeats must exceed startBeats by at most 65536, so a bound on one side is reachable only with a matching partner; rejects still run"
-       for m in ("export.audio", "bounce.inPlace") for f in ("startBeats", "endBeats")},
+    (
+        "devices.insert",
+        "id",
+        "accept",
+    ): "per-kind id caps (clap 256, vst3 32) make the shared 4096 unreachable; rejects still run",
+    (
+        "devices.layers.insert",
+        "id",
+        "accept",
+    ): "per-kind id caps (clap 256, vst3 32) make the shared 4096 unreachable; rejects still run",
+    (
+        "launcher.create",
+        "notes.0.beat",
+        "accept",
+    ): "a note must fit lengthBeats (max 4096), so beat 4194304 is unreachable here",
+    (
+        "notes.edit",
+        "edits.0.beat",
+        "accept",
+    ): "no explicit window: the host derives a grid of <=128 steps (step<=4 beats, startStep<=1048576) and rejects extremes the schema allows; error names the fix",
+    (
+        "launcher.create",
+        "notes.0.durationBeats",
+        "accept",
+    ): "same derived-grid limit (a 4096-beat note needs >128 steps)",
+    (
+        "arranger.clips.create",
+        "notes.0.beat",
+        "accept",
+    ): "a note must fit lengthBeats (max 65536), so beat 4194304 is unreachable here",
+    (
+        "notes.edit",
+        "edits.0.durationBeats",
+        "accept",
+    ): "same derived-grid limit as edits.0.beat (duration 4096 beats needs >128 steps)",
+    **{
+        (
+            m,
+            f,
+            "accept",
+        ): "endBeats must exceed startBeats by at most 65536, so a bound on one side is reachable only with a matching partner; rejects still run"
+        for m in ("export.audio", "bounce.inPlace")
+        for f in ("startBeats", "endBeats")
+    },
 }
 
 
@@ -55,17 +91,21 @@ def project_path(params, value):
     tail = "/S/S.bwproject"
     body = len(value.encode("utf-16-le", errors="surrogatepass")) // 2 - len(tail) - 1
     if body > 0:
-        filler = "\U0001F600" * (body // 2) + "a" * (body % 2) if any(ord(c) > 0xFFFF for c in value) else "a" * body
+        filler = "\U0001f600" * (body // 2) + "a" * (body % 2) if any(ord(c) > 0xFFFF for c in value) else "a" * body
         params["path"] = "/" + filler + tail
 
 
 def window_fix(field):
     """Keep the explicit note window self-consistent while one window field sweeps."""
+
     def fix(params, value):
         if field == "pitchStart" and 0 <= value < 128:
             params["pitchCount"] = max(1, min(params["pitchCount"], 128 - value))
         if "edits" in params and "stepSizeBeats" in params:
-            params["edits"] = [{"op": "clear", "beat": params["startStep"] * params["stepSizeBeats"], "pitch": params["pitchStart"]}]
+            params["edits"] = [
+                {"op": "clear", "beat": params["startStep"] * params["stepSizeBeats"], "pitch": params["pitchStart"]}
+            ]
+
     return fix
 
 
@@ -73,6 +113,7 @@ def window_fix(field):
 # vector is valid except for the bound under test.
 def drop(*keys):
     """Exactly-one-of alternatives: drop the sibling the example already carries."""
+
     def fix(params, value, keys=keys):
         for key in keys:
             container, _, leaf = key.rpartition(".")
@@ -81,23 +122,27 @@ def drop(*keys):
                 target = target[int(part)] if part.isdigit() else target.get(part, {})
             if isinstance(target, dict):
                 target.pop(leaf, None)
+
     return fix
 
 
 def steps_fix(field):
     """Keep values no longer than expectedValues while one of the two arrays sweeps its length."""
+
     def fix(params, value):
         for box in (params, *(params.get("writes") or [])):
             if "expectedValues" in box and "values" in box:
                 if field == "values":
                     box["expectedValues"] = [0.0] * max(len(box["expectedValues"]), len(box["values"]))
                 else:
-                    box["values"] = box["values"][:len(box["expectedValues"])] or [0.0]
+                    box["values"] = box["values"][: len(box["expectedValues"])] or [0.0]
+
     return fix
 
 
 def automation_fix(field):
     """Keep range ordered and points increasing and inside it while one of them sweeps."""
+
     def fix(params, value):
         box = params.get("range")
         if box and isinstance(value, (int, float)) and 0 <= value <= 4194304:
@@ -110,17 +155,26 @@ def automation_fix(field):
         low = box["startBeat"] if box else 0.0
         if field == "points":
             span = (box["endBeat"] - low) if box else float(value)
-            params["points"] = [{"beat": low + span * i / max(value, 1), "value": 0.5, "interpolation": "linear"} for i in range(value)]
+            params["points"] = [
+                {"beat": low + span * i / max(value, 1), "value": 0.5, "interpolation": "linear"} for i in range(value)
+            ]
         elif box:
             params["points"] = [p for p in params["points"] if box["startBeat"] <= p["beat"] <= box["endBeat"]]
+
     return fix
 
 
 FIXUPS = {
-    **{(m, f"range.{f}"): automation_fix(f) for m in ("automation.points.get", "automation.points.set") for f in ("startBeat", "endBeat")},
+    **{
+        (m, f"range.{f}"): automation_fix(f)
+        for m in ("automation.points.get", "automation.points.set")
+        for f in ("startBeat", "endBeat")
+    },
     ("automation.points.set", "points"): automation_fix("points"),
-    **{("grid.parameters.set", name): steps_fix(name.rsplit(".", 1)[-1])
-       for name in ("values", "expectedValues", "writes.0.values", "writes.0.expectedValues")},
+    **{
+        ("grid.parameters.set", name): steps_fix(name.rsplit(".", 1)[-1])
+        for name in ("values", "expectedValues", "writes.0.values", "writes.0.expectedValues")
+    },
     ("grid.modules.insert", "typeName"): drop("typeId"),
     ("grid.modules.insert", "typeId"): drop("typeName"),
     ("grid.modules.insert", "modules.0.typeName"): drop("modules.0.typeId"),
@@ -131,8 +185,11 @@ FIXUPS = {
     ("launcher.import", "path"): lambda p, v: p.__setitem__("path", as_path(v)),
     ("project.saveAs", "path"): project_path,
     ("export.audio", "directory"): lambda p, v: p.__setitem__("directory", as_path(v)),
-    **{(m, f): window_fix(f) for m in ("notes.read", "notes.edit")
-       for f in ("stepSizeBeats", "startStep", "steps", "pitchStart", "pitchCount")},
+    **{
+        (m, f): window_fix(f)
+        for m in ("notes.read", "notes.edit")
+        for f in ("stepSizeBeats", "startStep", "steps", "pitchStart", "pitchCount")
+    },
 }
 
 
@@ -251,8 +308,12 @@ def bound_vectors(node, defs):
                 yield f"maxLength={top}", "a" * top, True
                 yield "maxLength+", "a" * (top + 1), False
                 # Java counts UTF-16 units; U+1F600 is two.
-                yield f"maxLength={top} utf16", ("\U0001F600" * (top // 2 - 1) + "a" * (2 + top % 2)) if top >= 2 else "a" * top, True
-                yield "maxLength+ utf16", "\U0001F600" * (top // 2 + 1), False
+                yield (
+                    f"maxLength={top} utf16",
+                    ("\U0001f600" * (top // 2 - 1) + "a" * (2 + top % 2)) if top >= 2 else "a" * top,
+                    True,
+                )
+                yield "maxLength+ utf16", "\U0001f600" * (top // 2 + 1), False
         elif kind == "array":
             if s.get("minItems", 0) > 0:
                 yield f"minItems={s['minItems']}", s["minItems"], True
@@ -332,22 +393,30 @@ async def run(port):
             java, error = await java_verdict(port, method, params)
             checked += 1
             if py != java:
-                problems.append(f"MISMATCH {label}: python={'accept' if py else 'reject'} java={'accept' if java else 'reject'} {error}")
+                problems.append(
+                    f"MISMATCH {label}: python={'accept' if py else 'reject'} java={'accept' if java else 'reject'} {error}"
+                )
             elif expect != "reject":
                 covered[label] = covered.get(label, False) or py
             elif py:
                 problems.append(f"{label}: both sides accept a value beyond the schema bound")
     insert = TOOLS["grid.modules.insert"].examples[0]
     for name in ("<", "=", ">", "\u2260", "\u2264", "\u2265", "Slope \u2197", "---", "\u00b2"):
-        for params in (insert | {"typeName": name},
-                       {k: v for k, v in insert.items() if k not in ("typeName", "x", "y")} | {"modules": [{"typeName": name, "x": 1, "y": 1}]}):
+        for params in (
+            insert | {"typeName": name},
+            {k: v for k, v in insert.items() if k not in ("typeName", "x", "y")}
+            | {"modules": [{"typeName": name, "x": 1, "y": 1}]},
+        ):
             py = python_verdict("grid.modules.insert", params)
             java, error = await java_verdict(port, "grid.modules.insert", params)
             checked += 1
             if not (py and java):
                 problems.append(f"typeName {name!r} must be accepted by both: python={py} java={java} {error}")
-    problems += [f"VACUOUS {label}: no example base is valid with this vector, so it never exercised the bound"
-                 for label, ok in covered.items() if not ok]
+    problems += [
+        f"VACUOUS {label}: no example base is valid with this vector, so it never exercised the bound"
+        for label, ok in covered.items()
+        if not ok
+    ]
     if problems:
         raise AssertionError(f"bound parity failed ({checked} vectors):\n" + "\n".join(problems))
     return checked

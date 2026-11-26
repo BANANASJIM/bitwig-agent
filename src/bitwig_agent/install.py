@@ -1,4 +1,5 @@
 """Install the matching release extension, or an explicitly supplied local build."""
+
 import argparse
 import hashlib
 from http.client import HTTPException
@@ -72,7 +73,9 @@ def _release_extension(package_version: str) -> bytes:
 def _atomic_write(target: Path, data: bytes) -> None:
     staging = None
     try:
-        with tempfile.NamedTemporaryFile(prefix=f".{target.name}.", suffix=".tmp", dir=target.parent, delete=False) as stream:
+        with tempfile.NamedTemporaryFile(
+            prefix=f".{target.name}.", suffix=".tmp", dir=target.parent, delete=False
+        ) as stream:
             staging = Path(stream.name)
             stream.write(data)
             stream.flush()
@@ -110,17 +113,30 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--version", action="version", version=f"%(prog)s {version('bitwig-agent')}")
     parser.add_argument("--extension", type=Path, help="Install this local extension instead of downloading a release")
     parser.add_argument("--destination", type=Path, default=_default_destination(), help="Bitwig Extensions directory")
-    parser.add_argument("--mcp-config", action="store_true", help="Print MCP configuration only; do not download or install")
+    parser.add_argument(
+        "--mcp-config", action="store_true", help="Print MCP configuration only; do not download or install"
+    )
     args = parser.parse_args(argv)
     if args.mcp_config:
-        print(json.dumps({"mcpServers": {"bitwig-agent": {
-            "command": sys.executable,
-            "args": ["-m", "bitwig_agent"],
-            "env": {"BITWIG_AGENT_PORT": "61172"},
-        }}}, indent=2))
+        print(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "bitwig-agent": {
+                            "command": sys.executable,
+                            "args": ["-m", "bitwig_agent"],
+                            "env": {"BITWIG_AGENT_PORT": "61172"},
+                        }
+                    }
+                },
+                indent=2,
+            )
+        )
         return
     try:
-        data = args.extension.read_bytes() if args.extension is not None else _release_extension(version("bitwig-agent"))
+        data = (
+            args.extension.read_bytes() if args.extension is not None else _release_extension(version("bitwig-agent"))
+        )
         _install(data, args.destination)
     except (OSError, ValueError, URLError, HTTPException) as exc:
         parser.exit(1, f"{parser.prog}: error: {exc}\n")

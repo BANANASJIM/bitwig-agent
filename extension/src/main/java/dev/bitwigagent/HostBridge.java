@@ -1,24 +1,48 @@
 package dev.bitwigagent;
 
+import static dev.bitwigagent.HostServices.failure;
+
 import com.bitwig.extension.controller.api.ControllerHost;
 import com.google.gson.JsonObject;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.BiConsumer;
-import static dev.bitwigagent.HostServices.failure;
 
 /** Composition and the single network-to-host boundary; domain state belongs to modules. */
 public final class HostBridge implements RpcServer.Handler, AutoCloseable {
-    static final Set<String> PROJECT_WRITES = Set.of("tracks.create", "devices.insert", "launcher.create", "launcher.import", "scenes.append", "scenes.duplicate", "scenes.delete", "grid.voicing.set",
-            "devices.delete", "devices.move", "devices.layers.insert", "tracks.group", "tracks.delete", "arranger.clips.create", "arranger.clips.copyFromLauncher", "arranger.clips.edit",
-            "grid.modules.insert", "grid.modules.move", "grid.modules.delete", "grid.modules.rename", "grid.connections.set", "grid.parameters.set",
-            "tracks.routing.set", "devices.sidechain.set");
+    static final Set<String> PROJECT_WRITES = Set.of(
+            "tracks.create",
+            "devices.insert",
+            "launcher.create",
+            "launcher.import",
+            "scenes.append",
+            "scenes.duplicate",
+            "scenes.delete",
+            "grid.voicing.set",
+            "devices.delete",
+            "devices.move",
+            "devices.layers.insert",
+            "tracks.group",
+            "tracks.delete",
+            "arranger.clips.create",
+            "arranger.clips.copyFromLauncher",
+            "arranger.clips.edit",
+            "grid.modules.insert",
+            "grid.modules.move",
+            "grid.modules.delete",
+            "grid.modules.rename",
+            "grid.connections.set",
+            "grid.parameters.set",
+            "tracks.routing.set",
+            "devices.sidechain.set");
     private static final Map<String, BiConsumer<String, JsonObject>> VALIDATORS = validators();
     private final HostServices services;
     private final Map<String, HostModule> modules = new HashMap<>();
     private final List<HostModule> domains = new ArrayList<>();
 
-    public HostBridge(ControllerHost host) { this(host, System::nanoTime); }
+    public HostBridge(ControllerHost host) {
+        this(host, System::nanoTime);
+    }
 
     /** Test seam: injectable clock for the project settle window. */
     HostBridge(ControllerHost host, java.util.function.LongSupplier clock) {
@@ -56,7 +80,9 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
     }
 
     /** Test seam. */
-    HostServices services() { return services; }
+    HostServices services() {
+        return services;
+    }
 
     private void register(HostModule module) {
         domains.add(module);
@@ -92,8 +118,10 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
         return Collections.unmodifiableMap(methods);
     }
 
-    private static void registerValidator(Map<String, BiConsumer<String, JsonObject>> registry,
-            Set<String> methods, BiConsumer<String, JsonObject> validator) {
+    private static void registerValidator(
+            Map<String, BiConsumer<String, JsonObject>> registry,
+            Set<String> methods,
+            BiConsumer<String, JsonObject> validator) {
         for (String method : methods) {
             if (registry.putIfAbsent(method, validator) != null)
                 throw new IllegalStateException("Duplicate host validator: " + method);
@@ -101,7 +129,9 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
     }
 
     /** The same allowlist drives transport admission, host validation and capability discovery. */
-    static Set<String> supportedMethods() { return VALIDATORS.keySet(); }
+    static Set<String> supportedMethods() {
+        return VALIDATORS.keySet();
+    }
 
     static void validate(String method, JsonObject params) {
         BiConsumer<String, JsonObject> validator = VALIDATORS.get(method);
@@ -109,17 +139,23 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
         validator.accept(method, params);
     }
 
-    @Override public CompletableFuture<JsonObject> handle(String method, JsonObject params, long deadlineNanos) {
+    @Override
+    public CompletableFuture<JsonObject> handle(String method, JsonObject params, long deadlineNanos) {
         HostOperation operation = new HostOperation(deadlineNanos);
         try {
             validate(method, params);
             JsonObject copy = params.deepCopy();
             HostModule module = modules.get(method);
-            services.schedule(operation, () -> {
-                if (preflight(method, copy))
-                    operation.decorate = result -> addWarning(result, "Playback was started with an inactive audio engine: nothing will sound and captures will be silent. Run project.activateEngine and confirm status.engineActive=true.");
-                module.dispatch(operation, method, copy);
-            }, 0);
+            services.schedule(
+                    operation,
+                    () -> {
+                        if (preflight(method, copy))
+                            operation.decorate = result -> addWarning(
+                                    result,
+                                    "Playback was started with an inactive audio engine: nothing will sound and captures will be silent. Run project.activateEngine and confirm status.engineActive=true.");
+                        module.dispatch(operation, method, copy);
+                    },
+                    0);
         } catch (RuntimeException | Error error) {
             operation.fail(error);
         }
@@ -131,11 +167,15 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
         if (PROJECT_WRITES.contains(method)) services.requireProjectReady();
         if (method.equals("launcher.launch")) services.requireEngineActive("the clip launch");
         if (method.equals("scenes.launch")) services.requireEngineActive("the scene launch");
-        return method.equals("transport.set") && params.has("playing") && params.get("playing").getAsBoolean() && !services.engineActive();
+        return method.equals("transport.set")
+                && params.has("playing")
+                && params.get("playing").getAsBoolean()
+                && !services.engineActive();
     }
 
     static void addWarning(JsonObject result, String text) {
-        if (!result.has("warnings") || !result.get("warnings").isJsonArray()) result.add("warnings", new com.google.gson.JsonArray());
+        if (!result.has("warnings") || !result.get("warnings").isJsonArray())
+            result.add("warnings", new com.google.gson.JsonArray());
         result.getAsJsonArray("warnings").add(text);
     }
 
@@ -144,5 +184,8 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
         for (HostModule module : domains) module.flush();
     }
 
-    @Override public void close() { services.close(); }
+    @Override
+    public void close() {
+        services.close();
+    }
 }

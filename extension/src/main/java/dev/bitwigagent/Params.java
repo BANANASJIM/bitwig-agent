@@ -21,8 +21,10 @@ final class Params {
 
     static String string(JsonObject p, String key) {
         JsonElement value = value(p, key);
-        if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isString()
-                || value.getAsString().isEmpty() || value.getAsString().length() > 4096)
+        if (!value.isJsonPrimitive()
+                || !value.getAsJsonPrimitive().isString()
+                || value.getAsString().isEmpty()
+                || value.getAsString().length() > 4096)
             throw invalid(key + " must be a nonempty string (maximum 4096 characters).");
         return value.getAsString();
     }
@@ -31,9 +33,11 @@ final class Params {
         String path = string(p, key);
         try {
             Path parsed = Path.of(path);
-            if (!parsed.isAbsolute() || !parsed.normalize().toString().equals(path)
+            if (!parsed.isAbsolute()
+                    || !parsed.normalize().toString().equals(path)
                     || path.codePoints().anyMatch(Character::isISOControl))
-                throw invalid(key + " must be an absolute normalized path without control characters; no shell expansion.");
+                throw invalid(
+                        key + " must be an absolute normalized path without control characters; no shell expansion.");
             return parsed;
         } catch (InvalidPathException error) {
             throw invalid("Invalid file path.");
@@ -45,8 +49,11 @@ final class Params {
         if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isNumber())
             throw invalid(key + " must be an integer.");
         int number;
-        try { number = value.getAsBigDecimal().intValueExact(); }
-        catch (ArithmeticException | NumberFormatException error) { throw invalid(key + " must be an integer."); }
+        try {
+            number = value.getAsBigDecimal().intValueExact();
+        } catch (ArithmeticException | NumberFormatException error) {
+            throw invalid(key + " must be an integer.");
+        }
         if (number < min || number > max) throw invalid(key + " is outside its range.");
         return number;
     }
@@ -56,8 +63,7 @@ final class Params {
         if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isNumber())
             throw invalid(key + " must be numeric.");
         double number = value.getAsDouble();
-        if (!Double.isFinite(number) || number < min || number > max)
-            throw invalid(key + " is outside its range.");
+        if (!Double.isFinite(number) || number < min || number > max) throw invalid(key + " is outside its range.");
         return number;
     }
 

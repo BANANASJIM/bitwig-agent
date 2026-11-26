@@ -37,10 +37,21 @@ async def presets_search(client: Any, args: dict[str, Any], timeout_ms: int) -> 
     return await asyncio.to_thread(presets.search, args)  # offline: reads the local library, never the host
 
 
-
-HANDLERS = {"modulators.catalog": modulators_catalog, "modulators.describe": modulators_describe, "grid.apply": grid_apply, "grid.export": grid_export, "grid.graph": grid_graph, "grid.probe": grid_probe, "grid.describe": grid_describe, "grid.render": grid_render, "audio.route": audio_route,
-            "audio.capture": audio.capture, "audio.analyze": audio_analyze,
-            "host.diagnostics": diagnostics, "presets.search": presets_search}
+HANDLERS = {
+    "modulators.catalog": modulators_catalog,
+    "modulators.describe": modulators_describe,
+    "grid.apply": grid_apply,
+    "grid.export": grid_export,
+    "grid.graph": grid_graph,
+    "grid.probe": grid_probe,
+    "grid.describe": grid_describe,
+    "grid.render": grid_render,
+    "audio.route": audio_route,
+    "audio.capture": audio.capture,
+    "audio.analyze": audio_analyze,
+    "host.diagnostics": diagnostics,
+    "presets.search": presets_search,
+}
 
 
 async def run(method: str, client: Any, args: dict[str, Any], timeout_ms: int) -> dict[str, Any]:

@@ -24,8 +24,16 @@ def graph(host, **extra):
 
 def built():
     host = FakeGrid()
-    host.voicing = {"voices": 4, "voiceStacking": 1, "monoMode": "true_mono", "retriggerMode": "on_note_on", "notePriority": "last",
-                    "legatoGlide": False, "stealSameKey": False, "allowOverlappingNotes": True}
+    host.voicing = {
+        "voices": 4,
+        "voiceStacking": 1,
+        "monoMode": "true_mono",
+        "retriggerMode": "on_note_on",
+        "notePriority": "last",
+        "legatoGlide": False,
+        "stealSameKey": False,
+        "allowOverlappingNotes": True,
+    }
     spec = copy.deepcopy(SPEC)
     spec["modules"][3]["params"]["DATA"] = {"steps": [1, 0, 0.5, 0.25]}
     run(host, spec)
@@ -85,7 +93,10 @@ def test_namespace_export_references_outside_modules_as_external():
     out = export(host, namespace="H: ")["spec"]
     assert out["external"] == ["X: sum"] and out["namespace"] == "H: " and "voicing" not in out
     assert all(m["name"].startswith("H: ") for m in out["modules"])
-    assert {"from": "X: sum.OUT", "to": "H: add.IN2"} in out["connections"] and {"from": "H: add.OUT", "to": "X: sum.IN"} in out["connections"]
+    assert {"from": "X: sum.OUT", "to": "H: add.IN2"} in out["connections"] and {
+        "from": "H: add.OUT",
+        "to": "X: sum.IN",
+    } in out["connections"]
     host.calls.clear()
     assert run(host, out)["status"] == "unchanged" and host.writes() == []
     g = graph(host, namespace="H: ")
@@ -96,15 +107,21 @@ def test_graph_by_names():
     host = built()
     g = graph(host)
     assert g["moduleCount"] == 5 and {"from": "H: mul.OUT", "to": "H: add.IN"} in g["connections"]
-    assert all("params" not in m for m in g["modules"]) and "params" in next(m for m in graph(host, includeParams="changed")["modules"] if m["name"] == "H: env")
+    assert all("params" not in m for m in g["modules"]) and "params" in next(
+        m for m in graph(host, includeParams="changed")["modules"] if m["name"] == "H: env"
+    )
 
 
 def test_external_modules_wire_without_redeclaring_and_are_never_touched():
     host = built()
     host.add("Add", "X: sum", 20, 12)
-    spec = {"target": TARGET, "namespace": "H: ", "external": ["X: sum"],
-            "modules": [{"name": "H: new", "type": "Multiply", "x": 0, "y": 8}],
-            "connections": [{"from": "H: new.OUT", "to": "X: sum.IN2"}]}
+    spec = {
+        "target": TARGET,
+        "namespace": "H: ",
+        "external": ["X: sum"],
+        "modules": [{"name": "H: new", "type": "Multiply", "x": 0, "y": 8}],
+        "connections": [{"from": "H: new.OUT", "to": "X: sum.IN2"}],
+    }
     host.calls.clear()
     result = run(host, spec, prune=True)
     assert result["applied"]["connections"] == 1 and host.source("X: sum", "IN2") == ("H: new", "OUT")
@@ -120,8 +137,12 @@ def test_external_modules_wire_without_redeclaring_and_are_never_touched():
 def test_missing_external_and_double_declaration_fail_before_writing():
     host = built()
     host.calls.clear()
-    spec = {"target": TARGET, "external": ["X: smu"], "modules": [{"name": "H: new", "type": "Multiply", "x": 0, "y": 8}],
-            "connections": [{"from": "H: new.OUT", "to": "X: smu.IN"}]}
+    spec = {
+        "target": TARGET,
+        "external": ["X: smu"],
+        "modules": [{"name": "H: new", "type": "Multiply", "x": 0, "y": 8}],
+        "connections": [{"from": "H: new.OUT", "to": "X: smu.IN"}],
+    }
     with pytest.raises(BridgeError) as err:
         run(host, spec)
     assert "external module 'X: smu' is not in the device" in err.value.error["message"] and host.writes() == []
@@ -145,11 +166,20 @@ def outside_host():
 
 def test_prune_keeps_inputs_of_modules_outside_the_namespace_and_names_both_ends():
     host, s = outside_host()
-    spec = {"target": TARGET, "namespace": "Z: ", "prune": True,
-            "modules": [{"name": "X: sum", "type": "Add", "x": 20, "y": 12}], "connections": []}
+    spec = {
+        "target": TARGET,
+        "namespace": "Z: ",
+        "prune": True,
+        "modules": [{"name": "X: sum", "type": "Add", "x": 20, "y": 12}],
+        "connections": [],
+    }
     plan = run(host, spec, dryRun=True)
     assert plan["planned"]["disconnected"] == 0
-    assert "X: sum.IN (from H: mul.OUT)" in plan["warnings"][0] and "X: sum.IN2 (from H: add.OUT)" in plan["warnings"][0] and "allowOutsideDisconnect" in plan["warnings"][0]
+    assert (
+        "X: sum.IN (from H: mul.OUT)" in plan["warnings"][0]
+        and "X: sum.IN2 (from H: add.OUT)" in plan["warnings"][0]
+        and "allowOutsideDisconnect" in plan["warnings"][0]
+    )
     result = run(host, spec)
     assert host.writes() == [] and result["status"] == "unchanged" and "X: sum.IN2" in result["warnings"][0]
     assert host.conns[(s, "IN")] and host.conns[(s, "IN2")]
@@ -157,19 +187,36 @@ def test_prune_keeps_inputs_of_modules_outside_the_namespace_and_names_both_ends
 
 def test_outside_disconnect_needs_opt_in_and_is_listed():
     host, s = outside_host()
-    spec = {"target": TARGET, "namespace": "Z: ", "prune": True, "allowOutsideDisconnect": True, "external": ["H: mul"],
-            "modules": [{"name": "X: sum", "type": "Add", "x": 20, "y": 12}], "connections": [{"from": "H: mul.OUT", "to": "X: sum.IN"}]}
+    spec = {
+        "target": TARGET,
+        "namespace": "Z: ",
+        "prune": True,
+        "allowOutsideDisconnect": True,
+        "external": ["H: mul"],
+        "modules": [{"name": "X: sum", "type": "Add", "x": 20, "y": 12}],
+        "connections": [{"from": "H: mul.OUT", "to": "X: sum.IN"}],
+    }
     plan = run(host, spec, dryRun=True)
     cut = [c for c in plan["plan"]["connections"] if c["from"] is None]
-    assert cut == [{"from": None, "to": "X: sum.IN2", "previous": "H: add.OUT"}] and "X: sum.IN2 (from H: add.OUT)" in plan["warnings"][0]
+    assert (
+        cut == [{"from": None, "to": "X: sum.IN2", "previous": "H: add.OUT"}]
+        and "X: sum.IN2 (from H: add.OUT)" in plan["warnings"][0]
+    )
     result = run(host, spec)
     assert result["applied"]["disconnected"] == 1 and (s, "IN2") not in host.conns and (s, "IN") in host.conns
 
 
 def test_external_inputs_are_never_pruned_even_with_opt_in():
     host, s = outside_host()
-    spec = {"target": TARGET, "namespace": "X: ", "prune": True, "allowOutsideDisconnect": True, "external": ["X: sum"],
-            "modules": [{"name": "H: mul", "type": "Multiply", "x": 0, "y": 0}], "connections": []}
+    spec = {
+        "target": TARGET,
+        "namespace": "X: ",
+        "prune": True,
+        "allowOutsideDisconnect": True,
+        "external": ["X: sum"],
+        "modules": [{"name": "H: mul", "type": "Multiply", "x": 0, "y": 0}],
+        "connections": [],
+    }
     result = run(host, spec)
     assert result["status"] == "unchanged" and host.writes() == [] and (s, "IN2") in host.conns
 
@@ -179,7 +226,11 @@ def test_external_port_and_default_module_names_are_validated_before_writing():
     host.add("Audio Out", "", 30, 0)
     host.calls.clear()
     base = {"target": TARGET, "modules": [{"name": "H: new", "type": "Multiply", "x": 0, "y": 8}]}
-    bad_port = {**base, "external": ["_Audio Out_30_0"], "connections": [{"from": "H: new.OUT", "to": "_Audio Out_30_0.IN_L"}]}
+    bad_port = {
+        **base,
+        "external": ["_Audio Out_30_0"],
+        "connections": [{"from": "H: new.OUT", "to": "_Audio Out_30_0.IN_L"}],
+    }
     with pytest.raises(BridgeError) as err:
         run(host, bad_port)
     message = err.value.error["message"]
@@ -187,6 +238,10 @@ def test_external_port_and_default_module_names_are_validated_before_writing():
     by_type = {**base, "external": ["Audio Out"], "connections": [{"from": "H: new.OUT", "to": "Audio Out.IN"}]}
     with pytest.raises(BridgeError) as err:
         run(host, by_type)
-    assert "'_Audio Out_30_0'" in err.value.error["message"] and "generated name" in err.value.error["message"] and host.writes() == []
+    assert (
+        "'_Audio Out_30_0'" in err.value.error["message"]
+        and "generated name" in err.value.error["message"]
+        and host.writes() == []
+    )
     ok = {**bad_port, "connections": [{"from": "H: new.OUT", "to": "_Audio Out_30_0.IN"}]}
     assert run(host, ok)["applied"]["connections"] == 1

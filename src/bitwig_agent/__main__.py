@@ -1,4 +1,5 @@
 """Run the stdio MCP server with python -m bitwig_agent."""
+
 from .server import main
 
 

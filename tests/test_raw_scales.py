@@ -48,39 +48,45 @@ def test_unverified_and_recorded_scales_do_not_overlap_and_alternatives_do_not_f
     assert not fits(raw_scales.SCALES["linear_fraction"], 0.7937, "50 %")
     assert fits(raw_scales.SCALES["cbrt_gain"], 0.7937, "50 %")
     assert not fits(raw_scales.SCALES["cbrt_gain"], 0.5, "50.0 %")  # Chance PROBABILITY is linear
-    assert not fits(raw_scales.SCALES["linear_seconds"], 0.033 ** 3 * 0 + 0.5, "125 ms")  # Delay is cbrt, not linear
+    assert not fits(raw_scales.SCALES["linear_seconds"], 0.033**3 * 0 + 0.5, "125 ms")  # Delay is cbrt, not linear
 
 
-@pytest.mark.parametrize("module,pid,text,raw", [
-    ("Transpose", "VALUE", "−12 st", -12.0),
-    ("Sine", "PITCH", "7 st", 7.0),
-    ("Sine", "PITCH_MOD", "120 st", 1.0),
-    ("Sine", "PITCH_MOD", "15 st", 0.5),  # oscillator PITCH_MOD is cube-root
-    ("Comb", "CUTOFF_MOD", "60 st", 0.5),  # filter CUTOFF_MOD is linear
-    ("SVF", "CUTOFF_MOD", "70.18 st", 0.584833),
-    ("Amplify", "VALUE", "50 %", 0.5 ** (1 / 3)),
-    ("Amplify", "VALUE", "-6 dB", (10 ** (-6 / 20)) ** (1 / 3)),
-    ("Mixer", "LEVEL_2", "-10.3 dB", (10 ** (-10.3 / 20)) ** (1 / 3)),
-    ("All-pass Delay", "TIME", "10 ms", 0.01),
-    ("Clock", "RATE", "4 Hz", 4.0),
-    ("Chance", "PROBABILITY", "25 %", 0.25),
-    ("Mod Delay", "FEEDBACK", "30 %", 0.3),  # zero default: no live pair needed
-    ("SVF", "RESONANCE", "80 %", 0.8),
-    ("Distortion", "DRIVE", "+6 dB", 6.0),
-    ("Heat", "DRIVE", "40 dB", 40.0),
-    ("Attenuate", "VALUE", "25 %", 0.25),
-    ("Value", "VALUE", "50 %", 0.5),
-    ("Long Delay", "TIME", "125 ms", 0.5),
-    ("Long Delay", "TIME", "8 s", 2.0),
-    ("Comb", "DECAY", "1 ms", 0.1),
-    ("Audio Out", "HOLD_TIME", "100 ms", 0.1),
-    ("Gate Repeat", "RATE", "31.6 ms", math.log10(0.0316)),
-    ("Gate Repeat", "RATE", "1 s", 0.0),
-    ("Pitch Shift", "PITCH", "-7 st", -7.0),
-])
+@pytest.mark.parametrize(
+    "module,pid,text,raw",
+    [
+        ("Transpose", "VALUE", "−12 st", -12.0),
+        ("Sine", "PITCH", "7 st", 7.0),
+        ("Sine", "PITCH_MOD", "120 st", 1.0),
+        ("Sine", "PITCH_MOD", "15 st", 0.5),  # oscillator PITCH_MOD is cube-root
+        ("Comb", "CUTOFF_MOD", "60 st", 0.5),  # filter CUTOFF_MOD is linear
+        ("SVF", "CUTOFF_MOD", "70.18 st", 0.584833),
+        ("Amplify", "VALUE", "50 %", 0.5 ** (1 / 3)),
+        ("Amplify", "VALUE", "-6 dB", (10 ** (-6 / 20)) ** (1 / 3)),
+        ("Mixer", "LEVEL_2", "-10.3 dB", (10 ** (-10.3 / 20)) ** (1 / 3)),
+        ("All-pass Delay", "TIME", "10 ms", 0.01),
+        ("Clock", "RATE", "4 Hz", 4.0),
+        ("Chance", "PROBABILITY", "25 %", 0.25),
+        ("Mod Delay", "FEEDBACK", "30 %", 0.3),  # zero default: no live pair needed
+        ("SVF", "RESONANCE", "80 %", 0.8),
+        ("Distortion", "DRIVE", "+6 dB", 6.0),
+        ("Heat", "DRIVE", "40 dB", 40.0),
+        ("Attenuate", "VALUE", "25 %", 0.25),
+        ("Value", "VALUE", "50 %", 0.5),
+        ("Long Delay", "TIME", "125 ms", 0.5),
+        ("Long Delay", "TIME", "8 s", 2.0),
+        ("Comb", "DECAY", "1 ms", 0.1),
+        ("Audio Out", "HOLD_TIME", "100 ms", 0.1),
+        ("Gate Repeat", "RATE", "31.6 ms", math.log10(0.0316)),
+        ("Gate Repeat", "RATE", "1 s", 0.0),
+        ("Pitch Shift", "PITCH", "-7 st", -7.0),
+    ],
+)
 def test_display_writes_convert_to_raw_and_are_idempotent(module, pid, text, raw):
     host = FakeGrid()
-    spec = {"target": TARGET, "modules": [{"name": "X", "type": module, "x": 0, "y": 0, "params": {pid: {"display": text}}}]}
+    spec = {
+        "target": TARGET,
+        "modules": [{"name": "X", "type": module, "x": 0, "y": 0, "params": {pid: {"display": text}}}],
+    }
     result = run(host, spec)
     assert result["applied"]["paramsWritten"] == 1
     writes = [w for m, c in host.calls if m == "grid.parameters.set" for w in c["writes"]]
@@ -90,18 +96,27 @@ def test_display_writes_convert_to_raw_and_are_idempotent(module, pid, text, raw
     assert run(host, spec)["status"] == "unchanged" and host.writes() == []
 
 
-@pytest.mark.parametrize("module,pid,text", [
-    ("Transpose", "VALUE", "40 st"),       # raw outside -36..36
-    ("Amplify", "VALUE", "900 %"),         # raw 2.08 > 2
-    ("Clock", "RATE", "40 Hz"),
-    ("Sine", "PITCH", "12 hz"),            # wrong unit
-    ("Long Delay", "TIME", "10 s"),       # cbrt 2.15 > 2
-    ("Distortion", "DRIVE", "50 dB"),
-])
+@pytest.mark.parametrize(
+    "module,pid,text",
+    [
+        ("Transpose", "VALUE", "40 st"),  # raw outside -36..36
+        ("Amplify", "VALUE", "900 %"),  # raw 2.08 > 2
+        ("Clock", "RATE", "40 Hz"),
+        ("Sine", "PITCH", "12 hz"),  # wrong unit
+        ("Long Delay", "TIME", "10 s"),  # cbrt 2.15 > 2
+        ("Distortion", "DRIVE", "50 dB"),
+    ],
+)
 def test_unwritable_display_is_rejected(module, pid, text):
     host = FakeGrid()
     with pytest.raises(BridgeError) as err:
-        run(host, {"target": TARGET, "modules": [{"name": "X", "type": module, "x": 0, "y": 0, "params": {pid: {"display": text}}}]})
+        run(
+            host,
+            {
+                "target": TARGET,
+                "modules": [{"name": "X", "type": module, "x": 0, "y": 0, "params": {pid: {"display": text}}}],
+            },
+        )
     assert err.value.error["code"] == "invalid_spec" and host.writes() == []
 
 
@@ -111,6 +126,7 @@ def test_lfo_rate_follows_timebase():
         if timebase is not None:
             params["TIMEBASE"] = timebase
         return {"target": TARGET, "modules": [{"name": "L", "type": "LFO", "x": 0, "y": 0, "params": params}]}
+
     host = FakeGrid()
     run(host, spec({"label": "Hertz"}, "2 Hz"))
     assert host.param("L", "RATE") == 2.0
@@ -124,7 +140,13 @@ def test_lfo_rate_follows_timebase():
 
 def test_midi_pitch_cutoff_keeps_the_host_display_path():
     host = FakeGrid()
-    run(host, {"target": TARGET, "modules": [{"name": "F", "type": "SVF", "x": 0, "y": 0, "params": {"CUTOFF": {"display": "800 Hz"}}}]})
+    run(
+        host,
+        {
+            "target": TARGET,
+            "modules": [{"name": "F", "type": "SVF", "x": 0, "y": 0, "params": {"CUTOFF": {"display": "800 Hz"}}}],
+        },
+    )
     writes = [w for m, c in host.calls if m == "grid.parameters.set" for w in c["writes"]]
     assert writes and writes[0].get("display") == "800 Hz"
 

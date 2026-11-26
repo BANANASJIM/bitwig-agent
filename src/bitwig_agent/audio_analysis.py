@@ -17,7 +17,7 @@ from bitwig_agent import loudness
 MAX_BYTES = 256 * 1024 * 1024
 FFT_SIZE = 4096
 HOP_SECONDS = 0.005
-SILENT_PEAK = 0.01          # below this the whole file is reported silent (about -40 dBFS)
+SILENT_PEAK = 0.01  # below this the whole file is reported silent (about -40 dBFS)
 CLIP_LEVEL = 0.999
 MAX_ONSETS = 256
 MAX_PROBE = 2000
@@ -44,7 +44,7 @@ def read_wav(path: str, all_channels: bool = False):
     pcm = None
     pos = 12
     while pos + 8 <= len(data):
-        tag, size = data[pos:pos + 4], struct.unpack_from("<I", data, pos + 4)[0]
+        tag, size = data[pos : pos + 4], struct.unpack_from("<I", data, pos + 4)[0]
         body = pos + 8
         if tag == b"fmt ":
             fmt = struct.unpack_from("<HHIIHH", data, body)
@@ -63,7 +63,7 @@ def read_wav(path: str, all_channels: bool = False):
         raise WavError("Unsupported channel count or sample rate")
     width = bits // 8
     frame = width * channels
-    pcm = pcm[:len(pcm) // frame * frame]
+    pcm = pcm[: len(pcm) // frame * frame]
     if tag == 1 and bits == 16:
         samples = array("h", pcm)
         scale = 1 / 32768
@@ -71,7 +71,7 @@ def read_wav(path: str, all_channels: bool = False):
         samples = array("i", pcm)
         scale = 1 / 2147483648
     elif tag == 1 and bits == 24:
-        samples = array("i", (int.from_bytes(pcm[i:i + 3], "little", signed=True) for i in range(0, len(pcm), 3)))
+        samples = array("i", (int.from_bytes(pcm[i : i + 3], "little", signed=True) for i in range(0, len(pcm), 3)))
         scale = 1 / 8388608
     elif tag == 3 and bits == 32:
         samples, scale = array("f", pcm), 1.0
@@ -92,7 +92,7 @@ def _db(value: float) -> float | None:
 
 
 def _envelope(x: array, hop: int) -> list[float]:
-    return [max(map(abs, x[i:i + hop])) for i in range(0, len(x) - hop + 1, hop)]
+    return [max(map(abs, x[i : i + hop])) for i in range(0, len(x) - hop + 1, hop)]
 
 
 def _rms(seg: array) -> float:
@@ -106,12 +106,19 @@ def level(x: array, rate: int, window_seconds: float) -> dict[str, Any]:
     size = max(1, int(window_seconds * rate))
     rows = []
     for i in range(0, len(x), size):
-        seg = x[i:i + size]
+        seg = x[i : i + size]
         rows.append({"t": round(i / rate, 3), "peak": round(max(map(abs, seg)), 4), "rms": round(_rms(seg), 4)})
     quiet = sum(1 for r in rows if r["rms"] < 0.001)
-    return {"peak": round(peak, 4), "peakDb": _db(peak), "rms": round(rms, 4), "rmsDb": _db(rms),
-            "clipping": peak >= CLIP_LEVEL, "windowSeconds": round(window_seconds, 3),
-            "silenceRatio": round(quiet / len(rows), 3) if rows else 1.0, "windows": rows}
+    return {
+        "peak": round(peak, 4),
+        "peakDb": _db(peak),
+        "rms": round(rms, 4),
+        "rmsDb": _db(rms),
+        "clipping": peak >= CLIP_LEVEL,
+        "windowSeconds": round(window_seconds, 3),
+        "silenceRatio": round(quiet / len(rows), 3) if rows else 1.0,
+        "windows": rows,
+    }
 
 
 def onsets(x: array, rate: int, threshold: float, skip: float) -> tuple[list[float], dict[str, Any]]:
@@ -161,12 +168,12 @@ _WINDOW = [0.5 - 0.5 * math.cos(2 * math.pi * i / FFT_SIZE) for i in range(FFT_S
 def pitch_at(x: array, rate: int, start: int) -> float | None:
     """Dominant spectral peak 10 ms after an onset, as fractional MIDI (parabolic interpolation); None if too short."""
     begin = start + int(0.01 * rate)
-    seg = x[begin:begin + FFT_SIZE]
+    seg = x[begin : begin + FFT_SIZE]
     if len(seg) < FFT_SIZE:
         return None
     spectrum = _fft([complex(v * w) for v, w in zip(seg, _WINDOW)])
     low = max(2, int(30 * FFT_SIZE / rate))
-    mags = [abs(c) for c in spectrum[:FFT_SIZE // 2]]
+    mags = [abs(c) for c in spectrum[: FFT_SIZE // 2]]
     k = max(range(low, len(mags) - 1), key=mags.__getitem__)
     if mags[k] <= 0:
         return None
@@ -177,11 +184,11 @@ def pitch_at(x: array, rate: int, start: int) -> float | None:
     return 69 + 12 * math.log2(hz / 440)
 
 
-FLUX_SIZE = 512             # at FLUX_RATE: 21 ms frames
-FLUX_HOP = 240              # 10 ms
+FLUX_SIZE = 512  # at FLUX_RATE: 21 ms frames
+FLUX_HOP = 240  # 10 ms
 FLUX_RATE = 24000
 FLUX_MAX_HZ = 8000
-MIN_SEPARATION = 0.04       # seconds between onsets
+MIN_SEPARATION = 0.04  # seconds between onsets
 _FLUX_WINDOW = [0.5 - 0.5 * math.cos(2 * math.pi * i / FLUX_SIZE) for i in range(FLUX_SIZE)]
 
 
@@ -190,7 +197,7 @@ def _decimate(x: array, rate: int) -> tuple[array, int]:
     factor = max(1, round(rate / FLUX_RATE))
     if factor == 1:
         return x, rate
-    return array("d", (sum(x[i:i + factor]) / factor for i in range(0, len(x) - factor + 1, factor))), rate // factor
+    return array("d", (sum(x[i : i + factor]) / factor for i in range(0, len(x) - factor + 1, factor))), rate // factor
 
 
 def spectral_flux(x: array, rate: int) -> tuple[list[float], float]:
@@ -200,7 +207,7 @@ def spectral_flux(x: array, rate: int) -> tuple[list[float], float]:
     bins = min(max(2, int(FLUX_MAX_HZ * FLUX_SIZE / yrate)), FLUX_SIZE // 2)
     flux, previous = [], None
     for start in range(0, len(y) - FLUX_SIZE + 1, hop):
-        spectrum = _fft([complex(v * w) for v, w in zip(y[start:start + FLUX_SIZE], _FLUX_WINDOW)])
+        spectrum = _fft([complex(v * w) for v, w in zip(y[start : start + FLUX_SIZE], _FLUX_WINDOW)])
         mags = [math.log1p(200 * abs(c) / FLUX_SIZE) for c in spectrum[1:bins]]
         flux.append(0.0 if previous is None else sum(max(0.0, a - b) for a, b in zip(mags, previous)))
         previous = mags
@@ -211,7 +218,7 @@ def flux_onsets(x: array, rate: int, threshold: float, skip: float) -> tuple[lis
     """Peaks of the spectral flux: a new note over a long decaying tail still adds new energy per bin, which an
     amplitude envelope cannot see. A peak is a local maximum that beats its neighbourhood median by
     threshold*max(flux) and sits MIN_SEPARATION after the previous one; its time is refined to the steepest envelope rise."""
-    top_peak = max(map(abs, x[int(skip * rate):]), default=0.0)
+    top_peak = max(map(abs, x[int(skip * rate) :]), default=0.0)
     info = {"silent": top_peak < SILENT_PEAK, "peak": round(top_peak, 4), "method": "flux"}
     if info["silent"]:
         return [], info
@@ -225,13 +232,17 @@ def flux_onsets(x: array, rate: int, threshold: float, skip: float) -> tuple[lis
         env_hop = max(1, int(HOP_SECONDS * rate))
         for i in range(first, len(flux)):
             v = flux[i]
-            if v <= 0 or any(flux[j] > v or (flux[j] == v and j < i) for j in range(max(0, i - near), min(len(flux), i + near + 1)) if j != i):
+            if v <= 0 or any(
+                flux[j] > v or (flux[j] == v and j < i)
+                for j in range(max(0, i - near), min(len(flux), i + near + 1))
+                if j != i
+            ):
                 continue
-            window = sorted(flux[max(0, i - span):i + span + 1])
+            window = sorted(flux[max(0, i - span) : i + span + 1])
             if v - window[len(window) // 2] < threshold * top:
                 continue
             lo = int(max(0.0, i * hop_s - 0.01) * rate)
-            env = _envelope(x[lo:lo + int((FLUX_SIZE / FLUX_RATE + 0.02) * rate)], env_hop)
+            env = _envelope(x[lo : lo + int((FLUX_SIZE / FLUX_RATE + 0.02) * rate)], env_hop)
             rise = max(range(1, len(env)), key=lambda k: env[k] - env[k - 1], default=0)
             t = (lo + rise * env_hop) / rate
             if t < skip or (found and t - found[-1] < MIN_SEPARATION):
@@ -250,7 +261,9 @@ def find_onsets(x: array, rate: int, threshold: float, skip: float, method: str)
 NAMES = ("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
 
 
-def mono_pitch(x: array, rate: int, threshold: float, skip: float, bpm: float | None, method: str = "flux") -> dict[str, Any]:
+def mono_pitch(
+    x: array, rate: int, threshold: float, skip: float, bpm: float | None, method: str = "flux"
+) -> dict[str, Any]:
     times, info = find_onsets(x, rate, threshold, skip, method)
     notes = []
     for t in times:
@@ -266,24 +279,34 @@ def mono_pitch(x: array, rate: int, threshold: float, skip: float, bpm: float | 
     recovered = [i for i in leaps if i + 1 < len(ivs) and ivs[i + 1] * ivs[i] < 0 and abs(ivs[i + 1]) <= 2]
     pcs = sorted({m % 12 for m in rounded})
     summary: dict[str, Any] = {
-        "pitchClasses": pcs, "pitchClassNames": [NAMES[p] for p in pcs],
+        "pitchClasses": pcs,
+        "pitchClassNames": [NAMES[p] for p in pcs],
         "range": {"min": min(rounded), "max": max(rounded), "semitones": max(rounded) - min(rounded)},
-        "tuneError": round(sum(abs(m - r) for (_, m), r in zip(notes, rounded)) / len(notes), 3)}
+        "tuneError": round(sum(abs(m - r) for (_, m), r in zip(notes, rounded)) / len(notes), 3),
+    }
     if ivs:
         summary.update(
-            intervals=ivs[:MAX_ONSETS], stepwiseRatio=round(sum(abs(v) <= 2 for v in ivs) / len(ivs), 3),
-            repeatRatio=round(sum(v == 0 for v in ivs) / len(ivs), 3), leaps=len(leaps),
-            leapRecoveryRatio=round(len(recovered) / len(leaps), 3) if leaps else 1.0)
+            intervals=ivs[:MAX_ONSETS],
+            stepwiseRatio=round(sum(abs(v) <= 2 for v in ivs) / len(ivs), 3),
+            repeatRatio=round(sum(v == 0 for v in ivs) / len(ivs), 3),
+            leaps=len(leaps),
+            leapRecoveryRatio=round(len(recovered) / len(leaps), 3) if leaps else 1.0,
+        )
     result["summary"] = summary
     if bpm:
         step = 60.0 / bpm / 4
         offset = median(t % step for t, _ in notes)
         steps = [round((t - offset) / step) for t, _ in notes]
-        result["grid"] = {"stepSeconds": round(step, 5), "offsetSeconds": round(offset, 4),
-                          "positions16": [s % 16 for s in steps][:MAX_ONSETS],
-                          "onBeatRatio": round(sum(s % 4 == 0 for s in steps) / len(steps), 3)}
-    result["notes"] = [{"t": t, "midi": round(m, 2), "name": f"{NAMES[round(m) % 12]}{round(m) // 12 - 1}"}
-                       for t, m in notes[:MAX_ONSETS]]
+        result["grid"] = {
+            "stepSeconds": round(step, 5),
+            "offsetSeconds": round(offset, 4),
+            "positions16": [s % 16 for s in steps][:MAX_ONSETS],
+            "onBeatRatio": round(sum(s % 4 == 0 for s in steps) / len(steps), 3),
+        }
+    result["notes"] = [
+        {"t": t, "midi": round(m, 2), "name": f"{NAMES[round(m) % 12]}{round(m) // 12 - 1}"}
+        for t, m in notes[:MAX_ONSETS]
+    ]
     result["truncated"] = len(notes) > MAX_ONSETS
     return result
 
@@ -292,23 +315,36 @@ def probe(x: array, rate: int, skip: float) -> dict[str, Any]:
     """Signed means over 10 ms windows: the file as a scope trace of a logic/CV signal."""
     size = max(1, rate // 100)
     start = int(skip * rate)
-    means = [sum(x[i:i + size]) / size for i in range(start, len(x) - size + 1, size)]
+    means = [sum(x[i : i + size]) / size for i in range(start, len(x) - size + 1, size)]
     shown = means[:MAX_PROBE]
-    return {"windowSeconds": 0.01, "startSeconds": round(start / rate, 3), "count": len(means),
-            "truncated": len(means) > MAX_PROBE, "min": round(min(means), 4) if means else None,
-            "max": round(max(means), 4) if means else None, "means": [round(v, 4) for v in shown]}
+    return {
+        "windowSeconds": 0.01,
+        "startSeconds": round(start / rate, 3),
+        "count": len(means),
+        "truncated": len(means) > MAX_PROBE,
+        "min": round(min(means), 4) if means else None,
+        "max": round(max(means), 4) if means else None,
+        "means": [round(v, 4) for v in shown],
+    }
 
 
 # ---- bands ----------------------------------------------------------------------------------------------
 BAND_EDGES = (("sub", 0, 60), ("low", 60, 250), ("mid", 250, 2000), ("high", 2000, 8000), ("air", 8000, math.inf))
-FRAMES_PER_WINDOW = 16      # frames sampled evenly across a window (FFT_SIZE samples each), not every sample
+FRAMES_PER_WINDOW = 16  # frames sampled evenly across a window (FFT_SIZE samples each), not every sample
 CHROMA_LOW, CHROMA_HIGH = 50.0, 1500.0
-CHROMA_RATE = 4000            # chroma works on audio decimated to about this rate
-CHROMA_MAX_SAMPLES = 65536    # longest single chroma FFT (about 16 s at CHROMA_RATE); longer windows are split
-CHROMA_MIN_SAMPLES = 4000     # a leftover shorter than this (1 s) is dropped
-MODES = {"ionian": (0, 2, 4, 5, 7, 9, 11), "dorian": (0, 2, 3, 5, 7, 9, 10), "phrygian": (0, 1, 3, 5, 7, 8, 10),
-         "lydian": (0, 2, 4, 6, 7, 9, 11), "mixolydian": (0, 2, 4, 5, 7, 9, 10), "aeolian": (0, 2, 3, 5, 7, 8, 10),
-         "locrian": (0, 1, 3, 5, 6, 8, 10), "harmonic_minor": (0, 2, 3, 5, 7, 8, 11)}
+CHROMA_RATE = 4000  # chroma works on audio decimated to about this rate
+CHROMA_MAX_SAMPLES = 65536  # longest single chroma FFT (about 16 s at CHROMA_RATE); longer windows are split
+CHROMA_MIN_SAMPLES = 4000  # a leftover shorter than this (1 s) is dropped
+MODES = {
+    "ionian": (0, 2, 4, 5, 7, 9, 11),
+    "dorian": (0, 2, 3, 5, 7, 9, 10),
+    "phrygian": (0, 1, 3, 5, 7, 8, 10),
+    "lydian": (0, 2, 4, 6, 7, 9, 11),
+    "mixolydian": (0, 2, 4, 5, 7, 9, 10),
+    "aeolian": (0, 2, 3, 5, 7, 8, 10),
+    "locrian": (0, 1, 3, 5, 6, 8, 10),
+    "harmonic_minor": (0, 2, 3, 5, 7, 8, 11),
+}
 _TONICS = {"C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11}
 
 
@@ -324,8 +360,8 @@ def parse_key(key: str) -> tuple[int, str]:
 
 def _frame(x: array, start: int) -> tuple[list[float], list[float]]:
     """Power and magnitude of bins 0..N/2 of one Hann-windowed frame."""
-    spectrum = _fft([complex(v * w) for v, w in zip(x[start:start + FFT_SIZE], _WINDOW)])
-    mags = [abs(c) for c in spectrum[:FFT_SIZE // 2 + 1]]
+    spectrum = _fft([complex(v * w) for v, w in zip(x[start : start + FFT_SIZE], _WINDOW)])
+    mags = [abs(c) for c in spectrum[: FFT_SIZE // 2 + 1]]
     return [m * m for m in mags], mags
 
 
@@ -357,7 +393,7 @@ def _chroma(x: array, rate: int) -> list[float]:
     y, yrate = _lowpass_decimate(x, factor), rate / factor
     out = [0.0] * 12
     for begin in range(0, len(y) - CHROMA_MIN_SAMPLES + 1, CHROMA_MAX_SAMPLES):
-        seg = y[begin:begin + CHROMA_MAX_SAMPLES]
+        seg = y[begin : begin + CHROMA_MAX_SAMPLES]
         n = len(seg)
         size = 1 << (n - 1).bit_length()
         mean = sum(seg) / n
@@ -379,12 +415,14 @@ def _chroma_report(weights: list[float], scale: set[int]) -> dict[str, Any]:
     if total <= 0:
         return {"inKeyShare": None, "topPitchClasses": []}
     top = sorted(range(12), key=lambda p: -weights[p])[:3]
-    return {"inKeyShare": round(sum(weights[p] for p in scale) / total, 3),
-            "topPitchClasses": [{"name": NAMES[p], "share": round(weights[p] / total, 3)} for p in top if weights[p] > 0]}
+    return {
+        "inKeyShare": round(sum(weights[p] for p in scale) / total, 3),
+        "topPitchClasses": [{"name": NAMES[p], "share": round(weights[p] / total, 3)} for p in top if weights[p] > 0],
+    }
 
 
 PEAK_COUNT = 8
-PEAK_MIN_DB = -40.0   # peaks weaker than this relative to the strongest are ignored
+PEAK_MIN_DB = -40.0  # peaks weaker than this relative to the strongest are ignored
 
 
 def spectral_peaks(power: list[float], rate: int) -> list[dict[str, Any]]:
@@ -405,9 +443,16 @@ def spectral_peaks(power: list[float], rate: int) -> list[dict[str, Any]]:
     for level, freq in sorted(found, reverse=True)[:PEAK_COUNT]:
         midi = 69 + 12 * math.log2(freq / 440)
         nearest = round(midi)
-        row = {"hz": round(freq, 1), "db": round(level, 1), "midi": round(midi, 2),
-               "note": f"{NAMES[nearest % 12]}{nearest // 12 - 1}", "cents": round((midi - nearest) * 100)}
-        if 1200 * math.log2((freq + rate / FFT_SIZE) / freq) > 100:  # one bin is wider than a semitone here: the note name is a guess
+        row = {
+            "hz": round(freq, 1),
+            "db": round(level, 1),
+            "midi": round(midi, 2),
+            "note": f"{NAMES[nearest % 12]}{nearest // 12 - 1}",
+            "cents": round((midi - nearest) * 100),
+        }
+        if (
+            1200 * math.log2((freq + rate / FFT_SIZE) / freq) > 100
+        ):  # one bin is wider than a semitone here: the note name is a guess
             row["approximate"] = True
         out.append(row)
     return out
@@ -416,8 +461,15 @@ def spectral_peaks(power: list[float], rate: int) -> list[dict[str, Any]]:
 def bands(x: array, rate: int, window_seconds: float, key: str | None, shift: float) -> dict[str, Any]:
     """Per-window band energy relative to the window's total power (dB), spectral centroid and RMS; optional in-key chroma."""
     nyquist = rate / 2
-    edges = [(n, math.ceil(lo * FFT_SIZE / rate), min(FFT_SIZE // 2 + 1, math.ceil(hi * FFT_SIZE / rate) if hi != math.inf else FFT_SIZE // 2 + 1))
-             for n, lo, hi in BAND_EDGES if lo < nyquist]
+    edges = [
+        (
+            n,
+            math.ceil(lo * FFT_SIZE / rate),
+            min(FFT_SIZE // 2 + 1, math.ceil(hi * FFT_SIZE / rate) if hi != math.inf else FFT_SIZE // 2 + 1),
+        )
+        for n, lo, hi in BAND_EDGES
+        if lo < nyquist
+    ]
     scale: set[int] | None = None
     if key:
         tonic, mode = parse_key(key)
@@ -441,7 +493,7 @@ def bands(x: array, rate: int, window_seconds: float, key: str | None, shift: fl
         row: dict[str, Any] = {"t": round(begin / rate + shift, 3), "rms": round(_rms(x[begin:end]), 4)}
         if total > 0:
             weighted = sum(f * v for f, v in zip(freqs[1:], power[1:]))
-            row["bandsDb"] = {n: _rel_db(sum(power[max(lo, 1):hi]), total) for n, lo, hi in edges}
+            row["bandsDb"] = {n: _rel_db(sum(power[max(lo, 1) : hi]), total) for n, lo, hi in edges}
             row["centroidHz"] = round(weighted / total)
         else:
             row["bandsDb"], row["centroidHz"] = {n: None for n, _, _ in edges}, None
@@ -450,15 +502,22 @@ def bands(x: array, rate: int, window_seconds: float, key: str | None, shift: fl
             all_chroma = [a + b for a, b in zip(all_chroma, chroma)]
             row["chroma"] = _chroma_report(chroma, scale)
         rows.append(row)
-    out: dict[str, Any] = {"windowSeconds": round(window_seconds, 3), "windows": rows,
-                           "bandEdgesHz": {n: [lo, None if hi == math.inf else hi] for n, lo, hi in BAND_EDGES if lo < nyquist},
-                           "peaks": spectral_peaks(all_power, rate), "peakResolutionHz": round(rate / FFT_SIZE, 1),
-                           "note": f"each window samples up to {FRAMES_PER_WINDOW} Hann frames of {FFT_SIZE} samples; bandsDb are relative to the window's total power; "
-                                   "peaks = strongest spectral maxima of the whole analyzed range (dB re the strongest), the way to pitch steady or noisy sources"}
+    out: dict[str, Any] = {
+        "windowSeconds": round(window_seconds, 3),
+        "windows": rows,
+        "bandEdgesHz": {n: [lo, None if hi == math.inf else hi] for n, lo, hi in BAND_EDGES if lo < nyquist},
+        "peaks": spectral_peaks(all_power, rate),
+        "peakResolutionHz": round(rate / FFT_SIZE, 1),
+        "note": f"each window samples up to {FRAMES_PER_WINDOW} Hann frames of {FFT_SIZE} samples; bandsDb are relative to the window's total power; "
+        "peaks = strongest spectral maxima of the whole analyzed range (dB re the strongest), the way to pitch steady or noisy sources",
+    }
     if scale is not None:
         out["key"] = key
-        out["chroma"] = {**_chroma_report(all_chroma, scale), "rangeHz": [CHROMA_LOW, CHROMA_HIGH],
-                         "note": "power of every FFT bin in the range folded to pitch classes (one long Hann FFT per window on audio decimated to ~4 kHz); drums, noise and inharmonic partials pollute it, so use it on pitched stems"}
+        out["chroma"] = {
+            **_chroma_report(all_chroma, scale),
+            "rangeHz": [CHROMA_LOW, CHROMA_HIGH],
+            "note": "power of every FFT bin in the range folded to pitch classes (one long Hann FFT per window on audio decimated to ~4 kHz); drums, noise and inharmonic partials pollute it, so use it on pitched stems",
+        }
     return out
 
 
@@ -492,9 +551,14 @@ def _color(level: float) -> bytes:
 def write_png(path: str, width: int, height: int, rgb_rows: list[bytes]) -> None:
     def chunk(tag: bytes, data: bytes) -> bytes:
         return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data))
+
     raw = b"".join(b"\0" + row for row in rgb_rows)
-    png = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
-           + chunk(b"IDAT", zlib.compress(raw, 6)) + chunk(b"IEND", b""))
+    png = (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(raw, 6))
+        + chunk(b"IEND", b"")
+    )
     try:
         with open(path, "wb") as handle:
             handle.write(png)
@@ -512,7 +576,7 @@ def spectrogram(x: array, rate: int, path: str) -> dict[str, Any]:
     ratio = (top_hz / SPEC_LOW_HZ) ** (1 / SPEC_ROWS)
     ranges = []
     for r in range(SPEC_ROWS):
-        lo, hi = SPEC_LOW_HZ * ratio ** r, SPEC_LOW_HZ * ratio ** (r + 1)
+        lo, hi = SPEC_LOW_HZ * ratio**r, SPEC_LOW_HZ * ratio ** (r + 1)
         a, b = int(lo * FFT_SIZE / rate), int(hi * FFT_SIZE / rate)
         ranges.append((a, max(b, a) + 1))
     cells = []
@@ -523,11 +587,22 @@ def spectrogram(x: array, rate: int, path: str) -> dict[str, Any]:
     floor = peak * 10 ** (-SPEC_RANGE_DB / 20)
     rows = []
     for r in range(SPEC_ROWS - 1, -1, -1):
-        rows.append(b"".join(_color(0.0 if cells[c][r] <= floor else
-                                    1 + 20 * math.log10(cells[c][r] / peak) / SPEC_RANGE_DB) for c in range(columns)))
+        rows.append(
+            b"".join(
+                _color(0.0 if cells[c][r] <= floor else 1 + 20 * math.log10(cells[c][r] / peak) / SPEC_RANGE_DB)
+                for c in range(columns)
+            )
+        )
     write_png(path, columns, SPEC_ROWS, rows)
-    return {"path": path, "width": columns, "height": SPEC_ROWS, "fMinHz": SPEC_LOW_HZ, "fMaxHz": round(top_hz),
-            "axis": "log frequency, low at the bottom; time left to right", "dynamicRangeDb": SPEC_RANGE_DB}
+    return {
+        "path": path,
+        "width": columns,
+        "height": SPEC_ROWS,
+        "fMinHz": SPEC_LOW_HZ,
+        "fMaxHz": round(top_hz),
+        "axis": "log frequency, low at the bottom; time left to right",
+        "dynamicRangeDb": SPEC_RANGE_DB,
+    }
 
 
 def analyze(args: dict[str, Any]) -> dict[str, Any]:
@@ -540,9 +615,15 @@ def analyze(args: dict[str, Any]) -> dict[str, Any]:
     mode = args["mode"]
     if skip >= len(x) / rate:
         raise WavError("skipSeconds is beyond the end of the file")
-    base = {"path": args["path"], "mode": mode, "sampleRate": rate, "channels": channels,
-            "durationSeconds": round(len(x) / rate, 3), "analyzedChannel": 0}
-    body = x[int(skip * rate):]
+    base = {
+        "path": args["path"],
+        "mode": mode,
+        "sampleRate": rate,
+        "channels": channels,
+        "durationSeconds": round(len(x) / rate, 3),
+        "analyzedChannel": 0,
+    }
+    body = x[int(skip * rate) :]
     shift = int(skip * rate) / rate
     if mode == "level":
         out = level(body, rate, args.get("windowSeconds", 0.5))
@@ -554,8 +635,14 @@ def analyze(args: dict[str, Any]) -> dict[str, Any]:
     threshold = args.get("threshold", 0.15)
     if mode == "onsets":
         times, info = find_onsets(x, rate, threshold, skip, args.get("method", "flux"))
-        return {**base, **info, "count": len(times), "onsets": times[:MAX_ONSETS], "truncated": len(times) > MAX_ONSETS,
-                "intervals": [round(b - a, 4) for a, b in zip(times, times[1:])][:MAX_ONSETS]}
+        return {
+            **base,
+            **info,
+            "count": len(times),
+            "onsets": times[:MAX_ONSETS],
+            "truncated": len(times) > MAX_ONSETS,
+            "intervals": [round(b - a, 4) for a, b in zip(times, times[1:])][:MAX_ONSETS],
+        }
     return {**base, **mono_pitch(x, rate, threshold, skip, args.get("bpm"), args.get("method", "flux"))}
 
 
@@ -572,8 +659,16 @@ def loudness_mode(args: dict[str, Any]) -> dict[str, Any]:
         measured = loudness.analyze(body, rate)
     except ValueError as exc:
         raise WavError(str(exc)) from exc
-    return {"path": args["path"], "mode": "loudness", "sampleRate": rate, "channels": count,
-            "durationSeconds": round(frames / rate, 3), "analyzedChannel": "all", "startSeconds": round(begin / rate, 3), **measured}
+    return {
+        "path": args["path"],
+        "mode": "loudness",
+        "sampleRate": rate,
+        "channels": count,
+        "durationSeconds": round(frames / rate, 3),
+        "analyzedChannel": "all",
+        "startSeconds": round(begin / rate, 3),
+        **measured,
+    }
 
 
 def analyze_bands(args: dict[str, Any]) -> dict[str, Any]:
@@ -584,8 +679,14 @@ def analyze_bands(args: dict[str, Any]) -> dict[str, Any]:
         raise WavError("skipSeconds is beyond the end of the file")
     start = int(skip * rate)
     body = left[start:]
-    out: dict[str, Any] = {"path": args["path"], "mode": "bands", "sampleRate": rate, "channels": channels,
-                           "durationSeconds": round(len(left) / rate, 3), "analyzedChannel": 0}
+    out: dict[str, Any] = {
+        "path": args["path"],
+        "mode": "bands",
+        "sampleRate": rate,
+        "channels": channels,
+        "durationSeconds": round(len(left) / rate, 3),
+        "analyzedChannel": 0,
+    }
     out.update(bands(body, rate, args.get("windowSeconds", 8.0), args.get("key"), start / rate))
     out["stereoCorrelation"] = stereo_correlation(left, right, start)
     if args.get("spectrogramPath"):

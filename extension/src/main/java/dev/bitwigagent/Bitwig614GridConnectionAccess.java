@@ -1,9 +1,9 @@
 package dev.bitwigagent;
 
+import static dev.bitwigagent.HostServices.failure;
+
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
-
-import static dev.bitwigagent.HostServices.failure;
 
 /** The public led overload retains PSD's undo wrapper; the typed xOa overload must never be invoked. */
 final class Bitwig614GridConnectionAccess implements GridConnectionWriter.Access {
@@ -21,18 +21,30 @@ final class Bitwig614GridConnectionAccess implements GridConnectionWriter.Access
         if (!Modifier.isFinal(setter.getModifiers()))
             throw failure("grid_unavailable", "Inspected public connection setter is no longer final.");
     }
-    @Override public void requireSupported(Object input, Object undo) {
+
+    @Override
+    public void requireSupported(Object input, Object undo) {
         requireExact(input, destinationClass, "destination input");
         requireExact(undo, undoClass, "ancestor undo manager");
     }
+
     static void requireExact(Object model, Class<?> inspected, String label) {
         if (model == null || model.getClass() != inspected)
-            throw failure("grid_unavailable", "Connection writing requires the inspected exact " + label + " class "
-                    + inspected.getName() + "; observed " + (model == null ? "null" : model.getClass().getName())
-                    + ". Runtime subclasses require separate dispatch/validator research; read-only modelClass metadata is not permission.");
+            throw failure(
+                    "grid_unavailable",
+                    "Connection writing requires the inspected exact " + label + " class "
+                            + inspected.getName() + "; observed "
+                            + (model == null ? "null" : model.getClass().getName())
+                            + ". Runtime subclasses require separate dispatch/validator research; read-only modelClass metadata is not permission.");
     }
-    @Override public Runnable prepareSet(Object input, Object source) {
+
+    @Override
+    public Runnable prepareSet(Object input, Object source) {
         return () -> bindings.invoke(setter, input, source);
     }
-    @Override public void execute(Runnable observation) { bindings.execute(observation); }
+
+    @Override
+    public void execute(Runnable observation) {
+        bindings.execute(observation);
+    }
 }

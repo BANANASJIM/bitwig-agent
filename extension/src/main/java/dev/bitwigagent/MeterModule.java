@@ -13,7 +13,8 @@ import java.util.regex.Pattern;
 final class MeterModule implements HostModule {
     static final Set<String> METHODS = Set.of("tracks.meters");
     static final int RANGE = 128, MIN_WINDOW_MS = 50, MAX_WINDOW_MS = 5000, POLL_MS = 20;
-    private static final Pattern UUID = Pattern.compile("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}");
+    private static final Pattern UUID =
+            Pattern.compile("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}");
     private final HostServices s;
     // [track][channel] last callback value: observers only fire on change, so these are the standing levels.
     private final int[][] peak = new int[HostServices.TRACKS][2], rms = new int[HostServices.TRACKS][2];
@@ -27,8 +28,10 @@ final class MeterModule implements HostModule {
             for (int c = 0; c < 2; c++) {
                 final int ti = t, ci = c;
                 try {
-                    track.addVuMeterObserver(RANGE, c, true, (IntegerValueChangedCallback) v -> record(ti, ci, true, v));
-                    track.addVuMeterObserver(RANGE, c, false, (IntegerValueChangedCallback) v -> record(ti, ci, false, v));
+                    track.addVuMeterObserver(
+                            RANGE, c, true, (IntegerValueChangedCallback) v -> record(ti, ci, true, v));
+                    track.addVuMeterObserver(
+                            RANGE, c, false, (IntegerValueChangedCallback) v -> record(ti, ci, false, v));
                 } catch (RuntimeException error) {
                     unavailable = "Channel.addVuMeterObserver failed: " + error;
                 }
@@ -41,43 +44,66 @@ final class MeterModule implements HostModule {
         for (Window w : windows) w.add(t, c, isPeak, value);
     }
 
-    @Override public Set<String> methods() { return METHODS; }
-    @Override public void validate(String method, JsonObject p) { validateParams(method, p); }
+    @Override
+    public Set<String> methods() {
+        return METHODS;
+    }
+
+    @Override
+    public void validate(String method, JsonObject p) {
+        validateParams(method, p);
+    }
 
     static void validateParams(String method, JsonObject p) {
         if (!method.equals("tracks.meters")) throw HostServices.failure("unknown_method", "Unknown meter method.");
         Params.fields(p, Set.of("trackIds", "windowMs"), Set.of());
         Params.integer(p, "windowMs", MIN_WINDOW_MS, MAX_WINDOW_MS);
         JsonElement ids = p.get("trackIds");
-        if (!ids.isJsonArray() || ids.getAsJsonArray().size() < 1 || ids.getAsJsonArray().size() > HostServices.TRACKS)
-            throw HostServices.failure("invalid_params", "trackIds must hold 1.." + HostServices.TRACKS + " track UUIDs.");
+        if (!ids.isJsonArray()
+                || ids.getAsJsonArray().size() < 1
+                || ids.getAsJsonArray().size() > HostServices.TRACKS)
+            throw HostServices.failure(
+                    "invalid_params", "trackIds must hold 1.." + HostServices.TRACKS + " track UUIDs.");
         Set<String> seen = new HashSet<>();
         for (JsonElement id : ids.getAsJsonArray()) {
-            if (!id.isJsonPrimitive() || !id.getAsJsonPrimitive().isString() || !UUID.matcher(id.getAsString()).matches())
+            if (!id.isJsonPrimitive()
+                    || !id.getAsJsonPrimitive().isString()
+                    || !UUID.matcher(id.getAsString()).matches())
                 throw HostServices.failure("invalid_params", "trackIds entries must be canonical UUIDs.");
-            if (!seen.add(id.getAsString().toLowerCase(Locale.ROOT))) throw HostServices.failure("invalid_params", "trackIds must be unique.");
+            if (!seen.add(id.getAsString().toLowerCase(Locale.ROOT)))
+                throw HostServices.failure("invalid_params", "trackIds must be unique.");
         }
     }
 
     private static final class Window {
-        final HostOperation op; final int[] slots; final String[] ids;
+        final HostOperation op;
+        final int[] slots;
+        final String[] ids;
         final int[][] peakMax = new int[HostServices.TRACKS][2], rmsMax = new int[HostServices.TRACKS][2];
         final long[][] rmsSum = new long[HostServices.TRACKS][2];
         final int[] callbacks = new int[HostServices.TRACKS];
         int ticks;
-        Window(HostOperation op, int[] slots, String[] ids) { this.op = op; this.slots = slots; this.ids = ids; }
+
+        Window(HostOperation op, int[] slots, String[] ids) {
+            this.op = op;
+            this.slots = slots;
+            this.ids = ids;
+        }
+
         void add(int t, int c, boolean isPeak, int value) {
             callbacks[t]++;
             int[][] max = isPeak ? peakMax : rmsMax;
             max[t][c] = Math.max(max[t][c], value);
         }
+
         void tick(int[][] rms) {
             ticks++;
             for (int t : slots) for (int c = 0; c < 2; c++) rmsSum[t][c] += rms[t][c];
         }
     }
 
-    @Override public void dispatch(HostOperation op, String method, JsonObject p) {
+    @Override
+    public void dispatch(HostOperation op, String method, JsonObject p) {
         s.check(op);
         if (unavailable != null) throw HostServices.failure("unsupported_scope", unavailable);
         JsonArray requested = p.getAsJsonArray("trackIds");
@@ -90,11 +116,16 @@ final class MeterModule implements HostModule {
         int windowMs = p.get("windowMs").getAsInt();
         long end = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(windowMs);
         if (op.deadline - end < HostServices.DEADLINE_MARGIN_NANOS)
-            throw HostServices.failure("invalid_params", "timeoutMs is too short for windowMs; allow windowMs plus about 200 ms.");
+            throw HostServices.failure(
+                    "invalid_params", "timeoutMs is too short for windowMs; allow windowMs plus about 200 ms.");
         windows.removeIf(old -> old.op.result.isDone());
         Window w = new Window(op, slots, ids);
         // Standing levels count: a steady meter fires no callback during the window.
-        for (int t : slots) for (int c = 0; c < 2; c++) { w.peakMax[t][c] = peak[t][c]; w.rmsMax[t][c] = rms[t][c]; }
+        for (int t : slots)
+            for (int c = 0; c < 2; c++) {
+                w.peakMax[t][c] = peak[t][c];
+                w.rmsMax[t][c] = rms[t][c];
+            }
         windows.add(w);
         Boolean playingAtStart = s.playing();
         poll(op, w, end, windowMs, playingAtStart);
@@ -102,7 +133,10 @@ final class MeterModule implements HostModule {
 
     private void poll(HostOperation op, Window w, long end, int windowMs, Boolean playingAtStart) {
         w.tick(rms);
-        if (System.nanoTime() < end) { s.schedule(op, () -> poll(op, w, end, windowMs, playingAtStart), POLL_MS); return; }
+        if (System.nanoTime() < end) {
+            s.schedule(op, () -> poll(op, w, end, windowMs, playingAtStart), POLL_MS);
+            return;
+        }
         windows.remove(w);
         JsonObject out = HostServices.observed();
         out.addProperty("scope", "vu_meters_over_window");
@@ -132,13 +166,16 @@ final class MeterModule implements HostModule {
             tracks.add(row);
         }
         out.add("tracks", tracks);
-        out.addProperty("note", "Meters move only while audio renders; a stopped transport reads zero. Peak and RMS are the host's VU values, per channel, not LUFS or dBFS.");
+        out.addProperty(
+                "note",
+                "Meters move only while audio renders; a stopped transport reads zero. Peak and RMS are the host's VU values, per channel, not LUFS or dBFS.");
         op.result.complete(out);
     }
 
     private static JsonObject pair(int[] v) {
         JsonObject out = new JsonObject();
-        out.addProperty("left", v[0]); out.addProperty("right", v[1]);
+        out.addProperty("left", v[0]);
+        out.addProperty("right", v[1]);
         return out;
     }
 }

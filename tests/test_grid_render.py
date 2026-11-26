@@ -29,16 +29,39 @@ class FakeGrid:
     async def call(self, method, params, timeout_ms=5000):
         self.calls.append((method, copy.deepcopy(params)))
         assert method == "grid.get"
-        rows = [m for m in self.modules if m["instanceId"] in params.get("moduleIds", [m["instanceId"] for m in self.modules])]
-        page = rows[params["moduleOffset"]:params["moduleOffset"] + min(params["moduleLimit"], self.cap)]
+        rows = [
+            m
+            for m in self.modules
+            if m["instanceId"] in params.get("moduleIds", [m["instanceId"] for m in self.modules])
+        ]
+        page = rows[params["moduleOffset"] : params["moduleOffset"] + min(params["moduleLimit"], self.cap)]
         page = [m if params["includeParameters"] else {k: v for k, v in m.items() if k != "parameters"} for m in page]
-        return {"status": "observed", "modules": page, "connections": self.connections,
-                "window": {"offset": params["moduleOffset"], "total": len(rows), "complete": params["moduleOffset"] + len(page) >= len(rows)}}
+        return {
+            "status": "observed",
+            "modules": page,
+            "connections": self.connections,
+            "window": {
+                "offset": params["moduleOffset"],
+                "total": len(rows),
+                "complete": params["moduleOffset"] + len(page) >= len(rows),
+            },
+        }
 
 
 def mod(name, typ, x, y, w=1, h=1, inputs=("IN",), outputs=("OUT",), custom=None, iid=None):
-    return {"instanceId": iid or name, "customName": name if custom is None else custom, "name": name, "typeName": typ, "x": x, "y": y, "width": w, "height": h,
-            "inputs": [{"key": k, "name": k, "connected": False} for k in inputs], "outputs": [{"key": k, "name": k} for k in outputs], "parameters": []}
+    return {
+        "instanceId": iid or name,
+        "customName": name if custom is None else custom,
+        "name": name,
+        "typeName": typ,
+        "x": x,
+        "y": y,
+        "width": w,
+        "height": h,
+        "inputs": [{"key": k, "name": k, "connected": False} for k in inputs],
+        "outputs": [{"key": k, "name": k} for k in outputs],
+        "parameters": [],
+    }
 
 
 def cable(a, b):
@@ -69,8 +92,13 @@ def test_fixture_pages_completely_and_renders_wellformed_svg(tmp_path):
 
 
 def test_overlaps_unconnected_sections_and_density(tmp_path):
-    mods = [mod("H: a", "Clock", 0, 0, 2, 1), mod("H: b", "AD", 1, 0, 2, 1), mod("M: c", "Dice", 5, 0), mod("lonely", "Delay", 0, 3),
-            mod("note", "Comment", 8, 0, 3, 1, inputs=(), outputs=())]
+    mods = [
+        mod("H: a", "Clock", 0, 0, 2, 1),
+        mod("H: b", "AD", 1, 0, 2, 1),
+        mod("M: c", "Dice", 5, 0),
+        mod("lonely", "Delay", 0, 3),
+        mod("note", "Comment", 8, 0, 3, 1, inputs=(), outputs=()),
+    ]
     mods[4]["parameters"] = [{"parameterId": "TEXT", "value": "hello <&> world"}]
     host = FakeGrid(mods, [cable("H: a", "H: b"), cable("H: b", "M: c")])
     result = run(host, tmp_path, namespace="H: ")
@@ -80,7 +108,10 @@ def test_overlaps_unconnected_sections_and_density(tmp_path):
     assert [m["name"] for m in result["unconnected"]] == ["lonely"]  # comments are never "unconnected"
     sections = {s["prefix"]: s for s in result["sections"]}
     assert set(sections) == {"H: ", "M: "}
-    assert sections["H: "]["boundingBox"] == {"x": 0, "y": 0, "width": 3, "height": 1} and sections["H: "]["moduleCount"] == 2
+    assert (
+        sections["H: "]["boundingBox"] == {"x": 0, "y": 0, "width": 3, "height": 1}
+        and sections["H: "]["moduleCount"] == 2
+    )
     assert result["boundingBox"] == {"x": 0, "y": 0, "width": 11, "height": 4}
     assert result["density"] == round(len({(0, 0), (1, 0), (2, 0), (5, 0), (0, 3), (8, 0), (9, 0), (10, 0)}) / 44, 3)
     assert result["namespace"] == {"prefix": "H: ", "moduleCount": 2}
@@ -127,6 +158,7 @@ def test_incomplete_paging_fails_instead_of_drawing_part(tmp_path):
         if params["moduleOffset"]:
             result["modules"] = []
         return result
+
     host.cap = 2
     host.call = short
     with pytest.raises(BridgeError) as err:
@@ -135,11 +167,27 @@ def test_incomplete_paging_fails_instead_of_drawing_part(tmp_path):
 
 
 def test_validation_and_exposure(tmp_path):
-    for bad in ({"outPath": "relative.svg"}, {"outPath": "/tmp/../x.svg"}, {"outPath": str(tmp_path / "x"), "format": "gif"}, {"outPath": str(tmp_path / "x"), "scale": 9}):
+    for bad in (
+        {"outPath": "relative.svg"},
+        {"outPath": "/tmp/../x.svg"},
+        {"outPath": str(tmp_path / "x"), "format": "gif"},
+        {"outPath": str(tmp_path / "x"), "scale": 9},
+    ):
         with pytest.raises(ValueError):
             validate_call("grid.render", {**TARGET, **bad})
     assert "grid.render" in CLIENT_SIDE
-    params, _ = parse_arguments("grid.render", [f"trackId={TRACK}", "deviceIndex=0", "expectedDeviceName=Poly Grid", f"outPath={tmp_path}/a.svg", "overwrite=true"], None, None)
+    params, _ = parse_arguments(
+        "grid.render",
+        [
+            f"trackId={TRACK}",
+            "deviceIndex=0",
+            "expectedDeviceName=Poly Grid",
+            f"outPath={tmp_path}/a.svg",
+            "overwrite=true",
+        ],
+        None,
+        None,
+    )
     assert params["overwrite"] is True and params["expectedDeviceName"] == "Poly Grid"
 
 

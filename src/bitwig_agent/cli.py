@@ -39,28 +39,38 @@ def parser() -> ArgumentParser:
 
 def help_payload() -> dict[str, Any]:
     return {
-        "usage": ["bitwig-agent-rpc list [domain]", "bitwig-agent-rpc describe <method>",
-                  "bitwig-agent-rpc help [method]", "bitwig-agent-rpc <method> key=value ... [--timeout-ms 5000]",
-                  "bitwig-agent-rpc <method> --params '{\"key\":\"value\"}'",
-                  "bitwig-agent-rpc grid.apply spec=@patch.json [dryRun=true]  (also --params @file; key=@file loads a JSON value)",
-                  "bitwig-agent-rpc grid.export trackId=<uuid> deviceIndex=0 expectedDeviceName='Poly Grid' [includeParams=changed|all|none] [namespace='H: '] [outPath=/abs/spec.json]",
-                  "bitwig-agent-rpc grid.render trackId=<uuid> deviceIndex=0 expectedDeviceName='Poly Grid' outPath=/abs/grid.svg [format=png] [overwrite=true]",
-                  "bitwig-agent-rpc grid.probe trackId=<uuid> deviceIndex=0 expectedDeviceName='Poly Grid' port='H: lead.OUT' seconds=4 mode=mono_pitch  (reroute, record, restore cables)",
-                  "bitwig-agent-rpc audio.route mode=silent|restore|status   (Linux/PipeWire)",
-                  "bitwig-agent-rpc audio.capture seconds=8 outPath=/abs/out.wav [fromStart=false] [overwrite=true]",
-                  "bitwig-agent-rpc audio.analyze path=/abs/out.wav mode=level|onsets|mono_pitch|probe|bands [bpm=120] [skipSeconds=2]",
-                  "bitwig-agent-rpc host.diagnostics [sinceSeconds=300 | sinceMarker=<marker>] [maxEvents=50]  (Bitwig log: grid_rejected, engine, extension errors)",
-                  "bitwig-agent-rpc grid.describe type=\"Select In\" | query=\"random trigger\" [lang=de]  (offline Bitwig module docs)"],
+        "usage": [
+            "bitwig-agent-rpc list [domain]",
+            "bitwig-agent-rpc describe <method>",
+            "bitwig-agent-rpc help [method]",
+            "bitwig-agent-rpc <method> key=value ... [--timeout-ms 5000]",
+            'bitwig-agent-rpc <method> --params \'{"key":"value"}\'',
+            "bitwig-agent-rpc grid.apply spec=@patch.json [dryRun=true]  (also --params @file; key=@file loads a JSON value)",
+            "bitwig-agent-rpc grid.export trackId=<uuid> deviceIndex=0 expectedDeviceName='Poly Grid' [includeParams=changed|all|none] [namespace='H: '] [outPath=/abs/spec.json]",
+            "bitwig-agent-rpc grid.render trackId=<uuid> deviceIndex=0 expectedDeviceName='Poly Grid' outPath=/abs/grid.svg [format=png] [overwrite=true]",
+            "bitwig-agent-rpc grid.probe trackId=<uuid> deviceIndex=0 expectedDeviceName='Poly Grid' port='H: lead.OUT' seconds=4 mode=mono_pitch  (reroute, record, restore cables)",
+            "bitwig-agent-rpc audio.route mode=silent|restore|status   (Linux/PipeWire)",
+            "bitwig-agent-rpc audio.capture seconds=8 outPath=/abs/out.wav [fromStart=false] [overwrite=true]",
+            "bitwig-agent-rpc audio.analyze path=/abs/out.wav mode=level|onsets|mono_pitch|probe|bands [bpm=120] [skipSeconds=2]",
+            "bitwig-agent-rpc host.diagnostics [sinceSeconds=300 | sinceMarker=<marker>] [maxEvents=50]  (Bitwig log: grid_rejected, engine, extension errors)",
+            'bitwig-agent-rpc grid.describe type="Select In" | query="random trigger" [lang=de]  (offline Bitwig module docs)',
+        ],
         "discovery": "list, help and describe are offline. capabilities queries the running host.",
         "arguments": "Strings are unquoted values (shell-quote spaces); numbers/booleans/arrays/objects use strict JSON. Booleans are true/false. Explicit null is accepted only where the method schema allows it; required nullable fields must still be supplied. Duplicate/extra fields are rejected. Raw --params is equally strict.",
         "targets": "Discover track UUIDs with tracks.list and exact device names/zero-based indices with devices.list. Clip slots and MIDI channels are zero-based. Example UUIDs are placeholders.",
         "safety": "One request, no retries. A timeout is not cancellation; inspect actual host state before another write after an unknown outcome. Output preserves host results/errors without upgrading dispatched to observed.",
-        "exitCodes": {"0": "success or offline discovery", "1": "host/transport error", "2": "invalid arguments/configuration; not dispatched"},
+        "exitCodes": {
+            "0": "success or offline discovery",
+            "1": "host/transport error",
+            "2": "invalid arguments/configuration; not dispatched",
+        },
         "methods": list(TOOLS),
     }
 
 
-def parse_arguments(method: str, pairs: list[str], raw: str | None, timeout_ms: int | None) -> tuple[dict[str, Any], int]:
+def parse_arguments(
+    method: str, pairs: list[str], raw: str | None, timeout_ms: int | None
+) -> tuple[dict[str, Any], int]:
     if method not in TOOLS:
         raise ValueError(f"Unknown method: {method}. Use list or describe <method> offline.")
     if raw is not None:
@@ -116,8 +126,11 @@ async def execute(argv: list[str]) -> tuple[dict[str, Any], int]:
                 if len(arguments) > 1:
                     raise ValueError("Usage: list [domain]")
                 prefix = arguments[0] + "." if arguments else ""
-                entries = {name: {"description": spec.description, "readOnly": spec.read_only}
-                           for name, spec in TOOLS.items() if not prefix or name.startswith(prefix)}
+                entries = {
+                    name: {"description": spec.description, "readOnly": spec.read_only}
+                    for name, spec in TOOLS.items()
+                    if not prefix or name.startswith(prefix)
+                }
                 if not entries:
                     raise ValueError(f"Unknown domain: {arguments[0]}")
                 return {"result": {"methods": entries}}, 0
@@ -129,12 +142,22 @@ async def execute(argv: list[str]) -> tuple[dict[str, Any], int]:
             return {"result": {"method": name, **TOOLS[name].describe()}}, 0
         params, timeout_ms = parse_arguments(command, arguments, args.params, args.timeout_ms)
         client = BridgeClient(configured_port())
-        result = await (run_client_side(command, client, params, timeout_ms) if command in CLIENT_SIDE else client.call(command, params, timeout_ms))
+        result = await (
+            run_client_side(command, client, params, timeout_ms)
+            if command in CLIENT_SIDE
+            else client.call(command, params, timeout_ms)
+        )
         return {"result": result}, 0
     except BridgeError as exc:
         return {"error": exc.error}, 1
     except (ValueError, TypeError, RecursionError) as exc:
-        return {"error": {"code": "invalid_params", "message": invalid_params_message(command, exc), "outcome": "not_dispatched"}}, 2
+        return {
+            "error": {
+                "code": "invalid_params",
+                "message": invalid_params_message(command, exc),
+                "outcome": "not_dispatched",
+            }
+        }, 2
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Static gates that need no Bitwig API jar: ruff, mypy, Java format, duplicate detection.
 
-  python scripts/lint.py                  run every gate
-  python scripts/lint.py --fix            apply ruff fixes and reformat Python and Java
-  python scripts/lint.py --update-cpd-baseline
+python scripts/lint.py                  run every gate
+python scripts/lint.py --fix            apply ruff fixes and reformat Python and Java
+python scripts/lint.py --update-cpd-baseline
 """
 
 import argparse
@@ -111,7 +111,8 @@ def cpd_duplicates(language: str) -> Counter[tuple[int, tuple[str, ...]]]:
     found: Counter[tuple[int, tuple[str, ...]]] = Counter()
     for duplication in ET.fromstring(result.stdout).findall("c:duplication", namespace):
         files = sorted(
-            Path(entry.attrib["path"]).relative_to(ROOT).as_posix() for entry in duplication.findall("c:file", namespace)
+            Path(entry.attrib["path"]).relative_to(ROOT).as_posix()
+            for entry in duplication.findall("c:file", namespace)
         )
         found[(int(duplication.attrib["tokens"]), tuple(files))] += 1
     return found

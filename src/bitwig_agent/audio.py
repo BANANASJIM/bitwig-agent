@@ -41,8 +41,12 @@ async def require_engine(bridge: Any, timeout_ms: int) -> None:
     """Fail fast when status observes the audio engine inactive: a capture would only record silence."""
     status = await bridge.call("status", {}, min(timeout_ms, 5000))
     if status.get("engineActive") is False:
-        raise fail("engine_inactive", "The audio engine is not active for this project (status.engineActive=false), so playback would be silent. "
-                   "Run project.activateEngine, confirm engineActive=true, then retry. Nothing was dispatched.", "not_applied")
+        raise fail(
+            "engine_inactive",
+            "The audio engine is not active for this project (status.engineActive=false), so playback would be silent. "
+            "Run project.activateEngine, confirm engineActive=true, then retry. Nothing was dispatched.",
+            "not_applied",
+        )
 
 
 # Seams for tests: no real subprocess or sleeping there.
@@ -125,8 +129,9 @@ def ensure_sink() -> bool:
     """Create the null sink if absent; True when this call created it."""
     if sink_exists():
         return False
-    code, _, err = run(["pactl", "load-module", "module-null-sink", f"sink_name={SINK}",
-                        f"sink_properties=device.description={SINK}"])
+    code, _, err = run(
+        ["pactl", "load-module", "module-null-sink", f"sink_name={SINK}", f"sink_properties=device.description={SINK}"]
+    )
     if code != 0:
         raise fail("audio_tool_failed", f"Cannot create the {SINK} null sink: {err.strip() or code}")
     return True
@@ -139,8 +144,10 @@ def link(args: list[str], what: str) -> None:
 
 
 def describe(links: list[tuple[str, str]]) -> dict[str, Any]:
-    return {"links": [{"from": a, "to": b} for a, b in links],
-            "silent": bool(links) and all(b.startswith(f"{SINK}:") for _, b in links)}
+    return {
+        "links": [{"from": a, "to": b} for a, b in links],
+        "silent": bool(links) and all(b.startswith(f"{SINK}:") for _, b in links),
+    }
 
 
 def route(args: dict[str, Any]) -> dict[str, Any]:
@@ -188,8 +195,11 @@ async def playing_tracks(bridge: Any, timeout_ms: int) -> list[dict[str, str]] |
         ctx = await bridge.call("context.get", {}, timeout_ms)
     except BridgeError:
         return None
-    return [{"trackId": t.get("trackId", ""), "name": t.get("name", "")} for t in ctx.get("tracks") or []
-            if any(s.get("playing") for s in t.get("launcherSlots") or [])]
+    return [
+        {"trackId": t.get("trackId", ""), "name": t.get("name", "")}
+        for t in ctx.get("tracks") or []
+        if any(s.get("playing") for s in t.get("launcherSlots") or [])
+    ]
 
 
 async def isolate(bridge: Any, args: dict[str, Any], timeout_ms: int) -> dict[str, Any]:
@@ -197,7 +207,11 @@ async def isolate(bridge: Any, args: dict[str, Any], timeout_ms: int) -> dict[st
     solo, stop_others = args.get("soloTrack"), args.get("stopOthers", False)
     playing = await playing_tracks(bridge, timeout_ms)
     if playing is None:
-        return {"warnings": ["could not read which tracks are playing (context.get failed): the recording may mix several tracks"]}
+        return {
+            "warnings": [
+                "could not read which tracks are playing (context.get failed): the recording may mix several tracks"
+            ]
+        }
     others = [t for t in playing if t["trackId"] != solo]
     stopped: list[str] = []
     if stop_others and solo:
@@ -205,15 +219,24 @@ async def isolate(bridge: Any, args: dict[str, Any], timeout_ms: int) -> dict[st
             await bridge.call("launcher.stop", {"trackId": t["trackId"]}, timeout_ms)
             stopped.append(t["name"])
         others = []
-    if solo and others:  # the solo track itself may sound without a launcher clip (a Poly Grid, a held note): the real solo covers that
-        raise fail("not_isolated", f"soloTrack {solo} is not the only playing track (other tracks are playing: {[t['name'] for t in others]}); "
-                   "stop the others or pass stopOthers:true", "not_applied", otherTracksPlaying=[t["name"] for t in others])
+    if (
+        solo and others
+    ):  # the solo track itself may sound without a launcher clip (a Poly Grid, a held note): the real solo covers that
+        raise fail(
+            "not_isolated",
+            f"soloTrack {solo} is not the only playing track (other tracks are playing: {[t['name'] for t in others]}); "
+            "stop the others or pass stopOthers:true",
+            "not_applied",
+            otherTracksPlaying=[t["name"] for t in others],
+        )
     out: dict[str, Any] = {"otherTracksPlaying": [t["name"] for t in others] if solo or len(others) > 1 else []}
     if stopped:
         out["stoppedTracks"] = stopped
     if out["otherTracksPlaying"]:
-        out["warnings"] = [f"launcher clips are playing on {out['otherTracksPlaying']}: the recording is a mix, not one patch; "
-                           "pass soloTrack (and stopOthers) to isolate it"]
+        out["warnings"] = [
+            f"launcher clips are playing on {out['otherTracksPlaying']}: the recording is a mix, not one patch; "
+            "pass soloTrack (and stopOthers) to isolate it"
+        ]
     return out
 
 
@@ -225,8 +248,11 @@ async def read_solo_states(bridge: Any, timeout_ms: int) -> dict[str, bool]:
         tid = row.get("trackId")
         got = await bridge.call("tracks.get", {"trackId": tid}, timeout_ms)
         if not isinstance(got.get("solo"), bool):
-            raise fail("solo_unreadable", f"Cannot read the solo state of track {row.get('name') or tid}; refusing to change solos it could not restore.",
-                       "not_applied")
+            raise fail(
+                "solo_unreadable",
+                f"Cannot read the solo state of track {row.get('name') or tid}; refusing to change solos it could not restore.",
+                "not_applied",
+            )
         states[tid] = got["solo"]
     return states
 
@@ -251,7 +277,11 @@ async def apply_solo(bridge: Any, solo: str, timeout_ms: int) -> tuple[dict[str,
     previous = await read_solo_states(bridge, timeout_ms)
     if solo not in previous:
         raise fail("unknown_track", f"soloTrack {solo} is not in the track bank (tracks.list)", "not_applied")
-    block: dict[str, Any] = {"soloed": solo, "previousSolo": sorted(t for t, v in previous.items() if v), "unsoloed": []}
+    block: dict[str, Any] = {
+        "soloed": solo,
+        "previousSolo": sorted(t for t, v in previous.items() if v),
+        "unsoloed": [],
+    }
     changed: list[str] = []
     try:
         for tid in [solo, *[t for t in previous if t != solo]]:  # the target first, then clear every other soloed track
@@ -275,7 +305,10 @@ def bitwig_outputs() -> list[str]:
     ports = [line.strip() for line in out.splitlines()]
     found = [p for p in (f"{NODE}:out1", f"{NODE}:out2") if p in ports]
     if len(found) != 2:
-        raise fail("bitwig_not_found", f"Expected '{NODE}:out1' and '{NODE}:out2' in pw-link -o; is Bitwig running with its audio engine on?")
+        raise fail(
+            "bitwig_not_found",
+            f"Expected '{NODE}:out1' and '{NODE}:out2' in pw-link -o; is Bitwig running with its audio engine on?",
+        )
     return found
 
 
@@ -301,8 +334,12 @@ async def capture(bridge: Any, args: dict[str, Any], timeout_ms: int) -> dict[st
     if not allow_audible:
         state = describe(current_links())
         if not state["silent"]:
-            raise fail("not_silent", "Bitwig output is not routed to the silent sink; call audio.route mode=silent "
-                       "first, or pass allowAudible:true to record without the silent route (the signal stays audible)", **state)
+            raise fail(
+                "not_silent",
+                "Bitwig output is not routed to the silent sink; call audio.route mode=silent "
+                "first, or pass allowAudible:true to record without the silent route (the signal stays audible)",
+                **state,
+            )
     sources = bitwig_outputs()
     await require_engine(bridge, timeout_ms)
     isolation = await isolate(bridge, args, timeout_ms)
@@ -318,8 +355,20 @@ async def capture(bridge: Any, args: dict[str, Any], timeout_ms: int) -> dict[st
     created: list[tuple[str, str]] = []
     proc = None
     try:
-        proc = spawn(["pw-record", "-P", f"{{ node.name={node} node.autoconnect=false }}", "--rate", str(RATE), "--channels", "2",
-                      "--format", "s32", path])
+        proc = spawn(
+            [
+                "pw-record",
+                "-P",
+                f"{{ node.name={node} node.autoconnect=false }}",
+                "--rate",
+                str(RATE),
+                "--channels",
+                "2",
+                "--format",
+                "s32",
+                path,
+            ]
+        )
         inputs = await wait_for_inputs(node)
         if proc.poll() is not None:
             err = (proc.stderr.read() or b"").decode(errors="replace").strip() if proc.stderr else ""
@@ -356,12 +405,26 @@ async def capture(bridge: Any, args: dict[str, Any], timeout_ms: int) -> dict[st
         if solo:
             solo_block.update(await restore_solo(bridge, previous_solo, changed, timeout_ms))
     stats = await asyncio.to_thread(audio_analysis.analyze, {"path": path, "mode": "level", "windowSeconds": 60})
-    return {"path": path, "requestedSeconds": seconds, "elapsedSeconds": round(elapsed, 3),
-            "durationSeconds": stats["durationSeconds"], "sampleRate": stats["sampleRate"], "channels": stats["channels"],
-            "peak": stats["peak"], "peakDb": stats["peakDb"], "rms": stats["rms"], "rmsDb": stats["rmsDb"],
-            "clipping": stats["clipping"], "silent": stats["peak"] < audio_analysis.SILENT_PEAK,
-            "fromStart": from_start, "audible": allow_audible, "transportStopped": transport_started,
-            "source": {"ports": sources, "node": node}, **isolation, **solo_block}
+    return {
+        "path": path,
+        "requestedSeconds": seconds,
+        "elapsedSeconds": round(elapsed, 3),
+        "durationSeconds": stats["durationSeconds"],
+        "sampleRate": stats["sampleRate"],
+        "channels": stats["channels"],
+        "peak": stats["peak"],
+        "peakDb": stats["peakDb"],
+        "rms": stats["rms"],
+        "rmsDb": stats["rmsDb"],
+        "clipping": stats["clipping"],
+        "silent": stats["peak"] < audio_analysis.SILENT_PEAK,
+        "fromStart": from_start,
+        "audible": allow_audible,
+        "transportStopped": transport_started,
+        "source": {"ports": sources, "node": node},
+        **isolation,
+        **solo_block,
+    }
 
 
 async def analyze(args: dict[str, Any]) -> dict[str, Any]:

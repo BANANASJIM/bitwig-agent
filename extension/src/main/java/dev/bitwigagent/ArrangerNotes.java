@@ -15,12 +15,19 @@ final class ArrangerNotes {
         Object newNote(double beat, double durationBeats, double velocity01);
         /** Native {@code AGr.MRY(note, channel, key, selection)}. */
         void addNote(Object clip, Object note, int channel, int key);
+
         List<?> rows(Object clip);
+
         int channel(Object row);
+
         int key(Object row);
+
         List<?> notes(Object row);
+
         double start(Object note);
+
         double length(Object note);
+
         double velocity01(Object note);
     }
 
@@ -33,8 +40,14 @@ final class ArrangerNotes {
         final JsonObject json;
         /** Rows with a channel outside 0..15 or a key outside 0..127: Bitwig's editor cannot draw them. */
         final int invalidRows;
+
         final boolean complete;
-        Readback(JsonObject json, int invalidRows, boolean complete) { this.json = json; this.invalidRows = invalidRows; this.complete = complete; }
+
+        Readback(JsonObject json, int invalidRows, boolean complete) {
+            this.json = json;
+            this.invalidRows = invalidRows;
+            this.complete = complete;
+        }
     }
 
     static Readback verify(Host host, Object clip, List<double[]> notes, int channel) {
@@ -46,7 +59,7 @@ final class ArrangerNotes {
             if (c < 0 || c > 15 || k < 0 || k > 127) invalid++;
             for (Object note : events) {
                 count++;
-                seen.add(new double[]{c, k, host.start(note), host.length(note), host.velocity01(note) * 127.0});
+                seen.add(new double[] {c, k, host.start(note), host.length(note), host.velocity01(note) * 127.0});
             }
         }
         int verified = 0;
@@ -54,11 +67,16 @@ final class ArrangerNotes {
         for (double[] n : notes) {
             boolean ok = false;
             for (double[] s : seen)
-                ok |= s[0] == channel && s[1] == n[1] && near(s[2], n[0]) && near(s[3], n[3]) && Math.abs(s[4] - n[2]) < 0.5;
+                ok |= s[0] == channel
+                        && s[1] == n[1]
+                        && near(s[2], n[0])
+                        && near(s[3], n[3])
+                        && Math.abs(s[4] - n[2]) < 0.5;
             if (ok) verified++;
             else {
                 JsonObject m = new JsonObject();
-                m.addProperty("beat", n[0]); m.addProperty("pitch", (int) n[1]);
+                m.addProperty("beat", n[0]);
+                m.addProperty("pitch", (int) n[1]);
                 missing.add(m);
             }
         }
@@ -73,5 +91,7 @@ final class ArrangerNotes {
         return new Readback(out, invalid, invalid == 0 && verified == notes.size() && count == notes.size());
     }
 
-    private static boolean near(double a, double b) { return Math.abs(a - b) <= Bitwig614ArrangerAccess.EPS; }
+    private static boolean near(double a, double b) {
+        return Math.abs(a - b) <= Bitwig614ArrangerAccess.EPS;
+    }
 }

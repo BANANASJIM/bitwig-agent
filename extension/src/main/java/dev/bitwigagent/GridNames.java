@@ -5,17 +5,21 @@ import java.util.*;
 /** The one name-matching rule for catalog queries and typeName lookup: case, spaces, hyphens and punctuation are ignored. */
 final class GridNames {
     static final int SUGGESTIONS = 5;
+
     private GridNames() {}
 
     static String norm(String text) {
         StringBuilder out = new StringBuilder(text.length());
-        text.codePoints().filter(Character::isLetterOrDigit).forEach(c -> out.appendCodePoint(Character.toLowerCase(c)));
+        text.codePoints()
+                .filter(Character::isLetterOrDigit)
+                .forEach(c -> out.appendCodePoint(Character.toLowerCase(c)));
         return out.toString();
     }
 
     /** Every whitespace-separated query word must occur in the normalized name; an empty query matches everything. */
     static boolean matches(String name, String query) {
-        if (norm(query).isEmpty() && !query.trim().isEmpty()) return name.equalsIgnoreCase(query.trim()); // symbol-only query
+        if (norm(query).isEmpty() && !query.trim().isEmpty())
+            return name.equalsIgnoreCase(query.trim()); // symbol-only query
         String haystack = norm(name);
         for (String word : query.split("\\s+")) {
             String needle = norm(word);
@@ -38,7 +42,9 @@ final class GridNames {
         return hits;
     }
 
-    static boolean same(String name, String query) { return norm(name).equals(norm(query)); }
+    static boolean same(String name, String query) {
+        return norm(name).equals(norm(query));
+    }
 
     /** Normalized form, or the lowercased raw text when it is all symbols. */
     private static String key(String text) {
@@ -59,7 +65,10 @@ final class GridNames {
         }
         scored.sort(Map.Entry.<Double, String>comparingByKey().reversed().thenComparing(Map.Entry.comparingByValue()));
         List<String> out = new ArrayList<>();
-        for (Map.Entry<Double, String> entry : scored) { if (out.size() == limit) break; out.add(entry.getValue()); }
+        for (Map.Entry<Double, String> entry : scored) {
+            if (out.size() == limit) break;
+            out.add(entry.getValue());
+        }
         return out;
     }
 
@@ -67,10 +76,12 @@ final class GridNames {
         int[] row = new int[b.length() + 1];
         for (int j = 0; j <= b.length(); j++) row[j] = j;
         for (int i = 1; i <= a.length(); i++) {
-            int diagonal = row[0]; row[0] = i;
+            int diagonal = row[0];
+            row[0] = i;
             for (int j = 1; j <= b.length(); j++) {
                 int up = row[j];
-                row[j] = Math.min(Math.min(row[j] + 1, row[j - 1] + 1), diagonal + (a.charAt(i - 1) == b.charAt(j - 1) ? 0 : 1));
+                row[j] = Math.min(
+                        Math.min(row[j] + 1, row[j - 1] + 1), diagonal + (a.charAt(i - 1) == b.charAt(j - 1) ? 0 : 1));
                 diagonal = up;
             }
         }

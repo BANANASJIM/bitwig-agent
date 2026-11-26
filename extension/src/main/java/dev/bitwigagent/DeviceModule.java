@@ -8,13 +8,21 @@ import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.TimeUnit;
 
 /** Public API device operations, addressed through fixed, initialization-time bank proxies. */
 final class DeviceModule implements HostModule {
-    static final Set<String> METHODS = Set.of("devices.get", "devices.set", "devices.select", "devices.insert",
-            "devices.delete", "devices.move", "devices.layers.insert", "devices.catalog", "devices.remote.get",
-            "devices.remote.page", "devices.remote.set");
+    static final Set<String> METHODS = Set.of(
+            "devices.get",
+            "devices.set",
+            "devices.select",
+            "devices.insert",
+            "devices.delete",
+            "devices.move",
+            "devices.layers.insert",
+            "devices.catalog",
+            "devices.remote.get",
+            "devices.remote.page",
+            "devices.remote.set");
     private static final Set<String> TARGET = Set.of("trackId", "deviceIndex", "expectedDeviceName");
     static final int MAX_LAYER_CHILDREN = 4096;
     private final HostServices s;
@@ -56,23 +64,28 @@ final class DeviceModule implements HostModule {
         source.page = source.device.createCursorRemoteControlsPage("BitwigAgent-" + track + "-" + device, 8, "");
         source.page.pageNames().addValueObserver((StringArrayValueChangedCallback) names -> {
             if (!remoteSourcePresent(source)) return;
-            source.pageNamesObserved = true; source.remoteGeneration++;
+            source.pageNamesObserved = true;
+            source.remoteGeneration++;
         });
         source.page.pageCount().addValueObserver((IntegerValueChangedCallback) value -> {
             if (!remoteSourcePresent(source)) return;
-            source.pageCountObserved = true; source.remoteGeneration++;
+            source.pageCountObserved = true;
+            source.remoteGeneration++;
         });
         source.page.selectedPageIndex().addValueObserver((IntegerValueChangedCallback) value -> {
             if (!remoteSourcePresent(source)) return;
             if (source.identity.established && source.pageIndexObserved && source.lastPageIndex != value)
                 invalidateControls(source);
             source.lastPageIndex = value;
-            source.pageIndexObserved = true; source.pageIndexFresh = true;
-            source.remoteGeneration++; source.pageSequence++;
+            source.pageIndexObserved = true;
+            source.pageIndexFresh = true;
+            source.remoteGeneration++;
+            source.pageSequence++;
         });
         source.page.getName().addValueObserver((StringValueChangedCallback) value -> {
             if (!remoteSourcePresent(source)) return;
-            source.pageNameObserved = true; source.remoteGeneration++;
+            source.pageNameObserved = true;
+            source.remoteGeneration++;
         });
         for (int i = 0; i < 8; i++) {
             final int index = i;
@@ -85,31 +98,35 @@ final class DeviceModule implements HostModule {
                 source.lastControlExists[index] = value;
                 if (value) source.controlPresenceEstablished[index] = true;
                 if (source.controlRebindPending[index]) requestRemoteFlush(source);
-                source.controlExistsObserved[index] = true; source.remoteGeneration++;
+                source.controlExistsObserved[index] = true;
+                source.remoteGeneration++;
             });
             control.name().addValueObserver((StringValueChangedCallback) value -> {
                 if (!remoteControlPresent(source, index)) return;
                 if (source.identity.established && source.controlNamesObserved[index]) invalidateControl(source, index);
-                source.controlNamesObserved[index] = true; source.remoteGeneration++;
+                source.controlNamesObserved[index] = true;
+                source.remoteGeneration++;
             });
             control.isBeingMapped().addValueObserver((BooleanValueChangedCallback) value -> {
                 if (!remoteControlPresent(source, index)) return;
                 if (value) invalidateControl(source, index);
                 else if (source.controlRebindPending[index]) requestRemoteFlush(source);
-                source.controlMappingObserved[index] = true; source.remoteGeneration++;
+                source.controlMappingObserved[index] = true;
+                source.remoteGeneration++;
             });
             control.value().addValueObserver((DoubleValueChangedCallback) value -> {
                 if (!remoteControlPresent(source, index)) return;
                 source.controlValuesObserved[index] = true;
-                source.controlValuesFresh[index] = Double.isFinite(value) && !control.isBeingMapped().get();
+                source.controlValuesFresh[index] =
+                        Double.isFinite(value) && !control.isBeingMapped().get();
                 source.controlSequences[index]++;
             });
         }
     }
 
     private String remoteToken(Target target) {
-        return sessionToken + ":" + target.trackSlot + ":" + target.index + ":"
-                + target.source.identity.revision + ":" + target.source.remoteGeneration;
+        return sessionToken + ":" + target.trackSlot + ":" + target.index + ":" + target.source.identity.revision + ":"
+                + target.source.remoteGeneration;
     }
 
     private JsonObject remoteMetadata(Target target) {
@@ -119,7 +136,8 @@ final class DeviceModule implements HostModule {
         result.addProperty("contextToken", remoteToken(target));
         result.addProperty("scope", "independent_device_remote_page");
         result.addProperty("followsUiPageSelection", false);
-        result.addProperty("identityCaveat", "Unobserved same-name device replacement or control remapping cannot be detected.");
+        result.addProperty(
+                "identityCaveat", "Unobserved same-name device replacement or control remapping cannot be detected.");
         result.addProperty("pageIndex", source.page.selectedPageIndex().get());
         result.addProperty("pageName", source.page.getName().get());
         result.addProperty("pageCount", source.page.pageCount().get());
@@ -127,26 +145,42 @@ final class DeviceModule implements HostModule {
         String[] names = source.page.pageNames().get();
         for (int i = 0; i < Math.min(names.length, 4096); i++) {
             JsonObject page = new JsonObject();
-            page.addProperty("pageIndex", i); page.addProperty("name", names[i]); pages.add(page);
+            page.addProperty("pageIndex", i);
+            page.addProperty("name", names[i]);
+            pages.add(page);
         }
         result.add("pages", pages);
-        result.add("pageWindow", HostServices.window(0, 4096, source.page.pageCount().get()));
+        result.add(
+                "pageWindow",
+                HostServices.window(0, 4096, source.page.pageCount().get()));
         JsonArray controls = new JsonArray();
         boolean complete = true;
         for (int i = 0; i < 8; i++) {
             RemoteControl control = source.controls[i];
             JsonObject item = new JsonObject();
             item.addProperty("parameterIndex", i);
-            boolean present = source.controlExistsObserved[i] && control.exists().get();
+            boolean present =
+                    source.controlExistsObserved[i] && control.exists().get();
             boolean readable = present && !source.controlRebindPending[i];
-            item.addProperty("exists", source.controlExistsObserved[i] ? control.exists().get() : null);
-            item.addProperty("name", readable && source.controlNamesObserved[i] ? control.name().get() : null);
-            item.addProperty("isBeingMapped", readable && source.controlMappingObserved[i] ? control.isBeingMapped().get() : null);
-            boolean valueKnown = readable && source.controlValuesObserved[i]
-                    && source.controlMappingObserved[i] && !control.isBeingMapped().get() && Double.isFinite(control.value().get());
+            item.addProperty(
+                    "exists", source.controlExistsObserved[i] ? control.exists().get() : null);
+            item.addProperty(
+                    "name",
+                    readable && source.controlNamesObserved[i] ? control.name().get() : null);
+            item.addProperty(
+                    "isBeingMapped",
+                    readable && source.controlMappingObserved[i]
+                            ? control.isBeingMapped().get()
+                            : null);
+            boolean valueKnown = readable
+                    && source.controlValuesObserved[i]
+                    && source.controlMappingObserved[i]
+                    && !control.isBeingMapped().get()
+                    && Double.isFinite(control.value().get());
             item.addProperty("normalizedValue", valueKnown ? control.value().get() : null);
-            complete &= source.controlExistsObserved[i] && (!control.exists().get()
-                    || (source.controlNamesObserved[i] && source.controlMappingObserved[i] && valueKnown));
+            complete &= source.controlExistsObserved[i]
+                    && (!control.exists().get()
+                            || (source.controlNamesObserved[i] && source.controlMappingObserved[i] && valueKnown));
             controls.add(item);
         }
         result.add("controls", controls);
@@ -158,7 +192,10 @@ final class DeviceModule implements HostModule {
     private static void requireRemotePage(Source source) {
         if (source.remoteRebindPending)
             throw HostServices.failure("not_ready", "Remote source rebind awaits a host flush.");
-        if (!source.pageNamesObserved || !source.pageCountObserved || !source.pageIndexObserved || !source.pageNameObserved)
+        if (!source.pageNamesObserved
+                || !source.pageCountObserved
+                || !source.pageIndexObserved
+                || !source.pageNameObserved)
             throw HostServices.failure("not_ready", "Remote page metadata has not been observed.");
     }
 
@@ -166,16 +203,22 @@ final class DeviceModule implements HostModule {
         Source source = target.source;
         requireRemotePage(source);
         if (!remoteToken(target).equals(p.get("contextToken").getAsString()))
-            throw HostServices.failure("stale_context", "Remote page/control observations changed; read a fresh context.");
+            throw HostServices.failure(
+                    "stale_context", "Remote page/control observations changed; read a fresh context.");
         String pageName = p.get("expectedPageName").getAsString();
         if (method.equals("devices.remote.page")) {
             int index = p.get("pageIndex").getAsInt();
             String[] names = source.page.pageNames().get();
             if (index >= source.page.pageCount().get() || index >= names.length || !pageName.equals(names[index]))
-                throw HostServices.failure("stale_context", "Requested remote page index/name is not in the observed page catalog.");
-            if (source.pageIndexFresh && source.page.selectedPageIndex().get() == index && pageName.equals(source.page.getName().get())) {
+                throw HostServices.failure(
+                        "stale_context", "Requested remote page index/name is not in the observed page catalog.");
+            if (source.pageIndexFresh
+                    && source.page.selectedPageIndex().get() == index
+                    && pageName.equals(source.page.getName().get())) {
                 JsonObject result = remoteMetadata(target);
-                result.addProperty("verification", "already_observed_no_write"); op.result.complete(result); return;
+                result.addProperty("verification", "already_observed_no_write");
+                op.result.complete(result);
+                return;
             }
             long sequence = source.pageSequence;
             guard(op, target);
@@ -187,15 +230,25 @@ final class DeviceModule implements HostModule {
         int index = p.get("parameterIndex").getAsInt();
         RemoteControl control = source.controls[index];
         String name = p.get("expectedParameterName").getAsString();
-        if (!pageName.equals(source.page.getName().get()) || !source.controlExistsObserved[index]
-                || !source.controlNamesObserved[index] || !source.controlMappingObserved[index]
-                || source.controlRebindPending[index] || !source.controlValuesObserved[index] || !control.exists().get()
-                || control.isBeingMapped().get() || !Double.isFinite(control.value().get()) || !name.equals(control.name().get()))
-            throw HostServices.failure("stale_context", "Remote control is absent, unobserved, being remapped, or differs from its expected name/page.");
+        if (!pageName.equals(source.page.getName().get())
+                || !source.controlExistsObserved[index]
+                || !source.controlNamesObserved[index]
+                || !source.controlMappingObserved[index]
+                || source.controlRebindPending[index]
+                || !source.controlValuesObserved[index]
+                || !control.exists().get()
+                || control.isBeingMapped().get()
+                || !Double.isFinite(control.value().get())
+                || !name.equals(control.name().get()))
+            throw HostServices.failure(
+                    "stale_context",
+                    "Remote control is absent, unobserved, being remapped, or differs from its expected name/page.");
         double value = p.get("normalizedValue").getAsDouble();
         if (source.controlValuesFresh[index] && Math.abs(control.value().get() - value) <= HostServices.TOLERANCE) {
             JsonObject result = remoteMetadata(target);
-            result.addProperty("verification", "already_observed_no_write"); op.result.complete(result); return;
+            result.addProperty("verification", "already_observed_no_write");
+            op.result.complete(result);
+            return;
         }
         String token = remoteToken(target);
         long sequence = source.controlSequences[index];
@@ -210,9 +263,13 @@ final class DeviceModule implements HostModule {
     }
 
     private void observePage(HostOperation op, Target target, int index, String name, long sequence, long end) {
-        if (!matches(target)) { uncertain(op, "target_changed_after_dispatch"); return; }
+        if (!matches(target)) {
+            uncertain(op, "target_changed_after_dispatch");
+            return;
+        }
         Source source = target.source;
-        boolean observed = source.pageSequence > sequence && source.page.selectedPageIndex().get() == index
+        boolean observed = source.pageSequence > sequence
+                && source.page.selectedPageIndex().get() == index
                 && name.equals(source.page.getName().get());
         if (observed || System.nanoTime() >= end) {
             JsonObject result = remoteMetadata(target);
@@ -222,13 +279,15 @@ final class DeviceModule implements HostModule {
         } else s.schedule(op, () -> observePage(op, target, index, name, sequence, end), 25);
     }
 
-    private void observeRemote(HostOperation op, Target target, int index, double value,
-                               String token, long sequence, long end) {
+    private void observeRemote(
+            HostOperation op, Target target, int index, double value, String token, long sequence, long end) {
         if (!matches(target) || !token.equals(remoteToken(target))) {
-            uncertain(op, "remote_context_changed_after_dispatch"); return;
+            uncertain(op, "remote_context_changed_after_dispatch");
+            return;
         }
         Source source = target.source;
-        boolean observed = source.controlValuesFresh[index] && source.controlSequences[index] > sequence
+        boolean observed = source.controlValuesFresh[index]
+                && source.controlSequences[index] > sequence
                 && Math.abs(source.controls[index].value().get() - value) <= HostServices.TOLERANCE;
         if (observed || System.nanoTime() >= end) {
             JsonObject result = remoteMetadata(target);
@@ -239,11 +298,11 @@ final class DeviceModule implements HostModule {
         } else s.schedule(op, () -> observeRemote(op, target, index, value, token, sequence, end), 25);
     }
 
-
     private static boolean remoteSourcePresent(Source source) {
         // Retain first-population observations even if existence/UUID callbacks have not arrived yet.
         // Later absent callbacks cannot establish freshness; history is reconciled only at flush.
-        return !source.identity.established || (source.track.exists().get() && source.device.exists().get());
+        return !source.identity.established
+                || (source.track.exists().get() && source.device.exists().get());
     }
 
     private static boolean remoteControlPresent(Source source, int index) {
@@ -278,82 +337,135 @@ final class DeviceModule implements HostModule {
         s.host.requestFlush();
     }
 
-    @Override public void flush() {
+    @Override
+    public void flush() {
         for (int t = 0; t < sources.length; t++) {
             for (Source source : sources[t]) {
                 if (!source.remoteFlushPending) continue;
-                if (!source.identity.established || !source.identity.present()
+                if (!source.identity.established
+                        || !source.identity.present()
                         || !s.trackMatches(source.identity.track.id, source.track)
                         || !source.device.exists().get()
                         || source.device.position().get() != source.deviceIndex
-                        || !java.util.Objects.equals(source.identity.type, source.device.deviceType().get())
+                        || !java.util.Objects.equals(
+                                source.identity.type, source.device.deviceType().get())
                         || source.device.name().get().isEmpty()) continue;
                 // Host flush is the interested-value update boundary, not a timer or replayed callback.
                 // Reads use current getters only for previously observed sources. Do not advance any
                 // observer sequence or fresh-write flag: unchanged getters cannot acknowledge a write.
                 source.remoteRebindPending = false;
                 source.remoteFlushPending = false;
-                if (source.pageIndexObserved) source.lastPageIndex = source.page.selectedPageIndex().get();
+                if (source.pageIndexObserved)
+                    source.lastPageIndex = source.page.selectedPageIndex().get();
                 for (int i = 0; i < source.controls.length; i++) {
                     if (!source.controlRebindPending[i] || !source.controlExistsObserved[i]) continue;
                     RemoteControl control = source.controls[i];
                     source.lastControlExists[i] = control.exists().get();
                     source.controlPresenceEstablished[i] |= source.lastControlExists[i];
-                    if (source.lastControlExists[i] && source.controlMappingObserved[i] && !control.isBeingMapped().get())
-                        source.controlRebindPending[i] = false;
+                    if (source.lastControlExists[i]
+                            && source.controlMappingObserved[i]
+                            && !control.isBeingMapped().get()) source.controlRebindPending[i] = false;
                 }
             }
         }
     }
 
-    @Override public Set<String> methods() { return METHODS; }
-    @Override public void validate(String method, JsonObject params) { validateParams(method, params); }
+    @Override
+    public Set<String> methods() {
+        return METHODS;
+    }
+
+    @Override
+    public void validate(String method, JsonObject params) {
+        validateParams(method, params);
+    }
 
     static void validateParams(String method, JsonObject p) {
         switch (method) {
-            case "devices.catalog": Params.fields(p, Set.of(), Set.of()); return;
+            case "devices.catalog":
+                Params.fields(p, Set.of(), Set.of());
+                return;
             case "devices.get":
             case "devices.remote.get":
-            case "devices.select": Params.fields(p, TARGET, Set.of()); validateTarget(p); return;
+            case "devices.select":
+                Params.fields(p, TARGET, Set.of());
+                validateTarget(p);
+                return;
             case "devices.set":
                 Params.fields(p, Set.of("trackId", "deviceIndex", "expectedDeviceName", "enabled"), Set.of());
-                validateTarget(p); Params.bool(p, "enabled"); return;
+                validateTarget(p);
+                Params.bool(p, "enabled");
+                return;
             case "devices.insert":
-                Params.fields(p, Set.of("trackId", "expectedDeviceCount", "kind"),
+                Params.fields(
+                        p,
+                        Set.of("trackId", "expectedDeviceCount", "kind"),
                         Set.of("id", "path", "position", "deviceIndex", "expectedDeviceName"));
                 Params.string(p, "trackId");
                 Params.integer(p, "expectedDeviceCount", 0, HostServices.DEVICES - 1);
-                validateInsertion(p); validatePosition(p); return;
-            case "devices.delete": Params.fields(p, TARGET, Set.of()); validateTarget(p); return;
+                validateInsertion(p);
+                validatePosition(p);
+                return;
+            case "devices.delete":
+                Params.fields(p, TARGET, Set.of());
+                validateTarget(p);
+                return;
             case "devices.move":
                 Params.fields(p, Set.of("trackId", "deviceIndex", "expectedDeviceName", "toIndex"), Set.of());
                 validateTarget(p);
-                if (Params.integer(p, "toIndex", 0, HostServices.DEVICES - 1) == p.get("deviceIndex").getAsInt())
-                    invalid("toIndex equals deviceIndex; nothing to move.");
+                if (Params.integer(p, "toIndex", 0, HostServices.DEVICES - 1)
+                        == p.get("deviceIndex").getAsInt()) invalid("toIndex equals deviceIndex; nothing to move.");
                 return;
             case "devices.layers.insert":
-                Params.fields(p, Set.of("parent", "layerId", "expectedChildCount", "kind"),
-                        Set.of("id", "path", "position"));
+                Params.fields(
+                        p, Set.of("parent", "layerId", "expectedChildCount", "kind"), Set.of("id", "path", "position"));
                 if (!p.get("parent").isJsonObject()) invalid("parent must be an object.");
                 DeviceSources.validateParent(p.getAsJsonObject("parent"));
-                if (!DeviceSources.canonicalUuid(Params.string(p, "layerId"))) invalid("layerId must be a canonical UUID.");
+                if (!DeviceSources.canonicalUuid(Params.string(p, "layerId")))
+                    invalid("layerId must be a canonical UUID.");
                 Params.integer(p, "expectedChildCount", 0, MAX_LAYER_CHILDREN);
                 validateInsertion(p);
                 if (p.has("position") && !Set.of("start", "end").contains(Params.string(p, "position")))
                     invalid("position must be start or end for a layer chain.");
                 return;
             case "devices.remote.page":
-                Params.fields(p, Set.of("trackId", "deviceIndex", "expectedDeviceName", "contextToken",
-                        "pageIndex", "expectedPageName"), Set.of());
-                validateTarget(p); Params.string(p, "contextToken"); Params.string(p, "expectedPageName");
-                Params.integer(p, "pageIndex", 0, 4095); return;
+                Params.fields(
+                        p,
+                        Set.of(
+                                "trackId",
+                                "deviceIndex",
+                                "expectedDeviceName",
+                                "contextToken",
+                                "pageIndex",
+                                "expectedPageName"),
+                        Set.of());
+                validateTarget(p);
+                Params.string(p, "contextToken");
+                Params.string(p, "expectedPageName");
+                Params.integer(p, "pageIndex", 0, 4095);
+                return;
             case "devices.remote.set":
-                Params.fields(p, Set.of("trackId", "deviceIndex", "expectedDeviceName", "contextToken",
-                        "expectedPageName", "parameterIndex", "expectedParameterName", "normalizedValue"), Set.of());
-                validateTarget(p); Params.string(p, "contextToken"); Params.string(p, "expectedPageName");
-                Params.string(p, "expectedParameterName"); Params.integer(p, "parameterIndex", 0, 7);
-                Params.number(p, "normalizedValue", 0, 1); return;
-            default: throw HostServices.failure("unknown_method", "Unknown device operation.");
+                Params.fields(
+                        p,
+                        Set.of(
+                                "trackId",
+                                "deviceIndex",
+                                "expectedDeviceName",
+                                "contextToken",
+                                "expectedPageName",
+                                "parameterIndex",
+                                "expectedParameterName",
+                                "normalizedValue"),
+                        Set.of());
+                validateTarget(p);
+                Params.string(p, "contextToken");
+                Params.string(p, "expectedPageName");
+                Params.string(p, "expectedParameterName");
+                Params.integer(p, "parameterIndex", 0, 7);
+                Params.number(p, "normalizedValue", 0, 1);
+                return;
+            default:
+                throw HostServices.failure("unknown_method", "Unknown device operation.");
         }
     }
 
@@ -393,33 +505,66 @@ final class DeviceModule implements HostModule {
                 return;
             case "vst2":
                 if (!id.matches("-?(0|[1-9][0-9]{0,9})")) invalid("VST2 id must be a signed int32 decimal string.");
-                try { Integer.parseInt(id); } catch (NumberFormatException error) { invalid("VST2 id is outside int32."); }
+                try {
+                    Integer.parseInt(id);
+                } catch (NumberFormatException error) {
+                    invalid("VST2 id is outside int32.");
+                }
                 return;
             case "vst3":
                 if (!id.matches("[0-9a-fA-F]{32}")) invalid("VST3 id must contain exactly 32 hexadecimal digits.");
                 return;
             case "clap":
-                if (!id.matches("[!-~]{1,256}")) invalid("CLAP id must be 1..256 printable non-whitespace ASCII characters.");
+                if (!id.matches("[!-~]{1,256}"))
+                    invalid("CLAP id must be 1..256 printable non-whitespace ASCII characters.");
                 return;
-            default: invalid("kind must be bitwig, vst2, vst3, clap, or file.");
+            default:
+                invalid("kind must be bitwig, vst2, vst3, clap, or file.");
         }
     }
 
-    private static void invalid(String message) { throw HostServices.failure("invalid_params", message); }
+    private static void invalid(String message) {
+        throw HostServices.failure("invalid_params", message);
+    }
 
-    @Override public void dispatch(HostOperation op, String method, JsonObject p) {
-        if (method.equals("devices.catalog")) { op.result.complete(deviceCatalog); return; }
-        if (method.equals("devices.get")) { op.result.complete(metadata(target(p))); return; }
-        if (method.equals("devices.remote.get")) { op.result.complete(remoteMetadata(target(p))); return; }
+    @Override
+    public void dispatch(HostOperation op, String method, JsonObject p) {
+        if (method.equals("devices.catalog")) {
+            op.result.complete(deviceCatalog);
+            return;
+        }
+        if (method.equals("devices.get")) {
+            op.result.complete(metadata(target(p)));
+            return;
+        }
+        if (method.equals("devices.remote.get")) {
+            op.result.complete(remoteMetadata(target(p)));
+            return;
+        }
         if (mutation != null && !mutation.result.isDone())
             throw HostServices.failure("busy", "Another device mutation is awaiting observations.");
         mutation = op;
-        if (method.equals("devices.insert")) { insert(op, p); return; }
-        if (method.equals("devices.layers.insert")) { insertIntoLayer(op, p); return; }
-        if (method.equals("devices.delete")) { delete(op, target(p)); return; }
-        if (method.equals("devices.move")) { move(op, target(p), p.get("toIndex").getAsInt()); return; }
+        if (method.equals("devices.insert")) {
+            insert(op, p);
+            return;
+        }
+        if (method.equals("devices.layers.insert")) {
+            insertIntoLayer(op, p);
+            return;
+        }
+        if (method.equals("devices.delete")) {
+            delete(op, target(p));
+            return;
+        }
+        if (method.equals("devices.move")) {
+            move(op, target(p), p.get("toIndex").getAsInt());
+            return;
+        }
         Target target = target(p);
-        if (method.startsWith("devices.remote.")) { remoteWrite(op, method, p, target); return; }
+        if (method.startsWith("devices.remote.")) {
+            remoteWrite(op, method, p, target);
+            return;
+        }
         if (method.equals("devices.select")) {
             guard(op, target);
             s.requireSelectionFree();
@@ -456,7 +601,8 @@ final class DeviceModule implements HostModule {
 
     private boolean matches(Target target) {
         DeviceSources.Source root = target.source.identity;
-        return root.revision == target.generation && root.present()
+        return root.revision == target.generation
+                && root.present()
                 && s.devices[target.trackSlot].scrollPosition().get() == 0;
     }
 
@@ -478,16 +624,24 @@ final class DeviceModule implements HostModule {
         result.addProperty("enabled", device.isEnabled().get());
         result.addProperty("type", device.deviceType().get());
         result.addProperty("scope", "top_level_device_bank");
-        result.add("window", HostServices.window(s.devices[target.trackSlot].scrollPosition().get(),
-                HostServices.DEVICES, s.devices[target.trackSlot].itemCount().get()));
+        result.add(
+                "window",
+                HostServices.window(
+                        s.devices[target.trackSlot].scrollPosition().get(),
+                        HostServices.DEVICES,
+                        s.devices[target.trackSlot].itemCount().get()));
         result.addProperty("remoteControlsAvailable", true);
         result.addProperty("nameWritable", false);
         return result;
     }
 
     private void observeEnabled(HostOperation op, Target target, boolean enabled, long sequence, long end) {
-        if (!matches(target)) { uncertain(op, "target_changed_after_dispatch"); return; }
-        if (target.source.enabledSequence > sequence && target.source.device.isEnabled().get() == enabled) {
+        if (!matches(target)) {
+            uncertain(op, "target_changed_after_dispatch");
+            return;
+        }
+        if (target.source.enabledSequence > sequence
+                && target.source.device.isEnabled().get() == enabled) {
             JsonObject result = metadata(target);
             result.addProperty("verification", "observer_after_write");
             op.result.complete(result);
@@ -511,10 +665,21 @@ final class DeviceModule implements HostModule {
         final String contextLost;
         final JsonObject extra = new JsonObject();
 
-        Edit(String trackId, int slot, DeviceChainEdit.View view, DeviceChainEdit.Plan plan, long[] prefixRevisions,
-             java.util.function.BooleanSupplier context, String contextLost) {
-            this.trackId = trackId; this.slot = slot; this.view = view; this.plan = plan;
-            this.prefixRevisions = prefixRevisions; this.context = context; this.contextLost = contextLost;
+        Edit(
+                String trackId,
+                int slot,
+                DeviceChainEdit.View view,
+                DeviceChainEdit.Plan plan,
+                long[] prefixRevisions,
+                java.util.function.BooleanSupplier context,
+                String contextLost) {
+            this.trackId = trackId;
+            this.slot = slot;
+            this.view = view;
+            this.plan = plan;
+            this.prefixRevisions = prefixRevisions;
+            this.context = context;
+            this.contextLost = contextLost;
         }
     }
 
@@ -526,33 +691,55 @@ final class DeviceModule implements HostModule {
         TopState state = captureTop(t, count, "Device count or bank window differs from expectedDeviceCount.");
         int anchor = -1, index;
         switch (position) {
-            case "start": index = 0; break;
-            case "end": index = count; break;
+            case "start":
+                index = 0;
+                break;
+            case "end":
+                index = count;
+                break;
             default:
                 anchor = p.get("deviceIndex").getAsInt();
-                if (anchor >= count) throw HostServices.failure("target_not_found", "Anchor device index is beyond the observed device count.");
-                if (!sources[t][anchor].device.name().get().equals(p.get("expectedDeviceName").getAsString()))
-                    throw HostServices.failure("stale_target", "The device at index " + anchor + " is named \""
-                            + sources[t][anchor].device.name().get() + "\", not expectedDeviceName.");
+                if (anchor >= count)
+                    throw HostServices.failure(
+                            "target_not_found", "Anchor device index is beyond the observed device count.");
+                if (!sources[t][anchor]
+                        .device
+                        .name()
+                        .get()
+                        .equals(p.get("expectedDeviceName").getAsString()))
+                    throw HostServices.failure(
+                            "stale_target",
+                            "The device at index " + anchor + " is named \""
+                                    + sources[t][anchor].device.name().get() + "\", not expectedDeviceName.");
                 index = position.equals("before") ? anchor : anchor + 1;
         }
         s.check(op);
-        if (!s.trackMatches(id, (Track) s.tracks.getItemAt(t)) || !prefixMatches(t, state.revisions)
-                || s.devices[t].itemCount().get() != count || s.devices[t].scrollPosition().get() != 0)
+        if (!s.trackMatches(id, (Track) s.tracks.getItemAt(t))
+                || !prefixMatches(t, state.revisions)
+                || s.devices[t].itemCount().get() != count
+                || s.devices[t].scrollPosition().get() != 0)
             throw HostServices.failure("stale_context", "Insertion target changed before dispatch.");
         String kind = p.get("kind").getAsString();
         String value = p.get(kind.equals("file") ? "path" : "id").getAsString();
         InsertionPoint point;
         switch (position) {
-            case "start": point = ((Track) s.tracks.getItemAt(t)).startOfDeviceChainInsertionPoint(); break;
-            case "end": point = ends[t]; break;
-            case "before": point = sources[t][anchor].device.beforeDeviceInsertionPoint(); break;
-            default: point = sources[t][anchor].device.afterDeviceInsertionPoint();
+            case "start":
+                point = ((Track) s.tracks.getItemAt(t)).startOfDeviceChainInsertionPoint();
+                break;
+            case "end":
+                point = ends[t];
+                break;
+            case "before":
+                point = sources[t][anchor].device.beforeDeviceInsertionPoint();
+                break;
+            default:
+                point = sources[t][anchor].device.afterDeviceInsertionPoint();
         }
         Edit edit = topEdit(id, t, DeviceChainEdit.Plan.insert(index, state.before), state, index);
         edit.extra.addProperty("requestedIdentifierVerified", false);
         JsonObject placed = new JsonObject();
-        placed.addProperty("mode", position); placed.addProperty("index", index);
+        placed.addProperty("mode", position);
+        placed.addProperty("index", index);
         edit.extra.add("position", placed);
         op.dispatched = true;
         insertAt(point, kind, value);
@@ -561,12 +748,23 @@ final class DeviceModule implements HostModule {
 
     private static void insertAt(InsertionPoint point, String kind, String value) {
         switch (kind) {
-            case "bitwig": point.insertBitwigDevice(UUID.fromString(value)); break;
-            case "vst2": point.insertVST2Device(Integer.parseInt(value)); break;
-            case "vst3": point.insertVST3Device(value); break;
-            case "clap": point.insertCLAPDevice(value); break;
-            case "file": point.insertFile(value); break;
-            default: throw new IllegalStateException("Validated insertion kind changed");
+            case "bitwig":
+                point.insertBitwigDevice(UUID.fromString(value));
+                break;
+            case "vst2":
+                point.insertVST2Device(Integer.parseInt(value));
+                break;
+            case "vst3":
+                point.insertVST3Device(value);
+                break;
+            case "clap":
+                point.insertCLAPDevice(value);
+                break;
+            case "file":
+                point.insertFile(value);
+                break;
+            default:
+                throw new IllegalStateException("Validated insertion kind changed");
         }
     }
 
@@ -579,29 +777,41 @@ final class DeviceModule implements HostModule {
         LayerView view = new LayerView(layer);
         if (view.count() != count)
             throw HostServices.failure("stale_context", "Layer child count differs from expectedChildCount.");
-        DeviceChainEdit.Before before = DeviceChainEdit.Before.capture(view,
-                "Layer child count and window contents disagree.");
+        DeviceChainEdit.Before before =
+                DeviceChainEdit.Before.capture(view, "Layer child count and window contents disagree.");
         boolean start = p.has("position") && p.get("position").getAsString().equals("start");
         s.check(op);
         String trackId = root.track.id, rootName = root.name;
         java.util.function.BooleanSupplier context = () -> Boolean.TRUE.equals(root.exists)
-                && root.name.equals(rootName) && root.track.id.equals(trackId)
-                && Boolean.TRUE.equals(layer.exists) && layerId.equals(layer.id);
-        if (!context.getAsBoolean()) throw HostServices.failure("stale_context", "Layer target changed before dispatch.");
+                && root.name.equals(rootName)
+                && root.track.id.equals(trackId)
+                && Boolean.TRUE.equals(layer.exists)
+                && layerId.equals(layer.id);
+        if (!context.getAsBoolean())
+            throw HostServices.failure("stale_context", "Layer target changed before dispatch.");
         String kind = p.get("kind").getAsString();
         String value = p.get(kind.equals("file") ? "path" : "id").getAsString();
-        Edit edit = new Edit(trackId, root.track.slot, view, DeviceChainEdit.Plan.insert(start ? 0 : count, before),
-                null, context, "layer_context_changed_after_dispatch");
+        Edit edit = new Edit(
+                trackId,
+                root.track.slot,
+                view,
+                DeviceChainEdit.Plan.insert(start ? 0 : count, before),
+                null,
+                context,
+                "layer_context_changed_after_dispatch");
         edit.extra.addProperty("requestedIdentifierVerified", false);
         edit.extra.add("parent", parent.deepCopy());
         edit.extra.addProperty("layerId", layerId);
         edit.extra.addProperty("layerName", layer.name);
         JsonObject placed = new JsonObject();
-        placed.addProperty("mode", start ? "start" : "end"); placed.addProperty("index", edit.plan.index);
+        placed.addProperty("mode", start ? "start" : "end");
+        placed.addProperty("index", edit.plan.index);
         edit.extra.add("position", placed);
         op.dispatched = true;
-        insertAt(start ? layer.proxy.startOfDeviceChainInsertionPoint() : layer.proxy.endOfDeviceChainInsertionPoint(),
-                kind, value);
+        insertAt(
+                start ? layer.proxy.startOfDeviceChainInsertionPoint() : layer.proxy.endOfDeviceChainInsertionPoint(),
+                kind,
+                value);
         observeEdit(op, edit, observationEnd(op));
     }
 
@@ -633,7 +843,8 @@ final class DeviceModule implements HostModule {
         moved.addProperty("toIndex", to);
         edit.extra.add("moved", moved);
         // Moving up lands after the device at `to`, moving down lands before it: the device ends at index `to`.
-        InsertionPoint point = to > from ? sources[t][to].device.afterDeviceInsertionPoint()
+        InsertionPoint point = to > from
+                ? sources[t][to].device.afterDeviceInsertionPoint()
                 : sources[t][to].device.beforeDeviceInsertionPoint();
         op.dispatched = true;
         point.moveDevices(target.source.device);
@@ -652,11 +863,15 @@ final class DeviceModule implements HostModule {
         if (s.devices[t].scrollPosition().get() != 0 || (expectedCount >= 0 && count != expectedCount))
             throw HostServices.failure("stale_context", staleMessage);
         if (count > HostServices.DEVICES)
-            throw HostServices.failure("outside_window", "The chain is longer than the 16-device window; only inserts at a bounded count are supported.");
+            throw HostServices.failure(
+                    "outside_window",
+                    "The chain is longer than the 16-device window; only inserts at a bounded count are supported.");
         long[] revisions = new long[count];
         for (int d = 0; d < HostServices.DEVICES; d++) {
             Source source = sources[t][d];
-            if (d < count && source.identity.exists != null && source.device.exists().get()
+            if (d < count
+                    && source.identity.exists != null
+                    && source.device.exists().get()
                     && source.device.position().get() != d)
                 throw HostServices.failure("stale_context", "Device count and bank contents disagree.");
             if (d < count) revisions[d] = source.identity.revision;
@@ -666,24 +881,36 @@ final class DeviceModule implements HostModule {
 
     private Edit topEdit(String trackId, int t, DeviceChainEdit.Plan plan, TopState state, int fixedPrefix) {
         long[] prefix = java.util.Arrays.copyOf(state.revisions, Math.min(fixedPrefix, state.revisions.length));
-        return new Edit(trackId, t, new TopView(t), plan, prefix,
-                () -> s.trackMatches(trackId, (Track) s.tracks.getItemAt(t)) && s.devices[t].scrollPosition().get() == 0,
+        return new Edit(
+                trackId,
+                t,
+                new TopView(t),
+                plan,
+                prefix,
+                () -> s.trackMatches(trackId, (Track) s.tracks.getItemAt(t))
+                        && s.devices[t].scrollPosition().get() == 0,
                 "insertion_track_or_window_changed");
     }
 
     private boolean prefixMatches(int t, long[] prefix) {
         for (int d = 0; d < prefix.length; d++) {
             Source source = sources[t][d];
-            if (source.identity.revision != prefix[d] || !source.device.exists().get() || source.device.position().get() != d)
-                return false;
+            if (source.identity.revision != prefix[d]
+                    || !source.device.exists().get()
+                    || source.device.position().get() != d) return false;
         }
         return true;
     }
 
     private void observeEdit(HostOperation op, Edit edit, long end) {
-        if (!edit.context.getAsBoolean()) { uncertain(op, edit.contextLost); return; }
-        DeviceChainEdit.Outcome outcome = edit.prefixRevisions != null && !prefixMatches(edit.slot, edit.prefixRevisions)
-                ? DeviceChainEdit.Outcome.ambiguous() : DeviceChainEdit.observe(edit.view, edit.plan);
+        if (!edit.context.getAsBoolean()) {
+            uncertain(op, edit.contextLost);
+            return;
+        }
+        DeviceChainEdit.Outcome outcome =
+                edit.prefixRevisions != null && !prefixMatches(edit.slot, edit.prefixRevisions)
+                        ? DeviceChainEdit.Outcome.ambiguous()
+                        : DeviceChainEdit.observe(edit.view, edit.plan);
         if (outcome.pending && System.nanoTime() < end) {
             s.schedule(op, () -> observeEdit(op, edit, end), 25);
             return;
@@ -695,9 +922,13 @@ final class DeviceModule implements HostModule {
         DeviceChainEdit.View view = edit.view;
         DeviceChainEdit.Plan plan = edit.plan;
         boolean insert = plan.kind == DeviceChainEdit.INSERT;
-        String verification = override != null ? override : outcome.pending
-                ? (insert ? "insertion_not_observed" : plan.kind == DeviceChainEdit.DELETE ? "deletion_not_observed"
-                        : "move_not_observed") : outcome.verification;
+        String verification = override != null
+                ? override
+                : outcome.pending
+                        ? (insert
+                                ? "insertion_not_observed"
+                                : plan.kind == DeviceChainEdit.DELETE ? "deletion_not_observed" : "move_not_observed")
+                        : outcome.verification;
         JsonObject result = HostServices.observed();
         result.addProperty("status", outcome.ok ? "observed" : "dispatched");
         result.addProperty("verification", verification);
@@ -710,48 +941,136 @@ final class DeviceModule implements HostModule {
         for (String key : edit.extra.keySet()) result.add(key, edit.extra.get(key));
         if (insert) {
             boolean identified = outcome.ok && plan.index < view.window();
-            result.add("inserted", identified
-                    ? DeviceChainEdit.summary(plan.index, view.name(plan.index), view.type(plan.index)) : JsonNull.INSTANCE);
+            result.add(
+                    "inserted",
+                    identified
+                            ? DeviceChainEdit.summary(plan.index, view.name(plan.index), view.type(plan.index))
+                            : JsonNull.INSTANCE);
         }
         op.result.complete(result);
     }
 
     private final class TopView implements DeviceChainEdit.View {
         final int t;
-        TopView(int t) { this.t = t; }
-        @Override public int count() { return s.devices[t].itemCount().get(); }
-        @Override public int window() { return HostServices.DEVICES; }
-        @Override public long countSequence() { return countSequence[t]; }
-        @Override public boolean known(int slot) { return sources[t][slot].identity.exists != null; }
-        @Override public boolean exists(int slot) { return sources[t][slot].device.exists().get(); }
-        @Override public boolean ready(int slot) { return sources[t][slot].ready() && !sources[t][slot].device.name().get().isEmpty(); }
-        @Override public String name(int slot) { return sources[t][slot].device.name().get(); }
-        @Override public String type(int slot) { return sources[t][slot].device.deviceType().get(); }
-        @Override public long nameSequence(int slot) { return sources[t][slot].identity.nameSequence; }
+
+        TopView(int t) {
+            this.t = t;
+        }
+
+        @Override
+        public int count() {
+            return s.devices[t].itemCount().get();
+        }
+
+        @Override
+        public int window() {
+            return HostServices.DEVICES;
+        }
+
+        @Override
+        public long countSequence() {
+            return countSequence[t];
+        }
+
+        @Override
+        public boolean known(int slot) {
+            return sources[t][slot].identity.exists != null;
+        }
+
+        @Override
+        public boolean exists(int slot) {
+            return sources[t][slot].device.exists().get();
+        }
+
+        @Override
+        public boolean ready(int slot) {
+            return sources[t][slot].ready()
+                    && !sources[t][slot].device.name().get().isEmpty();
+        }
+
+        @Override
+        public String name(int slot) {
+            return sources[t][slot].device.name().get();
+        }
+
+        @Override
+        public String type(int slot) {
+            return sources[t][slot].device.deviceType().get();
+        }
+
+        @Override
+        public long nameSequence(int slot) {
+            return sources[t][slot].identity.nameSequence;
+        }
     }
 
     /** A layer's child window: two observed slots, with the layer's own total count. */
     private static final class LayerView implements DeviceChainEdit.View {
         final DeviceSources.Layer layer;
-        LayerView(DeviceSources.Layer layer) { this.layer = layer; }
-        private DeviceSources.Source child(int slot) { return layer.children[slot]; }
-        @Override public int count() { return layer.window.count == null ? -1 : layer.window.count; }
-        @Override public int window() { return DeviceSources.CHILDREN; }
-        @Override public long countSequence() { return layer.window.countSequence; }
-        @Override public boolean known(int slot) { return child(slot).exists != null; }
-        @Override public boolean exists(int slot) { return Boolean.TRUE.equals(child(slot).exists); }
-        @Override public boolean ready(int slot) { return child(slot).metadataReady() && !child(slot).name.isEmpty(); }
-        @Override public String name(int slot) { return child(slot).name == null ? "" : child(slot).name; }
-        @Override public String type(int slot) { return child(slot).type == null ? "" : child(slot).type; }
-        @Override public long nameSequence(int slot) { return child(slot).nameSequence; }
+
+        LayerView(DeviceSources.Layer layer) {
+            this.layer = layer;
+        }
+
+        private DeviceSources.Source child(int slot) {
+            return layer.children[slot];
+        }
+
+        @Override
+        public int count() {
+            return layer.window.count == null ? -1 : layer.window.count;
+        }
+
+        @Override
+        public int window() {
+            return DeviceSources.CHILDREN;
+        }
+
+        @Override
+        public long countSequence() {
+            return layer.window.countSequence;
+        }
+
+        @Override
+        public boolean known(int slot) {
+            return child(slot).exists != null;
+        }
+
+        @Override
+        public boolean exists(int slot) {
+            return Boolean.TRUE.equals(child(slot).exists);
+        }
+
+        @Override
+        public boolean ready(int slot) {
+            return child(slot).metadataReady() && !child(slot).name.isEmpty();
+        }
+
+        @Override
+        public String name(int slot) {
+            return child(slot).name == null ? "" : child(slot).name;
+        }
+
+        @Override
+        public String type(int slot) {
+            return child(slot).type == null ? "" : child(slot).type;
+        }
+
+        @Override
+        public long nameSequence(int slot) {
+            return child(slot).nameSequence;
+        }
     }
 
     private static final class TopState {
         final int count;
         final long[] revisions;
         final DeviceChainEdit.Before before;
+
         TopState(int count, long[] revisions, DeviceChainEdit.Before before) {
-            this.count = count; this.revisions = revisions; this.before = before;
+            this.count = count;
+            this.revisions = revisions;
+            this.before = before;
         }
     }
 
@@ -767,7 +1086,9 @@ final class DeviceModule implements HostModule {
         op.result.complete(result);
     }
 
-    private static JsonObject catalog() { return catalog(System.getProperty("installationRoot")); }
+    private static JsonObject catalog() {
+        return catalog(System.getProperty("installationRoot"));
+    }
 
     /** Every factory device file under the installation, with category and description read from its localization resources at runtime. */
     static JsonObject catalog(String installation) {
@@ -789,10 +1110,15 @@ final class DeviceModule implements HostModule {
             Path directory = root.resolve("Library").resolve("devices").normalize();
             DeviceTexts texts = DeviceTexts.read(root.resolve("resources").resolve("localization"));
             java.util.List<Path> files = new java.util.ArrayList<>();
-            try (java.util.stream.Stream<Path> stream = Files.isDirectory(directory) ? Files.list(directory) : java.util.stream.Stream.<Path>empty()) {
-                stream.filter(f -> f.getFileName().toString().endsWith(".bwdevice") && Files.isRegularFile(f)).forEach(files::add);
-            } catch (java.io.IOException error) { throw new java.io.UncheckedIOException(error); }
-            files.sort(java.util.Comparator.comparing(f -> f.getFileName().toString().toLowerCase(java.util.Locale.ROOT)));
+            try (java.util.stream.Stream<Path> stream =
+                    Files.isDirectory(directory) ? Files.list(directory) : java.util.stream.Stream.<Path>empty()) {
+                stream.filter(f -> f.getFileName().toString().endsWith(".bwdevice") && Files.isRegularFile(f))
+                        .forEach(files::add);
+            } catch (java.io.IOException error) {
+                throw new java.io.UncheckedIOException(error);
+            }
+            files.sort(java.util.Comparator.comparing(
+                    f -> f.getFileName().toString().toLowerCase(java.util.Locale.ROOT)));
             for (Path path : files) {
                 String file = path.getFileName().toString();
                 String name = file.substring(0, file.length() - ".bwdevice".length());
@@ -820,19 +1146,32 @@ final class DeviceModule implements HostModule {
 
     /** Name, category and description read from Device-descriptions/Categories resources; absent files only drop the text. */
     static final class DeviceTexts {
-        private final java.util.Map<String, String> descriptions = new java.util.HashMap<>(), categories = new java.util.HashMap<>();
+        private final java.util.Map<String, String> descriptions = new java.util.HashMap<>(),
+                categories = new java.util.HashMap<>();
         private final java.util.Map<String, String> displayCategories = new java.util.HashMap<>();
         private boolean available;
-        boolean available() { return available; }
-        String description(String deviceName) { return descriptions.get(key(deviceName)); }
-        String category(String deviceName) { return categories.get(key(deviceName)); }
+
+        boolean available() {
+            return available;
+        }
+
+        String description(String deviceName) {
+            return descriptions.get(key(deviceName));
+        }
+
+        String category(String deviceName) {
+            return categories.get(key(deviceName));
+        }
         /** Word-order-insensitive: the file "v9 Hat Open" is resource "v9_open_hat". */
         private static String key(String name) {
             String[] words = name.toLowerCase(java.util.Locale.ROOT).split("[\\s_]+");
             java.util.Arrays.sort(words);
             return String.join(" ", words);
         }
-        private static String squash(String text) { return text.toLowerCase(java.util.Locale.ROOT).replaceAll("[^a-z0-9]", ""); }
+
+        private static String squash(String text) {
+            return text.toLowerCase(java.util.Locale.ROOT).replaceAll("[^a-z0-9]", "");
+        }
 
         static DeviceTexts read(Path localization) {
             DeviceTexts texts = new DeviceTexts();
@@ -846,14 +1185,22 @@ final class DeviceModule implements HostModule {
                 Path categoryFile = localization.resolve("Categories-resources.properties");
                 if (Files.isRegularFile(categoryFile)) {
                     java.util.Properties display = new java.util.Properties();
-                    display.load(new java.io.StringReader(new String(Files.readAllBytes(categoryFile), java.nio.charset.StandardCharsets.UTF_8)));
-                    for (String key : display.stringPropertyNames()) texts.displayCategories.put(squash(key), display.getProperty(key));
+                    display.load(new java.io.StringReader(
+                            new String(Files.readAllBytes(categoryFile), java.nio.charset.StandardCharsets.UTF_8)));
+                    for (String key : display.stringPropertyNames())
+                        texts.displayCategories.put(squash(key), display.getProperty(key));
                 }
                 String header = null;
                 for (String line : text.split("\r?\n")) {
-                    java.util.regex.Matcher heading = java.util.regex.Pattern.compile("^#([a-z_-]+)\\.\\s*$").matcher(line);
-                    if (heading.matches()) { header = heading.group(1); continue; }
-                    java.util.regex.Matcher entry = java.util.regex.Pattern.compile("^device\\.([^=:\\s]+)\\.desc\\s*[=:]").matcher(line);
+                    java.util.regex.Matcher heading = java.util.regex.Pattern.compile("^#([a-z_-]+)\\.\\s*$")
+                            .matcher(line);
+                    if (heading.matches()) {
+                        header = heading.group(1);
+                        continue;
+                    }
+                    java.util.regex.Matcher entry = java.util.regex.Pattern.compile(
+                                    "^device\\.([^=:\\s]+)\\.desc\\s*[=:]")
+                            .matcher(line);
                     if (!entry.find()) continue;
                     String id = entry.group(1), description = values.getProperty("device." + id + ".desc");
                     String k = key(id);
@@ -862,10 +1209,12 @@ final class DeviceModule implements HostModule {
                 }
                 texts.available = !texts.descriptions.isEmpty();
             } catch (java.io.IOException | RuntimeException error) {
-                texts.descriptions.clear(); texts.categories.clear();
+                texts.descriptions.clear();
+                texts.categories.clear();
             }
             return texts;
         }
+
         private String displayCategory(String header) {
             String flat = squash(header);
             String exact = displayCategories.get(flat);
@@ -889,8 +1238,10 @@ final class DeviceModule implements HostModule {
         final int deviceIndex;
         CursorRemoteControlsPage page;
         final RemoteControl[] controls = new RemoteControl[8];
-        final boolean[] controlExistsObserved = new boolean[8], controlNamesObserved = new boolean[8],
-                controlMappingObserved = new boolean[8], controlValuesObserved = new boolean[8];
+        final boolean[] controlExistsObserved = new boolean[8],
+                controlNamesObserved = new boolean[8],
+                controlMappingObserved = new boolean[8],
+                controlValuesObserved = new boolean[8];
         final boolean[] controlRebindPending = new boolean[8], controlValuesFresh = new boolean[8];
         final boolean[] controlPresenceEstablished = new boolean[8], lastControlExists = new boolean[8];
         final long[] controlSequences = new long[8];
@@ -900,11 +1251,17 @@ final class DeviceModule implements HostModule {
         int lastPageIndex;
         long enabledSequence;
         boolean enabledObserved;
+
         Source(DeviceSources.Source identity, int deviceIndex) {
-            this.identity = identity; this.track = identity.track.proxy;
-            this.device = identity.device; this.deviceIndex = deviceIndex;
+            this.identity = identity;
+            this.track = identity.track.proxy;
+            this.device = identity.device;
+            this.deviceIndex = deviceIndex;
         }
-        boolean ready() { return identity.metadataReady() && enabledObserved; }
+
+        boolean ready() {
+            return identity.metadataReady() && enabledObserved;
+        }
     }
 
     private static final class Target {

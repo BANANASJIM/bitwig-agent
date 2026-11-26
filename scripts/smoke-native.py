@@ -12,6 +12,7 @@ Requires Linux /proc, xprop and the existing Python development environment.
 A matching title/project name is NOT proof of the loaded full file path; exact
 file identity and actual reopen/music/UI behavior require independent evidence.
 """
+
 import argparse
 import asyncio
 from contextlib import contextmanager
@@ -66,7 +67,9 @@ class NativeOutcomeGuard:
             yield
         except BaseException as error:
             if not self.stopped:
-                self._reason = f"Native operation or evidence failed ({type(error).__name__}); coordinator inspection required."
+                self._reason = (
+                    f"Native operation or evidence failed ({type(error).__name__}); coordinator inspection required."
+                )
             raise
 
     def observe(self, envelope, *, allow_dispatch_only=False):
@@ -85,11 +88,13 @@ class NativeOutcomeGuard:
             self.stop("Native result has unknown completion; observed field values do not acknowledge the write.")
         if result.get("topologyQuarantined") is True or result.get("topologyAdmissionBlocked") is True:
             self.stop("Native topology admission is blocked; coordinator inspection is required.")
-        dispatch_only = (allow_dispatch_only and result.get("status") == "dispatched"
-                         and result.get("completion") == "not_observed")
+        dispatch_only = (
+            allow_dispatch_only and result.get("status") == "dispatched" and result.get("completion") == "not_observed"
+        )
         if result.get("status") != "observed" and not dispatch_only:
             self.stop("Native result is not observed or an explicitly expected dispatch-only operation.")
         return envelope
+
 
 def has_owned_loopback_listener(table, port, owned_sockets, *, byteorder=sys.byteorder):
     """Read Linux /proc/net/tcp{,6}: each address word is native-endian u32."""
@@ -103,8 +108,9 @@ def has_owned_loopback_listener(table, port, owned_sockets, *, byteorder=sys.byt
             address, port_hex = row[1].split(":")
             if len(address) not in (8, 32) or int(port_hex, 16) != port:
                 continue
-            packed = b"".join(int(address[index:index + 8], 16).to_bytes(4, byteorder)
-                              for index in range(0, len(address), 8))
+            packed = b"".join(
+                int(address[index : index + 8], 16).to_bytes(4, byteorder) for index in range(0, len(address), 8)
+            )
         except (ValueError, OverflowError):
             continue
         # A Java IPv4 listener may appear as an IPv4-mapped IPv6 socket. Neither
@@ -112,7 +118,6 @@ def has_owned_loopback_listener(table, port, owned_sockets, *, byteorder=sys.byt
         if packed in (loopback, mapped_loopback):
             return True
     return False
-
 
 
 class NativeTarget:
@@ -124,7 +129,9 @@ class NativeTarget:
             raise ValueError("Explicit isolated_display_confirmed=true is required")
         if not isinstance(config["display"], str) or not re.fullmatch(r":[1-9][0-9]*(?:\.[0-9]+)?", config["display"]):
             raise ValueError("Explicit non-default local X display such as :1 is required")
-        if not isinstance(config["window_id"], str) or not re.fullmatch(r"0x[0-9a-fA-F]+|[1-9][0-9]*", config["window_id"]):
+        if not isinstance(config["window_id"], str) or not re.fullmatch(
+            r"0x[0-9a-fA-F]+|[1-9][0-9]*", config["window_id"]
+        ):
             raise ValueError("Explicit X window ID is required")
         if type(config["pid"]) is not int or config["pid"] <= 1:
             raise ValueError("pid must identify the existing Bitwig process")
@@ -159,16 +166,30 @@ class NativeTarget:
         if "bitwig" not in command.lower():
             raise RuntimeError("Target process command line does not identify Bitwig")
         window = subprocess.run(
-            ["xprop", "-display", self.config["display"], "-id", self.config["window_id"],
-             "_NET_WM_PID", "WM_CLASS", "_NET_WM_NAME", "WM_NAME"],
-            check=True, capture_output=True, text=True, timeout=5,
+            [
+                "xprop",
+                "-display",
+                self.config["display"],
+                "-id",
+                self.config["window_id"],
+                "_NET_WM_PID",
+                "WM_CLASS",
+                "_NET_WM_NAME",
+                "WM_NAME",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=5,
         ).stdout
         owner = re.search(r"_NET_WM_PID\([^)]*\)\s*=\s*(\d+)", window)
         if not owner or int(owner.group(1)) != self.config["pid"]:
             raise RuntimeError("The explicitly targeted window is not owned by the supplied PID")
         title_lines = [line for line in window.splitlines() if line.startswith(("WM_NAME(", "_NET_WM_NAME("))]
         class_lines = [line for line in window.splitlines() if line.startswith("WM_CLASS(")]
-        if not any("bitwig" in line.lower() for line in class_lines) or not any(self.fixture.stem in line for line in title_lines):
+        if not any("bitwig" in line.lower() for line in class_lines) or not any(
+            self.fixture.stem in line for line in title_lines
+        ):
             raise RuntimeError("Window class/title does not identify Bitwig and the saved fixture name")
         owned_sockets = set()
         for fd in (self.process / "fd").iterdir():
@@ -185,17 +206,22 @@ class NativeTarget:
                 tables.append(path.read_text())
             except FileNotFoundError:
                 continue  # A kernel may have IPv6 disabled.
-        if not any(has_owned_loopback_listener(table, self.config["port"], owned_sockets)
-                   for table in tables):
+        if not any(has_owned_loopback_listener(table, self.config["port"], owned_sockets) for table in tables):
             raise RuntimeError("Requested IPv4 loopback listener is not owned by the supplied host PID")
-        return {"processStartTicks": self.start_time, "commandLine": command, "windowProperties": window,
-                "listener": f"127.0.0.1:{self.config['port']}", "pid": self.config["pid"]}
+        return {
+            "processStartTicks": self.start_time,
+            "commandLine": command,
+            "windowProperties": window,
+            "listener": f"127.0.0.1:{self.config['port']}",
+            "pid": self.config["pid"],
+        }
 
 
 async def probe(target, report):
     env = dict(os.environ, BITWIG_AGENT_PORT=str(target.config["port"]))
-    server = StdioServerParameters(command=sys.executable,
-                                  args=["-c", "from bitwig_agent.server import main; main()"], env=env)
+    server = StdioServerParameters(
+        command=sys.executable, args=["-c", "from bitwig_agent.server import main; main()"], env=env
+    )
     calls_path = target.artifacts / "calls.jsonl"
     raw_results_path = target.artifacts / "mcp-results.jsonl"
     outcome_guard = NativeOutcomeGuard()
@@ -211,14 +237,22 @@ async def probe(target, report):
                     target.guard()
                     arguments = params or {}
                     response = await session.call_tool(method, arguments)
-                    raw_record = {"time": datetime.now(timezone.utc).isoformat(), "method": method,
-                                  "params": arguments,
-                                  "response": response.model_dump(mode="json", by_alias=True)}
+                    raw_record = {
+                        "time": datetime.now(timezone.utc).isoformat(),
+                        "method": method,
+                        "params": arguments,
+                        "response": response.model_dump(mode="json", by_alias=True),
+                    }
                     with raw_results_path.open("a", encoding="utf-8") as output:
                         output.write(json.dumps(raw_record, allow_nan=False) + "\n")
                     body = response.structured_content or json.loads(response.content[0].text)
-                    record = {"time": datetime.now(timezone.utc).isoformat(), "method": method,
-                              "params": arguments, "isError": response.is_error, "response": body}
+                    record = {
+                        "time": datetime.now(timezone.utc).isoformat(),
+                        "method": method,
+                        "params": arguments,
+                        "isError": response.is_error,
+                        "response": body,
+                    }
                     with calls_path.open("a", encoding="utf-8") as output:
                         output.write(json.dumps(record, ensure_ascii=False, allow_nan=False) + "\n")
                     outcome_guard.observe(body)
@@ -241,7 +275,9 @@ async def probe(target, report):
             report["trackWindow"] = tracks.get("window")
             await call("devices.catalog")
             await call("actions.list")
-            report["deviceReadScope"] = "First observed top-level device per returned track; not all devices or private Grid topology"
+            report["deviceReadScope"] = (
+                "First observed top-level device per returned track; not all devices or private Grid topology"
+            )
             device_count = 0
             for track in tracks["tracks"]:
                 track_params = {"trackId": track["trackId"]}
@@ -250,7 +286,11 @@ async def probe(target, report):
                 devices = await call("devices.list", track_params)
                 if devices["devices"]:
                     device = devices["devices"][0]
-                    params = {**track_params, "deviceIndex": device["deviceIndex"], "expectedDeviceName": device["name"]}
+                    params = {
+                        **track_params,
+                        "deviceIndex": device["deviceIndex"],
+                        "expectedDeviceName": device["name"],
+                    }
                     await call("devices.get", params)
                     await call("devices.remote.get", params)
                     await call("parameters.list", params)
@@ -283,12 +323,17 @@ def main():
         parser.error("--allow-native is required; no host interaction occurred")
     target = NativeTarget(json.loads(args.config.read_text(encoding="utf-8")))
     target.artifacts.mkdir(parents=True, exist_ok=False)
-    report = {"scope": "read_only_native_preflight_not_E2E_acceptance", "status": "running",
-              "config": target.config, "fixtureSha256Before": target.fixture_hash,
-              "exactLoadedFileIdentity": "unverified: path supplied; title and API expose only project name",
-              "guardBefore": target.initial_guard, "notExercised": [
-                  "Mutations, audio/music quality, GUI behavior, private Grid graph APIs and actual save/reopen"
-              ]}
+    report = {
+        "scope": "read_only_native_preflight_not_E2E_acceptance",
+        "status": "running",
+        "config": target.config,
+        "fixtureSha256Before": target.fixture_hash,
+        "exactLoadedFileIdentity": "unverified: path supplied; title and API expose only project name",
+        "guardBefore": target.initial_guard,
+        "notExercised": [
+            "Mutations, audio/music quality, GUI behavior, private Grid graph APIs and actual save/reopen"
+        ],
+    }
     try:
         asyncio.run(asyncio.wait_for(probe(target, report), timeout=150))
         report["guardAfter"] = target.guard()
@@ -304,7 +349,9 @@ def main():
         return 1
     finally:
         report["recordedAt"] = datetime.now(timezone.utc).isoformat()
-        (target.artifacts / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        (target.artifacts / "report.json").write_text(
+            json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
         print(f"Native preflight {report['status']}; artifacts: {target.artifacts}; NOT E2E acceptance")
 
 

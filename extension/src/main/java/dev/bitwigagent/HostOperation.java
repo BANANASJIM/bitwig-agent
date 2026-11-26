@@ -8,8 +8,10 @@ final class HostOperation {
     final long deadline;
     /** Applied to a successful result at completion (e.g. cross-cutting warnings); the future stays the caller's cancellation handle. */
     volatile java.util.function.Consumer<JsonObject> decorate;
+
     final CompletableFuture<JsonObject> result = new CompletableFuture<JsonObject>() {
-        @Override public boolean complete(JsonObject value) {
+        @Override
+        public boolean complete(JsonObject value) {
             java.util.function.Consumer<JsonObject> d = decorate;
             if (d != null && value != null && !isDone()) d.accept(value);
             return super.complete(value);
@@ -18,7 +20,9 @@ final class HostOperation {
     volatile boolean dispatched;
     volatile HostServices.SafetyObservation safetyAtEnqueue;
 
-    HostOperation(long deadline) { this.deadline = deadline; }
+    HostOperation(long deadline) {
+        this.deadline = deadline;
+    }
 
     void fail(Throwable error) {
         if (dispatched) {
@@ -26,8 +30,10 @@ final class HostOperation {
                 RpcException rpc = (RpcException) error;
                 error = new RpcException(rpc.code, rpc.getMessage(), "unknown");
             } else {
-                error = new RpcException("internal_error",
-                        "Failure after native dispatch; outcome unknown. Inspect state before another write.", "unknown");
+                error = new RpcException(
+                        "internal_error",
+                        "Failure after native dispatch; outcome unknown. Inspect state before another write.",
+                        "unknown");
             }
         }
         result.completeExceptionally(error);

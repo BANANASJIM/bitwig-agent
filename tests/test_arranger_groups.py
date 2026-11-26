@@ -16,26 +16,53 @@ def test_group_keeps_explicit_track_order_and_optional_name():
     assert validate_call("tracks.group", {"trackIds": [TRACK]})[0] == {"trackIds": [TRACK]}
 
 
-@pytest.mark.parametrize("args", [
-    {"trackIds": []}, {"trackIds": [TRACK, TRACK]}, {"trackIds": [TRACK, TRACK.upper()]},
-    {"trackIds": ["not-a-uuid"]}, {"trackIds": [f"00000000-0000-0000-0000-{i:012d}" for i in range(17)]},
-    {"trackIds": [TRACK], "name": ""}, {"trackIds": [TRACK], "position": 0}, {"name": "Drums"}])
+@pytest.mark.parametrize(
+    "args",
+    [
+        {"trackIds": []},
+        {"trackIds": [TRACK, TRACK]},
+        {"trackIds": [TRACK, TRACK.upper()]},
+        {"trackIds": ["not-a-uuid"]},
+        {"trackIds": [f"00000000-0000-0000-0000-{i:012d}" for i in range(17)]},
+        {"trackIds": [TRACK], "name": ""},
+        {"trackIds": [TRACK], "position": 0},
+        {"name": "Drums"},
+    ],
+)
 def test_group_rejects_ambiguous_requests(args):
     with pytest.raises(ValidationError):
         validate_call("tracks.group", args)
 
 
 def test_arranger_create_with_notes_and_channel():
-    args = {**CREATE, "notes": [NOTE, {**NOTE, "beat": 1}, {**NOTE, "pitch": 64, "beat": 3.5, "durationBeats": 0.5}], "channel": 2}
+    args = {
+        **CREATE,
+        "notes": [NOTE, {**NOTE, "beat": 1}, {**NOTE, "pitch": 64, "beat": 3.5, "durationBeats": 0.5}],
+        "channel": 2,
+    }
     assert validate_call("arranger.clips.create", args)[0] == args
     assert validate_call("arranger.clips.create", {**CREATE, "lengthBeats": 1 / 128})[0]["lengthBeats"] == 1 / 128
 
 
-@pytest.mark.parametrize("changes", [
-    {"startBeats": -1}, {"lengthBeats": 0}, {"lengthBeats": 65537}, {"name": ""}, {"name": "x" * 129},
-    {"channel": 1}, {"notes": []}, {"notes": [{**NOTE, "op": "set"}]},
-    {"notes": [NOTE, {**NOTE, "beat": 0.5}]}, {"notes": [NOTE, NOTE]}, {"notes": [{**NOTE, "beat": 3.5}]},
-    {"notes": [{**NOTE, "beat": 0.001}]}, {"notes": [{**NOTE, "velocity": 0}]}, {"trackId": "track"}])
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"startBeats": -1},
+        {"lengthBeats": 0},
+        {"lengthBeats": 65537},
+        {"name": ""},
+        {"name": "x" * 129},
+        {"channel": 1},
+        {"notes": []},
+        {"notes": [{**NOTE, "op": "set"}]},
+        {"notes": [NOTE, {**NOTE, "beat": 0.5}]},
+        {"notes": [NOTE, NOTE]},
+        {"notes": [{**NOTE, "beat": 3.5}]},
+        {"notes": [{**NOTE, "beat": 0.001}]},
+        {"notes": [{**NOTE, "velocity": 0}]},
+        {"trackId": "track"},
+    ],
+)
 def test_arranger_create_rejects_invalid(changes):
     with pytest.raises(ValidationError):
         validate_call("arranger.clips.create", {**CREATE, **changes})
@@ -50,18 +77,29 @@ def test_arranger_copy_and_list():
             validate_call("arranger.clips.copyFromLauncher", {**copy, **bad})
 
 
-@pytest.mark.parametrize("op,payload", [("move", {"startBeats": 32}), ("resize", {"lengthBeats": 8}),
-                                        ("rename", {"name": "Chorus"}), ("delete", {})])
+@pytest.mark.parametrize(
+    "op,payload",
+    [("move", {"startBeats": 32}), ("resize", {"lengthBeats": 8}), ("rename", {"name": "Chorus"}), ("delete", {})],
+)
 def test_arranger_edit_ops_take_exactly_their_payload(op, payload):
     args = {**EDIT, "op": op, **payload}
     assert validate_call("arranger.clips.edit", args)[0] == args
     assert validate_call("arranger.clips.edit", {**args, "expectedName": ""})[0]["expectedName"] == ""
 
 
-@pytest.mark.parametrize("args", [
-    {**EDIT, "op": "move"}, {**EDIT, "op": "delete", "startBeats": 1}, {**EDIT, "op": "move", "startBeats": 1, "lengthBeats": 2},
-    {**EDIT, "op": "split"}, {**EDIT, "op": "rename", "name": ""}, {**EDIT, "op": "resize", "lengthBeats": 0},
-    {**EDIT, "clipIndex": 4096, "op": "delete"}, {**EDIT, "expectedName": "x" * 257, "op": "delete"}])
+@pytest.mark.parametrize(
+    "args",
+    [
+        {**EDIT, "op": "move"},
+        {**EDIT, "op": "delete", "startBeats": 1},
+        {**EDIT, "op": "move", "startBeats": 1, "lengthBeats": 2},
+        {**EDIT, "op": "split"},
+        {**EDIT, "op": "rename", "name": ""},
+        {**EDIT, "op": "resize", "lengthBeats": 0},
+        {**EDIT, "clipIndex": 4096, "op": "delete"},
+        {**EDIT, "expectedName": "x" * 257, "op": "delete"},
+    ],
+)
 def test_arranger_edit_rejects_invalid(args):
     with pytest.raises(ValidationError):
         validate_call("arranger.clips.edit", args)

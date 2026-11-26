@@ -81,7 +81,10 @@ def test_mono_reads_three_lu_below_dual_mono_and_one_channel_of_two_likewise(tmp
 
 
 def test_relative_gate_ignores_the_quiet_part(tmp_path):
-    loud, quiet = sine(-20, 997, 10), sine(-45, 997, 10)       # 25 dB apart: the quiet part is below the -10 LU relative gate
+    loud, quiet = (
+        sine(-20, 997, 10),
+        sine(-45, 997, 10),
+    )  # 25 dB apart: the quiet part is below the -10 LU relative gate
     both = loud + quiet
     write_float_wav(tmp_path / "g.wav", [both, both])
     out = analyze(tmp_path / "g.wav")
@@ -97,7 +100,7 @@ def test_absolute_gate_makes_silence_unmeasurable(tmp_path):
     assert out["integratedLufs"] is None and out["truePeakDbtp"] is None and out["gating"]["absoluteGated"] == 0
     quiet = sine(-90, 997, 3)
     write_float_wav(tmp_path / "q.wav", [quiet, quiet])
-    assert analyze(tmp_path / "q.wav")["integratedLufs"] is None   # below -70 LUFS
+    assert analyze(tmp_path / "q.wav")["integratedLufs"] is None  # below -70 LUFS
 
 
 def test_true_peak_finds_the_intersample_peak(tmp_path):
@@ -150,7 +153,9 @@ def test_skip_seconds_drops_the_warm_up(tmp_path):
 def test_five_one_weights_and_limits_are_reported(tmp_path):
     tone = sine(-20, 997, 4)
     silent = [0.0] * len(tone)
-    write_float_wav(tmp_path / "f.wav", [silent, silent, silent, tone, silent, silent])   # LFE only: excluded by the standard
+    write_float_wav(
+        tmp_path / "f.wav", [silent, silent, silent, tone, silent, silent]
+    )  # LFE only: excluded by the standard
     out = analyze(tmp_path / "f.wav")
     assert out["integratedLufs"] is None and out["channelWeights"] == [1.0, 1.0, 1.0, 0.0, 1.41, 1.41]
     write_float_wav(tmp_path / "f2.wav", [silent, silent, silent, silent, tone, silent])  # Ls: weight 1.41

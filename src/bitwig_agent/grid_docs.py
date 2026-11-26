@@ -24,13 +24,28 @@ _ESCAPES = {"n": "\n", "t": "\t", "r": "\r", "f": "\f"}
 ID_OVERRIDES: dict[str, str] = {}
 # Module display name -> extra Modules-resources key prefixes holding its port/parameter entries.
 PREFIX_ALIASES: dict[str, tuple[str, ...]] = {
-    "AD": ("ad_module",), "Array": ("array_module",), "Curves": ("curves-module",), "Key Quantize": ("by_scale",),
-    "Semitone Quantize": ("by_semitone",), "Logic Delay": ("gate_delay",), "Level": ("level_module",),
-    "Pitch": ("pitch_module",), "Ratio": ("ratio_module",), "Segments": ("segments-module",),
-    "Slopes": ("slopes-module",), "Transfer": ("transfer-module",), "Voice Stack Info": ("voice_info",),
-    "Voice Stack Mix": ("voice_mix",), "Voice Stack Tog": ("voice_tog",),
-    "Slope ↘": ("slope_↘\ufe0e",), "Sawtooth": ("saw",), "Ø Saw": ("saw",),
-    "Crossover-2": ("crossover",), "Crossover-3": ("crossover",), "Pitch → Freq": ("pitch→freq",), "Freq → Pitch": ("freq→pitch",),
+    "AD": ("ad_module",),
+    "Array": ("array_module",),
+    "Curves": ("curves-module",),
+    "Key Quantize": ("by_scale",),
+    "Semitone Quantize": ("by_semitone",),
+    "Logic Delay": ("gate_delay",),
+    "Level": ("level_module",),
+    "Pitch": ("pitch_module",),
+    "Ratio": ("ratio_module",),
+    "Segments": ("segments-module",),
+    "Slopes": ("slopes-module",),
+    "Transfer": ("transfer-module",),
+    "Voice Stack Info": ("voice_info",),
+    "Voice Stack Mix": ("voice_mix",),
+    "Voice Stack Tog": ("voice_tog",),
+    "Slope ↘": ("slope_↘\ufe0e",),
+    "Sawtooth": ("saw",),
+    "Ø Saw": ("saw",),
+    "Crossover-2": ("crossover",),
+    "Crossover-3": ("crossover",),
+    "Pitch → Freq": ("pitch→freq",),
+    "Freq → Pitch": ("freq→pitch",),
     "Poly → Mono": ("poly→mono",),
 }
 
@@ -91,8 +106,8 @@ def _unescape(text: str) -> str:
             i += 1
             continue
         nxt = text[i + 1]
-        if nxt == "u" and re.fullmatch(r"[0-9a-fA-F]{4}", text[i + 2:i + 6]):
-            out.append(chr(int(text[i + 2:i + 6], 16)))
+        if nxt == "u" and re.fullmatch(r"[0-9a-fA-F]{4}", text[i + 2 : i + 6]):
+            out.append(chr(int(text[i + 2 : i + 6], 16)))
             i += 6
             continue
         out.append(_ESCAPES.get(nxt, nxt))
@@ -130,8 +145,10 @@ def localization_dir(root: str | os.PathLike | None = None) -> Path:
         for directory in (path / "resources" / "localization", path / "localization"):
             if (directory / "Module-descriptions-resources.properties").is_file():
                 return directory
-    raise DocsUnavailable("Bitwig localization resources not found; pass installationRoot or set BITWIG_INSTALLATION_ROOT "
-                          "(the Bitwig install directory that contains resources/localization)")
+    raise DocsUnavailable(
+        "Bitwig localization resources not found; pass installationRoot or set BITWIG_INSTALLATION_ROOT "
+        "(the Bitwig install directory that contains resources/localization)"
+    )
 
 
 def norm(text: str) -> str:
@@ -150,14 +167,14 @@ class Docs:
 
         self.descriptions = load("Module-descriptions-resources")
         self.entries = load("Modules-resources")
-        self.ids: dict[str, str] = {}            # resource id -> its `.desc` key
+        self.ids: dict[str, str] = {}  # resource id -> its `.desc` key
         self.id_category: dict[str, str | None] = {}
         category = None
         for key in self.descriptions:  # file order: a category header precedes its modules
             if key.startswith("module-category.") and key.endswith(".desc"):
-                category = key[len("module-category."):-len(".desc")]
+                category = key[len("module-category.") : -len(".desc")]
             elif key.startswith("module.") and key.endswith(".desc"):
-                rid = key[len("module."):-len(".desc")]
+                rid = key[len("module.") : -len(".desc")]
                 self.ids[rid] = key
                 self.id_category[rid] = category
         self.prefixes: dict[str, dict[str, str]] = {}
@@ -212,9 +229,14 @@ def _lookup(entries: dict[str, str], names: list[str]) -> str | None:
 def _candidate_names(key: str, name: str) -> list[str]:
     name = (name or "").replace("\u200b", "")
     words = re.findall(r"[^\W_]+", name.casefold())
-    names = [key, re.sub(r"\d+$", "", key), name, re.sub(r"\s*\d+$", "", name)]  # `Signal Out 2` -> family entry `signal_out`
+    names = [
+        key,
+        re.sub(r"\d+$", "", key),
+        name,
+        re.sub(r"\s*\d+$", "", name),
+    ]  # `Signal Out 2` -> family entry `signal_out`
     if len(words) > 1 and words[-1] in ("in", "out"):
-        names.append("".join(words[:-1]))              # `Trigger In` -> `trigger`
+        names.append("".join(words[:-1]))  # `Trigger In` -> `trigger`
     return names
 
 
@@ -231,8 +253,14 @@ def raw_scale(type_name: str, pid: str) -> dict[str, Any] | None:
     if block is None and (type_name, pid) in SECONDS_PARAMS:
         mapping, raw, display = SECONDS_PARAMS[(type_name, pid)]
         formula = {"cbrt": "raw = cbrt(seconds)", "log10": "raw = log10(seconds)"}[mapping]
-        block = {"scale": f"{mapping}_seconds", "formula": formula, "status": "verified", "units": ["ms", "s"],
-                 "evidence": [{"raw": raw, "display": display}], "displayWrites": True}
+        block = {
+            "scale": f"{mapping}_seconds",
+            "formula": formula,
+            "status": "verified",
+            "units": ["ms", "s"],
+            "evidence": [{"raw": raw, "display": display}],
+            "displayWrites": True,
+        }
     return block
 
 
@@ -257,16 +285,26 @@ def describe_module(docs: Docs, name: str, info: dict[str, Any]) -> dict[str, An
             if prefix not in prefixes:
                 shared.update(docs.prefixes[prefix])
     lookup = {**shared, **own}
-    items: list[dict[str, Any]] = []   # ports then parameters, each: row, key, name, direction
+    items: list[dict[str, Any]] = []  # ports then parameters, each: row, key, name, direction
     for direction, group in (("in", info.get("inputs", ())), ("out", info.get("outputs", ()))):
         for port in group:
             row = {"key": port["key"], "name": port["name"].replace("\u200b", ""), "direction": direction}
-            items.append({"row": row, "key": port["key"], "name": port["name"], "direction": direction, "single": len(group) == 1})
+            items.append(
+                {
+                    "row": row,
+                    "key": port["key"],
+                    "name": port["name"],
+                    "direction": direction,
+                    "single": len(group) == 1,
+                }
+            )
     ports = [i["row"] for i in items]
     params = []
     for param in info.get("parameters", ()):
         row = {"id": param["parameterId"], "name": param["name"], **parameter_facts(name, param)}
-        items.append({"row": row, "key": param["parameterId"], "name": param["name"], "direction": None, "single": False})
+        items.append(
+            {"row": row, "key": param["parameterId"], "name": param["name"], "direction": None, "single": False}
+        )
         params.append(row)
     claimed: set[str] = set()
     for item in items:
@@ -281,8 +319,14 @@ def describe_module(docs: Docs, name: str, info: dict[str, Any]) -> dict[str, An
         stem = rest[:-5]
         direction = "in" if stem.endswith("_in") else "out" if stem.endswith("_out") else None
         words = {_stem(w) for w in re.findall(r"[^\W_]+", stem.casefold())} - {"in", "out"}
-        fits = [i for i in items if "description" not in i["row"] and (direction is None or i["direction"] in (direction, None))
-                and words and words <= {_stem(w) for w in re.findall(r"[^\W_]+", (i["name"] or "").casefold())}]
+        fits = [
+            i
+            for i in items
+            if "description" not in i["row"]
+            and (direction is None or i["direction"] in (direction, None))
+            and words
+            and words <= {_stem(w) for w in re.findall(r"[^\W_]+", (i["name"] or "").casefold())}
+        ]
         if direction and not fits:  # `logic_in` for the lone undescribed input
             fits = [i for i in items if "description" not in i["row"] and i["direction"] == direction]
         if len(fits) == 1:
@@ -306,7 +350,9 @@ def describe_module(docs: Docs, name: str, info: dict[str, Any]) -> dict[str, An
         result["footprint"] = {"width": info["width"], "height": info["height"]}
     result["ports"] = ports
     result["parameters"] = params
-    result["rawEntries"] = {f"{prefix}.{rest}": text for prefix in prefixes for rest, text in docs.prefixes[prefix].items()}
+    result["rawEntries"] = {
+        f"{prefix}.{rest}": text for prefix in prefixes for rest, text in docs.prefixes[prefix].items()
+    }
     if rid is None:
         result["note"] = "No Bitwig documentation entry maps to this module."
     return result
@@ -322,7 +368,9 @@ def resolve_type(modules: dict[str, Any], value: str) -> str:
     if len(matches) == 1:
         return matches[0]
     close = difflib.get_close_matches(value, list(modules), n=5, cutoff=0.5)
-    raise ValueError(f"Unknown Grid module {value!r}" + (f"; did you mean {close}?" if close else "; use query to search"))
+    raise ValueError(
+        f"Unknown Grid module {value!r}" + (f"; did you mean {close}?" if close else "; use query to search")
+    )
 
 
 def search(docs: Docs, modules: dict[str, Any], query: str, limit: int) -> list[dict[str, Any]]:
@@ -378,5 +426,8 @@ def describe(args: dict[str, Any]) -> dict[str, Any]:
     if "type" in args:
         name = resolve_type(modules, args["type"])
         return describe_module(docs, name, modules[name])
-    return {"query": args["query"], "matches": search(docs, modules, args["query"], args.get("limit", 10)),
-            "next": "grid.describe type=<name> for ports and parameters"}
+    return {
+        "query": args["query"],
+        "matches": search(docs, modules, args["query"], args.get("limit", 10)),
+        "next": "grid.describe type=<name> for ports and parameters",
+    }

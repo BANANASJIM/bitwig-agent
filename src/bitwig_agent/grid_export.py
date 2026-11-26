@@ -16,7 +16,16 @@ from bitwig_agent.client import BridgeError
 from bitwig_agent.grid_apply import bundled_schema, generated_name
 
 PAGE, PARAM_PAGE = 128, 64
-VOICING_FIELDS = ("voices", "voiceStacking", "monoMode", "retriggerMode", "notePriority", "legatoGlide", "stealSameKey", "allowOverlappingNotes")
+VOICING_FIELDS = (
+    "voices",
+    "voiceStacking",
+    "monoMode",
+    "retriggerMode",
+    "notePriority",
+    "legatoGlide",
+    "stealSameKey",
+    "allowOverlappingNotes",
+)
 WRITABLE = ("float", "integer", "boolean", "enum", "string", "steps")
 
 
@@ -30,16 +39,28 @@ async def read_all(client: Any, target: dict[str, Any], timeout_ms: int, params:
     cables: dict[tuple, dict] = {}
     total, step = None, PARAM_PAGE if params else PAGE
     while total is None or len(rows) < total:
-        page = await client.call("grid.get", {**target, "moduleOffset": len(rows), "moduleLimit": step, "includeParameters": params}, timeout_ms)
+        page = await client.call(
+            "grid.get",
+            {**target, "moduleOffset": len(rows), "moduleLimit": step, "includeParameters": params},
+            timeout_ms,
+        )
         got = page.get("modules") if isinstance(page, dict) else None
         if not isinstance(got, list):
-            raise BridgeError({"code": "not_applied", "message": "grid.get returned an unusable result", "outcome": "not_dispatched"})
+            raise BridgeError(
+                {"code": "not_applied", "message": "grid.get returned an unusable result", "outcome": "not_dispatched"}
+            )
         rows += got
         for c in page.get("connections", []):
             cables[(c["targetModuleId"], c["targetPortKey"])] = c
         total = (page.get("window") or {}).get("total", len(rows))
         if not got and len(rows) < total:
-            raise BridgeError({"code": "graph_incomplete", "message": f"grid.get returned {len(rows)} of {total} modules", "outcome": "not_dispatched"})
+            raise BridgeError(
+                {
+                    "code": "graph_incomplete",
+                    "message": f"grid.get returned {len(rows)} of {total} modules",
+                    "outcome": "not_dispatched",
+                }
+            )
     return rows, list(cables.values())
 
 
@@ -101,13 +122,24 @@ def build(rows: list[dict], cables: list[dict], mode: str, namespace: str | None
     names, generated, duplicates = module_names(rows)
     warnings: list[str] = []
     if duplicates:
-        warnings.append(f"customNames {duplicates} are not unique; those modules got generated names, rename them before applying")
+        warnings.append(
+            f"customNames {duplicates} are not unique; those modules got generated names, rename them before applying"
+        )
     if generated:
-        warnings.append(f"{len(generated)} module(s) have no (unique) customName and carry a generated name; grid.apply matches unnamed modules by it")
+        warnings.append(
+            f"{len(generated)} module(s) have no (unique) customName and carry a generated name; grid.apply matches unnamed modules by it"
+        )
     inside = {r["instanceId"] for r in rows if not namespace or names[r["instanceId"]].startswith(namespace)}
     modules = []
-    for r in sorted((r for r in rows if r["instanceId"] in inside), key=lambda r: (r["y"], r["x"], names[r["instanceId"]])):
-        m: dict[str, Any] = {"name": names[r["instanceId"]], "type": r.get("typeName") or r["typeId"], "x": r["x"], "y": r["y"]}
+    for r in sorted(
+        (r for r in rows if r["instanceId"] in inside), key=lambda r: (r["y"], r["x"], names[r["instanceId"]])
+    ):
+        m: dict[str, Any] = {
+            "name": names[r["instanceId"]],
+            "type": r.get("typeName") or r["typeId"],
+            "x": r["x"],
+            "y": r["y"],
+        }
         if mode != "none":
             params = export_params(r, mode, warnings, m["name"])
             if params:
@@ -123,11 +155,19 @@ def build(rows: list[dict], cables: list[dict], mode: str, namespace: str | None
             if end not in inside:
                 external[names[end]] = None
         connections.append({"from": f"{names[src]}.{c['sourcePortKey']}", "to": f"{names[dst]}.{c['targetPortKey']}"})
-    return {"modules": modules, "connections": connections, "external": list(external), "unnamed": generated, "warnings": warnings,
-            "sizes": {names[r["instanceId"]]: (r.get("width"), r.get("height")) for r in rows if r["instanceId"] in inside}}
+    return {
+        "modules": modules,
+        "connections": connections,
+        "external": list(external),
+        "unnamed": generated,
+        "warnings": warnings,
+        "sizes": {names[r["instanceId"]]: (r.get("width"), r.get("height")) for r in rows if r["instanceId"] in inside},
+    }
 
 
-async def read_voicing(client: Any, target: dict[str, Any], timeout_ms: int, warnings: list[str]) -> dict[str, Any] | None:
+async def read_voicing(
+    client: Any, target: dict[str, Any], timeout_ms: int, warnings: list[str]
+) -> dict[str, Any] | None:
     try:
         got = await client.call("grid.voicing.get", target, timeout_ms)
     except BridgeError as exc:
@@ -161,8 +201,14 @@ async def export(client: Any, args: dict[str, Any], timeout_ms: int = 5000) -> d
         spec["voicing"] = voicing
     if not spec["modules"]:
         built["warnings"].append("no modules exported; an empty modules list is not a valid grid.apply spec")
-    out = {"status": "exported", "moduleCount": len(spec["modules"]), "connectionCount": len(spec["connections"]), "includeParams": mode,
-           **({"unnamed": built["unnamed"]} if built["unnamed"] else {}), **({"warnings": built["warnings"]} if built["warnings"] else {})}
+    out = {
+        "status": "exported",
+        "moduleCount": len(spec["modules"]),
+        "connectionCount": len(spec["connections"]),
+        "includeParams": mode,
+        **({"unnamed": built["unnamed"]} if built["unnamed"] else {}),
+        **({"warnings": built["warnings"]} if built["warnings"] else {}),
+    }
     if path is None:
         return {**out, "spec": spec}
     data = json.dumps(spec, indent=1, ensure_ascii=False).encode("utf-8")
@@ -180,7 +226,16 @@ async def graph(client: Any, args: dict[str, Any], timeout_ms: int = 5000) -> di
     rows, cables = await read_all(client, _target(args), timeout_ms, mode != "none")
     built = build(rows, cables, mode, namespace)
     generated = set(built["unnamed"])
-    modules = [{**m, "size": list(built["sizes"][m["name"]]), **({"unnamed": True} if m["name"] in generated else {})} for m in built["modules"]]
-    return {"status": "observed", "moduleCount": len(modules), "connectionCount": len(built["connections"]), "modules": modules,
-            "connections": built["connections"], **({"external": built["external"]} if built["external"] else {}),
-            **({"warnings": built["warnings"]} if built["warnings"] else {})}
+    modules = [
+        {**m, "size": list(built["sizes"][m["name"]]), **({"unnamed": True} if m["name"] in generated else {})}
+        for m in built["modules"]
+    ]
+    return {
+        "status": "observed",
+        "moduleCount": len(modules),
+        "connectionCount": len(built["connections"]),
+        "modules": modules,
+        "connections": built["connections"],
+        **({"external": built["external"]} if built["external"] else {}),
+        **({"warnings": built["warnings"]} if built["warnings"] else {}),
+    }

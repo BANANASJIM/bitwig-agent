@@ -1,4 +1,5 @@
 """Installer behavior, isolated from Bitwig and public release servers."""
+
 from contextlib import redirect_stderr, redirect_stdout
 import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -30,7 +31,9 @@ class InstallerTests(unittest.TestCase):
     def run_cli(self, *args):
         return subprocess.run(
             [sys.executable, "-m", "bitwig_agent.install", "--destination", str(self.destination), *args],
-            check=False, capture_output=True, text=True,
+            check=False,
+            capture_output=True,
+            text=True,
         )
 
     def install_local(self):
@@ -134,9 +137,15 @@ class InstallerTests(unittest.TestCase):
     def test_invalid_manifests_never_create_destination(self):
         digest = hashlib.sha256(b"new build").hexdigest()
         valid = f"{digest}  {self.target.name}\n"
-        manifests = [b"", f"{digest}  other.whl\n".encode(), (valid * 2).encode(),
-                     b"not-a-hash  BitwigAgent.bwextension\n", (valid + "malformed\n").encode(),
-                     f"{digest}  nested/BitwigAgent.bwextension\n".encode(), b"\xff"]
+        manifests = [
+            b"",
+            f"{digest}  other.whl\n".encode(),
+            (valid * 2).encode(),
+            b"not-a-hash  BitwigAgent.bwextension\n",
+            (valid + "malformed\n").encode(),
+            f"{digest}  nested/BitwigAgent.bwextension\n".encode(),
+            b"\xff",
+        ]
         self.destination.rmdir()
         for manifest in manifests:
             with self.subTest(manifest=manifest):
@@ -232,7 +241,11 @@ class InstallerTests(unittest.TestCase):
             return original_replace(path, target)
 
         stderr = io.StringIO()
-        with patch.object(Path, "replace", fail_target_replace), redirect_stdout(io.StringIO()), redirect_stderr(stderr):
+        with (
+            patch.object(Path, "replace", fail_target_replace),
+            redirect_stdout(io.StringIO()),
+            redirect_stderr(stderr),
+        ):
             with self.assertRaises(SystemExit) as caught:
                 install.main(["--extension", str(self.source), "--destination", str(self.destination)])
         self.assertEqual(caught.exception.code, 1)
@@ -247,15 +260,20 @@ class InstallerTests(unittest.TestCase):
         base, requests = self.release_server(status=503)
         stdout = io.StringIO()
         with patch.object(install, "_RELEASES", base), redirect_stdout(stdout):
-            install.main(["--mcp-config", "--extension", str(self.root / "missing"),
-                          "--destination", str(self.destination)])
+            install.main(
+                ["--mcp-config", "--extension", str(self.root / "missing"), "--destination", str(self.destination)]
+            )
         json.loads(stdout.getvalue())
         self.assertEqual(requests, [])
         self.assertFalse(self.destination.exists())
 
     def test_default_destination_follows_platform(self):
         for platform, documents in (("linux", False), ("darwin", True), ("win32", True)):
-            with self.subTest(platform=platform), patch.object(sys, "platform", platform), patch.object(Path, "home", return_value=self.root):
+            with (
+                self.subTest(platform=platform),
+                patch.object(sys, "platform", platform),
+                patch.object(Path, "home", return_value=self.root),
+            ):
                 base = self.root / "Documents" if documents else self.root
                 self.assertEqual(install._default_destination(), base / "Bitwig Studio" / "Extensions")
 

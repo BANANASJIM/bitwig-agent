@@ -4,6 +4,7 @@
 Requires BITWIG_API_JAR and a JDK. This exercises no Bitwig instance and cannot
 prove edits, observer delivery, audio, UI, or persistence. Run with check.py.
 """
+
 import asyncio
 import importlib.util
 import json
@@ -72,14 +73,19 @@ async def exercise(folder: Path, api: Path) -> None:
     sources = sorted((ROOT / "extension/src/main/java").rglob("*.java"))
     build.compile_java([*sources, fixture], folder, [gson, api])
     process = await asyncio.create_subprocess_exec(
-        os.environ.get("JAVA", "java"), "-cp", os.pathsep.join(map(str, [folder, gson, api])),
-        "dev.bitwigagent.McpTransportFixture", stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        os.environ.get("JAVA", "java"),
+        "-cp",
+        os.pathsep.join(map(str, [folder, gson, api])),
+        "dev.bitwigagent.McpTransportFixture",
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
     )
     try:
         port = int((await asyncio.wait_for(process.stdout.readline(), 10)).decode())
         env = dict(os.environ, BITWIG_AGENT_PORT=str(port))
-        server = StdioServerParameters(command=sys.executable,
-                                      args=["-c", "from bitwig_agent.server import main; main()"], env=env)
+        server = StdioServerParameters(
+            command=sys.executable, args=["-c", "from bitwig_agent.server import main; main()"], env=env
+        )
         async with stdio_client(server) as (read, write):
             async with ClientSession(read, write) as session:
                 await session.initialize()
@@ -88,8 +94,10 @@ async def exercise(folder: Path, api: Path) -> None:
                 status = payload(response)
                 require(not response.is_error, f"Java status fixture failed: {status}")
                 java_names = set(status["result"]["supportedMethods"])
-                require(names - CLIENT_SIDE == java_names == set(TOOLS) - CLIENT_SIDE and CLIENT_SIDE <= names,
-                        f"Registry mismatch: MCP={sorted(names)}, Java={sorted(java_names)}")
+                require(
+                    names - CLIENT_SIDE == java_names == set(TOOLS) - CLIENT_SIDE and CLIENT_SIDE <= names,
+                    f"Registry mismatch: MCP={sorted(names)}, Java={sorted(java_names)}",
+                )
                 calls = 0
                 for method in sorted(names - CLIENT_SIDE):
                     examples = TOOLS[method].examples
@@ -100,27 +108,39 @@ async def exercise(folder: Path, api: Path) -> None:
                             params["expectedDeviceName"] = "音色 α"
                         # Preserve omitted optional fields; the real JVM independently
                         # validates what the adapter actually sends.
-                        expected = TOOLS[method].model.model_validate(params).model_dump(exclude={"timeoutMs"}, exclude_unset=True)
+                        expected = (
+                            TOOLS[method]
+                            .model.model_validate(params)
+                            .model_dump(exclude={"timeoutMs"}, exclude_unset=True)
+                        )
                         response = await session.call_tool(method, params)
                         body = payload(response)
                         if method == "parameters.set":
-                            require(response.is_error and body.get("error", {}).get("outcome") == "unknown"
-                                    and body["error"]["code"] == "fixture_unknown",
-                                    f"Lost Java ambiguity for {method}: {body}")
+                            require(
+                                response.is_error
+                                and body.get("error", {}).get("outcome") == "unknown"
+                                and body["error"]["code"] == "fixture_unknown",
+                                f"Lost Java ambiguity for {method}: {body}",
+                            )
                         else:
                             require(not response.is_error, f"{method} failed Java/schema validation: {body}")
                             result = body["result"]
-                            require(result.get("fixtureOnly") is True and result.get("method") == method
-                                    and result.get("echo") == expected,
-                                    f"Forwarding mismatch for {method}: {body}")
+                            require(
+                                result.get("fixtureOnly") is True
+                                and result.get("method") == method
+                                and result.get("echo") == expected,
+                                f"Forwarding mismatch for {method}: {body}",
+                            )
                         calls += 1
                 # Exercise the actual MCP validation boundary, not model validation alone.
                 invalid = await session.call_tool("status", {"unexpected": True})
                 require(invalid.is_error, "MCP accepted an extra argument")
                 vectors = await bound_parity.run(port)
-        print(f"PASS: {len(names)} matching Java/MCP tools, {calls} example roundtrips, "
-              f"Unicode, strict MCP arguments, unknown error propagation, {vectors} bound/optional parity vectors. "
-              "FIXTURE ONLY; no native host.")
+        print(
+            f"PASS: {len(names)} matching Java/MCP tools, {calls} example roundtrips, "
+            f"Unicode, strict MCP arguments, unknown error propagation, {vectors} bound/optional parity vectors. "
+            "FIXTURE ONLY; no native host."
+        )
     finally:
         if process.stdin:
             process.stdin.close()

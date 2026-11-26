@@ -70,4 +70,3 @@ async def mcp_session(host):
             initialized = await session.initialize()
             assert initialized.server_info.name == "Bitwig Agent"
             yield session
-

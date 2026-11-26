@@ -10,7 +10,12 @@ from bitwig_agent.client import BridgeError
 from test_audio import NODES, SINK_LINKS, FakePW, FakeProc
 from test_grid_apply import TARGET, FakeGrid
 
-SAFE = {"playing": True, "arrangerRecordEnabled": False, "arrangerAutomationWriteEnabled": False, "clipLauncherAutomationWriteEnabled": False}
+SAFE = {
+    "playing": True,
+    "arrangerRecordEnabled": False,
+    "arrangerAutomationWriteEnabled": False,
+    "clipLauncherAutomationWriteEnabled": False,
+}
 
 
 class ProbeGrid(FakeGrid):
@@ -81,7 +86,9 @@ def rig(tmp_path, monkeypatch):
 
 
 def probe(host, **extra):
-    args, timeout = validate_call("grid.probe", {**TARGET, "port": "P: osc.OUT", "seconds": 1, "mode": "onsets", **extra})
+    args, timeout = validate_call(
+        "grid.probe", {**TARGET, "port": "P: osc.OUT", "seconds": 1, "mode": "onsets", **extra}
+    )
     return asyncio.run(grid_probe.probe(host, args, timeout))
 
 
@@ -90,27 +97,45 @@ def test_registered_client_side_and_validated():
     for bad in ({"seconds": 0.1}, {"seconds": 21}, {"mode": "other"}, {"port": "x"}):
         with pytest.raises(ValueError):
             validate_call("grid.probe", {**TARGET, "port": "P: osc.OUT", "seconds": 1, "mode": "onsets", **bad})
-    assert validate_call("grid.probe", {**TARGET, "port": "P: osc.OUT", "seconds": 0.2, "mode": "level", "timeoutMs": 60000})[1] == 60000
+    assert (
+        validate_call(
+            "grid.probe", {**TARGET, "port": "P: osc.OUT", "seconds": 0.2, "mode": "level", "timeoutMs": 60000}
+        )[1]
+        == 60000
+    )
 
 
 def test_probe_reroutes_records_and_restores_exactly(rig):
     host, _ = rig
     out = probe(host)
     assert host.conns == host.original and host.transport["playing"] is False
-    assert host.wires_during_capture == {(host.out1, "IN"): (host.osc, "OUT")}  # probe on one Audio Out, the other silenced
-    assert out["status"] == "probed" and out["restored"] is True and out["audioOut"] == "P: out1" and out["cablesChanged"] == 2
+    assert host.wires_during_capture == {
+        (host.out1, "IN"): (host.osc, "OUT")
+    }  # probe on one Audio Out, the other silenced
+    assert (
+        out["status"] == "probed"
+        and out["restored"] is True
+        and out["audioOut"] == "P: out1"
+        and out["cablesChanged"] == 2
+    )
     assert out["analysis"]["mode"] == "onsets" and out["analysis"]["count"] == 2 and "path" not in out["analysis"]
     first, last = host.sets()[0], host.sets()[-1]
     assert len(host.sets()) == 2 and len(first["connections"]) == 2 and len(last["connections"]) == 2
     # restore is a compare-and-set against the probe wiring
-    assert {c["targetModuleId"]: c["expectedSource"]["moduleId"] for c in last["connections"] if c["expectedSource"]} == {host.out1: host.osc}
+    assert {
+        c["targetModuleId"]: c["expectedSource"]["moduleId"] for c in last["connections"] if c["expectedSource"]
+    } == {host.out1: host.osc}
     assert ("transport.set", {"playing": False}) in host.calls
 
 
 def test_probe_uses_the_requested_analysis_mode_and_options(rig):
     host, _ = rig
     out = probe(host, mode="mono_pitch", bpm=120, method="envelope")
-    assert out["analysis"]["mode"] == "mono_pitch" and out["analysis"]["method"] == "envelope" and "grid" in out["analysis"]
+    assert (
+        out["analysis"]["mode"] == "mono_pitch"
+        and out["analysis"]["method"] == "envelope"
+        and "grid" in out["analysis"]
+    )
 
 
 def test_unsafe_transport_is_refused_before_any_write(rig):
@@ -128,7 +153,10 @@ def test_unsafe_transport_is_refused_before_any_write(rig):
 
 def test_audible_output_is_refused_unless_allowed(rig):
     host, pw = rig
-    pw.links = {("Bitwig Studio:out1", "alsa_output.pci:playback_FL"), ("Bitwig Studio:out2", "alsa_output.pci:playback_FR")}
+    pw.links = {
+        ("Bitwig Studio:out1", "alsa_output.pci:playback_FL"),
+        ("Bitwig Studio:out2", "alsa_output.pci:playback_FR"),
+    }
     with pytest.raises(BridgeError) as e:
         probe(host)
     assert e.value.error["code"] == "not_silent" and host.sets() == [] and host.calls == []
@@ -155,7 +183,14 @@ def test_no_audio_out_is_refused(rig):
 
 def test_capture_failure_still_restores_and_reports_the_capture_error(rig, monkeypatch):
     host, _ = rig
-    monkeypatch.setattr(audio, "spawn", lambda args: (NODES.append(args[2].split("node.name=")[1].split()[0]), type("Dead", (FakeProc,), {"poll": lambda self: 1})(args[-1]))[1])
+    monkeypatch.setattr(
+        audio,
+        "spawn",
+        lambda args: (
+            NODES.append(args[2].split("node.name=")[1].split()[0]),
+            type("Dead", (FakeProc,), {"poll": lambda self: 1})(args[-1]),
+        )[1],
+    )
     with pytest.raises(BridgeError) as e:
         probe(host)
     assert e.value.error["code"] == "audio_tool_failed" and host.conns == host.original
@@ -170,7 +205,10 @@ def test_failed_restore_reports_exactly_what_is_left(rig):
     assert err["code"] == "probe_restore_failed" and err["outcome"] == "unknown"
     assert err["details"]["restoreError"]["code"] == "deadline_exceeded"
     assert err["details"]["left"] == "unknown: reading or writing the graph failed; inspect with grid.graph"
-    assert {d["input"]: d["source"] for d in err["details"]["originally"]} == {"P: out1.IN": "P: mix.OUT", "P: out2.IN": "P: alt.OUT"}
+    assert {d["input"]: d["source"] for d in err["details"]["originally"]} == {
+        "P: out1.IN": "P: mix.OUT",
+        "P: out2.IN": "P: alt.OUT",
+    }
 
 
 def test_restore_leaves_foreign_edits_alone_and_names_them(rig):
@@ -228,7 +266,11 @@ def test_probe_keeps_the_wav_only_with_outpath(rig, tmp_path):
     assert wav.is_file() and out["wavPath"] == str(wav)
     with pytest.raises(BridgeError) as e:  # refused before any cable moves
         probe(host, outPath=str(wav))
-    assert e.value.error["code"] == "file_exists" and e.value.error["outcome"] == "not_dispatched" and host.conns == host.original
+    assert (
+        e.value.error["code"] == "file_exists"
+        and e.value.error["outcome"] == "not_dispatched"
+        and host.conns == host.original
+    )
     assert probe(host, outPath=str(wav), overwrite=True)["wavPath"] == str(wav)
     with pytest.raises(ValueError):
         validate_call("grid.probe", {**TARGET, "port": "P: osc.OUT", "seconds": 1, "mode": "level", "overwrite": True})
@@ -239,6 +281,7 @@ def test_probe_keeps_the_wav_only_with_outpath(rig, tmp_path):
 def test_spectral_peaks_flag_low_notes_finer_than_one_bin_as_approximate():
     import math
     from bitwig_agent.audio_analysis import FFT_SIZE, spectral_peaks
+
     rate = 48000
     power = [0.0] * (FFT_SIZE // 2 + 1)
     for hz in (55.0, 880.0):

@@ -1,15 +1,16 @@
 package dev.bitwigagent;
 
-import com.bitwig.extension.controller.api.*;
+import static dev.bitwigagent.HostServices.*;
+
 import com.bitwig.extension.callback.*;
+import com.bitwig.extension.controller.api.*;
 import com.google.gson.*;
 import java.util.*;
-import java.util.concurrent.TimeUnit;
-import static dev.bitwigagent.HostServices.*;
 
 /** Source-specific direct-parameter observations on fixed bank proxies, never a cursor. */
 final class ParameterModule implements HostModule {
-    static final Set<String> METHODS = Set.of("parameters.list", "parameters.set", "parameters.layer.list", "parameters.layer.set");
+    static final Set<String> METHODS =
+            Set.of("parameters.list", "parameters.set", "parameters.layer.list", "parameters.layer.set");
     private final HostServices s;
     private final Map<DeviceSources.Source, ParameterSource> parameterSources = new IdentityHashMap<>();
     private long valueSequence;
@@ -43,16 +44,29 @@ final class ParameterModule implements HostModule {
         }
     }
 
-    @Override public Set<String> methods() { return METHODS; }
-    @Override public void validate(String method, JsonObject params) { validateParams(method, params); }
+    @Override
+    public Set<String> methods() {
+        return METHODS;
+    }
+
+    @Override
+    public void validate(String method, JsonObject params) {
+        validateParams(method, params);
+    }
+
     static void validateParams(String method, JsonObject params) {
         if (!METHODS.contains(method)) throw failure("unknown_method", "Unknown parameter method.");
         if (method.startsWith("parameters.layer.")) {
-            DeviceSources.validateLayer(params, method.endsWith(".set"), false); return;
+            DeviceSources.validateLayer(params, method.endsWith(".set"), false);
+            return;
         }
         boolean write = method.equals("parameters.set");
-        Params.fields(params, write ? Set.of("trackId", "deviceIndex", "expectedDeviceName", "contextToken", "parameterId", "value")
-                : Set.of("trackId", "deviceIndex", "expectedDeviceName"), Set.of());
+        Params.fields(
+                params,
+                write
+                        ? Set.of("trackId", "deviceIndex", "expectedDeviceName", "contextToken", "parameterId", "value")
+                        : Set.of("trackId", "deviceIndex", "expectedDeviceName"),
+                Set.of());
         Params.string(params, "trackId");
         Params.integer(params, "deviceIndex", 0, DEVICES - 1);
         Params.string(params, "expectedDeviceName");
@@ -63,7 +77,8 @@ final class ParameterModule implements HostModule {
         }
     }
 
-    @Override public void dispatch(HostOperation request, String method, JsonObject params) {
+    @Override
+    public void dispatch(HostOperation request, String method, JsonObject params) {
         if (parameterRequest != null && !parameterRequest.result.isDone())
             throw failure("busy", "Another parameter operation is awaiting host observations.");
         parameterRequest = request;
@@ -84,8 +99,10 @@ final class ParameterModule implements HostModule {
         diagnostics.addProperty("idCallbacksRejected", source == null ? null : source.idCallbacksRejected);
         diagnostics.addProperty("cacheGeneration", source == null ? null : source.cacheGeneration);
         diagnostics.addProperty("lastIdCallbackGeneration", source == null ? null : source.lastIdCallbackGeneration);
-        diagnostics.addProperty("lastAcceptedIdCallbackGeneration", source == null ? null : source.lastAcceptedIdCallbackGeneration);
-        diagnostics.addProperty("lastIdCallbackAccepted",
+        diagnostics.addProperty(
+                "lastAcceptedIdCallbackGeneration", source == null ? null : source.lastAcceptedIdCallbackGeneration);
+        diagnostics.addProperty(
+                "lastIdCallbackAccepted",
                 source == null || source.idCallbacksReceived == 0 ? null : source.lastIdCallbackAccepted);
         diagnostics.addProperty("identityScope", "observed_bank_proxy_not_persistent_device_identity");
         return diagnostics;
@@ -93,7 +110,11 @@ final class ParameterModule implements HostModule {
 
     private void bind(HostOperation request, JsonObject params) {
         ParameterSource source = resolve(params);
-        if (binding != null && binding.established && binding.source == source && matches(binding) && source.idsObserved) {
+        if (binding != null
+                && binding.established
+                && binding.source == source
+                && matches(binding)
+                && source.idsObserved) {
             request.result.complete(listParameters());
             return;
         }
@@ -104,7 +125,8 @@ final class ParameterModule implements HostModule {
     }
 
     private void awaitDevice(HostOperation request, Binding target) {
-        if (binding != target || !bankTargetMatches(target)) throw failure("stale_target", "Target changed during binding.");
+        if (binding != target || !bankTargetMatches(target))
+            throw failure("stale_target", "Target changed during binding.");
         if (!matches(target) || !target.source.idsObserved) {
             s.schedule(request, () -> awaitDevice(request, target), 20);
             return;
@@ -137,32 +159,46 @@ final class ParameterModule implements HostModule {
         ParameterSource requested = resolve(params);
         Binding target = binding;
         String token = params.get("contextToken").getAsString();
-        if (target == null || !target.established || !target.token.equals(token)
-                || target.source != requested || !matches(target)) {
+        if (target == null
+                || !target.established
+                || !target.token.equals(token)
+                || target.source != requested
+                || !matches(target)) {
             throw failure("stale_context", "Read the matching parameter list method again before writing this target.");
         }
         String id = params.get("parameterId").getAsString();
         ParameterSource source = target.source;
-        if (!source.parameterIds.contains(id)) throw failure("unknown_parameter", "Parameter is not in the observed ID list.");
+        if (!source.parameterIds.contains(id))
+            throw failure("unknown_parameter", "Parameter is not in the observed ID list.");
         ParameterState parameter = source.parameters == null ? null : source.parameters.get(id);
-        if (parameter == null || parameter.value == null) throw failure("not_ready", "Parameter has no readable value.");
+        if (parameter == null || parameter.value == null)
+            throw failure("not_ready", "Parameter has no readable value.");
         double requestedValue = params.get("value").getAsDouble();
         double applied = Math.round(requestedValue * (RESOLUTION - 1)) / (double) (RESOLUTION - 1);
         if (Math.abs(parameter.value - applied) <= TOLERANCE) {
-            request.result.complete(writeResult(target, id, requestedValue, applied, parameter.value, "already_at_value"));
+            request.result.complete(
+                    writeResult(target, id, requestedValue, applied, parameter.value, "already_at_value"));
             return;
         }
         long before = parameter.sequence;
         s.check(request);
         if (!matches(target)) throw failure("stale_context", "Target changed before parameter dispatch.");
         request.dispatched = true;
-        source.identity.device.setDirectParameterValueNormalized(id, Math.round(requestedValue * (RESOLUTION - 1)), RESOLUTION);
+        source.identity.device.setDirectParameterValueNormalized(
+                id, Math.round(requestedValue * (RESOLUTION - 1)), RESOLUTION);
         long observeUntil = HostServices.observeUntil(request);
         awaitValue(request, target, token, id, requestedValue, applied, before, observeUntil);
     }
 
-    private void awaitValue(HostOperation request, Binding target, String token, String id,
-            double requested, double applied, long before, long observeUntil) {
+    private void awaitValue(
+            HostOperation request,
+            Binding target,
+            String token,
+            String id,
+            double requested,
+            double applied,
+            long before,
+            long observeUntil) {
         if (binding != target || !target.token.equals(token) || !matches(target)) {
             throw new RpcException("stale_context", "Target changed after dispatch; outcome unknown.", "unknown");
         }
@@ -170,17 +206,26 @@ final class ParameterModule implements HostModule {
         ParameterState parameter = source.parameters == null ? null : source.parameters.get(id);
         boolean fresh = parameter != null && parameter.sequence > before && parameter.value != null;
         if (fresh && Math.abs(parameter.value - applied) <= TOLERANCE) {
-            request.result.complete(writeResult(target, id, requested, applied, parameter.value, "observer_after_write"));
+            request.result.complete(
+                    writeResult(target, id, requested, applied, parameter.value, "observer_after_write"));
         } else if (System.nanoTime() >= observeUntil) {
-            request.result.complete(writeResult(target, id, requested, applied,
-                    fresh ? parameter.value : null, fresh ? "readback_mismatch" : "not_observed"));
+            request.result.complete(writeResult(
+                    target,
+                    id,
+                    requested,
+                    applied,
+                    fresh ? parameter.value : null,
+                    fresh ? "readback_mismatch" : "not_observed"));
         } else {
-            s.schedule(request, () -> awaitValue(request, target, token, id, requested, applied, before, observeUntil), 20);
+            s.schedule(
+                    request,
+                    () -> awaitValue(request, target, token, id, requested, applied, before, observeUntil),
+                    20);
         }
     }
 
-    private static JsonObject writeResult(Binding target, String id, double requested, double applied,
-            Double actual, String verification) {
+    private static JsonObject writeResult(
+            Binding target, String id, double requested, double applied, Double actual, String verification) {
         boolean matched = actual != null && Math.abs(actual - applied) <= TOLERANCE;
         JsonObject result = new JsonObject();
         result.addProperty("status", matched ? "observed" : "dispatched");
@@ -232,10 +277,15 @@ final class ParameterModule implements HostModule {
         return identity.directReady() && identity.epoch == target.epoch && identity.revision == target.revision;
     }
 
-    private boolean matches(Binding target) { return bankTargetMatches(target); }
-    private static void nullable(JsonObject object, String key, Double value) {
-        if (value == null) object.add(key, JsonNull.INSTANCE); else object.addProperty(key, value);
+    private boolean matches(Binding target) {
+        return bankTargetMatches(target);
     }
+
+    private static void nullable(JsonObject object, String key, Double value) {
+        if (value == null) object.add(key, JsonNull.INSTANCE);
+        else object.addProperty(key, value);
+    }
+
     private static final class ParameterSource {
         final DeviceSources.Source identity;
         Map<String, ParameterState> parameters;
@@ -243,29 +293,42 @@ final class ParameterModule implements HostModule {
         boolean idsObserved, lastIdCallbackAccepted;
         long cacheGeneration, idCallbacksReceived, idCallbacksRejected;
         long lastIdCallbackGeneration = -1, lastAcceptedIdCallbackGeneration = -1;
-        ParameterSource(DeviceSources.Source identity) { this.identity = identity; }
+
+        ParameterSource(DeviceSources.Source identity) {
+            this.identity = identity;
+        }
+
         ParameterState parameter(String id) {
             if (parameters == null) parameters = new LinkedHashMap<>();
             return parameters.computeIfAbsent(id, ParameterState::new);
         }
     }
+
     private static final class ParameterState {
         final String id;
         String name = "";
         Double value;
         long sequence;
-        ParameterState(String id) { this.id = id; }
+
+        ParameterState(String id) {
+            this.id = id;
+        }
     }
+
     private static final class Binding {
         final ParameterSource source;
         final long epoch, revision;
         final JsonObject address;
         String token = UUID.randomUUID().toString();
         boolean established;
+
         Binding(ParameterSource source) {
-            this.source = source; epoch = source.identity.epoch; revision = source.identity.revision;
+            this.source = source;
+            epoch = source.identity.epoch;
+            revision = source.identity.revision;
             address = source.identity.address();
         }
+
         JsonObject json() {
             JsonObject result = address.deepCopy();
             if (source.identity.layer == null) {

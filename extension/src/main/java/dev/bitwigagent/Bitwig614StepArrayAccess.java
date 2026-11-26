@@ -1,9 +1,9 @@
 package dev.bitwigagent;
 
+import static dev.bitwigagent.HostServices.failure;
+
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
-
-import static dev.bitwigagent.HostServices.failure;
 
 /**
  * Exact imU step-array bindings (Steps, Pitches, Gates, Probabilities, Accents): FDM reads, plus the public final
@@ -42,27 +42,54 @@ final class Bitwig614StepArrayAccess implements GridStepArrayWriter.Access {
     }
 
     /** Null when the write operation is bound; otherwise why not. */
-    String setterError() { return setterError; }
+    String setterError() {
+        return setterError;
+    }
 
-    boolean isModel(Object object) { return object != null && object.getClass() == model; }
-    Object identifier(Object object) { requireSupported(object); return bindings.invoke(identifier, object); }
-    Object data(Object object) { requireSupported(object); return bindings.invoke(data, object); }
-    Object length(Object object) { requireSupported(object); return bindings.invoke(length, object); }
-    Object property(Object object) { requireSupported(object); return bindings.invoke(property, object); }
+    boolean isModel(Object object) {
+        return object != null && object.getClass() == model;
+    }
 
-    @Override public float[] current(Object object) {
+    Object identifier(Object object) {
+        requireSupported(object);
+        return bindings.invoke(identifier, object);
+    }
+
+    Object data(Object object) {
+        requireSupported(object);
+        return bindings.invoke(data, object);
+    }
+
+    Object length(Object object) {
+        requireSupported(object);
+        return bindings.invoke(length, object);
+    }
+
+    Object property(Object object) {
+        requireSupported(object);
+        return bindings.invoke(property, object);
+    }
+
+    @Override
+    public float[] current(Object object) {
         requireSupported(object);
         Object size = bindings.invoke(length, object);
         if (!(size instanceof Integer)) throw failure("grid_unavailable", "Native step array length is unavailable.");
         return GridSnapshotReader.effectiveSteps(bindings.invoke(data, object), (Integer) size);
     }
-    @Override public void set(Object object, float[] values) {
+
+    @Override
+    public void set(Object object, float[] values) {
         requireSupported(object);
-        if (setter == null) throw failure(bindings.unavailableCode(), "Step array write operation is not bound: " + setterError);
+        if (setter == null)
+            throw failure(bindings.unavailableCode(), "Step array write operation is not bound: " + setterError);
         if (values == null) throw failure("invalid_params", "Step array must not be null.");
         bindings.invoke(setter, object, values);
     }
-    @Override public void requireSupported(Object object) {
-        if (!isModel(object)) throw failure(bindings.unavailableCode(), "Step array requires the exact inspected imU model.");
+
+    @Override
+    public void requireSupported(Object object) {
+        if (!isModel(object))
+            throw failure(bindings.unavailableCode(), "Step array requires the exact inspected imU model.");
     }
 }

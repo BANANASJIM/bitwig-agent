@@ -19,6 +19,7 @@ final class TrackTree {
     boolean windowComplete;
     /** windowComplete plus a parent for every track that is the root or a Group in the window, consistent with pre-order. */
     boolean complete;
+
     boolean groups;
     String rootParentId, reason;
 
@@ -31,17 +32,30 @@ final class TrackTree {
         String parentId;
         int depth = -1;
         boolean topLevel, parentResolved, parentInferred;
+
         Node(int slot, String id, String type, int position, Boolean isGroup, Boolean expanded, String parentRaw) {
-            this.slot = slot; this.id = id; this.type = type; this.position = position;
-            this.isGroup = isGroup; this.expanded = expanded; this.parentRaw = parentRaw;
+            this.slot = slot;
+            this.id = id;
+            this.type = type;
+            this.position = position;
+            this.isGroup = isGroup;
+            this.expanded = expanded;
+            this.parentRaw = parentRaw;
         }
-        boolean master() { return "Master".equals(type); }
-        boolean group() { return "Group".equals(type) || Boolean.TRUE.equals(isGroup); }
+
+        boolean master() {
+            return "Master".equals(type);
+        }
+
+        boolean group() {
+            return "Group".equals(type) || Boolean.TRUE.equals(isGroup);
+        }
     }
 
     static TrackTree capture(HostServices s) {
         TrackTree tree = new TrackTree();
-        int offset = s.tracks.scrollPosition().get(), total = s.tracks.itemCount().get();
+        int offset = s.tracks.scrollPosition().get(),
+                total = s.tracks.itemCount().get();
         boolean unique = true;
         for (int i = 0; i < HostServices.TRACKS; i++) {
             Track track = (Track) s.tracks.getItemAt(i);
@@ -49,9 +63,18 @@ final class TrackTree {
             String id = track.channelId().get(), type = track.trackType().get();
             int position = track.position().get();
             Track parent = s.parents[i];
-            String parentRaw = parent.exists().get() ? blankToNull(parent.channelId().get()) : null;
-            Node node = new Node(i, id, blankToNull(type), position, track.isGroup().get(), track.isGroupExpanded().get(), parentRaw);
-            if (id == null || id.isEmpty() || tree.byId.put(id, node) != null || node.type == null || position < 0) unique = false;
+            String parentRaw =
+                    parent.exists().get() ? blankToNull(parent.channelId().get()) : null;
+            Node node = new Node(
+                    i,
+                    id,
+                    blankToNull(type),
+                    position,
+                    track.isGroup().get(),
+                    track.isGroupExpanded().get(),
+                    parentRaw);
+            if (id == null || id.isEmpty() || tree.byId.put(id, node) != null || node.type == null || position < 0)
+                unique = false;
             tree.nodes.add(node);
             tree.groups |= node.group();
         }
@@ -64,26 +87,49 @@ final class TrackTree {
     private void resolve() {
         List<Node> ordered = new ArrayList<>();
         for (Node node : nodes) if (!node.master()) ordered.add(node);
-        if (!windowComplete) { reason = "track_window_incomplete"; markFlat(ordered); return; }
-        if (ordered.isEmpty()) { complete = true; return; }
+        if (!windowComplete) {
+            reason = "track_window_incomplete";
+            markFlat(ordered);
+            return;
+        }
+        if (ordered.isEmpty()) {
+            complete = true;
+            return;
+        }
         rootParentId = rootParent(ordered);
         if (!groups) {
             // Without a Group in the window every track is top-level; parent observations are not required.
-            markFlat(ordered); complete = true; return;
+            markFlat(ordered);
+            complete = true;
+            return;
         }
         boolean ok = true;
         List<Node> unobservable = new ArrayList<>();
         for (Node node : ordered) {
-            if (node.parentRaw == null) { ok = false; reason = "parent_observation_missing"; continue; }
-            if (node.parentRaw.equals(rootParentId)) { node.topLevel = true; node.parentResolved = true; continue; }
+            if (node.parentRaw == null) {
+                ok = false;
+                reason = "parent_observation_missing";
+                continue;
+            }
+            if (node.parentRaw.equals(rootParentId)) {
+                node.topLevel = true;
+                node.parentResolved = true;
+                continue;
+            }
             Node parent = byId.get(node.parentRaw);
             if (parent != null && parent.group() && !parent.master() && parent.position < node.position) {
-                node.parentId = node.parentRaw; node.parentResolved = true; continue;
+                node.parentId = node.parentRaw;
+                node.parentResolved = true;
+                continue;
             }
             // A group reporting itself or an id outside the window: its parent proxy says nothing about its parent.
-            if (node.group() && (parent == null || parent == node)) { unobservable.add(node); continue; }
+            if (node.group() && (parent == null || parent == node)) {
+                unobservable.add(node);
+                continue;
+            }
             node.parentId = node.parentRaw;
-            ok = false; reason = "parent_not_a_group_in_window";
+            ok = false;
+            reason = "parent_not_a_group_in_window";
         }
         for (Node node : unobservable) {
             // Pre-order: the parent is the previous track or one of its ancestors. It is the root without doubt
@@ -91,18 +137,33 @@ final class TrackTree {
             int i = ordered.indexOf(node);
             Node previous = i == 0 ? null : ordered.get(i - 1);
             if (previous == null || (previous.topLevel && !previous.group())) {
-                node.topLevel = true; node.parentResolved = true; node.parentInferred = true;
-            } else { ok = false; reason = "group_parent_ambiguous"; }
+                node.topLevel = true;
+                node.parentResolved = true;
+                node.parentInferred = true;
+            } else {
+                ok = false;
+                reason = "group_parent_ambiguous";
+            }
         }
-        if (ok) for (Node node : ordered) if (depth(node, 0) < 0) { ok = false; reason = "parent_cycle"; }
+        if (ok)
+            for (Node node : ordered)
+                if (depth(node, 0) < 0) {
+                    ok = false;
+                    reason = "parent_cycle";
+                }
         // Pre-order: every track strictly between a group and its child descends from that group.
-        if (ok) for (int i = 0; i < ordered.size() && ok; i++) {
-            Node node = ordered.get(i);
-            if (node.topLevel) continue;
-            Node parent = byId.get(node.parentId);
-            for (int j = ordered.indexOf(parent) + 1; j < i; j++)
-                if (!descends(ordered.get(j), parent)) { ok = false; reason = "parent_order_inconsistent"; break; }
-        }
+        if (ok)
+            for (int i = 0; i < ordered.size() && ok; i++) {
+                Node node = ordered.get(i);
+                if (node.topLevel) continue;
+                Node parent = byId.get(node.parentId);
+                for (int j = ordered.indexOf(parent) + 1; j < i; j++)
+                    if (!descends(ordered.get(j), parent)) {
+                        ok = false;
+                        reason = "parent_order_inconsistent";
+                        break;
+                    }
+            }
         complete = ok;
         if (!ok) for (Node node : ordered) node.depth = -1;
     }
@@ -115,15 +176,23 @@ final class TrackTree {
     private String rootParent(List<Node> ordered) {
         Node first = ordered.get(0);
         if (!first.group()) return first.parentRaw;
-        for (Node node : ordered) if (!node.group() && node.parentRaw != null && !inWindow(node.parentRaw)) return node.parentRaw;
+        for (Node node : ordered)
+            if (!node.group() && node.parentRaw != null && !inWindow(node.parentRaw)) return node.parentRaw;
         return null;
     }
 
-    private boolean inWindow(String id) { Node node = byId.get(id); return node != null && !node.master(); }
+    private boolean inWindow(String id) {
+        Node node = byId.get(id);
+        return node != null && !node.master();
+    }
 
     private void markFlat(List<Node> ordered) {
         if (groups) return;
-        for (Node node : ordered) { node.topLevel = true; node.parentResolved = true; node.depth = 0; }
+        for (Node node : ordered) {
+            node.topLevel = true;
+            node.parentResolved = true;
+            node.depth = 0;
+        }
     }
 
     private int depth(Node node, int guard) {
@@ -147,7 +216,10 @@ final class TrackTree {
         boolean effect = "Effect".equals(candidate.type);
         int ordinal = 0;
         for (Node node : nodes)
-            if (node != candidate && !node.master() && node.topLevel && "Effect".equals(node.type) == effect
+            if (node != candidate
+                    && !node.master()
+                    && node.topLevel
+                    && "Effect".equals(node.type) == effect
                     && node.position < candidate.position) ordinal++;
         return ordinal;
     }
@@ -162,9 +234,17 @@ final class TrackTree {
     void describe(JsonObject row, Node node) {
         row.addProperty("type", node.type);
         row.addProperty("isGroup", node.group());
-        row.add("groupExpanded", node.group() && node.expanded != null ? new JsonPrimitive(node.expanded) : JsonNull.INSTANCE);
-        if (node.master()) { row.add("parentId", JsonNull.INSTANCE); row.add("depth", JsonNull.INSTANCE); return; }
-        row.add("parentId", node.parentResolved && !node.topLevel ? new JsonPrimitive(node.parentId) : JsonNull.INSTANCE);
+        row.add(
+                "groupExpanded",
+                node.group() && node.expanded != null ? new JsonPrimitive(node.expanded) : JsonNull.INSTANCE);
+        if (node.master()) {
+            row.add("parentId", JsonNull.INSTANCE);
+            row.add("depth", JsonNull.INSTANCE);
+            return;
+        }
+        row.add(
+                "parentId",
+                node.parentResolved && !node.topLevel ? new JsonPrimitive(node.parentId) : JsonNull.INSTANCE);
         row.add("depth", node.depth >= 0 ? new JsonPrimitive(node.depth) : JsonNull.INSTANCE);
         row.addProperty("parentResolved", node.parentResolved);
         if (node.parentInferred) row.addProperty("parentSource", "preorder_inference");
@@ -182,5 +262,7 @@ final class TrackTree {
         return out;
     }
 
-    private static String blankToNull(String value) { return value == null || value.isEmpty() ? null : value; }
+    private static String blankToNull(String value) {
+        return value == null || value.isEmpty() ? null : value;
+    }
 }
