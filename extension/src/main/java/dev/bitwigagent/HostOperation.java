@@ -6,19 +6,9 @@ import java.util.concurrent.CompletableFuture;
 /** One request's deadline and outcome, shared by controller and native document callbacks. */
 final class HostOperation {
     final long deadline;
-    /** Applied to a successful result at completion (e.g. cross-cutting warnings); the future stays the caller's cancellation handle. */
-    volatile java.util.function.Consumer<JsonObject> decorate;
-
-    final CompletableFuture<JsonObject> result = new CompletableFuture<JsonObject>() {
-        @Override
-        public boolean complete(JsonObject value) {
-            java.util.function.Consumer<JsonObject> d = decorate;
-            if (d != null && value != null && !isDone()) d.accept(value);
-            return super.complete(value);
-        }
-    };
+    final CompletableFuture<JsonObject> result = new CompletableFuture<>();
     volatile boolean dispatched;
-    volatile HostServices.SafetyObservation safetyAtEnqueue;
+    volatile SafetyObservation safetyAtEnqueue;
 
     HostOperation(long deadline) {
         this.deadline = deadline;

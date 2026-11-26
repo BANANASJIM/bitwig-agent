@@ -19,12 +19,12 @@ public final class WriteGuardTest {
     void valueWritesPlayButNotWhileRecording() {
         HostFixture f = new HostFixture();
         f.transport.child("isPlaying").emit(true);
-        Runnable guard = f.services.writeGuard(op(), false);
+        Runnable guard = f.services.transportSafety.writeGuard(op(), false);
         assertDoesNotThrow(guard::run, "a playing transport admits a value write at enqueue and at delivery");
         for (String key : RECORDING) {
             HostFixture blocked = new HostFixture();
             blocked.transport.child(key).emit(true);
-            assertRpcError("unsafe_state", () -> blocked.services.writeGuard(op(), false));
+            assertRpcError("unsafe_state", () -> blocked.services.transportSafety.writeGuard(op(), false));
             f.transport.child(key).emit(true);
             assertRpcError("unsafe_state", guard);
             f.transport.child(key).emit(false);
@@ -36,9 +36,9 @@ public final class WriteGuardTest {
     void structuralWritesNeedStoppedTransport() {
         HostFixture f = new HostFixture();
         f.transport.child("isPlaying").emit(true);
-        assertRpcError("unsafe_state", () -> f.services.writeGuard(op(), true));
+        assertRpcError("unsafe_state", () -> f.services.transportSafety.writeGuard(op(), true));
         f.transport.child("isPlaying").emit(false);
-        Runnable guard = f.services.writeGuard(op(), true);
+        Runnable guard = f.services.transportSafety.writeGuard(op(), true);
         f.transport.child("isPlaying").emit(true);
         assertRpcError("stale_context", guard);
     }
@@ -46,6 +46,6 @@ public final class WriteGuardTest {
     @Test
     void unobservedSafetyIsNotReady() {
         HostFixture f = new HostFixture(false);
-        assertRpcError("not_ready", () -> f.services.writeGuard(op(), false));
+        assertRpcError("not_ready", () -> f.services.transportSafety.writeGuard(op(), false));
     }
 }

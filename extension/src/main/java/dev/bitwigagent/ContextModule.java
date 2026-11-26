@@ -8,13 +8,26 @@ import java.util.Set;
 /** One read-only call for orientation: project, safety, tracks, occupied launcher slots, selected track and cursor clip. Never selects. */
 final class ContextModule implements HostModule {
     static final Set<String> METHODS = Set.of("context.get");
-    private final HostServices s;
+    private final Scheduler scheduler;
+    private final TrackWindow window;
+    private final ProjectState projectState;
+    private final TransportSafety transportSafety;
     private final TransportModule transport;
     private final MixModule mix;
     private final LauncherModule launcher;
 
-    ContextModule(HostServices services, TransportModule transport, MixModule mix, LauncherModule launcher) {
-        s = services;
+    ContextModule(
+            Scheduler scheduler,
+            TrackWindow window,
+            ProjectState projectState,
+            TransportSafety transportSafety,
+            TransportModule transport,
+            MixModule mix,
+            LauncherModule launcher) {
+        this.scheduler = scheduler;
+        this.window = window;
+        this.projectState = projectState;
+        this.transportSafety = transportSafety;
         this.transport = transport;
         this.mix = mix;
         this.launcher = launcher;
@@ -37,32 +50,32 @@ final class ContextModule implements HostModule {
 
     @Override
     public void dispatch(HostOperation op, String method, JsonObject p) {
-        s.check(op);
+        scheduler.check(op);
         op.result.complete(snapshot());
     }
 
     /** Unobserved values are JSON null, never guessed. */
     private JsonObject snapshot() {
-        JsonObject out = HostServices.observed();
+        JsonObject out = Results.observed();
         for (Map.Entry<String, JsonElement> e : transport.basics().entrySet()) out.add(e.getKey(), e.getValue());
-        out.add("projectModified", s.projectModifiedJson());
-        out.addProperty("engineActive", s.engineActive());
-        for (Map.Entry<String, JsonElement> e : s.projectReadiness().entrySet()) out.add(e.getKey(), e.getValue());
-        out.add("instance", HostServices.instance());
-        for (Map.Entry<String, JsonElement> e : s.playbackSafety().entrySet()) out.add(e.getKey(), e.getValue());
+        out.add("projectModified", Results.modified(projectState.modified()));
+        out.addProperty("engineActive", projectState.engineActive());
+        for (Map.Entry<String, JsonElement> e : Results.readiness(projectState.readiness()).entrySet()) out.add(e.getKey(), e.getValue());
+        out.add("instance", Results.instance());
+        Results.addPlaybackSafety(out, transportSafety.observation());
         out.add(
                 "sceneCount",
-                s.tracksObserved
-                        ? new JsonPrimitive(s.tracks.sceneBank().itemCount().get())
+                window.observed()
+                        ? new JsonPrimitive(window.bank().sceneBank().itemCount().get())
                         : JsonNull.INSTANCE);
         out.add("tracks", JsonNull.INSTANCE);
         out.add("selectedTrack", JsonNull.INSTANCE);
         out.add("cursorClip", JsonNull.INSTANCE);
-        if (!s.tracksObserved) return out;
+        if (!window.observed()) return out;
         JsonArray tracks = new JsonArray();
         JsonElement selectedTrack = JsonNull.INSTANCE, cursorClip = JsonNull.INSTANCE;
-        for (int t = 0; t < HostServices.TRACKS; t++) {
-            Track track = (Track) s.tracks.getItemAt(t);
+        for (int t = 0; t < HostLimits.TRACKS; t++) {
+            Track track = window.at(t);
             if (!track.exists().get()) continue;
             JsonObject item = mix.brief(t);
             JsonElement id = item.get("trackId");

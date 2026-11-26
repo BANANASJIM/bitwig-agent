@@ -63,7 +63,7 @@ final class DisplaySolver {
         }
     }
 
-    private final HostServices s;
+    private final Scheduler scheduler;
     private final HostOperation op;
     private final Port port;
     private final DisplayScale.Kind kind;
@@ -73,8 +73,8 @@ final class DisplaySolver {
     private double lo = 0, hi = 1;
 
     DisplaySolver(
-            HostServices s, HostOperation op, Port port, DisplayScale.Kind kind, double target, Consumer<Result> done) {
-        this.s = s;
+            Scheduler scheduler, HostOperation op, Port port, DisplayScale.Kind kind, double target, Consumer<Result> done) {
+        this.scheduler = scheduler;
         this.op = op;
         this.port = port;
         this.kind = kind;
@@ -97,7 +97,7 @@ final class DisplaySolver {
     private void probe(double x) {
         port.guard();
         // The scheduler throws deadline_exceeded once the deadline passes, so stop while a restore still fits.
-        if (op.deadline - s.now() < 2 * PROBE_TIMEOUT_NANOS + HostServices.DEADLINE_MARGIN_NANOS) {
+        if (op.deadline - scheduler.now() < 2 * PROBE_TIMEOUT_NANOS + Scheduler.DEADLINE_MARGIN_NANOS) {
             fail("deadline");
             return;
         }
@@ -109,7 +109,7 @@ final class DisplaySolver {
             result.dispatched = true;
             port.write(x);
         }
-        awaitValue(x, before, same, s.now() + PROBE_TIMEOUT_NANOS, same ? 0 : -1);
+        awaitValue(x, before, same, scheduler.now() + PROBE_TIMEOUT_NANOS, same ? 0 : -1);
     }
 
     /** settle < 0: waiting for the value callback; otherwise counts the polls that let the display text catch up. */
@@ -125,12 +125,12 @@ final class DisplaySolver {
             evaluate(x);
             return;
         }
-        if (settle < 0 && s.now() >= until) {
+        if (settle < 0 && scheduler.now() >= until) {
             fail("probe_not_observed");
             return;
         }
         int next = settle < 0 ? -1 : settle + 1;
-        s.schedule(op, () -> awaitValue(x, before, same, until, next), POLL_MS);
+        scheduler.schedule(op, () -> awaitValue(x, before, same, until, next), POLL_MS);
     }
 
     private void evaluate(double x) {
@@ -185,7 +185,7 @@ final class DisplaySolver {
             }
             if (value) port.write(result.original);
             if (enabled) port.writeEnabled(result.originalEnabled);
-            awaitRestore(before, enabledBefore, value, enabled, s.now() + PROBE_TIMEOUT_NANOS);
+            awaitRestore(before, enabledBefore, value, enabled, scheduler.now() + PROBE_TIMEOUT_NANOS);
         } catch (RpcException error) {
             done.accept(result);
         }
@@ -209,14 +209,14 @@ final class DisplaySolver {
             done.accept(result);
             return;
         }
-        if (s.now() >= until) {
+        if (scheduler.now() >= until) {
             done.accept(result);
             return;
         }
-        s.schedule(op, () -> awaitRestore(before, enabledBefore, value, enabled, until), POLL_MS);
+        scheduler.schedule(op, () -> awaitRestore(before, enabledBefore, value, enabled, until), POLL_MS);
     }
 
     private static boolean near(JsonElement value, double x) {
-        return !value.isJsonNull() && Math.abs(value.getAsDouble() - x) <= HostServices.TOLERANCE;
+        return !value.isJsonNull() && Math.abs(value.getAsDouble() - x) <= HostLimits.TOLERANCE;
     }
 }

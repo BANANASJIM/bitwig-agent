@@ -15,16 +15,20 @@ final class MeterModule implements HostModule {
     static final int RANGE = 128, MIN_WINDOW_MS = 50, MAX_WINDOW_MS = 5000, POLL_MS = 20;
     private static final Pattern UUID =
             Pattern.compile("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}");
-    private final HostServices s;
+    private final Scheduler scheduler;
+    private final TrackWindow window;
+    private final TransportSafety transportSafety;
     // [track][channel] last callback value: observers only fire on change, so these are the standing levels.
-    private final int[][] peak = new int[HostServices.TRACKS][2], rms = new int[HostServices.TRACKS][2];
+    private final int[][] peak = new int[HostLimits.TRACKS][2], rms = new int[HostLimits.TRACKS][2];
     private final List<Window> windows = new ArrayList<>();
     private String unavailable;
 
-    MeterModule(HostServices services) {
-        s = services;
-        for (int t = 0; t < HostServices.TRACKS; t++) {
-            Track track = (Track) s.tracks.getItemAt(t);
+    MeterModule(Scheduler scheduler, TrackWindow window, TransportSafety transportSafety) {
+        this.scheduler = scheduler;
+        this.window = window;
+        this.transportSafety = transportSafety;
+        for (int t = 0; t < HostLimits.TRACKS; t++) {
+            Track track = window.at(t);
             for (int c = 0; c < 2; c++) {
                 final int ti = t, ci = c;
                 try {
@@ -61,9 +65,9 @@ final class MeterModule implements HostModule {
         JsonElement ids = p.get("trackIds");
         if (!ids.isJsonArray()
                 || ids.getAsJsonArray().size() < 1
-                || ids.getAsJsonArray().size() > HostServices.TRACKS)
+                || ids.getAsJsonArray().size() > HostLimits.TRACKS)
             throw Errors.notApplied(
-                    ErrorCode.INVALID_PARAMS, "trackIds must hold 1.." + HostServices.TRACKS + " track UUIDs.");
+                    ErrorCode.INVALID_PARAMS, "trackIds must hold 1.." + HostLimits.TRACKS + " track UUIDs.");
         Set<String> seen = new HashSet<>();
         for (JsonElement id : ids.getAsJsonArray()) {
             if (!id.isJsonPrimitive()
@@ -79,9 +83,9 @@ final class MeterModule implements HostModule {
         final HostOperation op;
         final int[] slots;
         final String[] ids;
-        final int[][] peakMax = new int[HostServices.TRACKS][2], rmsMax = new int[HostServices.TRACKS][2];
-        final long[][] rmsSum = new long[HostServices.TRACKS][2];
-        final int[] callbacks = new int[HostServices.TRACKS];
+        final int[][] peakMax = new int[HostLimits.TRACKS][2], rmsMax = new int[HostLimits.TRACKS][2];
+        final long[][] rmsSum = new long[HostLimits.TRACKS][2];
+        final int[] callbacks = new int[HostLimits.TRACKS];
         int ticks;
 
         Window(HostOperation op, int[] slots, String[] ids) {
@@ -104,18 +108,18 @@ final class MeterModule implements HostModule {
 
     @Override
     public void dispatch(HostOperation op, String method, JsonObject p) {
-        s.check(op);
+        scheduler.check(op);
         if (unavailable != null) throw Errors.notApplied(ErrorCode.UNSUPPORTED_SCOPE, unavailable);
         JsonArray requested = p.getAsJsonArray("trackIds");
         int[] slots = new int[requested.size()];
         String[] ids = new String[requested.size()];
         for (int i = 0; i < slots.length; i++) {
             ids[i] = requested.get(i).getAsString();
-            slots[i] = s.trackSlot(ids[i]);
+            slots[i] = window.trackSlot(ids[i]);
         }
         int windowMs = p.get("windowMs").getAsInt();
-        long end = s.now() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(windowMs);
-        if (op.deadline - end < HostServices.DEADLINE_MARGIN_NANOS)
+        long end = scheduler.now() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(windowMs);
+        if (op.deadline - end < Scheduler.DEADLINE_MARGIN_NANOS)
             throw Errors.notApplied(
                     ErrorCode.INVALID_PARAMS, "timeoutMs is too short for windowMs; allow windowMs plus about 200 ms.");
         windows.removeIf(old -> old.op.result.isDone());
@@ -127,31 +131,31 @@ final class MeterModule implements HostModule {
                 w.rmsMax[t][c] = rms[t][c];
             }
         windows.add(w);
-        Boolean playingAtStart = s.playing();
+        Boolean playingAtStart = transportSafety.playing();
         poll(op, w, end, windowMs, playingAtStart);
     }
 
     private void poll(HostOperation op, Window w, long end, int windowMs, Boolean playingAtStart) {
         w.tick(rms);
-        if (s.now() < end) {
-            s.schedule(op, () -> poll(op, w, end, windowMs, playingAtStart), POLL_MS);
+        if (scheduler.now() < end) {
+            scheduler.schedule(op, () -> poll(op, w, end, windowMs, playingAtStart), POLL_MS);
             return;
         }
         windows.remove(w);
-        JsonObject out = HostServices.observed();
+        JsonObject out = Results.observed();
         out.addProperty("scope", "vu_meters_over_window");
         out.addProperty("windowMs", windowMs);
         out.addProperty("polls", w.ticks);
         out.addProperty("range", RANGE);
         out.addProperty("unit", "vu_steps_0_to_" + (RANGE - 1) + "_public_api_publishes_no_db_mapping");
         out.add("playingAtStart", playingAtStart == null ? JsonNull.INSTANCE : new JsonPrimitive(playingAtStart));
-        out.add("playingAtEnd", s.playing() == null ? JsonNull.INSTANCE : new JsonPrimitive(s.playing()));
+        out.add("playingAtEnd", transportSafety.playing() == null ? JsonNull.INSTANCE : new JsonPrimitive(transportSafety.playing()));
         JsonArray tracks = new JsonArray();
         for (int i = 0; i < w.slots.length; i++) {
             int t = w.slots[i];
             JsonObject row = new JsonObject();
             row.addProperty("trackId", w.ids[i]);
-            boolean same = s.trackMatches(w.ids[i], (Track) s.tracks.getItemAt(t));
+            boolean same = window.trackMatches(w.ids[i], window.at(t));
             row.addProperty("targetUnchanged", same);
             if (same) {
                 row.add("peakMax", pair(w.peakMax[t]));

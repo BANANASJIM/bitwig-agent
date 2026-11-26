@@ -1,8 +1,11 @@
 package dev.bitwigagent;
 
-import static dev.bitwigagent.HostServices.*;
+import static dev.bitwigagent.HostLimits.*;
+import static dev.bitwigagent.Results.*;
 
 import com.bitwig.extension.controller.api.Action;
+import com.bitwig.extension.controller.api.Application;
+import com.bitwig.extension.controller.api.Project;
 import com.google.gson.JsonObject;
 import java.nio.file.Path;
 import java.util.List;
@@ -38,20 +41,42 @@ final class ProjectModule implements HostModule {
         void saveAs(Object projectProxy, Path dispatchPath, Runnable beforeDispatch, Completion done);
     }
 
-    private final HostServices s;
+    private final Scheduler scheduler;
+    private final Application application;
+    private final Project project;
+    private final ProjectState projectState;
+    private final NativeRuntime natives;
+    private final Holds holds;
     private SaveAsAccess access;
     private String accessError;
     /** Cleared only by the native callback: until then Bitwig may still be writing. */
-    private volatile boolean pending;
-
+    private static final String PENDING = "project.saveAs";
     private volatile String pendingPath;
 
-    ProjectModule(HostServices s) {
-        this(s, null);
+    ProjectModule(
+            Scheduler scheduler,
+            Application application,
+            Project project,
+            ProjectState projectState,
+            NativeRuntime natives,
+            Holds holds) {
+        this(scheduler, application, project, projectState, natives, holds, null);
     }
 
-    ProjectModule(HostServices s, SaveAsAccess access) {
-        this.s = s;
+    ProjectModule(
+            Scheduler scheduler,
+            Application application,
+            Project project,
+            ProjectState projectState,
+            NativeRuntime natives,
+            Holds holds,
+            SaveAsAccess access) {
+        this.scheduler = scheduler;
+        this.application = application;
+        this.project = project;
+        this.projectState = projectState;
+        this.natives = natives;
+        this.holds = holds;
         this.access = access;
     }
 
@@ -78,17 +103,9 @@ final class ProjectModule implements HostModule {
     }
 
     @Override
-    public List<String> unresolved() {
-        return pending
-                ? List.of("A project.saveAs to " + pendingPath
-                        + " has no native completion callback yet; inspect the file and projectModified.")
-                : List.of();
-    }
-
-    @Override
     public void dispatch(HostOperation op, String method, JsonObject params) {
-        s.check(op);
-        if (pending)
+        scheduler.check(op);
+        if (holds.held(PENDING))
             throw Errors.notApplied(
                     ErrorCode.BUSY,
                     "A project.saveAs is still running natively (" + pendingPath + "); no request was queued.");
@@ -100,7 +117,7 @@ final class ProjectModule implements HostModule {
             activateEngine(op);
             return;
         }
-        if (Boolean.FALSE.equals(s.projectModified())) {
+        if (Boolean.FALSE.equals(projectState.modified())) {
             JsonObject done = observed();
             done.addProperty("saved", true);
             done.addProperty("alreadySaved", true);
@@ -108,43 +125,43 @@ final class ProjectModule implements HostModule {
             op.result.complete(done);
             return;
         }
-        Action save = s.application.getAction(SAVE_ACTION);
+        Action save = application.getAction(SAVE_ACTION);
         if (save == null)
             throw Errors.notApplied(ErrorCode.UNKNOWN_ACTION, "Save action is absent from the host catalog.");
-        long before = s.projectModifiedSequence();
-        s.check(op);
+        long before = projectState.modifiedSequence();
+        scheduler.check(op);
         op.dispatched = true;
         save.invoke();
         // Full request deadline, not observeUntil's 750 ms window: a real save can take longer. Shared margin keeps the
         // last poll inside it.
-        await(op, before, op.deadline - HostServices.DEADLINE_MARGIN_NANOS);
+        await(op, before, op.deadline - Scheduler.DEADLINE_MARGIN_NANOS);
     }
 
     private void activateEngine(HostOperation op) {
-        if (s.engineActive()) {
+        if (projectState.engineActive()) {
             JsonObject done = observed();
             done.addProperty("engineActive", true);
             done.addProperty("alreadyActive", true);
             op.result.complete(done);
             return;
         }
-        Action activate = s.application.getAction(ACTIVATE_ACTION);
+        Action activate = application.getAction(ACTIVATE_ACTION);
         if (activate == null)
             throw Errors.notApplied(
                     ErrorCode.UNKNOWN_ACTION,
                     "\"" + ACTIVATE_ACTION + "\" is absent from the host catalog; use actions.list query=engine.");
-        s.check(op);
+        scheduler.check(op);
         op.dispatched = true;
         activate.invoke();
-        awaitEngine(op, op.deadline - HostServices.DEADLINE_MARGIN_NANOS);
+        awaitEngine(op, op.deadline - Scheduler.DEADLINE_MARGIN_NANOS);
     }
 
     private void awaitEngine(HostOperation op, long until) {
-        if (s.engineActive()) {
+        if (projectState.engineActive()) {
             JsonObject done = observed();
             done.addProperty("engineActive", true);
             op.result.complete(done);
-        } else if (s.now() >= until) {
+        } else if (scheduler.now() >= until) {
             JsonObject result = new JsonObject();
             result.addProperty("status", "dispatched");
             result.addProperty("engineActive", false);
@@ -154,28 +171,28 @@ final class ProjectModule implements HostModule {
                     "The action was dispatched once, not retried, but hasActiveEngine did not become true in time. A dialog may be blocking it, or the project may still be loading: check status.engineActive and projectReady before another attempt.");
             op.result.complete(result);
         } else {
-            s.schedule(op, () -> awaitEngine(op, until), 50);
+            scheduler.schedule(op, () -> awaitEngine(op, until), 50);
         }
     }
 
     private void await(HostOperation op, long before, long until) {
-        if (s.projectModifiedSequence() > before && Boolean.FALSE.equals(s.projectModified())) {
+        if (projectState.modifiedSequence() > before && Boolean.FALSE.equals(projectState.modified())) {
             JsonObject done = observed();
             done.addProperty("saved", true);
             done.addProperty("projectModified", false);
             op.result.complete(done);
-        } else if (s.now() >= until) {
+        } else if (scheduler.now() >= until) {
             JsonObject result = new JsonObject();
             result.addProperty("status", "dispatched");
             result.addProperty("saved", false);
             result.addProperty("completion", "not_observed");
-            result.add("projectModified", s.projectModifiedJson());
+            result.add("projectModified", Results.modified(projectState.modified()));
             result.addProperty(
                     "hint",
                     "Save was dispatched once, not retried. A modal dialog (Save As for an untitled project, crash recovery, ...) can block the save and needs GUI/user completion; check projectModified via status before any further action.");
             op.result.complete(result);
         } else {
-            s.schedule(op, () -> await(op, before, until), 20);
+            scheduler.schedule(op, () -> await(op, before, until), 20);
         }
     }
 
@@ -203,7 +220,7 @@ final class ProjectModule implements HostModule {
         if (access != null) return access;
         if (accessError != null) throw Errors.notApplied(UNAVAILABLE, accessError);
         try {
-            access = new Bitwig614ProjectSaveAsAccess(s.nativeRuntime(op).access(UNAVAILABLE));
+            access = new Bitwig614ProjectSaveAsAccess(natives.get(op).access(UNAVAILABLE));
         } catch (ReflectiveOperationException | LinkageError error) {
             accessError = "Exact project save bindings unavailable: " + Bitwig614Runtime.diagnostic(error);
             throw Errors.notApplied(UNAVAILABLE, accessError);
@@ -245,42 +262,45 @@ final class ProjectModule implements HostModule {
                 params.has("allowAnyPath") && params.get("allowAnyPath").getAsBoolean();
         SaveAsAccess bridge = access(op);
         Path home = Path.of(System.getProperty("user.home"));
-        pending = true;
         pendingPath = path.toString();
-        Outcome outcome = new Outcome(() -> pending = false);
+        holds.place(
+                PENDING,
+                "A project.saveAs to " + pendingPath
+                        + " has no native completion callback yet; inspect the file and projectModified.");
+        Outcome outcome = new Outcome(() -> holds.release(PENDING));
         try {
             bridge.execute(() -> {
                 try {
-                    s.check(op);
+                    scheduler.check(op);
                     ProjectSaveAsPlan plan =
                             ProjectSaveAsPlan.resolve(path, bridge.projectsRoot(), home, overwrite, anyPath);
                     bridge.saveAs(
-                            s.project,
+                            project,
                             plan.dispatchPath,
                             () -> {
-                                s.check(op);
+                                scheduler.check(op);
                                 op.dispatched = true;
                             },
                             outcome);
-                    s.schedule(
+                    scheduler.schedule(
                             op,
                             () -> awaitSaveAs(
-                                    op, plan, outcome, bridge, op.deadline - HostServices.DEADLINE_MARGIN_NANOS),
+                                    op, plan, outcome, bridge, op.deadline - Scheduler.DEADLINE_MARGIN_NANOS),
                             0);
                 } catch (RuntimeException | Error error) {
-                    if (!op.dispatched) pending = false;
+                    if (!op.dispatched) holds.release(PENDING);
                     op.fail(error);
                 }
             });
         } catch (RuntimeException | Error error) {
-            pending = false;
+            holds.release(PENDING);
             throw error;
         }
     }
 
     private void awaitSaveAs(
             HostOperation op, ProjectSaveAsPlan plan, Outcome outcome, SaveAsAccess bridge, long until) {
-        boolean late = s.now() >= until;
+        boolean late = scheduler.now() >= until;
         // One snapshot per poll: failure is written before done, so it is stable once done is seen.
         boolean done = outcome.done;
         String failure = done ? outcome.failure : null;
@@ -296,11 +316,11 @@ final class ProjectModule implements HostModule {
             return;
         }
         ProjectSaveAsPlan.Stat file = ProjectSaveAsPlan.Stat.of(plan.file);
-        boolean written = file.writtenSince(plan.before), saved = Boolean.FALSE.equals(s.projectModified());
-        String name = s.application.projectName().get();
+        boolean written = file.writtenSince(plan.before), saved = Boolean.FALSE.equals(projectState.modified());
+        String name = application.projectName().get();
         boolean named = plan.name.equals(name);
         if (!(done && written && saved && named) && !late) {
-            s.schedule(op, () -> awaitSaveAs(op, plan, outcome, bridge, until), 25);
+            scheduler.schedule(op, () -> awaitSaveAs(op, plan, outcome, bridge, until), 25);
             return;
         }
         boolean observed = done && written && saved && named;
@@ -320,7 +340,7 @@ final class ProjectModule implements HostModule {
         if (file.exists) result.addProperty("fileBytes", file.size);
         result.addProperty("expectedProjectName", plan.name);
         result.addProperty("projectName", name);
-        result.add("projectModified", s.projectModifiedJson());
+        result.add("projectModified", Results.modified(projectState.modified()));
         result.addProperty("nativeVersion", Bitwig614Runtime.VERSION);
         result.addProperty("nativeJarSha256", bridge.nativeJarSha256());
         result.addProperty("verificationScope", "native_callback_file_and_model_flags_not_reopen");

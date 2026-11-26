@@ -293,7 +293,7 @@ public final class HostBridgeTest {
         assertRpcError("invalid_params", b4.handle("project.save", extra, bad.deadline()));
     }
 
-    private static final long SETTLE = HostServices.PROJECT_SETTLE_NANOS;
+    private static final long SETTLE = ProjectState.SETTLE_NANOS;
 
     @Test
     void engineActivationAndInactiveEngineGuards() {
@@ -326,23 +326,12 @@ public final class HostBridgeTest {
             RpcException e = rejection(refused);
             assertTrue(e.outcome.equals("not_applied"), "inactive-engine refusal dispatched nothing");
         }
-        assertTrue(bridge.preflight("transport.set", play), "playing=true on an inactive engine asks for a warning");
-        JsonObject stop = new JsonObject();
-        stop.addProperty("playing", false);
-        assertTrue(!bridge.preflight("transport.set", stop), "stopping needs no warning");
-        HostOperation op = new HostOperation(Long.MAX_VALUE);
-        op.decorate = r -> HostBridge.addWarning(r, "w");
-        JsonObject out = new JsonObject();
-        out.addProperty("status", "dispatched");
-        op.result.complete(out);
-        assertTrue(op.result.join().getAsJsonArray("warnings").size() == 1, "a decorated result carries the warning");
         JsonObject activated = call(f, bridge, "project.activateEngine", new JsonObject());
         assertTrue(
                 f.activateInvocations == 1
                         && activated.get("status").getAsString().equals("observed")
                         && activated.get("engineActive").getAsBoolean(),
                 "activation is invoked once and confirmed by an observed true");
-        assertTrue(!bridge.preflight("transport.set", play), "no warning once active");
         // The action runs but the engine never reports active: bounded, not retried, never claimed.
         Fake stuck = new Fake();
         HostBridge b2 = stuck.bridge();
@@ -423,7 +412,7 @@ public final class HostBridgeTest {
             boolean engine = HostFixture.SPECS.get(method).engineRequired;
             String refusal = null;
             try {
-                bridge.preflight(method, new JsonObject());
+                bridge.preflight(method);
             } catch (RpcException e) {
                 refusal = e.code;
             }
@@ -435,14 +424,14 @@ public final class HostBridgeTest {
         for (String method : HostFixture.SPECS.methods()) {
             if (!HostFixture.SPECS.get(method).engineRequired) continue;
             RpcException refused =
-                    assertThrows(RpcException.class, () -> bridge.preflight(method, new JsonObject()), method);
+                    assertThrows(RpcException.class, () -> bridge.preflight(method), method);
             assertTrue(
                     refused.code.equals("engine_inactive")
                             && refused.getMessage().contains(method),
                     method + " names itself");
         }
         for (String method : HostFixture.SPECS.methods())
-            if (!HostFixture.SPECS.get(method).engineRequired) bridge.preflight(method, new JsonObject());
+            if (!HostFixture.SPECS.get(method).engineRequired) bridge.preflight(method);
     }
 
     @Test
@@ -581,7 +570,7 @@ public final class HostBridgeTest {
         assertTrue(host.tasks.isEmpty(), "cached parameter listing completes without extra scheduled polling");
         JsonObject tracks = call(host, bridge, "tracks.list", new JsonObject());
         assertTrue(
-                tracks.getAsJsonObject("window").get("capacity").getAsInt() == HostServices.TRACKS,
+                tracks.getAsJsonObject("window").get("capacity").getAsInt() == HostLimits.TRACKS,
                 "bounded track window");
         assertTrue(
                 !tracks.getAsJsonObject("window").get("complete").getAsBoolean(),
@@ -879,7 +868,7 @@ public final class HostBridgeTest {
                                 .getAsJsonObject("tracks")
                                 .get("total")
                                 .getAsInt()
-                        == HostServices.TRACKS + 4,
+                        == HostLimits.TRACKS + 4,
                 "discovery reports the actual host track count, not the window capacity");
         assertTrue(
                 !result.getAsJsonObject("windows")
@@ -1213,7 +1202,7 @@ public final class HostBridgeTest {
                 bridge.handle("parameters.layer.set", layerWrite(listing, .8), f.deadline());
         f.next();
         assertTrue(!write.isDone(), "nested setter dispatch cannot acknowledge a write");
-        double applied = Math.round(.8 * (HostServices.RESOLUTION - 1)) / (double) (HostServices.RESOLUTION - 1);
+        double applied = Math.round(.8 * (HostLimits.RESOLUTION - 1)) / (double) (HostLimits.RESOLUTION - 1);
         f.emitChildValue(1, 1, applied);
         f.emitValue(0, applied);
         f.next();
@@ -1976,7 +1965,7 @@ public final class HostBridgeTest {
                 bank.on("getItemAt", args -> bankDevices[(Integer) args[0]]);
                 trackNodes[t].attach("createDeviceBank", bank);
             }
-            trackBank.put("itemCount", HostServices.TRACKS + 4);
+            trackBank.put("itemCount", HostLimits.TRACKS + 4);
         }
 
         void attachLayers(FakeHost root, boolean populated) {
@@ -2183,7 +2172,7 @@ public final class HostBridgeTest {
             initializing = true;
             try {
                 HostBridge b = base.bridge(specs);
-                tasks.advance(2 * HostServices.PROJECT_SETTLE_NANOS);
+                tasks.advance(2 * ProjectState.SETTLE_NANOS);
                 return b;
             } finally {
                 initializing = false;

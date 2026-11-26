@@ -93,7 +93,7 @@ final class GridModuleNameWriter {
                             ErrorCode.STALE_CONTEXT,
                             "Native effective module name changed during later graph observation.");
                 check.run();
-                JsonObject result = HostServices.observed();
+                JsonObject result = Results.observed();
                 result.addProperty("moduleId", moduleId.toString());
                 result.addProperty("operation", "rename");
                 result.addProperty("previousCustomName", previous.custom);

@@ -43,31 +43,44 @@ final class TransportModule implements HostModule {
             "loopEnabled",
             "playing");
 
-    private final HostServices s;
+    private final Transport transport;
+    private final Application application;
+    private final Scheduler scheduler;
+    private final TransportSafety transportSafety;
+    private final ProjectState projectState;
     private final Map<String, Sample> values = new LinkedHashMap<>();
     private final Map<String, SettableEnumValue> enums = new LinkedHashMap<>();
 
-    TransportModule(HostServices services) {
-        s = services;
-        observe("playing", s.transport.isPlaying());
+    TransportModule(
+            Transport transport,
+            Application application,
+            Scheduler scheduler,
+            TransportSafety transportSafety,
+            ProjectState projectState) {
+        this.transport = transport;
+        this.application = application;
+        this.scheduler = scheduler;
+        this.transportSafety = transportSafety;
+        this.projectState = projectState;
+        observe("playing", transport.isPlaying());
         Sample tempo = sample("tempoBpm");
-        s.transport.tempo().value().addRawValueObserver((DoubleValueChangedCallback) v -> tempo.number(v));
+        transport.tempo().value().addRawValueObserver((DoubleValueChangedCallback) v -> tempo.number(v));
         Sample signature = sample("timeSignature");
-        s.transport.timeSignature().markInterested();
-        s.transport.timeSignature().addValueObserver((StringValueChangedCallback)
+        transport.timeSignature().markInterested();
+        transport.timeSignature().addValueObserver((StringValueChangedCallback)
                 v -> signature.set(new JsonPrimitive((String) v)));
-        observe("positionBeats", s.transport.playPosition());
-        observe("metronome", s.transport.isMetronomeEnabled());
-        observe("loopEnabled", s.transport.isArrangerLoopEnabled());
-        observe("loopStartBeats", s.transport.arrangerLoopStart());
-        observe("loopDurationBeats", s.transport.arrangerLoopDuration());
+        observe("positionBeats", transport.playPosition());
+        observe("metronome", transport.isMetronomeEnabled());
+        observe("loopEnabled", transport.isArrangerLoopEnabled());
+        observe("loopStartBeats", transport.arrangerLoopStart());
+        observe("loopDurationBeats", transport.arrangerLoopDuration());
         Sample volume = sample("metronomeVolumeNormalized");
-        s.transport.metronomeVolume().addValueObserver((DoubleValueChangedCallback) volume::number);
-        observe("punchInEnabled", s.transport.isPunchInEnabled());
-        observe("punchOutEnabled", s.transport.isPunchOutEnabled());
-        observe("preRoll", s.transport.preRoll());
-        observe("defaultLaunchQuantization", s.transport.defaultLaunchQuantization());
-        observe("recordQuantizationGrid", s.application.recordQuantizationGrid());
+        transport.metronomeVolume().addValueObserver((DoubleValueChangedCallback) volume::number);
+        observe("punchInEnabled", transport.isPunchInEnabled());
+        observe("punchOutEnabled", transport.isPunchOutEnabled());
+        observe("preRoll", transport.preRoll());
+        observe("defaultLaunchQuantization", transport.defaultLaunchQuantization());
+        observe("recordQuantizationGrid", application.recordQuantizationGrid());
     }
 
     @Override
@@ -120,7 +133,7 @@ final class TransportModule implements HostModule {
 
     @Override
     public void dispatch(HostOperation op, String method, JsonObject p) {
-        s.check(op);
+        scheduler.check(op);
         if (method.equals("transport.get")) {
             op.result.complete(snapshot());
             return;
@@ -143,45 +156,68 @@ final class TransportModule implements HostModule {
                 : values.get("loopDurationBeats").value.getAsDouble();
         if (!Double.isFinite(start + duration))
             throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "Loop end must be finite.");
-        Map<String, Long> writes = new LinkedHashMap<>();
-        long until = s.observeUntil(op);
+        Request request = new Request(
+                op,
+                p,
+                scheduler.observeUntil(op),
+                p.has("playing") && p.get("playing").getAsBoolean() && !projectState.engineActive());
         boolean stopping = p.has("playing") && !p.get("playing").getAsBoolean();
         try {
-            if (stopping) write(op, p, "playing", writes);
+            if (stopping) write(request, "playing");
         } catch (RpcException error) {
             if (!op.dispatched) throw error;
-            finish(op, p, writes, error.code);
+            finish(request, error.code);
             return;
         }
-        if (stopping && p.size() > 1) awaitStop(op, p, writes, until);
-        else writeRemaining(op, p, writes, until);
+        if (stopping && p.size() > 1) awaitStop(request);
+        else writeRemaining(request);
     }
 
-    private void awaitStop(HostOperation op, JsonObject p, Map<String, Long> writes, long until) {
-        // Stop is asynchronous: dispatch order alone cannot protect a following seek.
-        if (s.now() >= until) {
-            finish(op, p, writes, null);
-        } else if (verified("playing", p.get("playing"), writes.get("playing"))) {
-            writeRemaining(op, p, writes, until);
-        } else {
-            s.schedule(op, () -> awaitStop(op, p, writes, until), 20);
+    /** One transport.set: what was asked, what was dispatched, and whether it started playback on a silent engine. */
+    private static final class Request {
+        final HostOperation op;
+        final JsonObject p;
+        final Map<String, Long> writes = new LinkedHashMap<>();
+        final long until;
+        final boolean silentEngine;
+
+        Request(HostOperation op, JsonObject p, long until, boolean silentEngine) {
+            this.op = op;
+            this.p = p;
+            this.until = until;
+            this.silentEngine = silentEngine;
         }
     }
 
-    private void writeRemaining(HostOperation op, JsonObject p, Map<String, Long> writes, long until) {
+    private void awaitStop(Request request) {
+        // Stop is asynchronous: dispatch order alone cannot protect a following seek.
+        scheduler.poll(
+                request.op,
+                request.until,
+                () -> scheduler.now() < request.until
+                        && verified("playing", request.p.get("playing"), request.writes.get("playing")),
+                () -> writeRemaining(request),
+                () -> finish(request, null));
+    }
+
+    private void writeRemaining(Request request) {
         try {
             for (String key : ORDER)
-                if (p.has(key) && !(key.equals("playing") && !p.get(key).getAsBoolean())) write(op, p, key, writes);
+                if (request.p.has(key) && !(key.equals("playing") && !request.p.get(key).getAsBoolean()))
+                    write(request, key);
         } catch (RpcException error) {
-            if (!op.dispatched) throw error;
-            finish(op, p, writes, error.code);
+            if (!request.op.dispatched) throw error;
+            finish(request, error.code);
             return;
         }
-        await(op, p, writes, until);
+        await(request);
     }
 
-    private void write(HostOperation op, JsonObject p, String key, Map<String, Long> writes) {
-        s.check(op);
+    private void write(Request request, String key) {
+        HostOperation op = request.op;
+        JsonObject p = request.p;
+        Map<String, Long> writes = request.writes;
+        scheduler.check(op);
         guard(key, p.get(key));
         Sample before = values.get(key);
         if (matches(key, before.value, p.get(key))) {
@@ -189,38 +225,38 @@ final class TransportModule implements HostModule {
             return;
         }
         writes.put(key, before.sequence);
-        s.check(op);
+        scheduler.check(op);
         op.dispatched = true;
         JsonElement value = p.get(key);
         switch (key) {
             case "playing":
-                if (value.getAsBoolean()) s.transport.play();
-                else s.transport.stop();
+                if (value.getAsBoolean()) transport.play();
+                else transport.stop();
                 break;
             case "tempoBpm":
-                s.transport.tempo().value().setRaw(value.getAsDouble());
+                transport.tempo().value().setRaw(value.getAsDouble());
                 break;
             case "timeSignature":
-                s.transport.timeSignature().set(value.getAsString());
+                transport.timeSignature().set(value.getAsString());
                 break;
             case "positionBeats":
-                s.transport.setPosition(value.getAsDouble());
+                transport.setPosition(value.getAsDouble());
                 break;
             case "metronome":
-                s.transport.isMetronomeEnabled().set(value.getAsBoolean());
+                transport.isMetronomeEnabled().set(value.getAsBoolean());
                 break;
             case "loopEnabled":
-                s.transport.isArrangerLoopEnabled().set(value.getAsBoolean());
+                transport.isArrangerLoopEnabled().set(value.getAsBoolean());
                 break;
             // Absolute RPC target: no physical-controller pickup.
             case "metronomeVolumeNormalized":
-                s.transport.metronomeVolume().setImmediately(value.getAsDouble());
+                transport.metronomeVolume().setImmediately(value.getAsDouble());
                 break;
             case "punchInEnabled":
-                s.transport.isPunchInEnabled().set(value.getAsBoolean());
+                transport.isPunchInEnabled().set(value.getAsBoolean());
                 break;
             case "punchOutEnabled":
-                s.transport.isPunchOutEnabled().set(value.getAsBoolean());
+                transport.isPunchOutEnabled().set(value.getAsBoolean());
                 break;
             case "preRoll":
             case "defaultLaunchQuantization":
@@ -228,10 +264,10 @@ final class TransportModule implements HostModule {
                 enums.get(key).set(value.getAsString());
                 break;
             case "loopStartBeats":
-                s.transport.arrangerLoopStart().set(value.getAsDouble());
+                transport.arrangerLoopStart().set(value.getAsDouble());
                 break;
             case "loopDurationBeats":
-                s.transport.arrangerLoopDuration().set(value.getAsDouble());
+                transport.arrangerLoopDuration().set(value.getAsDouble());
                 break;
             default:
                 throw new IllegalArgumentException(key);
@@ -240,17 +276,20 @@ final class TransportModule implements HostModule {
 
     private void guard(String key, JsonElement value) {
         if (key.equals("playing") && !value.getAsBoolean()) return;
-        s.requirePlaybackSafe();
+        transportSafety.requirePlaybackSafe();
     }
 
-    private void await(HostOperation op, JsonObject p, Map<String, Long> writes, long until) {
-        boolean done = true;
-        for (String key : p.keySet()) done &= verified(key, p.get(key), writes.get(key));
-        if (done || s.now() >= until) {
-            finish(op, p, writes, null);
-            return;
-        }
-        s.schedule(op, () -> await(op, p, writes, until), 20);
+    private void await(Request request) {
+        scheduler.poll(
+                request.op,
+                request.until,
+                () -> {
+                    boolean done = true;
+                    for (String key : request.p.keySet())
+                        done &= verified(key, request.p.get(key), request.writes.get(key));
+                    return done;
+                },
+                () -> finish(request, null));
     }
 
     private boolean verified(String key, JsonElement expected, Long before) {
@@ -258,7 +297,10 @@ final class TransportModule implements HostModule {
         return before != null && (before == -1 || actual.sequence > before) && matches(key, actual.value, expected);
     }
 
-    private void finish(HostOperation op, JsonObject p, Map<String, Long> writes, String reason) {
+    private void finish(Request request, String reason) {
+        HostOperation op = request.op;
+        JsonObject p = request.p;
+        Map<String, Long> writes = request.writes;
         JsonObject result = snapshot();
         JsonObject fields = new JsonObject();
         boolean all = reason == null;
@@ -287,21 +329,25 @@ final class TransportModule implements HostModule {
         result.addProperty("matchesRequested", all);
         if (reason != null) result.addProperty("reason", reason);
         result.add("fields", fields);
+        if (request.silentEngine)
+            Results.addWarning(
+                    result,
+                    "Playback was started with an inactive audio engine: nothing will sound and captures will be silent. Run project.activateEngine and confirm status.engineActive=true.");
         op.result.complete(result);
     }
 
     /** Observed basics for context.get; unobserved values are null instead of not_ready. */
     JsonObject basics() {
         JsonObject out = new JsonObject();
-        out.addProperty("projectName", s.application.projectName().get());
+        out.addProperty("projectName", application.projectName().get());
         out.add("playing", values.get("playing").value);
         out.add("tempoBpm", values.get("tempoBpm").value);
         return out;
     }
 
     private JsonObject snapshot() {
-        JsonObject result = HostServices.observed();
-        result.addProperty("projectName", s.application.projectName().get());
+        JsonObject result = Results.observed();
+        result.addProperty("projectName", application.projectName().get());
         result.addProperty("scope", "project_transport_observed_values");
         for (Map.Entry<String, Sample> entry : values.entrySet()) {
             if (BASE.contains(entry.getKey())) require(entry.getKey());
@@ -331,8 +377,7 @@ final class TransportModule implements HostModule {
         tempoRange.addProperty("maximum", 666);
         tempoRange.addProperty("scope", "toolkit_supported_shipped_controller_range_not_api_raw_limit");
         result.add("tempoRange", tempoRange);
-        for (Map.Entry<String, JsonElement> entry : s.playbackSafety().entrySet())
-            result.add(entry.getKey(), entry.getValue());
+        Results.addPlaybackSafety(result, transportSafety.observation());
         return result;
     }
 
@@ -371,7 +416,7 @@ final class TransportModule implements HostModule {
     private static boolean matches(String key, JsonElement a, JsonElement b) {
         if (a.isJsonNull()) return false;
         if (key.equals("metronomeVolumeNormalized"))
-            return Math.abs(a.getAsDouble() - b.getAsDouble()) <= HostServices.TOLERANCE;
+            return Math.abs(a.getAsDouble() - b.getAsDouble()) <= HostLimits.TOLERANCE;
         if (key.equals("tempoBpm") || key.endsWith("Beats")) return Math.abs(a.getAsDouble() - b.getAsDouble()) <= 1e-6;
         return a.equals(b);
     }

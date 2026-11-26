@@ -133,7 +133,7 @@ public final class LauncherSettingsModuleTest {
             host.tracks[0].child("channelId").emit(ID);
             host.transport.child("isPlaying").emit(playing);
             host.occupySlot(0, 0, "Verse");
-            module = new LauncherSettingsModule(host.services, new LauncherSettingsModule.Access() {
+            module = host.services.launcherSettings(new LauncherSettingsModule.Access() {
                 public void execute(Runnable task) {
                     queue.add(task);
                 }

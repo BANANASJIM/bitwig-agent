@@ -11,7 +11,7 @@ import java.util.regex.Pattern;
  * pages are listed for name conflicts but never edited.
  */
 final class GridRemotePageWriter {
-    static final int SLOTS = HostServices.LIMITS.remotePageSlots, MAX_PAGE_NAME = 256, MAX_LABEL = 256;
+    static final int SLOTS = HostLimits.LIMITS.remotePageSlots, MAX_PAGE_NAME = 256, MAX_LABEL = 256;
     private static final Pattern UUID_PATTERN =
             Pattern.compile("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}");
     private static final Set<GridSnapshotReader.Kind> SCALARS = EnumSet.of(
@@ -174,7 +174,7 @@ final class GridRemotePageWriter {
                     Outcome.UNKNOWN);
         }
         check.run();
-        JsonObject result = HostServices.observed();
+        JsonObject result = Results.observed();
         result.add("page", pageJson(host, page));
         result.addProperty("created", created);
         JsonArray slots = new JsonArray();
@@ -220,7 +220,7 @@ final class GridRemotePageWriter {
             throw unknown;
         }
         check.run();
-        JsonObject result = HostServices.observed();
+        JsonObject result = Results.observed();
         result.addProperty("deletedPage", pageName);
         result.add("pages", visibleNames(host));
         return finish(result, true, "native_page_absent_after_delete");

@@ -9,20 +9,29 @@ final class ModulatorModule implements HostModule {
     static final Set<String> METHODS =
             Set.of("modulators.capabilities", "modulators.list", "modulators.parameters.get");
     static final int MAX_RESPONSE_CHARS = 240000;
-    private final HostServices s;
+    private final Scheduler scheduler;
+    private final DeviceSources sources;
+    private final NativeRuntime natives;
     private ModulatorAdapter adapter;
     private final ModulatorEditModule edits;
 
-    ModulatorModule(HostServices services) {
-        this(services, null);
+    ModulatorModule(Scheduler scheduler, DeviceSources sources, NativeRuntime natives) {
+        this(scheduler, sources, natives, null);
     }
 
-    ModulatorModule(HostServices services, ModulatorAdapter injected) {
-        this(services, injected, null);
+    ModulatorModule(Scheduler scheduler, DeviceSources sources, NativeRuntime natives, ModulatorAdapter injected) {
+        this(scheduler, sources, natives, injected, null);
     }
 
-    ModulatorModule(HostServices services, ModulatorAdapter injected, ModulatorEditModule edits) {
-        s = services;
+    ModulatorModule(
+            Scheduler scheduler,
+            DeviceSources sources,
+            NativeRuntime natives,
+            ModulatorAdapter injected,
+            ModulatorEditModule edits) {
+        this.scheduler = scheduler;
+        this.sources = sources;
+        this.natives = natives;
         adapter = injected;
         this.edits = edits;
     }
@@ -53,7 +62,7 @@ final class ModulatorModule implements HostModule {
             throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "parent must be an object.");
         JsonObject parent = p.getAsJsonObject("parent");
         DeviceSources.validateParent(parent);
-        integer(parent, "deviceIndex", 0, HostServices.DEVICES - 1);
+        integer(parent, "deviceIndex", 0, HostLimits.DEVICES - 1);
         if (parameter) {
             if (!DeviceSources.canonicalUuid(Params.string(p, "modulatorId")))
                 throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "modulatorId must be a canonical current UUID.");
@@ -79,9 +88,9 @@ final class ModulatorModule implements HostModule {
 
     @Override
     public void dispatch(HostOperation op, String method, JsonObject p) {
-        s.check(op);
+        scheduler.check(op);
         if (adapter == null)
-            adapter = new Bitwig614ModulatorAdapter(s.nativeRuntime(op).access(ErrorCode.MODULATOR_UNAVAILABLE));
+            adapter = new Bitwig614ModulatorAdapter(natives.get(op).access(ErrorCode.MODULATOR_UNAVAILABLE));
         if (method.equals("modulators.capabilities")) {
             JsonObject capabilities = adapter.capabilities();
             // Read-only fields above describe modulators.list/parameters.get; edit methods report separately here.
@@ -91,11 +100,11 @@ final class ModulatorModule implements HostModule {
                 capabilities.add("writeAvailable", edit.get("available"));
             }
             String serialized = serialize(capabilities);
-            s.check(op);
+            scheduler.check(op);
             op.result.complete(JsonParser.parseString(serialized).getAsJsonObject());
             return;
         }
-        final DeviceSources.RootReadTicket target = s.sources.rootRead(p.getAsJsonObject("parent"));
+        final DeviceSources.RootReadTicket target = sources.rootRead(p.getAsJsonObject("parent"));
         final UUID trackId = UUID.fromString(target.trackId);
         final boolean parameter = method.equals("modulators.parameters.get");
         final UUID modulatorId =
@@ -107,7 +116,7 @@ final class ModulatorModule implements HostModule {
             try {
                 // Never read Controller API getters or mutable observation fields on this queue.
                 Runnable check = () -> {
-                    s.check(op);
+                    scheduler.check(op);
                     target.check();
                 };
                 check.run();
@@ -128,11 +137,11 @@ final class ModulatorModule implements HostModule {
                 value.addProperty("nativeMutation", false);
                 final String serialized = serialize(value);
                 check.run();
-                s.schedule(
+                scheduler.schedule(
                         op,
                         () -> {
-                            s.sources.guardRootRead(target);
-                            s.check(op);
+                            sources.guardRootRead(target);
+                            scheduler.check(op);
                             op.result.complete(
                                     JsonParser.parseString(serialized).getAsJsonObject());
                         },

@@ -343,7 +343,7 @@ final class ModulatorSnapshotReader {
     }
 
     private static JsonObject result() {
-        JsonObject result = HostServices.observed();
+        JsonObject result = Results.observed();
         result.addProperty("scope", "primary_modulators_on_root_device");
         result.addProperty("nativeMutation", false);
         result.addProperty("nativeUndo", false);

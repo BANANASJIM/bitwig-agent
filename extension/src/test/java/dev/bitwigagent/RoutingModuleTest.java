@@ -191,7 +191,7 @@ public final class RoutingModuleTest {
         assertTrue(
                 f.adapter.writes == 1 && result.get("status").getAsString().equals("applied"),
                 "stopped transport admits the write");
-        assertTrue(f.module.unresolved().isEmpty(), "an observed write clears the pending/quarantine state");
+        assertTrue(f.host.services.holds.descriptions().isEmpty(), "an observed write clears the pending/quarantine state");
     }
 
     @Test
@@ -201,7 +201,7 @@ public final class RoutingModuleTest {
         JsonObject result = f.call("tracks.routing.set", outputTo(B));
         assertTrue(
                 result.get("completion").getAsString().equals("unknown"), "unknown readback is returned, not hidden");
-        assertTrue(!f.module.unresolved().isEmpty(), "unknown readback quarantines routing writes");
+        assertTrue(!f.host.services.holds.descriptions().isEmpty(), "unknown readback quarantines routing writes");
         assertRpcError("unresolved_mutation", f.start("tracks.routing.set", outputTo(B)));
         assertTrue(
                 f.call("tracks.routing.get", json("{\"trackId\":\"" + A + "\"}"))
@@ -229,7 +229,7 @@ public final class RoutingModuleTest {
         f.drain();
         assertRpcError("kind_mismatch", op);
         assertTrue(
-                !op.dispatched && f.module.unresolved().isEmpty(),
+                !op.dispatched && f.host.services.holds.descriptions().isEmpty(),
                 "pre-dispatch refusal is not_applied and does not quarantine");
         {
             RpcException e = rejection(op);
@@ -324,7 +324,7 @@ public final class RoutingModuleTest {
     static final class Fixture {
         final HostFixture host = new HostFixture();
         final Adapter adapter = new Adapter();
-        final RoutingModule module = new RoutingModule(host.services, HostFixture.SPECS, adapter);
+        final RoutingModule module = host.services.routing(HostFixture.SPECS, adapter);
 
         void observeDevice(String name) {
             FakeHost devices = host.tracks[0].child("createDeviceBank"), device = devices.item(0);
@@ -376,7 +376,7 @@ public final class RoutingModuleTest {
             lastSelf = self;
             lastBank = bank;
             lastChoices = choices;
-            return HostServices.observed();
+            return Results.observed();
         }
 
         public JsonObject trackSet(
@@ -396,7 +396,7 @@ public final class RoutingModuleTest {
             reads++;
             check.run();
             lastDevice = device;
-            return HostServices.observed();
+            return Results.observed();
         }
 
         public JsonObject sidechainSet(
@@ -417,7 +417,7 @@ public final class RoutingModuleTest {
             before.run();
             writes++;
             if (failAfterWrite) throw new RpcException("routing_unavailable", "simulated native failure", "unknown");
-            JsonObject out = HostServices.observed();
+            JsonObject out = Results.observed();
             out.addProperty("status", unknown ? "unknown" : "applied");
             out.addProperty("completion", unknown ? "unknown" : "observed");
             return out;

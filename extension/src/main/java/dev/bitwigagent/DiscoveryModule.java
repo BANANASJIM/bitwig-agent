@@ -1,6 +1,7 @@
 package dev.bitwigagent;
 
-import static dev.bitwigagent.HostServices.*;
+import static dev.bitwigagent.HostLimits.*;
+import static dev.bitwigagent.Results.*;
 
 import com.bitwig.extension.controller.api.*;
 import com.google.gson.*;
@@ -12,15 +13,34 @@ final class DiscoveryModule implements HostModule {
     static final Set<String> METHODS =
             Set.of("status", "tracks.list", "devices.list", "devices.layers.list", "capabilities");
     private static final BuildInfo BUILD = BuildInfo.load();
-    private final HostServices s;
+    private final ControllerHost host;
+    private final Application application;
+    private final Transport transport;
+    private final TrackWindow window;
+    private final DeviceSources sources;
+    private final ProjectState projectState;
     private final MethodSpecs specs;
     private final ParameterModule parameters;
     private final ProjectModule project;
     private final RenderModule render;
 
     DiscoveryModule(
-            HostServices s, MethodSpecs specs, ParameterModule parameters, ProjectModule project, RenderModule render) {
-        this.s = s;
+            ControllerHost host,
+            Application application,
+            Transport transport,
+            TrackWindow window,
+            DeviceSources sources,
+            ProjectState projectState,
+            MethodSpecs specs,
+            ParameterModule parameters,
+            ProjectModule project,
+            RenderModule render) {
+        this.host = host;
+        this.application = application;
+        this.transport = transport;
+        this.window = window;
+        this.sources = sources;
+        this.projectState = projectState;
         this.specs = specs;
         this.parameters = parameters;
         this.project = project;
@@ -60,7 +80,7 @@ final class DiscoveryModule implements HostModule {
                 operation.result.complete(listDevices(params.get("trackId").getAsString()));
                 return;
             case "devices.layers.list":
-                operation.result.complete(s.sources.listLayers(params));
+                operation.result.complete(sources.listLayers(params));
                 return;
             case "capabilities":
                 operation.result.complete(capabilities(operation));
@@ -72,15 +92,15 @@ final class DiscoveryModule implements HostModule {
 
     private JsonObject status() {
         JsonObject result = observed();
-        result.addProperty("hostVersion", s.host.getHostVersion());
-        result.addProperty("projectName", s.application.projectName().get());
-        result.addProperty("engineActive", s.application.hasActiveEngine().get());
-        result.addProperty("playing", s.transport.isPlaying().get());
-        for (Map.Entry<String, JsonElement> e : s.projectReadiness().entrySet()) result.add(e.getKey(), e.getValue());
-        result.add("projectModified", s.projectModifiedJson());
+        result.addProperty("hostVersion", host.getHostVersion());
+        result.addProperty("projectName", application.projectName().get());
+        result.addProperty("engineActive", application.hasActiveEngine().get());
+        result.addProperty("playing", transport.isPlaying().get());
+        for (Map.Entry<String, JsonElement> e : Results.readiness(projectState.readiness()).entrySet()) result.add(e.getKey(), e.getValue());
+        result.add("projectModified", Results.modified(projectState.modified()));
         result.addProperty("apiVersion", 25);
         result.add("extension", BUILD.toJson());
-        result.add("instance", HostServices.instance());
+        result.add("instance", Results.instance());
         result.addProperty("trackWindowCapacity", TRACKS);
         result.addProperty("deviceWindowCapacity", DEVICES);
         result.add("parameterBindingDiagnostics", parameters.diagnostics());
@@ -91,7 +111,7 @@ final class DiscoveryModule implements HostModule {
         JsonObject result = observed();
         result.addProperty("scope", "implemented_toolkit_interfaces");
         result.addProperty("apiVersion", 25);
-        result.addProperty("hostVersion", s.host.getHostVersion());
+        result.addProperty("hostVersion", host.getHostVersion());
         result.add("extension", BUILD.toJson());
         JsonArray methods = new JsonArray();
         JsonObject domains = new JsonObject();
@@ -107,9 +127,9 @@ final class DiscoveryModule implements HostModule {
         windows.add(
                 "tracks",
                 window(
-                        s.tracks.scrollPosition().get(),
+                        window.offset(),
                         TRACKS,
-                        s.tracks.itemCount().get()));
+                        window.total()));
         windows.addProperty("devicesPerTrack", DEVICES);
         windows.addProperty("launcherSlotsPerTrack", SCENES);
         windows.addProperty("sendsPerTrack", SENDS);
@@ -200,13 +220,13 @@ final class DiscoveryModule implements HostModule {
     }
 
     private JsonObject listTracks() {
-        if (!s.tracksObserved)
+        if (!window.observed())
             throw Errors.notApplied(ErrorCode.NOT_READY, "Track bank has not reported its size yet.");
         JsonObject result = observed();
         JsonArray items = new JsonArray();
-        TrackTree tree = TrackTree.capture(s);
+        TrackTree tree = TrackTree.capture(window);
         for (TrackTree.Node node : tree.nodes) {
-            Track track = (Track) s.tracks.getItemAt(node.slot);
+            Track track = window.at(node.slot);
             JsonObject item = new JsonObject();
             item.addProperty("trackId", node.id);
             item.addProperty("index", node.position);
@@ -219,16 +239,16 @@ final class DiscoveryModule implements HostModule {
         result.add(
                 "window",
                 window(
-                        s.tracks.scrollPosition().get(),
+                        window.offset(),
                         TRACKS,
-                        s.tracks.itemCount().get()));
+                        window.total()));
         result.addProperty("scope", "flat_track_bank");
         return result;
     }
 
     private JsonObject listDevices(String trackId) {
-        int trackSlot = s.trackSlot(trackId);
-        DeviceBank bank = s.devices[trackSlot];
+        int trackSlot = window.trackSlot(trackId);
+        DeviceBank bank = window.devices(trackSlot);
         JsonArray items = new JsonArray();
         for (int i = 0; i < DEVICES; i++) {
             Device device = (Device) bank.getItemAt(i);

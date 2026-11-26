@@ -124,7 +124,7 @@ final class GridModuleWriter {
                 snapshots.guardTarget(target, proxy, trackId);
                 contexts.capture(target.target, target.graph, after.modules, context, check);
                 check.run();
-                JsonObject result = HostServices.observed();
+                JsonObject result = Results.observed();
                 result.addProperty("moduleId", moduleId.toString());
                 result.addProperty("operation", request == null ? "delete" : "move");
                 result.add("previousPosition", selected.position());

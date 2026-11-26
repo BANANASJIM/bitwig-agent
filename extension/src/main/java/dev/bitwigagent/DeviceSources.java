@@ -1,6 +1,7 @@
 package dev.bitwigagent;
 
-import static dev.bitwigagent.HostServices.*;
+import static dev.bitwigagent.HostLimits.*;
+import static dev.bitwigagent.Results.*;
 
 import com.bitwig.extension.callback.*;
 import com.bitwig.extension.controller.api.*;
@@ -13,27 +14,27 @@ final class DeviceSources {
     static final int LAYERS = 2, CHILDREN = 2;
     final Source[][] roots = new Source[TRACKS][DEVICES];
     final List<Source> all = new ArrayList<>(TRACKS * DEVICES * (1 + LAYERS * CHILDREN));
-    private final HostServices s;
+    private final TrackWindow window;
     private final TrackState[] tracks = new TrackState[TRACKS];
     private Integer trackOffset;
 
-    DeviceSources(HostServices services) {
-        s = services;
-        s.tracks.scrollPosition().addValueObserver((IntegerValueChangedCallback) value -> {
+    DeviceSources(TrackWindow window) {
+        this.window = window;
+        window.bank().scrollPosition().addValueObserver((IntegerValueChangedCallback) value -> {
             boolean changed = trackOffset != null && trackOffset != value;
             trackOffset = value;
             if (changed) for (TrackState track : tracks) if (track != null) track.retire();
         });
-        s.tracks.itemCount().addValueObserver((IntegerValueChangedCallback) value -> {
+        window.bank().itemCount().addValueObserver((IntegerValueChangedCallback) value -> {
             for (Source[] row : roots)
                 for (Source source : row) if (source != null) source.rootReadEpoch.incrementAndGet();
         });
         for (int t = 0; t < TRACKS; t++) {
-            TrackState track = new TrackState(t, (Track) s.tracks.getItemAt(t));
+            TrackState track = new TrackState(t, window.at(t));
             tracks[t] = track;
             track.observe();
             for (int d = 0; d < DEVICES; d++) {
-                Source root = new Source(track, d, (Device) s.devices[t].getItemAt(d), null);
+                Source root = new Source(track, d, (Device) window.devices(t).getItemAt(d), null);
                 roots[t][d] = root;
                 all.add(root);
                 root.observe();
@@ -84,13 +85,13 @@ final class DeviceSources {
                 if (moved) retire();
                 else changed(change);
             });
-            s.devices[slot].scrollPosition().addValueObserver((IntegerValueChangedCallback) value -> {
+            window.devices(slot).scrollPosition().addValueObserver((IntegerValueChangedCallback) value -> {
                 boolean change = offset != null && offset != value;
                 offset = value;
                 if (change && count != null && count > 0) retire();
                 else changed(change);
             });
-            s.devices[slot].itemCount().addValueObserver((IntegerValueChangedCallback) value -> {
+            window.devices(slot).itemCount().addValueObserver((IntegerValueChangedCallback) value -> {
                 boolean change = count != null && count != value;
                 Integer previousCount = count;
                 count = value;
@@ -117,7 +118,7 @@ final class DeviceSources {
                     && count != null
                     && count >= 0
                     && trackOffset != null
-                    && s.tracksObserved;
+                    && window.observed();
         }
 
         void retire() {
@@ -483,8 +484,8 @@ final class DeviceSources {
 
     /** Grid/Device targets address the zero-scrolled bank; an absent device is target_not_found, not a stale identity. */
     void requireZeroWindow(JsonObject p) {
-        int t = s.trackSlot(p.get("trackId").getAsString());
-        if (s.devices[t].scrollPosition().get() != 0)
+        int t = window.trackSlot(p.get("trackId").getAsString());
+        if (window.devices(t).scrollPosition().get() != 0)
             throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Device bank is not at the zero-based window.");
         Source source = roots[t][p.get("deviceIndex").getAsInt()];
         if (source.metadataReady()
@@ -496,7 +497,7 @@ final class DeviceSources {
     }
 
     Source root(JsonObject p) {
-        int t = s.trackSlot(p.get("trackId").getAsString());
+        int t = window.trackSlot(p.get("trackId").getAsString());
         int index = p.get("deviceIndex").getAsInt();
         TrackState track = tracks[t];
         if (track.offset == null)
@@ -524,7 +525,7 @@ final class DeviceSources {
         if (source.position >= source.track.count)
             throw Errors.notApplied(ErrorCode.TARGET_NOT_FOUND, "Parent is outside the observed device count.");
         RootReadTicket ticket =
-                new RootReadTicket(source, trackOffset, s.tracks.itemCount().get());
+                new RootReadTicket(source, trackOffset, window.total());
         guardRootRead(ticket);
         return ticket;
     }
@@ -544,10 +545,10 @@ final class DeviceSources {
                 || !track.proxy.exists().get()
                 || !ticket.trackId.equals(track.proxy.channelId().get())
                 || track.proxy.position().get() != ticket.trackPosition
-                || s.tracks.scrollPosition().get() != ticket.trackOffset
-                || s.tracks.itemCount().get() != ticket.trackCount
-                || s.devices[track.slot].scrollPosition().get() != ticket.deviceOffset
-                || s.devices[track.slot].itemCount().get() != ticket.deviceCount
+                || window.offset() != ticket.trackOffset
+                || window.total() != ticket.trackCount
+                || window.devices(track.slot).scrollPosition().get() != ticket.deviceOffset
+                || window.devices(track.slot).itemCount().get() != ticket.deviceCount
                 || !source.device.exists().get()
                 || source.device.position().get() != ticket.index
                 || !ticket.name.equals(source.device.name().get())

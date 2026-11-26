@@ -1,19 +1,21 @@
 package dev.bitwigagent;
 
+import com.bitwig.extension.controller.api.ControllerHost;
 import com.google.gson.*;
 import java.util.*;
-import java.util.function.Supplier;
 
 /** Controller restart: clears per-instance write quarantine without the Settings toggle. */
 final class ExtensionModule implements HostModule {
     static final Set<String> METHODS = Set.of("extension.restart");
     static final long RESTART_DELAY_MS = 250;
-    private final HostServices s;
-    private final Supplier<List<HostModule>> modules;
+    private final ControllerHost host;
+    private final Scheduler scheduler;
+    private final Holds holds;
 
-    ExtensionModule(HostServices s, Supplier<List<HostModule>> modules) {
-        this.s = s;
-        this.modules = modules;
+    ExtensionModule(ControllerHost host, Scheduler scheduler, Holds holds) {
+        this.host = host;
+        this.scheduler = scheduler;
+        this.holds = holds;
     }
 
     @Override
@@ -34,8 +36,7 @@ final class ExtensionModule implements HostModule {
 
     @Override
     public void dispatch(HostOperation operation, String method, JsonObject params) {
-        List<String> unresolved = new ArrayList<>();
-        for (HostModule module : modules.get()) unresolved.addAll(module.unresolved());
+        List<String> unresolved = holds.descriptions();
         boolean discard = params.has("discardUnresolved")
                 && params.get("discardUnresolved").getAsBoolean();
         if (!unresolved.isEmpty() && !discard)
@@ -53,8 +54,8 @@ final class ExtensionModule implements HostModule {
                 "next",
                 "RPC drops during restart; poll status until it answers, then re-discover targets and inspect the unresolved items.");
         // Respond first, then stop admitting work so nothing runs on this instance before the restart.
-        s.host.scheduleTask(s.host::restart, RESTART_DELAY_MS);
+        host.scheduleTask(host::restart, RESTART_DELAY_MS);
         operation.result.complete(result);
-        s.close();
+        scheduler.close();
     }
 }

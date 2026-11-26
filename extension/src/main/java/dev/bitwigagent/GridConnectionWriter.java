@@ -111,7 +111,7 @@ final class GridConnectionWriter {
                 contexts.capture(target.target, target.graph, after.members, context, check);
                 check.run();
                 quarantine.requireAvailable(device);
-                JsonObject result = HostServices.observed();
+                JsonObject result = Results.observed();
                 result.addProperty("targetModuleId", request.target.moduleId.toString());
                 result.addProperty("targetPortKey", request.target.portKey);
                 result.add("previousSource", Endpoint.json(input.sourceEndpoint));
@@ -321,7 +321,7 @@ final class GridConnectionWriter {
         private void finish() {
             try {
                 boolean unknown = status.equals("unknown");
-                JsonObject result = HostServices.observed();
+                JsonObject result = Results.observed();
                 result.addProperty("batchStatus", status);
                 result.addProperty("completion", unknown ? "unknown" : "observed");
                 result.addProperty("written", written);

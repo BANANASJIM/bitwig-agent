@@ -24,44 +24,50 @@ final class LauncherSettingsModule implements HostModule {
                 Runnable beforeWrite);
     }
 
-    private final HostServices s;
-    private final AtomicLongArray epochs = new AtomicLongArray(HostServices.TRACKS);
+    private final Scheduler scheduler;
+    private final TrackWindow window;
+    private final TransportSafety transportSafety;
+    private final NativeRuntime natives;
+    private final Holds holds;
+    private final AtomicLongArray epochs = new AtomicLongArray(HostLimits.TRACKS);
     private Access access;
     private LauncherModule launcher;
-    private volatile boolean pending, quarantined;
+    private static final String PENDING = LauncherStructureLock.SETTINGS_PENDING, QUARANTINE = LauncherStructureLock.SETTINGS;
+    private static final String HOLD = "A launcher.set settings write is pending or unresolved.";
 
-    LauncherSettingsModule(HostServices s, LauncherModule launcher) {
-        this(s, (Access) null);
+    LauncherSettingsModule(
+            Scheduler scheduler,
+            TrackWindow window,
+            TransportSafety transportSafety,
+            NativeRuntime natives,
+            Holds holds,
+            LauncherModule launcher) {
+        this(scheduler, window, transportSafety, natives, holds, (Access) null);
         this.launcher = launcher;
-        launcher.settingsWriteGuard = this::requireNoPendingOrUnresolved;
     }
 
-    @Override
-    public java.util.List<String> unresolved() {
-        return pending || quarantined
-                ? java.util.List.of("A launcher.set settings write is pending or unresolved.")
-                : java.util.List.of();
-    }
-
-    void requireNoPendingOrUnresolved() {
-        if (pending || quarantined)
-            throw Errors.notApplied(
-                    ErrorCode.UNRESOLVED_MUTATION,
-                    "Launcher settings write is pending or unresolved; inspect state before further launcher writes");
-    }
-
-    LauncherSettingsModule(HostServices s, Access access) {
-        this.s = s;
+    LauncherSettingsModule(
+            Scheduler scheduler,
+            TrackWindow window,
+            TransportSafety transportSafety,
+            NativeRuntime natives,
+            Holds holds,
+            Access access) {
+        this.scheduler = scheduler;
+        this.window = window;
+        this.transportSafety = transportSafety;
+        this.natives = natives;
+        this.holds = holds;
         this.access = access;
-        for (int i = 0; i < HostServices.TRACKS; i++) {
+        for (int i = 0; i < HostLimits.TRACKS; i++) {
             final int index = i;
-            Track t = (Track) s.tracks.getItemAt(i);
+            Track t = window.at(i);
             ClipLauncherSlotBank bank = t.clipLauncherSlotBank();
             t.channelId().addValueObserver((StringValueChangedCallback) v -> epochs.incrementAndGet(index));
             t.exists().addValueObserver((BooleanValueChangedCallback) v -> epochs.incrementAndGet(index));
             bank.scrollPosition().addValueObserver((IntegerValueChangedCallback) v -> epochs.incrementAndGet(index));
             bank.itemCount().markInterested();
-            for (int j = 0; j < HostServices.SCENES; j++) {
+            for (int j = 0; j < HostLimits.SCENES; j++) {
                 ClipLauncherSlot slot = (ClipLauncherSlot) bank.getItemAt(j);
                 slot.name().markInterested();
                 slot.hasContent().markInterested();
@@ -92,7 +98,7 @@ final class LauncherSettingsModule implements HostModule {
         Params.fields(p, required, optional);
         if (!DeviceSources.canonicalUuid(Params.string(p, "trackId")))
             throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "trackId must be a canonical UUID");
-        Params.integer(p, "slotIndex", 0, HostServices.SCENES - 1);
+        Params.integer(p, "slotIndex", 0, HostLimits.SCENES - 1);
         if (Params.string(p, "expectedClipName").length() > 256)
             throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "expectedClipName is too long");
         if (method.equals("launcher.set") && p.size() == 3)
@@ -128,7 +134,7 @@ final class LauncherSettingsModule implements HostModule {
 
     @Override
     public void dispatch(HostOperation op, String method, JsonObject p) {
-        s.check(op);
+        scheduler.check(op);
         boolean write = method.equals("launcher.set");
         if (write && LauncherModule.hasLaunchFields(p)) {
             if (launcher == null)
@@ -136,15 +142,15 @@ final class LauncherSettingsModule implements HostModule {
             launcher.launchSettings(op, p);
             return;
         }
-        if (pending) throw Errors.notApplied(ErrorCode.BUSY, "Another native launcher settings operation is pending");
-        if (write && quarantined)
+        if (holds.held(PENDING)) throw Errors.notApplied(ErrorCode.BUSY, "Another native launcher settings operation is pending");
+        if (write && holds.held(QUARANTINE))
             throw Errors.notApplied(
                     ErrorCode.WRITE_QUARANTINED,
                     "An unresolved launcher settings write requires inspection and extension reload");
         String id = p.get("trackId").getAsString(),
                 expected = p.get("expectedClipName").getAsString();
-        int index = s.trackSlot(id), number = p.get("slotIndex").getAsInt();
-        Track track = (Track) s.tracks.getItemAt(index);
+        int index = window.trackSlot(id), number = p.get("slotIndex").getAsInt();
+        Track track = window.at(index);
         ClipLauncherSlotBank bank = track.clipLauncherSlotBank();
         if (bank.scrollPosition().get() != 0 || number >= bank.itemCount().get())
             throw Errors.notApplied(
@@ -156,11 +162,11 @@ final class LauncherSettingsModule implements HostModule {
             throw Errors.notApplied(
                     ErrorCode.STALE_CONTEXT, "Observe the exact occupied slot name and index before settings access");
         if (write && launcher != null) launcher.requireSettingsSafe(id, number);
-        HostServices.SafetyObservation safety = write ? s.stoppedSafety(op) : null;
+        SafetyObservation safety = write ? transportSafety.stopped(op) : null;
         if (access == null)
             try {
                 access = new Bitwig614LauncherSettingsAccess(
-                        s.nativeRuntime(op).access(ErrorCode.LAUNCHER_SETTINGS_UNAVAILABLE));
+                        natives.get(op).access(ErrorCode.LAUNCHER_SETTINGS_UNAVAILABLE));
             } catch (ReflectiveOperationException e) {
                 throw Errors.notApplied(
                         ErrorCode.LAUNCHER_SETTINGS_UNAVAILABLE,
@@ -169,13 +175,13 @@ final class LauncherSettingsModule implements HostModule {
         JsonObject changes = new JsonObject();
         for (String key : WRITE_ORDER) if (p.has(key)) changes.add(key, p.get(key));
         long epoch = epochs.get(index);
-        pending = true;
+        holds.place(PENDING, HOLD);
         Runnable check = () -> {
-            s.check(op);
+            scheduler.check(op);
             if (epochs.get(index) != epoch)
                 throw Errors.notApplied(
                         ErrorCode.STALE_CONTEXT, "Launcher track bank changed while settings operation was queued");
-            if (write) s.guardStoppedSafety(safety);
+            if (write) transportSafety.guardStopped(safety);
         };
         try {
             access.execute(() -> {
@@ -184,36 +190,36 @@ final class LauncherSettingsModule implements HostModule {
                     JsonObject result = access.apply(slot, id, expected, changes, check, () -> {
                         check.run();
                         op.dispatched = true;
-                        quarantined = true;
+                        holds.place(QUARANTINE, HOLD);
                     });
                     check.run();
                     result.addProperty("trackId", id);
                     result.addProperty("slotIndex", number);
-                    s.schedule(
+                    scheduler.schedule(
                             op,
                             () -> {
                                 check.run();
-                                if (!s.trackMatches(id, track)
+                                if (!window.trackMatches(id, track)
                                         || bank.scrollPosition().get() != 0
                                         || slot.sceneIndex().get() != number
                                         || !expected.equals(slot.name().get()))
                                     throw Errors.notApplied(
                                             ErrorCode.STALE_CONTEXT,
                                             "Launcher public target changed after native access");
-                                if (write) quarantined = false;
-                                pending = false;
+                                if (write) holds.release(QUARANTINE);
+                                holds.release(PENDING);
                                 op.result.complete(result);
                             },
                             0);
                 } catch (RuntimeException | Error e) {
-                    pending = false;
+                    holds.release(PENDING);
                     op.fail(e);
                 }
             });
         } catch (RuntimeException | Error e) {
-            pending = false;
+            holds.release(PENDING);
             throw e;
         }
-        op.result.whenComplete((r, e) -> pending = false);
+        op.result.whenComplete((r, e) -> holds.release(PENDING));
     }
 }

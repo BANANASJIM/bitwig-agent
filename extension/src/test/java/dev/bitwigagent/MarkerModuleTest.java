@@ -82,7 +82,7 @@ public final class MarkerModuleTest {
     }
 
     private static MarkerModule module(HostFixture f) {
-        return new MarkerModule(f.services);
+        return f.services.marker();
     }
 
     private static JsonObject json(String t) {
@@ -168,7 +168,7 @@ public final class MarkerModuleTest {
                 "one native add; playhead untouched");
         assertTrue(r.getAsJsonObject("marker").get("name").getAsString().equals("Verse"), "result names the marker");
         assertTrue(r.getAsJsonArray("markers").size() == 3, "result carries the observed list");
-        assertTrue(m.unresolved().isEmpty(), "observed insert leaves nothing unresolved");
+        assertTrue(f.services.holds.descriptions().isEmpty(), "observed insert leaves nothing unresolved");
     }
 
     @Test
@@ -238,7 +238,7 @@ public final class MarkerModuleTest {
                 call(f, m, "markers.rename", "{\"markerIndex\":1,\"expectedName\":\"Verse 1\",\"name\":\"Verse 1\"}");
         assertTrue(
                 same.get("verification").getAsString().equals("already_at_value")
-                        && m.unresolved().isEmpty(),
+                        && f.services.holds.descriptions().isEmpty(),
                 "same name is not rewritten");
     }
 
@@ -276,7 +276,7 @@ public final class MarkerModuleTest {
                 r.get("completion").getAsString().equals("unknown")
                         && !r.get("matchesRequested").getAsBoolean(),
                 "unobserved insert is unknown: " + r);
-        assertTrue(m.unresolved().size() == 1, "reported as unresolved for extension.restart");
+        assertTrue(f.services.holds.descriptions().size() == 1, "reported as unresolved for extension.restart");
         HostOperation next = f.submit(m, "markers.insert", json("{\"beat\":5}"));
         f.next();
         assertRpcError("unresolved_mutation", next);

@@ -208,7 +208,7 @@ public final class RenderModuleTest {
                         .getAsString()
                         .equals(A),
                 "rows keep source order");
-        assertTrue(sim.module.unresolved().isEmpty(), "completed job is not unresolved");
+        assertTrue(sim.fixture.services.holds.descriptions().isEmpty(), "completed job is not unresolved");
         JsonObject status = sim.call("render.status");
         assertTrue(
                 status.getAsJsonObject("job").get("state").getAsString().equals("completed")
@@ -240,7 +240,7 @@ public final class RenderModuleTest {
                         && result.get("nativeCompletion").getAsString().equals("pending")
                         && result.get("poll").getAsString().equals("render.status"),
                 "no latch within the deadline: dispatched/unknown with a poll method");
-        assertTrue(sim.module.unresolved().size() == 1, "a running job is unresolved");
+        assertTrue(sim.fixture.services.holds.descriptions().size() == 1, "a running job is unresolved");
         HostOperation busy = sim.start("bounce.inPlace", bounce(A), 5000);
         sim.drainUntil(busy);
         assertRpcError("busy", busy);
@@ -256,7 +256,7 @@ public final class RenderModuleTest {
         assertTrue(
                 status.getAsJsonObject("job").get("state").getAsString().equals("completed")
                         && status.getAsJsonObject("job").get("verified").getAsBoolean()
-                        && sim.module.unresolved().isEmpty(),
+                        && sim.fixture.services.holds.descriptions().isEmpty(),
                 "after the latch the polled job verifies and nothing is unresolved");
         assertTrue(sim.dispatches == 1, "never re-dispatched");
     }
@@ -272,7 +272,7 @@ public final class RenderModuleTest {
                 "native preflight refusal is not_applied");
         assertTrue(
                 sim.call("render.status").get("job").isJsonNull()
-                        && sim.module.unresolved().isEmpty(),
+                        && sim.fixture.services.holds.descriptions().isEmpty(),
                 "a refused job leaves no status or unresolved entry");
         sim.refusal = null;
         HostOperation next = sim.start("export.audio", export(sim.dir.toString(), "master"), 5000);
@@ -345,7 +345,7 @@ public final class RenderModuleTest {
                                 .getAsJsonObject("job")
                                 .get("verified")
                                 .getAsBoolean()
-                        && sim.module.unresolved().isEmpty(),
+                        && sim.fixture.services.holds.descriptions().isEmpty(),
                 "re-reading a reported job reports, never quarantines");
 
         Sim partial = new Sim();
@@ -374,7 +374,7 @@ public final class RenderModuleTest {
         none.drainUntil(op);
         assertTrue(
                 assertRpcError("bounce_failed", op).outcome.equals("not_applied")
-                        && none.module.unresolved().isEmpty(),
+                        && none.fixture.services.holds.descriptions().isEmpty(),
                 "a finished job that changed nothing is not_applied");
     }
 
@@ -387,7 +387,7 @@ public final class RenderModuleTest {
         assertTrue(
                 assertRpcError("bounce_verification_failed", op).outcome.equals("unknown"),
                 "a different lane is unknown");
-        assertTrue(sim.module.unresolved().size() == 1, "unknown bounce is listed for extension.restart");
+        assertTrue(sim.fixture.services.holds.descriptions().size() == 1, "unknown bounce is listed for extension.restart");
         HostOperation again = sim.start("bounce.inPlace", bounce(A), 5000);
         sim.drainUntil(again);
         assertRpcError("unresolved_mutation", again);
@@ -408,7 +408,7 @@ public final class RenderModuleTest {
                 op.result.join().get("status").getAsString().equals("dispatched"),
                 "bounce without latch by the deadline is dispatched");
         sim.completeBounce();
-        assertTrue(sim.module.unresolved().size() == 1, "a finished but unverified bounce stays listed");
+        assertTrue(sim.fixture.services.holds.descriptions().size() == 1, "a finished but unverified bounce stays listed");
         HostOperation again = sim.start("bounce.inPlace", bounce(B), 5000);
         sim.drainUntil(again);
         assertRpcError("unresolved_mutation", again);
@@ -418,7 +418,7 @@ public final class RenderModuleTest {
         JsonObject status = sim.call("render.status");
         assertTrue(
                 status.getAsJsonObject("job").get("verified").getAsBoolean()
-                        && sim.module.unresolved().isEmpty(),
+                        && sim.fixture.services.holds.descriptions().isEmpty(),
                 "render.status verifies and clears it");
         sim.finish = true;
         again = sim.start("bounce.inPlace", bounce(B), 5000);
@@ -453,7 +453,7 @@ public final class RenderModuleTest {
 
         Sim() throws IOException {
             dir = temp("bwa-render-sim");
-            module = new RenderModule(fixture.services, new RenderModule.Access() {
+            module = fixture.services.render(new RenderModule.Access() {
                 public void execute(Runnable work) {
                     document.add(work);
                 }

@@ -346,7 +346,7 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
 
     @Override
     public JsonObject capabilities() {
-        JsonObject result = HostServices.observed();
+        JsonObject result = Results.observed();
         result.addProperty("hostVersion", hostVersion);
         result.addProperty("requiredHostVersion", VERSION);
         result.addProperty("loadedHostJarSha256", actualHash);

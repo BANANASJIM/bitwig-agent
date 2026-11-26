@@ -243,7 +243,7 @@ final class GridParameterWriter {
                 if (unknown) completion = "unknown";
             }
         }
-        JsonObject result = HostServices.observed();
+        JsonObject result = Results.observed();
         result.addProperty("batchStatus", status);
         result.addProperty("completion", completion);
         result.addProperty("written", written);

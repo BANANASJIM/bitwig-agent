@@ -32,12 +32,10 @@ public final class LauncherModuleTest {
     @Test
     void settingsIsolationIsShared() throws Exception {
         Fake f = new Fake();
-        f.module.settingsWriteGuard = () -> {
-            throw Errors.notApplied(ErrorCode.UNRESOLVED_MUTATION, "settings unresolved");
-        };
+        f.services.holds.place(LauncherStructureLock.SETTINGS, "settings unresolved");
         assertRpcError("unresolved_mutation", "not_applied", f.start("launcher.create", createTarget()));
         assertTrue(f.creates == 0, "settings quarantine blocks launcher create before dispatch");
-        f.module.settingsWriteGuard = () -> {};
+        f.services.holds.release(LauncherStructureLock.SETTINGS);
         Path file = Files.createTempFile("settings-import-quarantine-", ".wav");
         try {
             f.failImport = true;
@@ -229,16 +227,16 @@ public final class LauncherModuleTest {
         f.slots[0].content = true;
         HostOperation edit = f.start("notes.edit", editFixture());
         assertTrue(
-                !edit.result.isDone() && f.services.selectionHeld(), "pending cursor edit holds the selection lease");
+                !edit.result.isDone() && f.services.selection.held(), "pending cursor edit holds the selection lease");
         {
-            RpcException e = assertThrows(RpcException.class, () -> f.services.requireSelectionFree());
+            RpcException e = assertThrows(RpcException.class, () -> f.services.selection.requireFree());
             assertTrue(
                     e.code.equals("busy") && e.outcome.equals("not_applied"), "select methods fail fast, not applied");
         }
         f.drain(edit);
         assertTrue(edit.result.join().get("status").getAsString().equals("observed"), "edit completes undisturbed");
-        f.services.requireSelectionFree();
-        assertTrue(!f.services.selectionHeld(), "lease released with the operation");
+        f.services.selection.requireFree();
+        assertTrue(!f.services.selection.held(), "lease released with the operation");
     }
 
     @Test
@@ -257,7 +255,7 @@ public final class LauncherModuleTest {
         f = new Fake();
         f.slots[0].content = true;
         HostOperation expired = new HostOperation(f.tasks.now() - 1);
-        f.services.schedule(
+        f.services.scheduler.schedule(
                 expired,
                 () -> {
                     throw new AssertionError("expired operation ran");
@@ -1628,7 +1626,7 @@ public final class LauncherModuleTest {
                         && f.slots[0].name.equals("Verse")
                         && f.nameWrites == 1,
                 "rename is verified by name readback");
-        assertTrue(f.module.unresolved().isEmpty(), "rename does not quarantine");
+        assertTrue(f.services.holds.descriptions().isEmpty(), "rename does not quarantine");
         f = riff();
         r = run(f, clipEdit("rename", "name", "Riff"));
         assertTrue(
@@ -1642,7 +1640,7 @@ public final class LauncherModuleTest {
         assertTrue(
                 r.get("status").getAsString().equals("dispatched")
                         && r.get("verification").getAsString().equals("readback_mismatch")
-                        && f.module.unresolved().isEmpty(),
+                        && f.services.holds.descriptions().isEmpty(),
                 "unread rename is dispatched, not observed, idempotent so no quarantine");
 
         f = riff();
@@ -1718,13 +1716,13 @@ public final class LauncherModuleTest {
                         && c.get("pitchMaxAfter").getAsInt() == 69
                         && c.get("verifiedChannel").getAsInt() == 0,
                 "transpose reports what was compared");
-        assertTrue(f.module.unresolved().isEmpty(), "an observed transpose releases its mutation");
+        assertTrue(f.services.holds.descriptions().isEmpty(), "an observed transpose releases its mutation");
         assertTrue(f.selected == 0, "the clip was selected on the cursor");
 
         f = riff();
         f.put(0, 0, 16, 120, 90, 2);
         fail(f, clipEdit("transpose", "semitones", 12), "invalid_params", "not_applied");
-        assertTrue(f.transposes == 0 && f.module.unresolved().isEmpty(), "out-of-range transpose changes nothing");
+        assertTrue(f.transposes == 0 && f.services.holds.descriptions().isEmpty(), "out-of-range transpose changes nothing");
         Fake empty = new Fake();
         empty.slots[0].content = true;
         empty.slots[0].name = "Riff";
@@ -1738,7 +1736,7 @@ public final class LauncherModuleTest {
         f.applyClipOp = false;
         fail(f, clipEdit("transpose", "semitones", 2), "transpose_not_observed", "unknown");
         assertTrue(
-                f.transposes == 1 && f.module.unresolved().size() == 1,
+                f.transposes == 1 && f.services.holds.descriptions().size() == 1,
                 "unobserved transpose latches the unresolved mutation list");
         expectQuarantine(f.start("clips.edit", clipEdit("rename", "name", "Verse")), "clips.edit transpose", ID);
         expectQuarantine(f.start("notes.edit", editFixture()), "clips.edit transpose", ID);
@@ -1759,20 +1757,20 @@ public final class LauncherModuleTest {
         f.quantizeMoves = false;
         fail(f, clipEdit("quantize", "amount", 0.5), "quantize_not_observed", "unknown");
         assertTrue(
-                f.module.unresolved().size() == 1,
+                f.services.holds.descriptions().size() == 1,
                 "partial quantize with no observed change is unknown and quarantined");
         f = riff();
         f.put(0, 0, 4, 67, 80, 2);
         fail(f, clipEdit("quantize", "amount", 1), "quantize_invariants_violated", "unknown");
         assertTrue(
-                f.module.unresolved().size() == 1, "quantize that changes the onset count is unknown and quarantined");
+                f.services.holds.descriptions().size() == 1, "quantize that changes the onset count is unknown and quarantined");
         f = riff();
         f.quantizeMoves = false;
         r = run(f, clipEdit("quantize", "amount", 1));
         assertTrue(
                 r.get("status").getAsString().equals("dispatched")
                         && r.get("verification").getAsString().equals("no_cell_change")
-                        && f.module.unresolved().isEmpty(),
+                        && f.services.holds.descriptions().isEmpty(),
                 "amount 1 with no movement is idempotent: no quarantine");
 
         f = riff();
@@ -1788,7 +1786,7 @@ public final class LauncherModuleTest {
         f = riff();
         f.applyClipOp = false;
         fail(f, clipEdit("duplicateContent"), "duplicateContent_not_observed", "unknown");
-        assertTrue(f.module.unresolved().size() == 1, "unobserved duplicateContent is quarantined");
+        assertTrue(f.services.holds.descriptions().size() == 1, "unobserved duplicateContent is quarantined");
     }
 
     // ---- launcher.set launch fields (public cursor-clip properties) ----
@@ -1808,7 +1806,7 @@ public final class LauncherModuleTest {
         HostOperation op = new HostOperation(f.tasks.after(2000));
         try {
             settings.validate("launcher.set", p);
-            f.services.schedule(op, () -> settings.dispatch(op, "launcher.set", p), 0);
+            f.services.enqueue(op, () -> settings.dispatch(op, "launcher.set", p));
             f.tasks.take().run();
         } catch (RuntimeException error) {
             op.fail(error);
@@ -1838,7 +1836,7 @@ public final class LauncherModuleTest {
 
         Fake f = riff();
         f.selected = 5;
-        LauncherSettingsModule settings = new LauncherSettingsModule(f.services, f.module);
+        LauncherSettingsModule settings = f.services.launcherSettings(f.module);
         HostOperation op = startSettings(
                 f, settings, launchSet("launchQuantization", "1/4", "useLoopStartAsQuantizationReference", true));
         f.drain(op);
@@ -1862,10 +1860,10 @@ public final class LauncherModuleTest {
         assertTrue(
                 r.getAsJsonObject("options").getAsJsonArray("launchMode").size() == 3,
                 "options come from the host's own enum definition");
-        assertTrue(f.module.unresolved().isEmpty(), "idempotent absolute setters do not quarantine");
+        assertTrue(f.services.holds.descriptions().isEmpty(), "idempotent absolute setters do not quarantine");
 
         f = riff();
-        settings = new LauncherSettingsModule(f.services, f.module);
+        settings = f.services.launcherSettings(f.module);
         op = startSettings(f, settings, launchSet("launchMode", "from_group", "launchQuantization", "default"));
         f.drain(op);
         r = op.result.join();
@@ -1880,7 +1878,7 @@ public final class LauncherModuleTest {
                 "matching fields are not rewritten");
         f = riff();
         f.emitLaunch = false;
-        settings = new LauncherSettingsModule(f.services, f.module);
+        settings = f.services.launcherSettings(f.module);
         op = startSettings(f, settings, launchSet("launchMode", "gate"));
         f.drain(op);
         r = op.result.join();
@@ -1896,7 +1894,7 @@ public final class LauncherModuleTest {
 
         f = riff();
         f.selected = 5;
-        settings = new LauncherSettingsModule(f.services, f.module);
+        settings = f.services.launcherSettings(f.module);
         op = startSettings(f, settings, launchSet("launchMode", "bogus"));
         f.drain(op);
         assertRpcError("invalid_params", "not_applied", op);
@@ -1908,7 +1906,7 @@ public final class LauncherModuleTest {
         assertRpcError("stale_target", "not_applied", op);
 
         f = riff();
-        settings = new LauncherSettingsModule(f.services, f.module);
+        settings = f.services.launcherSettings(f.module);
         f.applyLaunch = false;
         op = startSettings(f, settings, launchSet("launchMode", "gate"));
         f.drain(op);
@@ -1926,7 +1924,7 @@ public final class LauncherModuleTest {
         f = new Fake(true, true, false, false);
         f.slots[0].content = true;
         f.slots[0].name = "Riff";
-        settings = new LauncherSettingsModule(f.services, f.module);
+        settings = f.services.launcherSettings(f.module);
         op = startSettings(f, settings, launchSet("launchMode", "gate"));
         f.drain(op);
         assertRpcError("unsafe_state", "not_applied", op);
@@ -1942,7 +1940,7 @@ public final class LauncherModuleTest {
                         && r.get("verification").getAsString().equals("slot_empty")
                         && !f.slots[0].content
                         && f.deletes == 1
-                        && f.module.unresolved().isEmpty(),
+                        && f.services.holds.descriptions().isEmpty(),
                 "delete is verified by the empty slot");
         f = riff();
         f.slots[0].playing = true;
@@ -1955,7 +1953,7 @@ public final class LauncherModuleTest {
         f = riff();
         f.applyDelete = false;
         fail(f, clipEdit("delete"), "delete_not_observed", "unknown");
-        assertTrue(f.deletes == 1 && f.module.unresolved().size() == 1, "unobserved delete is unknown and quarantined");
+        assertTrue(f.deletes == 1 && f.services.holds.descriptions().size() == 1, "unobserved delete is unknown and quarantined");
         expectQuarantine(f.start("launcher.create", createTarget()), "clips.edit delete", ID);
         f = riff();
         fail(f, clipEditNamed("Other", "delete"), "stale_target", "not_applied");
@@ -1969,7 +1967,7 @@ public final class LauncherModuleTest {
                         && f.slots[1].name.equals("Riff")
                         && f.copies == 1
                         && r.get("targetSlotIndex").getAsInt() == 1
-                        && f.module.unresolved().isEmpty(),
+                        && f.services.holds.descriptions().isEmpty(),
                 "copyTo is verified by target content and name");
         f = riff();
         f.slots[1].content = true;
@@ -1988,14 +1986,14 @@ public final class LauncherModuleTest {
                                 .get("to")
                                 .getAsString()
                                 .equals("Riff copy")
-                        && f.module.unresolved().isEmpty(),
+                        && f.services.holds.descriptions().isEmpty(),
                 "a renamed copy is observed with nameChanged");
         assertTrue(f.slots[0].content && f.slots[0].name.equals("Riff"), "the source clip is untouched");
         f = riff();
         f.applyCopy = false;
         fail(f, clipEdit("copyTo", "targetSlotIndex", 1), "copy_not_observed", "unknown");
         assertTrue(
-                f.copies == 1 && f.module.unresolved().size() == 1,
+                f.copies == 1 && f.services.holds.descriptions().size() == 1,
                 "unobserved copy is unknown and quarantines the target");
         JsonObject create = createTarget();
         create.addProperty("slotIndex", 1);
@@ -2080,8 +2078,8 @@ public final class LauncherModuleTest {
         final ScheduledTasks tasks = base.tasks;
         final Map<String, Note> notes = new HashMap<>();
         final SlotData[] slots = new SlotData[16];
-        final Track[] tracks = new Track[HostServices.TRACKS];
-        final HostServices services;
+        final Track[] tracks = new Track[HostLimits.TRACKS];
+        final TestServices services;
         final LauncherModule module;
         NoteStepChangedCallback observer;
         int scenes = 16;
@@ -2396,8 +2394,8 @@ public final class LauncherModuleTest {
                         delay);
                 return null;
             });
-            services = new HostServices(host.proxy(ControllerHost.class), tasks::now);
-            module = new LauncherModule(services);
+            services = new TestServices(host.proxy(ControllerHost.class), tasks::now);
+            module = services.launcher();
             initialised = true;
         }
 
@@ -2500,7 +2498,7 @@ public final class LauncherModuleTest {
         }
 
         HostOperation start(HostOperation op, String method, JsonObject p) {
-            services.schedule(op, () -> module.dispatch(op, method, p), 0);
+            services.enqueue(op, () -> module.dispatch(op, method, p));
             tasks.take().run();
             return op;
         }

@@ -14,16 +14,27 @@ final class MarkerModule implements HostModule {
     static final Set<String> METHODS = Set.of("markers.list", "markers.insert", "markers.rename", "markers.delete");
     static final int WINDOW = 64;
     static final double BEAT_TOLERANCE = 1e-6;
-    private final HostServices s;
+    private final Scheduler scheduler;
+    private final Transport transport;
+    private final TransportSafety transportSafety;
+    private final Holds holds;
     private final CueMarkerBank bank;
     private final CueMarker[] items = new CueMarker[WINDOW];
+    private static final String UNRESOLVED = "markers.unresolved";
     private boolean observed;
     private HostOperation active;
-    private boolean unresolved;
 
-    MarkerModule(HostServices services) {
-        s = services;
-        bank = s.host.createArranger().createCueMarkerBank(WINDOW);
+    MarkerModule(
+            ControllerHost host,
+            Transport transport,
+            Scheduler scheduler,
+            TransportSafety transportSafety,
+            Holds holds) {
+        this.transport = transport;
+        this.scheduler = scheduler;
+        this.transportSafety = transportSafety;
+        this.holds = holds;
+        bank = host.createArranger().createCueMarkerBank(WINDOW);
         bank.itemCount().addValueObserver((IntegerValueChangedCallback) count -> observed = true);
         bank.scrollPosition().markInterested();
         for (int i = 0; i < WINDOW; i++) {
@@ -42,11 +53,6 @@ final class MarkerModule implements HostModule {
     @Override
     public void validate(String method, JsonObject p) {
         validateParams(method, p);
-    }
-
-    @Override
-    public List<String> unresolved() {
-        return unresolved ? List.of("A markers.* write was dispatched and its outcome was not observed.") : List.of();
     }
 
     static void validateParams(String method, JsonObject p) {
@@ -119,7 +125,7 @@ final class MarkerModule implements HostModule {
     }
 
     private JsonObject describe(Snapshot snap) {
-        JsonObject out = HostServices.observed();
+        JsonObject out = Results.observed();
         out.addProperty("scope", "arranger_cue_markers");
         JsonArray list = new JsonArray();
         for (int i = 0; i < snap.markers.size(); i++) {
@@ -130,7 +136,7 @@ final class MarkerModule implements HostModule {
             list.add(row);
         }
         out.add("markers", list);
-        out.add("window", HostServices.window(snap.offset, WINDOW, snap.total));
+        out.add("window", Results.window(snap.offset, WINDOW, snap.total));
         out.addProperty("observationsComplete", snap.complete);
         JsonObject units = new JsonObject();
         units.addProperty("beat", "quarter_note_beats");
@@ -141,7 +147,7 @@ final class MarkerModule implements HostModule {
 
     @Override
     public void dispatch(HostOperation op, String method, JsonObject p) {
-        s.check(op);
+        scheduler.check(op);
         if (!observed) throw Errors.notApplied(ErrorCode.NOT_READY, "Cue marker bank has not reported its size yet.");
         Snapshot before = read();
         if (method.equals("markers.list")) {
@@ -152,13 +158,13 @@ final class MarkerModule implements HostModule {
             throw Errors.notApplied(
                     ErrorCode.UNSUPPORTED_SCOPE,
                     "Marker edits need the whole marker list inside the " + WINDOW + "-marker window.");
-        if (unresolved)
+        if (holds.held(UNRESOLVED))
             throw Errors.notApplied(
                     ErrorCode.UNRESOLVED_MUTATION,
                     "A prior marker write was not observed; inspect markers.list or restart the extension first.");
         if (active != null && !active.result.isDone())
             throw Errors.notApplied(ErrorCode.BUSY, "Another marker write awaits observation.");
-        s.requirePlaybackSafe();
+        transportSafety.requirePlaybackSafe();
         if (method.equals("markers.insert")) {
             insert(op, p, before);
             return;
@@ -177,11 +183,11 @@ final class MarkerModule implements HostModule {
         }
         active = op;
         op.dispatched = true;
-        unresolved = true;
+        holds.place(UNRESOLVED, "A markers.* write was dispatched and its outcome was not observed.");
         CueMarker marker = items[target.slot];
         if (method.equals("markers.rename")) marker.name().set(newName);
         else marker.deleteObject();
-        awaitMulti(op, method, expected, before, target.beat, newName, s.observeUntil(op));
+        awaitMulti(op, method, expected, before, target.beat, newName, scheduler.observeUntil(op));
     }
 
     private Marker locate(Snapshot snap, JsonObject p) {
@@ -201,7 +207,7 @@ final class MarkerModule implements HostModule {
     }
 
     private void insert(HostOperation op, JsonObject p, Snapshot before) {
-        s.requireStopped();
+        transportSafety.requireStopped();
         double beat = p.get("beat").getAsDouble();
         for (Marker m : before.markers)
             if (Math.abs(m.beat - beat) <= BEAT_TOLERANCE)
@@ -211,9 +217,9 @@ final class MarkerModule implements HostModule {
         if (before.total >= WINDOW) throw Errors.notApplied(ErrorCode.UNSUPPORTED_SCOPE, "The marker window is full.");
         active = op;
         op.dispatched = true;
-        unresolved = true;
-        s.transport.addCueMarkerAtPlaybackPosition();
-        awaitInserted(op, p, before, s.observeUntil(op));
+        holds.place(UNRESOLVED, "A markers.* write was dispatched and its outcome was not observed.");
+        transport.addCueMarkerAtPlaybackPosition();
+        awaitInserted(op, p, before, scheduler.observeUntil(op));
     }
 
     /** The new marker is whatever single entry the multiset gained; it is then named and moved in one controller callback. */
@@ -239,20 +245,20 @@ final class MarkerModule implements HostModule {
             if (!sameBeat) marker.position().set(beat);
             Map<String, Integer> expected = before.multiset();
             expected.merge(new Marker(0, name, beat).key(), 1, Integer::sum);
-            awaitMulti(op, "markers.insert", expected, before, beat, name, s.observeUntil(op));
+            awaitMulti(op, "markers.insert", expected, before, beat, name, scheduler.observeUntil(op));
             return;
         }
-        if (s.now() >= until || now.total > before.total + 1 || gained.size() > 1) {
+        if (scheduler.now() >= until || now.total > before.total + 1 || gained.size() > 1) {
             JsonObject result = describe(now);
             result.addProperty("status", "dispatched");
             result.addProperty("completion", "unknown");
             result.addProperty("matchesRequested", false);
             result.addProperty("reason", "unique_added_marker_not_observed");
-            unresolved = true;
+            holds.place(UNRESOLVED, "A markers.* write was dispatched and its outcome was not observed.");
             op.result.complete(result);
             return;
         }
-        s.schedule(op, () -> awaitInserted(op, p, before, until), 20);
+        scheduler.schedule(op, () -> awaitInserted(op, p, before, until), 20);
     }
 
     private void awaitMulti(
@@ -268,11 +274,11 @@ final class MarkerModule implements HostModule {
             finish(op, method, expected, now, beat, name, "observer_after_write", true);
             return;
         }
-        if (s.now() >= until) {
+        if (scheduler.now() >= until) {
             finish(op, method, expected, now, beat, name, "not_observed", false);
             return;
         }
-        s.schedule(op, () -> awaitMulti(op, method, expected, before, beat, name, until), 20);
+        scheduler.schedule(op, () -> awaitMulti(op, method, expected, before, beat, name, until), 20);
     }
 
     private void finish(
@@ -285,7 +291,7 @@ final class MarkerModule implements HostModule {
             String verification,
             boolean matched) {
         // An already-satisfied rename dispatched nothing, so it leaves no unresolved write behind.
-        if (matched) unresolved = false;
+        if (matched) holds.release(UNRESOLVED);
         JsonObject result = describe(read());
         result.addProperty("status", matched ? "observed" : "dispatched");
         result.addProperty("completion", matched ? "observed" : "unknown");

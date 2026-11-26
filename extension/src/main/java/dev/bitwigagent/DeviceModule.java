@@ -25,27 +25,43 @@ final class DeviceModule implements HostModule {
             "devices.remote.set");
     private static final Set<String> TARGET = Set.of("trackId", "deviceIndex", "expectedDeviceName");
     static final int MAX_LAYER_CHILDREN = 4096;
-    private final HostServices s;
-    private final Source[][] sources = new Source[HostServices.TRACKS][HostServices.DEVICES];
-    private final InsertionPoint[] ends = new InsertionPoint[HostServices.TRACKS];
-    private final boolean[] countObserved = new boolean[HostServices.TRACKS];
-    private final long[] countSequence = new long[HostServices.TRACKS];
+    private final ControllerHost host;
+    private final Scheduler scheduler;
+    private final TrackWindow window;
+    private final DeviceSources deviceSources;
+    private final TransportSafety transportSafety;
+    private final SelectionLease selection;
+    private final Source[][] sources = new Source[HostLimits.TRACKS][HostLimits.DEVICES];
+    private final InsertionPoint[] ends = new InsertionPoint[HostLimits.TRACKS];
+    private final boolean[] countObserved = new boolean[HostLimits.TRACKS];
+    private final long[] countSequence = new long[HostLimits.TRACKS];
     private HostOperation mutation;
     private final String sessionToken = UUID.randomUUID().toString();
     private final JsonObject deviceCatalog = catalog();
 
-    DeviceModule(HostServices services) {
-        s = services;
-        for (int t = 0; t < HostServices.TRACKS; t++) {
+    DeviceModule(
+            ControllerHost host,
+            Scheduler scheduler,
+            TrackWindow window,
+            DeviceSources deviceSources,
+            TransportSafety transportSafety,
+            SelectionLease selection) {
+        this.host = host;
+        this.scheduler = scheduler;
+        this.window = window;
+        this.deviceSources = deviceSources;
+        this.transportSafety = transportSafety;
+        this.selection = selection;
+        for (int t = 0; t < HostLimits.TRACKS; t++) {
             final int slot = t;
-            Track track = (Track) s.tracks.getItemAt(t);
+            Track track = window.at(t);
             ends[t] = track.endOfDeviceChainInsertionPoint();
-            s.devices[t].itemCount().addValueObserver((IntegerValueChangedCallback) value -> {
+            window.devices(t).itemCount().addValueObserver((IntegerValueChangedCallback) value -> {
                 countObserved[slot] = true;
                 countSequence[slot]++;
             });
-            for (int d = 0; d < HostServices.DEVICES; d++) {
-                Source source = new Source(s.sources.roots[t][d], d);
+            for (int d = 0; d < HostLimits.DEVICES; d++) {
+                Source source = new Source(deviceSources.roots[t][d], d);
                 sources[t][d] = source;
                 source.identity.listeners.add((structural, name) -> {
                     if (structural) invalidateRemotes(source);
@@ -153,7 +169,7 @@ final class DeviceModule implements HostModule {
         result.add("pages", pages);
         result.add(
                 "pageWindow",
-                HostServices.window(0, 4096, source.page.pageCount().get()));
+                Results.window(0, 4096, source.page.pageCount().get()));
         JsonArray controls = new JsonArray();
         boolean complete = true;
         for (int i = 0; i < 8; i++) {
@@ -246,7 +262,7 @@ final class DeviceModule implements HostModule {
                     ErrorCode.STALE_CONTEXT,
                     "Remote control is absent, unobserved, being remapped, or differs from its expected name/page.");
         double value = p.get("normalizedValue").getAsDouble();
-        if (source.controlValuesFresh[index] && Math.abs(control.value().get() - value) <= HostServices.TOLERANCE) {
+        if (source.controlValuesFresh[index] && Math.abs(control.value().get() - value) <= HostLimits.TOLERANCE) {
             JsonObject result = remoteMetadata(target);
             result.addProperty("verification", "already_observed_no_write");
             op.result.complete(result);
@@ -257,7 +273,7 @@ final class DeviceModule implements HostModule {
         guard(op, target);
         if (!token.equals(p.get("contextToken").getAsString()))
             throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Remote control context changed before dispatch.");
-        s.requirePlaybackSafe();
+        transportSafety.requirePlaybackSafe();
         op.dispatched = true;
         // Explicit absolute RPC writes must not wait for physical-controller takeover.
         control.value().setImmediately(value);
@@ -273,12 +289,12 @@ final class DeviceModule implements HostModule {
         boolean observed = source.pageSequence > sequence
                 && source.page.selectedPageIndex().get() == index
                 && name.equals(source.page.getName().get());
-        if (observed || s.now() >= end) {
+        if (observed || scheduler.now() >= end) {
             JsonObject result = remoteMetadata(target);
             result.addProperty("status", observed ? "observed" : "dispatched");
             result.addProperty("verification", observed ? "page_observer_after_write" : "postcondition_not_observed");
             op.result.complete(result);
-        } else s.schedule(op, () -> observePage(op, target, index, name, sequence, end), 25);
+        } else scheduler.schedule(op, () -> observePage(op, target, index, name, sequence, end), 25);
     }
 
     private void observeRemote(
@@ -290,14 +306,14 @@ final class DeviceModule implements HostModule {
         Source source = target.source;
         boolean observed = source.controlValuesFresh[index]
                 && source.controlSequences[index] > sequence
-                && Math.abs(source.controls[index].value().get() - value) <= HostServices.TOLERANCE;
-        if (observed || s.now() >= end) {
+                && Math.abs(source.controls[index].value().get() - value) <= HostLimits.TOLERANCE;
+        if (observed || scheduler.now() >= end) {
             JsonObject result = remoteMetadata(target);
             result.addProperty("status", observed ? "observed" : "dispatched");
             result.addProperty("verification", observed ? "observer_after_write" : "postcondition_not_observed");
             result.addProperty("requestedNormalizedValue", value);
             op.result.complete(result);
-        } else s.schedule(op, () -> observeRemote(op, target, index, value, token, sequence, end), 25);
+        } else scheduler.schedule(op, () -> observeRemote(op, target, index, value, token, sequence, end), 25);
     }
 
     private static boolean remoteSourcePresent(Source source) {
@@ -336,7 +352,7 @@ final class DeviceModule implements HostModule {
 
     private void requestRemoteFlush(Source source) {
         source.remoteFlushPending = true;
-        s.host.requestFlush();
+        host.requestFlush();
     }
 
     @Override
@@ -346,7 +362,7 @@ final class DeviceModule implements HostModule {
                 if (!source.remoteFlushPending) continue;
                 if (!source.identity.established
                         || !source.identity.present()
-                        || !s.trackMatches(source.identity.track.id, source.track)
+                        || !window.trackMatches(source.identity.track.id, source.track)
                         || !source.device.exists().get()
                         || source.device.position().get() != source.deviceIndex
                         || !java.util.Objects.equals(
@@ -404,7 +420,7 @@ final class DeviceModule implements HostModule {
                         Set.of("trackId", "expectedDeviceCount", "kind"),
                         Set.of("id", "path", "position", "deviceIndex", "expectedDeviceName"));
                 Params.string(p, "trackId");
-                Params.integer(p, "expectedDeviceCount", 0, HostServices.DEVICES - 1);
+                Params.integer(p, "expectedDeviceCount", 0, HostLimits.DEVICES - 1);
                 validateInsertion(p);
                 validatePosition(p);
                 return;
@@ -415,7 +431,7 @@ final class DeviceModule implements HostModule {
             case "devices.move":
                 Params.fields(p, Set.of("trackId", "deviceIndex", "expectedDeviceName", "toIndex"), Set.of());
                 validateTarget(p);
-                if (Params.integer(p, "toIndex", 0, HostServices.DEVICES - 1)
+                if (Params.integer(p, "toIndex", 0, HostLimits.DEVICES - 1)
                         == p.get("deviceIndex").getAsInt()) invalid("toIndex equals deviceIndex; nothing to move.");
                 return;
             case "devices.layers.insert":
@@ -473,7 +489,7 @@ final class DeviceModule implements HostModule {
 
     private static void validateTarget(JsonObject p) {
         Params.string(p, "trackId");
-        Params.integer(p, "deviceIndex", 0, HostServices.DEVICES - 1);
+        Params.integer(p, "deviceIndex", 0, HostLimits.DEVICES - 1);
         Params.string(p, "expectedDeviceName");
     }
 
@@ -485,7 +501,7 @@ final class DeviceModule implements HostModule {
         if (anchored) {
             if (!p.has("deviceIndex") || !p.has("expectedDeviceName"))
                 invalid("position before/after requires deviceIndex and expectedDeviceName of the anchor device.");
-            Params.integer(p, "deviceIndex", 0, HostServices.DEVICES - 1);
+            Params.integer(p, "deviceIndex", 0, HostLimits.DEVICES - 1);
             Params.string(p, "expectedDeviceName");
         } else if (p.has("deviceIndex") || p.has("expectedDeviceName"))
             invalid("deviceIndex and expectedDeviceName are only for position before/after.");
@@ -569,7 +585,7 @@ final class DeviceModule implements HostModule {
         }
         if (method.equals("devices.select")) {
             guard(op, target);
-            s.requireSelectionFree();
+            selection.requireFree();
             op.dispatched = true;
             target.source.device.selectInEditor();
             JsonObject result = metadata(target);
@@ -594,9 +610,9 @@ final class DeviceModule implements HostModule {
     }
 
     private Target target(JsonObject p) {
-        s.sources.requireZeroWindow(p);
-        DeviceSources.Source root = s.sources.root(p);
-        Source source = sources[s.trackSlot(root.track.id)][p.get("deviceIndex").getAsInt()];
+        deviceSources.requireZeroWindow(p);
+        DeviceSources.Source root = deviceSources.root(p);
+        Source source = sources[window.trackSlot(root.track.id)][p.get("deviceIndex").getAsInt()];
         if (!source.ready()) throw Errors.notApplied(ErrorCode.NOT_READY, "Device metadata has not been observed.");
         return new Target(root.track.id, root.track.slot, source.deviceIndex, root.name, source, root.revision);
     }
@@ -605,17 +621,17 @@ final class DeviceModule implements HostModule {
         DeviceSources.Source root = target.source.identity;
         return root.revision == target.generation
                 && root.present()
-                && s.devices[target.trackSlot].scrollPosition().get() == 0;
+                && window.devices(target.trackSlot).scrollPosition().get() == 0;
     }
 
     private void guard(HostOperation op, Target target) {
-        s.check(op);
+        scheduler.check(op);
         if (!matches(target))
             throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Device target changed before dispatch.");
     }
 
     private JsonObject metadata(Target target) {
-        JsonObject result = HostServices.observed();
+        JsonObject result = Results.observed();
         JsonObject identity = new JsonObject();
         identity.addProperty("trackId", target.trackId);
         identity.addProperty("deviceIndex", target.index);
@@ -629,10 +645,10 @@ final class DeviceModule implements HostModule {
         result.addProperty("scope", "top_level_device_bank");
         result.add(
                 "window",
-                HostServices.window(
-                        s.devices[target.trackSlot].scrollPosition().get(),
-                        HostServices.DEVICES,
-                        s.devices[target.trackSlot].itemCount().get()));
+                Results.window(
+                        window.devices(target.trackSlot).scrollPosition().get(),
+                        HostLimits.DEVICES,
+                        window.devices(target.trackSlot).itemCount().get()));
         result.addProperty("remoteControlsAvailable", true);
         result.addProperty("nameWritable", false);
         return result;
@@ -648,13 +664,13 @@ final class DeviceModule implements HostModule {
             JsonObject result = metadata(target);
             result.addProperty("verification", "observer_after_write");
             op.result.complete(result);
-        } else if (s.now() >= end) {
+        } else if (scheduler.now() >= end) {
             JsonObject result = metadata(target);
             result.addProperty("status", "dispatched");
             result.addProperty("verification", "postcondition_not_observed");
             result.addProperty("requestedEnabled", enabled);
             op.result.complete(result);
-        } else s.schedule(op, () -> observeEnabled(op, target, enabled, sequence, end), 25);
+        } else scheduler.schedule(op, () -> observeEnabled(op, target, enabled, sequence, end), 25);
     }
 
     /** One verified edit in flight: what was planned, how to read the chain, and what to add to the result. */
@@ -688,7 +704,7 @@ final class DeviceModule implements HostModule {
 
     private void insert(HostOperation op, JsonObject p) {
         String id = p.get("trackId").getAsString();
-        int t = s.trackSlot(id);
+        int t = window.trackSlot(id);
         int count = p.get("expectedDeviceCount").getAsInt();
         String position = p.has("position") ? p.get("position").getAsString() : "end";
         TopState state = captureTop(t, count, "Device count or bank window differs from expectedDeviceCount.");
@@ -716,18 +732,18 @@ final class DeviceModule implements HostModule {
                                     + sources[t][anchor].device.name().get() + "\", not expectedDeviceName.");
                 index = position.equals("before") ? anchor : anchor + 1;
         }
-        s.check(op);
-        if (!s.trackMatches(id, (Track) s.tracks.getItemAt(t))
+        scheduler.check(op);
+        if (!window.trackMatches(id, window.at(t))
                 || !prefixMatches(t, state.revisions)
-                || s.devices[t].itemCount().get() != count
-                || s.devices[t].scrollPosition().get() != 0)
+                || window.devices(t).itemCount().get() != count
+                || window.devices(t).scrollPosition().get() != 0)
             throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Insertion target changed before dispatch.");
         String kind = p.get("kind").getAsString();
         String value = p.get(kind.equals("file") ? "path" : "id").getAsString();
         InsertionPoint point;
         switch (position) {
             case "start":
-                point = ((Track) s.tracks.getItemAt(t)).startOfDeviceChainInsertionPoint();
+                point = (window.at(t)).startOfDeviceChainInsertionPoint();
                 break;
             case "end":
                 point = ends[t];
@@ -774,8 +790,8 @@ final class DeviceModule implements HostModule {
     private void insertIntoLayer(HostOperation op, JsonObject p) {
         JsonObject parent = p.getAsJsonObject("parent");
         String layerId = p.get("layerId").getAsString();
-        DeviceSources.Source root = s.sources.root(parent);
-        DeviceSources.Layer layer = s.sources.layer(parent, layerId);
+        DeviceSources.Source root = deviceSources.root(parent);
+        DeviceSources.Layer layer = deviceSources.layer(parent, layerId);
         int count = p.get("expectedChildCount").getAsInt();
         LayerView view = new LayerView(layer);
         if (view.count() != count)
@@ -783,7 +799,7 @@ final class DeviceModule implements HostModule {
         DeviceChainEdit.Before before =
                 DeviceChainEdit.Before.capture(view, "Layer child count and window contents disagree.");
         boolean start = p.has("position") && p.get("position").getAsString().equals("start");
-        s.check(op);
+        scheduler.check(op);
         String trackId = root.track.id, rootName = root.name;
         java.util.function.BooleanSupplier context = () -> Boolean.TRUE.equals(root.exists)
                 && root.name.equals(rootName)
@@ -820,7 +836,7 @@ final class DeviceModule implements HostModule {
 
     private void delete(HostOperation op, Target target) {
         int t = target.trackSlot, index = target.index;
-        s.requirePlaybackSafe();
+        transportSafety.requirePlaybackSafe();
         TopState state = captureTop(t, -1, "Device bank contents disagree with the observed device count.");
         if (index >= state.before.count)
             throw Errors.notApplied(ErrorCode.TARGET_NOT_FOUND, "Device is beyond the observed device count.");
@@ -834,7 +850,7 @@ final class DeviceModule implements HostModule {
 
     private void move(HostOperation op, Target target, int to) {
         int t = target.trackSlot, from = target.index;
-        s.requirePlaybackSafe();
+        transportSafety.requirePlaybackSafe();
         TopState state = captureTop(t, -1, "Device bank contents disagree with the observed device count.");
         int n = state.before.count;
         if (from >= n)
@@ -864,15 +880,15 @@ final class DeviceModule implements HostModule {
     /** Complete, ready top-level window: count, scroll, per-slot existence and the revisions of every present device. */
     private TopState captureTop(int t, int expectedCount, String staleMessage) {
         if (!countObserved[t]) throw Errors.notApplied(ErrorCode.NOT_READY, "Device count has not been observed.");
-        int count = s.devices[t].itemCount().get();
-        if (s.devices[t].scrollPosition().get() != 0 || (expectedCount >= 0 && count != expectedCount))
+        int count = window.devices(t).itemCount().get();
+        if (window.devices(t).scrollPosition().get() != 0 || (expectedCount >= 0 && count != expectedCount))
             throw Errors.notApplied(ErrorCode.STALE_CONTEXT, staleMessage);
-        if (count > HostServices.DEVICES)
+        if (count > HostLimits.DEVICES)
             throw Errors.notApplied(
                     ErrorCode.OUTSIDE_WINDOW,
                     "The chain is longer than the 16-device window; only inserts at a bounded count are supported.");
         long[] revisions = new long[count];
-        for (int d = 0; d < HostServices.DEVICES; d++) {
+        for (int d = 0; d < HostLimits.DEVICES; d++) {
             Source source = sources[t][d];
             if (d < count
                     && source.identity.exists != null
@@ -892,8 +908,8 @@ final class DeviceModule implements HostModule {
                 new TopView(t),
                 plan,
                 prefix,
-                () -> s.trackMatches(trackId, (Track) s.tracks.getItemAt(t))
-                        && s.devices[t].scrollPosition().get() == 0,
+                () -> window.trackMatches(trackId, window.at(t))
+                        && window.devices(t).scrollPosition().get() == 0,
                 "insertion_track_or_window_changed");
     }
 
@@ -916,8 +932,8 @@ final class DeviceModule implements HostModule {
                 edit.prefixRevisions != null && !prefixMatches(edit.slot, edit.prefixRevisions)
                         ? DeviceChainEdit.Outcome.ambiguous()
                         : DeviceChainEdit.observe(edit.view, edit.plan);
-        if (outcome.pending && s.now() < end) {
-            s.schedule(op, () -> observeEdit(op, edit, end), 25);
+        if (outcome.pending && scheduler.now() < end) {
+            scheduler.schedule(op, () -> observeEdit(op, edit, end), 25);
             return;
         }
         finishEdit(op, edit, outcome, null);
@@ -934,7 +950,7 @@ final class DeviceModule implements HostModule {
                                 ? "insertion_not_observed"
                                 : plan.kind == DeviceChainEdit.DELETE ? "deletion_not_observed" : "move_not_observed")
                         : outcome.verification;
-        JsonObject result = HostServices.observed();
+        JsonObject result = Results.observed();
         result.addProperty("status", outcome.ok ? "observed" : "dispatched");
         result.addProperty("verification", verification);
         result.addProperty("trackId", edit.trackId);
@@ -964,12 +980,12 @@ final class DeviceModule implements HostModule {
 
         @Override
         public int count() {
-            return s.devices[t].itemCount().get();
+            return window.devices(t).itemCount().get();
         }
 
         @Override
         public int window() {
-            return HostServices.DEVICES;
+            return HostLimits.DEVICES;
         }
 
         @Override
@@ -1080,7 +1096,7 @@ final class DeviceModule implements HostModule {
     }
 
     private long observationEnd(HostOperation op) {
-        return s.observeUntil(op);
+        return scheduler.observeUntil(op);
     }
 
     private static void uncertain(HostOperation op, String reason) {
@@ -1097,7 +1113,7 @@ final class DeviceModule implements HostModule {
 
     /** Every factory device file under the installation, with category and description read from its localization resources at runtime. */
     static JsonObject catalog(String installation) {
-        JsonObject result = HostServices.observed();
+        JsonObject result = Results.observed();
         result.addProperty("scope", "installed_bitwig_factory_devices");
         result.addProperty("completePluginCatalog", false);
         result.addProperty("verification", "local_file_presence_not_insertion_or_audio_proof");

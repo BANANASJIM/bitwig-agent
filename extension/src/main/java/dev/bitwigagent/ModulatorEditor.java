@@ -423,7 +423,7 @@ final class ModulatorEditor {
         }
         if (modulatorId != null && rows.size() == 0) s.modulator(modulatorId);
         s.guard();
-        JsonObject result = HostServices.observed();
+        JsonObject result = Results.observed();
         result.addProperty("count", s.members.size());
         result.add("modulators", rows);
         result.addProperty("complete", unsupported.isEmpty());
@@ -559,7 +559,7 @@ final class ModulatorEditor {
                     changed ? ErrorCode.MODULATOR_VERIFICATION_FAILED : ErrorCode.STALE_CONTEXT,
                     "Native readback differs from the requested value; inspect modulators.get before another write.",
                     changed ? Outcome.UNKNOWN : Outcome.NOT_APPLIED);
-        JsonObject result = HostServices.observed();
+        JsonObject result = Results.observed();
         result.addProperty("modulatorId", modulatorId.toString());
         current.remove("supported");
         result.add("parameter", current);
@@ -657,7 +657,7 @@ final class ModulatorEditor {
                             changed ? ErrorCode.MODULATOR_VERIFICATION_FAILED : ErrorCode.STALE_CONTEXT,
                             "Mapping readback differs from the request; inspect modulators.get before another write.",
                             changed ? Outcome.UNKNOWN : Outcome.NOT_APPLIED);
-                JsonObject result = HostServices.observed();
+                JsonObject result = Results.observed();
                 result.addProperty("modulatorId", r.modulatorId.toString());
                 result.addProperty("outputId", outputId);
                 result.add("target", describe(s, target.parameter));
@@ -720,7 +720,7 @@ final class ModulatorEditor {
                     throw Errors.unknown(
                             ErrorCode.MODULATOR_VERIFICATION_FAILED,
                             "Membership after delete is not the previous list minus this modulator; inspect modulators.get.");
-                JsonObject result = HostServices.observed();
+                JsonObject result = Results.observed();
                 result.addProperty("modulatorId", modulatorId.toString());
                 result.addProperty("count", expected.size());
                 written(
@@ -804,7 +804,7 @@ final class ModulatorEditor {
                             + " or its contents are unmaterialized; inspect modulators.get.");
         Scope now = new Scope(s.proxy, s.trackId, check);
         List<String> unsupported = new ArrayList<>();
-        JsonObject result = HostServices.observed();
+        JsonObject result = Results.observed();
         int index = 0;
         while (after.get(index) != created) index++;
         result.add("modulator", row(now, created, index, unsupported));

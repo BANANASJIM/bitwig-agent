@@ -47,7 +47,7 @@ final class GridVoicingWriter {
     JsonObject get(Object proxy, java.util.UUID trackId, Runnable check) {
         GridSnapshotReader.NativeTarget target = values.bindTarget(proxy, trackId, check);
         Object model = nativeAccess.model(target.target);
-        JsonObject result = HostServices.observed();
+        JsonObject result = Results.observed();
         if (model == null) {
             result.addProperty("supported", false);
             result.addProperty(
@@ -107,7 +107,7 @@ final class GridVoicingWriter {
                                 + "; inspect state before another write.",
                         changed ? Outcome.UNKNOWN : Outcome.NOT_APPLIED);
         check.run();
-        JsonObject result = HostServices.observed();
+        JsonObject result = Results.observed();
         result.addProperty("supported", true);
         result.add("voicing", current);
         result.addProperty("mode", mode(current));

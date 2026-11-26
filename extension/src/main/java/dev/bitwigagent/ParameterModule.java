@@ -1,6 +1,7 @@
 package dev.bitwigagent;
 
-import static dev.bitwigagent.HostServices.*;
+import static dev.bitwigagent.HostLimits.*;
+import static dev.bitwigagent.Results.*;
 
 import com.bitwig.extension.callback.*;
 import com.bitwig.extension.controller.api.*;
@@ -11,15 +12,17 @@ import java.util.*;
 final class ParameterModule implements HostModule {
     static final Set<String> METHODS =
             Set.of("parameters.list", "parameters.set", "parameters.layer.list", "parameters.layer.set");
-    private final HostServices s;
+    private final Scheduler scheduler;
+    private final DeviceSources sources;
     private final Map<DeviceSources.Source, ParameterSource> parameterSources = new IdentityHashMap<>();
     private long valueSequence;
     private Binding binding;
     private HostOperation parameterRequest;
 
-    ParameterModule(HostServices s) {
-        this.s = s;
-        for (DeviceSources.Source identity : s.sources.all) {
+    ParameterModule(Scheduler scheduler, DeviceSources sources) {
+        this.scheduler = scheduler;
+        this.sources = sources;
+        for (DeviceSources.Source identity : sources.all) {
             ParameterSource source = new ParameterSource(identity);
             parameterSources.put(identity, source);
             identity.listeners.add((structural, name) -> {
@@ -120,7 +123,7 @@ final class ParameterModule implements HostModule {
         }
         Binding target = new Binding(source);
         binding = target;
-        s.check(request);
+        scheduler.check(request);
         awaitDevice(request, target);
     }
 
@@ -128,7 +131,7 @@ final class ParameterModule implements HostModule {
         if (binding != target || !bankTargetMatches(target))
             throw Errors.notApplied(ErrorCode.STALE_TARGET, "Target changed during binding.");
         if (!matches(target) || !target.source.idsObserved) {
-            s.schedule(request, () -> awaitDevice(request, target), 20);
+            scheduler.schedule(request, () -> awaitDevice(request, target), 20);
             return;
         }
         target.established = true;
@@ -183,13 +186,13 @@ final class ParameterModule implements HostModule {
             return;
         }
         long before = parameter.sequence;
-        s.check(request);
+        scheduler.check(request);
         if (!matches(target))
             throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Target changed before parameter dispatch.");
         request.dispatched = true;
         source.identity.device.setDirectParameterValueNormalized(
                 id, Math.round(requestedValue * (RESOLUTION - 1)), RESOLUTION);
-        long observeUntil = s.observeUntil(request);
+        long observeUntil = scheduler.observeUntil(request);
         awaitValue(request, target, token, id, requestedValue, applied, before, observeUntil);
     }
 
@@ -211,7 +214,7 @@ final class ParameterModule implements HostModule {
         if (fresh && Math.abs(parameter.value - applied) <= TOLERANCE) {
             request.result.complete(
                     writeResult(target, id, requested, applied, parameter.value, "observer_after_write"));
-        } else if (s.now() >= observeUntil) {
+        } else if (scheduler.now() >= observeUntil) {
             request.result.complete(writeResult(
                     target,
                     id,
@@ -220,7 +223,7 @@ final class ParameterModule implements HostModule {
                     fresh ? parameter.value : null,
                     fresh ? "readback_mismatch" : "not_observed"));
         } else {
-            s.schedule(
+            scheduler.schedule(
                     request,
                     () -> awaitValue(request, target, token, id, requested, applied, before, observeUntil),
                     20);
@@ -271,7 +274,7 @@ final class ParameterModule implements HostModule {
     }
 
     private ParameterSource resolve(JsonObject params) {
-        DeviceSources.Source identity = params.has("parent") ? s.sources.child(params) : s.sources.root(params);
+        DeviceSources.Source identity = params.has("parent") ? sources.child(params) : sources.root(params);
         return parameterSources.get(identity);
     }
 

@@ -29,8 +29,8 @@ public final class ExtensionModuleTest {
     void restartRepliesFirstThenRestartsOnce() {
         HostFixture f = new HostFixture();
         int[] restarts = countRestarts(f);
-        MixModule mix = new MixModule(f.services);
-        ExtensionModule module = new ExtensionModule(f.services, () -> List.<HostModule>of(mix));
+        MixModule mix = f.services.mix();
+        ExtensionModule module = f.services.extension();
         JsonObject result = f.call(module, "extension.restart", params(null));
         assertTrue(
                 result.get("status").getAsString().equals("dispatched")
@@ -50,8 +50,8 @@ public final class ExtensionModuleTest {
     void unresolvedCreationRefusesUnlessDiscarded() {
         HostFixture f = new HostFixture();
         int[] restarts = countRestarts(f);
-        MixModule mix = new MixModule(f.services);
-        ExtensionModule module = new ExtensionModule(f.services, () -> List.<HostModule>of(mix));
+        MixModule mix = f.services.mix();
+        ExtensionModule module = f.services.extension();
         JsonObject create = new JsonObject();
         create.addProperty("type", "audio");
         create.addProperty("position", -1);
@@ -60,7 +60,7 @@ public final class ExtensionModuleTest {
         f.next();
         a.result.cancel(false);
         f.next();
-        assertTrue(mix.unresolved().size() == 1, "creation is unresolved");
+        assertTrue(f.services.holds.descriptions().size() == 1, "creation is unresolved");
         HostOperation refused = f.submit(module, "extension.restart", params(null));
         f.next();
         RpcException error = assertRpcError("unresolved_mutation", refused);
@@ -86,7 +86,7 @@ public final class ExtensionModuleTest {
     @Test
     void invalidParamsNeverSchedule() {
         HostFixture f = new HostFixture();
-        ExtensionModule module = new ExtensionModule(f.services, () -> List.<HostModule>of());
+        ExtensionModule module = f.services.extension();
         for (String bad : List.of("{\"discardUnresolved\":1}", "{\"discardUnresolved\":null}", "{\"other\":true}")) {
             HostOperation op = f.submit(
                     module, "extension.restart", JsonParser.parseString(bad).getAsJsonObject());

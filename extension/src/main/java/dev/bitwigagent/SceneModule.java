@@ -9,27 +9,28 @@ import java.util.*;
 final class SceneModule implements HostModule {
     static final Set<String> METHODS =
             Set.of("scenes.list", "scenes.rename", "scenes.launch", "scenes.duplicate", "scenes.delete");
-    private final HostServices s;
+    private final Scheduler scheduler;
+    private final TrackWindow window;
+    private final TransportSafety transportSafety;
+    private final LauncherStructureLock lock;
     private final SceneBank bank;
-    private final Scene[] scenes = new Scene[HostServices.SCENES];
+    private final Scene[] scenes = new Scene[HostLimits.SCENES];
     // Names arrive by observer; null means not yet observed (an unnamed scene reports "", which is a real value).
-    private final String[] names = new String[HostServices.SCENES];
-    private final long[] nameSequence = new long[HostServices.SCENES];
-    private final ClipLauncherSlot[][] slots = new ClipLauncherSlot[HostServices.TRACKS][HostServices.SCENES];
+    private final String[] names = new String[HostLimits.SCENES];
+    private final long[] nameSequence = new long[HostLimits.SCENES];
+    private final ClipLauncherSlot[][] slots = new ClipLauncherSlot[HostLimits.TRACKS][HostLimits.SCENES];
     private int count = -1;
-    private final Runnable structureGuard;
 
-    SceneModule(HostServices services) {
-        this(services, () -> {});
-    }
-    /** structureGuard refuses duplicate/delete while launcher work pins the slot rows (see LauncherModule.requireStructureSafe). */
-    SceneModule(HostServices services, Runnable structureGuard) {
-        s = services;
-        this.structureGuard = structureGuard;
-        bank = s.tracks.sceneBank();
+    SceneModule(
+            Scheduler scheduler, TrackWindow window, TransportSafety transportSafety, LauncherStructureLock lock) {
+        this.scheduler = scheduler;
+        this.window = window;
+        this.transportSafety = transportSafety;
+        this.lock = lock;
+        bank = window.bank().sceneBank();
         bank.scrollPosition().markInterested();
         bank.itemCount().addValueObserver((IntegerValueChangedCallback) v -> count = v);
-        for (int i = 0; i < HostServices.SCENES; i++) {
+        for (int i = 0; i < HostLimits.SCENES; i++) {
             final int index = i;
             scenes[i] = (Scene) bank.getItemAt(i);
             scenes[i].exists().markInterested();
@@ -38,10 +39,10 @@ final class SceneModule implements HostModule {
                 nameSequence[index]++;
             });
         }
-        for (int t = 0; t < HostServices.TRACKS; t++) {
-            Track track = (Track) s.tracks.getItemAt(t);
+        for (int t = 0; t < HostLimits.TRACKS; t++) {
+            Track track = window.at(t);
             ClipLauncherSlotBank slotBank = track.clipLauncherSlotBank();
-            for (int j = 0; j < HostServices.SCENES; j++) {
+            for (int j = 0; j < HostLimits.SCENES; j++) {
                 ClipLauncherSlot slot = slots[t][j] = (ClipLauncherSlot) slotBank.getItemAt(j);
                 slot.hasContent().markInterested();
                 slot.isPlaying().markInterested();
@@ -79,7 +80,7 @@ final class SceneModule implements HostModule {
             default:
                 throw Errors.notApplied(ErrorCode.UNKNOWN_METHOD, "Unknown scene method.");
         }
-        Params.integer(p, "sceneIndex", 0, HostServices.SCENES - 1);
+        Params.integer(p, "sceneIndex", 0, HostLimits.SCENES - 1);
         expected(p);
     }
 
@@ -97,8 +98,8 @@ final class SceneModule implements HostModule {
 
     @Override
     public void dispatch(HostOperation op, String method, JsonObject p) {
-        s.check(op);
-        if (!s.tracksObserved || count < 0)
+        scheduler.check(op);
+        if (!window.observed() || count < 0)
             throw Errors.notApplied(ErrorCode.NOT_READY, "Scene bank has not reported its size yet.");
         if (bank.scrollPosition().get() != 0)
             throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Scene bank is not at offset zero.");
@@ -133,12 +134,12 @@ final class SceneModule implements HostModule {
     }
 
     private JsonObject list() {
-        JsonObject out = HostServices.observed();
+        JsonObject out = Results.observed();
         out.addProperty("scope", "scene_bank");
-        out.add("window", HostServices.window(0, HostServices.SCENES, count));
+        out.add("window", Results.window(0, HostLimits.SCENES, count));
         out.addProperty("sceneCount", count);
         JsonArray rows = new JsonArray();
-        for (int i = 0; i < Math.min(count, HostServices.SCENES); i++) {
+        for (int i = 0; i < Math.min(count, HostLimits.SCENES); i++) {
             JsonObject row = new JsonObject();
             row.addProperty("sceneIndex", i);
             row.add("name", names[i] == null ? JsonNull.INSTANCE : new JsonPrimitive(names[i]));
@@ -151,14 +152,14 @@ final class SceneModule implements HostModule {
 
     private List<ClipLauncherSlot> occupied(int index) {
         List<ClipLauncherSlot> out = new ArrayList<>();
-        for (int t = 0; t < HostServices.TRACKS; t++)
-            if (((Track) s.tracks.getItemAt(t)).exists().get()
+        for (int t = 0; t < HostLimits.TRACKS; t++)
+            if ((window.at(t)).exists().get()
                     && slots[t][index].hasContent().get()) out.add(slots[t][index]);
         return out;
     }
 
     private JsonObject result(String status, String completion, String verification, int index) {
-        JsonObject out = HostServices.observed();
+        JsonObject out = Results.observed();
         out.addProperty("scope", "scene_bank");
         out.addProperty("sceneIndex", index);
         out.addProperty("status", status);
@@ -176,15 +177,15 @@ final class SceneModule implements HostModule {
             return;
         }
         long before = nameSequence[index];
-        s.check(op);
+        scheduler.check(op);
         op.dispatched = true;
         scenes[index].name().set(name);
-        awaitRename(op, index, name, before, s.observeUntil(op));
+        awaitRename(op, index, name, before, scheduler.observeUntil(op));
     }
 
     private void awaitRename(HostOperation op, int index, String name, long before, long end) {
         boolean done = nameSequence[index] > before && name.equals(names[index]);
-        if (done || s.now() >= end) {
+        if (done || scheduler.now() >= end) {
             JsonObject out = result(
                     done ? "observed" : "dispatched",
                     done ? "observed" : "unknown",
@@ -193,23 +194,23 @@ final class SceneModule implements HostModule {
             out.add("name", names[index] == null ? JsonNull.INSTANCE : new JsonPrimitive(names[index]));
             out.addProperty("matchesRequested", done);
             op.result.complete(out);
-        } else s.schedule(op, () -> awaitRename(op, index, name, before, end), 20);
+        } else scheduler.schedule(op, () -> awaitRename(op, index, name, before, end), 20);
     }
 
     private void launch(HostOperation op, int index) {
-        s.requirePlaybackSafe();
+        transportSafety.requirePlaybackSafe();
         List<ClipLauncherSlot> clips = occupied(index);
-        s.check(op);
+        scheduler.check(op);
         op.dispatched = true;
         scenes[index].launch();
-        awaitLaunch(op, index, clips, s.observeUntil(op));
+        awaitLaunch(op, index, clips, scheduler.observeUntil(op));
     }
 
     private void awaitLaunch(HostOperation op, int index, List<ClipLauncherSlot> clips, long end) {
         boolean done = !clips.isEmpty();
         for (ClipLauncherSlot slot : clips)
             done &= slot.isPlaying().get() || slot.isPlaybackQueued().get();
-        if (done || s.now() >= end) {
+        if (done || scheduler.now() >= end) {
             // A scene without clips has nothing to observe: dispatched, never claimed as playing.
             JsonObject out = result(
                     done ? "observed" : "dispatched",
@@ -218,22 +219,22 @@ final class SceneModule implements HostModule {
                     index);
             out.addProperty("clipCount", clips.size());
             op.result.complete(out);
-        } else s.schedule(op, () -> awaitLaunch(op, index, clips, end), 20);
+        } else scheduler.schedule(op, () -> awaitLaunch(op, index, clips, end), 20);
     }
 
     private void duplicate(HostOperation op, int index) {
-        structureGuard.run();
-        if (count + 1 > HostServices.SCENES)
+        lock.requireStructureFree();
+        if (count + 1 > HostLimits.SCENES)
             throw Errors.notApplied(
                     ErrorCode.SCENE_LIMIT,
-                    "The project has " + count + " scene(s); the launcher tools address at most " + HostServices.SCENES
+                    "The project has " + count + " scene(s); the launcher tools address at most " + HostLimits.SCENES
                             + ", so one more cannot be added.");
         List<String> before = snapshotNames();
         if (before == null) throw Errors.notApplied(ErrorCode.NOT_READY, "Not every scene name has been observed yet.");
-        s.check(op);
+        scheduler.check(op);
         op.dispatched = true;
         scenes[index].duplicateObject();
-        awaitDuplicate(op, index, before, nameSequence.clone(), s.observeUntil(op));
+        awaitDuplicate(op, index, before, nameSequence.clone(), scheduler.observeUntil(op));
     }
 
     private void awaitDuplicate(HostOperation op, int index, List<String> before, long[] sequenceBefore, long end) {
@@ -248,7 +249,7 @@ final class SceneModule implements HostModule {
                 && is.subList(0, index + 1).equals(was.subList(0, index + 1))
                 && is.subList(index + 2, is.size()).equals(was.subList(index + 1, was.size()))
                 && occupied(index + 1).size() == occupied(index).size();
-        if (done || s.now() >= end) {
+        if (done || scheduler.now() >= end) {
             JsonObject out = result(
                     done ? "observed" : "dispatched",
                     done ? "observed" : "unknown",
@@ -266,17 +267,17 @@ final class SceneModule implements HostModule {
                                 : JsonNull.INSTANCE);
             }
             op.result.complete(out);
-        } else s.schedule(op, () -> awaitDuplicate(op, index, before, sequenceBefore, end), 20);
+        } else scheduler.schedule(op, () -> awaitDuplicate(op, index, before, sequenceBefore, end), 20);
     }
 
     private void delete(HostOperation op, int index) {
-        structureGuard.run();
-        HostServices.SafetyObservation safety = s.stoppedSafety(op);
-        if (count > HostServices.SCENES)
+        lock.requireStructureFree();
+        SafetyObservation safety = transportSafety.stopped(op);
+        if (count > HostLimits.SCENES)
             throw Errors.notApplied(
                     ErrorCode.OUTSIDE_WINDOW,
                     "The project has " + count + " scenes; scene edits that need every name address at most "
-                            + HostServices.SCENES + ".");
+                            + HostLimits.SCENES + ".");
         if (count <= 1) throw Errors.notApplied(ErrorCode.LAST_SCENE, "A project keeps at least one scene.");
         List<ClipLauncherSlot> clips = occupied(index);
         for (ClipLauncherSlot slot : clips)
@@ -288,18 +289,18 @@ final class SceneModule implements HostModule {
                         "Delete requires the scene's clips to be neither playing, queued nor recording.");
         List<String> before = snapshotNames();
         if (before == null) throw Errors.notApplied(ErrorCode.NOT_READY, "Not every scene name has been observed yet.");
-        s.guardStoppedSafety(safety);
-        s.check(op);
+        transportSafety.guardStopped(safety);
+        scheduler.check(op);
         op.dispatched = true;
         scenes[index].deleteObject();
-        awaitDelete(op, index, before, clips.size(), s.observeUntil(op));
+        awaitDelete(op, index, before, clips.size(), scheduler.observeUntil(op));
     }
 
     private void awaitDelete(HostOperation op, int index, List<String> before, int clipCount, long end) {
         List<String> expected = unnamed(before);
         expected.remove(index);
         boolean done = count == before.size() - 1 && expected.equals(unnamed(snapshotNames()));
-        if (done || s.now() >= end) {
+        if (done || scheduler.now() >= end) {
             JsonObject out = result(
                     done ? "observed" : "dispatched",
                     done ? "observed" : "unknown",
@@ -309,7 +310,7 @@ final class SceneModule implements HostModule {
             out.addProperty("deletedName", before.get(index));
             out.addProperty("clipsDeleted", clipCount);
             op.result.complete(out);
-        } else s.schedule(op, () -> awaitDelete(op, index, before, clipCount, end), 20);
+        } else scheduler.schedule(op, () -> awaitDelete(op, index, before, clipCount, end), 20);
     }
 
     /** Names with the positional default ("Scene N" at index N-1) blanked, so a shifted label is not mistaken for a rename; null stays null. */
@@ -322,7 +323,7 @@ final class SceneModule implements HostModule {
 
     /** Names of all scenes in the window, or null while any is unobserved. */
     private List<String> snapshotNames() {
-        if (count < 0 || count > HostServices.SCENES) return null;
+        if (count < 0 || count > HostLimits.SCENES) return null;
         List<String> out = new ArrayList<>();
         for (int i = 0; i < count; i++) {
             if (names[i] == null) return null;

@@ -134,7 +134,7 @@ public final class GridModuleTest {
         assertTrue(f.adapter.tasks.isEmpty(), "expired controller queue work never dispatches native reads");
         Fixture closed = new Fixture();
         op = closed.start(target());
-        closed.host.services.close();
+        closed.host.services.scheduler.close();
         closed.adapter.next();
         assertRpcError("unavailable", op);
         assertTrue(closed.adapter.reads == 0, "extension close invalidates queued document work");
@@ -539,7 +539,7 @@ public final class GridModuleTest {
                 "post-mutation safety change cannot erase dispatched state");
         Fixture closed = new Fixture();
         op = closed.startWrite();
-        closed.adapter.writer.afterMutation = closed.host.services::close;
+        closed.adapter.writer.afterMutation = closed.host.services.scheduler::close;
         closed.adapter.next();
         assertTrue(
                 assertRpcError("unavailable", op).outcome.equals("unknown"),
@@ -568,7 +568,7 @@ public final class GridModuleTest {
         HostOperation expired = new HostOperation(0);
         expired.dispatched = true;
         {
-            RpcException error = assertThrows(RpcException.class, () -> noop.host.services.check(expired));
+            RpcException error = assertThrows(RpcException.class, () -> noop.host.services.scheduler.check(expired));
             expired.fail(error);
         }
         assertTrue(
@@ -902,7 +902,7 @@ public final class GridModuleTest {
         op = closed.host.submit(closed.module, "grid.connections.set", connectionTarget());
         closed.host.next();
         closed.adapter.next();
-        closed.host.services.close();
+        closed.host.services.scheduler.close();
         closed.adapter.next();
         assertTrue(
                 assertRpcError("unavailable", op).outcome.equals("unknown") && closed.adapter.connections.calls == 1,
@@ -1403,7 +1403,7 @@ public final class GridModuleTest {
                 f.device.child("name").emit("Poly Grid");
             }
             if (change == 2) op.result.cancel(false);
-            if (change == 3) f.host.services.close();
+            if (change == 3) f.host.services.scheduler.close();
             f.adapter.insertion.deliver();
             assertTrue(
                     f.adapter.insertion.cleanups == 1 && f.adapter.insertion.placements == 0,
@@ -1635,7 +1635,7 @@ public final class GridModuleTest {
                 f.host.next();
                 if (boundary > 0) f.adapter.next();
                 if (boundary > 1) f.adapter.next();
-                if (close) f.host.services.close();
+                if (close) f.host.services.scheduler.close();
                 else op.result.cancel(false);
                 if (boundary < 2) f.adapter.next();
                 else f.host.next();
@@ -1687,7 +1687,7 @@ public final class GridModuleTest {
             device.child("deviceType").emit("AudioEffect");
             bank.child("itemCount").emit(1);
             device.child("name").emit(observed ? "Poly Grid" : "");
-            module = new GridModule(host.services, adapter);
+            module = host.services.grid(adapter);
         }
 
         HostOperation start(JsonObject p) {
@@ -1778,14 +1778,14 @@ public final class GridModuleTest {
                 Runnable check) {
             check.run();
             reads++;
-            return HostServices.observed();
+            return Results.observed();
         }
 
         @Override
         public JsonObject voicing(Object proxy, UUID expectedTrackId, Runnable check) {
             check.run();
             reads++;
-            return HostServices.observed();
+            return Results.observed();
         }
 
         @Override
@@ -1793,7 +1793,7 @@ public final class GridModuleTest {
                 Object proxy, UUID track, GridVoicingWriter.Request request, Runnable check, Runnable dispatch) {
             check.run();
             dispatch.run();
-            return HostServices.observed();
+            return Results.observed();
         }
 
         @Override
@@ -1802,7 +1802,7 @@ public final class GridModuleTest {
             check.run();
             dispatch.run();
             remoteCalls++;
-            return HostServices.observed();
+            return Results.observed();
         }
 
         @Override
@@ -1811,7 +1811,7 @@ public final class GridModuleTest {
             check.run();
             dispatch.run();
             remoteCalls++;
-            return HostServices.observed();
+            return Results.observed();
         }
 
         @Override
