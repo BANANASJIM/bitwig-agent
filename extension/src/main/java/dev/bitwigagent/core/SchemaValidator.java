@@ -7,6 +7,7 @@ import com.google.gson.JsonPrimitive;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -64,6 +65,7 @@ public final class SchemaValidator {
         Bound minimum, maximum, exclusiveMinimum, exclusiveMaximum;
         Integer minLength, maxLength, minItems, maxItems;
         Pattern pattern;
+        String patternSource;
         Set<String> required = Set.of();
         Map<String, Node> properties = Map.of();
         Node items, reference, additional;
@@ -72,13 +74,20 @@ public final class SchemaValidator {
     }
 
     private final Node root;
+    private final String label;
 
-    private SchemaValidator(Node root) {
+    private SchemaValidator(Node root, String label) {
         this.root = root;
+        this.label = label;
     }
 
     /** Compile a pydantic schema; any keyword outside the supported set is an error. */
     public static SchemaValidator compile(JsonObject schema) {
+        return compile(schema, "params");
+    }
+
+    /** As {@link #compile(JsonObject)}, naming the validated object {@code label} in violation messages. */
+    public static SchemaValidator compile(JsonObject schema, String label) {
         Map<String, Node> definitions = new HashMap<>();
         JsonObject declared = schema.has("$defs") ? schema.getAsJsonObject("$defs") : new JsonObject();
         for (String name : declared.keySet()) definitions.put(name, new Node());
@@ -88,13 +97,28 @@ public final class SchemaValidator {
         body.remove("$defs");
         Node node = new Node();
         build(body, node, definitions, "schema");
-        return new SchemaValidator(node);
+        Set<Node> settled = new HashSet<>();
+        for (Map.Entry<String, Node> entry : definitions.entrySet())
+            requireProgress(entry.getValue(), new HashSet<>(), settled, "$defs." + entry.getKey());
+        requireProgress(node, new HashSet<>(), settled, "schema");
+        return new SchemaValidator(node, label);
+    }
+
+    /** A reference chain that returns to itself without consuming any of the value would never finish. */
+    private static void requireProgress(Node node, Set<Node> path, Set<Node> settled, String where) {
+        if (settled.contains(node)) return;
+        if (!path.add(node)) throw new IllegalStateException(where + ": $ref cycle without structure");
+        if (node.reference != null) requireProgress(node.reference, path, settled, where);
+        for (Node branch : node.anyOf) requireProgress(branch, path, settled, where);
+        for (Node branch : node.oneOf) requireProgress(branch, path, settled, where);
+        path.remove(node);
+        settled.add(node);
     }
 
     /** The request with defaults filled; the argument is not modified. */
     public JsonObject apply(JsonObject params) {
-        if (params == null) throw fail("params", "must be an object");
-        return check(root, params, "params").getAsJsonObject();
+        if (params == null) throw fail(label, "must be an object");
+        return check(root, params, label).getAsJsonObject();
     }
 
     private static void build(JsonObject schema, Node node, Map<String, Node> definitions, String where) {
@@ -141,7 +165,10 @@ public final class SchemaValidator {
                     node.maxItems = count(value, where);
                     break;
                 case "pattern":
-                    node.pattern = pattern(value.getAsString(), where);
+                    if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isString())
+                        throw new IllegalStateException(where + ": pattern must be a string");
+                    node.patternSource = value.getAsString();
+                    node.pattern = pattern(node.patternSource, where);
                     break;
                 case "required":
                     node.required = new LinkedHashSet<>();
@@ -169,6 +196,9 @@ public final class SchemaValidator {
                     break;
                 case "oneOf":
                     node.oneOf = children(value, definitions, where + ".oneOf");
+                    for (Node branch : node.oneOf)
+                        if (branch.defaultValue != null)
+                            throw new IllegalStateException(where + ": default inside oneOf is not supported");
                     break;
                 case "$ref":
                     String text = value.getAsString();
@@ -203,9 +233,12 @@ public final class SchemaValidator {
     }
 
     private static int count(JsonElement value, String where) {
-        if (!isInteger(number(value)) || value.getAsInt() < 0)
-            throw new IllegalStateException(where + ": expected a non-negative integer");
-        return value.getAsInt();
+        JsonPrimitive number = number(value);
+        if (!isInteger(number)
+                || number.getAsBigDecimal().signum() < 0
+                || number.getAsBigDecimal().compareTo(BigDecimal.valueOf(Integer.MAX_VALUE)) > 0)
+            throw new IllegalStateException(where + ": expected a non-negative 32-bit integer");
+        return number.getAsInt();
     }
 
     private static JsonPrimitive number(JsonElement value) {
@@ -313,7 +346,7 @@ public final class SchemaValidator {
         if (node.maxLength != null && length > node.maxLength)
             throw fail(path, "must have at most " + node.maxLength + " characters");
         if (node.pattern != null && !node.pattern.matcher(text).find())
-            throw fail(path, "must match " + node.pattern.pattern());
+            throw fail(path, "must match " + node.patternSource);
     }
 
     private static JsonElement array(Node node, JsonArray items, String path) {
@@ -328,7 +361,11 @@ public final class SchemaValidator {
     }
 
     private static JsonElement object(Node node, JsonObject fields, String path) {
-        for (String name : node.required) if (!fields.has(name)) throw fail(path, "is missing required field " + name);
+        List<String> missing = new ArrayList<>();
+        for (String name : node.required) if (!fields.has(name)) missing.add(name);
+        if (!missing.isEmpty())
+            throw fail(
+                    path, "is missing required field" + (missing.size() > 1 ? "s " : " ") + String.join(", ", missing));
         JsonObject out = new JsonObject();
         for (Map.Entry<String, JsonElement> field : fields.entrySet()) {
             Node known = node.properties.get(field.getKey());
@@ -359,16 +396,56 @@ public final class SchemaValidator {
     }
 
     private static void oneOf(Node node, JsonElement value, String path) {
-        int matched = 0;
+        List<Node> matching = new ArrayList<>();
+        List<Node> targeted = new ArrayList<>();
+        Map<Node, String> reasons = new LinkedHashMap<>();
         for (Node branch : node.oneOf) {
             try {
                 check(branch, value, path);
-                matched++;
-            } catch (Violation ignored) {
-                // a non-matching branch is the normal case
+                matching.add(branch);
+            } catch (Violation violation) {
+                reasons.put(branch, violation.getMessage());
+                if (selects(branch, value)) targeted.add(branch);
             }
         }
-        if (matched != 1) throw fail(path, "must match exactly one allowed form, matched " + matched);
+        if (matching.size() == 1) return;
+        if (matching.size() > 1) {
+            List<String> forms = new ArrayList<>();
+            for (Node branch : matching) forms.add(describeForm(branch));
+            throw fail(
+                    path, "matches more than one allowed form (" + String.join(" and ", forms) + "); send exactly one");
+        }
+        List<String> shown =
+                new ArrayList<>(targeted.isEmpty() ? reasons.values() : targetedReasons(targeted, reasons));
+        throw fail(path, "matches none of the allowed forms: " + String.join("; ", shown));
+    }
+
+    private static List<String> targetedReasons(List<Node> targeted, Map<Node, String> reasons) {
+        List<String> out = new ArrayList<>();
+        for (Node branch : targeted) out.add(reasons.get(branch));
+        return out;
+    }
+
+    /** A branch is selected by the value when it constrains a discriminating field the value carries and agrees. */
+    private static boolean selects(Node branch, JsonElement value) {
+        if (!value.isJsonObject()) return false;
+        boolean any = false;
+        for (Map.Entry<String, Node> property : branch.properties.entrySet()) {
+            Node field = property.getValue();
+            JsonElement present = value.getAsJsonObject().get(property.getKey());
+            if (present == null || (field.options == null && field.constant == null)) continue;
+            any = true;
+            if (field.options != null && field.options.stream().noneMatch(option -> same(option, present)))
+                return false;
+            if (field.constant != null && !same(field.constant, present)) return false;
+        }
+        return any;
+    }
+
+    private static String describeForm(Node branch) {
+        return branch.required.isEmpty()
+                ? "a form without required fields"
+                : "requires " + String.join(", ", branch.required);
     }
 
     private static String article(String type) {

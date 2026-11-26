@@ -232,18 +232,122 @@ public final class SchemaValidatorTest {
     }
 
     @Test
-    void oneOfNeedsExactlyOneMatch() {
+    void oneOfNeedsExactlyOneMatchAndSaysWhy() {
         SchemaValidator one = compile("{\"type\":\"object\",\"additionalProperties\":false,"
-                + "\"properties\":{\"a\":{\"type\":\"integer\"},\"b\":{\"type\":\"integer\"}},"
-                + "\"oneOf\":[{\"required\":[\"a\"]},{\"required\":[\"b\"]}]}");
+                + "\"properties\":{\"a\":{\"type\":\"integer\"},\"b\":{\"type\":\"integer\"},\"c\":{\"type\":\"integer\"}},"
+                + "\"oneOf\":[{\"required\":[\"a\"]},{\"required\":[\"b\",\"c\"]}]}");
         one.apply(object("{\"a\":1}"));
-        one.apply(object("{\"b\":1}"));
-        assertTrue(assertThrows(SchemaValidator.Violation.class, () -> one.apply(object("{}")))
-                .getMessage()
-                .contains("matched 0"));
-        assertTrue(assertThrows(SchemaValidator.Violation.class, () -> one.apply(object("{\"a\":1,\"b\":2}")))
-                .getMessage()
-                .contains("matched 2"));
+        one.apply(object("{\"b\":1,\"c\":2}"));
+        String neither = assertThrows(SchemaValidator.Violation.class, () -> one.apply(object("{}")))
+                .getMessage();
+        assertEquals(
+                "params matches none of the allowed forms: params is missing required field a; "
+                        + "params is missing required fields b, c",
+                neither);
+        String both = assertThrows(
+                        SchemaValidator.Violation.class, () -> one.apply(object("{\"a\":1,\"b\":2,\"c\":3}")))
+                .getMessage();
+        assertEquals(
+                "params matches more than one allowed form (requires a and requires b, c); send exactly one", both);
+    }
+
+    private static final String KINDS = "{\"type\":\"object\",\"additionalProperties\":false,"
+            + "\"properties\":{\"kind\":{\"enum\":[\"flag\",\"count\"]},\"value\":{\"anyOf\":[{\"type\":\"boolean\"},{\"type\":\"integer\"}]}},"
+            + "\"oneOf\":[{\"properties\":{\"kind\":{\"enum\":[\"flag\"]},\"value\":{\"type\":\"boolean\"}}},"
+            + "{\"properties\":{\"kind\":{\"enum\":[\"count\"]},\"value\":{\"type\":\"integer\"}}}]}";
+
+    @Test
+    void aKindMismatchNamesTheBranchTheKindSelected() {
+        SchemaValidator validator = compile(KINDS);
+        validator.apply(object("{\"kind\":\"flag\",\"value\":true}"));
+        validator.apply(object("{\"kind\":\"count\",\"value\":3}"));
+        String message = assertThrows(
+                        SchemaValidator.Violation.class,
+                        () -> validator.apply(object("{\"kind\":\"count\",\"value\":true}")))
+                .getMessage();
+        assertEquals(
+                "params matches none of the allowed forms: params.value must be an integer, not a boolean", message);
+    }
+
+    private static String reject(String method, String params) {
+        return assertThrows(
+                        SchemaValidator.Violation.class,
+                        () -> MethodSpecs.load().get(method).params.apply(object(params)))
+                .getMessage();
+    }
+
+    private static final String DEVICE =
+            "\"trackId\":\"12345678-1234-1234-1234-123456789abc\",\"deviceIndex\":0,\"expectedDeviceName\":\"Poly Grid\"";
+    private static final String MODULE = "\"moduleId\":\"12345678-1234-1234-1234-123456789abd\",\"parameterId\":\"p\"";
+
+    @Test
+    void gridParameterBatchWritesExplainKindMismatches() {
+        String batch = reject(
+                "grid.parameters.set",
+                "{" + DEVICE + ",\"writes\":[{" + MODULE
+                        + ",\"expectedKind\":\"boolean\",\"expectedValue\":true,\"value\":1}]}");
+        assertTrue(batch.contains("params.writes[0].value must be a boolean"), batch);
+        assertFalse(batch.contains("integer"), "only the branch the kind selected is reported: " + batch);
+    }
+
+    @Test
+    void exactlyOneOfRootFormsSayWhichFieldsEachNeeds() {
+        String neither = reject("grid.parameters.set", "{" + DEVICE + "}");
+        assertTrue(neither.contains("expectedKind, moduleId, parameterId") && neither.contains("writes"), neither);
+        String both = reject(
+                "grid.parameters.set",
+                "{" + DEVICE + "," + MODULE + ",\"expectedKind\":\"boolean\",\"value\":true,\"expectedValue\":true,"
+                        + "\"writes\":[{" + MODULE
+                        + ",\"expectedKind\":\"boolean\",\"expectedValue\":true,\"value\":true}]}");
+        assertTrue(
+                both.contains(
+                        "more than one allowed form (requires expectedKind, moduleId, parameterId and requires writes)"),
+                both);
+        String connections = reject("grid.connections.set", "{" + DEVICE + "}");
+        assertTrue(
+                connections.contains("expectedSource, source, targetModuleId, targetPortKey")
+                        && connections.contains("connections"),
+                connections);
+        String modules = reject("grid.modules.insert", "{" + DEVICE + "}");
+        assertTrue(modules.contains("required fields x, y") && modules.contains("modules"), modules);
+    }
+
+    @Test
+    void patternMessagesShowTheSchemaPattern() {
+        String message = reject("tracks.get", "{\"trackId\":\"x\"}");
+        assertTrue(message.contains("[0-9a-fA-F]{8}") && !message.contains("\\z"), message);
+    }
+
+    @Test
+    void theEnvelopeTimeoutIsCheckedByTheSchemasOwnNode() {
+        MethodSpecs.Spec spec = MethodSpecs.load().get("status");
+        assertEquals(
+                1000,
+                spec.timeout
+                        .apply(object("{\"timeoutMs\":1000}"))
+                        .get("timeoutMs")
+                        .getAsInt());
+        for (String bad : new String[] {"1000.0", "1e3", "99", "\"1000\"", "null", "999999999999"})
+            assertTrue(
+                    assertThrows(
+                                    SchemaValidator.Violation.class,
+                                    () -> spec.timeout.apply(object("{\"timeoutMs\":" + bad + "}")))
+                            .getMessage()
+                            .startsWith("request.timeoutMs"),
+                    bad);
+    }
+
+    @Test
+    void unsoundSchemasAreRefusedAtLoad() {
+        refuses("{\"$ref\":\"#/$defs/A\",\"$defs\":{\"A\":{\"$ref\":\"#/$defs/A\"}}}", "$ref cycle");
+        refuses(
+                "{\"$defs\":{\"A\":{\"$ref\":\"#/$defs/B\"},\"B\":{\"anyOf\":[{\"$ref\":\"#/$defs/A\"}]}}}",
+                "$ref cycle");
+        refuses("{\"oneOf\":[{\"default\":1},{\"type\":\"null\"}]}", "default inside oneOf");
+        refuses("{\"maxItems\":4294967296}", "32-bit");
+        refuses("{\"pattern\":5}", "pattern must be a string");
+        compile(
+                "{\"$defs\":{\"N\":{\"type\":\"object\",\"properties\":{\"k\":{\"$ref\":\"#/$defs/N\"}}}},\"$ref\":\"#/$defs/N\"}");
     }
 
     @Test
@@ -344,7 +448,7 @@ public final class SchemaValidatorTest {
         assertTrue(
                 assertThrows(IllegalStateException.class, () -> MethodSpecs.parse(new StringReader(bundle.toString())))
                         .getMessage()
-                        .contains("status has no inputSchema"));
+                        .contains("status inputSchema has no properties"));
         JsonObject unknown = MethodSpecsTest.bundle();
         unknown.getAsJsonObject("methods")
                 .getAsJsonObject("status")

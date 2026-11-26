@@ -4,6 +4,7 @@ import com.google.gson.*;
 import com.google.gson.stream.JsonReader;
 import com.google.gson.stream.JsonToken;
 import dev.bitwigagent.core.MethodSpecs;
+import dev.bitwigagent.core.SchemaValidator;
 import java.io.*;
 import java.net.*;
 import java.nio.ByteBuffer;
@@ -148,16 +149,13 @@ public final class RpcServer implements AutoCloseable {
             spec = specs.get(method);
             int timeout = spec.defaultTimeoutMs;
             if (request.has("timeoutMs")) {
-                JsonElement value = request.get("timeoutMs");
-                if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isNumber())
-                    throw invalid("timeoutMs must be an integer");
+                JsonObject envelope = new JsonObject();
+                envelope.add("timeoutMs", request.get("timeoutMs"));
                 try {
-                    timeout = value.getAsBigDecimal().intValueExact();
-                } catch (ArithmeticException | NumberFormatException e) {
-                    throw invalid("timeoutMs must be an integer");
+                    timeout = spec.timeout.apply(envelope).get("timeoutMs").getAsInt();
+                } catch (SchemaValidator.Violation violation) {
+                    throw invalid(violation.getMessage() + " (" + method + ")");
                 }
-                if (timeout < MIN_TIMEOUT_MS || timeout > spec.maxTimeoutMs)
-                    throw invalid("timeoutMs must be " + MIN_TIMEOUT_MS + "-" + spec.maxTimeoutMs + " for " + method);
             }
             extendExpiry.accept(timeout);
             long deadline = acceptedAt + TimeUnit.MILLISECONDS.toNanos(timeout);
