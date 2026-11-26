@@ -577,10 +577,12 @@ public final class HostBridgeTest {
                 "initial data belongs to the requested bank proxy");
         assertTrue(host.tasks.isEmpty(), "cached parameter listing completes without extra scheduled polling");
         JsonObject tracks = call(host, bridge, "tracks.list", new JsonObject());
-        assertTrue(tracks.getAsJsonObject("window").get("capacity").getAsInt() == 16, "bounded track window");
+        assertTrue(
+                tracks.getAsJsonObject("window").get("capacity").getAsInt() == HostServices.TRACKS,
+                "bounded track window");
         assertTrue(
                 !tracks.getAsJsonObject("window").get("complete").getAsBoolean(),
-                "20 tracks cannot be declared complete");
+                "a track count beyond the window cannot be declared complete");
         JsonObject params = new JsonObject();
         params.addProperty("trackId", Fake.TRACK_ID);
         JsonObject devices = call(host, bridge, "devices.list", params);
@@ -877,7 +879,7 @@ public final class HostBridgeTest {
                                 .getAsJsonObject("tracks")
                                 .get("total")
                                 .getAsInt()
-                        == 20,
+                        == HostServices.TRACKS + 4,
                 "discovery reports the actual host track count, not the window capacity");
         assertTrue(
                 !result.getAsJsonObject("windows")
@@ -1890,7 +1892,7 @@ public final class HostBridgeTest {
         final HostFixture base = HostFixture.withoutServices();
         final Deque<Runnable> tasks = base.tasks;
         final FakeHost trackBank = base.bank;
-        final FakeHost[] trackNodes = new FakeHost[16], deviceNodes = new FakeHost[16];
+        final FakeHost[] trackNodes = new FakeHost[HostFixture.DETAILED_TRACKS], deviceNodes = new FakeHost[16];
         final Device[] deviceObjects = new Device[16];
         final StringArrayValueChangedCallback[] idObservers = new StringArrayValueChangedCallback[16];
         final DirectParameterNormalizedValueChangedCallback[] valueObservers =
@@ -1928,7 +1930,7 @@ public final class HostBridgeTest {
             Arrays.fill(initialIds, true);
             parameterValues[0] = .25;
             parameterValues[1] = .6;
-            for (int t = 0; t < 16; t++) {
+            for (int t = 0; t < HostFixture.DETAILED_TRACKS; t++) {
                 Device[] bankDevices = t == 0 ? deviceObjects : new Device[16];
                 for (int d = 0; d < 16; d++) {
                     FakeHost node = new FakeHost("node");
@@ -1989,7 +1991,7 @@ public final class HostBridgeTest {
                 bank.on("getItemAt", args -> bankDevices[(Integer) args[0]]);
                 trackNodes[t].attach("createDeviceBank", bank);
             }
-            trackBank.put("itemCount", 20);
+            trackBank.put("itemCount", HostServices.TRACKS + 4);
         }
 
         void attachLayers(FakeHost root, boolean populated) {

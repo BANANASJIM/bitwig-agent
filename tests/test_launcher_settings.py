@@ -2,6 +2,7 @@ import pytest
 from pydantic import ValidationError
 
 from bitwig_agent.protocol import validate_call
+from bitwig_agent.protocol.limits import SCENE_WINDOW
 
 TARGET = {"trackId": "11111111-1111-1111-1111-111111111111", "slotIndex": 0, "expectedClipName": "Verse"}
 
@@ -37,7 +38,7 @@ def test_next_clip_after_one_loop():
         {"loopStartBeats": 4194304, "loopLengthBeats": 1},
         {"nextActionDelayBeats": None},
         {"expectedClipName": ""},
-        {"slotIndex": 16},
+        {"slotIndex": SCENE_WINDOW},
         {"extra": 1},
     ],
 )

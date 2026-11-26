@@ -76,7 +76,7 @@ Names can change, same-metadata replacement can be ambiguous, and module/modulat
 
 ## Bounded coverage and compatibility
 
-- Tracks, root devices and Launcher windows are 16 each; sends are eight. Layers expose one hop with two layers and two children per layer. There is no general project paging or arbitrary nested traversal.
+- Track and scene windows come from `src/bitwig_agent/protocol/limits.py` through the protocol bundle; root devices are 16 per track and sends eight. Layers expose one hop with two layers and two children per layer. There is no general project paging or arbitrary nested traversal.
 - A Grid page's `window.complete` is page coverage. Whole-result coverage may still be partial, and stored connections are not proof of the active DSP graph.
 - MIDI reads use explicit channel/grid/window bounds and do not establish lossless arbitrary-clip export; selection/grid settling is not a general acknowledgement barrier.
 - String panels are written only through `grid.parameters.set`/`grid.apply` (Grid modules, e.g. Comment TEXT). Arranger clips (`arranger.clips.*`), arranger automation points (`automation.points.*`) and track routing/device sidechains (`tracks.routing.*`, `devices.sidechain.*`, bank tracks only; hardware entries deferred) use version-gated native access; launcher automation, automation clips and dedicated master/cue tools are outside the structured surface.

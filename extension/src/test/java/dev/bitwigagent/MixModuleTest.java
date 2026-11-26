@@ -33,7 +33,7 @@ public final class MixModuleTest {
         assertTrue(
                 send.get("enabled").getAsBoolean() && !send.get("preFader").getAsBoolean(), "send metadata observed");
         assertTrue(
-                result.getAsJsonObject("window").get("capacity").getAsInt() == 16
+                result.getAsJsonObject("window").get("capacity").getAsInt() == HostServices.TRACKS
                         && result.getAsJsonObject("sendWindow").get("capacity").getAsInt() == 8,
                 "bounded observation scope explicit");
         assertTrue(f.host.calls("createTrackBank") == 1, "mix never creates a duplicate track bank");
@@ -569,7 +569,7 @@ public final class MixModuleTest {
                 "ambiguous tracks never renamed");
         HostFixture outside = new HostFixture();
         MixModule other = new MixModule(outside.services);
-        outside.bank.child("itemCount").emit(20);
+        outside.bank.child("itemCount").emit(HostServices.TRACKS + 4);
         HostOperation rejected = outside.submit(other, "tracks.create", create("effect", -1));
         outside.next();
         assertTrue(
@@ -1379,7 +1379,7 @@ public final class MixModuleTest {
                 groupRequest(HostFixture.A, HostFixture.A),
                 groupRequest(HostFixture.A, HostFixture.A.toUpperCase())));
         JsonObject many = groupRequest();
-        for (int i = 0; i < 17; i++)
+        for (int i = 0; i < HostServices.TRACKS + 1; i++)
             many.getAsJsonArray("trackIds").add(String.format("00000000-0000-0000-0000-%012d", i));
         invalid.add(many);
         JsonObject named = groupRequest(HostFixture.A);

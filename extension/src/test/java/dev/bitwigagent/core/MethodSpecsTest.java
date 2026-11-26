@@ -83,6 +83,7 @@ public final class MethodSpecsTest {
         JsonObject methods = new JsonObject(), root = new JsonObject();
         methods.add(name, method);
         root.add("methods", methods);
+        root.add("limits", bundle().getAsJsonObject("limits"));
         return root;
     }
 
@@ -154,8 +155,26 @@ public final class MethodSpecsTest {
         JsonObject fraction = one("a", method(true, true, "", 5000, 10000));
         fraction.getAsJsonObject("methods").getAsJsonObject("a").addProperty("maxTimeoutMs", 10000.5);
         malformed(fraction.toString(), "fractional timeout");
+        JsonObject noLimits = one("a", method(true, true, "", 5000, 10000));
+        noLimits.remove("limits");
+        malformed(noLimits.toString(), "missing limits");
+        JsonObject emptyWindow = one("a", method(true, true, "", 5000, 10000));
+        emptyWindow.getAsJsonObject("limits").addProperty("trackWindow", 0);
+        malformed(emptyWindow.toString(), "empty track window");
         assertTrue(
                 parse(one("a", method(true, true, "\"engine\"", 5000, 10000))).get("a").engineRequired,
                 "minimal bundle");
+    }
+
+    @Test
+    void limitsComeFromTheBundle() {
+        MethodSpecs.Limits limits = MethodSpecs.load().limits();
+        assertTrue(
+                limits.trackWindow
+                                == bundle().getAsJsonObject("limits")
+                                        .get("trackWindow")
+                                        .getAsInt()
+                        && limits.sceneWindow > 0,
+                "limits come from the bundle");
     }
 }

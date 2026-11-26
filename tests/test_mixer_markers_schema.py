@@ -5,6 +5,7 @@ import re
 import pytest
 
 from bitwig_agent.protocol import TOOLS, validate_call
+from bitwig_agent.protocol.limits import TRACK_WINDOW
 
 TRACK = "12345678-1234-1234-1234-123456789abc"
 OTHER = "12345678-1234-1234-1234-123456789abd"
@@ -75,7 +76,7 @@ def test_meters_arguments():
     bad("tracks.meters", trackIds=[TRACK, TRACK.upper()], windowMs=500)
     bad("tracks.meters", trackIds=[TRACK], windowMs=49)
     bad("tracks.meters", trackIds=[TRACK], windowMs=5001)
-    bad("tracks.meters", trackIds=[TRACK] * 17, windowMs=100)
+    bad("tracks.meters", trackIds=[TRACK] * (TRACK_WINDOW + 1), windowMs=100)
     bad("tracks.meters", trackIds=["nope"], windowMs=100)
 
 
