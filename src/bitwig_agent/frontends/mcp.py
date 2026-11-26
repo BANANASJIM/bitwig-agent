@@ -65,7 +65,7 @@ async def call_tool(ctx: ServerRequestContext, params: CallToolRequestParams) ->
     arguments = params.arguments or {}
     if params.name == views.HELP_NAME:
         return envelope_result(ask_help(arguments))
-    if "timeoutMs" in arguments:
+    if "timeoutMs" in arguments and views.exists(params.name):
         return envelope_result(refuse_timeout(params.name))
     envelope = await invoke(params.name, arguments)
     if isinstance(envelope, Error) and envelope.error["code"] == "unknown_method":

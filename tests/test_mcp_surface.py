@@ -54,7 +54,9 @@ def test_explicit_annotations_are_only_for_custom_verbs_or_overrides_that_differ
 
 def test_tools_that_write_files_or_retrigger_are_not_read_only_or_idempotent():
     for name in ("grid.export", "grid.render"):
-        assert resolve(name, TOOLS[name].annotations).read_only is False
+        annotations = resolve(name, TOOLS[name].annotations)
+        assert annotations.read_only is False
+        assert annotations.destructive is True
     for name in ("launcher.launch", "scenes.launch"):
         annotations = resolve(name, TOOLS[name].annotations)
         assert annotations.idempotent is False
@@ -241,5 +243,10 @@ async def test_grid_apply_still_reaches_the_hidden_blocks_through_the_client():
     assert not isinstance(envelope, Error)
     assert envelope.result["outcome"] == "applied"
     reached = {method for method, _ in host.calls}
-    assert {"grid.modules.insert", "grid.connections.set"} <= reached
-    assert reached & HIDDEN <= HIDDEN
+    assert {"grid.modules.insert", "grid.modules.rename", "grid.connections.set"} <= reached
+
+
+@pytest.mark.parametrize("name", ["no.such.tool", "grid.modules.insert"])
+async def test_timeout_ms_does_not_change_how_an_unknown_or_hidden_name_is_refused(name):
+    with pytest.raises(MCPError, match="Unknown method"):
+        await call_tool(NO_CONTEXT, CallToolRequestParams(name=name, arguments={"timeoutMs": 5000}))

@@ -4,7 +4,7 @@ from typing import Annotated, Literal, Self
 
 from pydantic import Field, field_validator, model_validator
 
-from bitwig_agent.protocol.annotations import EDIT, SET, STEER
+from bitwig_agent.protocol.annotations import EDIT, SET
 from bitwig_agent.protocol.audio import wav_path
 from bitwig_agent.protocol.base import (
     MAX_STRING_UNITS,
@@ -360,7 +360,7 @@ SPECS: dict[str, ToolSpec] = {
         True,
         examples=({**TARGET, "includeParams": "changed"},),
         host=False,
-        annotations=STEER,
+        annotations=SET,
     ),
     "grid.graph": ToolSpec(GridGraphArgs, GRID_GRAPH_DESCRIPTION, True, examples=(TARGET,), host=False),
     "grid.render": ToolSpec(
@@ -369,6 +369,6 @@ SPECS: dict[str, ToolSpec] = {
         True,
         examples=({"trackId": TRACK, "deviceIndex": 0, "expectedDeviceName": "Poly Grid", "outPath": "/tmp/grid.svg"},),
         host=False,
-        annotations=STEER,
+        annotations=SET,
     ),
 }
