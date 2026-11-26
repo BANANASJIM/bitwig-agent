@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from decimal import Decimal
-from typing import Annotated, Any, Literal, Self
+from decimal import ROUND_FLOOR, ROUND_HALF_UP, Decimal
+from typing import Annotated, Any, Literal, NamedTuple, Self
 
 from pydantic import Discriminator, Field, Tag, model_validator
 
@@ -19,7 +19,7 @@ from bitwig_agent.protocol.base import (
     validate_local_path,
 )
 from bitwig_agent.protocol.launcher import ARRANGER_CLIP_REF, CLIP_REF, SLOT_REF, TRACK_REF
-from bitwig_agent.protocol.limits import BEAT_GRID, BEAT_GRID_LABEL, MAX_CLIP_BEATS
+from bitwig_agent.protocol.limits import BEAT_GRID, BEAT_GRID_DIVISOR, BEAT_GRID_LABEL, MAX_CLIP_BEATS
 from bitwig_agent.protocol.refs import ArrangerClipRef, Beats, ClipRef, LauncherClipRef, SlotRef, TrackRef
 from bitwig_agent.protocol.values import Expect
 
@@ -36,25 +36,135 @@ class ClipNote(StrictModel):
     durationBeats: float = Field(ge=BEAT_GRID, le=MAX_CLIP_BEATS)
 
 
-def check_note_spans(notes: list[Any]) -> None:
-    """Grid-independent checks; the extension derives or validates the grid itself."""
-    seen: set[tuple[Decimal, int]] = set()
-    spans: dict[int, list[tuple[Decimal, Decimal]]] = {}
-    for note in notes:
-        beat = Decimal(str(note.beat))
-        if beat / Decimal("0.0078125") % 1:
-            raise ValueError("beat must be a multiple of " + BEAT_GRID_LABEL + " beat")
-        if (beat, note.pitch) in seen:
-            raise ValueError("duplicate edit cell")
-        seen.add((beat, note.pitch))
-        if getattr(note, "op", "set") == "clear":
+ONSET_GRID = Decimal(1) / BEAT_GRID_DIVISOR
+
+
+def plain(value: Decimal) -> str:
+    return format(value.normalize(), "f")
+
+
+def written_duration(duration: Decimal) -> Decimal:
+    """The duration Bitwig can read back exactly: the nearest onset-grid multiple, halves up, at least one step."""
+    steps = max((duration / ONSET_GRID).quantize(Decimal(1), rounding=ROUND_HALF_UP), Decimal(1))
+    return steps * ONSET_GRID
+
+
+class NoteWindow(NamedTuple):
+    grid: Decimal
+    start: int
+    steps: int
+    pitch: int
+    pitches: int
+
+
+class Span(NamedTuple):
+    position: int
+    pitch: int
+    is_set: bool
+    beat: Decimal
+    end: Decimal
+
+
+def window_problem(at: str, span: Span, window: NoteWindow) -> str | None:
+    step, rest = divmod(span.beat, window.grid)
+    window_end = (window.start + window.steps) * window.grid
+    if rest:
+        return (
+            f"{at} beat {plain(span.beat)} does not align with stepSizeBeats {plain(window.grid)}: use a multiple of it"
+        )
+    if not (
+        window.start <= step < window.start + window.steps
+        and window.pitch <= span.pitch < window.pitch + window.pitches
+    ):
+        return (
+            f"{at} (beat {plain(span.beat)}, pitch {span.pitch}) is outside the window: beats "
+            f"{plain(window.start * window.grid)} to {plain(window_end)}, pitches {window.pitch} to "
+            f"{window.pitch + window.pitches - 1}"
+        )
+    if span.end > window_end:
+        return (
+            f"{at} ends at beat {plain(span.end)}, past the window end {plain(window_end)}: shorten it to "
+            f"durationBeats <= {plain(window_end - span.beat)}"
+        )
+    return None
+
+
+def onset_problem(at: str, span: Span) -> str | None:
+    if not span.beat % ONSET_GRID:
+        return None
+    low = (span.beat / ONSET_GRID).to_integral_value(rounding=ROUND_FLOOR) * ONSET_GRID
+    return f"{at} beat {plain(span.beat)} is not on the {BEAT_GRID_LABEL}-beat grid: use {plain(low)} or {plain(low + ONSET_GRID)}"
+
+
+def length_problem(at: str, span: Span, length: Decimal) -> str | None:
+    if not span.is_set or span.end <= length:
+        return None
+    if span.beat >= length:
+        return f"{at} starts at beat {plain(span.beat)}, at or past the clip length {plain(length)}"
+    return (
+        f"{at} ends at beat {plain(span.end)}, past the clip length {plain(length)}: shorten it to durationBeats <= "
+        f"{plain(length - span.beat)}"
+    )
+
+
+def collision_problems(spans: list[Span], field: str) -> list[tuple[int, str]]:
+    """Repeated cells, then sets that start before an earlier same-pitch set ends."""
+    found = []
+    cells: dict[tuple[str, int], int] = {}
+    for span in spans:
+        first = cells.setdefault((plain(span.beat), span.pitch), span.position)
+        if first != span.position:
+            found.append(
+                (span.position, f"{field}[{span.position}] repeats the beat and pitch of {field}[{first}]: remove one")
+            )
+    holders: dict[int, Span] = {}  # per pitch, the set seen so far that ends last
+    for span in sorted(spans, key=lambda s: (s.beat, s.position)):
+        if not span.is_set:
             continue
-        end = beat + Decimal(str(note.durationBeats))
-        if Decimal(str(note.durationBeats)) / Decimal("0.0078125") % 1:
-            raise ValueError("durationBeats must be a multiple of " + BEAT_GRID_LABEL + " beat")
-        if any(beat < old_end and start < end for start, old_end in spans.setdefault(note.pitch, [])):
-            raise ValueError("same-pitch set durations overlap")
-        spans[note.pitch].append((beat, end))
+        holder = holders.get(span.pitch)
+        if holder is not None and holder.beat != span.beat and holder.end > span.beat:
+            found.append(
+                (
+                    span.position,
+                    f"{field}[{span.position}] starts at beat {plain(span.beat)} before {field}[{holder.position}] on pitch "
+                    f"{span.pitch} ends at beat {plain(holder.end)}: shorten {field}[{holder.position}] to durationBeats <= "
+                    f"{plain(span.beat - holder.beat)}",
+                )
+            )
+        if holder is None or span.end > holder.end:
+            holders[span.pitch] = span
+    return found
+
+
+def note_violations(
+    notes: list[Any], field: str, length: Decimal | None = None, window: NoteWindow | None = None
+) -> list[str]:
+    """Every grid and clip rule the entries break, in request order, with the extension's texts.
+
+    Durations count as written (snapped to the onset grid); the extension derives or checks the window itself.
+    """
+    spans = []
+    for index, note in enumerate(notes):
+        beat = Decimal(str(note.beat))
+        is_set = getattr(note, "op", "set") == "set"
+        end = beat + written_duration(Decimal(str(note.durationBeats))) if is_set else beat
+        spans.append(Span(index, note.pitch, is_set, beat, end))
+    found: list[tuple[int, str]] = []
+    for span in spans:
+        at = f"{field}[{span.position}]"
+        problems = (
+            window_problem(at, span, window) if window is not None else onset_problem(at, span),
+            length_problem(at, span, length) if length is not None else None,
+        )
+        found += [(span.position, text) for text in problems if text]
+    found += collision_problems(spans, field)
+    return [text for _, text in sorted(found, key=lambda item: item[0])]
+
+
+def refuse_violations(field: str, found: list[str]) -> None:
+    if found:
+        noun = "problem" if len(found) == 1 else "problems"
+        raise ValueError(f"{field}: {len(found)} {noun}, nothing was written: " + "; ".join(found))
 
 
 def require_location(target: Any, location: type, method: str, label: str) -> None:
@@ -116,10 +226,8 @@ class ClipInsertArgs(StatusArgs):
             return self
         if not launcher and "detail" in supplied:
             raise ValueError("detail applies to launcher slots only")
-        check_note_spans(self.notes)
         length = Decimal(str(self.loop.lengthBeats if launcher else self.lengthBeats))
-        if any(Decimal(str(n.beat)) + Decimal(str(n.durationBeats)) > length for n in self.notes):
-            raise ValueError("notes must fit inside the clip length")
+        refuse_violations("notes", note_violations(self.notes, "notes", length))
         return self
 
 
@@ -299,36 +407,12 @@ class NoteEditArgs(NoteWindowArgs):
 
     @model_validator(mode="after")
     def validate_edits(self) -> Self:
-        if not self.explicit_window:
-            check_note_spans(self.edits)
-            return self
-        cells = set()
-        intervals: dict[int, list[tuple[int, int]]] = {}
-        grid = Decimal(str(self.stepSizeBeats))
-        for edit in self.edits:
-            beat = Decimal(str(edit.beat))
-            if beat % grid:
-                raise ValueError("beat must align exactly with stepSizeBeats")
-            step = int(beat / grid)
-            if not self.startStep <= step < self.startStep + self.steps:
-                raise ValueError("edit beat is outside the requested step window")
-            if not self.pitchStart <= edit.pitch < self.pitchStart + self.pitchCount:
-                raise ValueError("edit pitch is outside the requested pitch window")
-            cell = (step, edit.pitch)
-            if cell in cells:
-                raise ValueError("duplicate edit cell")
-            cells.add(cell)
-            if edit.op == "set":
-                duration = Decimal(str(edit.durationBeats))
-                if duration % grid:
-                    raise ValueError("durationBeats must align exactly with stepSizeBeats")
-                end = step + int(duration / grid)
-                if end > self.startStep + self.steps:
-                    raise ValueError("set duration extends beyond the requested step window")
-                spans = intervals.setdefault(edit.pitch, [])
-                if any(step < old_end and start < end for start, old_end in spans):
-                    raise ValueError("same-pitch set durations overlap")
-                spans.append((step, end))
+        window = (
+            NoteWindow(Decimal(str(self.stepSizeBeats)), self.startStep, self.steps, self.pitchStart, self.pitchCount)
+            if self.explicit_window
+            else None
+        )
+        refuse_violations("edits", note_violations(self.edits, "edits", window=window))
         return self
 
 
@@ -350,13 +434,28 @@ CLIPS_GET_DESCRIPTION = (
     "the per-field outcomes of clips.set are their evidence. Requires the inspected Bitwig 6.1.4 JAR. Readback is not "
     "playback or persistence proof."
 )
+NOTE_RULES = (
+    f"Note rules: beats on a {BEAT_GRID_LABEL}-beat grid; durations are snapped to it (Bitwig keeps them only to "
+    "1/1048576 beat) and each changed one is listed in adjusted {index, requested, written}; no two notes on one "
+    "beat and pitch, no same-pitch overlap. Every broken rule is refused at once (each with its index and a fix) "
+    "and nothing is written. "
+)
+NOTE_WINDOWS = (
+    "Notes are written through 128-step windows of the finest power-of-two grid that aligns every onset; a span "
+    "too long for one runs as several windows of the coarsest aligning grid in the same call: windows[] has each "
+    "window's result, outcome is the worst, and after a window that does not succeed the rest are not_reached, "
+    "their indices in notReached. "
+)
 CLIPS_INSERT_DESCRIPTION = (
     "Create a named MIDI clip in an EMPTY launcher slot (to: a slot ref from launcher.list, scene included; loop "
     "{lengthBeats} sets loop length and playback stop) or on an instrument track's arranger timeline (to {track, "
     "startBeats}, lengthBeats; refused on overlap, never overwrites). Optional notes (beat, pitch, velocity, "
-    "durationBeats; optional channel, default 0) are written in the same call, must fit the length; detail=full "
-    "returns notes.edit's full shape (launcher). A launcher create selects the clip in the host UI. Returns the new "
-    "clip's ref. An unobserved create is outcome unknown (reason not_observed): inspect, then ack the hold; never retry."
+    "durationBeats; optional channel, default 0) are written in the same call and must fit the length. "
+    + NOTE_RULES
+    + "Launcher: the note result is noteWrite, in notes.edit's shape (detail=full for the full one). "
+    + NOTE_WINDOWS
+    + "A launcher create selects the clip in the host UI. Returns the new clip's ref. An unobserved create is "
+    "outcome unknown (reason not_observed): inspect, then ack the hold; never retry."
 )
 CLIPS_IMPORT_DESCRIPTION = (
     "Import a local audio or clip file into an EMPTY launcher slot (to: a slot ref). Occupied slots reject; no "
@@ -436,18 +535,19 @@ NOTES_READ_DESCRIPTION = (
 )
 NOTES_EDIT_DESCRIPTION = (
     "Edit up to 256 onset cells. Selects the target clip in the host UI (moves the editor cursor; see context.get). "
-    "The window (stepSizeBeats,startStep,steps,pitchStart,pitchCount; all five or none) may be omitted: the finest "
-    f"power-of-two grid (down to {BEAT_GRID_LABEL} beat) that aligns every beat/duration within 128 steps, and the "
-    "pitch range, are derived (window echoed with derived=true); >128 steps is rejected, so split by time or use a "
-    "coarser grid. channel defaults to 0. Each set requires op=set, absolute beat, MIDI pitch, integer velocity "
-    "1..127 and durationBeats; clear requires only op=clear,beat,pitch. Beat/duration must align exactly to "
-    "stepSizeBeats without rounding; entire note must fit requested window and observed clip loop. No duplicate "
-    "cells, overlapping same-pitch sets or clear-all; sustains are protected and already-matching cells are not "
+    "The window (stepSizeBeats,startStep,steps,pitchStart,pitchCount; all five or none) may be omitted: it is then "
+    "derived from the onsets and the pitch range (echoed with derived=true). "
+    + NOTE_WINDOWS
+    + "channel defaults to 0. Each set requires op=set, absolute beat, MIDI pitch, integer velocity 1..127 and "
+    "durationBeats; clear requires only op=clear,beat,pitch. "
+    + NOTE_RULES
+    + "With an explicit window, beats align exactly to stepSizeBeats instead and every note must end inside it. "
+    "Notes must fit the observed clip loop; sustains are protected, no clear-all, and already-matching cells are not "
     "rewritten. Result is compact: outcome is the worst over every edit (applied, already_matched, or unknown with "
     "a reason); summary {requested, dispatched, alreadyMatched, verified, unverified}; unverifiedEdits lists only "
-    "unverified edits (outcome, reason, observed cell). detail=full also returns the window's note listing (as "
-    "notes.read) and every edit. Verification is per-cell readback after scheduled grid settling (gridReadiness), "
-    "not a host-data barrier. Verify unverified edits with notes.read. No automatic retry."
+    "unverified edits (index, outcome, reason, observed cell). detail=full also returns the window's note listing "
+    "(as notes.read) and every edit. Verification is per-cell readback after scheduled grid settling "
+    "(gridReadiness), not a host-data barrier. Verify unverified edits with notes.read. No automatic retry."
 )
 _EDIT = {"op": "set", "beat": 0.0, "pitch": 60, "velocity": 90, "durationBeats": 1.0}
 
@@ -469,7 +569,7 @@ SPECS: dict[str, ToolSpec] = {
             {"to": {"track": TRACK_REF, "startBeats": 16}, "lengthBeats": 16, "name": "Verse"},
         ),
         requires=PROJECT_READY,
-        summary="Create a named MIDI clip in an empty launcher slot (to: slot ref, loop {lengthBeats}) or on an instrument track's arranger timeline (to {track, startBeats}, lengthBeats), with optional notes. Returns the new clip's ref. A launcher create selects the clip. An unobserved create is unknown: ack the hold, never retry.",
+        summary="Create a named MIDI clip in an empty launcher slot (to: slot ref, loop {lengthBeats}) or on an instrument track's timeline (to {track, startBeats}, lengthBeats), with optional notes (beats on the 1/128 grid, durations snapped to it). Returns the new ref. A launcher create selects it. Unobserved: unknown, ack the hold, never retry.",
     ),
     "clips.import": ToolSpec(
         ClipImportArgs,
@@ -561,6 +661,6 @@ SPECS: dict[str, ToolSpec] = {
             {"target": CLIP_REF, "edits": [_EDIT]},
             {**NOTE_WINDOW, "edits": [_EDIT]},
         ),
-        summary="Edit up to 256 onset cells of a clip; selects the clip in the host UI. set needs op, beat, pitch, velocity 1..127 and durationBeats; clear needs op, beat, pitch. Beats align exactly to stepSizeBeats (omit the window to derive it). Never retry unknown.",
+        summary="Edit up to 256 onset cells of a clip; selects the clip. set: op, beat, pitch, velocity 1..127, durationBeats (snapped to 1/128); clear: op, beat, pitch. Beats on the 1/128 grid or on stepSizeBeats of an explicit window (omit it to derive). Never retry unknown.",
     ),
 }

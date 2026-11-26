@@ -11,6 +11,7 @@ public final class HostOperation {
     private volatile boolean dispatched;
 
     private boolean expired;
+    private final HostOperation parent;
     public volatile SafetyObservation safetyAtEnqueue;
     /** The long job this request dispatched; an unknown result names it for jobs.get. */
     public volatile String job;
@@ -23,8 +24,18 @@ public final class HostOperation {
     }
 
     public HostOperation(long deadline, String inspect) {
+        this(deadline, inspect, null);
+    }
+
+    private HostOperation(long deadline, String inspect, HostOperation parent) {
         this.deadline = deadline;
         this.inspect = inspect;
+        this.parent = parent;
+    }
+
+    /** One step of this request with its own result; its dispatch marks this operation dispatched first. */
+    public HostOperation child() {
+        return new HostOperation(deadline, inspect, this);
     }
 
     /** The future the transport waits on; at its deadline it may expire an operation that never dispatched. */
@@ -47,6 +58,7 @@ public final class HostOperation {
 
     /** Called right before the native call; an operation the transport already expired never dispatches. */
     public synchronized void markDispatched() {
+        if (parent != null) parent.markDispatched();
         if (expired) throw Errors.notApplied(Reason.DEADLINE, "The request expired before dispatch; nothing was sent.");
         dispatched = true;
     }

@@ -597,6 +597,7 @@ public final class LauncherFake {
         final List<double[]> clips = new ArrayList<>();
         final List<String> names = new ArrayList<>();
         int created, copied, edited;
+        List<double[]> notes = List.of();
 
         @Override
         public void execute(Runnable work) {
@@ -639,6 +640,7 @@ public final class LauncherFake {
                 Runnable beforeWrite) {
             beforeWrite.run();
             created++;
+            notes = noteList;
             clips.add(new double[] {startBeats, lengthBeats});
             names.add(name);
             return result(Outcome.APPLIED, clips.size() - 1);

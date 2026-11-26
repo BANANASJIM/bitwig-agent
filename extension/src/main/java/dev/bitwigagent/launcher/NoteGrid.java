@@ -5,14 +5,16 @@ import com.bitwig.extension.controller.api.NoteStep;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
-import com.google.gson.JsonPrimitive;
 import dev.bitwigagent.core.Errors;
 import dev.bitwigagent.core.HostLimits;
 import dev.bitwigagent.core.Reason;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.ArrayList;
-import java.util.HashSet;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /** The note grid of a cursor clip: window, edits and the units the note methods share. Host-free except note reads. */
@@ -22,6 +24,8 @@ public final class NoteGrid {
     public static final double BEAT_GRID = HostLimits.LIMITS.beatGrid;
     static final int MAX_CLIP_BEATS = HostLimits.LIMITS.maxClipBeats;
     public static final String BEAT_GRID_LABEL = "1/" + Math.round(1 / BEAT_GRID);
+    private static final int MAX_STEPS = 128;
+    private static final BigDecimal ONSET_GRID = BigDecimal.valueOf(BEAT_GRID);
     private static final Set<String> GRID_FIELDS =
             Set.of("stepSizeBeats", "startStep", "steps", "pitchStart", "pitchCount");
     private static final BigDecimal[] DERIVED_GRIDS = {
@@ -88,19 +92,64 @@ public final class NoteGrid {
     }
 
     static final class Edit {
-        final int x, pitch, velocity, durationSteps;
+        /** Position in the request's notes/edits array. */
+        final int index;
+        /** {@code cells}: grid cells the note touches from its onset cell, so the sustain cells preflight checks. */
+        final int x, pitch, velocity, cells;
+
         final double duration;
         final boolean set;
         long before, generation;
         boolean alreadyMatched, verified;
 
-        Edit(int x, int pitch, int velocity, double duration, int durationSteps, boolean set) {
+        Edit(int index, int x, int pitch, int velocity, double duration, int cells, boolean set) {
+            this.index = index;
             this.x = x;
             this.pitch = pitch;
             this.velocity = velocity;
             this.duration = duration;
-            this.durationSteps = durationSteps;
+            this.cells = cells;
             this.set = set;
+        }
+    }
+
+    /** One window of a write and the request entries whose onsets it holds, in request order. */
+    static final class Part {
+        final Window window;
+        final List<Integer> indices;
+        final JsonArray edits;
+
+        Part(Window window, List<Integer> indices, JsonArray all) {
+            this.window = window;
+            this.indices = indices;
+            this.edits = new JsonArray();
+            for (int i : indices) edits.add(all.get(i));
+        }
+    }
+
+    /** A request entry in exact beats: a set spans beat..end, a clear marks one cell. */
+    private static final class Span {
+        final int index, pitch;
+        final boolean set;
+        final BigDecimal beat, end;
+
+        Span(int index, JsonObject e) {
+            this.index = index;
+            this.pitch = e.get("pitch").getAsInt();
+            this.set = e.get("op").getAsString().equals("set");
+            this.beat = e.get("beat").getAsBigDecimal();
+            this.end = set ? beat.add(e.get("durationBeats").getAsBigDecimal()) : beat;
+        }
+
+        long cell(BigDecimal grid) {
+            return beat.divide(grid).longValueExact();
+        }
+
+        /** One past the last cell the entry touches. */
+        long cellEnd(BigDecimal grid) {
+            long first = cell(grid);
+            if (!set) return first + 1;
+            return Math.max(first + 1, end.divide(grid, 0, RoundingMode.CEILING).longValueExact());
         }
     }
 
@@ -113,11 +162,84 @@ public final class NoteGrid {
         return present != 0;
     }
 
-    /** The explicit window, or for a write the smallest one derived from its edits; null for a read sized from the clip loop. */
-    static Window window(JsonObject p, JsonArray edits) {
-        if (edits != null) checkShape(edits);
-        if (hasGrid(p)) return Window.of(p, false);
-        return edits == null ? null : deriveEditWindow(p, edits);
+    /** The explicit window of a read, or null for one sized from the clip loop. */
+    static Window readWindow(JsonObject p) {
+        return hasGrid(p) ? Window.of(p, false) : null;
+    }
+
+    /** The windows of a write and the durations it snapped to the onset grid. */
+    static final class Plan {
+        final List<Part> parts;
+        final JsonArray adjusted;
+
+        Plan(List<Part> parts, JsonArray adjusted) {
+            this.parts = parts;
+            this.adjusted = adjusted;
+        }
+    }
+
+    /** Entries whose set durations are snapped to the onset grid, and {index, requested, written} per changed one. */
+    public static final class Snapped {
+        public final JsonArray entries = new JsonArray(), adjusted = new JsonArray();
+
+        /** Bitwig keeps a duration only to 1/1048576 beat, so an exact readback needs one on the onset grid. */
+        Snapped(JsonArray array) {
+            for (int i = 0; i < array.size(); i++) {
+                JsonObject e = array.get(i).getAsJsonObject();
+                BigDecimal requested =
+                        e.has("durationBeats") ? e.get("durationBeats").getAsBigDecimal() : null;
+                BigDecimal written = requested == null ? null : written(requested);
+                if (requested == null || written.compareTo(requested) == 0) {
+                    entries.add(e);
+                    continue;
+                }
+                JsonObject copy = e.deepCopy();
+                copy.addProperty("durationBeats", written.doubleValue());
+                entries.add(copy);
+                JsonObject change = new JsonObject();
+                change.addProperty("index", i);
+                change.add("requested", e.get("durationBeats"));
+                change.addProperty("written", written.doubleValue());
+                adjusted.add(change);
+            }
+        }
+    }
+
+    /** The nearest multiple of the onset grid, halves rounded up; never below one grid step. */
+    static BigDecimal written(BigDecimal duration) {
+        BigDecimal steps =
+                duration.divide(ONSET_GRID).setScale(0, RoundingMode.HALF_UP).max(BigDecimal.ONE);
+        return steps.multiply(ONSET_GRID).stripTrailingZeros();
+    }
+
+    /**
+     * The windows a write runs in: the explicit one, or derived from the onsets alone. Durations are snapped to the
+     * onset grid first; every rule the entries then break is refused together, each with its index and a fix.
+     * {@code length} bounds the entries when known.
+     */
+    static Plan plan(JsonObject p, JsonArray request, String field, BigDecimal length) {
+        checkShape(request);
+        Snapped snapped = new Snapped(request);
+        JsonArray array = snapped.entries;
+        Window explicit = hasGrid(p) ? Window.of(p, false) : null;
+        List<Span> spans = new ArrayList<>(array.size());
+        for (int i = 0; i < array.size(); i++)
+            spans.add(new Span(i, array.get(i).getAsJsonObject()));
+        refuse(field, violations(spans, field, length, explicit));
+        List<Integer> all = new ArrayList<>();
+        for (int i = 0; i < array.size(); i++) all.add(i);
+        List<Part> parts = explicit != null ? List.of(new Part(explicit, all, array)) : derive(p, array, spans, field);
+        return new Plan(parts, snapped.adjusted);
+    }
+
+    /** Clip notes {beat, pitch, velocity, durationBeats} with snapped durations, checked within {@code length}. */
+    public static Snapped noteRules(JsonArray notes, BigDecimal length) {
+        Snapped snapped = new Snapped(notes);
+        JsonArray sets = setEdits(snapped.entries);
+        List<Span> spans = new ArrayList<>(sets.size());
+        for (int i = 0; i < sets.size(); i++) spans.add(new Span(i, sets.get(i).getAsJsonObject()));
+        refuse("notes", violations(spans, "notes", length, null));
+        return snapped;
     }
 
     /** A set carries velocity and duration, a clear neither: the rule the schema cannot say per op. */
@@ -131,103 +253,200 @@ public final class NoteGrid {
         }
     }
 
-    static int aligned(JsonElement beat, JsonElement size, String field) {
-        BigDecimal[] parts = beat.getAsBigDecimal().divideAndRemainder(size.getAsBigDecimal());
-        if (parts[1].signum() != 0)
-            throw Errors.invalid(field + " must exactly align with stepSizeBeats; no rounding is performed");
-        try {
-            return parts[0].intValueExact();
-        } catch (ArithmeticException error) {
-            throw Errors.invalid(field + " exceeds supported grid range");
-        }
+    static String plain(BigDecimal value) {
+        return value.stripTrailingZeros().toPlainString();
     }
 
-    /** The edits aligned to the window; no edit leaves it, repeats a cell or overlaps a same-pitch set. */
-    static List<Edit> edits(JsonArray array, Window w) {
-        checkShape(array);
-        List<Edit> result = new ArrayList<>(array.size());
-        Set<Integer> cells = new HashSet<>();
-        for (JsonElement value : array) {
-            JsonObject e = value.getAsJsonObject();
-            boolean set = e.get("op").getAsString().equals("set");
-            int x = aligned(e.get("beat"), new JsonPrimitive(w.exact), "beat") - w.start;
-            int pitch = e.get("pitch").getAsInt();
-            if (x < 0 || x >= w.steps || pitch < w.pitch || pitch >= w.pitch + w.pitches)
-                throw Errors.invalid("edit onset is outside the explicit window");
-            if (!cells.add(x * 128 + pitch))
-                throw Errors.invalid("multiple edits address the same channel/step/pitch cell");
-            int velocity = set ? e.get("velocity").getAsInt() : 0;
-            double duration = set ? e.get("durationBeats").getAsDouble() : 0;
-            int durationSteps = set ? aligned(e.get("durationBeats"), new JsonPrimitive(w.exact), "durationBeats") : 0;
-            if (set && (durationSteps < 1 || x + durationSteps > w.steps))
-                throw Errors.invalid("set duration must fit entirely inside the explicit window");
-            result.add(new Edit(x, pitch, velocity, duration, durationSteps, set));
-        }
-        for (int i = 0; i < result.size(); i++) {
-            Edit a = result.get(i);
-            if (!a.set) continue;
-            for (int j = i + 1; j < result.size(); j++) {
-                Edit b = result.get(j);
-                if (b.set && a.pitch == b.pitch && a.x < b.x + b.durationSteps && b.x < a.x + a.durationSteps)
-                    throw Errors.invalid("same-channel/pitch note durations overlap");
+    private static void add(List<Object[]> out, int index, String message) {
+        out.add(new Object[] {index, message});
+    }
+
+    /** The rules of the grid and the clip, in request order; the same texts as the Python validator. */
+    private static List<Object[]> violations(List<Span> spans, String field, BigDecimal length, Window explicit) {
+        List<Object[]> out = new ArrayList<>();
+        for (Span s : spans) {
+            String at = field + "[" + s.index + "]";
+            if (explicit != null) {
+                BigDecimal[] step = s.beat.divideAndRemainder(explicit.exact);
+                BigDecimal first = BigDecimal.valueOf(explicit.start),
+                        limit = first.add(BigDecimal.valueOf(explicit.steps));
+                BigDecimal windowEnd = limit.multiply(explicit.exact);
+                if (step[1].signum() != 0)
+                    add(
+                            out,
+                            s.index,
+                            at + " beat " + plain(s.beat) + " does not align with stepSizeBeats "
+                                    + plain(explicit.exact) + ": use a multiple of it");
+                else if (step[0].compareTo(first) < 0
+                        || step[0].compareTo(limit) >= 0
+                        || s.pitch < explicit.pitch
+                        || s.pitch >= explicit.pitch + explicit.pitches)
+                    add(
+                            out,
+                            s.index,
+                            at + " (beat " + plain(s.beat) + ", pitch " + s.pitch
+                                    + ") is outside the window: beats " + plain(first.multiply(explicit.exact)) + " to "
+                                    + plain(windowEnd) + ", pitches " + explicit.pitch + " to "
+                                    + (explicit.pitch + explicit.pitches - 1));
+                else if (s.end.compareTo(windowEnd) > 0)
+                    add(
+                            out,
+                            s.index,
+                            at + " ends at beat " + plain(s.end) + ", past the window end " + plain(windowEnd)
+                                    + ": shorten it to durationBeats <= " + plain(windowEnd.subtract(s.beat)));
+            } else if (s.beat.remainder(ONSET_GRID).signum() != 0) {
+                BigDecimal low =
+                        s.beat.divide(ONSET_GRID, 0, RoundingMode.FLOOR).multiply(ONSET_GRID);
+                add(
+                        out,
+                        s.index,
+                        at + " beat " + plain(s.beat) + " is not on the " + BEAT_GRID_LABEL + "-beat grid: use "
+                                + plain(low) + " or " + plain(low.add(ONSET_GRID)));
             }
+            if (length != null && s.set && s.end.compareTo(length) > 0)
+                add(
+                        out,
+                        s.index,
+                        s.beat.compareTo(length) >= 0
+                                ? at + " starts at beat " + plain(s.beat) + ", at or past the clip length "
+                                        + plain(length)
+                                : at + " ends at beat " + plain(s.end) + ", past the clip length " + plain(length)
+                                        + ": shorten it to durationBeats <= " + plain(length.subtract(s.beat)));
+        }
+        Map<String, Span> cells = new HashMap<>();
+        for (Span s : spans) {
+            Span first = cells.putIfAbsent(plain(s.beat) + "/" + s.pitch, s);
+            if (first != null)
+                add(
+                        out,
+                        s.index,
+                        field + "[" + s.index + "] repeats the beat and pitch of " + field + "[" + first.index
+                                + "]: remove one");
+        }
+        Map<Integer, Span> holders = new HashMap<>(); // per pitch, the set seen so far that ends last
+        List<Span> byOnset = new ArrayList<>(spans);
+        byOnset.sort(Comparator.comparing((Span s) -> s.beat).thenComparingInt(s -> s.index));
+        for (Span s : byOnset) {
+            if (!s.set) continue;
+            Span holder = holders.get(s.pitch);
+            if (holder != null && holder.beat.compareTo(s.beat) != 0 && holder.end.compareTo(s.beat) > 0)
+                add(
+                        out,
+                        s.index,
+                        field + "[" + s.index + "] starts at beat " + plain(s.beat) + " before " + field
+                                + "[" + holder.index + "] on pitch " + s.pitch + " ends at beat " + plain(holder.end)
+                                + ": shorten " + field + "[" + holder.index + "] to durationBeats <= "
+                                + plain(s.beat.subtract(holder.beat)));
+            if (holder == null || s.end.compareTo(holder.end) > 0) holders.put(s.pitch, s);
+        }
+        out.sort(Comparator.comparingInt(v -> (Integer) v[0]));
+        return out;
+    }
+
+    private static void refuse(String field, List<Object[]> violations) {
+        if (violations.isEmpty()) return;
+        StringBuilder message = new StringBuilder(field + ": " + violations.size()
+                + (violations.size() == 1 ? " problem" : " problems") + ", nothing was written: ");
+        for (int i = 0; i < violations.size(); i++)
+            message.append(i == 0 ? "" : "; ").append(violations.get(i)[1]);
+        throw Errors.invalid(message.toString());
+    }
+
+    /**
+     * The finest power-of-two grid (4..1/128 beat) aligning every onset whose cells fit one 128-step window, so finer
+     * existing onsets stay visible; else the coarsest aligning grid, cut into 128-step windows holding whole notes.
+     */
+    private static List<Part> derive(JsonObject p, JsonArray array, List<Span> spans, String field) {
+        int channel = p.has("channel") ? p.get("channel").getAsInt() : 0;
+        BigDecimal coarsest = null;
+        for (int i = DERIVED_GRIDS.length - 1; i >= 0; i--) {
+            BigDecimal grid = DERIVED_GRIDS[i];
+            if (!aligns(spans, grid)) continue;
+            coarsest = grid;
+            long first = Long.MAX_VALUE, last = 0;
+            for (Span s : spans) {
+                first = Math.min(first, s.cell(grid));
+                last = Math.max(last, s.cellEnd(grid));
+            }
+            if (last - first <= MAX_STEPS) {
+                List<Integer> all = new ArrayList<>();
+                for (Span s : spans) all.add(s.index);
+                return List.of(new Part(window(channel, grid, spans, first, last), all, array));
+            }
+        }
+        BigDecimal grid = coarsest;
+        List<Object[]> tooLong = new ArrayList<>();
+        for (Span s : spans)
+            if (s.cellEnd(grid) - s.cell(grid) > MAX_STEPS)
+                add(
+                        tooLong,
+                        s.index,
+                        field + "[" + s.index + "] durationBeats " + plain(s.end.subtract(s.beat))
+                                + " spans more than " + MAX_STEPS + " steps of the " + plain(grid)
+                                + "-beat grid the onsets need: shorten it to durationBeats <= "
+                                + plain(grid.multiply(BigDecimal.valueOf(MAX_STEPS)))
+                                + (spans.size() > 1 ? " or write it in a call of its own" : ""));
+        refuse(field, tooLong);
+        List<Span> byOnset = new ArrayList<>(spans);
+        byOnset.sort(Comparator.comparing((Span s) -> s.beat).thenComparingInt(s -> s.index));
+        List<Part> parts = new ArrayList<>();
+        List<Span> current = new ArrayList<>();
+        long first = 0, last = 0;
+        for (Span s : byOnset) {
+            if (!current.isEmpty() && s.cellEnd(grid) - first > MAX_STEPS) {
+                parts.add(part(channel, grid, current, first, last, array));
+                current = new ArrayList<>();
+            }
+            if (current.isEmpty()) first = s.cell(grid);
+            current.add(s);
+            last = Math.max(last, s.cellEnd(grid));
+        }
+        parts.add(part(channel, grid, current, first, last, array));
+        return parts;
+    }
+
+    private static boolean aligns(List<Span> spans, BigDecimal grid) {
+        for (Span s : spans) if (s.beat.remainder(grid).signum() != 0) return false;
+        return true;
+    }
+
+    private static Part part(int channel, BigDecimal grid, List<Span> spans, long first, long last, JsonArray all) {
+        List<Integer> indices = new ArrayList<>();
+        for (Span s : spans) indices.add(s.index);
+        indices.sort(null);
+        return new Part(window(channel, grid, spans, first, last), indices, all);
+    }
+
+    private static Window window(int channel, BigDecimal grid, List<Span> spans, long first, long last) {
+        int low = 127, high = 0;
+        for (Span s : spans) {
+            low = Math.min(low, s.pitch);
+            high = Math.max(high, s.pitch);
+        }
+        if (first > Integer.MAX_VALUE) throw Errors.invalid("beat exceeds supported grid range");
+        return new Window(channel, grid, (int) first, (int) (last - first), low, high - low + 1, true);
+    }
+
+    /** The part's entries as cells of its window; plan() already checked every rule. */
+    static List<Edit> edits(Part part) {
+        Window w = part.window;
+        List<Edit> result = new ArrayList<>(part.indices.size());
+        for (int i = 0; i < part.indices.size(); i++) {
+            JsonObject e = part.edits.get(i).getAsJsonObject();
+            Span s = new Span(part.indices.get(i), e);
+            int x = (int) (s.cell(w.exact) - w.start), cells = (int) (s.cellEnd(w.exact) - s.cell(w.exact));
+            if (x < 0 || x + cells > w.steps || s.pitch < w.pitch || s.pitch >= w.pitch + w.pitches)
+                throw Errors.invalid("edit does not fit its window");
+            result.add(new Edit(
+                    s.index,
+                    x,
+                    s.pitch,
+                    s.set ? e.get("velocity").getAsInt() : 0,
+                    s.set ? e.get("durationBeats").getAsDouble() : 0,
+                    cells,
+                    s.set));
         }
         return result;
-    }
-
-    /** Finest power-of-two grid (4..1/128 beat) aligning every edit within 128 steps, so finer existing onsets stay visible. */
-    static Window deriveEditWindow(JsonObject p, JsonArray array) {
-        List<BigDecimal[]> spans = new ArrayList<>(); // {beat, duration or null}
-        int low = 128, high = -1;
-        for (JsonElement value : array) {
-            JsonObject e = value.getAsJsonObject();
-            boolean set = e.get("op").getAsString().equals("set");
-            int pitch = e.get("pitch").getAsInt();
-            low = Math.min(low, pitch);
-            high = Math.max(high, pitch);
-            spans.add(new BigDecimal[] {
-                e.get("beat").getAsBigDecimal(), set ? e.get("durationBeats").getAsBigDecimal() : null
-            });
-        }
-        BigDecimal grid = null, coarsest = null;
-        long first = 0, last = 0;
-        for (int i = DERIVED_GRIDS.length - 1; i >= 0 && grid == null; i--) {
-            BigDecimal candidate = DERIVED_GRIDS[i];
-            boolean aligns = true;
-            for (BigDecimal[] span : spans)
-                aligns &= span[0].remainder(candidate).signum() == 0
-                        && (span[1] == null || span[1].remainder(candidate).signum() == 0);
-            if (!aligns) continue;
-            long lo = Long.MAX_VALUE, hi = 0;
-            for (BigDecimal[] span : spans) {
-                long x = span[0].divide(candidate).longValueExact();
-                lo = Math.min(lo, x);
-                hi = Math.max(
-                        hi, x + (span[1] == null ? 1 : span[1].divide(candidate).longValueExact()));
-            }
-            coarsest = candidate;
-            if (hi - lo <= 128) {
-                grid = candidate;
-                first = lo;
-                last = hi;
-            }
-        }
-        if (coarsest == null)
-            throw Errors.invalid("beat and durationBeats must be multiples of " + BEAT_GRID_LABEL
-                    + " beat to derive a window; no rounding is performed");
-        if (grid == null)
-            throw Errors.invalid(
-                    "edits do not fit 128 steps on any grid that aligns them (coarsest is "
-                            + coarsest.stripTrailingZeros().toPlainString()
-                            + " beat): split them by time range into several calls, or use beats/durations that fit a coarser grid");
-        return new Window(
-                p.has("channel") ? p.get("channel").getAsInt() : 0,
-                grid,
-                (int) first,
-                (int) (last - first),
-                low,
-                high - low + 1,
-                true);
     }
 
     /** The clip's notes as set edits, for the note stage of a clip insert. */
@@ -306,7 +525,7 @@ public final class NoteGrid {
             if (e.set && (beat < loopStart || beat + e.duration > end))
                 throw Errors.invalid("set note must fit inside the observed clip loop start and end");
             if (!e.set) continue;
-            for (int x = e.x + 1; x < e.x + e.durationSteps; x++) {
+            for (int x = e.x + 1; x < e.x + e.cells; x++) {
                 NoteStep next = clip.getStep(w.channel, x, e.pitch);
                 if (next == null || next.state() == null)
                     throw Errors.notApplied(Reason.NOT_READY, "Note grid is not readable");

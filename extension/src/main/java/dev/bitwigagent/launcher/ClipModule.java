@@ -133,14 +133,16 @@ public final class ClipModule implements HostModule {
             ArrangerModule.notes(p.getAsJsonArray("notes"), p.get("lengthBeats").getAsDouble());
             return;
         }
-        JsonArray edits = NoteGrid.setEdits(p.getAsJsonArray("notes"));
-        NoteGrid.edits(edits, NoteGrid.deriveEditWindow(p, edits));
-        double length = p.getAsJsonObject("loop").get("lengthBeats").getAsDouble();
-        for (JsonElement n : edits) {
-            JsonObject e = n.getAsJsonObject();
-            if (e.get("beat").getAsDouble() + e.get("durationBeats").getAsDouble() > length)
-                throw Errors.invalid("notes must fit inside the loop length");
-        }
+        noteParts(p);
+    }
+
+    /** The windows a launcher insert writes its notes in; every rule the notes break is refused together. */
+    private static NoteGrid.Plan noteParts(JsonObject p) {
+        return NoteGrid.plan(
+                p,
+                NoteGrid.setEdits(p.getAsJsonArray("notes")),
+                "notes",
+                p.getAsJsonObject("loop").get("lengthBeats").getAsBigDecimal());
     }
 
     private static void validateSet(JsonObject p) {
@@ -241,7 +243,16 @@ public final class ClipModule implements HostModule {
                 p.get("name").getAsString(),
                 p.has("notes") ? p.getAsJsonArray("notes") : null,
                 p.has("channel") ? p.get("channel").getAsInt() : 0,
-                op.result::complete);
+                result -> {
+                    JsonArray adjusted = p.has("notes")
+                            ? NoteGrid.noteRules(
+                                            p.getAsJsonArray("notes"),
+                                            p.get("lengthBeats").getAsBigDecimal())
+                                    .adjusted
+                            : new JsonArray();
+                    if (adjusted.size() > 0) result.add("adjusted", adjusted);
+                    op.result.complete(result);
+                });
     }
 
     private void insertLauncher(HostOperation op, JsonObject p) {
@@ -317,17 +328,11 @@ public final class ClipModule implements HostModule {
                     out.addProperty(
                             "outcome",
                             Outcome.APPLIED.worst(Results.outcomeOf(written)).wire());
+                    // Snapped durations are a property of the whole insert, reported where the arranger reports them.
+                    if (written.has("adjusted")) out.add("adjusted", written.remove("adjusted"));
                     out.add("noteWrite", written);
                 } else {
-                    Throwable cause =
-                            error instanceof java.util.concurrent.CompletionException && error.getCause() != null
-                                    ? error.getCause()
-                                    : error;
-                    RpcException rpc = cause instanceof RpcException
-                            ? (RpcException) cause
-                            : Errors.notApplied(Reason.INTERNAL, String.valueOf(cause.getMessage()));
-                    JsonObject failure = Errors.unknownResult(rpc);
-                    if (!rpc.unknown) failure.addProperty("outcome", Outcome.NOT_APPLIED.wire());
+                    JsonObject failure = Errors.entryResult(error);
                     out.addProperty(
                             "outcome",
                             Outcome.APPLIED.worst(Results.outcomeOf(failure)).wire());
@@ -336,9 +341,7 @@ public final class ClipModule implements HostModule {
                 op.result.complete(out);
             });
             try {
-                JsonArray edits = NoteGrid.setEdits(p.getAsJsonArray("notes"));
-                notes.bindAndEdit(
-                        child, target, NoteGrid.deriveEditWindow(p, edits), edits, NoteGrid.full(p), state.until(op));
+                notes.write(child, target, noteParts(p), NoteGrid.full(p), state.until(op));
             } catch (RuntimeException failure) {
                 child.fail(failure);
             }
@@ -1001,7 +1004,7 @@ public final class ClipModule implements HostModule {
         HostOperation child = new HostOperation(op.deadline);
         child.result.whenComplete((result, error) -> {
             if (child.dispatched()) op.markDispatched();
-            JsonObject entry = error == null ? result : failed(error);
+            JsonObject entry = error == null ? result : Errors.entryResult(error);
             if (batch.record(entry)) transformNext(op, refs, i + 1, batch);
             else {
                 JsonObject out = Results.outcome(Results.worst(batch.entries().asList()));
@@ -1034,19 +1037,6 @@ public final class ClipModule implements HostModule {
         } catch (RuntimeException failure) {
             child.fail(failure);
         }
-    }
-
-    /** An entry whose own work failed: an error before any write is not_applied, a possible change is unknown. */
-    private static JsonObject failed(Throwable error) {
-        Throwable cause = error instanceof java.util.concurrent.CompletionException && error.getCause() != null
-                ? error.getCause()
-                : error;
-        RpcException rpc = cause instanceof RpcException
-                ? (RpcException) cause
-                : Errors.notApplied(Reason.INTERNAL, String.valueOf(cause.getMessage()));
-        JsonObject out = Errors.unknownResult(rpc);
-        if (!rpc.unknown) out.addProperty("outcome", Outcome.NOT_APPLIED.wire());
-        return out;
     }
 
     /** Onset cells of the window as x*128+pitch -> {velocity, duration}; the same bounded read as notes.read. */
