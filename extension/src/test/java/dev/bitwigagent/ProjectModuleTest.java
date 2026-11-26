@@ -199,7 +199,9 @@ public final class ProjectModuleTest {
         assertTrue(
                 error.outcome.equals("unknown") && error.getMessage().contains("disk full"),
                 "native failure after the job started is unknown");
-        assertTrue(failed.fixture.services.holds.descriptions().isEmpty(), "a failure callback also ends the pending state");
+        assertTrue(
+                failed.fixture.services.holds.descriptions().isEmpty(),
+                "a failure callback also ends the pending state");
     }
 
     @Test
@@ -214,7 +216,8 @@ public final class ProjectModuleTest {
                         && result.get("nativeCompletion").getAsString().equals("pending"),
                 "no callback within the deadline is unknown, never retried");
         assertTrue(
-                silent.dispatches == 1 && silent.fixture.services.holds.descriptions().size() == 1,
+                silent.dispatches == 1
+                        && silent.fixture.services.holds.descriptions().size() == 1,
                 "pending native save is listed as unresolved");
         HostOperation busy = silent.start(silent.root.resolve("Again/Again.bwproject"), false);
         silent.drain();

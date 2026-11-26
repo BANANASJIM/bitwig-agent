@@ -387,7 +387,9 @@ public final class RenderModuleTest {
         assertTrue(
                 assertRpcError("bounce_verification_failed", op).outcome.equals("unknown"),
                 "a different lane is unknown");
-        assertTrue(sim.fixture.services.holds.descriptions().size() == 1, "unknown bounce is listed for extension.restart");
+        assertTrue(
+                sim.fixture.services.holds.descriptions().size() == 1,
+                "unknown bounce is listed for extension.restart");
         HostOperation again = sim.start("bounce.inPlace", bounce(A), 5000);
         sim.drainUntil(again);
         assertRpcError("unresolved_mutation", again);
@@ -408,7 +410,8 @@ public final class RenderModuleTest {
                 op.result.join().get("status").getAsString().equals("dispatched"),
                 "bounce without latch by the deadline is dispatched");
         sim.completeBounce();
-        assertTrue(sim.fixture.services.holds.descriptions().size() == 1, "a finished but unverified bounce stays listed");
+        assertTrue(
+                sim.fixture.services.holds.descriptions().size() == 1, "a finished but unverified bounce stays listed");
         HostOperation again = sim.start("bounce.inPlace", bounce(B), 5000);
         sim.drainUntil(again);
         assertRpcError("unresolved_mutation", again);

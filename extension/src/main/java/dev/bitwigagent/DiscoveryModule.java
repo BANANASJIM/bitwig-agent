@@ -96,7 +96,8 @@ final class DiscoveryModule implements HostModule {
         result.addProperty("projectName", application.projectName().get());
         result.addProperty("engineActive", application.hasActiveEngine().get());
         result.addProperty("playing", transport.isPlaying().get());
-        for (Map.Entry<String, JsonElement> e : Results.readiness(projectState.readiness()).entrySet()) result.add(e.getKey(), e.getValue());
+        for (Map.Entry<String, JsonElement> e :
+                Results.readiness(projectState.readiness()).entrySet()) result.add(e.getKey(), e.getValue());
         result.add("projectModified", Results.modified(projectState.modified()));
         result.addProperty("apiVersion", 25);
         result.add("extension", BUILD.toJson());
@@ -124,12 +125,7 @@ final class DiscoveryModule implements HostModule {
         result.add("methods", methods);
         result.add("domains", domains);
         JsonObject windows = new JsonObject();
-        windows.add(
-                "tracks",
-                window(
-                        window.offset(),
-                        TRACKS,
-                        window.total()));
+        windows.add("tracks", window(window.offset(), TRACKS, window.total()));
         windows.addProperty("devicesPerTrack", DEVICES);
         windows.addProperty("launcherSlotsPerTrack", SCENES);
         windows.addProperty("sendsPerTrack", SENDS);
@@ -236,12 +232,7 @@ final class DiscoveryModule implements HostModule {
         }
         result.add("tracks", items);
         result.add("tree", tree.summary());
-        result.add(
-                "window",
-                window(
-                        window.offset(),
-                        TRACKS,
-                        window.total()));
+        result.add("window", window(window.offset(), TRACKS, window.total()));
         result.addProperty("scope", "flat_track_bank");
         return result;
     }

@@ -12,7 +12,7 @@ import java.util.regex.Pattern;
  */
 final class MeterModule implements HostModule {
     static final Set<String> METHODS = Set.of("tracks.meters");
-    static final int RANGE = 128, MIN_WINDOW_MS = 50, MAX_WINDOW_MS = 5000, POLL_MS = 20;
+    static final int RANGE = 128, MIN_WINDOW_MS = 50, MAX_WINDOW_MS = 5000;
     private static final Pattern UUID =
             Pattern.compile("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}");
     private final Scheduler scheduler;
@@ -132,15 +132,10 @@ final class MeterModule implements HostModule {
             }
         windows.add(w);
         Boolean playingAtStart = transportSafety.playing();
-        poll(op, w, end, windowMs, playingAtStart);
+        scheduler.sample(op, end, () -> w.tick(rms), () -> finish(op, w, windowMs, playingAtStart));
     }
 
-    private void poll(HostOperation op, Window w, long end, int windowMs, Boolean playingAtStart) {
-        w.tick(rms);
-        if (scheduler.now() < end) {
-            scheduler.schedule(op, () -> poll(op, w, end, windowMs, playingAtStart), POLL_MS);
-            return;
-        }
+    private void finish(HostOperation op, Window w, int windowMs, Boolean playingAtStart) {
         windows.remove(w);
         JsonObject out = Results.observed();
         out.addProperty("scope", "vu_meters_over_window");
@@ -149,7 +144,9 @@ final class MeterModule implements HostModule {
         out.addProperty("range", RANGE);
         out.addProperty("unit", "vu_steps_0_to_" + (RANGE - 1) + "_public_api_publishes_no_db_mapping");
         out.add("playingAtStart", playingAtStart == null ? JsonNull.INSTANCE : new JsonPrimitive(playingAtStart));
-        out.add("playingAtEnd", transportSafety.playing() == null ? JsonNull.INSTANCE : new JsonPrimitive(transportSafety.playing()));
+        out.add(
+                "playingAtEnd",
+                transportSafety.playing() == null ? JsonNull.INSTANCE : new JsonPrimitive(transportSafety.playing()));
         JsonArray tracks = new JsonArray();
         for (int i = 0; i < w.slots.length; i++) {
             int t = w.slots[i];

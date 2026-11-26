@@ -8,7 +8,6 @@ import com.bitwig.extension.controller.api.Application;
 import com.bitwig.extension.controller.api.Project;
 import com.google.gson.JsonObject;
 import java.nio.file.Path;
-import java.util.List;
 import java.util.Set;
 
 /**
@@ -51,6 +50,7 @@ final class ProjectModule implements HostModule {
     private String accessError;
     /** Cleared only by the native callback: until then Bitwig may still be writing. */
     private static final String PENDING = "project.saveAs";
+
     private volatile String pendingPath;
 
     ProjectModule(
@@ -134,7 +134,7 @@ final class ProjectModule implements HostModule {
         save.invoke();
         // Full request deadline, not observeUntil's 750 ms window: a real save can take longer. Shared margin keeps the
         // last poll inside it.
-        await(op, before, op.deadline - Scheduler.DEADLINE_MARGIN_NANOS);
+        awaitSaved(op, before);
     }
 
     private void activateEngine(HostOperation op) {
@@ -153,15 +153,17 @@ final class ProjectModule implements HostModule {
         scheduler.check(op);
         op.dispatched = true;
         activate.invoke();
-        awaitEngine(op, op.deadline - Scheduler.DEADLINE_MARGIN_NANOS);
+        awaitEngine(op);
     }
 
-    private void awaitEngine(HostOperation op, long until) {
-        if (projectState.engineActive()) {
-            JsonObject done = observed();
-            done.addProperty("engineActive", true);
-            op.result.complete(done);
-        } else if (scheduler.now() >= until) {
+    private void awaitEngine(HostOperation op) {
+        scheduler.poll(op, scheduler.deadlineUntil(op), projectState::engineActive, done -> {
+            if (done) {
+                JsonObject result = observed();
+                result.addProperty("engineActive", true);
+                op.result.complete(result);
+                return;
+            }
             JsonObject result = new JsonObject();
             result.addProperty("status", "dispatched");
             result.addProperty("engineActive", false);
@@ -170,30 +172,32 @@ final class ProjectModule implements HostModule {
                     "hint",
                     "The action was dispatched once, not retried, but hasActiveEngine did not become true in time. A dialog may be blocking it, or the project may still be loading: check status.engineActive and projectReady before another attempt.");
             op.result.complete(result);
-        } else {
-            scheduler.schedule(op, () -> awaitEngine(op, until), 50);
-        }
+        });
     }
 
-    private void await(HostOperation op, long before, long until) {
-        if (projectState.modifiedSequence() > before && Boolean.FALSE.equals(projectState.modified())) {
-            JsonObject done = observed();
-            done.addProperty("saved", true);
-            done.addProperty("projectModified", false);
-            op.result.complete(done);
-        } else if (scheduler.now() >= until) {
-            JsonObject result = new JsonObject();
-            result.addProperty("status", "dispatched");
-            result.addProperty("saved", false);
-            result.addProperty("completion", "not_observed");
-            result.add("projectModified", Results.modified(projectState.modified()));
-            result.addProperty(
-                    "hint",
-                    "Save was dispatched once, not retried. A modal dialog (Save As for an untitled project, crash recovery, ...) can block the save and needs GUI/user completion; check projectModified via status before any further action.");
-            op.result.complete(result);
-        } else {
-            scheduler.schedule(op, () -> await(op, before, until), 20);
-        }
+    private void awaitSaved(HostOperation op, long before) {
+        scheduler.poll(
+                op,
+                scheduler.deadlineUntil(op),
+                () -> projectState.modifiedSequence() > before && Boolean.FALSE.equals(projectState.modified()),
+                done -> {
+                    if (done) {
+                        JsonObject result = observed();
+                        result.addProperty("saved", true);
+                        result.addProperty("projectModified", false);
+                        op.result.complete(result);
+                        return;
+                    }
+                    JsonObject result = new JsonObject();
+                    result.addProperty("status", "dispatched");
+                    result.addProperty("saved", false);
+                    result.addProperty("completion", "not_observed");
+                    result.add("projectModified", Results.modified(projectState.modified()));
+                    result.addProperty(
+                            "hint",
+                            "Save was dispatched once, not retried. A modal dialog (Save As for an untitled project, crash recovery, ...) can block the save and needs GUI/user completion; check projectModified via status before any further action.");
+                    op.result.complete(result);
+                });
     }
 
     /** Binding availability for capabilities; binds on first use, never dispatches. */
@@ -282,11 +286,7 @@ final class ProjectModule implements HostModule {
                                 op.dispatched = true;
                             },
                             outcome);
-                    scheduler.schedule(
-                            op,
-                            () -> awaitSaveAs(
-                                    op, plan, outcome, bridge, op.deadline - Scheduler.DEADLINE_MARGIN_NANOS),
-                            0);
+                    scheduler.schedule(op, () -> awaitSaveAs(op, plan, outcome, bridge), 0);
                 } catch (RuntimeException | Error error) {
                     if (!op.dispatched) holds.release(PENDING);
                     op.fail(error);
@@ -298,9 +298,21 @@ final class ProjectModule implements HostModule {
         }
     }
 
-    private void awaitSaveAs(
-            HostOperation op, ProjectSaveAsPlan plan, Outcome outcome, SaveAsAccess bridge, long until) {
-        boolean late = scheduler.now() >= until;
+    private void awaitSaveAs(HostOperation op, ProjectSaveAsPlan plan, Outcome outcome, SaveAsAccess bridge) {
+        scheduler.poll(
+                op,
+                scheduler.deadlineUntil(op),
+                () -> outcome.done && (outcome.failure != null || saveObserved(plan)),
+                done -> finishSaveAs(op, plan, outcome, bridge));
+    }
+
+    private boolean saveObserved(ProjectSaveAsPlan plan) {
+        return ProjectSaveAsPlan.Stat.of(plan.file).writtenSince(plan.before)
+                && Boolean.FALSE.equals(projectState.modified())
+                && plan.name.equals(application.projectName().get());
+    }
+
+    private void finishSaveAs(HostOperation op, ProjectSaveAsPlan plan, Outcome outcome, SaveAsAccess bridge) {
         // One snapshot per poll: failure is written before done, so it is stable once done is seen.
         boolean done = outcome.done;
         String failure = done ? outcome.failure : null;
@@ -319,10 +331,6 @@ final class ProjectModule implements HostModule {
         boolean written = file.writtenSince(plan.before), saved = Boolean.FALSE.equals(projectState.modified());
         String name = application.projectName().get();
         boolean named = plan.name.equals(name);
-        if (!(done && written && saved && named) && !late) {
-            scheduler.schedule(op, () -> awaitSaveAs(op, plan, outcome, bridge, until), 25);
-            return;
-        }
         boolean observed = done && written && saved && named;
         JsonObject result = new JsonObject();
         result.addProperty("status", observed ? "observed" : "dispatched");

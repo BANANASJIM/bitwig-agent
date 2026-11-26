@@ -177,7 +177,7 @@ final class MarkerModule implements HostModule {
             newName = p.get("name").getAsString();
             expected.merge(new Marker(0, newName, target.beat).key(), 1, Integer::sum);
             if (newName.equals(target.name)) {
-                finish(op, method, expected, before, target.beat, newName, "already_at_value", true);
+                finish(op, method, expected, target.beat, newName, "already_at_value", true);
                 return;
             }
         }
@@ -187,7 +187,7 @@ final class MarkerModule implements HostModule {
         CueMarker marker = items[target.slot];
         if (method.equals("markers.rename")) marker.name().set(newName);
         else marker.deleteObject();
-        awaitMulti(op, method, expected, before, target.beat, newName, scheduler.observeUntil(op));
+        awaitMulti(op, method, expected, target.beat, newName);
     }
 
     private Marker locate(Snapshot snap, JsonObject p) {
@@ -219,24 +219,24 @@ final class MarkerModule implements HostModule {
         op.dispatched = true;
         holds.place(UNRESOLVED, "A markers.* write was dispatched and its outcome was not observed.");
         transport.addCueMarkerAtPlaybackPosition();
-        awaitInserted(op, p, before, scheduler.observeUntil(op));
+        awaitInserted(op, p, before);
     }
 
     /** The new marker is whatever single entry the multiset gained; it is then named and moved in one controller callback. */
-    private void awaitInserted(HostOperation op, JsonObject p, Snapshot before, long until) {
-        Snapshot now = read();
-        Map<String, Integer> gained = diff(now.multiset(), before.multiset());
-        if (now.total == before.total + 1
-                && now.complete
-                && gained.size() == 1
-                && gained.values().iterator().next() == 1) {
-            String key = gained.keySet().iterator().next();
-            Marker created = null;
-            for (Marker m : now.markers)
-                if (m.key().equals(key)) {
-                    created = m;
-                    break;
-                }
+    private void awaitInserted(HostOperation op, JsonObject p, Snapshot before) {
+        Runnable finish = () -> {
+            Snapshot now = read();
+            Marker created = gained(now, before);
+            if (created == null) {
+                JsonObject result = describe(now);
+                result.addProperty("status", "dispatched");
+                result.addProperty("completion", "unknown");
+                result.addProperty("matchesRequested", false);
+                result.addProperty("reason", "unique_added_marker_not_observed");
+                holds.place(UNRESOLVED, "A markers.* write was dispatched and its outcome was not observed.");
+                op.result.complete(result);
+                return;
+            }
             double beat = p.get("beat").getAsDouble();
             String name = p.has("name") ? p.get("name").getAsString() : created.name;
             boolean sameName = name.equals(created.name), sameBeat = Math.abs(created.beat - beat) <= BEAT_TOLERANCE;
@@ -245,47 +245,49 @@ final class MarkerModule implements HostModule {
             if (!sameBeat) marker.position().set(beat);
             Map<String, Integer> expected = before.multiset();
             expected.merge(new Marker(0, name, beat).key(), 1, Integer::sum);
-            awaitMulti(op, "markers.insert", expected, before, beat, name, scheduler.observeUntil(op));
-            return;
-        }
-        if (scheduler.now() >= until || now.total > before.total + 1 || gained.size() > 1) {
-            JsonObject result = describe(now);
-            result.addProperty("status", "dispatched");
-            result.addProperty("completion", "unknown");
-            result.addProperty("matchesRequested", false);
-            result.addProperty("reason", "unique_added_marker_not_observed");
-            holds.place(UNRESOLVED, "A markers.* write was dispatched and its outcome was not observed.");
-            op.result.complete(result);
-            return;
-        }
-        scheduler.schedule(op, () -> awaitInserted(op, p, before, until), 20);
+            awaitMulti(op, "markers.insert", expected, beat, name);
+        };
+        scheduler.poll(
+                op,
+                scheduler.observeUntil(op),
+                () -> {
+                    Snapshot now = read();
+                    return gained(now, before) != null
+                            || now.total > before.total + 1
+                            || diff(now.multiset(), before.multiset()).size() > 1;
+                },
+                finish,
+                finish);
     }
 
-    private void awaitMulti(
-            HostOperation op,
-            String method,
-            Map<String, Integer> expected,
-            Snapshot before,
-            double beat,
-            String name,
-            long until) {
-        Snapshot now = read();
-        if (now.complete && same(now.multiset(), expected)) {
-            finish(op, method, expected, now, beat, name, "observer_after_write", true);
-            return;
-        }
-        if (scheduler.now() >= until) {
-            finish(op, method, expected, now, beat, name, "not_observed", false);
-            return;
-        }
-        scheduler.schedule(op, () -> awaitMulti(op, method, expected, before, beat, name, until), 20);
+    /** The single marker the list gained, or null while that is not (yet) what was observed. */
+    private Marker gained(Snapshot now, Snapshot before) {
+        Map<String, Integer> gained = diff(now.multiset(), before.multiset());
+        if (now.total != before.total + 1
+                || !now.complete
+                || gained.size() != 1
+                || gained.values().iterator().next() != 1) return null;
+        String key = gained.keySet().iterator().next();
+        for (Marker m : now.markers) if (m.key().equals(key)) return m;
+        return null;
+    }
+
+    private void awaitMulti(HostOperation op, String method, Map<String, Integer> expected, double beat, String name) {
+        scheduler.poll(
+                op,
+                scheduler.observeUntil(op),
+                () -> {
+                    Snapshot now = read();
+                    return now.complete && same(now.multiset(), expected);
+                },
+                () -> finish(op, method, expected, beat, name, "observer_after_write", true),
+                () -> finish(op, method, expected, beat, name, "not_observed", false));
     }
 
     private void finish(
             HostOperation op,
             String method,
             Map<String, Integer> expected,
-            Snapshot now,
             double beat,
             String name,
             String verification,

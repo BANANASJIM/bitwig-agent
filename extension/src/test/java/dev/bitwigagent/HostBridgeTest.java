@@ -423,8 +423,7 @@ public final class HostBridgeTest {
         f.tasks.advance(SETTLE);
         for (String method : HostFixture.SPECS.methods()) {
             if (!HostFixture.SPECS.get(method).engineRequired) continue;
-            RpcException refused =
-                    assertThrows(RpcException.class, () -> bridge.preflight(method), method);
+            RpcException refused = assertThrows(RpcException.class, () -> bridge.preflight(method), method);
             assertTrue(
                     refused.code.equals("engine_inactive")
                             && refused.getMessage().contains(method),

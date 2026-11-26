@@ -119,8 +119,7 @@ final class ModulatorEditModule implements HostModule {
         try {
             // The Grid reader keeps its own error code: it downgrades optional metadata failures only for
             // grid_unavailable.
-            Bitwig614GridAdapter grid =
-                    new Bitwig614GridAdapter(natives.get(op).access(ErrorCode.GRID_UNAVAILABLE));
+            Bitwig614GridAdapter grid = new Bitwig614GridAdapter(natives.get(op).access(ErrorCode.GRID_UNAVAILABLE));
             editor = new ModulatorEditor(new Bitwig614ModulatorEditAccess(bindings, grid));
         } catch (ReflectiveOperationException | RuntimeException | LinkageError error) {
             unavailable = "Device-modulator edit bindings unavailable: " + Bitwig614Runtime.diagnostic(error);
@@ -156,7 +155,8 @@ final class ModulatorEditModule implements HostModule {
         scheduler.check(op);
         ModulatorEditor edits = editor(op);
         final boolean writing = !specs.get(method).readOnly;
-        final Runnable safety = writing ? transportSafety.writeGuard(op, !method.equals("modulators.parameters.set")) : null;
+        final Runnable safety =
+                writing ? transportSafety.writeGuard(op, !method.equals("modulators.parameters.set")) : null;
         final DeviceSources.RootReadTicket target = sources.rootRead(p.getAsJsonObject("parent"));
         final UUID trackId = UUID.fromString(target.trackId);
         final UUID modulatorId =

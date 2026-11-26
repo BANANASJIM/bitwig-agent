@@ -357,7 +357,8 @@ final class AutomationModule implements HostModule {
     public void dispatch(HostOperation op, String method, JsonObject p) {
         scheduler.check(op);
         boolean write = method.equals("automation.points.set");
-        if (holds.held(PENDING)) throw Errors.notApplied(ErrorCode.BUSY, "Another native automation operation is pending.");
+        if (holds.held(PENDING))
+            throw Errors.notApplied(ErrorCode.BUSY, "Another native automation operation is pending.");
         if (write && holds.held(QUARANTINE))
             throw Errors.notApplied(
                     ErrorCode.UNRESOLVED_MUTATION,

@@ -8,19 +8,19 @@ final class TransportSafety {
     private volatile SafetyObservation observed = new SafetyObservation(0, null, null, null, null);
 
     TransportSafety(Transport transport) {
-        transport.isPlaying().addValueObserver((BooleanValueChangedCallback) value -> publish(
-                value, observed.recording, observed.arrangerAutomation, observed.launcherAutomation));
-        transport.isArrangerRecordEnabled().addValueObserver((BooleanValueChangedCallback) value -> publish(
-                observed.playing, value, observed.arrangerAutomation, observed.launcherAutomation));
-        transport.isArrangerAutomationWriteEnabled().addValueObserver((BooleanValueChangedCallback) value -> publish(
-                observed.playing, observed.recording, value, observed.launcherAutomation));
+        transport.isPlaying().addValueObserver((BooleanValueChangedCallback)
+                value -> publish(value, observed.recording, observed.arrangerAutomation, observed.launcherAutomation));
+        transport.isArrangerRecordEnabled().addValueObserver((BooleanValueChangedCallback)
+                value -> publish(observed.playing, value, observed.arrangerAutomation, observed.launcherAutomation));
+        transport.isArrangerAutomationWriteEnabled().addValueObserver((BooleanValueChangedCallback)
+                value -> publish(observed.playing, observed.recording, value, observed.launcherAutomation));
         observeLauncherAutomation(transport);
     }
 
     @SuppressWarnings("deprecation")
     private void observeLauncherAutomation(Transport transport) {
-        transport.isClipLauncherAutomationWriteEnabled().addValueObserver((BooleanValueChangedCallback) value ->
-                publish(observed.playing, observed.recording, observed.arrangerAutomation, value));
+        transport.isClipLauncherAutomationWriteEnabled().addValueObserver((BooleanValueChangedCallback)
+                value -> publish(observed.playing, observed.recording, observed.arrangerAutomation, value));
     }
 
     private void publish(Boolean playing, Boolean recording, Boolean arranger, Boolean launcher) {

@@ -1722,7 +1722,9 @@ public final class LauncherModuleTest {
         f = riff();
         f.put(0, 0, 16, 120, 90, 2);
         fail(f, clipEdit("transpose", "semitones", 12), "invalid_params", "not_applied");
-        assertTrue(f.transposes == 0 && f.services.holds.descriptions().isEmpty(), "out-of-range transpose changes nothing");
+        assertTrue(
+                f.transposes == 0 && f.services.holds.descriptions().isEmpty(),
+                "out-of-range transpose changes nothing");
         Fake empty = new Fake();
         empty.slots[0].content = true;
         empty.slots[0].name = "Riff";
@@ -1763,7 +1765,8 @@ public final class LauncherModuleTest {
         f.put(0, 0, 4, 67, 80, 2);
         fail(f, clipEdit("quantize", "amount", 1), "quantize_invariants_violated", "unknown");
         assertTrue(
-                f.services.holds.descriptions().size() == 1, "quantize that changes the onset count is unknown and quarantined");
+                f.services.holds.descriptions().size() == 1,
+                "quantize that changes the onset count is unknown and quarantined");
         f = riff();
         f.quantizeMoves = false;
         r = run(f, clipEdit("quantize", "amount", 1));
@@ -1953,7 +1956,9 @@ public final class LauncherModuleTest {
         f = riff();
         f.applyDelete = false;
         fail(f, clipEdit("delete"), "delete_not_observed", "unknown");
-        assertTrue(f.deletes == 1 && f.services.holds.descriptions().size() == 1, "unobserved delete is unknown and quarantined");
+        assertTrue(
+                f.deletes == 1 && f.services.holds.descriptions().size() == 1,
+                "unobserved delete is unknown and quarantined");
         expectQuarantine(f.start("launcher.create", createTarget()), "clips.edit delete", ID);
         f = riff();
         fail(f, clipEditNamed("Other", "delete"), "stale_target", "not_applied");

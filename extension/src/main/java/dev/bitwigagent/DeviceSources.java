@@ -524,8 +524,7 @@ final class DeviceSources {
         Source source = root(parent);
         if (source.position >= source.track.count)
             throw Errors.notApplied(ErrorCode.TARGET_NOT_FOUND, "Parent is outside the observed device count.");
-        RootReadTicket ticket =
-                new RootReadTicket(source, trackOffset, window.total());
+        RootReadTicket ticket = new RootReadTicket(source, trackOffset, window.total());
         guardRootRead(ticket);
         return ticket;
     }

@@ -286,7 +286,8 @@ final class RoutingModule implements HostModule {
     public void dispatch(HostOperation op, String method, JsonObject p) {
         scheduler.check(op);
         boolean write = !specs.get(method).readOnly;
-        if (holds.held(PENDING)) throw Errors.notApplied(ErrorCode.BUSY, "Another native routing operation is pending.");
+        if (holds.held(PENDING))
+            throw Errors.notApplied(ErrorCode.BUSY, "Another native routing operation is pending.");
         if (write && holds.held(QUARANTINE))
             throw Errors.notApplied(
                     ErrorCode.UNRESOLVED_MUTATION,

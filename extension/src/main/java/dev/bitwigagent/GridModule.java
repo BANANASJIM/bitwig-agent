@@ -30,8 +30,7 @@ final class GridModule implements HostModule {
     private final NativeRuntime natives;
     private GridAdapter adapter;
 
-    GridModule(
-            Scheduler scheduler, DeviceSources sources, TransportSafety transportSafety, NativeRuntime natives) {
+    GridModule(Scheduler scheduler, DeviceSources sources, TransportSafety transportSafety, NativeRuntime natives) {
         this(scheduler, sources, transportSafety, natives, null);
     }
 
@@ -433,8 +432,7 @@ final class GridModule implements HostModule {
     @Override
     public void dispatch(HostOperation op, String method, JsonObject p) {
         scheduler.check(op);
-        if (adapter == null)
-            adapter = new Bitwig614GridAdapter(natives.get(op).access(ErrorCode.GRID_UNAVAILABLE));
+        if (adapter == null) adapter = new Bitwig614GridAdapter(natives.get(op).access(ErrorCode.GRID_UNAVAILABLE));
         if (method.equals("grid.capabilities")) {
             scheduler.check(op);
             JsonObject full = adapter.capabilities();

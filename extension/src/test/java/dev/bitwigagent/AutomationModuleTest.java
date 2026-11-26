@@ -186,7 +186,8 @@ public final class AutomationModuleTest {
         before.drain();
         assertRpcError("stale_target", rejected);
         assertTrue(
-                !rejected.dispatched && before.host.services.holds.descriptions().isEmpty(),
+                !rejected.dispatched
+                        && before.host.services.holds.descriptions().isEmpty(),
                 "pre-dispatch refusal does not quarantine");
     }
 

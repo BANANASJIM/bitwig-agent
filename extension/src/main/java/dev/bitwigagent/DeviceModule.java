@@ -167,9 +167,7 @@ final class DeviceModule implements HostModule {
             pages.add(page);
         }
         result.add("pages", pages);
-        result.add(
-                "pageWindow",
-                Results.window(0, 4096, source.page.pageCount().get()));
+        result.add("pageWindow", Results.window(0, 4096, source.page.pageCount().get()));
         JsonArray controls = new JsonArray();
         boolean complete = true;
         for (int i = 0; i < 8; i++) {
@@ -281,39 +279,54 @@ final class DeviceModule implements HostModule {
     }
 
     private void observePage(HostOperation op, Target target, int index, String name, long sequence, long end) {
-        if (!matches(target)) {
-            uncertain(op, "target_changed_after_dispatch");
-            return;
-        }
-        Source source = target.source;
-        boolean observed = source.pageSequence > sequence
-                && source.page.selectedPageIndex().get() == index
-                && name.equals(source.page.getName().get());
-        if (observed || scheduler.now() >= end) {
-            JsonObject result = remoteMetadata(target);
-            result.addProperty("status", observed ? "observed" : "dispatched");
-            result.addProperty("verification", observed ? "page_observer_after_write" : "postcondition_not_observed");
-            op.result.complete(result);
-        } else scheduler.schedule(op, () -> observePage(op, target, index, name, sequence, end), 25);
+        Runnable observed = () -> finishPage(op, target, true);
+        scheduler.conclude(
+                op,
+                end,
+                () -> {
+                    if (!matches(target)) return () -> uncertain(op, "target_changed_after_dispatch");
+                    Source source = target.source;
+                    return source.pageSequence > sequence
+                                    && source.page.selectedPageIndex().get() == index
+                                    && name.equals(source.page.getName().get())
+                            ? observed
+                            : null;
+                },
+                () -> finishPage(op, target, false));
+    }
+
+    private void finishPage(HostOperation op, Target target, boolean observed) {
+        JsonObject result = remoteMetadata(target);
+        result.addProperty("status", observed ? "observed" : "dispatched");
+        result.addProperty("verification", observed ? "page_observer_after_write" : "postcondition_not_observed");
+        op.result.complete(result);
     }
 
     private void observeRemote(
             HostOperation op, Target target, int index, double value, String token, long sequence, long end) {
-        if (!matches(target) || !token.equals(remoteToken(target))) {
-            uncertain(op, "remote_context_changed_after_dispatch");
-            return;
-        }
-        Source source = target.source;
-        boolean observed = source.controlValuesFresh[index]
-                && source.controlSequences[index] > sequence
-                && Math.abs(source.controls[index].value().get() - value) <= HostLimits.TOLERANCE;
-        if (observed || scheduler.now() >= end) {
-            JsonObject result = remoteMetadata(target);
-            result.addProperty("status", observed ? "observed" : "dispatched");
-            result.addProperty("verification", observed ? "observer_after_write" : "postcondition_not_observed");
-            result.addProperty("requestedNormalizedValue", value);
-            op.result.complete(result);
-        } else scheduler.schedule(op, () -> observeRemote(op, target, index, value, token, sequence, end), 25);
+        Runnable observed = () -> finishRemote(op, target, value, true);
+        scheduler.conclude(
+                op,
+                end,
+                () -> {
+                    if (!matches(target) || !token.equals(remoteToken(target)))
+                        return () -> uncertain(op, "remote_context_changed_after_dispatch");
+                    Source source = target.source;
+                    return source.controlValuesFresh[index]
+                                    && source.controlSequences[index] > sequence
+                                    && Math.abs(source.controls[index].value().get() - value) <= HostLimits.TOLERANCE
+                            ? observed
+                            : null;
+                },
+                () -> finishRemote(op, target, value, false));
+    }
+
+    private void finishRemote(HostOperation op, Target target, double value, boolean observed) {
+        JsonObject result = remoteMetadata(target);
+        result.addProperty("status", observed ? "observed" : "dispatched");
+        result.addProperty("verification", observed ? "observer_after_write" : "postcondition_not_observed");
+        result.addProperty("requestedNormalizedValue", value);
+        op.result.complete(result);
     }
 
     private static boolean remoteSourcePresent(Source source) {
@@ -612,7 +625,8 @@ final class DeviceModule implements HostModule {
     private Target target(JsonObject p) {
         deviceSources.requireZeroWindow(p);
         DeviceSources.Source root = deviceSources.root(p);
-        Source source = sources[window.trackSlot(root.track.id)][p.get("deviceIndex").getAsInt()];
+        Source source =
+                sources[window.trackSlot(root.track.id)][p.get("deviceIndex").getAsInt()];
         if (!source.ready()) throw Errors.notApplied(ErrorCode.NOT_READY, "Device metadata has not been observed.");
         return new Target(root.track.id, root.track.slot, source.deviceIndex, root.name, source, root.revision);
     }
@@ -655,22 +669,26 @@ final class DeviceModule implements HostModule {
     }
 
     private void observeEnabled(HostOperation op, Target target, boolean enabled, long sequence, long end) {
-        if (!matches(target)) {
-            uncertain(op, "target_changed_after_dispatch");
-            return;
-        }
-        if (target.source.enabledSequence > sequence
-                && target.source.device.isEnabled().get() == enabled) {
-            JsonObject result = metadata(target);
-            result.addProperty("verification", "observer_after_write");
-            op.result.complete(result);
-        } else if (scheduler.now() >= end) {
-            JsonObject result = metadata(target);
-            result.addProperty("status", "dispatched");
-            result.addProperty("verification", "postcondition_not_observed");
-            result.addProperty("requestedEnabled", enabled);
-            op.result.complete(result);
-        } else scheduler.schedule(op, () -> observeEnabled(op, target, enabled, sequence, end), 25);
+        scheduler.conclude(
+                op,
+                end,
+                () -> {
+                    if (!matches(target)) return () -> uncertain(op, "target_changed_after_dispatch");
+                    if (target.source.enabledSequence <= sequence
+                            || target.source.device.isEnabled().get() != enabled) return null;
+                    return () -> {
+                        JsonObject result = metadata(target);
+                        result.addProperty("verification", "observer_after_write");
+                        op.result.complete(result);
+                    };
+                },
+                () -> {
+                    JsonObject result = metadata(target);
+                    result.addProperty("status", "dispatched");
+                    result.addProperty("verification", "postcondition_not_observed");
+                    result.addProperty("requestedEnabled", enabled);
+                    op.result.complete(result);
+                });
     }
 
     /** One verified edit in flight: what was planned, how to read the chain, and what to add to the result. */
@@ -924,19 +942,21 @@ final class DeviceModule implements HostModule {
     }
 
     private void observeEdit(HostOperation op, Edit edit, long end) {
-        if (!edit.context.getAsBoolean()) {
-            uncertain(op, edit.contextLost);
-            return;
-        }
-        DeviceChainEdit.Outcome outcome =
-                edit.prefixRevisions != null && !prefixMatches(edit.slot, edit.prefixRevisions)
-                        ? DeviceChainEdit.Outcome.ambiguous()
-                        : DeviceChainEdit.observe(edit.view, edit.plan);
-        if (outcome.pending && scheduler.now() < end) {
-            scheduler.schedule(op, () -> observeEdit(op, edit, end), 25);
-            return;
-        }
-        finishEdit(op, edit, outcome, null);
+        scheduler.conclude(
+                op,
+                end,
+                () -> {
+                    if (!edit.context.getAsBoolean()) return () -> uncertain(op, edit.contextLost);
+                    DeviceChainEdit.Outcome outcome = observedEdit(edit);
+                    return outcome.pending ? null : () -> finishEdit(op, edit, outcome, null);
+                },
+                () -> finishEdit(op, edit, observedEdit(edit), null));
+    }
+
+    private DeviceChainEdit.Outcome observedEdit(Edit edit) {
+        return edit.prefixRevisions != null && !prefixMatches(edit.slot, edit.prefixRevisions)
+                ? DeviceChainEdit.Outcome.ambiguous()
+                : DeviceChainEdit.observe(edit.view, edit.plan);
     }
 
     private void finishEdit(HostOperation op, Edit edit, DeviceChainEdit.Outcome outcome, String override) {

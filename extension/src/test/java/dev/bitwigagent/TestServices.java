@@ -86,8 +86,7 @@ final class TestServices {
     }
 
     MixModule mix(MixModule.GroupAccess access) {
-        return new MixModule(
-                host, scheduler, window, application, transportSafety, selection, natives, holds, access);
+        return new MixModule(host, scheduler, window, application, transportSafety, selection, natives, holds, access);
     }
 
     ModulatorModule modulator(ModulatorAdapter adapter) {

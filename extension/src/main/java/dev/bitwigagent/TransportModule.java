@@ -203,8 +203,8 @@ final class TransportModule implements HostModule {
     private void writeRemaining(Request request) {
         try {
             for (String key : ORDER)
-                if (request.p.has(key) && !(key.equals("playing") && !request.p.get(key).getAsBoolean()))
-                    write(request, key);
+                if (request.p.has(key)
+                        && !(key.equals("playing") && !request.p.get(key).getAsBoolean())) write(request, key);
         } catch (RpcException error) {
             if (!request.op.dispatched) throw error;
             finish(request, error.code);
@@ -289,7 +289,7 @@ final class TransportModule implements HostModule {
                         done &= verified(key, request.p.get(key), request.writes.get(key));
                     return done;
                 },
-                () -> finish(request, null));
+                done -> finish(request, null));
     }
 
     private boolean verified(String key, JsonElement expected, Long before) {

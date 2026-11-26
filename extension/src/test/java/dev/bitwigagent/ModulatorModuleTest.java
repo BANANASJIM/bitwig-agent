@@ -391,8 +391,7 @@ public final class ModulatorModuleTest {
         assertTrue(
                 first == f.host.services.natives.get(new HostOperation(Long.MAX_VALUE)),
                 "services compose one lazy shared runtime gate");
-        GridModule grid =
-                f.host.services.grid(new Bitwig614GridAdapter(first.access(ErrorCode.GRID_UNAVAILABLE)));
+        GridModule grid = f.host.services.grid(new Bitwig614GridAdapter(first.access(ErrorCode.GRID_UNAVAILABLE)));
         f.devices.child("scrollPosition").emit(1);
         f.devices.child("itemCount").emit(2);
         f.device.child("position").emit(1);

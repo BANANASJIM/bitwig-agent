@@ -3,7 +3,9 @@ package dev.bitwigagent;
 import com.bitwig.extension.controller.api.ControllerHost;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 import java.util.function.LongSupplier;
+import java.util.function.Supplier;
 
 /** Controller-thread task queue, the one clock, request deadlines and polling for observed state. */
 final class Scheduler implements AutoCloseable {
@@ -51,9 +53,33 @@ final class Scheduler implements AutoCloseable {
         else schedule(operation, () -> poll(operation, until, done, onDone, onTimeout), POLL_MS);
     }
 
-    /** {@link #poll} with one finisher for both ends; it reads the final state itself. */
-    void poll(HostOperation operation, long until, BooleanSupplier done, Runnable finish) {
-        poll(operation, until, done, finish, finish);
+    /** {@link #poll} with one finisher that reads the final state and is told whether {@code done} held. */
+    void poll(HostOperation operation, long until, BooleanSupplier done, Consumer<Boolean> finish) {
+        poll(operation, until, done, () -> finish.accept(true), () -> finish.accept(false));
+    }
+
+    /** Polls {@code step} until it returns the conclusion to run; {@code onTimeout} runs if {@code until} passes first. */
+    void conclude(HostOperation operation, long until, Supplier<Runnable> step, Runnable onTimeout) {
+        Runnable[] conclusion = new Runnable[1];
+        poll(operation, until, () -> (conclusion[0] = step.get()) != null, () -> conclusion[0].run(), onTimeout);
+    }
+
+    /** Polls until {@code done}; the request deadline, enforced by every scheduled step, is the only timeout. */
+    void await(HostOperation operation, BooleanSupplier done, Runnable onDone) {
+        poll(operation, Long.MAX_VALUE, done, onDone, () -> {});
+    }
+
+    /** Takes {@code sample} now and every {@link #POLL_MS} until {@code until}, then {@code onEnd}. */
+    void sample(HostOperation operation, long until, Runnable sample, Runnable onEnd) {
+        poll(
+                operation,
+                until,
+                () -> {
+                    sample.run();
+                    return false;
+                },
+                () -> {},
+                onEnd);
     }
 
     long observeUntil(HostOperation operation) {

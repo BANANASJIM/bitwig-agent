@@ -58,6 +58,18 @@ final class TrackWindow {
         return parents[slot];
     }
 
+    /** Marks what an addressed launcher slot is compared against (name, content, scene index) so its getters are valid. */
+    void markSlotIdentityInterested(Track track) {
+        ClipLauncherSlotBank slots = track.clipLauncherSlotBank();
+        slots.itemCount().markInterested();
+        for (int j = 0; j < SCENES; j++) {
+            ClipLauncherSlot slot = (ClipLauncherSlot) slots.getItemAt(j);
+            slot.name().markInterested();
+            slot.hasContent().markInterested();
+            slot.sceneIndex().markInterested();
+        }
+    }
+
     int offset() {
         return bank.scrollPosition().get();
     }

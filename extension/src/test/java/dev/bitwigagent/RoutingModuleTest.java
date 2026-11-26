@@ -191,7 +191,9 @@ public final class RoutingModuleTest {
         assertTrue(
                 f.adapter.writes == 1 && result.get("status").getAsString().equals("applied"),
                 "stopped transport admits the write");
-        assertTrue(f.host.services.holds.descriptions().isEmpty(), "an observed write clears the pending/quarantine state");
+        assertTrue(
+                f.host.services.holds.descriptions().isEmpty(),
+                "an observed write clears the pending/quarantine state");
     }
 
     @Test

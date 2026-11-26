@@ -14,8 +14,7 @@ final class LauncherStructureLock {
     }
 
     void requireNoCursorOperation() {
-        if (selection.held())
-            throw Errors.notApplied(ErrorCode.BUSY, "Launcher editor operation is still pending");
+        if (selection.held()) throw Errors.notApplied(ErrorCode.BUSY, "Launcher editor operation is still pending");
     }
 
     void requireNoSettingsWrite() {

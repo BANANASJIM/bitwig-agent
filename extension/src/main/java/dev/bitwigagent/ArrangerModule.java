@@ -70,11 +70,6 @@ final class ArrangerModule implements HostModule {
     private static final String HOLD = "An arranger clip write is pending or unresolved.";
 
     ArrangerModule(
-            Scheduler scheduler, TrackWindow window, TransportSafety transportSafety, NativeRuntime natives, Holds holds) {
-        this(scheduler, window, transportSafety, natives, holds, null);
-    }
-
-    ArrangerModule(
             Scheduler scheduler,
             TrackWindow window,
             TransportSafety transportSafety,
@@ -92,15 +87,8 @@ final class ArrangerModule implements HostModule {
             Track track = window.at(i);
             track.channelId().addValueObserver((StringValueChangedCallback) v -> epochs.incrementAndGet(index));
             track.exists().addValueObserver((BooleanValueChangedCallback) v -> epochs.incrementAndGet(index));
-            ClipLauncherSlotBank bank = track.clipLauncherSlotBank();
-            bank.scrollPosition().markInterested();
-            bank.itemCount().markInterested();
-            for (int j = 0; j < HostLimits.SCENES; j++) {
-                ClipLauncherSlot slot = (ClipLauncherSlot) bank.getItemAt(j);
-                slot.name().markInterested();
-                slot.hasContent().markInterested();
-                slot.sceneIndex().markInterested();
-            }
+            track.clipLauncherSlotBank().scrollPosition().markInterested();
+            window.markSlotIdentityInterested(track);
         }
     }
 
@@ -210,7 +198,8 @@ final class ArrangerModule implements HostModule {
     public void dispatch(HostOperation op, String method, JsonObject p) {
         scheduler.check(op);
         boolean write = !method.equals("arranger.clips.list");
-        if (holds.held(PENDING)) throw Errors.notApplied(ErrorCode.BUSY, "Another native arranger operation is pending.");
+        if (holds.held(PENDING))
+            throw Errors.notApplied(ErrorCode.BUSY, "Another native arranger operation is pending.");
         if (write && holds.held(QUARANTINE))
             throw Errors.notApplied(
                     ErrorCode.UNRESOLVED_MUTATION,

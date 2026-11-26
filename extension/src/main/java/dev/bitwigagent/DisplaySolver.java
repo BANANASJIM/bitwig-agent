@@ -12,7 +12,6 @@ import java.util.function.Consumer;
 final class DisplaySolver {
     static final int MAX_PROBES = 28;
     static final long PROBE_TIMEOUT_NANOS = TimeUnit.MILLISECONDS.toNanos(500);
-    static final long POLL_MS = 20;
     /** Polls after the value callback before the display text is read (the two callbacks are independent). */
     static final int SETTLE_POLLS = 2;
 
@@ -73,7 +72,12 @@ final class DisplaySolver {
     private double lo = 0, hi = 1;
 
     DisplaySolver(
-            Scheduler scheduler, HostOperation op, Port port, DisplayScale.Kind kind, double target, Consumer<Result> done) {
+            Scheduler scheduler,
+            HostOperation op,
+            Port port,
+            DisplayScale.Kind kind,
+            double target,
+            Consumer<Result> done) {
         this.scheduler = scheduler;
         this.op = op;
         this.port = port;
@@ -109,28 +113,38 @@ final class DisplaySolver {
             result.dispatched = true;
             port.write(x);
         }
-        awaitValue(x, before, same, scheduler.now() + PROBE_TIMEOUT_NANOS, same ? 0 : -1);
+        if (same) settle(x);
+        else awaitValue(x, before);
     }
 
-    /** settle < 0: waiting for the value callback; otherwise counts the polls that let the display text catch up. */
-    private void awaitValue(double x, long before, boolean same, long until, int settle) {
+    private boolean targetHolds() {
         try {
             port.guard();
+            return true;
         } catch (RpcException error) {
-            fail("target_changed");
-            return;
+            return false;
         }
-        if (settle < 0 && port.valueSeq() > before && near(port.value(), x)) settle = 0;
-        if (settle >= SETTLE_POLLS) {
-            evaluate(x);
-            return;
-        }
-        if (settle < 0 && scheduler.now() >= until) {
-            fail("probe_not_observed");
-            return;
-        }
-        int next = settle < 0 ? -1 : settle + 1;
-        scheduler.schedule(op, () -> awaitValue(x, before, same, until, next), POLL_MS);
+    }
+
+    private void awaitValue(double x, long before) {
+        scheduler.poll(
+                op,
+                scheduler.now() + PROBE_TIMEOUT_NANOS,
+                () -> !targetHolds() || port.valueSeq() > before && near(port.value(), x),
+                () -> {
+                    if (targetHolds()) settle(x);
+                    else fail("target_changed");
+                },
+                () -> fail("probe_not_observed"));
+    }
+
+    /** Counts the polls that let the display text catch up with the value. */
+    private void settle(double x) {
+        int[] polls = {0};
+        scheduler.await(op, () -> !targetHolds() || polls[0]++ >= SETTLE_POLLS, () -> {
+            if (targetHolds()) evaluate(x);
+            else fail("target_changed");
+        });
     }
 
     private void evaluate(double x) {
@@ -185,35 +199,32 @@ final class DisplaySolver {
             }
             if (value) port.write(result.original);
             if (enabled) port.writeEnabled(result.originalEnabled);
-            awaitRestore(before, enabledBefore, value, enabled, scheduler.now() + PROBE_TIMEOUT_NANOS);
+            awaitRestore(before, enabledBefore, value, enabled);
         } catch (RpcException error) {
             done.accept(result);
         }
     }
 
-    private void awaitRestore(long before, long enabledBefore, boolean value, boolean enabled, long until) {
-        try {
-            port.guard();
-        } catch (RpcException error) {
-            done.accept(result);
-            return;
-        }
+    private void awaitRestore(long before, long enabledBefore, boolean value, boolean enabled) {
+        scheduler.poll(
+                op,
+                scheduler.now() + PROBE_TIMEOUT_NANOS,
+                () -> !targetHolds() || restored(before, enabledBefore, value, enabled),
+                () -> {
+                    result.restored = targetHolds();
+                    done.accept(result);
+                },
+                () -> done.accept(result));
+    }
+
+    private boolean restored(long before, long enabledBefore, boolean value, boolean enabled) {
         JsonElement enabledNow = port.enabled();
         boolean valueOk = !value || (port.valueSeq() > before && near(port.value(), result.original));
         boolean enabledOk = !enabled
                 || (port.enabledSeq() > enabledBefore
                         && !enabledNow.isJsonNull()
                         && enabledNow.getAsBoolean() == result.originalEnabled);
-        if (valueOk && enabledOk) {
-            result.restored = true;
-            done.accept(result);
-            return;
-        }
-        if (scheduler.now() >= until) {
-            done.accept(result);
-            return;
-        }
-        scheduler.schedule(op, () -> awaitRestore(before, enabledBefore, value, enabled, until), POLL_MS);
+        return valueOk && enabledOk;
     }
 
     private static boolean near(JsonElement value, double x) {

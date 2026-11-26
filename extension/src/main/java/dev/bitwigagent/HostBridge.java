@@ -45,18 +45,16 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
         TransportModule transportModule =
                 new TransportModule(transport, application, scheduler, transportSafety, projectState);
         register(transportModule);
-        MixModule mix =
-                new MixModule(host, scheduler, window, application, transportSafety, selection, natives, holds);
+        MixModule mix = new MixModule(host, scheduler, window, application, transportSafety, selection, natives, holds);
         register(mix);
         register(new DeviceModule(host, scheduler, window, sources, transportSafety, selection));
-        LauncherModule launcher =
-                new LauncherModule(host, scheduler, window, transportSafety, selection, lock, holds);
+        LauncherModule launcher = new LauncherModule(host, scheduler, window, transportSafety, selection, lock, holds);
         register(launcher);
         register(new SceneModule(scheduler, window, transportSafety, lock));
         register(new LauncherSettingsModule(scheduler, window, transportSafety, natives, holds, launcher));
         register(new MarkerModule(host, transport, scheduler, transportSafety, holds));
         register(new MeterModule(scheduler, window, transportSafety));
-        register(new ArrangerModule(scheduler, window, transportSafety, natives, holds));
+        register(new ArrangerModule(scheduler, window, transportSafety, natives, holds, null));
         register(new AutomationModule(scheduler, window, sources, transportSafety, natives, holds));
         register(new RoutingModule(scheduler, window, sources, transportSafety, natives, holds, specs));
         register(render);

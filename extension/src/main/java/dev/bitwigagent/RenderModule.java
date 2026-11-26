@@ -25,8 +25,6 @@ final class RenderModule implements HostModule {
             BOUNCE_TAPS = Set.of("pre_fx", "pre_fader", "post_fader");
     /** After the latch, how long the bounce's undoable content replacement may take to show in the lane. */
     long applyGraceNanos = TimeUnit.SECONDS.toNanos(2);
-    /** Poll period; at most half of Scheduler.DEADLINE_MARGIN_NANOS so the last poll lands before the deadline. */
-    static final long POLL_MS = 20;
 
     static final class Export {
         final String format, tap;
@@ -416,14 +414,14 @@ final class RenderModule implements HostModule {
                     };
                     if (export) {
                         next.plan.refresh(next.export.overwrite);
-                        next.handle = bridge.export(
-                                project, proxies, ids, next.plan.basePaths(), next.export, check, before);
+                        next.handle =
+                                bridge.export(project, proxies, ids, next.plan.basePaths(), next.export, check, before);
                     } else {
                         for (int i = 0; i < ids.size(); i++)
                             next.before.put(ids.get(i), bridge.clips(proxies.get(i), ids.get(i), check));
                         next.handle = bridge.bounce(project, proxies, ids, start, end, tap, check, before);
                     }
-                    scheduler.schedule(op, () -> await(op, next, bridge, op.deadline - Scheduler.DEADLINE_MARGIN_NANOS), 0);
+                    scheduler.schedule(op, () -> await(op, next, bridge, scheduler.deadlineUntil(op)), 0);
                 } catch (RuntimeException | Error error) {
                     settle(next, previous);
                     op.fail(error);
@@ -444,14 +442,15 @@ final class RenderModule implements HostModule {
     }
 
     private void await(HostOperation op, Job current, Access bridge, long until) {
-        if (!current.done()) {
-            if (scheduler.now() < until) {
-                scheduler.schedule(op, () -> await(op, current, bridge, until), POLL_MS);
-                return;
-            }
-            op.result.complete(pending(current, bridge));
-            return;
-        }
+        scheduler.poll(
+                op,
+                until,
+                current::done,
+                () -> evaluateFinished(op, current, bridge, until),
+                () -> op.result.complete(pending(current, bridge)));
+    }
+
+    private void evaluateFinished(HostOperation op, Job current, Access bridge, long until) {
         bridge.execute(() -> {
             try {
                 scheduler.check(op);
@@ -464,7 +463,7 @@ final class RenderModule implements HostModule {
                                     && !evaluation.get("changed").getAsBoolean()
                                     && scheduler.now() - current.doneAt < applyGraceNanos;
                             if (waiting && scheduler.now() < until) {
-                                scheduler.schedule(op, () -> await(op, current, bridge, until), POLL_MS);
+                                scheduler.schedule(op, () -> await(op, current, bridge, until), Scheduler.POLL_MS);
                                 return;
                             }
                             if (waiting) {
@@ -706,7 +705,8 @@ final class RenderModule implements HostModule {
                                 if (!current.reported
                                         && current.kind.equals(BOUNCE)
                                         && evaluation.get("changed").getAsBoolean()
-                                        && !evaluation.get("verified").getAsBoolean()) holds.place(QUARANTINE, QUARANTINED);
+                                        && !evaluation.get("verified").getAsBoolean())
+                                    holds.place(QUARANTINE, QUARANTINED);
                                 current.reported = true;
                                 result.add("job", row);
                                 op.result.complete(result);

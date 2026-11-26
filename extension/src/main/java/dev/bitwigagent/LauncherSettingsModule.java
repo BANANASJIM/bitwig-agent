@@ -32,7 +32,8 @@ final class LauncherSettingsModule implements HostModule {
     private final AtomicLongArray epochs = new AtomicLongArray(HostLimits.TRACKS);
     private Access access;
     private LauncherModule launcher;
-    private static final String PENDING = LauncherStructureLock.SETTINGS_PENDING, QUARANTINE = LauncherStructureLock.SETTINGS;
+    private static final String PENDING = LauncherStructureLock.SETTINGS_PENDING,
+            QUARANTINE = LauncherStructureLock.SETTINGS;
     private static final String HOLD = "A launcher.set settings write is pending or unresolved.";
 
     LauncherSettingsModule(
@@ -66,13 +67,7 @@ final class LauncherSettingsModule implements HostModule {
             t.channelId().addValueObserver((StringValueChangedCallback) v -> epochs.incrementAndGet(index));
             t.exists().addValueObserver((BooleanValueChangedCallback) v -> epochs.incrementAndGet(index));
             bank.scrollPosition().addValueObserver((IntegerValueChangedCallback) v -> epochs.incrementAndGet(index));
-            bank.itemCount().markInterested();
-            for (int j = 0; j < HostLimits.SCENES; j++) {
-                ClipLauncherSlot slot = (ClipLauncherSlot) bank.getItemAt(j);
-                slot.name().markInterested();
-                slot.hasContent().markInterested();
-                slot.sceneIndex().markInterested();
-            }
+            window.markSlotIdentityInterested(t);
         }
     }
 
@@ -142,7 +137,8 @@ final class LauncherSettingsModule implements HostModule {
             launcher.launchSettings(op, p);
             return;
         }
-        if (holds.held(PENDING)) throw Errors.notApplied(ErrorCode.BUSY, "Another native launcher settings operation is pending");
+        if (holds.held(PENDING))
+            throw Errors.notApplied(ErrorCode.BUSY, "Another native launcher settings operation is pending");
         if (write && holds.held(QUARANTINE))
             throw Errors.notApplied(
                     ErrorCode.WRITE_QUARANTINED,

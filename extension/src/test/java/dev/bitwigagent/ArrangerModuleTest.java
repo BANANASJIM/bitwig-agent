@@ -157,7 +157,8 @@ public final class ArrangerModuleTest {
         before.drain();
         assertRpcError("arranger_overlap", rejected);
         assertTrue(
-                !rejected.dispatched && before.host.services.holds.descriptions().isEmpty(),
+                !rejected.dispatched
+                        && before.host.services.holds.descriptions().isEmpty(),
                 "pre-dispatch refusal does not quarantine");
     }
 

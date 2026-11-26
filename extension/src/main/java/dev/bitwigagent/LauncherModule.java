@@ -454,28 +454,32 @@ final class LauncherModule implements HostModule {
         // Project.createScene() is documented to create "a new empty scene as the last scene"; existing slot indices do
         // not move.
         for (int i = 0; i < count; i++) project.createScene();
-        awaitScenes(op, before, count, until(op));
-    }
-
-    private void awaitScenes(HostOperation op, int before, int count, long end) {
-        scheduler.check(op);
-        int now = sceneBank.itemCount().get();
-        if (now == before + count) {
-            JsonObject out = Results.observed();
-            out.addProperty("status", "observed");
-            out.addProperty("verification", "scene_count");
-            out.addProperty("sceneCountBefore", before);
-            out.addProperty("sceneCount", now);
-            out.addProperty("appended", count);
-            out.addProperty("firstNewSlotIndex", before);
-            out.addProperty("placement", "last_scene_per_api_documentation; position is not read back, count is");
-            op.result.complete(out);
-        } else if (scheduler.now() >= end) {
-            throw Errors.unknown(
-                    ErrorCode.SCENE_COUNT_NOT_OBSERVED,
-                    "Scene creation was dispatched, but the scene count did not reach " + (before + count)
-                            + " (observed " + now + "); inspect launcher.list and do not blindly repeat");
-        } else scheduler.schedule(op, () -> awaitScenes(op, before, count, end), 20);
+        scheduler.poll(
+                op,
+                until(op),
+                () -> {
+                    scheduler.check(op);
+                    return sceneBank.itemCount().get() == before + count;
+                },
+                () -> {
+                    JsonObject out = Results.observed();
+                    out.addProperty("status", "observed");
+                    out.addProperty("verification", "scene_count");
+                    out.addProperty("sceneCountBefore", before);
+                    out.addProperty("sceneCount", before + count);
+                    out.addProperty("appended", count);
+                    out.addProperty("firstNewSlotIndex", before);
+                    out.addProperty(
+                            "placement", "last_scene_per_api_documentation; position is not read back, count is");
+                    op.result.complete(out);
+                },
+                () -> {
+                    throw Errors.unknown(
+                            ErrorCode.SCENE_COUNT_NOT_OBSERVED,
+                            "Scene creation was dispatched, but the scene count did not reach " + (before + count)
+                                    + " (observed " + sceneBank.itemCount().get()
+                                    + "); inspect launcher.list and do not blindly repeat");
+                });
     }
 
     static int aligned(JsonElement beat, JsonElement size, String field) {
@@ -551,7 +555,26 @@ final class LauncherModule implements HostModule {
             beginMutation(id, track, slot, j, method);
             op.dispatched = true;
             slot.api.createEmptyClip(Params.integer(p, "lengthBeats", 1, MAX_CLIP_BEATS));
-            awaitCreated(op, id, track, slot, j, p, until(op));
+            long end = until(op);
+            JsonObject request = p;
+            awaitGuarded(
+                    op,
+                    () -> guard(op, id, track),
+                    end,
+                    () -> slot.contentVersion > cursorMutation.contentBefore
+                            && slot.observedContent
+                            && slot.api.hasContent().get(),
+                    () -> bind(op, id, track, slot, j, request, "launcher.create", end),
+                    () -> {
+                        JsonObject out = base(id, j);
+                        out.addProperty("status", "dispatched");
+                        out.addProperty("verification", "content_not_observed");
+                        if (request.has("notes")) out.addProperty("noteWrite", "not_attempted");
+                        out.addProperty("mutationUnresolved", true);
+                        out.addProperty("quarantine", "extension_instance");
+                        out.add("slot", slotJson(slot, j));
+                        op.result.complete(out);
+                    });
         } else if (method.equals("launcher.import")) {
             importFile(op, id, track, slot, j, p);
         } else if (method.equals("clips.edit")) {
@@ -621,42 +644,26 @@ final class LauncherModule implements HostModule {
         beginMutation(id, track, slot, index, "launcher.import");
         op.dispatched = true;
         insertion.insertFile(path.toString());
-        awaitImported(op, id, track, slot, index, before, until(op));
-    }
-
-    private void awaitImported(HostOperation op, String id, Track track, Slot slot, int index, long before, long end) {
-        guard(op, id, track);
-        if (slot.contentVersion > before
-                && slot.observedContent
-                && slot.api.hasContent().get()) {
-            JsonObject out = base(id, index);
-            out.addProperty("verification", "slot_content_transition");
-            out.addProperty("requestedFileVerified", false);
-            out.add("slot", slotJson(slot, index));
-            finishMutation();
-            op.result.complete(out);
-        } else if (scheduler.now() >= end) {
-            throw Errors.unknown(
-                    ErrorCode.IMPORT_NOT_OBSERVED,
-                    "File insertion was dispatched, but a fresh slot content transition was not observed; create/import/note writes remain quarantined for this extension instance. Read-only inspection is allowed.");
-        } else scheduler.schedule(op, () -> awaitImported(op, id, track, slot, index, before, end), 20);
-    }
-
-    private void awaitCreated(HostOperation op, String id, Track track, Slot slot, int index, JsonObject p, long end) {
-        guard(op, id, track);
-        if (slot.contentVersion > cursorMutation.contentBefore
-                && slot.observedContent
-                && slot.api.hasContent().get()) bind(op, id, track, slot, index, p, "launcher.create", end);
-        else if (scheduler.now() >= end) {
-            JsonObject out = base(id, index);
-            out.addProperty("status", "dispatched");
-            out.addProperty("verification", "content_not_observed");
-            if (p.has("notes")) out.addProperty("noteWrite", "not_attempted");
-            out.addProperty("mutationUnresolved", true);
-            out.addProperty("quarantine", "extension_instance");
-            out.add("slot", slotJson(slot, index));
-            op.result.complete(out);
-        } else scheduler.schedule(op, () -> awaitCreated(op, id, track, slot, index, p, end), 20);
+        awaitGuarded(
+                op,
+                () -> guard(op, id, track),
+                until(op),
+                () -> slot.contentVersion > before
+                        && slot.observedContent
+                        && slot.api.hasContent().get(),
+                () -> {
+                    JsonObject out = base(id, index);
+                    out.addProperty("verification", "slot_content_transition");
+                    out.addProperty("requestedFileVerified", false);
+                    out.add("slot", slotJson(slot, index));
+                    finishMutation();
+                    op.result.complete(out);
+                },
+                () -> {
+                    throw Errors.unknown(
+                            ErrorCode.IMPORT_NOT_OBSERVED,
+                            "File insertion was dispatched, but a fresh slot content transition was not observed; create/import/note writes remain quarantined for this extension instance. Read-only inspection is allowed.");
+                });
     }
 
     private void bind(
@@ -667,43 +674,44 @@ final class LauncherModule implements HostModule {
         // clips.edit counts as dispatched only at its mutation: selecting alone leaves the clip untouched.
         op.dispatched = !method.equals("clips.edit") && !method.equals("launcher.set");
         slot.api.select();
-        scheduler.schedule(op, () -> awaitBinding(op, id, track, slot, index, p, method, end, false), 40);
+        scheduler.schedule(op, () -> awaitBinding(op, id, track, slot, index, p, method, end), 40);
     }
 
     private void awaitBinding(
-            HostOperation op,
-            String id,
-            Track track,
-            Slot slot,
-            int index,
-            JsonObject p,
-            String method,
-            long end,
-            boolean settled) {
+            HostOperation op, String id, Track track, Slot slot, int index, JsonObject p, String method, long end) {
+        awaitGuarded(
+                op,
+                () -> guard(op, id, track),
+                end,
+                () -> bound(id, slot),
+                () -> {
+                    boolean grid = usesGrid(method, p);
+                    if ((method.equals("notes.read") || method.equals("clips.edit")) && grid && !p.has("stepSizeBeats"))
+                        deriveReadWindow(p);
+                    if (grid) {
+                        Window w = new Window(p);
+                        clip.setStepSize(w.size);
+                        clip.scrollToKey(0);
+                        clip.scrollToStep(w.start);
+                    }
+                    scheduler.schedule(
+                            op,
+                            () -> settledBinding(op, id, track, slot, index, p, method, end),
+                            grid ? NOTE_GRID_SETTLE_MS : Scheduler.POLL_MS);
+                },
+                () -> {
+                    throw Errors.of(
+                            ErrorCode.TARGET_NOT_OBSERVED,
+                            "Cursor slot identity or clip content was not observed",
+                            op.dispatched ? Outcome.UNKNOWN : Outcome.NOT_APPLIED);
+                });
+    }
+
+    private void settledBinding(
+            HostOperation op, String id, Track track, Slot slot, int index, JsonObject p, String method, long end) {
         guard(op, id, track);
         if (!bound(id, slot)) {
-            if (scheduler.now() >= end)
-                throw Errors.of(
-                        ErrorCode.TARGET_NOT_OBSERVED,
-                        "Cursor slot identity or clip content was not observed",
-                        op.dispatched ? Outcome.UNKNOWN : Outcome.NOT_APPLIED);
-            scheduler.schedule(op, () -> awaitBinding(op, id, track, slot, index, p, method, end, false), 20);
-            return;
-        }
-        if (!settled) {
-            boolean grid = usesGrid(method, p);
-            if ((method.equals("notes.read") || method.equals("clips.edit")) && grid && !p.has("stepSizeBeats"))
-                deriveReadWindow(p);
-            if (grid) {
-                Window w = new Window(p);
-                clip.setStepSize(w.size);
-                clip.scrollToKey(0);
-                clip.scrollToStep(w.start);
-            }
-            scheduler.schedule(
-                    op,
-                    () -> awaitBinding(op, id, track, slot, index, p, method, end, true),
-                    grid ? NOTE_GRID_SETTLE_MS : 20);
+            awaitBinding(op, id, track, slot, index, p, method, end);
             return;
         }
         // API exposes no grid-configuration acknowledgement. This is settling, not a proven data barrier.
@@ -713,7 +721,7 @@ final class LauncherModule implements HostModule {
             clip.setName(Params.string(p, "name"));
             // Native createEmptyClip can leave playback stop at its four-beat default.
             clip.getPlayStop().set(Params.integer(p, "lengthBeats", 1, MAX_CLIP_BEATS));
-            scheduler.schedule(op, () -> awaitName(op, id, track, slot, index, p, end), 20);
+            scheduler.schedule(op, () -> awaitName(op, id, track, slot, index, p, end), Scheduler.POLL_MS);
         } else if (method.equals("notes.read")) {
             cursorGuard(op, id, track, slot);
             op.result.complete(notesResult(id, index, new Window(p), true));
@@ -730,14 +738,21 @@ final class LauncherModule implements HostModule {
     }
 
     private void awaitName(HostOperation op, String id, Track track, Slot slot, int index, JsonObject p, long end) {
-        cursorGuard(op, id, track, slot);
-        boolean matches = slot.api.name().get().equals(Params.string(p, "name"))
+        BooleanSupplier named = () -> slot.api.name().get().equals(Params.string(p, "name"))
                 && clip.getLoopLength().get() == Params.integer(p, "lengthBeats", 1, MAX_CLIP_BEATS)
                 && clip.getPlayStop().get() == Params.integer(p, "lengthBeats", 1, MAX_CLIP_BEATS);
-        if (!matches && scheduler.now() < end) {
-            scheduler.schedule(op, () -> awaitName(op, id, track, slot, index, p, end), 20);
-            return;
-        }
+        scheduler.poll(
+                op,
+                end,
+                () -> {
+                    cursorGuard(op, id, track, slot);
+                    return named.getAsBoolean();
+                },
+                matches -> finishCreate(op, id, track, slot, index, p, matches));
+    }
+
+    private void finishCreate(
+            HostOperation op, String id, Track track, Slot slot, int index, JsonObject p, boolean matches) {
         JsonObject out = base(id, index);
         out.addProperty("status", matches ? "observed" : "dispatched");
         out.addProperty("verification", matches ? "slot_content_name_length" : "readback_mismatch");
@@ -883,11 +898,9 @@ final class LauncherModule implements HostModule {
             }
             return true;
         };
-        awaitClip(
+        awaitGuarded(
                 op,
-                id,
-                track,
-                slot,
+                () -> cursorGuard(op, id, track, slot),
                 end,
                 matches,
                 () -> op.result.complete(launchDone(id, index, p, slot, true, written, before)),
@@ -984,11 +997,9 @@ final class LauncherModule implements HostModule {
         long before = cursorMutation.contentBefore;
         op.dispatched = true;
         slot.api.deleteObject();
-        awaitSlot(
+        awaitGuarded(
                 op,
-                id,
-                track,
-                slot,
+                () -> guard(op, id, track),
                 until(op),
                 () -> slot.contentVersion > before
                         && !slot.observedContent
@@ -1052,11 +1063,9 @@ final class LauncherModule implements HostModule {
         };
         // Bitwig may rename the copy: wait for the equal name, but a verified content transition alone is still
         // observed.
-        awaitSlot(
+        awaitGuarded(
                 op,
-                id,
-                track,
-                to,
+                () -> guard(op, id, track),
                 until(op),
                 () -> present.getAsBoolean() && to.api.name().get().equals(name),
                 ok,
@@ -1066,34 +1075,17 @@ final class LauncherModule implements HostModule {
                 });
     }
 
-    private void awaitSlot(
-            HostOperation op,
-            String id,
-            Track track,
-            Slot slot,
-            long end,
-            BooleanSupplier done,
-            Runnable ok,
-            Runnable timeout) {
-        guard(op, id, track);
-        if (done.getAsBoolean()) ok.run();
-        else if (scheduler.now() >= end) timeout.run();
-        else scheduler.schedule(op, () -> awaitSlot(op, id, track, slot, end, done, ok, timeout), 20);
-    }
-
-    private void awaitClip(
-            HostOperation op,
-            String id,
-            Track track,
-            Slot slot,
-            long end,
-            BooleanSupplier done,
-            Runnable ok,
-            Runnable timeout) {
-        cursorGuard(op, id, track, slot);
-        if (done.getAsBoolean()) ok.run();
-        else if (scheduler.now() >= end) timeout.run();
-        else scheduler.schedule(op, () -> awaitClip(op, id, track, slot, end, done, ok, timeout), 20);
+    private void awaitGuarded(
+            HostOperation op, Runnable guard, long end, BooleanSupplier done, Runnable ok, Runnable timeout) {
+        scheduler.poll(
+                op,
+                end,
+                () -> {
+                    guard.run();
+                    return done.getAsBoolean();
+                },
+                ok,
+                timeout);
     }
 
     /** Ops on the bound launcher cursor clip. Idempotent absolute setters (rename/resize/color) that cannot be read back report
@@ -1150,11 +1142,9 @@ final class LauncherModule implements HostModule {
         }
         op.dispatched = true;
         write.run();
-        awaitClip(
+        awaitGuarded(
                 op,
-                id,
-                track,
-                slot,
+                () -> cursorGuard(op, id, track, slot),
                 end,
                 matches,
                 () -> op.result.complete(clipDone(id, index, kind, verification, slot, true)),
@@ -1182,20 +1172,16 @@ final class LauncherModule implements HostModule {
         clip.getLoopLength().set(length);
         // Playback stop follows the loop end once the loop change is observed; setting both blindly can be clamped by
         // the host.
-        awaitClip(
+        awaitGuarded(
                 op,
-                id,
-                track,
-                slot,
+                () -> cursorGuard(op, id, track, slot),
                 end,
                 () -> clip.getLoopLength().get() == length,
                 () -> {
                     clip.getPlayStop().set(start + length);
-                    awaitClip(
+                    awaitGuarded(
                             op,
-                            id,
-                            track,
-                            slot,
+                            () -> cursorGuard(op, id, track, slot),
                             end,
                             matches,
                             () -> op.result.complete(
@@ -1339,22 +1325,18 @@ final class LauncherModule implements HostModule {
         if (kind.equals("transpose")) {
             Map<Integer, double[]> expect = shifted(before, semitones);
             clip.transpose(semitones);
-            awaitClip(
+            awaitGuarded(
                     op,
-                    id,
-                    track,
-                    slot,
+                    () -> cursorGuard(op, id, track, slot),
                     end,
                     () -> clip.getLoopLength().get() == loop && sameCells(expect, onsets(w)),
                     complete,
                     timeout);
         } else if (kind.equals("duplicateContent")) {
             clip.duplicateContent();
-            awaitClip(
+            awaitGuarded(
                     op,
-                    id,
-                    track,
-                    slot,
+                    () -> cursorGuard(op, id, track, slot),
                     end,
                     () -> clip.getLoopLength().get() == loop * 2 && sameCells(before, onsets(w)),
                     complete,
@@ -1392,7 +1374,7 @@ final class LauncherModule implements HostModule {
                 } else timeout.run();
             };
             clip.quantize(amount);
-            awaitClip(op, id, track, slot, end, done, complete, settled);
+            awaitGuarded(op, () -> cursorGuard(op, id, track, slot), end, done, complete, settled);
         }
     }
 
@@ -1413,7 +1395,8 @@ final class LauncherModule implements HostModule {
             else clip.clearStep(w.channel, e.x, e.pitch);
         }
         boolean full = detail(p);
-        scheduler.schedule(op, () -> awaitNotes(op, id, track, slot, index, w, changes, full, until(op)), 20);
+        long end = until(op);
+        scheduler.schedule(op, () -> awaitNotes(op, id, track, slot, index, w, changes, full, end), Scheduler.POLL_MS);
     }
 
     static void preflight(List<Edit> changes, Window w, Clip clip) {
@@ -1451,17 +1434,25 @@ final class LauncherModule implements HostModule {
             List<Edit> changes,
             boolean full,
             long end) {
-        cursorGuard(op, id, track, slot);
-        boolean all = true;
-        for (Edit e : changes) {
-            boolean fresh = noteGenerations[e.x][e.pitch] == e.generation && noteVersions[e.x][e.pitch] > e.before;
-            e.verified = (fresh || e.alreadyMatched) && matches(e, clip.getStep(w.channel, e.x, e.pitch));
-            all &= e.verified;
-        }
-        if (!all && scheduler.now() < end) {
-            scheduler.schedule(op, () -> awaitNotes(op, id, track, slot, index, w, changes, full, end), 20);
-            return;
-        }
+        scheduler.poll(
+                op,
+                end,
+                () -> {
+                    cursorGuard(op, id, track, slot);
+                    boolean all = true;
+                    for (Edit e : changes) {
+                        boolean fresh =
+                                noteGenerations[e.x][e.pitch] == e.generation && noteVersions[e.x][e.pitch] > e.before;
+                        e.verified = (fresh || e.alreadyMatched) && matches(e, clip.getStep(w.channel, e.x, e.pitch));
+                        all &= e.verified;
+                    }
+                    return all;
+                },
+                all -> finishNotes(op, id, index, w, changes, full, all));
+    }
+
+    private void finishNotes(
+            HostOperation op, String id, int index, Window w, List<Edit> changes, boolean full, boolean all) {
         JsonObject out = notesResult(id, index, w, full);
         // Status and verification always cover every edit; detail only changes how many entries are listed.
         out.addProperty("status", all ? "observed" : "dispatched");
@@ -1583,16 +1574,22 @@ final class LauncherModule implements HostModule {
     }
 
     private void awaitPlayback(HostOperation op, String id, Track track, Slot slot, int index, long end) {
-        guard(op, id, track);
-        boolean observed =
+        BooleanSupplier observed = () ->
                 slot == null ? track.isStopped().get() : slot.api.isPlaying().get();
-        boolean queued = slot == null
+        BooleanSupplier queued = () -> slot == null
                 ? track.isQueuedForStop().get()
                 : slot.api.isPlaybackQueued().get();
-        if (!observed && !queued && scheduler.now() < end) {
-            scheduler.schedule(op, () -> awaitPlayback(op, id, track, slot, index, end), 20);
-            return;
-        }
+        scheduler.poll(
+                op,
+                end,
+                () -> {
+                    guard(op, id, track);
+                    return observed.getAsBoolean() || queued.getAsBoolean();
+                },
+                done -> finishPlayback(op, id, slot, index, observed.getAsBoolean(), queued.getAsBoolean()));
+    }
+
+    private void finishPlayback(HostOperation op, String id, Slot slot, int index, boolean observed, boolean queued) {
         JsonObject out = base(id, index);
         out.addProperty("status", observed ? "observed" : "dispatched");
         out.addProperty("completion", observed ? "observed" : queued ? "not_observed" : "unknown");

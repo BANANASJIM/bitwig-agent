@@ -54,8 +54,7 @@ final class TrackTree {
 
     static TrackTree capture(TrackWindow window) {
         TrackTree tree = new TrackTree();
-        int offset = window.offset(),
-                total = window.total();
+        int offset = window.offset(), total = window.total();
         boolean unique = true;
         for (int i = 0; i < HostLimits.TRACKS; i++) {
             Track track = window.at(i);
