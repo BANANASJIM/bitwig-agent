@@ -9,13 +9,12 @@ from __future__ import annotations
 import json
 import math
 import os
-from collections import Counter
 from typing import Any
 
 from bitwig_agent.errors import BridgeError, bridge_error
-from bitwig_agent.grid_apply import bundled_schema, generated_name
+from bitwig_agent.grid.bundled import bundled_schema
+from bitwig_agent.grid.read import device_target, host_call, module_names, read_graph
 
-PAGE, PARAM_PAGE = 128, 64
 VOICING_FIELDS = (
     "voices",
     "voiceStacking",
@@ -27,45 +26,6 @@ VOICING_FIELDS = (
     "allowOverlappingNotes",
 )
 WRITABLE = ("float", "integer", "boolean", "enum", "string", "steps")
-
-
-async def read_all(
-    client: Any, target: dict[str, Any], timeout_ms: int, params: bool
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Every module and cable of the device (all pages)."""
-    rows: list[dict[str, Any]] = []
-    cables: dict[tuple[Any, ...], dict[str, Any]] = {}
-    total, step = None, PARAM_PAGE if params else PAGE
-    while total is None or len(rows) < total:
-        page = await client.call(
-            "grid.get",
-            {**target, "moduleOffset": len(rows), "moduleLimit": step, "includeParameters": params},
-            timeout_ms,
-        )
-        got = page.get("modules") if isinstance(page, dict) else None
-        if not isinstance(got, list):
-            raise bridge_error("not_applied", "grid.get returned an unusable result")
-        rows += got
-        for c in page.get("connections", []):
-            cables[(c["targetModuleId"], c["targetPortKey"])] = c
-        total = (page.get("window") or {}).get("total", len(rows))
-        if not got and len(rows) < total:
-            raise bridge_error("graph_incomplete", f"grid.get returned {len(rows)} of {total} modules")
-    return rows, list(cables.values())
-
-
-def module_names(rows: list[dict[str, Any]]) -> tuple[dict[str, str], list[str], list[str]]:
-    """instanceId -> name (customName, else generated), the generated names, and customNames that are not unique."""
-    counts = Counter(r["customName"] for r in rows if r.get("customName"))
-    names, generated = {}, []
-    for r in rows:
-        n = r.get("customName")
-        if n and counts[n] == 1:
-            names[r["instanceId"]] = n
-        else:
-            names[r["instanceId"]] = generated_name(r)
-            generated.append(names[r["instanceId"]])
-    return names, generated, sorted(n for n, c in counts.items() if c > 1)
 
 
 def _same(a: Any, b: Any) -> bool:
@@ -167,10 +127,6 @@ async def read_voicing(
     return {k: live[k] for k in VOICING_FIELDS if k in live} if isinstance(live, dict) else None
 
 
-def _target(args: dict[str, Any]) -> dict[str, Any]:
-    return {k: args[k] for k in ("trackId", "deviceIndex", "expectedDeviceName")}
-
-
 async def export(client: Any, args: dict[str, Any], timeout_ms: int = 5000) -> dict[str, Any]:
     path, overwrite = args.get("outPath"), args.get("overwrite", False)
     if path is not None:
@@ -178,8 +134,8 @@ async def export(client: Any, args: dict[str, Any], timeout_ms: int = 5000) -> d
             raise bridge_error("file_exists", f"{path} exists; pass overwrite=true to replace it")
         if not os.path.isdir(os.path.dirname(path)):
             raise bridge_error("invalid_params", f"Parent directory does not exist: {os.path.dirname(path)}")
-    mode, namespace, target = args.get("includeParams", "changed"), args.get("namespace"), _target(args)
-    rows, cables = await read_all(client, target, timeout_ms, mode != "none")
+    mode, namespace, target = args.get("includeParams", "changed"), args.get("namespace"), device_target(args)
+    rows, cables = await read_graph(host_call(client, target, timeout_ms), params=mode != "none")
     built = build(rows, cables, mode, namespace)
     spec: dict[str, Any] = {"target": target, "modules": built["modules"], "connections": built["connections"]}
     if built["external"]:
@@ -213,7 +169,7 @@ async def export(client: Any, args: dict[str, Any], timeout_ms: int = 5000) -> d
 async def graph(client: Any, args: dict[str, Any], timeout_ms: int = 5000) -> dict[str, Any]:
     """Modules and cables by name (with sizes), for reading a patch without UUID joins."""
     mode, namespace = args.get("includeParams", "none"), args.get("namespace")
-    rows, cables = await read_all(client, _target(args), timeout_ms, mode != "none")
+    rows, cables = await read_graph(host_call(client, device_target(args), timeout_ms), params=mode != "none")
     built = build(rows, cables, mode, namespace)
     generated = set(built["unnamed"])
     modules = [
