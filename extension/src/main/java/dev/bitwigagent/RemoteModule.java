@@ -21,6 +21,29 @@ final class RemoteModule implements HostModule, ParameterResolver.RemotePages {
     private final TransportSafety transportSafety;
     private final Remote[][] sources = new Remote[HostLimits.TRACKS][HostLimits.DEVICES];
     private final Map<DeviceSources.Source, Remote> remoteSources = new IdentityHashMap<>();
+    /** How a write that finds its cache not fresh learns what the control holds; null when there is no native model. */
+    NativeValues nativeValues;
+
+    /** The verification a no-op carries when the native model, not the observed cache, showed the value. */
+    static final String NATIVE_READBACK = "exact_native_model_readback";
+
+    /** Reads a control's value from the native model on the document thread. */
+    interface NativeValues {
+        /**
+         * The value the control of {@code slot} on the page now shown at {@code page} (named {@code pageName} of
+         * {@code pageCount} pages) holds, or null when the model cannot say; a binding that is unavailable is also
+         * null, so the write goes on as it would without a model. Other failures go to {@code failed}.
+         */
+        void read(
+                HostOperation op,
+                DeviceSources.Source device,
+                int page,
+                String pageName,
+                int pageCount,
+                int slot,
+                java.util.function.Consumer<Double> done,
+                java.util.function.Consumer<RuntimeException> failed);
+    }
 
     RemoteModule(
             ControllerHost host,
@@ -263,6 +286,7 @@ final class RemoteModule implements HostModule, ParameterResolver.RemotePages {
     void setControl(
             HostOperation op, ParameterResolver.Remote target, JsonObject ref, ValueInput input, JsonElement expect) {
         double requested = input.normalized("value");
+        op.inspect = Refs.read(ref);
         selectPage(op, target.device, target.page, target.slot, () -> write(op, target, ref, requested, expect));
     }
 
@@ -285,6 +309,47 @@ final class RemoteModule implements HostModule, ParameterResolver.RemotePages {
             op.result.complete(result(ref, asked, current, Outcome.ALREADY_MATCHED, null));
             return;
         }
+        if (nativeValues == null || source.controlValuesFresh[slot]) {
+            dispatch(op, source, slot, ref, requested, snapshot);
+            return;
+        }
+        // The cache is not fresh (after a rebind or page switch) and the host does not echo an unchanged value, so
+        // the model itself is asked what the control holds before anything is sent.
+        nativeValues.read(
+                op,
+                target.device,
+                target.page,
+                source.page.pageNames().get()[target.page],
+                Math.min(source.page.pageCount().get(), source.page.pageNames().get().length),
+                slot,
+                held -> scheduler.schedule(
+                        op, () -> afterNativeRead(op, source, slot, ref, requested, snapshot, held), 0),
+                error -> scheduler.schedule(op, () -> op.fail(error), 0));
+    }
+
+    private void afterNativeRead(
+            HostOperation op,
+            Remote source,
+            int slot,
+            JsonObject ref,
+            double requested,
+            RequestSnapshot snapshot,
+            Double held) {
+        scheduler.check(op);
+        snapshot.require(op);
+        if (held != null && Math.abs(held - requested) <= HostLimits.TOLERANCE) {
+            JsonObject result = result(ref, new JsonPrimitive(requested), held, Outcome.ALREADY_MATCHED, null);
+            result.addProperty("verification", NATIVE_READBACK);
+            op.result.complete(result);
+            return;
+        }
+        dispatch(op, source, slot, ref, requested, snapshot);
+    }
+
+    private void dispatch(
+            HostOperation op, Remote source, int slot, JsonObject ref, double requested, RequestSnapshot snapshot) {
+        RemoteControl control = source.controls[slot];
+        JsonElement asked = new JsonPrimitive(requested);
         transportSafety.requirePlaybackSafe();
         scheduler.check(op);
         snapshot.require(op);
@@ -305,7 +370,7 @@ final class RemoteModule implements HostModule, ParameterResolver.RemotePages {
                     snapshot.require(op);
                     boolean fresh = source.controlValuesFresh[slot] && source.controlSequences[slot] > sequence;
                     double seen = control.value().get();
-                    op.result.complete(
+                    op.result.complete(Errors.withInspect(
                             observed
                                     ? result(ref, asked, seen, Outcome.APPLIED, null)
                                     : result(
@@ -313,7 +378,8 @@ final class RemoteModule implements HostModule, ParameterResolver.RemotePages {
                                             asked,
                                             fresh ? seen : null,
                                             Outcome.UNKNOWN,
-                                            fresh ? Reason.READBACK_MISMATCH : Reason.NOT_OBSERVED));
+                                            fresh ? Reason.READBACK_MISMATCH : Reason.NOT_OBSERVED),
+                            op.inspect));
                 });
     }
 

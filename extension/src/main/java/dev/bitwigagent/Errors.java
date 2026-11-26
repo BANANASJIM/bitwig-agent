@@ -63,11 +63,26 @@ public final class Errors {
 
     /** The wire result of a failure that may have changed state: {outcome: unknown, reason, message, next?}. */
     static JsonObject unknownResult(RpcException error) {
+        return unknownResult(error, null);
+    }
+
+    /** As above; {@code inspect}, the method's read, is the {@code next} when the failure carries none. */
+    static JsonObject unknownResult(RpcException error, String inspect) {
         JsonObject out = new JsonObject();
         out.addProperty("outcome", Outcome.UNKNOWN.wire());
         out.addProperty("reason", error.reason.wire());
         out.addProperty("message", error.getMessage());
-        if (error.next != null) out.addProperty("next", error.next);
+        String next = error.next != null ? error.next : inspect;
+        if (next != null) out.addProperty("next", next);
         return out;
+    }
+
+    /** An unknown result a module built itself gets the method's read as {@code next}; its own {@code next} wins. */
+    static JsonObject withInspect(JsonObject result, String inspect) {
+        if (inspect != null
+                && result.has("outcome")
+                && Results.outcomeOf(result) == Outcome.UNKNOWN
+                && !result.has("next")) result.addProperty("next", inspect);
+        return result;
     }
 }

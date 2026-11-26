@@ -14,8 +14,16 @@ final class HostOperation {
     /** The long job this request dispatched; an unknown result names it for jobs.get. */
     volatile String job;
 
+    /** The read an unknown result points at when it names none: the request's method spec says which. */
+    volatile String inspect;
+
     HostOperation(long deadline) {
+        this(deadline, null);
+    }
+
+    HostOperation(long deadline, String inspect) {
         this.deadline = deadline;
+        this.inspect = inspect;
     }
 
     /** The future the transport waits on; at its deadline it may expire an operation that never dispatched. */
@@ -48,7 +56,7 @@ final class HostOperation {
                 ? (RpcException) error
                 : Errors.notApplied(Reason.INTERNAL, "Internal failure: " + error);
         if (dispatched || rpc.unknown) {
-            JsonObject unknown = Errors.unknownResult(rpc);
+            JsonObject unknown = Errors.unknownResult(rpc, inspect);
             if (job != null) unknown.addProperty("job", job);
             result.complete(unknown);
         } else result.completeExceptionally(rpc);

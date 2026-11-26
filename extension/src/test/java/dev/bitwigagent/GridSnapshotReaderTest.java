@@ -440,7 +440,7 @@ public final class GridSnapshotReaderTest {
     void rejectsMissingWrongAndStaleTargets() {
         Fixture f = new Fixture();
         f.proxy.put(TARGET, null);
-        assertRpcError("invalid_target", () -> f.read(0, 64, true));
+        assertRpcError("target_not_found", () -> f.read(0, 64, true));
         f.proxy.put(TARGET, new Node());
         assertRpcError("kind_mismatch", () -> f.read(0, 64, true));
         f.proxy.put(TARGET, f.device);

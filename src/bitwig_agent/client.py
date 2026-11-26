@@ -138,9 +138,7 @@ def _transport_failure(exc: Exception, method: str, dispatched: bool) -> dict[st
         hint = f" The grid.get response exceeded the {mebibytes(MAX_RESPONSE_BYTES)} client cap: lower moduleLimit (64 works with includeParameters) or set includeParameters=false."
     message = f"{type(exc).__name__}: {exc}.{hint}"
     if dispatched and not TOOLS[method].read_only:
-        return unknown_result(
-            reason, message + " The request was not retried.", "Inspect host state before another write."
-        )
+        return unknown_result(reason, message + " The request was not retried.", TOOLS[method].inspect)
     raise bridge_error(reason, message) from exc
 
 

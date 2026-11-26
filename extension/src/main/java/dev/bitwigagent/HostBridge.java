@@ -43,6 +43,7 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
                 scheduler, sources, chains, trackRefs, window, transportSafety, remotes, modulatorEdits);
         register(parameters);
         ParameterResolver parameterResolver = new ParameterResolver(sources, trackRefs, window, parameters, remotes);
+        remotes.nativeValues = NativeRemoteValues.on(natives, chains);
         register(remotes);
         ProjectModule projectModule = new ProjectModule(scheduler, application, project, projectState, natives, holds);
         RenderModule render = new RenderModule(scheduler, window, trackRefs, project, transportSafety, natives, holds);
@@ -129,7 +130,8 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
 
     @Override
     public CompletableFuture<JsonObject> handle(String method, JsonObject params, long deadlineNanos) {
-        HostOperation operation = new HostOperation(deadlineNanos);
+        HostOperation operation =
+                new HostOperation(deadlineNanos, specs.contains(method) ? specs.get(method).inspect : null);
         try {
             JsonObject copy = validate(method, params);
             HostModule module = modules.get(method);

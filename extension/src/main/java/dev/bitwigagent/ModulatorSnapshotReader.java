@@ -165,13 +165,7 @@ final class ModulatorSnapshotReader {
     }
 
     private Snapshot capture(DeviceSources.Source source, UUID selectedId, int offset, int limit, Runnable check) {
-        DeviceSources.Native.Capture target;
-        try {
-            target = targets.capture(source, check);
-        } catch (RpcException error) {
-            if (!error.is(Reason.INVALID_TARGET)) throw error;
-            throw Errors.notApplied(Reason.TARGET_NOT_FOUND, "The device has no native target.");
-        }
+        DeviceSources.Native.Capture target = targets.capture(source, check);
         Object collection = a.read(Field.COLLECTION, target.device);
         require(Kind.COLLECTION, collection);
         parent(collection, target.device);

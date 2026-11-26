@@ -15,7 +15,7 @@ public final class ErrorsTest {
     void javaVocabularyEqualsTheBundle() {
         MethodSpecs.Vocabulary vocabulary = MethodSpecs.load().vocabulary();
         assertDoesNotThrow(() -> Reason.check(vocabulary));
-        assertEquals(ErrorCode.STALE, Reason.STALE_TARGET.code());
+        assertEquals(ErrorCode.STALE, Reason.TARGET_CHANGED.code());
         assertEquals(ErrorCode.PENDING, Reason.UNRESOLVED.code());
         assertEquals(ErrorCode.INCOMPATIBLE, Reason.PROTOCOL_MISMATCH.code());
     }
@@ -87,9 +87,9 @@ public final class ErrorsTest {
     @Test
     void aFailureBeforeDispatchIsAnErrorAndAfterItAnUnknownResult() {
         HostOperation before = new HostOperation(Long.MAX_VALUE);
-        before.fail(Errors.notApplied(Reason.STALE_TARGET, "moved"));
+        before.fail(Errors.notApplied(Reason.TARGET_CHANGED, "moved"));
         CompletionException error = assertThrows(CompletionException.class, before.result::join);
-        assertTrue(((RpcException) error.getCause()).is(Reason.STALE_TARGET));
+        assertTrue(((RpcException) error.getCause()).is(Reason.TARGET_CHANGED));
 
         HostOperation internal = new HostOperation(Long.MAX_VALUE);
         internal.fail(new IllegalStateException("boom"));
@@ -122,5 +122,45 @@ public final class ErrorsTest {
         HostOperation flagged = new HostOperation(Long.MAX_VALUE);
         flagged.fail(Errors.unknown(Reason.READBACK_MISMATCH, "differs"));
         assertEquals("readback_mismatch", flagged.result.join().get("reason").getAsString());
+    }
+
+    @Test
+    void anUnknownResultAfterDispatchNamesTheReadOfItsMethod() {
+        HostOperation after = new HostOperation(Long.MAX_VALUE, "transport.get");
+        after.markDispatched();
+        after.fail(Errors.notApplied(Reason.UNSAFE_STATE, "state changed while the write was running"));
+        JsonObject result = after.result.join();
+        assertEquals("unknown", result.get("outcome").getAsString());
+        assertEquals("transport.get", result.get("next").getAsString());
+
+        HostOperation own = new HostOperation(Long.MAX_VALUE, "transport.get");
+        own.markDispatched();
+        own.fail(Errors.notApplied(Reason.BUSY, "m", "tracks.list"));
+        assertEquals("tracks.list", own.result.join().get("next").getAsString(), "a module's own next wins");
+
+        HostOperation before = new HostOperation(Long.MAX_VALUE, "transport.get");
+        before.fail(Errors.notApplied(Reason.BUSY, "m"));
+        assertNull(((RpcException) assertThrows(CompletionException.class, before.result::join)
+                        .getCause())
+                .next);
+
+        HostOperation none = new HostOperation(Long.MAX_VALUE);
+        none.markDispatched();
+        none.fail(Errors.notApplied(Reason.BUSY, "m"));
+        assertFalse(none.result.join().has("next"), "a request without a method spec names no read");
+    }
+
+    @Test
+    void everyHostWriteNamesAnExistingReadAndReadsNone() {
+        MethodSpecs specs = MethodSpecs.load();
+        for (String method : specs.methods()) {
+            MethodSpecs.Spec spec = specs.get(method);
+            if (spec.readOnly) assertNull(spec.inspect, method);
+            else {
+                assertNotNull(spec.inspect, method + " names a read");
+                assertTrue(specs.contains(spec.inspect), method + " points at a host method");
+                assertTrue(specs.get(spec.inspect).readOnly, method + " points at a read");
+            }
+        }
     }
 }

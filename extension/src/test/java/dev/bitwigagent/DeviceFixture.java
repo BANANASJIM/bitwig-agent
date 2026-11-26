@@ -159,7 +159,7 @@ final class DeviceFixture {
 
     /** Validates and queues a request as the bridge does, on this fixture's services. */
     HostOperation submit(HostModule module, String method, JsonObject params, long deadline) {
-        HostOperation op = new HostOperation(deadline);
+        HostOperation op = new HostOperation(deadline, HostFixture.SPECS.get(method).inspect);
         try {
             JsonObject filled = HostBridge.checkSchema(HostFixture.SPECS, method, params);
             module.validate(method, filled);

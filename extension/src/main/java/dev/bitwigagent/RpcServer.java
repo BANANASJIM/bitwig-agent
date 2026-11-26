@@ -168,7 +168,7 @@ public final class RpcServer implements AutoCloseable {
             JsonObject result = answer(pending, deadline);
             if (result == null) throw new IllegalStateException("Handler returned no result");
             JsonObject response = envelope(id);
-            response.add("result", result);
+            response.add("result", Errors.withInspect(result, spec.inspect));
             send(socket, response);
         } catch (Exception e) {
             Throwable cause = e instanceof ExecutionException && e.getCause() != null ? e.getCause() : e;
@@ -184,7 +184,7 @@ public final class RpcServer implements AutoCloseable {
             else error = Errors.of(Reason.INTERNAL, "Internal failure; inspect state before another write.", write);
             if (e instanceof InterruptedException) Thread.currentThread().interrupt();
             JsonObject response = envelope(id);
-            if (error.unknown) response.add("result", Errors.unknownResult(error));
+            if (error.unknown) response.add("result", Errors.unknownResult(error, spec == null ? null : spec.inspect));
             else response.add("error", Errors.error(error));
             try {
                 send(socket, response);

@@ -737,6 +737,93 @@ public final class RemoteModuleTest {
         assertEquals(1, mapped.controls[1][0].child("value").writes, "a callback during remapping is no no-op proof");
     }
 
+    /** A control whose cache is not fresh (rebound, never re-reported), with the model answering as {@code held}. */
+    private static DeviceFixture notFresh(RemoteModule.NativeValues model) {
+        DeviceFixture f = DeviceFixture.twins();
+        rebind(f, 1);
+        f.flush();
+        f.remote.nativeValues = model;
+        f.controls[1][0].child("value").notifyWrites = false;
+        return f;
+    }
+
+    @Test
+    void anEqualWriteOnAStaleCacheIsAlreadyMatchedWhenTheNativeModelHoldsTheValue() {
+        int[] reads = {0};
+        DeviceFixture f = notFresh((op, device, page, pageName, pageCount, slot, done, failed) -> {
+            reads[0]++;
+            assertEquals(0, page);
+            assertEquals("Main", pageName);
+            assertEquals(0, slot);
+            done.accept(.6);
+        });
+        JsonObject current = get(f, 1);
+        HostOperation op = f.run(f.parameters(), "parameters.set", write(ref(current, 0), .6), f.host.tasks.after(20));
+        JsonObject result = f.finish(op);
+        assertEquals("already_matched", result.get("outcome").getAsString());
+        assertEquals("exact_native_model_readback", result.get("verification").getAsString());
+        assertEquals(1, reads[0]);
+        assertEquals(0, f.controls[1][0].child("value").writes, "nothing was sent");
+        assertFalse(op.dispatched());
+    }
+
+    @Test
+    void aDifferentValueOnAStaleCacheIsStillDispatchedAfterTheNativeRead() {
+        DeviceFixture f = notFresh((op, device, page, pageName, pageCount, slot, done, failed) -> done.accept(.2));
+        f.controls[1][0].child("value").notifyWrites = true;
+        JsonObject current = get(f, 1);
+        JsonObject result = f.finish(submit(f, ref(current, 0), .6));
+        assertEquals("applied", result.get("outcome").getAsString());
+        assertEquals(1, f.controls[1][0].child("value").writes);
+    }
+
+    @Test
+    void aStaleCacheAloneStillNeverProvesAnEqualWrite() {
+        for (String model : List.of("none", "unanswered", "refused")) {
+            DeviceFixture f = notFresh(
+                    model.equals("none")
+                            ? null
+                            : (op, device, page, pageName, pageCount, slot, done, failed) -> {
+                                if (model.equals("unanswered")) done.accept(null);
+                                else failed.accept(Errors.notApplied(Reason.NOT_READY, "model busy"));
+                            });
+            JsonObject current = get(f, 1);
+            HostOperation op =
+                    f.run(f.parameters(), "parameters.set", write(ref(current, 0), .6), f.host.tasks.after(20));
+            f.finishOrError(op);
+            if (model.equals("refused")) assertRpcError("not_ready", op);
+            else
+                assertEquals(
+                        "devices.remote.get",
+                        assertUnknown("not_observed", op).get("next").getAsString());
+            assertEquals(model.equals("refused") ? 0 : 1, f.controls[1][0].child("value").writes, model);
+        }
+    }
+
+    @Test
+    void aChangeOfTheRemoteStateDuringTheNativeReadIsTargetChangedNeverAlreadyMatched() {
+        DeviceFixture f = notFresh(null);
+        f.remote.nativeValues = (op, device, page, pageName, pageCount, slot, done, failed) -> {
+            f.controls[1][0].child("name").emit("Remapped");
+            done.accept(.6);
+        };
+        JsonObject current = get(f, 1);
+        HostOperation op = f.run(f.parameters(), "parameters.set", write(ref(current, 0), .6), f.host.tasks.after(20));
+        f.finishOrError(op);
+        assertRpcError("target_changed", op);
+        assertEquals(0, f.controls[1][0].child("value").writes);
+    }
+
+    @Test
+    void aFreshCacheNeverAsksTheNativeModel() {
+        DeviceFixture f = DeviceFixture.twins();
+        f.remote.nativeValues = (op, device, page, pageName, pageCount, slot, done, failed) -> fail("no native read");
+        JsonObject current = get(f, 1);
+        assertEquals("applied", call(f, ref(current, 0), .3).get("outcome").getAsString());
+        assertEquals(
+                "already_matched", call(f, ref(current, 0), .3).get("outcome").getAsString());
+    }
+
     @Test
     void aRenamedDeviceKeepsItsObservationsButOldRefsToItAreTargetChanged() {
         DeviceFixture f = DeviceFixture.twins();
