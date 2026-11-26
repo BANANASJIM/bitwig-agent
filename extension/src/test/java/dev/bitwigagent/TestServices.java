@@ -17,6 +17,10 @@ final class TestServices {
     final TrackRefs trackRefs;
     final DeviceSources sources;
     final NativeRuntime natives;
+    /** The simulated native document behind {@link #chains}. */
+    final FakeChains nativeChains;
+
+    final NativeChains chains;
     final SelectionLease selection;
     final Holds holds = new Holds();
     final LauncherStructureLock lock;
@@ -24,7 +28,12 @@ final class TestServices {
     private LauncherState launcherState;
 
     TestServices(ControllerHost host, LongSupplier clock) {
+        this(host, clock, new FakeChains());
+    }
+
+    TestServices(ControllerHost host, LongSupplier clock, FakeChains nativeChains) {
         this.host = host;
+        this.nativeChains = nativeChains;
         scheduler = new Scheduler(host, clock);
         application = host.createApplication();
         transport = host.createTransport();
@@ -35,6 +44,7 @@ final class TestServices {
         trackRefs = new TrackRefs(window);
         sources = new DeviceSources(window, trackRefs);
         natives = new NativeRuntime(host, scheduler);
+        chains = new NativeChains(scheduler, sources, natives, nativeChains);
         selection = new SelectionLease();
         lock = new LauncherStructureLock(selection, holds);
     }
@@ -62,15 +72,15 @@ final class TestServices {
     }
 
     DeviceModule device() {
-        return new DeviceModule(scheduler, sources, selection);
+        return new DeviceModule(scheduler, sources, chains, selection);
     }
 
     DeviceListModule deviceList() {
-        return new DeviceListModule(window, trackRefs, sources);
+        return new DeviceListModule(window, trackRefs, chains);
     }
 
     DeviceChainModule deviceChain() {
-        return new DeviceChainModule(scheduler, window, trackRefs, sources, transportSafety);
+        return new DeviceChainModule(scheduler, window, trackRefs, sources, chains, transportSafety);
     }
 
     RemoteModule remote() {
@@ -153,7 +163,7 @@ final class TestServices {
     }
 
     ParameterModule parameters(RemoteModule remotes, ModulatorEditModule edits) {
-        return new ParameterModule(scheduler, sources, trackRefs, window, transportSafety, remotes, edits);
+        return new ParameterModule(scheduler, sources, chains, trackRefs, window, transportSafety, remotes, edits);
     }
 
     /** Direct parameters and Remote Controls alone; a modulator control would need native edit bindings. */

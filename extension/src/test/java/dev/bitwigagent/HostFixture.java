@@ -126,21 +126,6 @@ final class HostFixture {
             for (int d = 0; d < HostLimits.DEVICES; d++) {
                 FakeHost device = devices.item(d);
                 emptyDevice(device, d);
-                device.child("hasLayers").data = false;
-                FakeHost layers = device.child("createLayerBank");
-                emptyBank(layers);
-                layers.items(DeviceLayer.class);
-                for (int l = 0; l < 2; l++) {
-                    FakeHost layer = layers.item(l);
-                    layer.child("exists").data = false;
-                    layer.child("channelId").data = "";
-                    layer.child("channelIndex").data = l;
-                    layer.child("name").data = "";
-                    FakeHost children = layer.child("createDeviceBank");
-                    emptyBank(children);
-                    children.items(Device.class);
-                    for (int c = 0; c < 2; c++) emptyDevice(children.item(c), c);
-                }
             }
             FakeHost sends = track.child("sendBank");
             sends.items(Send.class);
@@ -255,12 +240,6 @@ final class HostFixture {
         });
     }
 
-    private void emptyBank(FakeHost bank) {
-        bank.child("exists").data = false;
-        bank.child("itemCount").data = 0;
-        bank.child("scrollPosition").data = 0;
-    }
-
     private static void launcherCursorClip(FakeHost clip) {
         clip.on("addNoteStepObserver", args -> null);
         clip.on("scrollToKey", args -> null);
@@ -280,22 +259,6 @@ final class HostFixture {
         FakeHost cursorSlot = clip.child("clipLauncherSlot");
         cursorSlot.child("sceneIndex").data = -1;
         cursorSlot.on("createEqualsValue", args -> sameSlot.proxy());
-    }
-
-    /** The one chain of a layer device, observed with this UUID and name; returns its device bank (one slot). */
-    static FakeHost observeChain(FakeHost rackNode, String layerId, String name) {
-        rackNode.child("hasLayers").emit(true);
-        FakeHost layers = rackNode.child("createLayerBank");
-        layers.child("exists").emit(true);
-        layers.child("itemCount").emit(1);
-        FakeHost layer = layers.item(0);
-        layer.child("exists").emit(true);
-        layer.child("channelId").emit(layerId);
-        layer.child("name").emit(name);
-        FakeHost children = layer.child("createDeviceBank");
-        children.child("exists").emit(true);
-        children.child("itemCount").emit(1);
-        return children;
     }
 
     /** The cursor remote-controls page a device offers, empty and unmapped. */
@@ -465,12 +428,6 @@ final class HostFixture {
 
     static JsonObject json(String text) {
         return JsonParser.parseString(text).getAsJsonObject();
-    }
-
-    static JsonObject target(String id) {
-        JsonObject p = new JsonObject();
-        p.addProperty("trackId", id);
-        return p;
     }
 
     /** The ref of a fixture track A, B or C, named as the fixture names its slot. */

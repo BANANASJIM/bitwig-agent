@@ -1522,47 +1522,24 @@ public final class GridModuleTest {
     }
 
     @Test
-    void layerAddressingNeedsObservedLayersAndChildren() {
-        JsonObject badParent = legacyTarget();
-        badParent.addProperty("trackId", "not-a-uuid");
+    void rootAddressingNeedsAnObservedDeviceWindow() {
+        JsonObject root = Refs.device(Refs.track(HostFixture.A, "Track 0"), 0, "Poly Grid");
         HostFixture unobserved = HostFixture.withoutServices();
         unobserved.tracks[0].child("createDeviceBank").child("scrollPosition").notifyInitial = false;
         TestServices services = new TestServices(
                 unobserved.host.proxy(com.bitwig.extension.controller.api.ControllerHost.class), unobserved.tasks::now);
         assertTrue(
-                assertRpcError("not_ready", () -> services.sources.root(legacyTarget()))
+                assertRpcError("not_ready", () -> services.sources.device(root, false))
                         .getMessage()
                         .contains("Root device window"),
                 "a root device window that was never observed is not addressable");
         Fixture f = new Fixture();
         DeviceSources sources = f.host.services.sources;
-        assertThrows(RpcException.class, () -> sources.root(badParent));
-        JsonObject root = Refs.device(Refs.track(HostFixture.A, "Track 0"), 0, "Poly Grid");
-        FakeHost layers = f.device.child("createLayerBank");
-        f.device.child("hasLayers").emit(true);
-        layers.child("exists").emit(true);
-        layers.child("itemCount").emit(1);
-        FakeHost layer = layers.item(0);
-        String id = "00000000-0000-0000-0000-0000000000aa";
-        layer.child("exists").emit(true);
-        assertTrue(
-                assertRpcError("not_ready", () -> sources.chain(Refs.chain(root, id, "Pad"), false))
-                        .getMessage()
-                        .contains("Layer identity window"),
-                "an existing layer without an observed UUID is not addressable");
-        layer.child("channelId").emit(id);
-        assertTrue(
-                assertRpcError("not_ready", () -> sources.chain(Refs.chain(root, id, "Pad"), false))
-                        .getMessage()
-                        .contains("Layer and child window"),
-                "a layer whose child window was never observed is not addressable");
-        layer.child("createDeviceBank").child("exists").emit(true);
-        JsonObject chain = Refs.chain(root, id, "Pad");
-        assertTrue(
-                assertRpcError("target_not_found", () -> sources.device(Refs.device(chain, 0, "Child"), false))
-                        .getMessage()
-                        .contains("No device is at this index"),
-                "a chain device that is not there is not addressable");
+        assertRpcError(
+                "target_not_found",
+                () -> sources.device(Refs.device(Refs.track(HostFixture.C, "Gone"), 0, "X"), false));
+        JsonObject chain = Refs.chain(root, "00000000-0000-0000-0000-0000000000aa", "Pad");
+        assertRpcError("unsupported_scope", () -> sources.device(Refs.device(chain, 0, "Child"), false));
     }
 
     @Test
@@ -1590,13 +1567,6 @@ public final class GridModuleTest {
                     call[0] + " reaches the adapter once and dispatches only when it writes");
         }
         assertTrue(f.adapter.reads == 1 && f.adapter.remoteCalls == 2, "each call reached its adapter method");
-    }
-
-    private static JsonObject legacyTarget() {
-        JsonObject result = HostFixture.target(HostFixture.A);
-        result.addProperty("deviceIndex", 0);
-        result.addProperty("expectedDeviceName", "Poly Grid");
-        return result;
     }
 
     private static JsonObject target() {

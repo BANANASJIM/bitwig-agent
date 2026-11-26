@@ -7,14 +7,14 @@ import com.bitwig.extension.controller.api.*;
 import com.google.gson.*;
 import dev.bitwigagent.core.Refs;
 import java.util.Arrays;
-import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.BooleanSupplier;
 
 /**
- * chains.list and the verified edits of a device chain (devices.insert, devices.delete, devices.move). A chain is a
- * track's root device chain or one chain of a layer device; the edit is proven only by the observed bank delta.
+ * chains.list and the verified edits of a device chain (devices.insert, devices.delete, devices.move). A track's root
+ * chain is edited through the public API and proven by the observed bank delta; a chain inside a device is listed,
+ * edited and proven natively by {@link NativeChainEdits}.
  */
 final class DeviceChainModule implements HostModule {
     static final Set<String> METHODS = Set.of("chains.list", "devices.insert", "devices.delete", "devices.move");
@@ -23,6 +23,7 @@ final class DeviceChainModule implements HostModule {
     private final TrackRefs trackRefs;
     private final DeviceSources sources;
     private final TransportSafety transportSafety;
+    private final NativeChainEdits nested;
     private final InsertionPoint[] ends = new InsertionPoint[TRACKS];
     private final boolean[] countObserved = new boolean[TRACKS];
     private final long[] countSequence = new long[TRACKS];
@@ -33,12 +34,14 @@ final class DeviceChainModule implements HostModule {
             TrackWindow window,
             TrackRefs trackRefs,
             DeviceSources sources,
+            NativeChains chains,
             TransportSafety transportSafety) {
         this.scheduler = scheduler;
         this.window = window;
         this.trackRefs = trackRefs;
         this.sources = sources;
         this.transportSafety = transportSafety;
+        nested = new NativeChainEdits(chains);
         for (int t = 0; t < TRACKS; t++) {
             final int slot = t;
             ends[t] = window.at(t).endOfDeviceChainInsertionPoint();
@@ -99,75 +102,41 @@ final class DeviceChainModule implements HostModule {
     @Override
     public void dispatch(HostOperation op, String method, JsonObject p) {
         if (method.equals("chains.list")) {
-            op.result.complete(listChains(p.getAsJsonObject("parent")));
+            nested.list(op, p.getAsJsonObject("parent"));
             return;
         }
         if (mutation != null && !mutation.result.isDone())
             throw Errors.notApplied(Reason.BUSY, "Another device chain edit is awaiting observations.");
         mutation = op;
+        boolean inChain = method.equals("devices.insert")
+                ? "chain".equals(Refs.kind(p.getAsJsonObject("parent")))
+                : NativeChains.nested(p.getAsJsonObject("target"));
         switch (method) {
             case "devices.insert":
-                insert(op, p);
+                if (inChain) nested.insert(op, p);
+                else insert(op, p);
                 return;
             case "devices.delete":
-                delete(op, p.getAsJsonObject("target"));
+                if (inChain) {
+                    transportSafety.requirePlaybackSafe();
+                    nested.delete(op, p.getAsJsonObject("target"), transportSafety::requirePlaybackSafe);
+                } else delete(op, p.getAsJsonObject("target"));
                 return;
             default:
-                move(op, p.getAsJsonObject("target"), p.getAsJsonObject("to"));
+                if (inChain) {
+                    transportSafety.requirePlaybackSafe();
+                    nested.move(
+                            op,
+                            p.getAsJsonObject("target"),
+                            p.getAsJsonObject("to"),
+                            transportSafety::requirePlaybackSafe);
+                } else move(op, p.getAsJsonObject("target"), p.getAsJsonObject("to"));
         }
-    }
-
-    // ---------------------------------------------------------------- chains.list
-
-    private JsonObject listChains(JsonObject parent) {
-        DeviceSources.Source root = sources.device(parent, false);
-        if (root.layer != null)
-            throw Errors.notApplied(Reason.UNSUPPORTED_SCOPE, "Chains of a device inside a chain are not observed.");
-        sources.requireBranch(root.branch);
-        JsonObject result = new JsonObject();
-        result.add("parent", root.ref());
-        result.addProperty("scope", "one_chain_hop");
-        result.add("window", root.branch.window.json());
-        JsonArray chains = new JsonArray();
-        for (DeviceSources.Layer layer : root.branch.layers) {
-            if (layer.slot >= root.branch.window.count) continue;
-            JsonObject item = new JsonObject();
-            boolean unique = DeviceSources.canonicalUuid(layer.id) && uniqueIds(root.branch, layer);
-            if (unique) item.add("ref", layer.ref());
-            item.addProperty("name", layer.name);
-            item.addProperty("channelIndex", layer.channelIndex);
-            item.addProperty(
-                    "readiness",
-                    Boolean.FALSE.equals(layer.exists) ? "absent" : unique && layer.ready() ? "ready" : "not_ready");
-            item.addProperty("deviceCount", layer.window.count);
-            item.addProperty("devicesAvailable", devicesAvailable(layer));
-            item.add("window", layer.window.json());
-            chains.add(item);
-        }
-        result.add("chains", chains);
-        return result;
-    }
-
-    /** Whether the chain's devices can be read and written: a physically rebound proxy cannot until reload. */
-    private static boolean devicesAvailable(DeviceSources.Layer layer) {
-        for (DeviceSources.Source child : layer.children) if (child.rebound) return false;
-        return true;
-    }
-
-    private static boolean uniqueIds(DeviceSources.Branch branch, DeviceSources.Layer layer) {
-        for (DeviceSources.Layer other : branch.layers) {
-            if (other.slot >= branch.window.count) continue;
-            if (other.exists == null
-                    || (Boolean.TRUE.equals(other.exists) && !DeviceSources.canonicalUuid(other.id))
-                    || (other != layer && Boolean.TRUE.equals(other.exists) && Objects.equals(layer.id, other.id)))
-                return false;
-        }
-        return true;
     }
 
     // ---------------------------------------------------------------- the parent chains an edit works on
 
-    /** One chain being edited: how to read it, where its insertion points are and what must not change under an edit. */
+    /** The track's chain being edited: how to read it, where its insertion points are and what must not change. */
     private abstract class Parent {
         abstract DeviceChainEdit.View view();
 
@@ -275,85 +244,12 @@ final class DeviceChainModule implements HostModule {
         }
     }
 
-    private final class Chain extends Parent {
-        final DeviceSources.Layer layer;
-        final String rootName, trackId, layerId;
-
-        Chain(DeviceSources.Layer layer) {
-            this.layer = layer;
-            rootName = layer.branch.root.name;
-            trackId = layer.branch.root.track.id;
-            layerId = layer.id;
-        }
-
-        @Override
-        DeviceChainEdit.View view() {
-            return new LayerView(layer);
-        }
-
-        @Override
-        JsonObject ref() {
-            return layer.ref();
-        }
-
-        @Override
-        InsertionPoint start() {
-            return layer.proxy.startOfDeviceChainInsertionPoint();
-        }
-
-        @Override
-        InsertionPoint end() {
-            return layer.proxy.endOfDeviceChainInsertionPoint();
-        }
-
-        @Override
-        DeviceSources.Source at(int index) {
-            return layer.children[index];
-        }
-
-        @Override
-        BooleanSupplier context() {
-            DeviceSources.Source root = layer.branch.root;
-            return () -> Boolean.TRUE.equals(root.exists)
-                    && root.name.equals(rootName)
-                    && root.track.id.equals(trackId)
-                    && Boolean.TRUE.equals(layer.exists)
-                    && layerId.equals(layer.id);
-        }
-
-        @Override
-        String contextLost() {
-            return "Chain context changed after dispatch.";
-        }
-
-        @Override
-        int window() {
-            return DeviceSources.CHILDREN;
-        }
-
-        /**
-         * No revisions: a chain's own count change retires its devices' proxies by design, so their revisions move
-         * under every successful edit and cannot tell an edit from a change by someone else.
-         */
-        @Override
-        State capture(String staleMessage) {
-            return new State(new long[0], DeviceChainEdit.Before.capture(view(), staleMessage));
-        }
-
-        @Override
-        boolean prefixMatches(long[] prefix) {
-            return true;
-        }
-    }
-
     private Parent parentOf(DeviceSources.Source device) {
-        return device.layer == null ? new Top(device.track.slot) : new Chain(device.layer);
+        return new Top(device.track.slot);
     }
 
-    private Parent parentOf(JsonObject ref) {
-        return "chain".equals(Refs.kind(ref))
-                ? new Chain(sources.chain(ref, false))
-                : new Top(trackRefs.resolve(ref, false));
+    private Parent parentOf(JsonObject trackRef) {
+        return new Top(trackRefs.resolve(trackRef, false));
     }
 
     private static final class State {
@@ -607,64 +503,6 @@ final class DeviceChainModule implements HostModule {
         @Override
         public long nameSequence(int slot) {
             return sources.roots[t][slot].nameSequence;
-        }
-    }
-
-    /** A chain's device window: two observed slots, with the chain's own total count. */
-    private static final class LayerView implements DeviceChainEdit.View {
-        final DeviceSources.Layer layer;
-
-        LayerView(DeviceSources.Layer layer) {
-            this.layer = layer;
-        }
-
-        private DeviceSources.Source child(int slot) {
-            return layer.children[slot];
-        }
-
-        @Override
-        public int count() {
-            return layer.window.count == null ? -1 : layer.window.count;
-        }
-
-        @Override
-        public int window() {
-            return DeviceSources.CHILDREN;
-        }
-
-        @Override
-        public long countSequence() {
-            return layer.window.countSequence;
-        }
-
-        @Override
-        public boolean known(int slot) {
-            return child(slot).exists != null;
-        }
-
-        @Override
-        public boolean exists(int slot) {
-            return Boolean.TRUE.equals(child(slot).exists);
-        }
-
-        @Override
-        public boolean ready(int slot) {
-            return child(slot).metadataReady() && !child(slot).name.isEmpty();
-        }
-
-        @Override
-        public String name(int slot) {
-            return child(slot).name == null ? "" : child(slot).name;
-        }
-
-        @Override
-        public String type(int slot) {
-            return child(slot).type == null ? "" : child(slot).type;
-        }
-
-        @Override
-        public long nameSequence(int slot) {
-            return child(slot).nameSequence;
         }
     }
 }

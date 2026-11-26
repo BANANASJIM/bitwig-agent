@@ -154,33 +154,45 @@ public final class DeviceModuleTest {
         DeviceFixture f = new DeviceFixture();
         f.top.seed("Comp", "Rack");
         DeviceFixture.Rack rack = f.rack(1);
-        rack.layer(0, DeviceFixture.LAYER_A, "Pad", "Delay", "Reverb");
+        rack.layer(0, DeviceFixture.LAYER_A, "Pad", "Delay", "Reverb", "Chorus");
         f.start();
         DeviceModule module = f.device();
         JsonObject delay = rack.deviceRef(0, 0);
-        JsonObject got = f.call(module, "devices.get", target(delay));
+        JsonObject got = f.finish(f.submit(module, "devices.get", target(delay)));
         assertEquals("chain_device", got.get("scope").getAsString());
+        assertEquals("audio-effect", got.get("type").getAsString());
+        assertTrue(got.get("enabled").getAsBoolean());
         assertFalse(
                 got.get("remoteControlsAvailable").getAsBoolean(),
                 "a device inside a chain has no Remote Controls here");
         assertEquals(delay, got.getAsJsonObject("ref"));
         HostFixture.REF_SCHEMA.apply(got.getAsJsonObject("ref"));
-        JsonObject result = f.call(module, "devices.set", enable(rack.deviceRef(0, 1), false));
+        FakeChains.Node reverb = rack.chains.get(0).devices.get(1);
+        JsonObject result = f.finish(f.submit(module, "devices.set", enable(rack.deviceRef(0, 1), false)));
         assertEquals("applied", result.get("outcome").getAsString());
         assertEquals(rack.deviceRef(0, 1), result.getAsJsonObject("ref"));
-        FakeHost children = rack.layerNode(0).child("createDeviceBank");
-        assertEquals(1, children.item(1).child("isEnabled").writes);
-        assertEquals(0, children.item(0).child("isEnabled").writes);
+        assertEquals(0, reverb.enabled.value);
+        assertEquals(1, reverb.enabled.writes);
+        assertEquals(0, rack.chains.get(0).devices.get(0).enabled.writes);
+        JsonObject again = f.finish(f.submit(module, "devices.set", enable(rack.deviceRef(0, 1), false)));
+        assertEquals("already_matched", again.get("outcome").getAsString());
+        assertEquals(1, reverb.enabled.writes, "an equal value is not written");
+        reverb.enabled.sticks = 0.0;
+        JsonObject stuck = f.finish(f.submit(module, "devices.set", enable(rack.deviceRef(0, 1), true)));
+        assertEquals("unknown", stuck.get("outcome").getAsString());
+        assertEquals("readback_mismatch", stuck.get("reason").getAsString());
         assertEquals(
                 "sent",
-                f.call(module, "devices.select", target(delay)).get("outcome").getAsString());
-        assertEquals(0, rack.chains.get(0).selected, "the chain's own device is the one selected");
+                f.finish(f.submit(module, "devices.select", target(rack.deviceRef(0, 2))))
+                        .get("outcome")
+                        .getAsString());
+        assertSame(rack.chains.get(0).devices.get(2), f.natives.selected, "the third device, beyond any window");
         assertEquals(-1, f.top.selected);
         RpcException renamed = assertRpcError(
                 "target_changed", f.run(module, "devices.get", target(Refs.device(rack.chainRef(0), 1, "Gone"))));
         assertEquals(rack.deviceRef(0, 1), renamed.current);
         assertRpcError(
-                "outside_window", f.run(module, "devices.get", target(Refs.device(rack.chainRef(0), 2, "Gone"))));
+                "target_not_found", f.run(module, "devices.get", target(Refs.device(rack.chainRef(0), 3, "Gone"))));
     }
 
     @Test

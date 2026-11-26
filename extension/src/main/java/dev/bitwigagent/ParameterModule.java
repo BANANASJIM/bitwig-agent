@@ -8,8 +8,9 @@ import dev.bitwigagent.core.Refs;
 import java.util.*;
 
 /**
- * parameters.list and parameters.set: one parameter of a device by its ref. Direct parameters of a root device or of a
- * device inside a chain are handled here; a Remote Control and a modulator control are written by their own modules.
+ * parameters.list and parameters.set: one parameter of a device by its ref. Direct parameters of a root device are
+ * observed through its proxy; those of a device inside a chain are read and written natively through
+ * {@link NativeChains} on each request. A Remote Control and a modulator control are written by their own modules.
  */
 final class ParameterModule implements HostModule, ParameterResolver.DirectParameters {
     static final Set<String> METHODS = Set.of("parameters.list", "parameters.set");
@@ -23,12 +24,14 @@ final class ParameterModule implements HostModule, ParameterResolver.DirectParam
     private final RemoteModule remotes;
     private final ModulatorEditModule modulators;
     private final ParameterResolver resolver;
+    private final NativeChains chains;
     private final Map<DeviceSources.Source, ParameterSource> parameterSources = new IdentityHashMap<>();
     private long valueSequence, displaySequence;
 
     ParameterModule(
             Scheduler scheduler,
             DeviceSources sources,
+            NativeChains chains,
             TrackRefs trackRefs,
             TrackWindow window,
             TransportSafety transportSafety,
@@ -36,6 +39,7 @@ final class ParameterModule implements HostModule, ParameterResolver.DirectParam
             ModulatorEditModule modulators) {
         this.scheduler = scheduler;
         this.sources = sources;
+        this.chains = chains;
         this.transportSafety = transportSafety;
         this.remotes = remotes;
         this.modulators = modulators;
@@ -111,6 +115,10 @@ final class ParameterModule implements HostModule, ParameterResolver.DirectParam
     // ---------------------------------------------------------------- list
 
     private void list(HostOperation op, JsonObject parentRef) {
+        if (NativeChains.nested(parentRef)) {
+            nestedList(op, parentRef);
+            return;
+        }
         DeviceSources.Source device = sources.device(parentRef, false);
         ParameterSource source = parameterSources.get(device);
         RequestSnapshot snapshot = RequestSnapshot.of(device);
@@ -189,7 +197,8 @@ final class ParameterModule implements HostModule, ParameterResolver.DirectParam
                     "parameters.set does not take a parameter owned by a " + owner + ".",
                     owner.equals(ParameterRefs.TRACK) ? "tracks.set" : "grid.apply");
         ParameterResolver.Resolved resolved = resolver.resolve(target);
-        if (resolved instanceof ParameterResolver.Direct)
+        if (resolved instanceof ParameterResolver.Nested) nestedSet(op, target, input, expect);
+        else if (resolved instanceof ParameterResolver.Direct)
             direct(op, (ParameterResolver.Direct) resolved, target, input, expect);
         else if (resolved instanceof ParameterResolver.Remote)
             remotes.setControl(op, (ParameterResolver.Remote) resolved, target, input, expect);
@@ -356,6 +365,191 @@ final class ParameterModule implements HostModule, ParameterResolver.DirectParam
         op.result.complete(result);
     }
 
+    // ---------------------------------------------------------------- devices inside chains
+
+    /** Every direct parameter of a device inside a chain, with value and display, read natively in one pass. */
+    private void nestedList(HostOperation op, JsonObject parentRef) {
+        chains.run(op, parentRef, walk -> {
+            NativeChains.Device device = walk.device(parentRef, false);
+            JsonArray rows = new JsonArray();
+            for (String id : walk.a.parameterIds(device.device)) {
+                Object parameter = walk.a.parameter(device.device, id);
+                if (parameter == null) continue;
+                String name = walk.a.parameterName(parameter);
+                JsonObject item = new JsonObject();
+                item.add("ref", Refs.parameter(device.ref, id, name == null || name.isEmpty() ? null : name));
+                item.addProperty("name", name == null ? "" : name);
+                item.add("value", unit(finite(walk.a.value(parameter)), walk.a.display(parameter)));
+                rows.add(item);
+            }
+            JsonObject result = new JsonObject();
+            result.add("parent", device.ref);
+            result.add("parameters", rows);
+            result.addProperty("scope", "host_exposed_direct_parameters");
+            return result;
+        });
+    }
+
+    /** A parameter of a device inside a chain as found now: the parameter object, its device and its value. */
+    private static Object bind(NativeChains.Walk walk, JsonObject ref) {
+        NativeChains.Device device = walk.device(ref.getAsJsonObject("owner"), false);
+        String id = ref.get("id").getAsString();
+        Object parameter = Arrays.asList(walk.a.parameterIds(device.device)).contains(id)
+                ? walk.a.parameter(device.device, id)
+                : null;
+        if (parameter == null) throw Errors.targetNotFound(ref, "The device has no such parameter now.");
+        String name = walk.a.parameterName(parameter);
+        JsonObject current = Refs.parameter(device.ref, id, name == null || name.isEmpty() ? null : name);
+        if (!Refs.matches(ref, current, true))
+            throw Errors.targetChanged("Another parameter is at this location than the one read.", current);
+        return parameter;
+    }
+
+    /** Written and read back in one document-thread pass: the native value reflects the write at once. */
+    private void nestedSet(HostOperation op, JsonObject ref, ValueInput input, JsonObject expect) {
+        if (input.form == ValueInput.Form.DISPLAY) {
+            nestedSolve(op, ref, input.text, expect);
+            return;
+        }
+        double applied = step(input.normalized("value"));
+        JsonElement asked = input.bare;
+        chains.run(op, ref.getAsJsonObject("owner"), walk -> {
+            Object parameter = bind(walk, ref);
+            double before = walk.a.value(parameter);
+            requireExpected(expect, before);
+            if (Math.abs(before - applied) <= TOLERANCE)
+                return result(ref, asked, before, walk.a.display(parameter), Outcome.ALREADY_MATCHED, null);
+            if (!walk.a.writable(parameter))
+                throw Errors.notApplied(Reason.INVALID_TARGET, "The host does not let this parameter be written now.");
+            walk.dispatch();
+            walk.a.write(parameter, applied);
+            double seen = walk.a.value(parameter);
+            boolean ok = Math.abs(seen - applied) <= TOLERANCE;
+            return result(
+                    ref,
+                    asked,
+                    seen,
+                    walk.a.display(parameter),
+                    ok ? Outcome.APPLIED : Outcome.UNKNOWN,
+                    ok ? null : Reason.READBACK_MISMATCH);
+        });
+    }
+
+    private static void requireExpected(JsonObject expect, double value) {
+        if (expect == null) return;
+        JsonObject observed = new JsonObject();
+        observed.addProperty("value", value);
+        ValueMatch.requireExpected(expect, observed, Map.of("value", ValueMatch.NORMALIZED));
+    }
+
+    /** A display write on a device inside a chain: the same bisection, each probe a native write and read-back. */
+    private void nestedSolve(HostOperation op, JsonObject ref, String text, JsonObject expect) {
+        DisplayScale.Quantity wanted = DisplayScale.quantity(text);
+        if (wanted == null)
+            throw Errors.notApplied(
+                    Reason.UNSUPPORTED_UNIT,
+                    "A display write takes a number and its unit, like \"800 Hz\"; write the value you read.");
+        Runnable safety = transportSafety.writeGuard(op, true);
+        NativePort port = new NativePort(op, ref, safety);
+        chains.async(
+                op,
+                ref.getAsJsonObject("owner"),
+                walk -> {
+                    port.parameter = bind(walk, ref);
+                    requireExpected(expect, walk.a.value(port.parameter));
+                    port.read(walk);
+                    scheduler.schedule(
+                            op,
+                            () -> new DisplaySolver(
+                                            scheduler,
+                                            op,
+                                            port,
+                                            wanted,
+                                            outcome -> finishSolve(op, ref, text, wanted, port.observed(), outcome))
+                                    .start(),
+                            0);
+                },
+                op::fail);
+    }
+
+    /** A native parameter as the display solver sees it; each write is one document-thread task and its read-back. */
+    private final class NativePort implements DisplaySolver.Port {
+        private final HostOperation op;
+        private final JsonObject ref;
+        private final Runnable safety;
+        volatile Object parameter;
+        private volatile Double value;
+        private volatile String display;
+        private volatile long valueSeq, displaySeq;
+        private volatile RuntimeException failure;
+
+        NativePort(HostOperation op, JsonObject ref, Runnable safety) {
+            this.op = op;
+            this.ref = ref;
+            this.safety = safety;
+        }
+
+        void read(NativeChains.Walk walk) {
+            value = finite(walk.a.value(parameter));
+            display = walk.a.display(parameter);
+            valueSeq++;
+            displaySeq++;
+        }
+
+        ParameterState observed() {
+            ParameterState state = new ParameterState(ref.get("id").getAsString());
+            state.value = value;
+            return state;
+        }
+
+        @Override
+        public long valueSeq() {
+            return valueSeq;
+        }
+
+        @Override
+        public JsonElement value() {
+            return value == null ? JsonNull.INSTANCE : new JsonPrimitive(value);
+        }
+
+        @Override
+        public JsonElement display() {
+            return display == null ? JsonNull.INSTANCE : new JsonPrimitive(display);
+        }
+
+        @Override
+        public long displaySeq() {
+            return displaySeq;
+        }
+
+        @Override
+        public void write(double normalized) {
+            chains.async(
+                    op,
+                    ref.getAsJsonObject("owner"),
+                    walk -> {
+                        if (bind(walk, ref) != parameter)
+                            throw Errors.unknown(
+                                    Reason.TARGET_CHANGED, "The parameter changed while its display was solved.");
+                        walk.a.write(parameter, normalized);
+                        read(walk);
+                    },
+                    error -> failure = error);
+        }
+
+        @Override
+        public void guard() {
+            safety.run();
+            scheduler.check(op);
+            RuntimeException failed = failure;
+            if (failed != null) throw failed;
+        }
+    }
+
+    private static Double finite(double value) {
+        return Double.isFinite(value) ? value : null;
+    }
+
     // ---------------------------------------------------------------- results
 
     /** {outcome, ref, fields:{value}}: what was asked, and what the host shows when that differs. */
@@ -384,7 +578,6 @@ final class ParameterModule implements HostModule, ParameterResolver.DirectParam
 
     private boolean acceptParameterObservation(ParameterSource source) {
         // Registration identifies a fixed proxy, not the originating physical device.
-        // Nested sources that physically rebound stay closed; a callback is not a barrier.
         return source.identity.acceptDirectObservation();
     }
 

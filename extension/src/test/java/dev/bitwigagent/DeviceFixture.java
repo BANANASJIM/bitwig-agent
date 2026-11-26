@@ -6,8 +6,9 @@ import dev.bitwigagent.core.Refs;
 import java.util.*;
 
 /**
- * One simulated track of root devices with Remote Controls pages, device chains that react to the host's edit calls,
- * and layer devices; built on {@link HostFixture}'s topology before the services observe it. Consumer tests only.
+ * One simulated track of root devices with Remote Controls pages, a root chain that reacts to the host's edit calls,
+ * and layer devices whose chains live in the simulated native document ({@link FakeChains}); built on
+ * {@link HostFixture}'s topology before the services observe it. Consumer tests only.
  */
 final class DeviceFixture {
     static final String LAYER_A = "00000000-0000-4000-8000-0000000000aa";
@@ -22,6 +23,9 @@ final class DeviceFixture {
     final FakeHost[][] controls = new FakeHost[HostLimits.DEVICES][8];
     final JsonObject trackRef = Refs.track(HostFixture.A, "Track 0");
     final Chain top;
+    /** The native document the chains of layer devices live in. */
+    final FakeChains natives = new FakeChains();
+
     TestServices services;
     RemoteModule remote;
     /** A page switch the host reports after the call returns, followed by its flush, as the real host does. */
@@ -111,7 +115,7 @@ final class DeviceFixture {
                     if (silent.contains(field)) controls[d][r].child(field).notifyInitial = false;
         }
         if (deferredPageSwitch) for (int d = 0; d < 2; d++) pages[d].child("selectedPageIndex").notifyWrites = false;
-        services = new TestServices(host.host.proxy(ControllerHost.class), host.tasks::now);
+        services = new TestServices(host.host.proxy(ControllerHost.class), host.tasks::now, natives);
         remote = services.remote();
     }
 
@@ -183,6 +187,12 @@ final class DeviceFixture {
         return op.result.join();
     }
 
+    /** Runs host tasks until {@code op} settles, for a request expected to end in an error. */
+    HostOperation finishOrError(HostOperation op) {
+        while (!op.result.isDone()) host.next();
+        return op;
+    }
+
     JsonObject call(HostModule module, String method, JsonObject params) {
         HostOperation op = submit(module, method, params);
         host.next();
@@ -228,47 +238,30 @@ final class DeviceFixture {
 
     final class Rack {
         final int slot;
-        final FakeHost node, layers;
-        final List<Chain> chains = new ArrayList<>();
+        final FakeChains.Node node;
+        final List<FakeChains.Chain> chains = new ArrayList<>();
         final List<JsonObject> refs = new ArrayList<>();
 
         Rack(int slot) {
             this.slot = slot;
-            node = bank.item(slot);
-            node.child("hasLayers").emit(true);
-            layers = node.child("createLayerBank");
-            layers.child("exists").emit(true);
-            layers.child("scrollPosition").emit(0);
+            node = natives.root(
+                    0, slot, FakeChains.device(top.entries.get(slot)[0]).layered());
+            node.type = "instrument";
         }
 
         JsonObject ref() {
             return device(slot, top.entries.get(slot)[0]);
         }
 
-        /** The chain in layer slot {@code index}: its UUID, name and devices (audio effects). */
-        Chain layer(int index, String id, String name, String... deviceNames) {
-            FakeHost layer = layers.item(index);
-            layer.child("channelId").emit(id);
-            layer.child("channelIndex").emit(index);
-            layer.child("name").emit(name);
-            layer.child("exists").emit(true);
-            FakeHost children = layer.child("createDeviceBank");
-            children.child("exists").emit(true);
-            Chain chain = new Chain(
-                    host,
-                    children,
-                    DeviceSources.CHILDREN,
-                    layer.child("startOfDeviceChainInsertionPoint"),
-                    layer.child("endOfDeviceChainInsertionPoint"));
-            chain.seed(deviceNames);
+        /** The chain at {@code index} (the next one): its UUID, name and devices (audio effects). */
+        FakeChains.Chain layer(int index, String id, String name, String... deviceNames) {
+            if (index != chains.size()) throw new IllegalArgumentException("Chains are added in order.");
+            FakeChains.Node[] devices = new FakeChains.Node[deviceNames.length];
+            for (int i = 0; i < devices.length; i++) devices[i] = FakeChains.device(deviceNames[i]);
+            FakeChains.Chain chain = node.chain(id, name, devices);
             chains.add(chain);
             refs.add(Refs.chain(ref(), id, name));
-            layers.child("itemCount").emit(chains.size());
             return chain;
-        }
-
-        FakeHost layerNode(int index) {
-            return layers.item(index);
         }
 
         JsonObject chainRef(int index) {
@@ -276,7 +269,13 @@ final class DeviceFixture {
         }
 
         JsonObject deviceRef(int chain, int index) {
-            return Refs.device(chainRef(chain), index, chains.get(chain).entries.get(index)[0]);
+            return Refs.device(chainRef(chain), index, chains.get(chain).devices.get(index).name);
+        }
+
+        List<String> names(int chain) {
+            List<String> names = new ArrayList<>();
+            for (FakeChains.Node device : chains.get(chain).devices) names.add(device.name);
+            return names;
         }
     }
 

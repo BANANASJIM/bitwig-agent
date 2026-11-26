@@ -80,7 +80,7 @@ final class ParameterResolver {
         String id = ref.get("id").getAsString();
         switch (ParameterRefs.owner(ref)) {
             case ParameterRefs.DEVICE:
-                return direct(ref, devices.device(owner, false), id);
+                return NativeChains.nested(owner) ? new Nested() : direct(ref, devices.device(owner, false), id);
             case ParameterRefs.REMOTE_PAGE:
                 return remote(ref, devices.device(owner.getAsJsonObject("device"), false));
             case ParameterRefs.TRACK:
@@ -156,6 +156,17 @@ final class ParameterResolver {
                 Set<String> ids = direct.ids(device);
                 return ids == null ? null : new LinkedHashSet<>(ids);
             });
+        }
+    }
+
+    /**
+     * A direct parameter of a device inside a chain. Nothing about it is observed: the caller finds the device and the
+     * parameter natively and compares the ref there, in the same document-thread pass as the write.
+     */
+    static final class Nested extends Resolved {
+        @Override
+        RequestSnapshot snapshot() {
+            return new RequestSnapshot();
         }
     }
 

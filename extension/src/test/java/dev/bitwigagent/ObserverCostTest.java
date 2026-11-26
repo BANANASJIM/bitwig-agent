@@ -16,7 +16,7 @@ public final class ObserverCostTest {
         node.calls.forEach((method, count) -> {
             boolean registers =
                     (method.startsWith("add") && method.endsWith("Observer")) || method.equals("markInterested");
-            if (registers) registrations.merge(method, count, Integer::sum);
+            if (registers || method.equals("createLayerBank")) registrations.merge(method, count, Integer::sum);
         });
         for (FakeHost child : node.children.values()) walk(child, seen, registrations);
     }
@@ -32,9 +32,9 @@ public final class ObserverCostTest {
         walk(f.host, Collections.newSetFromMap(new IdentityHashMap<>()), registrations);
         int display = registrations.get("addDirectParameterValueDisplayObserver");
         int proxies = f.services.sources.all.size();
-        assertEquals(proxies, display, "exactly one display observer per device proxy, root or chain");
-        assertEquals(
-                HostLimits.TRACKS * HostLimits.DEVICES * (1 + DeviceSources.LAYERS * DeviceSources.CHILDREN), proxies);
+        assertEquals(proxies, display, "exactly one display observer per device proxy");
+        assertEquals(HostLimits.TRACKS * HostLimits.DEVICES, proxies, "root devices only: chains are walked natively");
+        assertNull(registrations.remove("createLayerBank"), "no nested proxy windows");
         long total =
                 registrations.values().stream().mapToLong(Integer::longValue).sum();
         int direct = registrations.get("addDirectParameterNormalizedValueObserver");

@@ -9,7 +9,10 @@ import dev.bitwigagent.core.Refs;
 import java.util.*;
 import org.junit.jupiter.api.Test;
 
-/** devices.insert/delete/move against chains that render the host's observer traffic; never native evidence. */
+/**
+ * devices.insert/delete/move against a root chain that renders the host's observer traffic and chains in a simulated
+ * native document; never native evidence.
+ */
 public final class DeviceChainModuleTest {
     private static final String NATIVE = "11111111-2222-4333-8444-555555555555";
 
@@ -396,42 +399,50 @@ public final class DeviceChainModuleTest {
         assertEquals(0, f.top.deletions);
     }
 
+    private static JsonObject finish(DeviceFixture f, HostModule module, String method, JsonObject params) {
+        return f.finish(f.submit(module, method, params));
+    }
+
     @Test
-    void aChainEditsItsOwnTwoDeviceWindow() {
+    void aChainEditsItsDevicesNativelyAndNamesTheInsertedOne() {
         DeviceFixture.Rack[] out = new DeviceFixture.Rack[1];
         DeviceFixture f = racks(out, "Delay", "Reverb");
         DeviceFixture.Rack rack = out[0];
-        DeviceFixture.Chain pad = rack.chains.get(0), lead = rack.chains.get(1);
-        JsonObject lone = f.call(f.chains(), "devices.insert", insert(rack.chainRef(1), "clap", "org.example.fx"));
+        JsonObject lone = finish(f, f.chains(), "devices.insert", insert(rack.chainRef(1), "clap", "org.example.fx"));
+        assertEquals("applied", lone.get("outcome").getAsString());
         assertEquals(rack.chainRef(1), lone.getAsJsonObject("parent"));
         assertEquals(1, lone.getAsJsonObject("inserted").get("deviceIndex").getAsInt());
         assertEquals(Refs.device(rack.chainRef(1), 1, "Inserted"), lone.getAsJsonObject("ref"));
         HostFixture.REF_SCHEMA.apply(lone.getAsJsonObject("ref"));
-        assertEquals(
-                "observed_count_increment_and_unchanged_prefix",
-                lone.get("verification").getAsString());
+        assertEquals(NativeChainEdits.VERIFICATION, lone.get("verification").getAsString());
         assertEquals(2, lone.get("afterCount").getAsInt());
-        assertEquals("insertCLAPDevice", lead.lastInsertion);
-        assertEquals(0, pad.insertions, "the other chain is untouched");
+        assertFalse(lone.get("requestedIdentifierVerified").getAsBoolean());
+        assertEquals(List.of("Chorus", "Inserted"), rack.names(1));
+        assertEquals(List.of("Delay", "Reverb"), rack.names(0), "the other chain is untouched");
 
-        JsonObject start = f.call(f.chains(), "devices.insert", insertAt(rack.chainRef(0), "start"));
-        assertEquals(List.of("start:-1:insertBitwigDevice"), pad.points);
-        assertEquals(List.of("Inserted", "Delay", "Reverb"), pad.names());
+        JsonObject start = finish(f, f.chains(), "devices.insert", insertAt(rack.chainRef(0), "start"));
+        assertEquals(List.of("Inserted", "Delay", "Reverb"), rack.names(0));
         assertEquals(0, start.getAsJsonObject("inserted").get("deviceIndex").getAsInt());
-        assertEquals(
-                "observed_count_increment_shifted_suffix",
-                start.get("verification").getAsString());
-        assertEquals(3, start.get("afterCount").getAsInt(), "the count says how many there are beyond the window");
-        assertEquals(2, start.getAsJsonArray("after").size(), "the window shows the first two");
+        assertEquals(3, start.getAsJsonArray("after").size(), "every device is shown");
 
-        JsonObject beyond = f.call(f.chains(), "devices.insert", insertAt(rack.chainRef(0), "end"));
+        JsonObject beyond = finish(f, f.chains(), "devices.insert", insertAt(rack.chainRef(0), "end"));
         assertEquals("applied", beyond.get("outcome").getAsString());
-        assertEquals(
-                "observed_count_increment_beyond_window",
-                beyond.get("verification").getAsString());
-        assertTrue(beyond.get("inserted").isJsonNull(), "a device beyond the window cannot be named");
-        assertFalse(beyond.has("ref"));
-        assertEquals(4, beyond.get("afterCount").getAsInt());
+        assertEquals(Refs.device(rack.chainRef(0), 3, "Inserted"), beyond.getAsJsonObject("ref"));
+        assertEquals(4, beyond.get("afterCount").getAsInt(), "no window limits the chain");
+        JsonObject file = finish(
+                f,
+                f.chains(),
+                "devices.insert",
+                params(
+                        "parent",
+                        rack.chainRef(0),
+                        "kind",
+                        "file",
+                        "path",
+                        TestPaths.absolute("/presets/Wide Delay.bwpreset"),
+                        "position",
+                        after(rack.deviceRef(0, 1))));
+        assertEquals(Refs.device(rack.chainRef(0), 2, "Wide Delay"), file.getAsJsonObject("ref"));
     }
 
     @Test
@@ -439,15 +450,16 @@ public final class DeviceChainModuleTest {
         DeviceFixture.Rack[] out = new DeviceFixture.Rack[1];
         DeviceFixture f = racks(out, "Delay", "Reverb");
         DeviceFixture.Rack rack = out[0];
-        DeviceFixture.Chain pad = rack.chains.get(0);
-        JsonObject moved = f.call(f.chains(), "devices.move", move(rack.deviceRef(0, 1), before(rack.deviceRef(0, 0))));
-        assertEquals(List.of("before:0:moveDevices"), pad.points);
-        assertEquals(List.of("Reverb", "Delay"), pad.names());
-        assertEquals("observed_expected_arrangement", moved.get("verification").getAsString());
+        JsonObject moved =
+                finish(f, f.chains(), "devices.move", move(rack.deviceRef(0, 1), before(rack.deviceRef(0, 0))));
+        assertEquals(List.of("Reverb", "Delay"), rack.names(0));
+        assertEquals(NativeChainEdits.VERIFICATION, moved.get("verification").getAsString());
         assertEquals(Refs.device(rack.chainRef(0), 0, "Reverb"), moved.getAsJsonObject("ref"));
+        assertEquals(1, moved.getAsJsonObject("moved").get("deviceIndex").getAsInt());
+        assertEquals(0, moved.getAsJsonObject("moved").get("toIndex").getAsInt());
         assertEquals(
                 "already_matched",
-                f.call(f.chains(), "devices.move", move(Refs.device(rack.chainRef(0), 0, "Reverb"), "start"))
+                finish(f, f.chains(), "devices.move", move(Refs.device(rack.chainRef(0), 0, "Reverb"), "start"))
                         .get("outcome")
                         .getAsString());
         assertRpcError(
@@ -471,46 +483,37 @@ public final class DeviceChainModuleTest {
                                 "to",
                                 params("parent", rack.chainRef(0), "position", "end"))));
 
-        JsonObject deleted = f.call(f.chains(), "devices.delete", delete(Refs.device(rack.chainRef(0), 0, "Reverb")));
+        JsonObject deleted =
+                finish(f, f.chains(), "devices.delete", delete(Refs.device(rack.chainRef(0), 0, "Reverb")));
         assertEquals("applied", deleted.get("outcome").getAsString());
         assertEquals("Reverb", deleted.getAsJsonObject("deleted").get("name").getAsString());
         assertEquals(1, deleted.get("afterCount").getAsInt());
-        assertEquals(List.of("Delay"), pad.names());
-        assertEquals(
-                "observed_count_decrement_and_shifted_suffix",
-                deleted.get("verification").getAsString());
+        assertEquals(List.of("Delay"), rack.names(0));
+        assertEquals(NativeChainEdits.VERIFICATION, deleted.get("verification").getAsString());
     }
 
     @Test
-    void aChainLongerThanItsWindowCannotBeMoved() {
+    void aLongChainMovesAndDeletesAnyDeviceEvenAmongTwins() {
         DeviceFixture.Rack[] out = new DeviceFixture.Rack[1];
-        DeviceFixture f = racks(out, "Delay", "Reverb", "Chorus");
+        DeviceFixture f = racks(out, "Twin", "Delay", "Twin", "Reverb", "Twin");
         DeviceFixture.Rack rack = out[0];
-        assertRpcError("outside_window", f.run(f.chains(), "devices.move", move(rack.deviceRef(0, 0), "end")));
-        assertTrue(rack.chains.get(0).points.isEmpty());
-    }
-
-    @Test
-    void aDeviceInAChainLongerThanItsWindowIsDeletedAndTheCountShrinks() {
-        String[][] cases = {{"first", "0", "Delay", "Reverb,Chorus"}, {"last in window", "1", "Reverb", "Delay,Chorus"}
-        };
-        for (String[] c : cases) {
-            DeviceFixture.Rack[] out = new DeviceFixture.Rack[1];
-            DeviceFixture f = racks(out, "Delay", "Reverb", "Chorus");
-            DeviceFixture.Rack rack = out[0];
-            JsonObject deleted =
-                    f.call(f.chains(), "devices.delete", delete(rack.deviceRef(0, Integer.parseInt(c[1]))));
-            assertEquals("applied", deleted.get("outcome").getAsString(), c[0]);
-            assertEquals(
-                    "observed_count_decrement_and_shifted_suffix",
-                    deleted.get("verification").getAsString(),
-                    c[0]);
-            assertEquals(3, deleted.get("beforeCount").getAsInt(), c[0]);
-            assertEquals(2, deleted.get("afterCount").getAsInt(), c[0]);
-            assertEquals(c[2], deleted.getAsJsonObject("deleted").get("name").getAsString(), c[0]);
-            assertEquals(Arrays.asList(c[3].split(",")), rack.chains.get(0).names(), c[0]);
-            assertEquals(1, rack.chains.get(0).deletions, c[0]);
-        }
+        FakeChains.Node first = rack.chains.get(0).devices.get(0);
+        JsonObject toEnd = finish(f, f.chains(), "devices.move", move(rack.deviceRef(0, 0), "end"));
+        assertEquals("applied", toEnd.get("outcome").getAsString(), "objects prove a move among same-name devices");
+        assertSame(first, rack.chains.get(0).devices.get(4));
+        assertEquals(Refs.device(rack.chainRef(0), 4, "Twin"), toEnd.getAsJsonObject("ref"));
+        JsonObject toStart = finish(f, f.chains(), "devices.move", move(rack.deviceRef(0, 2), "start"));
+        assertEquals("applied", toStart.get("outcome").getAsString());
+        assertEquals(List.of("Reverb", "Delay", "Twin", "Twin", "Twin"), rack.names(0));
+        JsonObject later =
+                finish(f, f.chains(), "devices.move", move(rack.deviceRef(0, 1), after(rack.deviceRef(0, 3))));
+        assertEquals(List.of("Reverb", "Twin", "Twin", "Delay", "Twin"), rack.names(0));
+        assertEquals(3, later.getAsJsonObject("moved").get("toIndex").getAsInt());
+        JsonObject deleted = finish(f, f.chains(), "devices.delete", delete(rack.deviceRef(0, 4)));
+        assertEquals("applied", deleted.get("outcome").getAsString());
+        assertEquals(5, deleted.get("beforeCount").getAsInt());
+        assertEquals(List.of("Reverb", "Twin", "Twin", "Delay"), rack.names(0));
+        assertFalse(rack.chains.get(0).devices.contains(first), "the device the ref named is the one deleted");
     }
 
     @Test
@@ -530,23 +533,46 @@ public final class DeviceChainModuleTest {
         assertRpcError(
                 "invalid_params",
                 f.run(f.chains(), "devices.move", move(rack.deviceRef(0, 0), after(rack.deviceRef(1, 0)))));
-        assertEquals(0, rack.chains.get(0).insertions + rack.chains.get(1).insertions + f.top.insertions);
+        assertEquals(List.of("Delay", "Reverb"), rack.names(0));
+        assertEquals(List.of("Chorus"), rack.names(1));
+        assertEquals(0, f.top.insertions);
+    }
+
+    @Test
+    void aChainInsertIsPolledUntilItAppearsAndUnknownWhenItNeverDoes() {
+        DeviceFixture.Rack[] out = new DeviceFixture.Rack[1];
+        DeviceFixture f = racks(out, "Delay");
+        DeviceFixture.Rack rack = out[0];
+        f.natives.insertDelay = 3;
+        HostOperation late = f.submit(f.chains(), "devices.insert", insert(rack.chainRef(0), "bitwig", NATIVE));
+        JsonObject appeared = f.finish(late);
+        assertEquals("applied", appeared.get("outcome").getAsString(), "a device that appears after the call");
+        assertEquals(List.of("Delay", "Inserted"), rack.names(0));
+
+        f.natives.insertDelay = Integer.MAX_VALUE;
+        HostOperation never = f.submit(
+                f.chains(), "devices.insert", insert(rack.chainRef(0), "bitwig", NATIVE), f.host.tasks.after(5000));
+        JsonObject unknown = f.finish(never);
+        assertEquals("unknown", unknown.get("outcome").getAsString());
+        assertEquals("not_observed", unknown.get("reason").getAsString());
+        assertTrue(unknown.get("inserted").isJsonNull());
+        assertEquals(List.of("Delay", "Inserted"), rack.names(0), "nothing is retried");
+    }
+
+    @Test
+    void anInsertTheHostDoesNotKnowIsRefusedBeforeDispatch() {
+        DeviceFixture.Rack[] out = new DeviceFixture.Rack[1];
+        DeviceFixture f = racks(out, "Delay");
+        DeviceFixture.Rack rack = out[0];
+        f.natives.unknownIds.add(NATIVE);
+        HostOperation op = f.run(f.chains(), "devices.insert", insert(rack.chainRef(0), "bitwig", NATIVE));
+        assertRpcError("invalid_target", op);
+        assertFalse(op.dispatched());
+        assertEquals(List.of("Delay"), rack.names(0));
     }
 
     @Test
     void aChainEditWhoseContextChangesAfterDispatchIsUnknown() {
-        DeviceFixture.Rack[] out = new DeviceFixture.Rack[1];
-        DeviceFixture f = racks(out, "Delay");
-        DeviceFixture.Rack rack = out[0];
-        rack.chains.get(0).insertMode = "none";
-        HostOperation op = f.submit(f.chains(), "devices.insert", insert(rack.chainRef(0), "bitwig", NATIVE));
-        f.host.next();
-        assertFalse(op.result.isDone());
-        f.devices[1].child("name").emit("Renamed Rack");
-        f.host.next();
-        assertUnknown("target_changed", op);
-        assertEquals(1, rack.chains.get(0).insertions, "the changed context never replays the edit");
-
         DeviceFixture top = abc();
         top.top.insertMode = "none";
         HostOperation rooted = top.submit(top.chains(), "devices.insert", insert(top.trackRef, "bitwig", NATIVE));
@@ -558,60 +584,38 @@ public final class DeviceChainModuleTest {
         assertEquals(1, top.top.insertions);
     }
 
-    /** The host reorders the two layers: each keeps its UUID, name and devices but changes slot. */
-    private static void swapLayers(DeviceFixture.Rack rack) {
-        FakeHost first = rack.layerNode(0), second = rack.layerNode(1);
-        List<String[]> padDevices = new ArrayList<>(rack.chains.get(0).entries);
-        List<String[]> leadDevices = new ArrayList<>(rack.chains.get(1).entries);
-        first.child("channelId").emit(LAYER_B);
-        second.child("channelId").emit(LAYER_A);
-        first.child("name").emit("Lead");
-        second.child("name").emit("Pad");
-        rack.chains.get(0).render(leadDevices);
-        rack.chains.get(1).render(padDevices);
-    }
-
     @Test
     void aChainRefIsLocatedByItsLayerUuidSoEditsFollowAReorderedLayer() {
         DeviceFixture.Rack[] out = new DeviceFixture.Rack[1];
         DeviceFixture f = racks(out, "Delay", "Reverb");
         DeviceFixture.Rack rack = out[0];
         JsonObject pad = rack.chainRef(0);
-        swapLayers(rack);
-        JsonObject result = f.call(f.chains(), "devices.insert", insert(pad, "clap", "org.example.fx"));
-        assertEquals(1, rack.chains.get(1).insertions, "the edit went to the layer that now holds the Pad chain");
-        assertEquals(0, rack.chains.get(0).insertions);
+        Collections.reverse(rack.node.chains);
+        JsonObject result = finish(f, f.chains(), "devices.insert", insert(pad, "clap", "org.example.fx"));
+        assertEquals(List.of("Delay", "Reverb", "Inserted"), rack.names(0), "the edit went to the Pad chain");
+        assertEquals(List.of("Chorus"), rack.names(1));
         assertEquals(pad, result.getAsJsonObject("parent"));
-        assertEquals("applied", result.get("outcome").getAsString());
         assertEquals(3, result.get("afterCount").getAsInt());
     }
 
     @Test
-    void aDeviceOfAReboundChainIsUnavailableNotStale() {
+    void aDeviceStaysAddressableAfterItsNeighboursChange() {
         DeviceFixture.Rack[] out = new DeviceFixture.Rack[1];
-        DeviceFixture f = racks(out, "Delay", "Reverb");
+        DeviceFixture f = racks(out, "Delay", "Reverb", "Chorus");
         DeviceFixture.Rack rack = out[0];
-        JsonObject delay = rack.deviceRef(0, 0);
-        swapLayers(rack);
-        RpcException unavailable = assertRpcError("not_ready", f.run(f.chains(), "devices.delete", delete(delay)));
-        assertTrue(
-                unavailable.getMessage().contains("extension reload"),
-                "reading again cannot help: " + unavailable.getMessage());
-        assertRpcError("not_ready", f.run(f.chains(), "devices.move", move(delay, "end")));
-        assertRpcError("not_ready", f.run(f.chains(), "devices.insert", insertAt(rack.chainRef(0), before(delay))));
-        assertEquals(0, rack.chains.get(0).deletions + rack.chains.get(1).deletions);
-        JsonObject listed = f.call(f.chains(), "chains.list", params("parent", rack.ref()));
-        for (JsonElement chain : listed.getAsJsonArray("chains")) {
-            JsonObject row = chain.getAsJsonObject();
-            assertTrue(row.has("ref"), "the chain itself stays addressable");
-            assertEquals("ready", row.get("readiness").getAsString());
-        }
-        assertFalse(
-                item(listed, "chains", 1).get("devicesAvailable").getAsBoolean(),
-                "the Pad chain's devices are rebound");
-        JsonObject devices = f.call(f.list(), "devices.list", params("parent", rack.chainRef(0)));
-        for (JsonElement device : devices.getAsJsonArray("devices"))
-            assertFalse(device.getAsJsonObject().get("available").getAsBoolean());
+        JsonObject delay = rack.deviceRef(0, 0), chorus = rack.deviceRef(0, 2);
+        assertEquals(
+                "applied",
+                finish(f, f.chains(), "devices.delete", delete(delay))
+                        .get("outcome")
+                        .getAsString());
+        RpcException shifted = assertRpcError("target_changed", f.run(f.chains(), "devices.delete", delete(delay)));
+        assertEquals(Refs.device(rack.chainRef(0), 0, "Reverb"), shifted.current, "another device is at index 0 now");
+        assertRpcError("target_not_found", f.run(f.chains(), "devices.delete", delete(chorus)));
+        JsonObject moved =
+                finish(f, f.chains(), "devices.move", move(Refs.device(rack.chainRef(0), 1, "Chorus"), "start"));
+        assertEquals("applied", moved.get("outcome").getAsString(), "no reload is needed after an edit");
+        assertEquals(List.of("Chorus", "Reverb"), rack.names(0));
     }
 
     @Test
@@ -619,8 +623,8 @@ public final class DeviceChainModuleTest {
         DeviceFixture.Rack[] out = new DeviceFixture.Rack[1];
         DeviceFixture f = racks(out, "Delay");
         DeviceFixture.Rack rack = out[0];
-        rack.layerNode(1).child("channelId").emit(LAYER_A);
+        rack.chains.get(1).id = UUID.fromString(LAYER_A);
         assertRpcError("not_ready", f.run(f.chains(), "devices.insert", insert(rack.chainRef(0), "bitwig", NATIVE)));
-        assertEquals(0, rack.chains.get(0).insertions + rack.chains.get(1).insertions);
+        assertEquals(List.of("Delay"), rack.names(0));
     }
 }

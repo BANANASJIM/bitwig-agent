@@ -261,14 +261,14 @@ final class AutomationModule implements HostModule {
         return out;
     }
 
-    /** The lane owner of a resolved parameter: a track's volume or pan, or a Grid module parameter (no chain devices). */
+    /**
+     * The lane owner of a resolved parameter: a track's volume or pan, or a Grid module parameter of a root device (a
+     * device inside a chain is unsupported_scope when its ref is resolved).
+     */
     private static Target target(ParameterResolver.Resolved resolved) {
         if (resolved instanceof ParameterResolver.TrackParameter)
             return new Target(((ParameterResolver.TrackParameter) resolved).id, null, null, null);
         ParameterResolver.ModuleParameter module = (ParameterResolver.ModuleParameter) resolved;
-        if (module.device.layer != null)
-            throw Errors.notApplied(
-                    Reason.UNSUPPORTED_SCOPE, "Automation of a Grid module inside a chain or layer is not covered.");
         return new Target("grid", module.device, module.ownerId, module.id);
     }
 
