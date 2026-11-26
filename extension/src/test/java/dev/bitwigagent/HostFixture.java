@@ -126,21 +126,6 @@ final class HostFixture {
             for (int d = 0; d < HostLimits.DEVICES; d++) {
                 FakeHost device = devices.item(d);
                 emptyDevice(device, d);
-                device.child("hasLayers").data = false;
-                FakeHost layers = device.child("createLayerBank");
-                emptyBank(layers);
-                layers.items(DeviceLayer.class);
-                for (int l = 0; l < 2; l++) {
-                    FakeHost layer = layers.item(l);
-                    layer.child("exists").data = false;
-                    layer.child("channelId").data = "";
-                    layer.child("channelIndex").data = l;
-                    layer.child("name").data = "";
-                    FakeHost children = layer.child("createDeviceBank");
-                    emptyBank(children);
-                    children.items(Device.class);
-                    for (int c = 0; c < 2; c++) emptyDevice(children.item(c), c);
-                }
             }
             FakeHost sends = track.child("sendBank");
             sends.items(Send.class);
@@ -253,12 +238,6 @@ final class HostFixture {
             int index = (Integer) args[0];
             return definition.item(index).returns("getId", ids[index]).proxy(EnumValueDefinition.class);
         });
-    }
-
-    private void emptyBank(FakeHost bank) {
-        bank.child("exists").data = false;
-        bank.child("itemCount").data = 0;
-        bank.child("scrollPosition").data = 0;
     }
 
     private static void launcherCursorClip(FakeHost clip) {

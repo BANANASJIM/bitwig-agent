@@ -207,7 +207,7 @@ final class LauncherFake {
             devices.live("scrollPosition", () -> 0);
             devices.live("itemCount", () -> 0);
             FakeHost[] roots = new FakeHost[16];
-            for (int d = 0; d < roots.length; d++) roots[d] = emptyDevice(d, true);
+            for (int d = 0; d < roots.length; d++) roots[d] = emptyDevice(d);
             devices.on("getItemAt", a -> roots[(Integer) a[0]].proxy());
             track.attach("createDeviceBank", devices);
             tracks[t] = track.proxy(Track.class);
@@ -862,7 +862,7 @@ final class LauncherFake {
         }
     }
 
-    private static FakeHost emptyDevice(int position, boolean root) {
+    private static FakeHost emptyDevice(int position) {
         FakeHost device = FakeHost.of(Device.class, "device");
         device.live("exists", () -> false);
         device.live("name", () -> "");
@@ -872,35 +872,6 @@ final class LauncherFake {
             ((StringArrayValueChangedCallback) a[0]).valueChanged(new String[0]);
             return null;
         });
-        if (root) {
-            device.live("hasLayers", () -> false);
-            FakeHost layers = FakeHost.of(DeviceLayerBank.class, "layers");
-            layers.live("exists", () -> false);
-            layers.live("itemCount", () -> 0);
-            layers.live("scrollPosition", () -> 0);
-            FakeHost[] layerNodes = new FakeHost[2];
-            for (int l = 0; l < layerNodes.length; l++) {
-                final int index = l;
-                FakeHost layer = layerNodes[l] = FakeHost.of(DeviceLayer.class, "layer");
-                layer.live("exists", () -> false);
-                layer.live("channelId", () -> "");
-                layer.live("channelIndex", () -> index);
-                layer.live("name", () -> "");
-                FakeHost children = FakeHost.of(DeviceBank.class, "children");
-                children.live("exists", () -> false);
-                children.live("itemCount", () -> 0);
-                children.live("scrollPosition", () -> 0);
-                FakeHost[] childNodes = {emptyDevice(0, false), emptyDevice(1, false)};
-                children.on("getItemAt", a -> childNodes[(Integer) a[0]].proxy());
-                layer.on("createDeviceBank", a -> children.proxy());
-            }
-            layers.on("getItemAt", a -> layerNodes[(Integer) a[0]].proxy());
-            device.on("createLayerBank", a -> layers.proxy());
-        } else {
-            device.on("createCursorRemoteControlsPage", a -> {
-                throw new AssertionError("Child remote controls are outside the fixed layer graph");
-            });
-        }
         return device;
     }
 

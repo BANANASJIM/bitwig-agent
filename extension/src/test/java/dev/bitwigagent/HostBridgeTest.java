@@ -1136,20 +1136,6 @@ public final class HostBridgeTest {
         boolean activateWorks = true;
         int saveInvocations, quitInvocations, lifecycleInvocations;
         boolean saveClears = true;
-        final FakeHost[] layerNodes = new FakeHost[2], childBanks = new FakeHost[2];
-        final FakeHost[][] childNodes = new FakeHost[2][2];
-        final StringArrayValueChangedCallback[][] childIds = new StringArrayValueChangedCallback[2][2];
-        final DirectParameterNormalizedValueChangedCallback[][] childValues =
-                new DirectParameterNormalizedValueChangedCallback[2][2];
-        final boolean[][] initialChildIds = {{true, true}, {true, true}};
-        final double[][] childParameterValues = {{.15, .35}, {.55, .75}};
-        final int[][] childWrites = new int[2][2];
-        FakeHost layerBank;
-        final List<List<String>> layerNames =
-                List.of(new ArrayList<>(List.of("Twin", "Twin")), new ArrayList<>(List.of("Twin", "Twin")));
-        final List<String> layerCalls = new ArrayList<>();
-        String layerMode = "one";
-        int childIdEmissions;
         int actionReads, actionLookups, actionInvocations;
         boolean slowActionLookup, initializing;
         String writeMode = "match";
@@ -1168,7 +1154,6 @@ public final class HostBridgeTest {
                     node.put("deviceType", "audio-effect");
                     node.put("isEnabled", true);
                     HostFixture.remotePage(node);
-                    attachLayers(node, t == 0 && d == 0);
                     displayObserver(node);
                     for (String observer : List.of(
                             "addDirectParameterIdObserver",
@@ -1223,103 +1208,6 @@ public final class HostBridgeTest {
             trackBank.put("itemCount", HostLimits.TRACKS + 4);
         }
 
-        void attachLayers(FakeHost root, boolean populated) {
-            root.put("hasLayers", populated);
-            FakeHost bank = new FakeHost("bank");
-            bank.put("exists", populated);
-            bank.put("itemCount", populated ? 2 : 0);
-            bank.put("scrollPosition", 0);
-            DeviceLayer[] layers = new DeviceLayer[2];
-            if (populated) layerBank = bank;
-            for (int l = 0; l < 2; l++) {
-                final int layer = l;
-                FakeHost node = new FakeHost("node");
-                node.put("exists", populated);
-                node.put("channelId", populated ? layerId(l) : "");
-                node.put("channelIndex", 10 + l);
-                node.put("name", "Same Layer");
-                if (populated) {
-                    node.attach("startOfDeviceChainInsertionPoint", layerPoint(layer, "start"));
-                    node.attach("endOfDeviceChainInsertionPoint", layerPoint(layer, "end"));
-                }
-                FakeHost children = new FakeHost("children");
-                children.put("exists", populated);
-                children.put("itemCount", populated ? 2 : 0);
-                children.put("scrollPosition", 0);
-                Device[] devices = new Device[2];
-                if (populated) {
-                    layerNodes[l] = node;
-                    childBanks[l] = children;
-                }
-                DeviceLayer owner = node.proxy(DeviceLayer.class);
-                layers[l] = owner;
-                for (int c = 0; c < 2; c++) {
-                    final int child = c;
-                    FakeHost leaf = new FakeHost("leaf");
-                    leaf.put("exists", populated);
-                    leaf.put("name", "Twin");
-                    leaf.put("position", c);
-                    leaf.put("deviceType", "audio-effect");
-                    leaf.put("isEnabled", true);
-                    FakeHost chain = new FakeHost("chain");
-                    chain.on("createEqualsValue", args -> {
-                        if (args[0] == owner)
-                            throw new IllegalArgumentException("These proxies always refer to the same target");
-                        FakeHost same = new FakeHost("equals");
-                        same.data = false;
-                        return same.proxy(BooleanValue.class);
-                    });
-                    leaf.attach("deviceChain", chain);
-                    if (populated) childNodes[l][c] = leaf;
-                    leaf.on("createCursorRemoteControlsPage", args -> {
-                        throw new AssertionError("No child remotes");
-                    });
-                    leaf.on("addDirectParameterIdObserver", args -> {
-                        requireInitializing("child direct observers must be init-created");
-                        if (populated) {
-                            childIds[layer][child] = (StringArrayValueChangedCallback) args[0];
-                            if (initialChildIds[layer][child]) emitChildIds(layer, child, new String[] {"gain"});
-                        }
-                        return null;
-                    });
-                    leaf.on("addDirectParameterNameObserver", args -> {
-                        requireInitializing("child direct observers must be init-created");
-                        if (populated)
-                            ((DirectParameterNameChangedCallback) args[1])
-                                    .directParameterNameChanged("gain", "Child gain");
-                        return null;
-                    });
-                    leaf.on("addDirectParameterNormalizedValueObserver", args -> {
-                        requireInitializing("child direct observers must be init-created");
-                        if (populated) {
-                            childValues[layer][child] = (DirectParameterNormalizedValueChangedCallback) args[0];
-                            emitChildValue(layer, child, childParameterValues[layer][child]);
-                        }
-                        return null;
-                    });
-                    displayObserver(leaf);
-                    leaf.on("setDirectParameterValueNormalized", args -> {
-                        if (populated) {
-                            if (!base.onHost) throw new AssertionError("child write outside host callback");
-                            childWrites[layer][child]++;
-                            if (writeMode.equals("match"))
-                                emitChildValue(
-                                        layer,
-                                        child,
-                                        ((Number) args[1]).doubleValue() / (((Number) args[2]).doubleValue() - 1));
-                            if (writeMode.equals("mismatch")) emitChildValue(layer, child, .4);
-                        }
-                        return null;
-                    });
-                    devices[c] = leaf.proxy(Device.class);
-                }
-                children.on("getItemAt", args -> devices[(Integer) args[0]]);
-                node.attach("createDeviceBank", children);
-            }
-            bank.on("getItemAt", args -> layers[(Integer) args[0]]);
-            root.attach("createLayerBank", bank);
-        }
-
         /** The host reports a display text for every observed id as soon as it is told which ids to observe. */
         void displayObserver(FakeHost node) {
             FakeHost observer = node.child("directDisplayObserver");
@@ -1335,49 +1223,6 @@ public final class HostBridgeTest {
                                 .directParameterDisplayedValueChanged(id, "shown " + id);
                 return null;
             });
-        }
-
-        FakeHost layerPoint(int layer, String mode) {
-            FakeHost node = new FakeHost("node");
-            node.onMethods(InsertionPoint.class, method -> method.startsWith("insert"), (method, args) -> {
-                if (!base.onHost) throw new AssertionError("layer insertion outside host callback");
-                layerCalls.add(layer + ":" + mode + ":" + method);
-                if (layerMode.equals("none")) return null;
-                List<String> names = new ArrayList<>(layerNames.get(layer));
-                names.add(mode.equals("start") ? 0 : names.size(), "Inserted");
-                setLayer(layer, names.toArray(new String[0]));
-                return null;
-            });
-            return node;
-        }
-        /** Make layer `layer` hold exactly these children, emitting observer traffic as the host would. */
-        void setLayer(int layer, String... names) {
-            for (int c = 0; c < 2; c++) {
-                FakeHost leaf = childNodes[layer][c];
-                if (c < names.length) {
-                    if (!names[c].equals(leaf.child("name").data))
-                        leaf.child("name").emit(names[c]);
-                    if (!Boolean.TRUE.equals(leaf.child("exists").data))
-                        leaf.child("exists").emit(true);
-                } else if (!Boolean.FALSE.equals(leaf.child("exists").data))
-                    leaf.child("exists").emit(false);
-            }
-            layerNames.get(layer).clear();
-            layerNames.get(layer).addAll(Arrays.asList(names));
-            childBanks[layer].child("itemCount").emit(names.length);
-        }
-
-        void emitChildIds(int layer, int child, String[] ids) {
-            if (childIds[layer][child] != null) {
-                childIdEmissions++;
-                childIds[layer][child].valueChanged(ids);
-            }
-        }
-
-        void emitChildValue(int layer, int child, double value) {
-            childParameterValues[layer][child] = value;
-            if (childValues[layer][child] != null)
-                childValues[layer][child].directParameterNormalizedValueChanged("gain", value);
         }
 
         HostBridge bridge() {
