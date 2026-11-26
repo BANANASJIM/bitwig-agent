@@ -6,3 +6,7 @@ warn_redundant_casts = true
 files = ["scripts", "tests", "examples"]
 explicit_package_bases = true
 mypy_path = ["src", "scripts", "tests"]
+
+[[tool.mypy.overrides]]
+module = ["numpy", "numpy.*", "scipy", "scipy.*", "soundfile"]
+ignore_missing_imports = true
