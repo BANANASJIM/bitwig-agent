@@ -385,7 +385,7 @@ final class AutomationModule implements HostModule {
         };
         Runnable beforeWrite = () -> {
             check.run();
-            op.dispatched = true;
+            op.markDispatched();
             holds.place(
                     QUARANTINE,
                     "An automation point write on track " + id + " has an unknown outcome until read back.");

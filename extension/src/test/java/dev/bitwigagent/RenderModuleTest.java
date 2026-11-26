@@ -484,6 +484,17 @@ public final class RenderModuleTest {
     }
 
     @Test
+    void aRenderTheTransportExpiredBeforeDispatchNeverStarts() throws IOException {
+        Sim sim = new Sim();
+        HostOperation op = sim.start("export.audio", export(sim.dir.toString(), "master"), 5000);
+        assertTrue(((RpcServer.Expiring) op.result).expire(), "the deadline fired while the request still waited");
+        sim.drainUntil(op);
+        assertRpcError("deadline", op);
+        assertTrue(sim.dispatches == 0 && sim.holds().isEmpty(), "nothing was dispatched or held");
+        assertRpcError("target_not_found", sim.jobsGet("render:1"));
+    }
+
+    @Test
     void ackGivesUpARunningJobWhoseRequestReturned() throws IOException {
         Sim sim = new Sim();
         sim.finish = false;

@@ -1236,7 +1236,7 @@ public final class GridInsertionWriterTest {
                             if (op.result.isDone())
                                 throw Errors.notApplied(Reason.CANCELLED, "request already completed");
                         },
-                        () -> op.dispatched = true,
+                        () -> op.markDispatched(),
                         op.result::complete,
                         op::fail);
             } catch (Throwable error) {
@@ -1277,7 +1277,7 @@ public final class GridInsertionWriterTest {
                             if (op.result.isDone())
                                 throw Errors.notApplied(Reason.CANCELLED, "request already completed");
                         },
-                        () -> op.dispatched = true,
+                        () -> op.markDispatched(),
                         value -> {
                             if (failDelivery) throw Errors.notApplied(Reason.OUT_OF_BOUNDS, "serialization failure");
                             op.result.complete(value);

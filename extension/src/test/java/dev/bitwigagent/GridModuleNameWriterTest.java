@@ -454,7 +454,7 @@ public final class GridModuleNameWriterTest {
                                 throw Errors.notApplied(
                                         Reason.valueOf(requestError.toUpperCase(Locale.ROOT)), "request changed");
                         },
-                        () -> op.dispatched = true,
+                        () -> op.markDispatched(),
                         value -> op.result.complete(value),
                         error -> {
                             failure = error;

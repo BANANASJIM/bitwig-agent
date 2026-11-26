@@ -45,7 +45,8 @@ public final class MethodSpecs {
                 maxRequestBytes,
                 maxResponseBytes,
                 defaultPort,
-                maxClipBeats;
+                maxClipBeats,
+                responseGraceMs;
         public final double beatGrid;
 
         private Limits(JsonObject object) {
@@ -59,6 +60,7 @@ public final class MethodSpecs {
             maxResponseBytes = integer(object, "maxResponseBytes");
             defaultPort = integer(object, "defaultPort");
             maxClipBeats = integer(object, "maxClipBeats");
+            responseGraceMs = integer(object, "responseGraceMs");
             beatGrid = object.get("beatGrid").getAsDouble();
             if (Math.min(Math.min(trackWindow, sceneWindow), Math.min(deviceWindow, sendWindow)) < 1
                     || Math.min(remotePageSlots, minTimeoutMs) < 1
@@ -66,6 +68,7 @@ public final class MethodSpecs {
                     || defaultPort < 1
                     || defaultPort > 65535
                     || maxClipBeats < 1
+                    || responseGraceMs < 2
                     || !(beatGrid > 0)) throw new IllegalStateException("limits must be positive");
         }
     }

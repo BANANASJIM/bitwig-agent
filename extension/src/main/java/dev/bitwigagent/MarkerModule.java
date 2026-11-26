@@ -177,7 +177,7 @@ final class MarkerModule implements HostModule {
                 return;
             }
         }
-        op.dispatched = true;
+        op.markDispatched();
         holds.place(UNRESOLVED, "A markers.* write was dispatched and its outcome was not observed.");
         CueMarker marker = items[target.slot];
         if (method.equals("markers.rename")) marker.name().set(newName);
@@ -209,7 +209,7 @@ final class MarkerModule implements HostModule {
                 throw Errors.notApplied(
                         Reason.TARGET_EXISTS, "A marker named " + m.name + " is already at beat " + m.beat + ".");
         if (before.total >= WINDOW) throw Errors.notApplied(Reason.UNSUPPORTED_SCOPE, "The marker window is full.");
-        op.dispatched = true;
+        op.markDispatched();
         holds.place(UNRESOLVED, "A markers.* write was dispatched and its outcome was not observed.");
         transport.addCueMarkerAtPlaybackPosition();
         awaitInserted(op, p, before);

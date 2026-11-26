@@ -404,7 +404,7 @@ final class RenderModule implements HostModule, JobsModule.Source {
                     check.run();
                     Runnable before = () -> {
                         check.run();
-                        op.dispatched = true;
+                        op.markDispatched();
                         op.job = next.id;
                         next.dispatched = true;
                     };

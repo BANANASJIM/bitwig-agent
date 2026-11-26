@@ -555,7 +555,7 @@ public final class GridModuleTest {
                 !assertRpcError("stale_context", op).unknown && !op.dispatched && noop.adapter.writer.calls == 0,
                 "late error after no-op does not invent a dispatched mutation");
         HostOperation expired = new HostOperation(0);
-        expired.dispatched = true;
+        expired.markDispatched();
         {
             RpcException error = assertThrows(RpcException.class, () -> noop.host.services.scheduler.check(expired));
             expired.fail(error);

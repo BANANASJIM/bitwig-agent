@@ -179,7 +179,7 @@ final class ModulatorEditModule implements HostModule {
                 check.run();
                 Runnable dispatch = () -> {
                     check.run();
-                    op.dispatched = true;
+                    op.markDispatched();
                 };
                 Consumer<JsonObject> complete = value -> deliver(op, target, safety, check, value);
                 Consumer<Throwable> fail = error -> op.fail(

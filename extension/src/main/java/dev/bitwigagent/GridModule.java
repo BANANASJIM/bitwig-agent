@@ -498,7 +498,7 @@ final class GridModule implements HostModule {
                             value -> deliver(op, target, safety, true, check, GridDiff.shape(value, fullGraph));
                     Runnable dispatch = () -> {
                         check.run();
-                        op.dispatched = true;
+                        op.markDispatched();
                     };
                     if (insertBatch)
                         adapter.insertModules(
@@ -532,19 +532,19 @@ final class GridModule implements HostModule {
                                 : voicingSet
                                         ? adapter.setVoicing(target.device, trackUuid, voicing, check, () -> {
                                             check.run();
-                                            op.dispatched = true;
+                                            op.markDispatched();
                                         })
                                         : remoteDefine
                                                 ? adapter.defineRemotePage(
                                                         target.device, trackUuid, remotePage, check, () -> {
                                                             check.run();
-                                                            op.dispatched = true;
+                                                            op.markDispatched();
                                                         })
                                                 : remoteDelete
                                                         ? adapter.deleteRemotePage(
                                                                 target.device, trackUuid, deletedPage, check, () -> {
                                                                     check.run();
-                                                                    op.dispatched = true;
+                                                                    op.markDispatched();
                                                                 })
                                                         : batching
                                                                 ? adapter.setParameters(
@@ -554,7 +554,7 @@ final class GridModule implements HostModule {
                                                                         check,
                                                                         () -> {
                                                                             check.run();
-                                                                            op.dispatched = true;
+                                                                            op.markDispatched();
                                                                         })
                                                                 : writing
                                                                         ? GridDiff.shape(
@@ -567,7 +567,7 @@ final class GridModule implements HostModule {
                                                                                         check,
                                                                                         () -> {
                                                                                             check.run();
-                                                                                            op.dispatched = true;
+                                                                                            op.markDispatched();
                                                                                         }),
                                                                                 true)
                                                                         : inspection

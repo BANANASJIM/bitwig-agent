@@ -98,17 +98,26 @@ public final class ErrorsTest {
                 .is(Reason.INTERNAL));
 
         HostOperation after = new HostOperation(Long.MAX_VALUE);
-        after.dispatched = true;
+        after.markDispatched();
         after.fail(new IllegalStateException("boom"));
         JsonObject result = after.result.join();
         assertEquals("unknown", result.get("outcome").getAsString());
         assertEquals("internal", result.get("reason").getAsString());
 
         HostOperation job = new HostOperation(Long.MAX_VALUE);
-        job.dispatched = true;
+        job.markDispatched();
         job.job = "render:1";
         job.fail(Errors.notApplied(Reason.DEADLINE, "late"));
         assertEquals("render:1", job.result.join().get("job").getAsString(), "an unknown result names its job");
+
+        HostOperation expiring = new HostOperation(Long.MAX_VALUE);
+        assertTrue(((RpcServer.Expiring) expiring.result).expire(), "an undispatched operation expires");
+        assertTrue(((RpcException) assertThrows(CompletionException.class, expiring.result::join)
+                        .getCause())
+                .is(Reason.DEADLINE));
+        assertThrows(RpcException.class, expiring::markDispatched, "an expired operation never dispatches");
+        assertFalse(expiring.dispatched);
+        assertFalse(((RpcServer.Expiring) job.result).expire(), "a dispatched operation does not expire");
 
         HostOperation flagged = new HostOperation(Long.MAX_VALUE);
         flagged.fail(Errors.unknown(Reason.READBACK_MISMATCH, "differs"));

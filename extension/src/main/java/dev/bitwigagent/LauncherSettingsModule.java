@@ -183,7 +183,7 @@ final class LauncherSettingsModule implements HostModule {
                     check.run();
                     JsonObject result = access.apply(slot, id, expected, changes, check, () -> {
                         check.run();
-                        op.dispatched = true;
+                        op.markDispatched();
                         holds.place(QUARANTINE, QUARANTINE_HOLD);
                     });
                     check.run();

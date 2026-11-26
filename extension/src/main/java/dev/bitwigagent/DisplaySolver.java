@@ -110,7 +110,7 @@ final class DisplaySolver {
         long before = port.valueSeq();
         boolean same = near(port.value(), x);
         if (!same) {
-            op.dispatched = true;
+            op.markDispatched();
             result.dispatched = true;
             port.write(x);
         }

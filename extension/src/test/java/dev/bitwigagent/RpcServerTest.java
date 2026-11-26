@@ -333,6 +333,47 @@ public final class RpcServerTest {
     }
 
     @Test
+    void anOperationStillWaitingAtTheDeadlineIsRefusedAndNeverDispatches() throws Exception {
+        List<HostOperation> operations = new CopyOnWriteArrayList<>();
+        try (RpcServer server = new RpcServer(0, SPECS, (method, params, until) -> {
+            HostOperation op = new HostOperation(until);
+            operations.add(op);
+            return op.result;
+        })) {
+            server.start();
+            error(call(server, request("waiting", "{}", "100").replace("status", "ack")), "deadline");
+            assertThrows(RpcException.class, operations.get(0)::markDispatched, "it can no longer dispatch");
+        }
+    }
+
+    @Test
+    void aDispatchedOperationAnswersItselfAfterTheDeadline() throws Exception {
+        try (RpcServer server = new RpcServer(0, SPECS, (method, params, until) -> {
+            HostOperation op = new HostOperation(until);
+            op.markDispatched();
+            op.job = "render:1";
+            timerFail(op, until);
+            return op.result;
+        })) {
+            server.start();
+            JsonObject response = call(server, request("late", "{}", "100").replace("status", "ack"));
+            unknown(response, "deadline");
+            assertEquals(
+                    "render:1", response.getAsJsonObject("result").get("job").getAsString(), "its job id");
+        }
+    }
+
+    /** The operation's own deadline failure, a little after the transport's deadline. */
+    private static void timerFail(HostOperation op, long until) {
+        Thread late = new Thread(() -> {
+            while (System.nanoTime() < until + TimeUnit.MILLISECONDS.toNanos(50)) Thread.onSpinWait();
+            op.fail(Errors.notApplied(Reason.DEADLINE, "Deadline expired."));
+        });
+        late.setDaemon(true);
+        late.start();
+    }
+
+    @Test
     void queuedDeadline() throws Exception {
         CountDownLatch entered = new CountDownLatch(4);
         AtomicInteger calls = new AtomicInteger();

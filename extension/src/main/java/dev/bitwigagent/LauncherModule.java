@@ -449,7 +449,7 @@ final class LauncherModule implements HostModule {
                     Reason.LIMIT_REACHED,
                     "The project has " + before + " scene(s); the launcher tools address at most " + HostLimits.SCENES
                             + ", so " + count + " more cannot be appended");
-        op.dispatched = true;
+        op.markDispatched();
         // Project.createScene() is documented to create "a new empty scene as the last scene"; existing slot indices do
         // not move.
         for (int i = 0; i < count; i++) project.createScene();
@@ -521,7 +521,7 @@ final class LauncherModule implements HostModule {
         if (method.equals("launcher.stop")) {
             if (!stopReady[t]) throw Errors.notApplied(Reason.NOT_READY, "Track stop state has not been observed");
             guard(op, id, track);
-            op.dispatched = true;
+            op.markDispatched();
             track.clipLauncherSlotBank().stop();
             awaitPlayback(op, id, track, null, -1, until(op));
             return;
@@ -539,7 +539,7 @@ final class LauncherModule implements HostModule {
             requireContent(slot);
             guard(op, id, track);
             transportSafety.requirePlaybackSafe();
-            op.dispatched = true;
+            op.markDispatched();
             slot.api.launch();
             awaitPlayback(op, id, track, slot, j, until(op));
             return;
@@ -551,7 +551,7 @@ final class LauncherModule implements HostModule {
                 throw Errors.notApplied(Reason.TARGET_EXISTS, "Create only accepts an observed empty slot");
             guard(op, id, track);
             beginMutation(id, track, slot, j, method);
-            op.dispatched = true;
+            op.markDispatched();
             slot.api.createEmptyClip(Params.integer(p, "lengthBeats", 1, MAX_CLIP_BEATS));
             long end = until(op);
             JsonObject request = p;
@@ -636,7 +636,7 @@ final class LauncherModule implements HostModule {
             throw Errors.notApplied(Reason.TARGET_EXISTS, "Import only accepts an observed empty slot.");
         long before = slot.contentVersion;
         beginMutation(id, track, slot, index, "launcher.import");
-        op.dispatched = true;
+        op.markDispatched();
         insertion.insertFile(path.toString());
         awaitGuarded(
                 op,
@@ -666,7 +666,7 @@ final class LauncherModule implements HostModule {
         gridObservation = null;
         bindingGeneration++;
         // clips.edit counts as dispatched only at its mutation: selecting alone leaves the clip untouched.
-        op.dispatched = !method.equals("clips.edit") && !method.equals("launcher.set");
+        if (!method.equals("clips.edit") && !method.equals("launcher.set")) op.markDispatched();
         slot.api.select();
         scheduler.schedule(op, () -> awaitBinding(op, id, track, slot, index, p, method, end), 40);
     }
@@ -878,7 +878,7 @@ final class LauncherModule implements HostModule {
         Set<String> written = new HashSet<>();
         for (String key : LAUNCH_FIELDS) {
             if (!p.has(key) || launchValue(key).equals(p.get(key))) continue;
-            op.dispatched = true;
+            op.markDispatched();
             written.add(key);
             JsonElement value = p.get(key);
             if (key.equals("launchQuantization")) clip.launchQuantization().set(value.getAsString());
@@ -993,7 +993,7 @@ final class LauncherModule implements HostModule {
         transportSafety.guardStopped(safety);
         beginMutation(id, track, slot, index, "clips.edit delete");
         long before = cursorMutation.contentBefore;
-        op.dispatched = true;
+        op.markDispatched();
         slot.api.deleteObject();
         awaitGuarded(
                 op,
@@ -1037,7 +1037,7 @@ final class LauncherModule implements HostModule {
         guard(op, id, track);
         beginMutation(id, track, to, target, "clips.edit copyTo");
         long before = cursorMutation.contentBefore;
-        op.dispatched = true;
+        op.markDispatched();
         // copySlotsOrScenes copies the supplied slots to this insertion point; copyFrom's direction is ambiguous in the
         // javadoc.
         to.api.replaceInsertionPoint().copySlotsOrScenes(slot.api);
@@ -1142,7 +1142,7 @@ final class LauncherModule implements HostModule {
             op.result.complete(clipDone(id, index, kind, Outcome.ALREADY_MATCHED, null, slot));
             return;
         }
-        op.dispatched = true;
+        op.markDispatched();
         write.run();
         awaitGuarded(
                 op,
@@ -1175,7 +1175,7 @@ final class LauncherModule implements HostModule {
             op.result.complete(clipDone(id, index, "resize", Outcome.ALREADY_MATCHED, null, slot));
             return;
         }
-        op.dispatched = true;
+        op.markDispatched();
         clip.getLoopLength().set(length);
         // Playback stop follows the loop end once the loop change is observed; setting both blindly can be clamped by
         // the host.
@@ -1288,7 +1288,7 @@ final class LauncherModule implements HostModule {
             throw Errors.invalid("transpose would move a note outside MIDI 0..127 (observed pitch range "
                     + beforePitches.get(0) + ".." + beforePitches.get(beforePitches.size() - 1) + ")");
         beginMutation(id, track, slot, index, "clips.edit " + kind);
-        op.dispatched = true;
+        op.markDispatched();
         JsonObject summary = new JsonObject();
         summary.addProperty("notesBefore", before.size());
         summary.addProperty("loopLengthBeatsBefore", loop);
@@ -1397,7 +1397,7 @@ final class LauncherModule implements HostModule {
             NoteStep old = clip.getStep(w.channel, e.x, e.pitch);
             e.alreadyMatched = matches(e, old);
             if (e.alreadyMatched) continue; // Preserve expression and other properties on an existing matching note.
-            op.dispatched = true;
+            op.markDispatched();
             if (e.set) clip.setStep(w.channel, e.x, e.pitch, e.velocity, e.duration);
             else clip.clearStep(w.channel, e.x, e.pitch);
         }

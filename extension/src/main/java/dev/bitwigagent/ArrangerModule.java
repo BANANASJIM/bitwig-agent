@@ -241,7 +241,7 @@ final class ArrangerModule implements HostModule {
         };
         Runnable beforeWrite = () -> {
             check.run();
-            op.dispatched = true;
+            op.markDispatched();
             holds.place(
                     QUARANTINE, "An arranger clip write on track " + id + " has an unknown outcome until read back.");
         };

@@ -128,7 +128,7 @@ final class ProjectModule implements HostModule, JobsModule.Source {
         if (save == null) throw Errors.notApplied(Reason.UNKNOWN_NAME, "Save action is absent from the host catalog.");
         long before = projectState.modifiedSequence();
         scheduler.check(op);
-        op.dispatched = true;
+        op.markDispatched();
         save.invoke();
         // Full request deadline, not observeUntil's 750 ms window: a real save can take longer. Shared margin keeps the
         // last poll inside it.
@@ -148,7 +148,7 @@ final class ProjectModule implements HostModule, JobsModule.Source {
                     Reason.UNKNOWN_NAME,
                     "\"" + ACTIVATE_ACTION + "\" is absent from the host catalog; use actions.list query=engine.");
         scheduler.check(op);
-        op.dispatched = true;
+        op.markDispatched();
         activate.invoke();
         awaitEngine(op);
     }
@@ -274,7 +274,7 @@ final class ProjectModule implements HostModule, JobsModule.Source {
                             next.plan.dispatchPath,
                             () -> {
                                 scheduler.check(op);
-                                op.dispatched = true;
+                                op.markDispatched();
                                 op.job = next.id;
                                 next.dispatched = true;
                             },

@@ -20,6 +20,7 @@ from bitwig_agent.protocol.limits import (
     MAX_REQUEST_BYTES,
     MAX_RESPONSE_BYTES,
     MIN_TIMEOUT_MS,
+    RESPONSE_GRACE_MS,
     mebibytes,
 )
 
@@ -144,7 +145,7 @@ def _transport_failure(exc: Exception, method: str, dispatched: bool) -> dict[st
 
 
 class BridgeClient:
-    def __init__(self, port: int = DEFAULT_PORT, *, response_grace_seconds: float = 1.0):
+    def __init__(self, port: int = DEFAULT_PORT, *, response_grace_seconds: float = RESPONSE_GRACE_MS / 1000):
         if type(port) is not int or not 1 <= port <= MAX_PORT:
             raise ValueError(f"port must be in 1..{MAX_PORT}")
         self.port = port

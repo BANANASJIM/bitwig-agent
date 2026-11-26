@@ -332,7 +332,7 @@ final class RoutingModule implements HostModule {
         };
         Runnable beforeWrite = () -> {
             check.run();
-            op.dispatched = true;
+            op.markDispatched();
             holds.place(QUARANTINE, HOLD);
         };
         Access bridge = access;

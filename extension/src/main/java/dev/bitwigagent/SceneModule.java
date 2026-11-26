@@ -182,7 +182,7 @@ final class SceneModule implements HostModule {
         }
         long before = nameSequence[index];
         scheduler.check(op);
-        op.dispatched = true;
+        op.markDispatched();
         scenes[index].name().set(name);
         scheduler.poll(
                 op,
@@ -199,7 +199,7 @@ final class SceneModule implements HostModule {
         transportSafety.requirePlaybackSafe();
         List<ClipLauncherSlot> clips = occupied(index);
         scheduler.check(op);
-        op.dispatched = true;
+        op.markDispatched();
         scenes[index].launch();
         scheduler.poll(
                 op,
@@ -234,7 +234,7 @@ final class SceneModule implements HostModule {
         List<String> before = snapshotNames();
         if (before == null) throw Errors.notApplied(Reason.NOT_READY, "Not every scene name has been observed yet.");
         scheduler.check(op);
-        op.dispatched = true;
+        op.markDispatched();
         scenes[index].duplicateObject();
         long[] sequenceBefore = nameSequence.clone();
         scheduler.poll(op, scheduler.observeUntil(op), () -> duplicated(index, before), done -> {
@@ -286,7 +286,7 @@ final class SceneModule implements HostModule {
         if (before == null) throw Errors.notApplied(Reason.NOT_READY, "Not every scene name has been observed yet.");
         transportSafety.guardStopped(safety);
         scheduler.check(op);
-        op.dispatched = true;
+        op.markDispatched();
         scenes[index].deleteObject();
         scheduler.poll(
                 op,

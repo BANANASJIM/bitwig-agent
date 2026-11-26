@@ -264,7 +264,7 @@ public final class GridStepsVoicingTest {
         }
 
         JsonObject set(GridParameterWriter.Request request) {
-            return writer.set(model.proxy, TRACK_ID, MODULE, "DATA", request, () -> {}, () -> op.dispatched = true);
+            return writer.set(model.proxy, TRACK_ID, MODULE, "DATA", request, () -> {}, () -> op.markDispatched());
         }
 
         RpcException failure(GridParameterWriter.Request request) {
@@ -511,7 +511,7 @@ public final class GridStepsVoicingTest {
         GridParameterWriter.Entry entry =
                 new GridParameterWriter.Entry(MODULE, "DATA", steps(batch.json(0, 4), "[0.7,0.8]", false));
         JsonObject result = batch.writer.setAll(
-                batch.model.proxy, TRACK_ID, List.of(entry), () -> {}, () -> batch.op.dispatched = true);
+                batch.model.proxy, TRACK_ID, List.of(entry), () -> {}, () -> batch.op.markDispatched());
         JsonObject item = result.getAsJsonArray("writes").get(0).getAsJsonObject();
         assertTrue(
                 batch.calls == 1
@@ -526,7 +526,7 @@ public final class GridStepsVoicingTest {
             RpcException caught = assertThrows(
                     RpcException.class,
                     () -> stale.writer.setAll(
-                            stale.model.proxy, TRACK_ID, List.of(bad), () -> {}, () -> stale.op.dispatched = true));
+                            stale.model.proxy, TRACK_ID, List.of(bad), () -> {}, () -> stale.op.markDispatched()));
             assertTrue(!caught.unknown && stale.calls == 0, "a stale step entry fails the batch preflight");
         }
     }
@@ -595,7 +595,7 @@ public final class GridStepsVoicingTest {
         }
 
         JsonObject set(String json) {
-            return writer.set(model.proxy, TRACK_ID, request(json), () -> {}, () -> op.dispatched = true);
+            return writer.set(model.proxy, TRACK_ID, request(json), () -> {}, () -> op.markDispatched());
         }
 
         RpcException failure(String json) {

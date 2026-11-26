@@ -13,6 +13,8 @@ MAX_TIMEOUT_MS = 10000
 # Ceiling for calls that verify against a full graph read per entry or wait for a native job.
 LONG_TIMEOUT_MS = 60000
 LONG_DEFAULT_TIMEOUT_MS = 30000
+# How long the client waits past a request's deadline for the host's own answer.
+RESPONSE_GRACE_MS = 1000
 
 MAX_REQUEST_BYTES = 1 << 20
 MAX_RESPONSE_BYTES = 16 << 20
@@ -42,4 +44,5 @@ def bundle_limits() -> dict[str, int | float]:
         "defaultPort": DEFAULT_PORT,
         "beatGrid": BEAT_GRID,
         "maxClipBeats": MAX_CLIP_BEATS,
+        "responseGraceMs": RESPONSE_GRACE_MS,
     }

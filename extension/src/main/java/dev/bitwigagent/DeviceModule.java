@@ -235,7 +235,7 @@ final class DeviceModule implements HostModule {
             }
             long sequence = source.pageSequence;
             guard(op, target);
-            op.dispatched = true;
+            op.markDispatched();
             source.page.selectedPageIndex().set(index);
             observePage(op, target, index, pageName, sequence, observationEnd(op));
             return;
@@ -267,7 +267,7 @@ final class DeviceModule implements HostModule {
         if (!token.equals(p.get("contextToken").getAsString()))
             throw Errors.notApplied(Reason.STALE_CONTEXT, "Remote control context changed before dispatch.");
         transportSafety.requirePlaybackSafe();
-        op.dispatched = true;
+        op.markDispatched();
         // Explicit absolute RPC writes must not wait for physical-controller takeover.
         control.value().setImmediately(value);
         observeRemote(op, target, index, value, token, sequence, observationEnd(op));
@@ -591,7 +591,7 @@ final class DeviceModule implements HostModule {
         if (method.equals("devices.select")) {
             guard(op, target);
             selection.requireFree();
-            op.dispatched = true;
+            op.markDispatched();
             target.source.device.selectInEditor();
             op.result.complete(stamp(metadata(target), Outcome.SENT, null));
             return;
@@ -603,7 +603,7 @@ final class DeviceModule implements HostModule {
         }
         long sequence = target.source.enabledSequence;
         guard(op, target);
-        op.dispatched = true;
+        op.markDispatched();
         target.source.device.isEnabled().set(enabled);
         observeEnabled(op, target, enabled, sequence, observationEnd(op));
     }
@@ -760,7 +760,7 @@ final class DeviceModule implements HostModule {
         placed.addProperty("mode", position);
         placed.addProperty("index", index);
         edit.extra.add("position", placed);
-        op.dispatched = true;
+        op.markDispatched();
         insertAt(point, kind, value);
         observeEdit(op, edit, observationEnd(op));
     }
@@ -826,7 +826,7 @@ final class DeviceModule implements HostModule {
         placed.addProperty("mode", start ? "start" : "end");
         placed.addProperty("index", edit.plan.index);
         edit.extra.add("position", placed);
-        op.dispatched = true;
+        op.markDispatched();
         insertAt(
                 start ? layer.proxy.startOfDeviceChainInsertionPoint() : layer.proxy.endOfDeviceChainInsertionPoint(),
                 kind,
@@ -843,7 +843,7 @@ final class DeviceModule implements HostModule {
         guard(op, target);
         Edit edit = topEdit(target.trackId, t, DeviceChainEdit.Plan.delete(index, state.before), state, index);
         edit.extra.add("deleted", DeviceChainEdit.summary(index, state.before.names[index], state.before.types[index]));
-        op.dispatched = true;
+        op.markDispatched();
         target.source.device.deleteObject();
         observeEdit(op, edit, observationEnd(op));
     }
@@ -865,7 +865,7 @@ final class DeviceModule implements HostModule {
         InsertionPoint point = to > from
                 ? sources[t][to].device.afterDeviceInsertionPoint()
                 : sources[t][to].device.beforeDeviceInsertionPoint();
-        op.dispatched = true;
+        op.markDispatched();
         point.moveDevices(target.source.device);
         if (plan.indistinguishable()) {
             edit.extra.addProperty(

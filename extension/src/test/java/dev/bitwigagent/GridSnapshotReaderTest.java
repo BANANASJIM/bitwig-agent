@@ -732,7 +732,7 @@ public final class GridSnapshotReaderTest {
         JsonObject out = batch.setAll(
                 List.of(new GridParameterWriter.Entry(new UUID(1, 1), "LOCAL_ID", displayRequest("84", "440 Hz"))),
                 () -> {},
-                () -> batch.op.dispatched = true);
+                () -> batch.op.markDispatched());
         JsonObject item = out.getAsJsonArray("writes").get(0).getAsJsonObject();
         assertTrue(
                 (Double) batch.child.values.get(FLOAT_VALUE) == 69.0
@@ -1145,7 +1145,7 @@ public final class GridSnapshotReaderTest {
     }
 
     private static JsonObject batch(WriterFixture f, GridParameterWriter.Entry... entries) {
-        return f.writer.setAll(f.model.proxy, TRACK_ID, List.of(entries), () -> {}, () -> f.op.dispatched = true);
+        return f.writer.setAll(f.model.proxy, TRACK_ID, List.of(entries), () -> {}, () -> f.op.markDispatched());
     }
 
     /** Settled without success: an error, a cancellation or a result with outcome unknown. */
@@ -1352,7 +1352,7 @@ public final class GridSnapshotReaderTest {
         GridParameterWriter.Entry panel =
                 new GridParameterWriter.Entry(new UUID(1, 1), "PANEL_ID", request("boolean", "true", "false"));
         JsonObject result =
-                f.writer.setAll(f.model.proxy, TRACK_ID, List.of(panel), () -> {}, () -> f.op.dispatched = true);
+                f.writer.setAll(f.model.proxy, TRACK_ID, List.of(panel), () -> {}, () -> f.op.markDispatched());
         JsonObject entry = result.getAsJsonArray("writes").get(0).getAsJsonObject();
         assertTrue(
                 f.calls == 1
@@ -1369,7 +1369,7 @@ public final class GridSnapshotReaderTest {
         broken.model.first.put(CHILDREN, List.of(broken.panel));
         RpcException error = assertThrows(RpcException.class, () -> {
             broken.writer.setAll(
-                    broken.model.proxy, TRACK_ID, List.of(panel), () -> {}, () -> broken.op.dispatched = true);
+                    broken.model.proxy, TRACK_ID, List.of(panel), () -> {}, () -> broken.op.markDispatched());
         });
         assertTrue(
                 !error.unknown && broken.calls == 0 && !broken.op.dispatched,
@@ -1838,7 +1838,7 @@ public final class GridSnapshotReaderTest {
 
         JsonObject set(GridParameterWriter.Request request) {
             return writer.set(
-                    model.proxy, TRACK_ID, new UUID(1, 1), "TEXT_ID", request, () -> {}, () -> op.dispatched = true);
+                    model.proxy, TRACK_ID, new UUID(1, 1), "TEXT_ID", request, () -> {}, () -> op.markDispatched());
         }
 
         RpcException failure(GridParameterWriter.Request request) {
@@ -1968,7 +1968,7 @@ public final class GridSnapshotReaderTest {
         GridParameterWriter.Entry entry =
                 new GridParameterWriter.Entry(new UUID(1, 1), "TEXT_ID", stringRequest("before", "batched"));
         JsonObject result = batch.writer.setAll(
-                batch.model.proxy, TRACK_ID, List.of(entry), () -> {}, () -> batch.op.dispatched = true);
+                batch.model.proxy, TRACK_ID, List.of(entry), () -> {}, () -> batch.op.markDispatched());
         JsonObject item = result.getAsJsonArray("writes").get(0).getAsJsonObject();
         assertTrue(
                 batch.calls == 1
@@ -1982,7 +1982,7 @@ public final class GridSnapshotReaderTest {
         {
             RpcException caught = assertThrows(RpcException.class, () -> {
                 stalePre.writer.setAll(
-                        stalePre.model.proxy, TRACK_ID, List.of(bad), () -> {}, () -> stalePre.op.dispatched = true);
+                        stalePre.model.proxy, TRACK_ID, List.of(bad), () -> {}, () -> stalePre.op.markDispatched());
             });
             assertTrue(!caught.unknown && stalePre.calls == 0, "stale string entry fails the batch preflight");
         }
@@ -3087,7 +3087,7 @@ public final class GridSnapshotReaderTest {
                     () -> {
                         if (expired[0]) throw Errors.notApplied(Reason.DEADLINE, "later observation expired");
                     },
-                    () -> late.dispatched = true,
+                    late::markDispatched,
                     value -> late.result.complete(value),
                     late::fail);
             expired[0] = true;
@@ -3162,7 +3162,7 @@ public final class GridSnapshotReaderTest {
                         () -> {
                             if (cancelled) throw Errors.notApplied(Reason.CANCELLED, "cancelled");
                         },
-                        () -> op.dispatched = true,
+                        () -> op.markDispatched(),
                         value -> op.result.complete(value),
                         op::fail);
             } catch (Throwable error) {
@@ -3208,7 +3208,7 @@ public final class GridSnapshotReaderTest {
                         () -> {
                             if (cancelled) throw Errors.notApplied(Reason.CANCELLED, "cancelled");
                         },
-                        () -> op.dispatched = true,
+                        () -> op.markDispatched(),
                         value -> op.result.complete(value),
                         op::fail);
             } catch (Throwable error) {
@@ -3267,7 +3267,7 @@ public final class GridSnapshotReaderTest {
                         () -> {
                             if (cancelled) throw Errors.notApplied(Reason.CANCELLED, "cancelled");
                         },
-                        () -> op.dispatched = true,
+                        () -> op.markDispatched(),
                         value -> op.result.complete(value),
                         op::fail);
             } catch (Throwable error) {
@@ -3410,7 +3410,7 @@ public final class GridSnapshotReaderTest {
                     () -> {
                         if (cancelled) throw Errors.notApplied(Reason.CANCELLED, "cancelled");
                     },
-                    () -> op.dispatched = true);
+                    () -> op.markDispatched());
         }
 
         JsonObject set(GridParameterWriter.Request request, Runnable check, Runnable dispatch) {
@@ -3494,7 +3494,7 @@ public final class GridSnapshotReaderTest {
 
         JsonObject set(GridParameterWriter.Request request) {
             return writer.set(
-                    model.proxy, TRACK_ID, new UUID(1, 1), "PANEL_ID", request, () -> {}, () -> op.dispatched = true);
+                    model.proxy, TRACK_ID, new UUID(1, 1), "PANEL_ID", request, () -> {}, () -> op.markDispatched());
         }
 
         RpcException failure() {

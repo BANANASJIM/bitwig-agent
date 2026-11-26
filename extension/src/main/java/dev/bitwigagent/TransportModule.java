@@ -225,7 +225,7 @@ final class TransportModule implements HostModule {
         }
         writes.put(key, before.sequence);
         scheduler.check(op);
-        op.dispatched = true;
+        op.markDispatched();
         JsonElement value = p.get(key);
         switch (key) {
             case "playing":

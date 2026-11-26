@@ -280,7 +280,7 @@ final class MixModule implements HostModule {
         if (method.equals("tracks.select")) {
             guard(op, target);
             selection.requireFree();
-            op.dispatched = true;
+            op.markDispatched();
             target.state.track.selectInEditor();
             guard(op, target);
             JsonObject result = snapshot(target);
@@ -492,7 +492,7 @@ final class MixModule implements HostModule {
                 long before = target.state.sequence[i];
                 guard(op, target);
                 writes.put(key, before);
-                op.dispatched = true;
+                op.markDispatched();
                 JsonElement next = changes.get(key);
                 Track track = target.state.track;
                 switch (i) {
@@ -723,7 +723,7 @@ final class MixModule implements HostModule {
             }
             writes.put(key, state.metaSeq(prefix + key));
             guardSend();
-            op.dispatched = true;
+            op.markDispatched();
             if (key.equals("enabled")) send.isEnabled().set(value.getAsBoolean());
             else send.value().setImmediately(value.getAsDouble());
             return true;
@@ -940,7 +940,7 @@ final class MixModule implements HostModule {
                             + "); the insertion position cannot be attributed safely and nothing changed.");
         creation = op;
         scheduler.check(op);
-        op.dispatched = true;
+        op.markDispatched();
         holds.place(CREATION, "A prior tracks.create factory remains unattributed.");
         int position = p.get("position").getAsInt();
         switch (p.get("type").getAsString()) {
@@ -1038,7 +1038,7 @@ final class MixModule implements HostModule {
             try {
                 JsonObject nativeInfo = access.group(proxies, ordered, check, () -> {
                     check.run();
-                    op.dispatched = true;
+                    op.markDispatched();
                     holds.place(GROUP, "A prior tracks.group operation remains unattributed.");
                 });
                 long until = Math.min(scheduler.deadlineUntil(op), scheduler.now() + GROUP_OBSERVE_NANOS);
@@ -1168,7 +1168,7 @@ final class MixModule implements HostModule {
                             + " tracks including group children and effect tracks, every UUID/type/position read); this project exceeds it or is not fully observed yet. Nothing changed.");
         transportSafety.guardStopped(safety);
         guard(op, target);
-        op.dispatched = true;
+        op.markDispatched();
         target.state.track.deleteObject();
         JsonObject deleted = new JsonObject();
         deleted.addProperty("trackId", target.id);
