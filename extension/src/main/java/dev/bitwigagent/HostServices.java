@@ -158,23 +158,26 @@ final class HostServices implements AutoCloseable {
     /** Selection-moving methods fail fast instead of rebinding the cursor under a running edit; nothing is queued. */
     void requireSelectionFree() {
         if (selectionHeld())
-            throw failure("busy", "A launcher cursor operation holds the editor selection; no request was queued.");
+            throw Errors.notApplied(
+                    ErrorCode.BUSY, "A launcher cursor operation holds the editor selection; no request was queued.");
     }
 
     void check(HostOperation operation) {
         if (closed)
-            throw new RpcException(
-                    "unavailable", "Extension has stopped.", operation.dispatched ? "unknown" : "not_applied");
+            throw Errors.of(
+                    ErrorCode.UNAVAILABLE,
+                    "Extension has stopped.",
+                    operation.dispatched ? Outcome.UNKNOWN : Outcome.NOT_APPLIED);
         if (operation.result.isDone())
-            throw new RpcException(
-                    "cancelled",
+            throw Errors.of(
+                    ErrorCode.CANCELLED,
                     "Operation is no longer awaiting a result.",
-                    operation.dispatched ? "unknown" : "not_applied");
+                    operation.dispatched ? Outcome.UNKNOWN : Outcome.NOT_APPLIED);
         if (System.nanoTime() >= operation.deadline)
-            throw new RpcException(
-                    "deadline_exceeded",
+            throw Errors.of(
+                    ErrorCode.DEADLINE_EXCEEDED,
                     "Deadline expired; inspect state before another write.",
-                    operation.dispatched ? "unknown" : "not_applied");
+                    operation.dispatched ? Outcome.UNKNOWN : Outcome.NOT_APPLIED);
     }
 
     /** projectReady true/false/null (null: project name never observed) with a reason. Heuristic: the public API has no project-loaded event,
@@ -208,8 +211,8 @@ final class HostServices implements AutoCloseable {
     void requireProjectReady() {
         JsonObject r = projectReadiness();
         if (r.get("projectReady").isJsonPrimitive() && !r.get("projectReady").getAsBoolean())
-            throw failure(
-                    "project_not_ready",
+            throw Errors.notApplied(
+                    ErrorCode.PROJECT_NOT_READY,
                     "Project is not ready (" + r.get("projectReadyReason").getAsString()
                             + "): it was just opened, recovered or renamed, so this write could land in a transient project. Poll status until projectReady is true, then re-discover targets; nothing was written.");
     }
@@ -221,8 +224,8 @@ final class HostServices implements AutoCloseable {
     /** Launching with an inactive audio engine silently produces no playback and silent captures. */
     void requireEngineActive(String what) {
         if (!engineActive())
-            throw failure(
-                    "engine_inactive",
+            throw Errors.notApplied(
+                    ErrorCode.ENGINE_INACTIVE,
                     "The audio engine is not active for this project, so " + what + " would not sound or be observed. "
                             + "Run project.activateEngine (or the \"Activate Engine For Project\" action), confirm status.engineActive=true, then retry; nothing was dispatched.");
     }
@@ -245,16 +248,20 @@ final class HostServices implements AutoCloseable {
         if (arrangerRecordEnabled == null
                 || arrangerAutomationWriteEnabled == null
                 || clipLauncherAutomationWriteEnabled == null)
-            throw failure("not_ready", "Recording and automation safety states have not all been observed.");
+            throw Errors.notApplied(
+                    ErrorCode.NOT_READY, "Recording and automation safety states have not all been observed.");
         if (arrangerRecordEnabled || arrangerAutomationWriteEnabled || clipLauncherAutomationWriteEnabled)
-            throw failure("unsafe_state", "Recording or automation write is enabled; playback mutations are blocked.");
+            throw Errors.notApplied(
+                    ErrorCode.UNSAFE_STATE,
+                    "Recording or automation write is enabled; playback mutations are blocked.");
     }
 
     /** Insert-type edits need an observed stopped transport on top of the recording/automation guard. */
     void requireStopped() {
         requirePlaybackSafe();
-        if (playing == null) throw failure("not_ready", "Transport playing state has not been observed.");
-        if (playing) throw failure("unsafe_state", "Transport is playing; stop it first.");
+        if (playing == null)
+            throw Errors.notApplied(ErrorCode.NOT_READY, "Transport playing state has not been observed.");
+        if (playing) throw Errors.notApplied(ErrorCode.UNSAFE_STATE, "Transport is playing; stop it first.");
     }
 
     Boolean playing() {
@@ -301,8 +308,9 @@ final class HostServices implements AutoCloseable {
     void guardStoppedSafety(SafetyObservation before) {
         SafetyObservation current = safety;
         if (current.epoch != before.epoch)
-            throw failure(
-                    "stale_context", "Observed transport safety changed while the Grid write was queued or running.");
+            throw Errors.notApplied(
+                    ErrorCode.STALE_CONTEXT,
+                    "Observed transport safety changed while the Grid write was queued or running.");
         current.requireStopped();
     }
 
@@ -326,20 +334,22 @@ final class HostServices implements AutoCloseable {
 
         void requireNotRecording() {
             if (recording == null || arrangerAutomation == null || launcherAutomation == null)
-                throw failure("not_ready", "Recording and automation safety states have not all been observed.");
+                throw Errors.notApplied(
+                        ErrorCode.NOT_READY, "Recording and automation safety states have not all been observed.");
             if (recording || arrangerAutomation || launcherAutomation)
-                throw failure(
-                        "unsafe_state",
+                throw Errors.notApplied(
+                        ErrorCode.UNSAFE_STATE,
                         "Recording or automation write is enabled; structural track edits are blocked.");
         }
 
         void requireStopped() {
             if (playing == null || recording == null || arrangerAutomation == null || launcherAutomation == null)
-                throw failure(
-                        "not_ready", "Stopped transport, recording and automation safety have not all been observed.");
+                throw Errors.notApplied(
+                        ErrorCode.NOT_READY,
+                        "Stopped transport, recording and automation safety have not all been observed.");
             if (playing || recording || arrangerAutomation || launcherAutomation)
-                throw failure(
-                        "unsafe_state",
+                throw Errors.notApplied(
+                        ErrorCode.UNSAFE_STATE,
                         "Grid writes require observed stopped transport with recording and automation write disabled.");
         }
     }
@@ -349,11 +359,11 @@ final class HostServices implements AutoCloseable {
     }
 
     int trackSlot(String trackId) {
-        if (!tracksObserved) throw failure("not_ready", "Track bank has not reported its size yet.");
+        if (!tracksObserved) throw Errors.notApplied(ErrorCode.NOT_READY, "Track bank has not reported its size yet.");
         for (int i = 0; i < TRACKS; i++) {
             if (trackMatches(trackId, (Track) tracks.getItemAt(i))) return i;
         }
-        throw failure("outside_window", "Track UUID is absent from the current 16-track window.");
+        throw Errors.notApplied(ErrorCode.OUTSIDE_WINDOW, "Track UUID is absent from the current 16-track window.");
     }
 
     boolean trackMatches(String trackId, Track track) {
@@ -383,10 +393,6 @@ final class HostServices implements AutoCloseable {
         result.addProperty("total", total);
         result.addProperty("complete", offset == 0 && total >= 0 && total <= capacity);
         return result;
-    }
-
-    static RpcException failure(String code, String message) {
-        return new RpcException(code, message, "not_applied");
     }
 
     @Override

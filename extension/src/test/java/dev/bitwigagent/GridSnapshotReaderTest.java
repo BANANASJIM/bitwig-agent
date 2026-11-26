@@ -304,7 +304,7 @@ public final class GridSnapshotReaderTest {
                         && value.get("numericUnit").getAsString().equals("seconds"),
                 "numeric-unit metadata does not depend on formatted display availability");
         f.display = true;
-        f.failures.put(UNIT_TOKEN, HostServices.failure("grid_unavailable", "unit token unavailable"));
+        f.failures.put(UNIT_TOKEN, Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "unit token unavailable"));
         result = f.read(0, 64, true);
         value = result.getAsJsonArray("modules")
                 .get(0)
@@ -364,7 +364,7 @@ public final class GridSnapshotReaderTest {
                         .equals("unsupported"),
                 "binding availability stays explicit");
         f.unavailable.clear();
-        f.failures.put(MODULE_NAME, HostServices.failure("grid_unavailable", "native getter failed"));
+        f.failures.put(MODULE_NAME, Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "native getter failed"));
         result = f.read(0, 64, true);
         module = result.getAsJsonArray("modules").get(0).getAsJsonObject();
         check(
@@ -379,7 +379,7 @@ public final class GridSnapshotReaderTest {
         large.first.put(MODULE_NAME, "x".repeat(GridSnapshotReader.MAX_TEXT + 1));
         expect("grid_bounds_exceeded", () -> large.read(0, 64, true));
         Fixture cancelled = new Fixture();
-        cancelled.failures.put(PARAMETER_NAME, HostServices.failure("cancelled", "cancelled during metadata"));
+        cancelled.failures.put(PARAMETER_NAME, Errors.notApplied(ErrorCode.CANCELLED, "cancelled during metadata"));
         cancelled.first.put(
                 CHILDREN, List.of(cancelled.parameter(BOOLEAN, cancelled.first).put(BOOLEAN_VALUE, true)));
         expect("cancelled", () -> cancelled.read(0, 64, true));
@@ -508,7 +508,7 @@ public final class GridSnapshotReaderTest {
         Fixture f = new Fixture();
         f.alias();
         f.owner.put(TRACK_UUID, new UUID(3, 9));
-        f.failures.put(TRACK_UUID, HostServices.failure("grid_unavailable", "raw SCA UUID must not be read"));
+        f.failures.put(TRACK_UUID, Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "raw SCA UUID must not be read"));
         check(
                 f.read(0, 64, true).getAsJsonArray("modules").size() == 2,
                 "SCA uses alias UUID even when raw owner UUID differs");
@@ -543,7 +543,7 @@ public final class GridSnapshotReaderTest {
             check(aliased.graphReads == 0, "alias UUID cannot fall back to ordinary UUID");
         }
         Fixture unavailable = new Fixture();
-        unavailable.failures.put(OWNER_TRACK, HostServices.failure("grid_unavailable", "unbound identity"));
+        unavailable.failures.put(OWNER_TRACK, Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "unbound identity"));
         expect("grid_unavailable", () -> unavailable.read(0, 64, true));
         check(unavailable.graphReads == 0, "unavailable required identity never degrades into structure-only read");
         check(
@@ -619,7 +619,7 @@ public final class GridSnapshotReaderTest {
         expect(
                 "cancelled",
                 () -> cancelled.reader.snapshot(cancelled.proxy, TRACK_ID, 0, 64, true, () -> {
-                    if (++calls[0] == 3) throw HostServices.failure("cancelled", "cancelled mid-traversal");
+                    if (++calls[0] == 3) throw Errors.notApplied(ErrorCode.CANCELLED, "cancelled mid-traversal");
                 }));
         check(cancelled.closed == 1, "cancellation closes active stream");
         Fixture children = new Fixture();
@@ -942,7 +942,7 @@ public final class GridSnapshotReaderTest {
                 "cancelled",
                 () -> cancelled.reader.parameter(
                         cancelled.proxy, TRACK_ID, new UUID(1, 1), "LOCAL_ID", context.reader, () -> {
-                            if (++calls[0] == 5) throw HostServices.failure("cancelled", "cancelled");
+                            if (++calls[0] == 5) throw Errors.notApplied(ErrorCode.CANCELLED, "cancelled");
                         }));
         check(cancelled.closed > 0, "cancelled exact lookup closes native streams");
     }
@@ -1242,7 +1242,8 @@ public final class GridSnapshotReaderTest {
         WriterFixture f = batchFixture();
         int[] seen = {0};
         f.afterMutation = () -> {
-            if (++seen[0] == 2) throw HostServices.failure("stale_context", "children rebuilt after the native set");
+            if (++seen[0] == 2)
+                throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "children rebuilt after the native set");
         };
         JsonObject result = batch(
                 f,
@@ -1482,7 +1483,7 @@ public final class GridSnapshotReaderTest {
     private static void rawParameterMutationFailuresRemainUnknown() {
         WriterFixture partial = new WriterFixture();
         partial.afterMutation = () -> {
-            throw HostServices.failure("grid_unavailable", "native failure after partial assignment");
+            throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "native failure after partial assignment");
         };
         RpcException error = partial.failure(request("boolean", "true", "false"));
         check(
@@ -1796,7 +1797,7 @@ public final class GridSnapshotReaderTest {
 
         @Override
         public void requireSupported(Object parameter) {
-            if (parameter != panel) throw HostServices.failure("grid_unavailable", "unmapped panel");
+            if (parameter != panel) throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "unmapped panel");
         }
 
         @Override
@@ -1879,7 +1880,7 @@ public final class GridSnapshotReaderTest {
                 "unobserved requested text is not a successful string dispatch");
         StringFixture partial = new StringFixture();
         partial.afterMutation = () -> {
-            throw HostServices.failure("grid_unavailable", "native string failure");
+            throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "native string failure");
         };
         error = partial.failure(stringRequest("before", "x"));
         check(
@@ -2088,7 +2089,7 @@ public final class GridSnapshotReaderTest {
                 "unobserved requested boolean is not successful panel dispatch");
         PanelFixture partial = new PanelFixture();
         partial.afterMutation = () -> {
-            throw HostServices.failure("grid_unavailable", "native panel failure");
+            throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "native panel failure");
         };
         error = partial.failure();
         check(
@@ -2326,7 +2327,7 @@ public final class GridSnapshotReaderTest {
                 "unavailable move binding does not disable selective deletion");
         ModuleWriterFixture deleteFailure = new ModuleWriterFixture();
         deleteFailure.afterMutation = () -> {
-            throw HostServices.failure("grid_unavailable", "native delete failure");
+            throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "native delete failure");
         };
         HostOperation failedDelete = deleteFailure.start(null);
         check(
@@ -3076,7 +3077,8 @@ public final class GridSnapshotReaderTest {
             timeout.edit(
                     timeout.request(null, noop ? null : timeout.output()),
                     () -> {
-                        if (expired[0]) throw HostServices.failure("deadline_exceeded", "later observation expired");
+                        if (expired[0])
+                            throw Errors.notApplied(ErrorCode.DEADLINE_EXCEEDED, "later observation expired");
                     },
                     () -> late.dispatched = true,
                     value -> late.result.complete(value),
@@ -3151,7 +3153,7 @@ public final class GridSnapshotReaderTest {
                 edit(
                         request,
                         () -> {
-                            if (cancelled) throw HostServices.failure("cancelled", "cancelled");
+                            if (cancelled) throw Errors.notApplied(ErrorCode.CANCELLED, "cancelled");
                         },
                         () -> op.dispatched = true,
                         value -> op.result.complete(value),
@@ -3197,7 +3199,7 @@ public final class GridSnapshotReaderTest {
                         TRACK_ID,
                         requests,
                         () -> {
-                            if (cancelled) throw HostServices.failure("cancelled", "cancelled");
+                            if (cancelled) throw Errors.notApplied(ErrorCode.CANCELLED, "cancelled");
                         },
                         () -> op.dispatched = true,
                         value -> op.result.complete(value),
@@ -3210,7 +3212,7 @@ public final class GridSnapshotReaderTest {
 
         @Override
         public void requireSupported(Object input, Object undo) {
-            if (!supported) throw HostServices.failure("grid_unavailable", "unsupported runtime class");
+            if (!supported) throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "unsupported runtime class");
         }
 
         @Override
@@ -3256,7 +3258,7 @@ public final class GridSnapshotReaderTest {
                 edit(
                         move,
                         () -> {
-                            if (cancelled) throw HostServices.failure("cancelled", "cancelled");
+                            if (cancelled) throw Errors.notApplied(ErrorCode.CANCELLED, "cancelled");
                         },
                         () -> op.dispatched = true,
                         value -> op.result.complete(value),
@@ -3283,7 +3285,7 @@ public final class GridSnapshotReaderTest {
 
         @Override
         public Runnable prepareMove(Object graph, Object module, int x, int y) {
-            if (!moveSupported) throw HostServices.failure("grid_unavailable", "move descriptor unavailable");
+            if (!moveSupported) throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "move descriptor unavailable");
             return () -> {
                 calls++;
                 if (apply) ((Node) module).put(X, x).put(Y, y);
@@ -3348,8 +3350,8 @@ public final class GridSnapshotReaderTest {
         }
 
         @Override
-        public String unavailableCode() {
-            return "grid_unavailable";
+        public ErrorCode unavailableCode() {
+            return ErrorCode.GRID_UNAVAILABLE;
         }
 
         private Object value(Enum<?> field, Object object) {
@@ -3403,7 +3405,7 @@ public final class GridSnapshotReaderTest {
             return set(
                     request,
                     () -> {
-                        if (cancelled) throw HostServices.failure("cancelled", "cancelled");
+                        if (cancelled) throw Errors.notApplied(ErrorCode.CANCELLED, "cancelled");
                     },
                     () -> op.dispatched = true);
         }
@@ -3428,7 +3430,7 @@ public final class GridSnapshotReaderTest {
 
         @Override
         public void requireSupported(Object parameter, GridSnapshotReader.Kind kind) {
-            if (!supported) throw HostServices.failure("grid_unavailable", "unmapped model");
+            if (!supported) throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "unmapped model");
         }
 
         @Override
@@ -3508,7 +3510,7 @@ public final class GridSnapshotReaderTest {
 
         @Override
         public void requireSupported(Object parameter) {
-            if (parameter != panel) throw HostServices.failure("grid_unavailable", "unmapped panel");
+            if (parameter != panel) throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "unmapped panel");
         }
 
         @Override
@@ -3575,8 +3577,8 @@ public final class GridSnapshotReaderTest {
         }
 
         @Override
-        public String unavailableCode() {
-            return "grid_unavailable";
+        public ErrorCode unavailableCode() {
+            return ErrorCode.GRID_UNAVAILABLE;
         }
 
         private Object value(Enum<?> field, Object object) {
@@ -3718,8 +3720,8 @@ public final class GridSnapshotReaderTest {
         }
 
         @Override
-        public String unavailableCode() {
-            return "grid_unavailable";
+        public ErrorCode unavailableCode() {
+            return ErrorCode.GRID_UNAVAILABLE;
         }
 
         @Override
@@ -3770,13 +3772,13 @@ public final class GridSnapshotReaderTest {
 
         @Override
         public void documentThread() {
-            if (!document) throw HostServices.failure("grid_unavailable", "wrong thread");
+            if (!document) throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "wrong thread");
         }
 
         @Override
         public void requireModelThread(Object value) {
             if (!(value instanceof Node) || !((Node) value).threadAllowed)
-                throw HostServices.failure("grid_unavailable", "wrong thread predicate");
+                throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "wrong thread predicate");
         }
 
         @Override

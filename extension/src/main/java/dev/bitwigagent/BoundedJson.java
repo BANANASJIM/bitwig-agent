@@ -1,7 +1,5 @@
 package dev.bitwigagent;
 
-import static dev.bitwigagent.HostServices.failure;
-
 import com.google.gson.*;
 import java.io.*;
 
@@ -11,7 +9,7 @@ final class BoundedJson {
 
     private BoundedJson() {}
 
-    static String serialize(JsonObject value, int maximum, String code, String message) {
+    static String serialize(JsonObject value, int maximum, ErrorCode code, String message) {
         StringWriter buffer = new StringWriter();
         Writer bounded = new Writer() {
             int count;
@@ -33,7 +31,7 @@ final class BoundedJson {
             JSON.toJson(value, bounded);
             return buffer.toString();
         } catch (JsonIOException error) {
-            throw failure(code, message);
+            throw Errors.notApplied(code, message);
         }
     }
 }

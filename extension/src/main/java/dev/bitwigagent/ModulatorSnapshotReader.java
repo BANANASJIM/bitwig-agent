@@ -1,7 +1,5 @@
 package dev.bitwigagent;
 
-import static dev.bitwigagent.HostServices.failure;
-
 import com.google.gson.*;
 import java.util.*;
 
@@ -59,7 +57,7 @@ final class ModulatorSnapshotReader {
 
     JsonObject list(Object proxy, UUID trackId, int offset, int limit, Runnable check) {
         if (offset < 0 || offset > 100000 || limit < 1 || limit > 128)
-            throw failure("invalid_params", "Invalid modulator page bounds.");
+            throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "Invalid modulator page bounds.");
         Snapshot snapshot = capture(proxy, trackId, null, offset, limit, check);
         JsonArray rows = new JsonArray();
         boolean partial = offset != 0 || snapshot.rows.length > limit;
@@ -116,22 +114,26 @@ final class ModulatorSnapshotReader {
 
     JsonObject parameter(Object proxy, UUID trackId, UUID modulatorId, String parameterId, Runnable check) {
         if (modulatorId == null || parameterId == null || parameterId.length() > MAX_TEXT)
-            throw failure("invalid_params", "Exact current modulator UUID and bounded parameter ID are required.");
+            throw Errors.notApplied(
+                    ErrorCode.INVALID_PARAMS, "Exact current modulator UUID and bounded parameter ID are required.");
         Snapshot snapshot = capture(proxy, trackId, modulatorId, 0, 0, check);
         Row row = null;
         for (Row candidate : snapshot.rows) if (candidate.id.equals(modulatorId)) row = candidate;
-        if (row == null) throw failure("target_not_found", "Current primary modulator UUID was not found.");
+        if (row == null)
+            throw Errors.notApplied(ErrorCode.TARGET_NOT_FOUND, "Current primary modulator UUID was not found.");
         if (row.contents == null)
-            throw failure(
-                    "modulator_unavailable",
+            throw Errors.notApplied(
+                    ErrorCode.MODULATOR_UNAVAILABLE,
                     "Selected modulator contents are not materialized; loading is not permitted.");
         Child selected = null;
         for (Child child : row.children) if (parameterId.equals(child.id)) selected = child;
-        if (selected == null) throw failure("target_not_found", "Exact direct parameter ID was not found.");
+        if (selected == null)
+            throw Errors.notApplied(ErrorCode.TARGET_NOT_FOUND, "Exact direct parameter ID was not found.");
         if (!selected.supported) {
             if (a.is(Kind.STRING_PANEL, selected.object) && !a.stringsAvailable())
-                throw failure("modulator_unavailable", "String-panel read binding is unavailable.");
-            throw failure("unsupported_scope", "Selected direct control is not a supported exact string panel.");
+                throw Errors.notApplied(ErrorCode.MODULATOR_UNAVAILABLE, "String-panel read binding is unavailable.");
+            throw Errors.notApplied(
+                    ErrorCode.UNSUPPORTED_SCOPE, "Selected direct control is not a supported exact string panel.");
         }
         Object[] models = {snapshot.target.device, snapshot.collection, row.object, row.contents, selected.object};
         String[] labels = {"device", "collection", "modulator", "contents", "parameter", "project"};
@@ -141,7 +143,7 @@ final class ModulatorSnapshotReader {
         contexts.guard(context, models, labels, check);
         guard(snapshot, check);
         if (!value.equals(text(a.read(Field.VALUE, selected.object), false)))
-            throw failure("stale_context", "Selected string value changed during capture.");
+            throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Selected string value changed during capture.");
         JsonObject result = result();
         result.addProperty("modulatorId", row.id.toString());
         result.addProperty("typeId", row.typeId.toString());
@@ -167,8 +169,8 @@ final class ModulatorSnapshotReader {
         try {
             target = targets.capture(proxy, trackId, check);
         } catch (RpcException error) {
-            if (!"missing_target".equals(error.code)) throw error;
-            throw failure("target_not_found", "Explicit device proxy has no native target.");
+            if (!error.is(ErrorCode.MISSING_TARGET)) throw error;
+            throw Errors.notApplied(ErrorCode.TARGET_NOT_FOUND, "Explicit device proxy has no native target.");
         }
         Object collection = a.read(Field.COLLECTION, target.device);
         require(Kind.COLLECTION, collection);
@@ -189,7 +191,7 @@ final class ModulatorSnapshotReader {
             if (a.read(Field.COLLECTION_OWNER, object) != collection) stale("Modulator collection owner differs.");
             UUID id = uuid(a.read(Field.ID, object));
             if (!ids.add(id) || !objects.add(object))
-                throw failure("modulator_unavailable", "Duplicate primary modulator identity.");
+                throw Errors.notApplied(ErrorCode.MODULATOR_UNAVAILABLE, "Duplicate primary modulator identity.");
             boolean inspected = selectedId == null ? i >= offset && i < offset + limit : selectedId.equals(id);
             Row row = new Row(
                     object,
@@ -219,13 +221,14 @@ final class ModulatorSnapshotReader {
                 Object child = children.get(j);
                 require(Kind.MODEL, child);
                 parent(child, row.contents);
-                if (!childObjects.add(child)) throw failure("modulator_unavailable", "Duplicate direct child object.");
+                if (!childObjects.add(child))
+                    throw Errors.notApplied(ErrorCode.MODULATOR_UNAVAILABLE, "Duplicate direct child object.");
                 String childId = identifier(child);
                 if (childId != null && !childIds.add(childId))
-                    throw failure("modulator_unavailable", "Duplicate direct parameter ID.");
+                    throw Errors.notApplied(ErrorCode.MODULATOR_UNAVAILABLE, "Duplicate direct parameter ID.");
                 boolean supported = a.is(Kind.STRING_PANEL, child) && a.stringsAvailable();
                 if (supported && childId == null)
-                    throw failure("modulator_unavailable", "String panel has no exact identifier.");
+                    throw Errors.notApplied(ErrorCode.MODULATOR_UNAVAILABLE, "String panel has no exact identifier.");
                 row.children[j] = new Child(child, childId, supported);
                 models.add(child);
             }
@@ -287,14 +290,15 @@ final class ModulatorSnapshotReader {
     private int count(Object collection) {
         Object count = a.read(Field.COUNT, collection);
         if (!(count instanceof Integer) || (Integer) count < 0)
-            throw failure("modulator_unavailable", "Invalid primary count.");
+            throw Errors.notApplied(ErrorCode.MODULATOR_UNAVAILABLE, "Invalid primary count.");
         if ((Integer) count > MAX_MODULATORS) bounds("Primary collection exceeds 4096 modulators.");
         return (Integer) count;
     }
 
     private List<?> children(Object contents) {
         Object value = a.read(Field.CHILDREN, contents);
-        if (!(value instanceof List<?>)) throw failure("modulator_unavailable", "Direct components are not a list.");
+        if (!(value instanceof List<?>))
+            throw Errors.notApplied(ErrorCode.MODULATOR_UNAVAILABLE, "Direct components are not a list.");
         List<?> result = (List<?>) value;
         if (result.size() > MAX_CHILDREN) bounds("Materialized contents exceed 256 direct children.");
         return result;
@@ -305,7 +309,8 @@ final class ModulatorSnapshotReader {
     }
 
     private void require(Kind kind, Object object) {
-        if (!a.is(kind, object)) throw failure("modulator_unavailable", "Unknown native " + kind + " identity.");
+        if (!a.is(kind, object))
+            throw Errors.notApplied(ErrorCode.MODULATOR_UNAVAILABLE, "Unknown native " + kind + " identity.");
         a.requireModelThread(object);
     }
 
@@ -315,24 +320,26 @@ final class ModulatorSnapshotReader {
     }
 
     private static UUID uuid(Object value) {
-        if (!(value instanceof UUID)) throw failure("modulator_unavailable", "Native UUID is unavailable.");
+        if (!(value instanceof UUID))
+            throw Errors.notApplied(ErrorCode.MODULATOR_UNAVAILABLE, "Native UUID is unavailable.");
         return (UUID) value;
     }
 
     private static String text(Object value, boolean nullable) {
         if (value == null && nullable) return null;
-        if (!(value instanceof String)) throw failure("modulator_unavailable", "Native text has an unsupported type.");
+        if (!(value instanceof String))
+            throw Errors.notApplied(ErrorCode.MODULATOR_UNAVAILABLE, "Native text has an unsupported type.");
         String text = (String) value;
         if (text.length() > MAX_TEXT) bounds("Native text exceeds 1024 UTF-16 units; not truncated.");
         return text;
     }
 
     private static void stale(String message) {
-        throw failure("stale_context", message);
+        throw Errors.notApplied(ErrorCode.STALE_CONTEXT, message);
     }
 
     private static void bounds(String message) {
-        throw failure("modulator_bounds_exceeded", message);
+        throw Errors.notApplied(ErrorCode.MODULATOR_BOUNDS_EXCEEDED, message);
     }
 
     private static JsonObject result() {

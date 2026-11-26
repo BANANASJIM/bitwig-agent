@@ -62,10 +62,10 @@ final class GridBooleanPanelWriter {
                 coupledContext, coupled.device, coupled.graph, coupled.module, coupled.parameter, coupled.kind, check);
         JsonObject current = values.parameterValue(binding);
         if (!request.matches(current.get("value"), request.value))
-            throw new RpcException(
-                    changed ? "grid_verification_failed" : "stale_context",
+            throw Errors.of(
+                    changed ? ErrorCode.GRID_VERIFICATION_FAILED : ErrorCode.STALE_CONTEXT,
                     "Native boolean panel readback differs; inspect both panel and linked parameter before another write.",
-                    changed ? "unknown" : "not_applied");
+                    changed ? Outcome.UNKNOWN : Outcome.NOT_APPLIED);
         JsonObject coupledAfter = values.parameterValue(coupled);
         values.guardBipolarParameter(binding, coupled);
         check.run();

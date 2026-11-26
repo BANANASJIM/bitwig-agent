@@ -375,10 +375,10 @@ public final class ModulatorModuleTest {
                 "oversized complete response fails without truncation or delivery");
         JsonObject exact = new JsonObject();
         exact.addProperty("v", "x");
-        String json = BoundedJson.serialize(exact, 9, "modulator_bounds_exceeded", "bound");
+        String json = BoundedJson.serialize(exact, 9, ErrorCode.MODULATOR_BOUNDS_EXCEEDED, "bound");
         check(json.equals("{\"v\":\"x\"}"), "exact transport bound is inclusive");
         try {
-            BoundedJson.serialize(exact, 8, "modulator_bounds_exceeded", "bound");
+            BoundedJson.serialize(exact, 8, ErrorCode.MODULATOR_BOUNDS_EXCEEDED, "bound");
             throw new AssertionError("bound bypass");
         } catch (RpcException error) {
             check(error.code.equals("modulator_bounds_exceeded"), "one character overflow fails closed");
@@ -392,7 +392,8 @@ public final class ModulatorModuleTest {
         check(
                 first == f.host.services.nativeRuntime(new HostOperation(Long.MAX_VALUE)),
                 "services compose one lazy shared runtime gate");
-        GridModule grid = new GridModule(f.host.services, new Bitwig614GridAdapter(first.access("grid_unavailable")));
+        GridModule grid =
+                new GridModule(f.host.services, new Bitwig614GridAdapter(first.access(ErrorCode.GRID_UNAVAILABLE)));
         f.devices.child("scrollPosition").emit(1);
         f.devices.child("itemCount").emit(2);
         f.device.child("position").emit(1);
@@ -530,10 +531,10 @@ public final class ModulatorModuleTest {
             during.run();
             check.run();
             if (!currentId.equals(modulator))
-                throw HostServices.failure("target_not_found", "Previous UUID is not current.");
-            if (id.equals("UNSUPPORTED")) throw HostServices.failure("unsupported_scope", "Not a string panel.");
+                throw Errors.notApplied(ErrorCode.TARGET_NOT_FOUND, "Previous UUID is not current.");
+            if (id.equals("UNSUPPORTED")) throw Errors.notApplied(ErrorCode.UNSUPPORTED_SCOPE, "Not a string panel.");
             if (!strings.containsKey(id))
-                throw HostServices.failure("target_not_found", "No exact parameter identifier.");
+                throw Errors.notApplied(ErrorCode.TARGET_NOT_FOUND, "No exact parameter identifier.");
             JsonObject result = HostServices.observed();
             result.addProperty("modulatorId", currentId.toString());
             result.addProperty("parameterId", id);

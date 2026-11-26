@@ -12,4 +12,12 @@ public final class RpcException extends RuntimeException {
         this.code = code;
         this.outcome = outcome;
     }
+
+    public boolean is(ErrorCode expected) {
+        return expected.wire().equals(code);
+    }
+
+    public boolean is(Outcome expected) {
+        return expected.wire().equals(outcome);
+    }
 }

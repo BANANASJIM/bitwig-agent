@@ -15,8 +15,8 @@ public final class Bitwig614RuntimeTest {
 
     private static void deniedRuntimeRetainsEachDomainCode() {
         Bitwig614Runtime runtime = new Bitwig614Runtime(new Object(), "unsupported-version", () -> {});
-        Bitwig614Runtime.Access grid = runtime.access("grid_unavailable"),
-                modulators = runtime.access("modulator_unavailable");
+        Bitwig614Runtime.Access grid = runtime.access(ErrorCode.GRID_UNAVAILABLE),
+                modulators = runtime.access(ErrorCode.MODULATOR_UNAVAILABLE);
         check(
                 grid.gateError() != null && grid.gateError().equals(modulators.gateError()),
                 "one failed runtime gate is reported consistently to independent domain accessors");
@@ -32,20 +32,21 @@ public final class Bitwig614RuntimeTest {
         expect(
                 "cancelled",
                 () -> new Bitwig614Runtime(new Object(), "unsupported-version", () -> {
-                    throw HostServices.failure("cancelled", "stop before binding");
+                    throw Errors.notApplied(ErrorCode.CANCELLED, "stop before binding");
                 }));
     }
 
     private static void nativeRejectionsRetainTheirInvocationBoundary() throws Exception {
         Method reader = ThrowingRead.class.getMethod("read");
-        for (String code : new String[] {"grid_unavailable", "modulator_unavailable"}) {
-            RpcException nativeRejection = HostServices.failure("cancelled", "native code threw an RPC-shaped error");
+        for (ErrorCode code : new ErrorCode[] {ErrorCode.GRID_UNAVAILABLE, ErrorCode.MODULATOR_UNAVAILABLE}) {
+            RpcException nativeRejection =
+                    Errors.notApplied(ErrorCode.CANCELLED, "native code threw an RPC-shaped error");
             try {
                 Bitwig614Runtime.invoke(code, reader, new ThrowingRead(nativeRejection));
                 throw new AssertionError("Expected reflected native rejection");
             } catch (RpcException translated) {
                 check(
-                        code.equals(translated.code) && Bitwig614Runtime.isInvocationFailure(translated),
+                        translated.is(code) && Bitwig614Runtime.isInvocationFailure(translated),
                         "native rejection is classified as a failed invocation in the calling domain");
                 check(
                         translated.getCause() instanceof InvocationTargetException

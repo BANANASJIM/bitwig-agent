@@ -1,7 +1,5 @@
 package dev.bitwigagent;
 
-import static dev.bitwigagent.HostServices.failure;
-
 import com.bitwig.extension.callback.*;
 import com.bitwig.extension.controller.api.*;
 import com.google.gson.*;
@@ -67,17 +65,19 @@ final class GridModule implements HostModule {
                                 && p.get("detail").getAsJsonPrimitive().isString()
                                 && Set.of("summary", "full")
                                         .contains(p.get("detail").getAsString())))
-                    throw failure("invalid_params", "detail must be \"summary\" or \"full\".");
+                    throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "detail must be \"summary\" or \"full\".");
                 return;
             case "grid.catalog":
                 Params.fields(p, Set.of(), Set.of("query", "offset", "limit"));
                 if (p.has("query")) {
                     if (!p.get("query").isJsonPrimitive()
                             || !p.get("query").getAsJsonPrimitive().isString())
-                        throw failure("invalid_params", "query must be a string of at most 128 UTF-16 units.");
+                        throw Errors.notApplied(
+                                ErrorCode.INVALID_PARAMS, "query must be a string of at most 128 UTF-16 units.");
                     String query = p.get("query").getAsString();
                     if (query.length() > 128)
-                        throw failure("invalid_params", "query must be a string of at most 128 UTF-16 units.");
+                        throw Errors.notApplied(
+                                ErrorCode.INVALID_PARAMS, "query must be a string of at most 128 UTF-16 units.");
                 }
                 if (p.has("offset")) Params.integer(p, "offset", 0, 100000);
                 if (p.has("limit")) Params.integer(p, "limit", 1, 256);
@@ -103,8 +103,8 @@ final class GridModule implements HostModule {
                                         "targetPortKey",
                                         "expectedSource",
                                         "source")))
-                    throw failure(
-                            "invalid_params",
+                    throw Errors.notApplied(
+                            ErrorCode.INVALID_PARAMS,
                             "Connection edits require trackId, deviceIndex, expectedDeviceName, targetModuleId, targetPortKey, expectedSource and source (optional graph); source fields must be explicitly nullable.");
                 for (String key : p.keySet())
                     if (!key.equals("graph")
@@ -116,7 +116,8 @@ final class GridModule implements HostModule {
                                             "targetPortKey",
                                             "expectedSource",
                                             "source")
-                                    .contains(key)) throw failure("invalid_params", "Unknown parameter: " + key);
+                                    .contains(key))
+                        throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "Unknown parameter: " + key);
                 graphMode(p);
                 canonicalUuid(p, "trackId");
                 Params.integer(p, "deviceIndex", 0, HostServices.DEVICES - 1);
@@ -193,7 +194,7 @@ final class GridModule implements HostModule {
                                 && p.get("detail").getAsJsonPrimitive().isString()
                                 && Set.of("summary", "full")
                                         .contains(p.get("detail").getAsString())))
-                    throw failure("invalid_params", "detail must be \"summary\" or \"full\".");
+                    throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "detail must be \"summary\" or \"full\".");
                 canonicalUuid(p, "trackId");
                 Params.integer(p, "deviceIndex", 0, HostServices.DEVICES - 1);
                 Params.string(p, "expectedDeviceName");
@@ -259,7 +260,8 @@ final class GridModule implements HostModule {
                 if (!p.get("parameterId").isJsonPrimitive()
                         || !p.get("parameterId").getAsJsonPrimitive().isString()
                         || p.get("parameterId").getAsString().length() > GridSnapshotReader.MAX_TEXT)
-                    throw failure("invalid_params", "parameterId must be a string of at most 1024 UTF-16 units.");
+                    throw Errors.notApplied(
+                            ErrorCode.INVALID_PARAMS, "parameterId must be a string of at most 1024 UTF-16 units.");
                 if (writing) GridParameterWriter.Request.parse(p);
                 return;
             case "grid.get":
@@ -270,7 +272,7 @@ final class GridModule implements HostModule {
                 if (p.has("full")) Params.bool(p, "full");
                 String id = Params.string(p, "trackId");
                 if (!id.matches("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"))
-                    throw failure("invalid_params", "trackId must be a canonical UUID.");
+                    throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "trackId must be a canonical UUID.");
                 Params.integer(p, "deviceIndex", 0, HostServices.DEVICES - 1);
                 Params.string(p, "expectedDeviceName");
                 if (p.has("moduleOffset")) Params.integer(p, "moduleOffset", 0, 100000);
@@ -280,7 +282,7 @@ final class GridModule implements HostModule {
                 if (p.has("moduleIds")) moduleIds(p);
                 return;
             default:
-                throw failure("unknown_method", "Unknown Grid operation.");
+                throw Errors.notApplied(ErrorCode.UNKNOWN_METHOD, "Unknown Grid operation.");
         }
     }
 
@@ -355,7 +357,7 @@ final class GridModule implements HostModule {
         if (!value.isJsonPrimitive()
                 || !value.getAsJsonPrimitive().isString()
                 || !(value.getAsString().equals("diff") || value.getAsString().equals("full")))
-            throw failure("invalid_params", "graph must be \"diff\" or \"full\".");
+            throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "graph must be \"diff\" or \"full\".");
         return value.getAsString().equals("full");
     }
 
@@ -364,13 +366,14 @@ final class GridModule implements HostModule {
         if (!value.isJsonArray()
                 || value.getAsJsonArray().size() < 1
                 || value.getAsJsonArray().size() > 256)
-            throw failure("invalid_params", "moduleIds must be an array of 1..256 canonical UUIDs.");
+            throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "moduleIds must be an array of 1..256 canonical UUIDs.");
         Set<String> ids = new java.util.HashSet<>();
         for (JsonElement item : value.getAsJsonArray()) {
             if (!item.isJsonPrimitive()
                     || !item.getAsJsonPrimitive().isString()
                     || !item.getAsString().matches(UUID_PATTERN))
-                throw failure("invalid_params", "moduleIds must be an array of 1..256 canonical UUIDs.");
+                throw Errors.notApplied(
+                        ErrorCode.INVALID_PARAMS, "moduleIds must be an array of 1..256 canonical UUIDs.");
             ids.add(item.getAsString().toLowerCase(java.util.Locale.ROOT));
         }
         return ids;
@@ -386,9 +389,10 @@ final class GridModule implements HostModule {
         if (!writes.isJsonArray()
                 || writes.getAsJsonArray().size() < 1
                 || writes.getAsJsonArray().size() > 64)
-            throw failure("invalid_params", "writes must be an array of 1..64 parameter writes.");
+            throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "writes must be an array of 1..64 parameter writes.");
         for (JsonElement element : writes.getAsJsonArray()) {
-            if (!element.isJsonObject()) throw failure("invalid_params", "Each write must be an object.");
+            if (!element.isJsonObject())
+                throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "Each write must be an object.");
             JsonObject w = element.getAsJsonObject();
             if (isStepsKind(w))
                 Params.fields(
@@ -404,11 +408,13 @@ final class GridModule implements HostModule {
             if (!w.get("parameterId").isJsonPrimitive()
                     || !w.get("parameterId").getAsJsonPrimitive().isString()
                     || w.get("parameterId").getAsString().length() > GridSnapshotReader.MAX_TEXT)
-                throw failure("invalid_params", "parameterId must be a string of at most 1024 UTF-16 units.");
+                throw Errors.notApplied(
+                        ErrorCode.INVALID_PARAMS, "parameterId must be a string of at most 1024 UTF-16 units.");
             UUID module = UUID.fromString(w.get("moduleId").getAsString());
             String parameter = w.get("parameterId").getAsString();
             if (!seen.add(module + "/" + parameter))
-                throw failure("invalid_params", "writes must not repeat a moduleId/parameterId pair.");
+                throw Errors.notApplied(
+                        ErrorCode.INVALID_PARAMS, "writes must not repeat a moduleId/parameterId pair.");
             entries.add(new GridParameterWriter.Entry(module, parameter, GridParameterWriter.Request.parse(w)));
         }
         return entries;
@@ -426,7 +432,7 @@ final class GridModule implements HostModule {
     public void dispatch(HostOperation op, String method, JsonObject p) {
         s.check(op);
         if (adapter == null)
-            adapter = new Bitwig614GridAdapter(s.nativeRuntime(op).access("grid_unavailable"));
+            adapter = new Bitwig614GridAdapter(s.nativeRuntime(op).access(ErrorCode.GRID_UNAVAILABLE));
         if (method.equals("grid.capabilities")) {
             s.check(op);
             JsonObject full = adapter.capabilities();
@@ -612,14 +618,14 @@ final class GridModule implements HostModule {
                 op.fail(
                         error instanceof RpcException
                                 ? error
-                                : failure(
-                                        "grid_unavailable",
+                                : Errors.notApplied(
+                                        ErrorCode.GRID_UNAVAILABLE,
                                         "Grid operation failed: "
                                                 + error.getClass().getSimpleName()
                                                 + "; inspect the exact host binding."));
             } catch (Error error) {
-                op.fail(failure(
-                        "grid_unavailable",
+                op.fail(Errors.notApplied(
+                        ErrorCode.GRID_UNAVAILABLE,
                         "Native Grid operation failed; inspect the loaded host binding and current state."));
             }
         });
@@ -637,7 +643,7 @@ final class GridModule implements HostModule {
         final String serialized = BoundedJson.serialize(
                 value,
                 240000,
-                "grid_bounds_exceeded",
+                ErrorCode.GRID_BOUNDS_EXCEEDED,
                 "Grid response exceeds bounded transport size; reduce moduleLimit or exclude parameters.");
         check.run();
         s.schedule(
@@ -677,7 +683,7 @@ final class GridModule implements HostModule {
     static void canonicalUuid(JsonObject p, String key) {
         if (!Params.string(p, key)
                 .matches("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"))
-            throw failure("invalid_params", key + " must be a canonical UUID.");
+            throw Errors.notApplied(ErrorCode.INVALID_PARAMS, key + " must be a canonical UUID.");
     }
 
     private static int integer(JsonObject p, String key, int fallback) {

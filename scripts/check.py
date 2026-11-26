@@ -3,7 +3,7 @@
 
 From an existing development environment:
   python scripts/check.py --layer offline
-  BITWIG_API_JAR=/path/to/installed/bitwig.jar python scripts/check.py
+  python scripts/check.py  # BITWIG_API_JAR=/path/to/bitwig.jar selects the installed host jar
   python scripts/check.py --layer native --allow-native --native-config /path/to/run.json
 
 Default layers: lint, offline Python, Java simulated-host, Java/MCP fixture. Missing
@@ -26,7 +26,7 @@ LAYERS = ("lint", "offline", "java", "fixture", "native")
 DESCRIPTIONS = {
     "lint": "Static gates: ruff, mypy, Java format, duplicate detection; no API jar or native host",
     "offline": "Python unit/adapter fixtures; no JVM or native host",
-    "java": "Java transport and simulated-host tests; installed API jar required",
+    "java": "Java transport and simulated-host tests; installed or pinned public API jar",
     "fixture": "Real MCP/Python/Java protocol + registry fixture; NOT native editing",
     "native": "Opt-in read-only native preflight; NOT music/UI/persistence E2E",
 }
@@ -58,11 +58,7 @@ def main() -> int:
         print(f"RUN [{layer}]: {DESCRIPTIONS[layer]}", flush=True)
         started = time.monotonic()
         result: dict[str, Any] = {"layer": layer, "scope": DESCRIPTIONS[layer]}
-        if layer in {"java", "fixture"} and not (
-            os.environ.get("BITWIG_API_JAR") and Path(os.environ["BITWIG_API_JAR"]).is_file()
-        ):
-            result.update(status="blocked", reason="BITWIG_API_JAR must point to the user's installed API jar")
-        elif layer == "native" and not (args.allow_native and args.native_config and args.native_config.is_file()):
+        if layer == "native" and not (args.allow_native and args.native_config and args.native_config.is_file()):
             result.update(status="blocked", reason="Native requires --allow-native and an existing --native-config")
         else:
             commands = {

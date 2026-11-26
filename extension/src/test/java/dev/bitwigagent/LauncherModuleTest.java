@@ -15,6 +15,17 @@ public final class LauncherModuleTest {
     private static int assertions;
     private static final String ID = "11111111-1111-1111-1111-111111111111";
 
+    private static Object stateConstant(String name) {
+        try {
+            for (Object constant :
+                    NoteStep.class.getMethod("state").getReturnType().getEnumConstants())
+                if (((Enum<?>) constant).name().equals(name)) return constant;
+        } catch (NoSuchMethodException e) {
+            throw new IllegalStateException(e);
+        }
+        throw new IllegalStateException("No NoteStep state " + name);
+    }
+
     public static void main(String[] args) throws Exception {
         settingsIsolationIsShared();
         parallelSelectionIsRejectedWhileCursorEditRuns();
@@ -64,7 +75,7 @@ public final class LauncherModuleTest {
     private static void settingsIsolationIsShared() throws Exception {
         Fake f = new Fake();
         f.module.settingsWriteGuard = () -> {
-            throw HostServices.failure("unresolved_mutation", "settings unresolved");
+            throw Errors.notApplied(ErrorCode.UNRESOLVED_MUTATION, "settings unresolved");
         };
         expectOutcome("unresolved_mutation", "not_applied", f.start("launcher.create", createTarget()));
         check(f.creates == 0, "settings quarantine blocks launcher create before dispatch");
@@ -2189,7 +2200,8 @@ public final class LauncherModuleTest {
                     slot.action("createEmptyClip", a -> {
                         creates++;
                         if (failCreate)
-                            throw HostServices.failure("host_write_failed", "Fixture native creation failure");
+                            throw Errors.of(
+                                    "host_write_failed", "Fixture native creation failure", Outcome.NOT_APPLIED);
                         data.length = (Integer) a[0];
                         if (!deferCreate) {
                             if (emitCreateContent) observeContent(index, true);
@@ -2230,7 +2242,8 @@ public final class LauncherModuleTest {
                         importedPath = (String) a[0];
                         importedSlot = index;
                         if (failImport)
-                            throw HostServices.failure("host_write_failed", "Fixture native insertion failure");
+                            throw Errors.of(
+                                    "host_write_failed", "Fixture native insertion failure", Outcome.NOT_APPLIED);
                         return null;
                     });
                     slot.action("replaceInsertionPoint", a -> {
@@ -2369,7 +2382,8 @@ public final class LauncherModuleTest {
             clip.action("getStep", a -> note((Integer) a[0], (Integer) a[1], (Integer) a[2]));
             clip.action("setStep", a -> {
                 writes++;
-                if (writes == failWriteAt) throw HostServices.failure("host_write_failed", "fixture interrupted batch");
+                if (writes == failWriteAt)
+                    throw Errors.of("host_write_failed", "fixture interrupted batch", Outcome.NOT_APPLIED);
                 int c = (Integer) a[0], x = (Integer) a[1], y = (Integer) a[2];
                 put(selected, c, start + x, y, (Integer) a[3], (Double) a[4]);
                 if (emitNotes) observer.noteStepChanged(note(c, x, y));
@@ -2511,18 +2525,18 @@ public final class LauncherModuleTest {
             double storagePosition = (start + x) * size / storageSize;
             int storedStep = (int) storagePosition;
             Note on = storagePosition == storedStep ? notes.get(key(selected, channel, storedStep, pitch)) : null;
-            NoteStep$State state = on == null ? NoteStep$State.Empty : NoteStep$State.NoteOn;
+            Object state = stateConstant(on == null ? "Empty" : "NoteOn");
             if (on == null)
                 for (int step = 0; step < storagePosition; step++) {
                     Note earlier = notes.get(key(selected, channel, step, pitch));
                     if (earlier != null && step * storageSize + earlier.duration > (start + x) * size) {
                         on = earlier;
-                        state = NoteStep$State.NoteSustain;
+                        state = stateConstant("NoteSustain");
                         break;
                     }
                 }
             final Note found = on;
-            final NoteStep$State actual = state;
+            final Object actual = state;
             Node n = new Node(NoteStep.class);
             n.action("channel", a -> channel);
             n.action("x", a -> x);

@@ -13,13 +13,37 @@ from tooling import download_verified
 
 ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "build"
-GSON_VERSION = "2.10"
-GSON_SHA256 = "0cdd163ce3598a20fc04eee71b140b24f6f2a3b35f0a499dbbdd9852e83fbfaf"
-GSON_URL = f"https://repo.maven.apache.org/maven2/com/google/code/gson/gson/{GSON_VERSION}/gson-{GSON_VERSION}.jar"
+SOURCES = ROOT / "extension/src/main/java"
+DEPS_TABLE = ROOT / "extension/deps.toml"
+
+
+def dependency(name):
+    entry = tomllib.loads(DEPS_TABLE.read_text())[name]
+    return download_verified(entry["url"], entry["sha256"], BUILD / "deps" / entry["file"], entry["max_bytes"])
 
 
 def gson_jar():
-    return download_verified(GSON_URL, GSON_SHA256, BUILD / "deps" / f"gson-{GSON_VERSION}.jar", 1024 * 1024)
+    return dependency("gson")
+
+
+def api_jar():
+    """Installed host jar when BITWIG_API_JAR is set, else the checksum-pinned public extension API."""
+    setting = os.environ.get("BITWIG_API_JAR")
+    if setting:
+        if not Path(setting).is_file():
+            raise RuntimeError(f"BITWIG_API_JAR is not a file: {setting}")
+        return Path(setting).resolve()
+    return dependency("extension-api")
+
+
+def lint_flag(api):
+    """The public API jar carries generics the host jar erases, so casts and raw types only warn against it."""
+    return "-Xlint:all,-cast,-rawtypes,-unchecked" if api == dependency("extension-api") else "-Xlint:all"
+
+
+def verification_sources():
+    """Main sources minus the default-package class that needs the host's internal classes."""
+    return sorted(path for path in SOURCES.rglob("*.java") if path.parent != SOURCES)
 
 
 def classes_digest(classes):
@@ -47,14 +71,14 @@ def build_properties(classes):
     return f"version={version}\nbuild={build}+{classes_digest(classes)}\n"
 
 
-def compile_java(sources, target, classpath):
+def compile_java(sources, target, classpath, lint="-Xlint:all"):
     target.mkdir(parents=True, exist_ok=True)
     subprocess.run(
         [
             os.environ.get("JAVAC", "javac"),
             "--release",
             "11",
-            "-Xlint:all",
+            lint,
             "-Werror",
             "-encoding",
             "UTF-8",
@@ -76,7 +100,7 @@ def build():
     classes = BUILD / "classes"
     if classes.exists():
         shutil.rmtree(classes)
-    compile_java(sorted((ROOT / "extension/src/main/java").rglob("*.java")), classes, [api, dependency])
+    compile_java(sorted(SOURCES.rglob("*.java")), classes, [api, dependency])
     resources = ROOT / "extension/src/main/resources"
     service = resources / "META-INF/services/com.bitwig.extension.ExtensionDefinition"
     if not service.is_file():

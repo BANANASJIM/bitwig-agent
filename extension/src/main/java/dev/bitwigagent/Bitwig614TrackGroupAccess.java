@@ -1,7 +1,5 @@
 package dev.bitwigagent;
 
-import static dev.bitwigagent.HostServices.failure;
-
 import com.google.gson.JsonObject;
 import java.lang.reflect.Method;
 import java.util.*;
@@ -68,7 +66,8 @@ final class Bitwig614TrackGroupAccess implements MixModule.GroupAccess {
             a.requireModelThread(common);
             context.guard(capture, models, labels, check);
             if (!resolve(proxies, ids).equals(tracks) || parent(tracks) != common)
-                throw failure("stale_context", "Native track targets or their parent group changed before grouping.");
+                throw Errors.notApplied(
+                        ErrorCode.STALE_CONTEXT, "Native track targets or their parent group changed before grouping.");
         };
         guard.run();
         beforeWrite.run();
@@ -86,15 +85,17 @@ final class Bitwig614TrackGroupAccess implements MixModule.GroupAccess {
         for (int i = 0; i < proxies.size(); i++) {
             Object track = a.invoke(target, proxies.get(i));
             if (!trackClass.isInstance(track))
-                throw failure("stale_context", "Track proxy has no attached native track: " + ids.get(i));
+                throw Errors.notApplied(
+                        ErrorCode.STALE_CONTEXT, "Track proxy has no attached native track: " + ids.get(i));
             a.requireModelThread(track);
             Object identity =
                     groupIface.isInstance(track) ? a.invoke(aliasUuid, a.invoke(alias, track)) : a.invoke(uuid, track);
             if (!UUID.fromString(ids.get(i)).equals(identity))
-                throw failure(
-                        "stale_context", "Native track UUID differs from the requested trackId " + ids.get(i) + ".");
+                throw Errors.notApplied(
+                        ErrorCode.STALE_CONTEXT,
+                        "Native track UUID differs from the requested trackId " + ids.get(i) + ".");
             if (tracks.contains(track))
-                throw failure("stale_context", "Two trackIds resolve to the same native track.");
+                throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Two trackIds resolve to the same native track.");
             tracks.add(track);
         }
         return tracks;
@@ -105,9 +106,9 @@ final class Bitwig614TrackGroupAccess implements MixModule.GroupAccess {
         for (Object track : tracks) {
             Object owner = a.invoke(parent, track);
             if (!groupClass.isInstance(owner))
-                throw failure("unsupported_scope", "Native parent is not a track group.");
+                throw Errors.notApplied(ErrorCode.UNSUPPORTED_SCOPE, "Native parent is not a track group.");
             if (common != null && owner != common)
-                throw failure("unsupported_scope", "Tracks do not share one native parent group.");
+                throw Errors.notApplied(ErrorCode.UNSUPPORTED_SCOPE, "Tracks do not share one native parent group.");
             common = owner;
         }
         return common;

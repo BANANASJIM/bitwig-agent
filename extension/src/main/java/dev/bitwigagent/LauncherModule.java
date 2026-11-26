@@ -42,6 +42,10 @@ final class LauncherModule implements HostModule {
     // Ops that compare the cursor clip's note cells before and after; they need the observed loop inside one read
     // window.
     private static final Set<String> GRID_OPS = Set.of("transpose", "quantize", "duplicateContent");
+    private static final Map<String, ErrorCode> GRID_OP_NOT_OBSERVED = Map.of(
+            "transpose", ErrorCode.TRANSPOSE_NOT_OBSERVED,
+            "quantize", ErrorCode.QUANTIZE_NOT_OBSERVED,
+            "duplicateContent", ErrorCode.DUPLICATE_CONTENT_NOT_OBSERVED);
     private static final java.util.regex.Pattern RGB = java.util.regex.Pattern.compile("#[0-9a-fA-F]{6}");
     // channel defaults to 0; the five grid fields are all-or-none (omitted: window derived from the edits or the clip
     // loop).
@@ -179,38 +183,39 @@ final class LauncherModule implements HostModule {
                 Params.fields(
                         p, Set.of("trackId", "slotIndex", "lengthBeats", "name"), Set.of("notes", "channel", "detail"));
                 int length = Params.integer(p, "lengthBeats", 1, 4096);
-                if (Params.string(p, "name").length() > 128) throw invalid("name must contain 1..128 characters");
+                if (Params.string(p, "name").length() > 128)
+                    throw Errors.invalid("name must contain 1..128 characters");
                 if (p.has("notes")) {
                     JsonObject ep = createNotes(p);
                     edits(ep, resolveWindow("notes.edit", ep));
                     for (JsonElement n : ep.getAsJsonArray("edits")) {
                         JsonObject e = n.getAsJsonObject();
                         if (e.get("beat").getAsDouble() + e.get("durationBeats").getAsDouble() > length)
-                            throw invalid("notes must fit inside lengthBeats");
+                            throw Errors.invalid("notes must fit inside lengthBeats");
                     }
                 } else if (p.has("channel") || p.has("detail"))
-                    throw invalid("channel and detail are only valid together with notes");
+                    throw Errors.invalid("channel and detail are only valid together with notes");
                 detail(p);
                 break;
             }
             case "clips.edit": {
                 String op = p.has("op") ? Params.string(p, "op") : "";
                 Set<String> payload = CLIP_OPS.get(op);
-                if (payload == null) throw invalid("op must be one of " + new TreeSet<>(CLIP_OPS.keySet()));
+                if (payload == null) throw Errors.invalid("op must be one of " + new TreeSet<>(CLIP_OPS.keySet()));
                 Set<String> required = new HashSet<>(payload);
                 required.addAll(Set.of("trackId", "slotIndex", "expectedClipName", "op"));
                 Params.fields(p, required, Set.of());
                 if (Params.string(p, "expectedClipName").length() > 256)
-                    throw invalid("expectedClipName must contain 1..256 characters");
+                    throw Errors.invalid("expectedClipName must contain 1..256 characters");
                 if (op.equals("rename") && Params.string(p, "name").length() > 128)
-                    throw invalid("name must contain 1..128 characters");
+                    throw Errors.invalid("name must contain 1..128 characters");
                 if (op.equals("resize")) Params.integer(p, "lengthBeats", 1, 4096);
                 if (op.equals("color") && !RGB.matcher(Params.string(p, "rgb")).matches())
-                    throw invalid("rgb must be #RRGGBB");
+                    throw Errors.invalid("rgb must be #RRGGBB");
                 if (op.equals("transpose") && Params.integer(p, "semitones", -48, 48) == 0)
-                    throw invalid("semitones must be nonzero");
+                    throw Errors.invalid("semitones must be nonzero");
                 if (op.equals("quantize") && Params.number(p, "amount", 0, 1) == 0)
-                    throw invalid("amount must be above 0");
+                    throw Errors.invalid("amount must be above 0");
                 if (op.equals("copyTo")) Params.integer(p, "targetSlotIndex", 0, 15);
                 break;
             }
@@ -232,7 +237,7 @@ final class LauncherModule implements HostModule {
                 break;
             }
             default:
-                throw HostServices.failure("unknown_method", "Unknown launcher method");
+                throw Errors.notApplied(ErrorCode.UNKNOWN_METHOD, "Unknown launcher method");
         }
         Params.string(p, "trackId");
         if (p.has("slotIndex")) Params.integer(p, "slotIndex", 0, 15);
@@ -245,22 +250,22 @@ final class LauncherModule implements HostModule {
         if (!d.isJsonPrimitive()
                 || !d.getAsJsonPrimitive().isString()
                 || !Set.of("compact", "full").contains(d.getAsString()))
-            throw invalid("detail must be compact or full");
+            throw Errors.invalid("detail must be compact or full");
         return d.getAsString().equals("full");
     }
 
     static List<Edit> edits(JsonObject p, Window w) {
-        if (!p.get("edits").isJsonArray()) throw invalid("edits must be an array");
+        if (!p.get("edits").isJsonArray()) throw Errors.invalid("edits must be an array");
         JsonArray array = p.getAsJsonArray("edits");
-        if (array.size() < 1 || array.size() > 256) throw invalid("edits must contain 1..256 entries");
+        if (array.size() < 1 || array.size() > 256) throw Errors.invalid("edits must contain 1..256 entries");
         List<Edit> result = new ArrayList<>(array.size());
         Set<Integer> cells = new HashSet<>();
         for (JsonElement value : array) {
-            if (!value.isJsonObject()) throw invalid("each edit must be an object");
+            if (!value.isJsonObject()) throw Errors.invalid("each edit must be an object");
             JsonObject e = value.getAsJsonObject();
             String op = Params.string(e, "op");
             boolean set = op.equals("set");
-            if (!set && !op.equals("clear")) throw invalid("edit op must be set or clear");
+            if (!set && !op.equals("clear")) throw Errors.invalid("edit op must be set or clear");
             Params.fields(
                     e,
                     set ? Set.of("op", "beat", "pitch", "velocity", "durationBeats") : Set.of("op", "beat", "pitch"),
@@ -270,13 +275,14 @@ final class LauncherModule implements HostModule {
             int x = absolute - w.start;
             int pitch = Params.integer(e, "pitch", 0, 127);
             if (x < 0 || x >= w.steps || pitch < w.pitch || pitch >= w.pitch + w.pitches)
-                throw invalid("edit onset is outside the explicit window");
-            if (!cells.add(x * 128 + pitch)) throw invalid("multiple edits address the same channel/step/pitch cell");
+                throw Errors.invalid("edit onset is outside the explicit window");
+            if (!cells.add(x * 128 + pitch))
+                throw Errors.invalid("multiple edits address the same channel/step/pitch cell");
             int velocity = set ? Params.integer(e, "velocity", 1, 127) : 0;
             double duration = set ? Params.number(e, "durationBeats", 1.0 / 128, 4096) : 0;
             int durationSteps = set ? aligned(e.get("durationBeats"), new JsonPrimitive(w.exact), "durationBeats") : 0;
             if (set && (durationSteps < 1 || x + durationSteps > w.steps))
-                throw invalid("set duration must fit entirely inside the explicit window");
+                throw Errors.invalid("set duration must fit entirely inside the explicit window");
             result.add(new Edit(x, pitch, velocity, duration, durationSteps, set));
         }
         for (int i = 0; i < result.size(); i++) {
@@ -285,7 +291,7 @@ final class LauncherModule implements HostModule {
             for (int j = i + 1; j < result.size(); j++) {
                 Edit b = result.get(j);
                 if (b.set && a.pitch == b.pitch && a.x < b.x + b.durationSteps && b.x < a.x + a.durationSteps)
-                    throw invalid("same-channel/pitch note durations overlap");
+                    throw Errors.invalid("same-channel/pitch note durations overlap");
             }
         }
         return result;
@@ -295,7 +301,7 @@ final class LauncherModule implements HostModule {
         int present = 0;
         for (String key : GRID_FIELDS) if (p.has(key)) present++;
         if (present != 0 && present != GRID_FIELDS.size())
-            throw invalid(
+            throw Errors.invalid(
                     "stepSizeBeats, startStep, steps, pitchStart and pitchCount must be supplied together or all omitted");
         return present != 0;
     }
@@ -318,13 +324,13 @@ final class LauncherModule implements HostModule {
 
     /** Finest power-of-two grid (4..1/128 beat) aligning every edit within 128 steps, so finer existing onsets stay visible. */
     static Window deriveEditWindow(JsonObject p) {
-        if (!p.has("edits") || !p.get("edits").isJsonArray()) throw invalid("edits must be an array");
+        if (!p.has("edits") || !p.get("edits").isJsonArray()) throw Errors.invalid("edits must be an array");
         JsonArray array = p.getAsJsonArray("edits");
-        if (array.size() < 1 || array.size() > 256) throw invalid("edits must contain 1..256 entries");
+        if (array.size() < 1 || array.size() > 256) throw Errors.invalid("edits must contain 1..256 entries");
         List<BigDecimal[]> spans = new ArrayList<>(); // {beat, duration or null}
         int low = 128, high = -1;
         for (JsonElement value : array) {
-            if (!value.isJsonObject()) throw invalid("each edit must be an object");
+            if (!value.isJsonObject()) throw Errors.invalid("each edit must be an object");
             JsonObject e = value.getAsJsonObject();
             boolean set = Params.string(e, "op").equals("set");
             Params.number(e, "beat", 0, 4194304);
@@ -361,10 +367,10 @@ final class LauncherModule implements HostModule {
             }
         }
         if (coarsest == null)
-            throw invalid(
+            throw Errors.invalid(
                     "beat and durationBeats must be multiples of 1/128 beat to derive a window; no rounding is performed");
         if (grid == null)
-            throw invalid(
+            throw Errors.invalid(
                     "edits do not fit 128 steps on any grid that aligns them (coarsest is "
                             + coarsest.stripTrailingZeros().toPlainString()
                             + " beat): split them by time range into several calls, or use beats/durations that fit a coarser grid");
@@ -380,7 +386,7 @@ final class LauncherModule implements HostModule {
 
     /** launcher.create notes are set entries of notes.edit; returns the equivalent notes.edit params with a derived window. */
     static JsonObject createNotes(JsonObject p) {
-        if (!p.get("notes").isJsonArray()) throw invalid("notes must be an array");
+        if (!p.get("notes").isJsonArray()) throw Errors.invalid("notes must be an array");
         JsonObject ep = new JsonObject();
         ep.add("trackId", p.get("trackId"));
         ep.add("slotIndex", p.get("slotIndex"));
@@ -388,11 +394,12 @@ final class LauncherModule implements HostModule {
         if (p.has("detail")) ep.add("detail", p.get("detail"));
         JsonArray list = new JsonArray();
         for (JsonElement n : p.getAsJsonArray("notes")) {
-            if (!n.isJsonObject()) throw invalid("each note must be an object");
+            if (!n.isJsonObject()) throw Errors.invalid("each note must be an object");
             JsonObject e = n.getAsJsonObject().deepCopy();
             if (e.has("op")
                     && !(e.get("op").isJsonPrimitive()
-                            && e.get("op").getAsString().equals("set"))) throw invalid("notes entries must be op=set");
+                            && e.get("op").getAsString().equals("set")))
+                throw Errors.invalid("notes entries must be op=set");
             e.addProperty("op", "set");
             list.add(e);
         }
@@ -417,11 +424,12 @@ final class LauncherModule implements HostModule {
 
     private void appendScenes(HostOperation op, JsonObject p) {
         int count = p.has("count") ? Params.integer(p, "count", 1, 16) : 1;
-        if (!s.tracksObserved) throw HostServices.failure("not_ready", "Track bank has not reported its size yet.");
+        if (!s.tracksObserved)
+            throw Errors.notApplied(ErrorCode.NOT_READY, "Track bank has not reported its size yet.");
         int before = sceneBank.itemCount().get();
         if (before + count > HostServices.SCENES)
-            throw HostServices.failure(
-                    "scene_limit",
+            throw Errors.notApplied(
+                    ErrorCode.SCENE_LIMIT,
                     "The project has " + before + " scene(s); the launcher tools address at most " + HostServices.SCENES
                             + ", so " + count + " more cannot be appended");
         op.dispatched = true;
@@ -445,22 +453,21 @@ final class LauncherModule implements HostModule {
             out.addProperty("placement", "last_scene_per_api_documentation; position is not read back, count is");
             op.result.complete(out);
         } else if (System.nanoTime() >= end) {
-            throw new RpcException(
-                    "scene_count_not_observed",
+            throw Errors.unknown(
+                    ErrorCode.SCENE_COUNT_NOT_OBSERVED,
                     "Scene creation was dispatched, but the scene count did not reach " + (before + count)
-                            + " (observed " + now + "); inspect launcher.list and do not blindly repeat",
-                    "unknown");
+                            + " (observed " + now + "); inspect launcher.list and do not blindly repeat");
         } else s.schedule(op, () -> awaitScenes(op, before, count, end), 20);
     }
 
     static int aligned(JsonElement beat, JsonElement size, String field) {
         BigDecimal[] parts = beat.getAsBigDecimal().divideAndRemainder(size.getAsBigDecimal());
         if (parts[1].signum() != 0)
-            throw invalid(field + " must exactly align with stepSizeBeats; no rounding is performed");
+            throw Errors.invalid(field + " must exactly align with stepSizeBeats; no rounding is performed");
         try {
             return parts[0].intValueExact();
         } catch (ArithmeticException error) {
-            throw invalid(field + " exceeds supported grid range");
+            throw Errors.invalid(field + " exceeds supported grid range");
         }
     }
 
@@ -477,7 +484,7 @@ final class LauncherModule implements HostModule {
         Track track = s.track(id);
         int t = s.trackSlot(id);
         if (track.clipLauncherSlotBank().scrollPosition().get() != 0)
-            throw HostServices.failure("stale_context", "Launcher bank is not at scene offset zero");
+            throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Launcher bank is not at scene offset zero");
         if (method.equals("launcher.list")) {
             JsonObject out = base(id, -1);
             JsonArray entries = new JsonArray();
@@ -492,7 +499,7 @@ final class LauncherModule implements HostModule {
             return;
         }
         if (method.equals("launcher.stop")) {
-            if (!stopReady[t]) throw HostServices.failure("not_ready", "Track stop state has not been observed");
+            if (!stopReady[t]) throw Errors.notApplied(ErrorCode.NOT_READY, "Track stop state has not been observed");
             guard(op, id, track);
             op.dispatched = true;
             track.clipLauncherSlotBank().stop();
@@ -502,8 +509,8 @@ final class LauncherModule implements HostModule {
         int j = Params.integer(p, "slotIndex", 0, 15);
         int scenes = track.clipLauncherSlotBank().itemCount().get();
         if (j >= scenes)
-            throw HostServices.failure(
-                    "slot_out_of_range",
+            throw Errors.notApplied(
+                    ErrorCode.SLOT_OUT_OF_RANGE,
                     "slotIndex " + j + " does not exist: the project has " + scenes
                             + " scene(s). Append scenes with scenes.append, then re-run launcher.list");
         Slot slot = slots[t][j];
@@ -521,7 +528,7 @@ final class LauncherModule implements HostModule {
         if (!method.equals("notes.read")) requireResolved(id, slot, j);
         if (method.equals("launcher.create")) {
             if (slot.api.hasContent().get())
-                throw HostServices.failure("slot_occupied", "Create only accepts an observed empty slot");
+                throw Errors.notApplied(ErrorCode.SLOT_OCCUPIED, "Create only accepts an observed empty slot");
             guard(op, id, track);
             beginMutation(id, track, slot, j, method);
             op.dispatched = true;
@@ -543,7 +550,7 @@ final class LauncherModule implements HostModule {
     }
 
     void requireSettingsSafe(String id, int index) {
-        if (s.selectionHeld()) throw HostServices.failure("busy", "Launcher editor operation is still pending");
+        if (s.selectionHeld()) throw Errors.notApplied(ErrorCode.BUSY, "Launcher editor operation is still pending");
         requireResolved(id, slots[s.trackSlot(id)][index], index);
     }
 
@@ -552,8 +559,8 @@ final class LauncherModule implements HostModule {
         for (Mutation mutation : unresolvedMutations) {
             // Keep both the logical target and its native proxy quarantined across track-bank rebinding.
             if (mutation.slot == slot || mutation.trackId.equals(id) && mutation.index == index)
-                throw HostServices.failure(
-                        "unresolved_mutation",
+                throw Errors.notApplied(
+                        ErrorCode.UNRESOLVED_MUTATION,
                         mutation.description()
                                 + " Completion remains unresolved; create/import/note writes are quarantined for this extension instance."
                                 + " Read-only inspection is allowed; an empty slot or elapsed time does not release quarantine.");
@@ -584,16 +591,16 @@ final class LauncherModule implements HostModule {
     private void importFile(HostOperation op, String id, Track track, Slot slot, int index, JsonObject p) {
         Path path = Params.absoluteFilePath(p, "path");
         if (!Files.isRegularFile(path) || !Files.isReadable(path))
-            throw HostServices.failure("file_unavailable", "Import requires a readable regular local file.");
+            throw Errors.notApplied(ErrorCode.FILE_UNAVAILABLE, "Import requires a readable regular local file.");
         if (slot.api.hasContent().get())
-            throw HostServices.failure("slot_occupied", "Import only accepts an observed empty slot.");
+            throw Errors.notApplied(ErrorCode.SLOT_OCCUPIED, "Import only accepts an observed empty slot.");
         MidiImportPreflight.validate(path);
         InsertionPoint insertion = slot.api.replaceInsertionPoint();
         // Resolve everything first, then recheck the target, safety and deadline at the mutation boundary.
         guard(op, id, track);
         s.requirePlaybackSafe();
         if (slot.api.hasContent().get())
-            throw HostServices.failure("slot_occupied", "Import only accepts an observed empty slot.");
+            throw Errors.notApplied(ErrorCode.SLOT_OCCUPIED, "Import only accepts an observed empty slot.");
         long before = slot.contentVersion;
         beginMutation(id, track, slot, index, "launcher.import");
         op.dispatched = true;
@@ -613,10 +620,9 @@ final class LauncherModule implements HostModule {
             finishMutation();
             op.result.complete(out);
         } else if (System.nanoTime() >= end) {
-            throw new RpcException(
-                    "import_not_observed",
-                    "File insertion was dispatched, but a fresh slot content transition was not observed; create/import/note writes remain quarantined for this extension instance. Read-only inspection is allowed.",
-                    "unknown");
+            throw Errors.unknown(
+                    ErrorCode.IMPORT_NOT_OBSERVED,
+                    "File insertion was dispatched, but a fresh slot content transition was not observed; create/import/note writes remain quarantined for this extension instance. Read-only inspection is allowed.");
         } else s.schedule(op, () -> awaitImported(op, id, track, slot, index, before, end), 20);
     }
 
@@ -661,10 +667,10 @@ final class LauncherModule implements HostModule {
         guard(op, id, track);
         if (!bound(id, slot)) {
             if (System.nanoTime() >= end)
-                throw new RpcException(
-                        "target_not_observed",
+                throw Errors.of(
+                        ErrorCode.TARGET_NOT_OBSERVED,
                         "Cursor slot identity or clip content was not observed",
-                        op.dispatched ? "unknown" : "not_applied");
+                        op.dispatched ? Outcome.UNKNOWN : Outcome.NOT_APPLIED);
             s.schedule(op, () -> awaitBinding(op, id, track, slot, index, p, method, end, false), 20);
             return;
         }
@@ -739,9 +745,13 @@ final class LauncherModule implements HostModule {
                                     : error;
                     JsonObject failure = new JsonObject();
                     failure.addProperty(
-                            "code", cause instanceof RpcException ? ((RpcException) cause).code : "internal_error");
+                            "code",
+                            cause instanceof RpcException
+                                    ? ((RpcException) cause).code
+                                    : ErrorCode.INTERNAL_ERROR.wire());
                     failure.addProperty(
-                            "outcome", cause instanceof RpcException ? ((RpcException) cause).outcome : "unknown");
+                            "outcome",
+                            cause instanceof RpcException ? ((RpcException) cause).outcome : Outcome.UNKNOWN.wire());
                     failure.addProperty("message", String.valueOf(cause.getMessage()));
                     out.addProperty("status", "dispatched");
                     out.add("noteWrite", failure);
@@ -781,12 +791,12 @@ final class LauncherModule implements HostModule {
         Track track = s.track(id);
         int t = s.trackSlot(id);
         if (track.clipLauncherSlotBank().scrollPosition().get() != 0)
-            throw HostServices.failure("stale_context", "Launcher bank is not at scene offset zero");
+            throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Launcher bank is not at scene offset zero");
         int j = Params.integer(p, "slotIndex", 0, 15);
         int scenes = track.clipLauncherSlotBank().itemCount().get();
         if (j >= scenes)
-            throw HostServices.failure(
-                    "slot_out_of_range",
+            throw Errors.notApplied(
+                    ErrorCode.SLOT_OUT_OF_RANGE,
                     "slotIndex " + j + " does not exist: the project has " + scenes + " scene(s).");
         Slot slot = slots[t][j];
         ready(slot);
@@ -796,10 +806,9 @@ final class LauncherModule implements HostModule {
         String expected = Params.string(p, "expectedClipName"),
                 actual = slot.api.name().get();
         if (!actual.equals(expected))
-            throw new RpcException(
-                    "stale_target",
-                    "Slot " + j + " holds clip \"" + actual + "\", not expectedClipName; re-read launcher.list",
-                    "not_applied");
+            throw Errors.notApplied(
+                    ErrorCode.STALE_TARGET,
+                    "Slot " + j + " holds clip \"" + actual + "\", not expectedClipName; re-read launcher.list");
         // Options are the host's own list; reject before the selection moves.
         if (p.has("launchQuantization"))
             EnumOptions.require(
@@ -821,11 +830,11 @@ final class LauncherModule implements HostModule {
 
     /** Scene duplicate/delete move slot rows: refuse while a cursor operation or an unresolved launcher mutation pins them. */
     void requireStructureSafe() {
-        if (s.selectionHeld()) throw HostServices.failure("busy", "Launcher editor operation is still pending");
+        if (s.selectionHeld()) throw Errors.notApplied(ErrorCode.BUSY, "Launcher editor operation is still pending");
         settingsWriteGuard.run();
         if (!unresolvedMutations.isEmpty())
-            throw HostServices.failure(
-                    "unresolved_mutation",
+            throw Errors.notApplied(
+                    ErrorCode.UNRESOLVED_MUTATION,
                     "A launcher mutation is unresolved; a scene edit would shift the slot rows it is quarantined by. Inspect launcher.list first.");
     }
 
@@ -845,7 +854,7 @@ final class LauncherModule implements HostModule {
             HostOperation op, String id, Track track, Slot slot, int index, JsonObject p, long end) {
         cursorGuard(op, id, track, slot);
         if (!p.get("expectedClipName").getAsString().equals(slot.api.name().get()))
-            throw new RpcException("stale_target", "The bound clip no longer has expectedClipName.", "not_applied");
+            throw Errors.notApplied(ErrorCode.STALE_TARGET, "The bound clip no longer has expectedClipName.");
         s.guardStoppedSafety(launchSafety);
         // Only differing fields are written; a written field counts only once its own observer fires after the write.
         long[] before = launchSequence.clone();
@@ -920,10 +929,9 @@ final class LauncherModule implements HostModule {
         String expected = Params.string(p, "expectedClipName"),
                 actual = slot.api.name().get();
         if (!actual.equals(expected))
-            throw new RpcException(
-                    "stale_target",
-                    "Slot " + index + " holds clip \"" + actual + "\", not expectedClipName; re-read launcher.list",
-                    "not_applied");
+            throw Errors.notApplied(
+                    ErrorCode.STALE_TARGET,
+                    "Slot " + index + " holds clip \"" + actual + "\", not expectedClipName; re-read launcher.list");
         String kind = Params.string(p, "op");
         if (kind.equals("delete")) deleteClip(op, id, track, slot, index);
         else if (kind.equals("copyTo"))
@@ -940,13 +948,12 @@ final class LauncherModule implements HostModule {
         return out;
     }
 
-    private RpcException unobserved(String code, String what) {
-        return new RpcException(
+    private RpcException unobserved(ErrorCode code, String what) {
+        return Errors.unknown(
                 code,
                 what
                         + " was dispatched but its outcome was not observed; this slot stays quarantined for this extension instance."
-                        + " Inspect with launcher.list / notes.read, never retry.",
-                "unknown");
+                        + " Inspect with launcher.list / notes.read, never retry.");
     }
 
     private void deleteClip(HostOperation op, String id, Track track, Slot slot, int index) {
@@ -954,8 +961,8 @@ final class LauncherModule implements HostModule {
         if (slot.api.isPlaying().get()
                 || slot.api.isPlaybackQueued().get()
                 || slot.api.isRecording().get())
-            throw HostServices.failure(
-                    "unsafe_state", "Delete requires the clip to be neither playing, queued nor recording.");
+            throw Errors.notApplied(
+                    ErrorCode.UNSAFE_STATE, "Delete requires the clip to be neither playing, queued nor recording.");
         guard(op, id, track);
         s.guardStoppedSafety(safety);
         beginMutation(id, track, slot, index, "clips.edit delete");
@@ -978,7 +985,7 @@ final class LauncherModule implements HostModule {
                     op.result.complete(out);
                 },
                 () -> {
-                    throw unobserved("delete_not_observed", "Clip delete");
+                    throw unobserved(ErrorCode.DELETE_NOT_OBSERVED, "Clip delete");
                 });
     }
 
@@ -993,16 +1000,16 @@ final class LauncherModule implements HostModule {
             int scenes,
             String name) {
         if (target >= scenes)
-            throw HostServices.failure(
-                    "slot_out_of_range",
+            throw Errors.notApplied(
+                    ErrorCode.SLOT_OUT_OF_RANGE,
                     "targetSlotIndex " + target + " does not exist: the project has " + scenes
                             + " scene(s). Append scenes with scenes.append, then re-run launcher.list");
-        if (target == index) throw HostServices.failure("slot_occupied", "targetSlotIndex is the source slot");
+        if (target == index) throw Errors.notApplied(ErrorCode.SLOT_OCCUPIED, "targetSlotIndex is the source slot");
         Slot to = slots[t][target];
         ready(to);
         requireResolved(id, to, target);
         if (to.api.hasContent().get())
-            throw HostServices.failure("slot_occupied", "copyTo only accepts an observed empty target slot");
+            throw Errors.notApplied(ErrorCode.SLOT_OCCUPIED, "copyTo only accepts an observed empty target slot");
         guard(op, id, track);
         beginMutation(id, track, to, target, "clips.edit copyTo");
         long before = cursorMutation.contentBefore;
@@ -1040,7 +1047,7 @@ final class LauncherModule implements HostModule {
                 ok,
                 () -> {
                     if (present.getAsBoolean()) ok.run();
-                    else throw unobserved("copy_not_observed", "Clip copy");
+                    else throw unobserved(ErrorCode.COPY_NOT_OBSERVED, "Clip copy");
                 });
     }
 
@@ -1213,8 +1220,8 @@ final class LauncherModule implements HostModule {
             for (int pitch = w.pitch; pitch < w.pitch + w.pitches; pitch++) {
                 NoteStep note = clip.getStep(w.channel, x, pitch);
                 if (note == null || note.state() == null)
-                    throw HostServices.failure("not_ready", "Note grid is not readable");
-                if (note.state() == NoteStep$State.NoteOn)
+                    throw Errors.notApplied(ErrorCode.NOT_READY, "Note grid is not readable");
+                if (hasState(note, "NoteOn"))
                     cells.put(x * 128 + pitch, new double[] {midiVelocity(note.velocity()), note.duration()});
             }
         return cells;
@@ -1225,6 +1232,11 @@ final class LauncherModule implements HostModule {
         for (int key : cells.keySet()) out.add(key % 128);
         Collections.sort(out);
         return out;
+    }
+
+    // Matched by constant name: the host jar flattens NoteStep.State, so only the name resolves with both jars.
+    static boolean hasState(NoteStep note, String name) {
+        return note.state().name().equals(name);
     }
 
     private static boolean sameCells(Map<Integer, double[]> a, Map<Integer, double[]> b) {
@@ -1251,13 +1263,13 @@ final class LauncherModule implements HostModule {
         List<Integer> beforePitches = pitches(before);
         if (!kind.equals("duplicateContent")) {
             if (!covers)
-                throw HostServices.failure(
-                        "unverifiable_clip",
+                throw Errors.notApplied(
+                        ErrorCode.UNVERIFIABLE_CLIP,
                         kind + " is verified by reading the whole loop in one window (at most 32 beats); this loop is "
                                 + loop + " beats, so the result could not be observed and nothing was changed");
             if (before.isEmpty())
-                throw HostServices.failure(
-                        "no_notes",
+                throw Errors.notApplied(
+                        ErrorCode.NO_NOTES,
                         "No channel-0 onsets observed in the clip, so " + kind
                                 + " could not be verified; nothing was changed");
         }
@@ -1265,7 +1277,7 @@ final class LauncherModule implements HostModule {
         if (kind.equals("transpose")
                 && (beforePitches.get(0) + semitones < 0
                         || beforePitches.get(beforePitches.size() - 1) + semitones > 127))
-            throw invalid("transpose would move a note outside MIDI 0..127 (observed pitch range "
+            throw Errors.invalid("transpose would move a note outside MIDI 0..127 (observed pitch range "
                     + beforePitches.get(0) + ".." + beforePitches.get(beforePitches.size() - 1) + ")");
         beginMutation(id, track, slot, index, "clips.edit " + kind);
         op.dispatched = true;
@@ -1307,7 +1319,7 @@ final class LauncherModule implements HostModule {
             op.result.complete(out);
         };
         Runnable timeout = () -> {
-            throw unobserved(kind + "_not_observed", "Clip " + kind);
+            throw unobserved(GRID_OP_NOT_OBSERVED.get(kind), "Clip " + kind);
         };
         if (kind.equals("transpose")) {
             Map<Integer, double[]> expect = shifted(before, semitones);
@@ -1344,7 +1356,7 @@ final class LauncherModule implements HostModule {
                         && clip.getLoopLength().get() == loop;
                 if (moved && stable && !invariants)
                     throw unobserved(
-                            "quantize_invariants_violated",
+                            ErrorCode.QUANTIZE_INVARIANTS_VIOLATED,
                             "Clip quantize (note count, pitches or loop length changed)");
                 return moved && stable && invariants;
             };
@@ -1395,20 +1407,20 @@ final class LauncherModule implements HostModule {
         for (Edit e : changes) {
             NoteStep old = clip.getStep(w.channel, e.x, e.pitch);
             if (old == null || old.state() == null)
-                throw HostServices.failure("not_ready", "Note grid is not readable");
-            if (old.state() == NoteStep$State.NoteSustain)
-                throw HostServices.failure("note_collision", "Edit addresses a sustained note, not its onset");
+                throw Errors.notApplied(ErrorCode.NOT_READY, "Note grid is not readable");
+            if (hasState(old, "NoteSustain"))
+                throw Errors.notApplied(ErrorCode.NOTE_COLLISION, "Edit addresses a sustained note, not its onset");
             double beat = (w.start + e.x) * w.size;
             if (e.set && (beat < loopStart || beat + e.duration > end))
-                throw invalid("set note must fit inside the observed clip loop start and end");
+                throw Errors.invalid("set note must fit inside the observed clip loop start and end");
             if (!e.set) continue;
             for (int x = e.x + 1; x < e.x + e.durationSteps; x++) {
                 NoteStep next = clip.getStep(w.channel, x, e.pitch);
                 if (next == null || next.state() == null)
-                    throw HostServices.failure("not_ready", "Note grid is not readable");
-                if (next.state() == NoteStep$State.NoteOn)
-                    throw HostServices.failure(
-                            "note_collision",
+                    throw Errors.notApplied(ErrorCode.NOT_READY, "Note grid is not readable");
+                if (hasState(next, "NoteOn"))
+                    throw Errors.notApplied(
+                            ErrorCode.NOTE_COLLISION,
                             "Set duration overlaps an existing unrelated onset; clear it in a separate explicit edit first");
             }
         }
@@ -1475,8 +1487,8 @@ final class LauncherModule implements HostModule {
 
     static boolean matches(Edit e, NoteStep note) {
         if (note == null) return false;
-        if (!e.set) return note.state() == NoteStep$State.Empty;
-        return note.state() == NoteStep$State.NoteOn
+        if (!e.set) return hasState(note, "Empty");
+        return hasState(note, "NoteOn")
                 && midiVelocity(note.velocity()) == e.velocity
                 && Math.abs(note.duration() - e.duration) <= 1e-9;
     }
@@ -1495,11 +1507,11 @@ final class LauncherModule implements HostModule {
             for (int pitch = w.pitch; pitch < w.pitch + w.pitches; pitch++) {
                 NoteStep note = clip.getStep(w.channel, x, pitch);
                 if (note == null || note.state() == null)
-                    throw HostServices.failure("not_ready", "Note grid is not readable");
-                if (note.state() == NoteStep$State.NoteOn) {
+                    throw Errors.notApplied(ErrorCode.NOT_READY, "Note grid is not readable");
+                if (hasState(note, "NoteOn")) {
                     total++;
                     if (list && notes.size() < NOTE_LIMIT) notes.add(noteJson(note, w, x, pitch));
-                } else if (list && note.state() == NoteStep$State.NoteSustain && x == 0) {
+                } else if (list && hasState(note, "NoteSustain") && x == 0) {
                     JsonObject row = noteJson(note, w, x, pitch);
                     row.addProperty("state", "NoteSustain"); // continues from before the window: not an onset to copy
                     sustains.add(row);
@@ -1547,7 +1559,7 @@ final class LauncherModule implements HostModule {
 
     /** A cell as read back after an edit: an onset row, or just the cell with its non-onset state. */
     static JsonObject observedJson(NoteStep note, Window w, int x, int pitch) {
-        if (note.state() == NoteStep$State.NoteOn) return noteJson(note, w, x, pitch);
+        if (hasState(note, "NoteOn")) return noteJson(note, w, x, pitch);
         JsonObject out = new JsonObject();
         out.addProperty("beat", (w.start + x) * w.size);
         out.addProperty("pitch", pitch);
@@ -1579,20 +1591,21 @@ final class LauncherModule implements HostModule {
     private void guard(HostOperation op, String id, Track track) {
         s.check(op);
         if (op.result.isDone())
-            throw new RpcException(
-                    "cancelled", "Operation is no longer active", op.dispatched ? "unknown" : "not_applied");
+            throw Errors.of(
+                    ErrorCode.CANCELLED,
+                    "Operation is no longer active",
+                    op.dispatched ? Outcome.UNKNOWN : Outcome.NOT_APPLIED);
         if (s.selectionOwner == op && cursorMutation != null && cursorMutation.rebound)
-            throw new RpcException(
-                    "stale_context",
+            throw Errors.unknown(
+                    ErrorCode.STALE_CONTEXT,
                     cursorMutation.description()
-                            + " Its target binding changed; the mutation remains quarantined for this extension instance.",
-                    "unknown");
+                            + " Its target binding changed; the mutation remains quarantined for this extension instance.");
         if (!s.trackMatches(id, track)
                 || track.clipLauncherSlotBank().scrollPosition().get() != 0)
-            throw new RpcException(
-                    "stale_context",
+            throw Errors.of(
+                    ErrorCode.STALE_CONTEXT,
                     "Explicit track or launcher bank changed",
-                    op.dispatched ? "unknown" : "not_applied");
+                    op.dispatched ? Outcome.UNKNOWN : Outcome.NOT_APPLIED);
     }
     /** Whether the launcher cursor clip is this slot's clip; null until the cursor identity has been observed. Read-only. */
     private Boolean selected(Slot slot, String trackId) {
@@ -1654,27 +1667,23 @@ final class LauncherModule implements HostModule {
     private void cursorGuard(HostOperation op, String id, Track track, Slot slot) {
         guard(op, id, track);
         if (s.selectionOwner != op || !bound(id, slot))
-            throw new RpcException(
-                    "stale_context",
+            throw Errors.of(
+                    ErrorCode.STALE_CONTEXT,
                     "Launcher cursor no longer proxies the explicit slot",
-                    op.dispatched ? "unknown" : "not_applied");
+                    op.dispatched ? Outcome.UNKNOWN : Outcome.NOT_APPLIED);
     }
 
     private static void ready(Slot slot) {
-        if (!slot.ready()) throw HostServices.failure("not_ready", "Launcher slot metadata has not been observed");
+        if (!slot.ready()) throw Errors.notApplied(ErrorCode.NOT_READY, "Launcher slot metadata has not been observed");
     }
 
     private static void requireContent(Slot slot) {
         if (!slot.api.hasContent().get())
-            throw HostServices.failure("clip_not_found", "Explicit launcher slot is empty");
+            throw Errors.notApplied(ErrorCode.CLIP_NOT_FOUND, "Explicit launcher slot is empty");
     }
 
     private static long until(HostOperation op) {
         return HostServices.observeUntil(op);
-    }
-
-    private static RpcException invalid(String message) {
-        return HostServices.failure("invalid_params", message);
     }
 
     private static JsonObject base(String id, int slot) {
@@ -1726,7 +1735,7 @@ final class LauncherModule implements HostModule {
             steps = Params.integer(p, "steps", 1, 128);
             pitch = Params.integer(p, "pitchStart", 0, 127);
             pitches = Params.integer(p, "pitchCount", 1, 128);
-            if (pitch + pitches > 128) throw invalid("pitchStart + pitchCount must not exceed 128");
+            if (pitch + pitches > 128) throw Errors.invalid("pitchStart + pitchCount must not exceed 128");
         }
 
         JsonObject json() {

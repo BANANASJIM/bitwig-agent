@@ -1,7 +1,5 @@
 package dev.bitwigagent;
 
-import static dev.bitwigagent.HostServices.failure;
-
 import com.google.gson.*;
 import java.util.Objects;
 
@@ -60,11 +58,11 @@ final class DeviceChainEdit {
         /** Complete, consistent window or a fail-closed error; getters are never evidence on their own. */
         static Before capture(View v, String staleMessage) {
             int count = v.count();
-            if (count < 0) throw failure("not_ready", "Device count has not been observed.");
+            if (count < 0) throw Errors.notApplied(ErrorCode.NOT_READY, "Device count has not been observed.");
             for (int i = 0; i < v.window(); i++) {
                 if (!v.known(i) || (i < count && !v.ready(i)))
-                    throw failure("not_ready", "Device bank has not reported the complete window.");
-                if (v.exists(i) != (i < count)) throw failure("stale_context", staleMessage);
+                    throw Errors.notApplied(ErrorCode.NOT_READY, "Device bank has not reported the complete window.");
+                if (v.exists(i) != (i < count)) throw Errors.notApplied(ErrorCode.STALE_CONTEXT, staleMessage);
             }
             return new Before(v);
         }

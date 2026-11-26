@@ -1,6 +1,5 @@
 package dev.bitwigagent;
 
-import static dev.bitwigagent.HostServices.failure;
 import static dev.bitwigagent.ModulatorSnapshotReader.Field.*;
 
 import com.google.gson.JsonObject;
@@ -161,20 +160,24 @@ final class Bitwig614ModulatorAdapter implements ModulatorAdapter, ModulatorSnap
     private void requireDiscovery() {
         bindings.requireAvailable();
         if (reader == null || discoveryError != null)
-            throw failure(
-                    "modulator_unavailable", "Primary modulator discovery binding unavailable: " + discoveryError);
+            throw Errors.notApplied(
+                    ErrorCode.MODULATOR_UNAVAILABLE,
+                    "Primary modulator discovery binding unavailable: " + discoveryError);
     }
 
     @Override
     public Object read(ModulatorSnapshotReader.Field field, Object object) {
         if (field == PROJECT) return contextAccess.read(NativeReadContext.Field.PROJECT, object);
         if (field == VALUE) {
-            if (strings == null) throw failure("modulator_unavailable", "Exact string-panel read binding unavailable.");
+            if (strings == null)
+                throw Errors.notApplied(
+                        ErrorCode.MODULATOR_UNAVAILABLE, "Exact string-panel read binding unavailable.");
             return strings.value(object);
         }
         if (field == PARAMETER_ID && strings != null && strings.isPanel(object)) return strings.identifier(object);
         Method method = readers.get(field);
-        if (method == null) throw failure("modulator_unavailable", "Required modulator getter is unavailable.");
+        if (method == null)
+            throw Errors.notApplied(ErrorCode.MODULATOR_UNAVAILABLE, "Required modulator getter is unavailable.");
         return bindings.invoke(method, object);
     }
 

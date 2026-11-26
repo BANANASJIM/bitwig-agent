@@ -442,7 +442,7 @@ public final class RoutingModuleTest {
         JsonObject write(Runnable check, Runnable before) {
             calls++;
             check.run();
-            if (refuse != null) throw HostServices.failure(refuse, "simulated refusal");
+            if (refuse != null) throw Errors.of(refuse, "simulated refusal", Outcome.NOT_APPLIED);
             before.run();
             writes++;
             if (failAfterWrite) throw new RpcException("routing_unavailable", "simulated native failure", "unknown");

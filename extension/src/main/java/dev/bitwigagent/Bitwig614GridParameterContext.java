@@ -1,7 +1,6 @@
 package dev.bitwigagent;
 
 import static dev.bitwigagent.GridParameterContext.Field.*;
-import static dev.bitwigagent.HostServices.failure;
 
 import java.lang.reflect.Method;
 import java.util.EnumMap;
@@ -60,7 +59,7 @@ final class Bitwig614GridParameterContext implements GridParameterContext.Access
     }
 
     @Override
-    public String unavailableCode() {
+    public ErrorCode unavailableCode() {
         return bindings.unavailableCode();
     }
 
@@ -72,23 +71,28 @@ final class Bitwig614GridParameterContext implements GridParameterContext.Access
     @Override
     public Object read(GridParameterContext.Field field, Object object) {
         if (field == GUI_PANEL_BOOLEAN) {
-            if (panels == null) throw failure("grid_unavailable", "Boolean panel property binding unavailable.");
+            if (panels == null)
+                throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Boolean panel property binding unavailable.");
             return panels.property(object);
         }
         if (field == GUI_STEP_ARRAY) {
-            if (steps == null) throw failure("grid_unavailable", "Step array property binding unavailable.");
+            if (steps == null)
+                throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Step array property binding unavailable.");
             return steps.property(object);
         }
         if (field == GUI_VOICING) {
-            if (voicing == null) throw failure("grid_unavailable", "Voicing property binding unavailable.");
+            if (voicing == null)
+                throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Voicing property binding unavailable.");
             return voicing.property(object);
         }
         if (field == GUI_PANEL_STRING) {
-            if (strings == null) throw failure("grid_unavailable", "String panel property binding unavailable.");
+            if (strings == null)
+                throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "String panel property binding unavailable.");
             return strings.property(object);
         }
         Method reader = readers.get(field);
-        if (reader == null) throw failure("grid_unavailable", "Unbound parameter context reader: " + field);
+        if (reader == null)
+            throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Unbound parameter context reader: " + field);
         if (field == UNDO) return bindings.invoke(reader, null, object);
         return bindings.invoke(reader, object);
     }

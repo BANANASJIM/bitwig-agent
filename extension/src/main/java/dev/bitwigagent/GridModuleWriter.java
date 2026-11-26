@@ -1,7 +1,6 @@
 package dev.bitwigagent;
 
 import static dev.bitwigagent.GridSnapshotReader.Field.*;
-import static dev.bitwigagent.HostServices.failure;
 
 import com.google.gson.*;
 import java.util.*;
@@ -188,7 +187,8 @@ final class GridModuleWriter {
     private int integer(GridSnapshotReader.Field field, Object module) {
         Object value = values.read(field, module);
         if (!(value instanceof Integer))
-            throw failure("grid_unavailable", "Native topology geometry reader unavailable: " + field);
+            throw Errors.notApplied(
+                    ErrorCode.GRID_UNAVAILABLE, "Native topology geometry reader unavailable: " + field);
         return (Integer) value;
     }
 
@@ -225,15 +225,15 @@ final class GridModuleWriter {
                 } catch (NumberFormatException ignored) {
                 }
             }
-            throw failure(
-                    "invalid_params",
+            throw Errors.notApplied(
+                    ErrorCode.INVALID_PARAMS,
                     key + " must be a signed 32-bit JSON integer token, not a boolean, string, decimal or exponent.");
         }
 
         void preflight(Layout layout, Row selected) {
             if (selected.x != expectedX || selected.y != expectedY)
-                throw failure(
-                        "stale_context",
+                throw Errors.notApplied(
+                        ErrorCode.STALE_CONTEXT,
                         "Exact native module position differs from expectedX/expectedY; reacquire grid.get before editing.");
             checked((long) x - selected.x);
             checked((long) y - selected.y);
@@ -243,8 +243,8 @@ final class GridModuleWriter {
                         && x < (long) row.x + row.width
                         && y >= row.y
                         && y < (long) row.y + row.height)
-                    throw failure(
-                            "invalid_params",
+                    throw Errors.notApplied(
+                            ErrorCode.INVALID_PARAMS,
                             "The requested native anchor lies inside another module's occupied footprint; choose another destination.");
             layout.bounds(selected, this);
         }
@@ -252,8 +252,8 @@ final class GridModuleWriter {
 
     private static void checked(long value) {
         if (value < Integer.MIN_VALUE || value > Integer.MAX_VALUE)
-            throw failure(
-                    "grid_bounds_exceeded",
+            throw Errors.notApplied(
+                    ErrorCode.GRID_BOUNDS_EXCEEDED,
                     "Native topology coordinates, endpoints, translation or cumulative horizontal reflow could overflow int32.");
     }
 
@@ -293,8 +293,8 @@ final class GridModuleWriter {
         Row require(UUID id) {
             Row row = find(id);
             if (row == null)
-                throw failure(
-                        "stale_context",
+                throw Errors.notApplied(
+                        ErrorCode.STALE_CONTEXT,
                         "Requested current module UUID is absent; reacquire grid.get. Deletion is not missing-is-success.");
             return row;
         }
@@ -304,8 +304,9 @@ final class GridModuleWriter {
             long minY = Long.MAX_VALUE, maxY = Long.MIN_VALUE, maxX = Long.MIN_VALUE, widths = 0;
             for (Row row : rows) {
                 if (row.width <= 0 || row.height <= 0)
-                    throw failure(
-                            "grid_bounds_exceeded", "Topology editing requires positive native module footprints.");
+                    throw Errors.notApplied(
+                            ErrorCode.GRID_BOUNDS_EXCEEDED,
+                            "Topology editing requires positive native module footprints.");
                 long x = row == moved ? request.x : row.x, y = row == moved ? request.y : row.y;
                 checked(x + row.width);
                 checked(y + row.height);
@@ -315,8 +316,8 @@ final class GridModuleWriter {
                 widths += row.width;
             }
             if (maxY - minY > MAX_Y_SPAN)
-                throw failure(
-                        "grid_bounds_exceeded",
+                throw Errors.notApplied(
+                        ErrorCode.GRID_BOUNDS_EXCEEDED,
                         "Complete occupied native y-span exceeds 65536; topology editing is bounded before native allocation.");
             // Conservative upper bounds, not a competing reflow algorithm: native BcP may push every box right.
             checked(maxX + widths);
@@ -324,22 +325,22 @@ final class GridModuleWriter {
 
         void survivors(Layout after, Row removed) {
             if (after.rows.size() != rows.size() - (removed == null ? 0 : 1))
-                throw failure(
-                        "grid_verification_failed",
+                throw Errors.notApplied(
+                        ErrorCode.GRID_VERIFICATION_FAILED,
                         "Later native graph membership differs from the selective operation; inspect state before another write.");
             for (Row row : rows) {
                 Row actual = after.find(row.id);
                 if (row == removed) {
                     if (actual != null)
-                        throw failure(
-                                "grid_verification_failed",
+                        throw Errors.notApplied(
+                                ErrorCode.GRID_VERIFICATION_FAILED,
                                 "Requested module remains in the later native graph; native return did not prove deletion.");
                 } else if (actual == null
                         || actual.module != row.module
                         || actual.width != row.width
                         || actual.height != row.height)
-                    throw failure(
-                            "stale_context",
+                    throw Errors.notApplied(
+                            ErrorCode.STALE_CONTEXT,
                             "Surviving native module identity or footprint changed during topology editing.");
             }
         }
@@ -351,8 +352,8 @@ final class GridModuleWriter {
                 int baselineY = row == selected ? request.y : row.y;
                 // Native placement sets the selected row; BcP may only push each module rightward.
                 if (actual.y != baselineY || actual.x < baselineX)
-                    throw failure(
-                            "grid_verification_failed",
+                    throw Errors.notApplied(
+                            ErrorCode.GRID_VERIFICATION_FAILED,
                             "Later native layout violates move/reflow row or rightward-position invariants; inspect state before another write.");
             }
         }
@@ -362,7 +363,8 @@ final class GridModuleWriter {
             for (Row row : rows) {
                 Row actual = after.require(row.id);
                 if (actual.x != row.x || actual.y != row.y)
-                    throw failure("stale_context", "Native graph layout changed during bounded capture.");
+                    throw Errors.notApplied(
+                            ErrorCode.STALE_CONTEXT, "Native graph layout changed during bounded capture.");
             }
         }
     }
