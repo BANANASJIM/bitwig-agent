@@ -61,7 +61,7 @@ The unnamed-package [`BitwigAgent614GridInsertion.java`](https://github.com/BANA
 4. The domain rechecks the relevant target, context and safety observations. If eligible, it dispatches the operation and observes the method-specific completion evidence.
 5. The reply carries a result or an error with its outcome. MCP/CLI preserve that distinction. The agent must inspect per-field verification, mutation/dispatch flags and completion—not merely whether a JSON result exists.
 
-`not_dispatched` means the client did not dispatch a request; `not_applied` is a host/domain rejection before the relevant operation was applied. `unknown` means the operation may have occurred. A transport timeout after dispatch, late response failure or stale target after dispatch must not become "failed, therefore retry." Some successful envelopes also report `completion: unknown`; an `observed` status does not cancel that uncertainty.
+Outcome semantics (`not_dispatched`, `not_applied`, `unknown`) and recovery rules are defined once in [PROTOCOL.md](../PROTOCOL.md#core-discovery-and-direct-parameters); a transport timeout after dispatch is `unknown`, never "failed, therefore retry." Some successful envelopes also report `completion: unknown`; an `observed` status does not cancel that uncertainty.
 
 The deadline is not cancellation or rollback. The client adds a short response-delivery grace without extending/replaying the host request. It never retries automatically. One call can have several native effects, and undo-aware native dispatch does not establish one-call/one-Undo grouping.
 
@@ -81,7 +81,22 @@ Names can change, same-metadata replacement can be ambiguous, and module/modulat
 - String panels are written only through `grid.parameters.set`/`grid.apply` (Grid modules, e.g. Comment TEXT). Arranger clips (`arranger.clips.*`), arranger automation points (`automation.points.*`) and track routing/device sidechains (`tracks.routing.*`, `devices.sidechain.*`, bank tracks only; hardware entries deferred) use version-gated native access; launcher automation, automation clips and dedicated master/cue tools are outside the structured surface.
 - Version `0.2.0` maps private access to **Bitwig 6.1.4 / API 25** and the exact loaded host-JAR hash; the older `0.1.2` release retains its 6.1.3 boundary. This is a single-version cutover, not a compatibility platform. [Native evidence](../VERIFICATION.md) is bounded to exercised Linux cases; a host package or successful macOS/Windows Python install does not extend it. Do not bypass the gate.
 
-The agent can explicitly use separately authorized Computer Use for an unsupported operation, but there is no implicit GUI fallback. The scratch music recipe's Pad VOICES 8 step is one such explicit gap, not a hidden voice-count API. See [usage](../USAGE.md#make-grid-instruments-without-preset-files).
+The agent can explicitly use separately authorized Computer Use for an unsupported operation, but there is no implicit GUI fallback.
+
+## Repository map
+
+| Path | Responsibility |
+|---|---|
+| `src/bitwig_agent/` | Schemas/catalog, transport, MCP, CLI and release installer |
+| `extension/src/main/java/dev/bitwigagent/` | Host services, domains and bounded native adapters |
+| `extension/src/test/`, `tests/` | Simulated-host Java checks and host-free Python regressions |
+| `scripts/` | Source builds/checks and offline evidence helpers |
+| `examples/` | Client configuration and explicit opt-in music recipes |
+| `docs/` | Public architecture, installation navigation and packaging guides |
+| `packaging/aur/` | Reviewed AUR recipe and synchronized `.SRCINFO` |
+| `skills/bitwig-agent/` | Copyable Agent Skills instructions, focused references and MIT license |
+
+Python layers import leftward (a test enforces the `protocol/` rule): `protocol/` (request models and method metadata; stdlib and pydantic only), `client`, composed tools (`grid/`, audio, presets), then `server` / `cli`. Java layers: `rpc`, `core`, `host`, domain modules, `bitwig614`.
 
 ## Evidence is layered
 

@@ -19,12 +19,12 @@ The first installer command changes your user extension directory; run it only w
 `pipx run` instead runs a command in a cached, disposable environment without a persistent installation. It is useful for a one-off **offline** discovery command:
 
 ```sh
-pipx run --spec bitwig-agent==0.4.0 bitwig-agent-rpc list
+pipx run --spec bitwig-agent==X.Y.Z bitwig-agent-rpc list
 ```
 
 Here `--spec` identifies the distribution; `bitwig-agent-rpc` identifies the entrypoint. Do not assume a generated absolute interpreter path inside an ephemeral cache is durable MCP configuration; prefer the persistent installation above.
 
-For a reproducible installation, pin a reviewed version with `pipx install bitwig-agent==0.4.0`. The Python tools come from [this PyPI project](https://pypi.org/project/bitwig-agent/); the matching controller extension is downloaded separately from GitHub by the installer.
+For a reproducible installation, pin a reviewed version with `pipx install bitwig-agent==X.Y.Z`. The Python tools come from [this PyPI project](https://pypi.org/project/bitwig-agent/); the matching controller extension is downloaded separately from GitHub by the installer.
 
 ## Arch Linux (AUR)
 
@@ -61,10 +61,10 @@ Bitwig is an optional host dependency, not a forced host upgrade. Installing a n
 
 ## Release artifacts and integrity
 
-The [v0.4.0 release](https://github.com/BANANASJIM/bitwig-agent/releases/tag/v0.4.0) supplies:
+The [vX.Y.Z release](https://github.com/BANANASJIM/bitwig-agent/releases/tag/vX.Y.Z) supplies:
 
-- `bitwig_agent-0.4.0-py3-none-any.whl`: Python MCP server, diagnostic CLI and installer.
-- `bitwig_agent-0.4.0.tar.gz`: Python source distribution.
+- `bitwig_agent-X.Y.Z-py3-none-any.whl`: Python MCP server, diagnostic CLI and installer.
+- `bitwig_agent-X.Y.Z.tar.gz`: Python source distribution.
 - `BitwigAgent.bwextension`: prebuilt Bitwig controller extension.
 - `SHA256SUMS`: SHA-256 hashes for all three artifacts.
 
@@ -74,7 +74,7 @@ If you prefer to download the assets manually, verify their hashes against `SHA2
 
 ```sh
 sha256sum --check SHA256SUMS
-pipx install ./bitwig_agent-0.4.0-py3-none-any.whl
+pipx install ./bitwig_agent-X.Y.Z-py3-none-any.whl
 bitwig-agent-install --extension ./BitwigAgent.bwextension
 ```
 
@@ -103,7 +103,7 @@ pipx upgrade bitwig-agent
 bitwig-agent-install
 ```
 
-`pipx upgrade` respects an existing version pin; change that constraint with `pipx install --force bitwig-agent==0.4.0` when selecting that release. To switch an older GitHub-wheel installation to PyPI, use `pipx install --force bitwig-agent`, then run `bitwig-agent-install`. For intentional direct-wheel installations, use `pipx install --force <new-wheel-URL>` instead.
+`pipx upgrade` respects an existing version pin; change that constraint with `pipx install --force bitwig-agent==X.Y.Z` when selecting that release. To switch an older GitHub-wheel installation to PyPI, use `pipx install --force bitwig-agent`, then run `bitwig-agent-install`. For intentional direct-wheel installations, use `pipx install --force <new-wheel-URL>` instead.
 
 Do not upgrade only the Python half. A restore similarly requires both matching versions; an extension backup alone is not a full rollback. Regenerate MCP configuration after replacing or moving the environment, then reload the controller.
 
