@@ -13,8 +13,8 @@ from bitwig_agent.protocol.base import (
     Nonempty,
     StrictModel,
     ToolSpec,
-    TrackId,
     UnitValue,
+    Uuid,
     omitted,
 )
 from bitwig_agent.protocol.limits import DEVICE_WINDOW
@@ -26,7 +26,7 @@ class AutomationTarget(StrictModel):
     )
     deviceIndex: Annotated[int, Field(ge=0, le=DEVICE_WINDOW - 1)] = omitted()
     expectedDeviceName: Nonempty = omitted()
-    moduleId: TrackId = omitted(description="Grid module instanceId from grid.get on that device.")
+    moduleId: Uuid = omitted(description="Grid module instanceId from grid.get on that device.")
     parameterId: Annotated[str, Field(max_length=MAX_STRING_UNITS)] = omitted(
         description="Exact parameterId of that module's float control, from grid.get."
     )

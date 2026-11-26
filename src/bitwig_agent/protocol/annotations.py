@@ -38,7 +38,7 @@ VERBS: dict[str, Annotations] = {
         ),
         READ,
     ),
-    **dict.fromkeys(("insert", "create", "append", "duplicate", "import"), ADD),
+    **dict.fromkeys(("insert", "create", "append", "duplicate", "import", "copy"), ADD),
     **dict.fromkeys(("set", "rename", "map", "unmap"), SET),
     **dict.fromkeys(("select", "page", "stop"), STEER),
     **dict.fromkeys(("delete", "deletePage", "move"), REMOVE),

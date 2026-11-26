@@ -99,6 +99,17 @@ REASONS: dict[str, ErrorCode] = {reason: code for code, names in _REASONS_BY_COD
 """The closed reason list: each reason belongs to one error code and also explains a result entry."""
 
 
+class ReasonError(ValueError):
+    """A validator's refusal with an invalid_params reason more specific than invalid_params, and maybe a next."""
+
+    def __init__(self, reason: str, message: str, next: str | None = None):
+        if REASONS[reason] is not ErrorCode.INVALID_PARAMS:
+            raise ValueError(f"{reason} is not an invalid_params reason")
+        super().__init__(message)
+        self.reason = reason
+        self.next = next
+
+
 def vocabulary() -> dict[str, Any]:
     return {
         "protocol": PROTOCOL,
@@ -109,9 +120,7 @@ def vocabulary() -> dict[str, Any]:
 
 
 Nonempty = Annotated[str, Field(min_length=1, max_length=4096)]
-TrackId = Annotated[
-    str, Field(pattern=r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
-]
+Uuid = Annotated[str, Field(pattern=r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")]
 
 
 UnitValue = Annotated[float, Field(ge=0, le=1)]
@@ -172,7 +181,7 @@ class StatusArgs(StrictModel):
 
 
 class DeviceArgs(StatusArgs):
-    trackId: TrackId
+    trackId: Uuid
 
 
 class ParameterArgs(DeviceArgs):

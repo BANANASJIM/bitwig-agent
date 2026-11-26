@@ -30,7 +30,8 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
         TrackWindow window = new TrackWindow(host);
         projectState = new ProjectState(application, project, window, scheduler);
         transportSafety = new TransportSafety(transport);
-        DeviceSources sources = new DeviceSources(window);
+        TrackRefs trackRefs = new TrackRefs(window);
+        DeviceSources sources = new DeviceSources(window, trackRefs);
         NativeRuntime natives = new NativeRuntime(host, scheduler);
         SelectionLease selection = new SelectionLease();
         Holds holds = new Holds();
@@ -44,13 +45,15 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
                 application,
                 transport,
                 window,
-                sources,
                 projectState,
                 specs,
                 parameters,
                 projectModule,
                 render,
-                holds));
+                holds,
+                domains));
+        register(new TrackListModule(window));
+        register(new DeviceListModule(window, sources));
         register(new ActionModule(scheduler, application, projectState, selection));
         register(projectModule);
         TransportModule transportModule =

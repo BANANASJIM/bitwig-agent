@@ -347,6 +347,19 @@ public final class HostBridgeTest {
     }
 
     @Test
+    void fullStatusAddsOnlyTheSectionsDomainsContribute() {
+        Fake f = new Fake();
+        HostBridge bridge = f.bridge();
+        JsonObject brief = call(f, bridge, "status", new JsonObject());
+        assertEquals(
+                brief,
+                call(f, bridge, "status", HostFixture.json("{\"detail\":\"full\"}")),
+                "no domain contributes a section yet");
+        assertRpcError(
+                "invalid_params", bridge.handle("status", HostFixture.json("{\"detail\":\"some\"}"), f.deadline()));
+    }
+
+    @Test
     void writesWaitForSettledProject() {
         Fake f = new Fake();
         HostBridge bridge = f.bridge();

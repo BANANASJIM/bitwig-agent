@@ -12,8 +12,8 @@ from bitwig_agent.protocol.base import (
     Nonempty,
     StatusArgs,
     ToolSpec,
-    TrackId,
     UnitValue,
+    Uuid,
     omitted,
 )
 from bitwig_agent.protocol.limits import MAX_TIMEOUT_MS, MIN_TIMEOUT_MS, TRACK_WINDOW
@@ -88,7 +88,7 @@ METERS_SETTLE_MS = 300
 
 
 class TrackMetersArgs(StatusArgs):
-    trackIds: list[TrackId] = Field(min_length=1, max_length=TRACK_WINDOW)
+    trackIds: list[Uuid] = Field(min_length=1, max_length=TRACK_WINDOW)
     windowMs: int = Field(ge=50, le=METERS_MAX_WINDOW_MS)
     timeoutMs: int = Field(default=METERS_MAX_WINDOW_MS + METERS_SETTLE_MS, ge=MIN_TIMEOUT_MS, le=MAX_TIMEOUT_MS)
 
@@ -106,7 +106,7 @@ class TrackCreateArgs(StatusArgs):
 
 
 class TrackGroupArgs(StatusArgs):
-    trackIds: Annotated[list[TrackId], Field(min_length=1, max_length=TRACK_WINDOW)] = Field(
+    trackIds: Annotated[list[Uuid], Field(min_length=1, max_length=TRACK_WINDOW)] = Field(
         description="Tracks to put into one new group, all with the same parent (top level or one group); not effect or master tracks."
     )
     name: Nonempty = omitted()

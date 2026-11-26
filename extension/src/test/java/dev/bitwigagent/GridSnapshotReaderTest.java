@@ -1,10 +1,10 @@
 package dev.bitwigagent;
 
+import static dev.bitwigagent.DeviceSources.Native.Field.*;
+import static dev.bitwigagent.DeviceSources.Native.Kind.*;
 import static dev.bitwigagent.GridSnapshotReader.Field.*;
 import static dev.bitwigagent.GridSnapshotReader.Kind.*;
 import static dev.bitwigagent.GridSnapshotReader.Metadata.*;
-import static dev.bitwigagent.NativeDeviceTarget.Field.*;
-import static dev.bitwigagent.NativeDeviceTarget.Kind.*;
 import static dev.bitwigagent.RpcAssert.*;
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -3607,7 +3607,7 @@ public final class GridSnapshotReaderTest {
             kinds.addAll(Arrays.asList(types));
         }
 
-        Node(NativeDeviceTarget.Kind type) {
+        Node(DeviceSources.Native.Kind type) {
             kinds.add(type);
         }
 
@@ -3616,7 +3616,7 @@ public final class GridSnapshotReaderTest {
             return this;
         }
 
-        Node put(NativeDeviceTarget.Field field, Object value) {
+        Node put(DeviceSources.Native.Field field, Object value) {
             values.put(field, value);
             return this;
         }
@@ -3696,12 +3696,12 @@ public final class GridSnapshotReaderTest {
         }
 
         @Override
-        public boolean is(NativeDeviceTarget.Kind kind, Object value) {
+        public boolean is(DeviceSources.Native.Kind kind, Object value) {
             return value instanceof Node && ((Node) value).kinds.contains(kind);
         }
 
         @Override
-        public Object read(NativeDeviceTarget.Field field, Object object) {
+        public Object read(DeviceSources.Native.Field field, Object object) {
             if (object instanceof Node && ((Node) object).forbidden.contains(field))
                 throw new AssertionError("Forbidden native getter: " + field);
             if (failures.containsKey(field)) throw failures.get(field);

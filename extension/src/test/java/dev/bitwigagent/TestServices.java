@@ -14,6 +14,7 @@ final class TestServices {
     final TrackWindow window;
     final ProjectState projectState;
     final TransportSafety transportSafety;
+    final TrackRefs trackRefs;
     final DeviceSources sources;
     final NativeRuntime natives;
     final SelectionLease selection;
@@ -29,7 +30,8 @@ final class TestServices {
         window = new TrackWindow(host);
         projectState = new ProjectState(application, project, window, scheduler);
         transportSafety = new TransportSafety(transport);
-        sources = new DeviceSources(window);
+        trackRefs = new TrackRefs(window);
+        sources = new DeviceSources(window, trackRefs);
         natives = new NativeRuntime(host, scheduler);
         selection = new SelectionLease();
         lock = new LauncherStructureLock(selection, holds);
@@ -91,6 +93,14 @@ final class TestServices {
 
     ModulatorModule modulator(ModulatorAdapter adapter) {
         return new ModulatorModule(scheduler, sources, natives, adapter);
+    }
+
+    ParameterModule parameters() {
+        return new ParameterModule(scheduler, sources);
+    }
+
+    ParameterResolver parameterResolver(ParameterModule parameters, DeviceModule devices) {
+        return new ParameterResolver(sources, trackRefs, window, parameters, devices);
     }
 
     ProjectModule projectModule(ProjectModule.SaveAsAccess access) {

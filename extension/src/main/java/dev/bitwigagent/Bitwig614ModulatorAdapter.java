@@ -30,7 +30,7 @@ final class Bitwig614ModulatorAdapter implements ModulatorAdapter, ModulatorSnap
         }
         try {
             bindDiscovery();
-            NativeDeviceTarget target = new NativeDeviceTarget(new Bitwig614DeviceTargetAccess(bindings));
+            DeviceSources.Native target = new DeviceSources.Native(new Bitwig614DeviceTargetAccess(bindings));
             contextAccess = new Bitwig614ReadContextAccess(bindings);
             reader = new ModulatorSnapshotReader(this, target, new NativeReadContext(contextAccess));
         } catch (ReflectiveOperationException | RuntimeException | LinkageError error) {

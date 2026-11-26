@@ -890,12 +890,12 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
     }
 
     @Override
-    public Object read(NativeDeviceTarget.Field field, Object object) {
+    public Object read(DeviceSources.Native.Field field, Object object) {
         return deviceTargets.read(field, object);
     }
 
     @Override
-    public boolean is(NativeDeviceTarget.Kind kind, Object object) {
+    public boolean is(DeviceSources.Native.Kind kind, Object object) {
         return deviceTargets.is(kind, object);
     }
 

@@ -33,6 +33,18 @@ final class Results {
         return field;
     }
 
+    /**
+     * A read unit: {value, display?, options?}. Its value is what a write takes back; display and options are present
+     * exactly when the write also takes {display} or an option value.
+     */
+    static JsonObject unit(JsonElement value, String display, JsonArray options) {
+        JsonObject unit = new JsonObject();
+        unit.add("value", value == null ? JsonNull.INSTANCE : value);
+        if (display != null) unit.addProperty("display", display);
+        if (options != null) unit.add("options", options);
+        return unit;
+    }
+
     /** The worst {@code outcome} of the entries; no entries already matched. */
     static Outcome worst(Iterable<JsonElement> entries) {
         Outcome worst = Outcome.ALREADY_MATCHED;

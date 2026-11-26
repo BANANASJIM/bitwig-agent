@@ -5,7 +5,7 @@ from typing import Annotated, Literal, Self
 from pydantic import Field, field_validator, model_validator
 
 from bitwig_agent.protocol.annotations import EDIT, SET
-from bitwig_agent.protocol.base import Nonempty, StatusArgs, ToolSpec, TrackId, omitted, validate_local_path
+from bitwig_agent.protocol.base import Nonempty, StatusArgs, ToolSpec, Uuid, omitted, validate_local_path
 
 
 class AudioRouteArgs(StatusArgs):
@@ -29,7 +29,7 @@ class AudioCaptureArgs(StatusArgs):
     allowAudible: bool = omitted(
         description="Do not require audio.route silent (the signal stays audible). Capture always records Bitwig's own out1/out2, never the default output monitor, so other applications are not in the file."
     )
-    soloTrack: TrackId = omitted(
+    soloTrack: Uuid = omitted(
         description="Really solo this track for the recording: its solo is set and every other soloed track cleared, then every changed solo is restored afterwards (also on failure); the result reports soloed/unsoloed/restored. Refuses (not_isolated) while other tracks have playing launcher clips unless stopOthers."
     )
     stopOthers: bool = omitted(

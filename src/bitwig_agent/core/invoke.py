@@ -9,7 +9,7 @@ from typing import Any
 from bitwig_agent.client import BridgeClient, configured_port, load_json
 from bitwig_agent.core import composed, views
 from bitwig_agent.errors import BridgeError, HostChanged, bridge_error, unknown_result
-from bitwig_agent.protocol import invalid_params_message, unknown_method_message, validate_call
+from bitwig_agent.protocol import invalid_params_message, invalid_params_reason, unknown_method_message, validate_call
 from bitwig_agent.protocol.base import SUCCEEDED
 
 
@@ -52,7 +52,8 @@ def invalid_params_error(message: str) -> Error:
 
 
 def invalid_params(name: str, exc: Exception) -> Error:
-    return invalid_params_error(invalid_params_message(name, exc))
+    reason, next = invalid_params_reason(exc)
+    return Error(bridge_error(reason, invalid_params_message(name, exc), next).error, usage=True)
 
 
 def ask_help(arguments: Mapping[str, Any]) -> Envelope:

@@ -2,12 +2,14 @@ package dev.bitwigagent.core;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import java.io.InputStreamReader;
 import java.io.Reader;
 import java.io.StringReader;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
 import org.junit.jupiter.api.Test;
@@ -49,7 +51,7 @@ public final class MethodSpecsTest {
         methods.add(name, method);
         root.add("methods", methods);
         JsonObject full = bundle();
-        for (String key : new String[] {"limits", "protocol", "outcomes", "errorCodes", "reasons"})
+        for (String key : new String[] {"limits", "protocol", "outcomes", "errorCodes", "reasons", "refs"})
             root.add(key, full.get(key));
         return root;
     }
@@ -128,6 +130,27 @@ public final class MethodSpecsTest {
         assertTrue(
                 parse(one("a", method(true, true, "\"engine\"", 5000, 10000))).get("a").engineRequired,
                 "minimal bundle");
+    }
+
+    @Test
+    void refRolesAndTheRefSchemaComeFromTheBundle() {
+        MethodSpecs specs = MethodSpecs.load();
+        assertEquals(List.of("id"), specs.refRoles().get("track").locate);
+        assertEquals(List.of("name"), specs.refRoles().get("track").targetOnly);
+        assertEquals(List.of("name"), specs.refRoles().get("device").compared);
+        assertThrows(
+                SchemaValidator.Violation.class,
+                () -> specs.refSchema()
+                        .apply(JsonParser.parseString("{\"kind\":\"track\"}").getAsJsonObject()));
+        JsonObject noLocate = one("a", method(true, true, "", 5000, 10000));
+        noLocate.getAsJsonObject("refs")
+                .getAsJsonObject("roles")
+                .getAsJsonObject("track")
+                .add("locate", new JsonArray());
+        malformed(noLocate.toString(), "a ref kind without a locating field");
+        JsonObject noKinds = one("a", method(true, true, "", 5000, 10000));
+        noKinds.getAsJsonObject("refs").add("roles", new JsonObject());
+        malformed(noKinds.toString(), "no ref kinds");
     }
 
     @Test

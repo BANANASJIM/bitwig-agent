@@ -11,7 +11,7 @@ from bitwig_agent.protocol.base import (
     StatusArgs,
     StrictModel,
     ToolSpec,
-    TrackId,
+    Uuid,
     omitted,
 )
 from bitwig_agent.protocol.devices import DeviceParent
@@ -26,7 +26,7 @@ class ModulatorListArgs(StatusArgs):
 
 class ModulatorParameterGetArgs(StatusArgs):
     parent: DeviceParent
-    modulatorId: TrackId = Field(
+    modulatorId: Uuid = Field(
         description="Current modulator UUID from modulators.list, not its typeId, name or index; reacquire after reopening or identity changes."
     )
     parameterId: str = Field(
@@ -43,7 +43,7 @@ MODULATOR_COUNT = 4096
 
 class ModulatorGetArgs(StatusArgs):
     parent: DeviceParent
-    modulatorId: TrackId = omitted(
+    modulatorId: Uuid = omitted(
         description="Only this modulator; absent returns every modulator on the device (at most 64)."
     )
 
@@ -60,7 +60,7 @@ class ModulatorInsertArgs(StatusArgs):
         max_length=128,
         description="Modulator type name from modulators.catalog, e.g. 'Random' or 'Beat LFO'; exactly one of typeName or typeId.",
     )
-    typeId: TrackId = omitted(
+    typeId: Uuid = omitted(
         description="Native modulator type UUID (the typeId of a modulators.get row); exactly one of typeName or typeId."
     )
 
@@ -73,13 +73,13 @@ class ModulatorInsertArgs(StatusArgs):
 
 class ModulatorDeleteArgs(StatusArgs):
     parent: DeviceParent
-    modulatorId: TrackId = Field(description=MODULATOR_ID)
+    modulatorId: Uuid = Field(description=MODULATOR_ID)
     expectedCount: int = Field(ge=1, le=MODULATOR_COUNT, description="Current modulator count from modulators.get.")
 
 
 class ModulatorParameterSetArgs(StatusArgs):
     parent: DeviceParent
-    modulatorId: TrackId = Field(description=MODULATOR_ID)
+    modulatorId: Uuid = Field(description=MODULATOR_ID)
     parameterId: str = Field(
         max_length=MAX_STRING_UNITS,
         description="Exact parameterId of a modulators.get parameters row (not an outputId).",
@@ -114,7 +114,7 @@ class ModulatorParameterSetArgs(StatusArgs):
 
 
 class GridControlTarget(StrictModel):
-    moduleId: TrackId = Field(description="Grid module instanceId from grid.get on this same device.")
+    moduleId: Uuid = Field(description="Grid module instanceId from grid.get on this same device.")
     parameterId: str = Field(
         max_length=MAX_STRING_UNITS,
         description="Exact parameterId of that module's control (e.g. DECAY), from grid.get.",
@@ -122,7 +122,7 @@ class GridControlTarget(StrictModel):
 
 
 class ModulatorControlTarget(StrictModel):
-    modulatorId: TrackId = Field(description="Another modulator on this same device (modulators.get).")
+    modulatorId: Uuid = Field(description="Another modulator on this same device (modulators.get).")
     parameterId: str = Field(max_length=MAX_STRING_UNITS, description="Exact parameterId of that modulator's control.")
 
 
@@ -131,7 +131,7 @@ MAP_TARGET = "The control to modulate: {moduleId, parameterId} for a Grid module
 
 class ModulatorMappingArgs(StatusArgs):
     parent: DeviceParent
-    modulatorId: TrackId = Field(description="Source modulator. " + MODULATOR_ID)
+    modulatorId: Uuid = Field(description="Source modulator. " + MODULATOR_ID)
     outputId: str = omitted(
         max_length=MAX_STRING_UNITS,
         description="Source output id from modulators.get outputs; may be omitted when the modulator has exactly one output.",

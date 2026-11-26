@@ -118,7 +118,7 @@ final class GridSnapshotReader {
 
     static final Metadata[] METADATA = Metadata.values();
 
-    interface Access extends NativeDeviceTarget.Access {
+    interface Access extends DeviceSources.Native.Access {
         Object read(Field field, Object object);
 
         boolean is(Kind kind, Object object);
@@ -135,11 +135,11 @@ final class GridSnapshotReader {
     }
 
     private final Access a;
-    private final NativeDeviceTarget targets;
+    private final DeviceSources.Native targets;
 
     GridSnapshotReader(Access access) {
         a = access;
-        targets = new NativeDeviceTarget(access);
+        targets = new DeviceSources.Native(access);
     }
 
     JsonObject catalog(String query, int offset, int limit, Runnable check) {
@@ -696,7 +696,7 @@ final class GridSnapshotReader {
     }
 
     NativeTarget target(Object proxy, UUID expectedTrackId) {
-        NativeDeviceTarget.Capture capture;
+        DeviceSources.Native.Capture capture;
         try {
             capture = targets.capture(proxy, expectedTrackId, () -> {});
         } catch (RpcException error) {
@@ -723,9 +723,9 @@ final class GridSnapshotReader {
 
     static final class NativeTarget {
         final Object target, graph;
-        final NativeDeviceTarget.Capture ownership;
+        final DeviceSources.Native.Capture ownership;
 
-        NativeTarget(NativeDeviceTarget.Capture ownership, Object graph) {
+        NativeTarget(DeviceSources.Native.Capture ownership, Object graph) {
             this.ownership = ownership;
             this.target = ownership.device;
             this.graph = graph;

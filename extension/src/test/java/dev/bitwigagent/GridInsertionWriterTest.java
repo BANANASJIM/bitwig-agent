@@ -1,11 +1,11 @@
 package dev.bitwigagent;
 
+import static dev.bitwigagent.DeviceSources.Native.Field.*;
 import static dev.bitwigagent.GridSnapshotReader.Field.*;
 import static dev.bitwigagent.GridSnapshotReader.Kind.*;
 import static dev.bitwigagent.GridSnapshotReaderTest.Node;
 import static dev.bitwigagent.GridSnapshotReaderTest.outcomes;
 import static dev.bitwigagent.GridSnapshotReaderTest.unsuccessful;
-import static dev.bitwigagent.NativeDeviceTarget.Field.*;
 import static dev.bitwigagent.RpcAssert.*;
 import static org.junit.jupiter.api.Assertions.*;
 

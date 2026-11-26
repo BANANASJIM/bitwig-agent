@@ -46,10 +46,10 @@ final class ModulatorSnapshotReader {
     }
 
     private final Access a;
-    private final NativeDeviceTarget targets;
+    private final DeviceSources.Native targets;
     private final NativeReadContext contexts;
 
-    ModulatorSnapshotReader(Access access, NativeDeviceTarget targets, NativeReadContext contexts) {
+    ModulatorSnapshotReader(Access access, DeviceSources.Native targets, NativeReadContext contexts) {
         a = access;
         this.targets = targets;
         this.contexts = contexts;
@@ -165,7 +165,7 @@ final class ModulatorSnapshotReader {
     }
 
     private Snapshot capture(Object proxy, UUID trackId, UUID selectedId, int offset, int limit, Runnable check) {
-        NativeDeviceTarget.Capture target;
+        DeviceSources.Native.Capture target;
         try {
             target = targets.capture(proxy, trackId, check);
         } catch (RpcException error) {
@@ -384,7 +384,7 @@ final class ModulatorSnapshotReader {
 
     private static final class Snapshot {
         final Object proxy, collection;
-        final NativeDeviceTarget.Capture target;
+        final DeviceSources.Native.Capture target;
         final Row[] rows;
         final Object[] models;
         final String[] labels;
@@ -393,7 +393,7 @@ final class ModulatorSnapshotReader {
 
         Snapshot(
                 Object proxy,
-                NativeDeviceTarget.Capture target,
+                DeviceSources.Native.Capture target,
                 Object collection,
                 Row[] rows,
                 Object[] models,

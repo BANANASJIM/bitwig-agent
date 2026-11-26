@@ -443,7 +443,7 @@ public final class ModulatorSnapshotReaderTest {
     }
 
     private static final class Fixture
-            implements ModulatorSnapshotReader.Access, NativeDeviceTarget.Access, NativeReadContext.Access {
+            implements ModulatorSnapshotReader.Access, DeviceSources.Native.Access, NativeReadContext.Access {
         final Node proxy = new Node(),
                 device = new Node(MODEL),
                 owner = new Node(MODEL),
@@ -454,7 +454,7 @@ public final class ModulatorSnapshotReaderTest {
         final List<Node> rows = new ArrayList<>();
         final Node first, contents, panel;
         final ModulatorSnapshotReader reader =
-                new ModulatorSnapshotReader(this, new NativeDeviceTarget(this), new NativeReadContext(this));
+                new ModulatorSnapshotReader(this, new DeviceSources.Native(this), new NativeReadContext(this));
         Object target = device, targetOwner = owner, alias = initialAlias, root = project, currentDt;
         UUID trackId = TRACK;
         int nextId, valueReads, childrenReads, indexReads;
@@ -562,7 +562,7 @@ public final class ModulatorSnapshotReaderTest {
         }
 
         @Override
-        public boolean is(NativeDeviceTarget.Kind kind, Object object) {
+        public boolean is(DeviceSources.Native.Kind kind, Object object) {
             switch (kind) {
                 case DEVICE:
                     return object == device;
@@ -578,7 +578,7 @@ public final class ModulatorSnapshotReaderTest {
         }
 
         @Override
-        public Object read(NativeDeviceTarget.Field field, Object object) {
+        public Object read(DeviceSources.Native.Field field, Object object) {
             switch (field) {
                 case TARGET:
                     return target;

@@ -13,7 +13,7 @@ from bitwig_agent.protocol.base import (
     ParameterArgs,
     StrictModel,
     ToolSpec,
-    TrackId,
+    Uuid,
     omitted,
 )
 from bitwig_agent.protocol.limits import TRACK_WINDOW
@@ -32,7 +32,7 @@ class RoutingEntry(StrictModel):
     if TYPE_CHECKING:
         kind: str
 
-    trackId: TrackId = omitted(description=ROUTING_TRACK_ID)
+    trackId: Uuid = omitted(description=ROUTING_TRACK_ID)
 
     @model_validator(mode="after")
     def validate_track(self) -> Self:
@@ -126,10 +126,10 @@ class SidechainSetArgs(ParameterArgs):
     componentId: Nonempty = omitted(
         description="componentId from devices.sidechain.get when it is unique on the device."
     )
-    expectedModulatorId: TrackId = omitted(
+    expectedModulatorId: Uuid = omitted(
         description="Required when the component's host is modulator: its modulatorId from the get."
     )
-    expectedModuleId: TrackId = omitted(
+    expectedModuleId: Uuid = omitted(
         description="Required when the component's host is grid_module: its moduleId from the get."
     )
     source: SourceEntry

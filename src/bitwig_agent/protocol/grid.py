@@ -15,7 +15,7 @@ from bitwig_agent.protocol.base import (
     StatusArgs,
     StrictModel,
     ToolSpec,
-    TrackId,
+    Uuid,
     long_timeout,
     omitted,
 )
@@ -46,7 +46,7 @@ class GridGetArgs(ParameterArgs):
         default=False,
         description="Add obfuscated native modelClass/path and constant coverage notes; no write needs them.",
     )
-    moduleIds: Annotated[list[TrackId], Field(min_length=1, max_length=256)] = omitted(
+    moduleIds: Annotated[list[Uuid], Field(min_length=1, max_length=256)] = omitted(
         description="Return only these module instanceIds (e.g. one module's parameters without paging); absent ids are listed in missingModuleIds and the read is never complete."
     )
     full: bool = omitted(
@@ -68,7 +68,7 @@ INT32_DESCRIPTION = "Requested absolute native anchor, not a relative delta or p
 
 
 class GridModuleSpec(StrictModel):
-    typeId: TrackId = omitted(description=TYPE_ID_DESCRIPTION)
+    typeId: Uuid = omitted(description=TYPE_ID_DESCRIPTION)
     typeName: str = omitted(min_length=1, max_length=128, description=TYPE_NAME_DESCRIPTION)
     x: int = Field(ge=-(2**31), le=2**31 - 1, description=INT32_DESCRIPTION)
     y: int = Field(ge=-(2**31), le=2**31 - 1, description=INT32_DESCRIPTION)
@@ -89,7 +89,7 @@ class GridModuleInsertArgs(GridWriteArgs):
         }
     )
 
-    typeId: TrackId = omitted(description="Single form: " + TYPE_ID_DESCRIPTION)
+    typeId: Uuid = omitted(description="Single form: " + TYPE_ID_DESCRIPTION)
     typeName: str = omitted(min_length=1, max_length=128, description="Single form: " + TYPE_NAME_DESCRIPTION)
     x: int = omitted(ge=-(2**31), le=2**31 - 1, description="Single form: " + INT32_DESCRIPTION)
     y: int = omitted(ge=-(2**31), le=2**31 - 1, description="Single form: " + INT32_DESCRIPTION)
@@ -109,7 +109,7 @@ class GridModuleInsertArgs(GridWriteArgs):
 
 
 class GridModuleArgs(ParameterArgs):
-    moduleId: TrackId = Field(
+    moduleId: Uuid = Field(
         description="Current module instanceId from grid.get; reacquire after reopening the project."
     )
 
@@ -121,13 +121,13 @@ class GridVoicingGetArgs(ParameterArgs):
 
 
 class GridModuleEditArgs(GridWriteArgs):
-    moduleId: TrackId = Field(
+    moduleId: Uuid = Field(
         description="Current module instanceId from grid.get; reacquire after reopening the project."
     )
 
 
 class GridConnectionSource(StrictModel):
-    moduleId: TrackId = Field(description="Current source module instanceId from grid.get, not a type UUID.")
+    moduleId: Uuid = Field(description="Current source module instanceId from grid.get, not a type UUID.")
     portKey: str = Field(
         max_length=MAX_STRING_UNITS,
         description=f"Exact output port key from grid.get; empty is valid, at most {MAX_STRING_UNITS} UTF-16 code units.",
@@ -138,7 +138,7 @@ GRID_CONNECTION_FIELDS = {"targetModuleId", "targetPortKey", "expectedSource", "
 
 
 class GridConnectionEdit(StrictModel):
-    targetModuleId: TrackId = Field(
+    targetModuleId: Uuid = Field(
         description="Current destination module instanceId from grid.get; reacquire after reopening the project."
     )
     targetPortKey: str = Field(
@@ -162,7 +162,7 @@ class GridConnectionSetArgs(GridWriteArgs):
         }
     )
 
-    targetModuleId: TrackId = omitted(
+    targetModuleId: Uuid = omitted(
         description="Single form: current destination module instanceId from grid.get; reacquire after reopening the project."
     )
     targetPortKey: str = omitted(
@@ -260,7 +260,7 @@ STEPS_VALUES_DESCRIPTION = (
 
 
 class GridRawWrite(StrictModel):
-    moduleId: TrackId = Field(
+    moduleId: Uuid = Field(
         description="Current module instanceId from grid.get; reacquire after reopening the project."
     )
     parameterId: str = Field(
@@ -385,7 +385,7 @@ class GridParameterSetArgs(ParameterArgs):
         }
     )
 
-    moduleId: TrackId = omitted(description="Single form: current module instanceId from grid.get.")
+    moduleId: Uuid = omitted(description="Single form: current module instanceId from grid.get.")
     parameterId: str = omitted(
         max_length=MAX_STRING_UNITS, description="Single form: exact parameterId from grid.get; empty is valid."
     )

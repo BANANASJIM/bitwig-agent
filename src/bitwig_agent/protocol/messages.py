@@ -6,6 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from bitwig_agent.protocol.base import ReasonError
 from bitwig_agent.protocol.registry import TOOLS
 
 # Names an agent tends to guess (often the output-side name) -> the accepted input field(s). Hint only, never an alias:
@@ -95,3 +96,13 @@ def invalid_params_message(method: str, exc: Exception) -> str:
     parts = [unknown_arguments_message(method, unknown)] if unknown else []
     parts += [f"{_path(tuple(e['loc'])) or method}: {e['msg']}" for e in items if e.get("type") != "extra_forbidden"]
     return "; ".join(parts) or str(exc)
+
+
+def invalid_params_reason(exc: Exception) -> tuple[str, str | None]:
+    """The invalid_params reason a validator named (e.g. unsupported_scope) and its next method; else invalid_params."""
+    errors = getattr(exc, "errors", None)
+    for error in errors(include_url=False, include_input=False) if callable(errors) else ():
+        refusal = (error.get("ctx") or {}).get("error")
+        if isinstance(refusal, ReasonError):
+            return refusal.reason, refusal.next
+    return "invalid_params", None

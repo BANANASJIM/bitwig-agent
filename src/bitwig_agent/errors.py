@@ -23,10 +23,15 @@ class HostChanged(Exception):
         super().__init__(result["message"])
 
 
-def bridge_error(reason: str, message: str, next: str | None = None, **details: Any) -> BridgeError:
+def bridge_error(
+    reason: str, message: str, next: str | None = None, *, fields: dict[str, Any] | None = None, **details: Any
+) -> BridgeError:
+    """fields: the envelope's other keys, current (the ref now where a stale ref pointed), observed (the values an
+    expect did not match) or entries (why each refused batch entry failed)."""
     error: dict[str, Any] = {"code": REASONS[reason].value, "reason": reason, "message": message}
     if next:
         error["next"] = next
+    error.update(fields or {})
     if details:
         error["details"] = details
     return BridgeError(error)

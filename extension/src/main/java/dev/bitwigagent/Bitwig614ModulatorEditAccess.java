@@ -18,7 +18,7 @@ final class Bitwig614ModulatorEditAccess implements ModulatorEditor.Access {
             R = "com.bitwig.ramona.core.",
             P = "com.bitwig.flt.packaging.core.";
     private final Bitwig614Runtime.Access bindings;
-    private final NativeDeviceTarget targets;
+    private final DeviceSources.Native targets;
     private final GridSnapshotReader grid;
     private final GridParameterContext parameterContexts;
     private final GridTopologyContext topologyContexts;
@@ -67,7 +67,7 @@ final class Bitwig614ModulatorEditAccess implements ModulatorEditor.Access {
     Bitwig614ModulatorEditAccess(Bitwig614Runtime.Access bindings, Bitwig614GridAdapter gridAccess)
             throws ReflectiveOperationException {
         this.bindings = bindings;
-        targets = new NativeDeviceTarget(new Bitwig614DeviceTargetAccess(bindings));
+        targets = new DeviceSources.Native(new Bitwig614DeviceTargetAccess(bindings));
         grid = new GridSnapshotReader(gridAccess);
         parameterContexts =
                 new GridParameterContext(new Bitwig614GridParameterContext(bindings, null, null, null, null));
@@ -179,7 +179,7 @@ final class Bitwig614ModulatorEditAccess implements ModulatorEditor.Access {
 
     @Override
     public void guardDevice(Object proxy, UUID trackId, Object device, Runnable check) {
-        NativeDeviceTarget.Capture now = targets.capture(proxy, trackId, check);
+        DeviceSources.Native.Capture now = targets.capture(proxy, trackId, check);
         if (now.device != device)
             throw Errors.notApplied(Reason.STALE_CONTEXT, "Explicit native device changed during the operation.");
     }

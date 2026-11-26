@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from pydantic import Field
 
-from bitwig_agent.protocol.base import TARGET, Nonempty, ParameterArgs, ToolSpec, TrackId, UnitValue
+from bitwig_agent.protocol.base import TARGET, Nonempty, ParameterArgs, ToolSpec, UnitValue, Uuid
 from bitwig_agent.protocol.devices import LAYER_TARGET, LayerListArgs
 
 
 class LayerParameterArgs(LayerListArgs):
-    layerId: TrackId
+    layerId: Uuid
     childDeviceIndex: int = Field(ge=0, le=1)
     expectedChildDeviceName: Nonempty
     discoveryToken: Nonempty

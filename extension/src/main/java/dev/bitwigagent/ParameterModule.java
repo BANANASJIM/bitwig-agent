@@ -9,7 +9,7 @@ import com.google.gson.*;
 import java.util.*;
 
 /** Source-specific direct-parameter observations on fixed bank proxies, never a cursor. */
-final class ParameterModule implements HostModule {
+final class ParameterModule implements HostModule, ParameterResolver.DirectParameters {
     static final Set<String> METHODS =
             Set.of("parameters.list", "parameters.set", "parameters.layer.list", "parameters.layer.set");
     private final Scheduler scheduler;
@@ -87,6 +87,19 @@ final class ParameterModule implements HostModule {
         parameterRequest = request;
         if (method.endsWith(".list")) bind(request, params);
         else setParameter(request, params);
+    }
+
+    @Override
+    public Set<String> ids(DeviceSources.Source device) {
+        ParameterSource source = parameterSources.get(device);
+        return source.idsObserved ? Collections.unmodifiableSet(source.parameterIds) : null;
+    }
+
+    @Override
+    public String name(DeviceSources.Source device, String id) {
+        ParameterSource source = parameterSources.get(device);
+        ParameterState parameter = source.parameters == null ? null : source.parameters.get(id);
+        return parameter == null ? null : parameter.name;
     }
 
     JsonObject diagnostics() {
