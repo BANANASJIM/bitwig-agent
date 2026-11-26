@@ -568,36 +568,42 @@ def write_wav(path, samples, rate=RATE, header_zero=False):
         path.write_bytes(bytes(raw))
 
 
-def notes(midis, step=0.125, length=0.1, total=None):
-    """Sine notes with fast attack/decay at each step."""
-    n = int((total or step * len(midis) + 0.3) * RATE)
+def _voices(midis, step, total, frames, sample):
+    n = int(total * RATE)
     out = [0.0] * n
     for i, m in enumerate(midis):
         hz = 440 * 2 ** ((m - 69) / 12)
         start = int((0.1 + i * step) * RATE)
-        for k in range(int(length * RATE)):
-            env = min(1, k / 48) * (1 - k / (length * RATE))
-            if start + k < n:
-                out[start + k] = 0.8 * env * math.sin(2 * math.pi * hz * k / RATE)
+        for k in range(min(frames, n - start)):
+            out[start + k] += sample(k, hz)
     return out
+
+
+def notes(midis, step=0.125, length=0.1, total=None):
+    """Sine notes with fast attack/decay at each step."""
+    frames = int(length * RATE)
+    return _voices(
+        midis,
+        step,
+        total or step * len(midis) + 0.3,
+        frames,
+        lambda k, hz: 0.8 * min(1, k / 48) * (1 - k / frames) * math.sin(2 * math.pi * hz * k / RATE),
+    )
 
 
 def overlapping(midis, step=0.1, decay=0.26, total=None):
     """Plucks whose exponential tail (about 260 ms) runs under the next several notes, summed."""
-    n = int((total or 0.1 + step * len(midis) + 0.6) * RATE)
-    out = [0.0] * n
-    for i, m in enumerate(midis):
-        hz = 440 * 2 ** ((m - 69) / 12)
-        start = int((0.1 + i * step) * RATE)
-        for k in range(min(int(1.0 * RATE), n - start)):
-            t = k / RATE
-            out[start + k] += (
-                0.25
-                * min(1, k / 48)
-                * math.exp(-t / (decay / 4))
-                * (math.sin(2 * math.pi * hz * t) + 0.4 * math.sin(4 * math.pi * hz * t))
-            )
-    return out
+
+    def pluck(k, hz):
+        t = k / RATE
+        return (
+            0.25
+            * min(1, k / 48)
+            * math.exp(-t / (decay / 4))
+            * (math.sin(2 * math.pi * hz * t) + 0.4 * math.sin(4 * math.pi * hz * t))
+        )
+
+    return _voices(midis, step, total or 0.1 + step * len(midis) + 0.6, RATE, pluck)
 
 
 class FakePW:

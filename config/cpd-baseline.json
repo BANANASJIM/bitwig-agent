@@ -116,14 +116,6 @@
     },
     {
       "files": [
-        "tests/fakes.py",
-        "tests/fakes.py"
-      ],
-      "count": 1,
-      "tokens": 55
-    },
-    {
-      "files": [
         "tests/test_audio.py",
         "tests/test_audio.py"
       ],
