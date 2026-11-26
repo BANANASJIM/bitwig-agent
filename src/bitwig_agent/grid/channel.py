@@ -11,8 +11,7 @@ from bitwig_agent.protocol import TOOLS
 
 WRITE_TIMEOUT_MS = 10000
 CLEAN = ("applied", "already_matched")
-TARGETLESS = ("grid.capabilities", "grid.catalog")
-NON_TOPOLOGY_WRITES = ("grid.parameters.set", "grid.connections.set", "grid.voicing.set")
+TOPOLOGY_PREFIX = "grid.modules."
 
 T = TypeVar("T")
 
@@ -50,19 +49,20 @@ class Channel:
         self.wrote = False
         self.topo_written = False
 
-    def _timeout(self, method: str, write: bool) -> int:
-        ceiling = TOOLS[method].max_timeout_ms
-        if ceiling > WRITE_TIMEOUT_MS:
-            return ceiling
-        return max(self.timeout_ms, WRITE_TIMEOUT_MS) if write else self.timeout_ms
+    def _timeout(self, method: str) -> int:
+        spec = TOOLS[method]
+        if spec.max_timeout_ms > WRITE_TIMEOUT_MS:
+            return spec.max_timeout_ms
+        return max(self.timeout_ms, WRITE_TIMEOUT_MS) if spec.project_write else self.timeout_ms
 
-    async def call(self, method: str, params: dict[str, Any], *, write: bool = False) -> dict[str, Any]:
-        timeout = self._timeout(method, write)
-        if write:
+    async def call(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
+        spec = TOOLS[method]
+        timeout = self._timeout(method)
+        if spec.project_write:
             self.wrote = True
-            self.topo_written |= method not in NON_TOPOLOGY_WRITES
+            self.topo_written |= method.startswith(TOPOLOGY_PREFIX)
         try:
-            host_params = params if method in TARGETLESS else {**self.target, **params}
+            host_params = {**self.target, **params} if "trackId" in spec.model.model_fields else params
             result: dict[str, Any] = await self.client.call(method, host_params, timeout)
         except BridgeError as exc:
             raise Stop(method, {"error": exc.error}, exc.error.get("outcome", "unknown")) from exc

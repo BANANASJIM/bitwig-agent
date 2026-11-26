@@ -59,7 +59,7 @@ class Executor:
         await self._wire()
 
     async def _write(self, method: str, params: dict[str, Any], key: str | None = None) -> dict[str, Any]:
-        result = await self.channel.call(method, params, write=True)
+        result = await self.channel.call(method, params)
         verify(method, result, key)
         return result
 
@@ -134,7 +134,6 @@ class Executor:
             result = await self.channel.call(
                 "grid.modules.insert",
                 {"modules": [self._insert_entry(n) for n in chunk]},
-                write=True,
             )
             size = next_insert_batch(size, self.clock() - started, result)
             fresh = self._record_inserted(chunk, result)
@@ -234,7 +233,7 @@ class Executor:
         writes = await self._param_writes()
         for i in range(0, len(writes), PARAM_BATCH):
             chunk = writes[i : i + PARAM_BATCH]
-            result = await self.channel.call("grid.parameters.set", {"writes": chunk}, write=True)
+            result = await self.channel.call("grid.parameters.set", {"writes": chunk})
             entries = result.get("writes", [])
             self.ledger.applied["paramsWritten"] += sum(1 for e in entries if e.get("status") == "applied")
             self.ledger.matched["params"] += sum(1 for e in entries if e.get("status") == "already_matched")
@@ -272,9 +271,7 @@ class Executor:
                 )
         for i in range(0, len(wiring.edits), CONNECTION_BATCH):
             chunk = wiring.edits[i : i + CONNECTION_BATCH]
-            result = await self.channel.call(
-                "grid.connections.set", {"connections": [e["write"] for e in chunk]}, write=True
-            )
+            result = await self.channel.call("grid.connections.set", {"connections": [e["write"] for e in chunk]})
             entries = result.get("connections", [])
             done = [e for e, r in zip(chunk, entries, strict=False) if r.get("status") == "applied"]
             self.ledger.applied["connections"] += sum(1 for e in done if e["from"])

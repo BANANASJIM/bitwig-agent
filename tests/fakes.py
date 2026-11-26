@@ -13,17 +13,9 @@ from bitwig_agent.errors import BridgeError
 from bitwig_agent.frontends import cli
 from bitwig_agent.grid import bundled, values
 from bitwig_agent.grid.apply import apply as apply_spec
-from bitwig_agent.protocol import validate_call
+from bitwig_agent.protocol import TOOLS, validate_call
 
-WRITES = {
-    "grid.modules.insert",
-    "grid.modules.rename",
-    "grid.modules.move",
-    "grid.modules.delete",
-    "grid.parameters.set",
-    "grid.connections.set",
-    "grid.voicing.set",
-}
+WRITES = {name for name, spec in TOOLS.items() if name.startswith("grid.") and spec.project_write}
 
 
 def seconds_text(type_name, raw):
