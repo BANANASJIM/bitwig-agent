@@ -14,7 +14,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from bitwig_agent.grid.docs import LANGS, DocsUnavailable, _tokens, load_localized, localization_dir
+from bitwig_agent.grid.docs import DocsUnavailable, _tokens, cached_docs, load_localized
 
 GENERAL = "modulator_general"
 # Display name -> extra Modulators-resources prefixes, only where the prefix is not `<id>` or `<id>-modulator`.
@@ -114,13 +114,7 @@ _cache: dict[tuple[str, str], ModulatorDocs] = {}
 
 
 def get_docs(root: str | os.PathLike[str] | None = None, lang: str = "en") -> ModulatorDocs:
-    if lang not in LANGS:
-        raise ValueError(f"lang must be one of {', '.join(LANGS)}")
-    directory = localization_dir(root)
-    key = (str(directory), lang)
-    if key not in _cache:
-        _cache[key] = ModulatorDocs(directory, lang)
-    return _cache[key]
+    return cached_docs(_cache, ModulatorDocs, root, lang)
 
 
 def search(docs: ModulatorDocs, query: str) -> list[dict[str, Any]]:
