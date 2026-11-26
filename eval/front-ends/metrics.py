@@ -194,7 +194,9 @@ def asks_for_help(call: Call) -> bool:
 def methods_of(call: Call) -> list[str]:
     """Methods of every non-help bitwig-agent call in the command, in order (an agent often chains several)."""
     if call.tool.startswith("mcp__"):
-        return [call.tool.split("__", 2)[-1]]
+        return [
+            call.tool.split("__", 2)[-1].replace("_", ".")
+        ]  # MCP tools are named tracks_insert, methods tracks.insert
     return [".".join(parsed[1]) for parsed in invocations(call.command) if parsed[1] and not is_help(parsed)]
 
 

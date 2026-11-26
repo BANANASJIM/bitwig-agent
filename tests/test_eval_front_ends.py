@@ -61,7 +61,7 @@ def transcript() -> list[dict[str, Any]]:
         say("=== TASK 2 ==="),
         use("7", "mcp__bitwig-agent__help", topic="refs"),
         result("7", "r" * 30),
-        use("8", "mcp__bitwig-agent__notes.edit", target={}),
+        use("8", "mcp__bitwig-agent__notes_edit", target={}),
         result("8", '{"outcome":"not_applied"}', True),
         use("9", "Read", file_path="/work/.claude/skills/bitwig-agent/SKILL.md"),
         result("9", "m" * 20),
@@ -78,7 +78,7 @@ def test_calls_bytes_and_tasks() -> None:
         "Bash": 4,
         "Read": 2,
         "mcp__bitwig-agent__help": 1,
-        "mcp__bitwig-agent__notes.edit": 1,
+        "mcp__bitwig-agent__notes_edit": 1,
     }
     assert out["task_split"] == "markers"
     assert out["calls_by_task"] == {"pre": 0, "1": 6, "2": 3, "3": 0, "4": 0, "5": 0}
