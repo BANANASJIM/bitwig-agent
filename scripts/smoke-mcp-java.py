@@ -17,6 +17,7 @@ from pathlib import Path
 import bound_parity
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from tooling import host_paths
 
 from bitwig_agent.protocol import CLIENT_SIDE, TOOLS
 
@@ -65,17 +66,6 @@ def payload(response):
 def require(condition, message):
     if not condition:
         raise AssertionError(message)
-
-
-def host_paths(value):
-    """Examples spell absolute paths POSIX-style; the host accepts only its own absolute spelling."""
-    if isinstance(value, str) and value.startswith("/"):
-        return os.path.abspath(value)
-    if isinstance(value, dict):
-        return {key: host_paths(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [host_paths(item) for item in value]
-    return value
 
 
 async def exercise(folder: Path, api: Path) -> None:  # noqa: PLR0915

@@ -17,6 +17,7 @@ import re
 from typing import Any
 
 from pydantic import ValidationError
+from tooling import host_paths
 
 from bitwig_agent.protocol import CLIENT_SIDE, TOOLS
 from bitwig_agent.protocol.base import MAX_BEAT
@@ -372,7 +373,7 @@ def cases(method):
     schema = spec.model.model_json_schema()
     defs = schema.get("$defs", {})
     sent = {key for example in spec.examples for key in example}
-    for example in spec.examples:
+    for example in map(host_paths, spec.examples):
         for path, node in leaves(schema, defs):
             name = ".".join(map(str, path))
             top_level_gap = len(path) == 1 and path[0] not in example
