@@ -3,6 +3,7 @@
 import difflib
 import re
 import typing
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -13,7 +14,7 @@ from bitwig_agent import schema
 
 @dataclass(frozen=True)
 class ToolSpec:
-    model: type[schema.StatusArgs]
+    model: type[BaseModel]
     description: str
     read_only: bool
     examples: tuple[dict[str, Any], ...]
@@ -78,7 +79,7 @@ CLIENT_SIDE = frozenset(
 )
 
 
-def tool(model, description, read_only, *examples):
+def tool(model: type[BaseModel], description: str, read_only: bool, *examples: dict[str, Any]) -> ToolSpec:
     return ToolSpec(model, description, read_only, examples or ({},))
 
 
@@ -691,12 +692,12 @@ TOOLS: dict[str, ToolSpec] = {
             **TARGET,
             "moduleId": "abcdef01-2345-6789-abcd-0123456789ab",
             "expectedCustomName": "",
-            "customName": "Lead = α",
+            "customName": "Lead = \u03b1",
         },
         {
             **TARGET,
             "moduleId": "abcdef01-2345-6789-abcd-0123456789ab",
-            "expectedCustomName": "Lead = α",
+            "expectedCustomName": "Lead = \u03b1",
             "customName": "",
         },
     ),
@@ -1177,7 +1178,7 @@ def _models_in(annotation: Any) -> list[type[BaseModel]]:
     return [m for arg in typing.get_args(annotation) for m in _models_in(arg)]
 
 
-def _fields_at(method: str, parent: tuple) -> list[str]:
+def _fields_at(method: str, parent: tuple[Any, ...]) -> list[str]:
     """Accepted field names of the model(s) found by walking `parent` (a pydantic loc minus its last key) from the tool's args."""
     models = [TOOLS[method].model]
     for part in parent:
@@ -1195,7 +1196,7 @@ def _fields_at(method: str, parent: tuple) -> list[str]:
     return list(dict.fromkeys(name for model in models for name in model.model_fields if name != "timeoutMs"))
 
 
-def _path(loc: tuple) -> str:
+def _path(loc: tuple[Any, ...]) -> str:
     return "".join(f"[{p}]" if isinstance(p, int) else (f".{p}" if i else str(p)) for i, p in enumerate(loc))
 
 
@@ -1204,7 +1205,7 @@ def _suggest(key: str, fields: list[str]) -> list[str]:
     return close or [name for name in fields if key.lower() in name.lower()][:1]
 
 
-def unknown_arguments_message(method: str, keys: list[str | tuple]) -> str:
+def unknown_arguments_message(method: str, keys: Sequence[str | tuple[Any, ...]]) -> str:
     """Name the accepted fields and the closest match, so a mistyped field is fixable in one retry.
     A key is a top-level name or the full pydantic loc (tuple) of a nested one: the full path and the siblings at that level are named."""
     top = [name for name in TOOLS[method].model.model_fields if name != "timeoutMs"]
@@ -1245,12 +1246,12 @@ def max_timeout_ms(method: str) -> int:
     """The method's timeoutMs ceiling (topology edits allow longer than the default)."""
     for constraint in TOOLS[method].model.model_fields["timeoutMs"].metadata:
         if getattr(constraint, "le", None) is not None:
-            return constraint.le
+            return int(constraint.le)
     return schema.MAX_TIMEOUT_MS
 
 
 def validate_call(method: str, arguments: dict[str, Any]) -> tuple[dict[str, Any], int]:
     if method not in TOOLS:
         raise ValueError(f"Unknown method: {method}. Use list or describe <method> offline.")
-    args = TOOLS[method].model.model_validate(arguments)
+    args: Any = TOOLS[method].model.model_validate(arguments)
     return args.model_dump(exclude={"timeoutMs"}, exclude_unset=True, by_alias=True), args.timeoutMs

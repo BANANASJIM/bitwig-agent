@@ -3,10 +3,10 @@
 import math
 
 import pytest
+from test_grid_apply import TARGET, FakeGrid, run
 
 from bitwig_agent import grid_apply, grid_docs, raw_scales
 from bitwig_agent.client import BridgeError
-from test_grid_apply import TARGET, FakeGrid, run
 
 SCHEMA = grid_apply.bundled_schema()["modules"]
 
@@ -40,7 +40,8 @@ def test_every_entry_exists_in_the_schema_and_fits_its_evidence():
             if shown:  # the schema default pair must agree; verified entries must be discriminating (non-zero)
                 assert fits(scale, p["default"], p["defaultDisplay"]), (type_name, pid)
             if entry.status == "verified":
-                assert shown and abs(shown[0]) > 0, (type_name, pid)
+                assert shown, (type_name, pid)
+                assert abs(shown[0]) > 0, (type_name, pid)
 
 
 def test_unverified_and_recorded_scales_do_not_overlap_and_alternatives_do_not_fit():
@@ -52,9 +53,9 @@ def test_unverified_and_recorded_scales_do_not_overlap_and_alternatives_do_not_f
 
 
 @pytest.mark.parametrize(
-    "module,pid,text,raw",
+    ("module", "pid", "text", "raw"),
     [
-        ("Transpose", "VALUE", "−12 st", -12.0),
+        ("Transpose", "VALUE", "\u221212 st", -12.0),
         ("Sine", "PITCH", "7 st", 7.0),
         ("Sine", "PITCH_MOD", "120 st", 1.0),
         ("Sine", "PITCH_MOD", "15 st", 0.5),  # oscillator PITCH_MOD is cube-root
@@ -93,11 +94,12 @@ def test_display_writes_convert_to_raw_and_are_idempotent(module, pid, text, raw
     assert all("display" not in w and "shown" not in w for w in writes)
     assert host.param("X", pid) == pytest.approx(raw)
     host.calls.clear()
-    assert run(host, spec)["status"] == "unchanged" and host.writes() == []
+    assert run(host, spec)["status"] == "unchanged"
+    assert host.writes() == []
 
 
 @pytest.mark.parametrize(
-    "module,pid,text",
+    ("module", "pid", "text"),
     [
         ("Transpose", "VALUE", "40 st"),  # raw outside -36..36
         ("Amplify", "VALUE", "900 %"),  # raw 2.08 > 2
@@ -117,7 +119,8 @@ def test_unwritable_display_is_rejected(module, pid, text):
                 "modules": [{"name": "X", "type": module, "x": 0, "y": 0, "params": {pid: {"display": text}}}],
             },
         )
-    assert err.value.error["code"] == "invalid_spec" and host.writes() == []
+    assert err.value.error["code"] == "invalid_spec"
+    assert host.writes() == []
 
 
 def test_lfo_rate_follows_timebase():
@@ -148,7 +151,8 @@ def test_midi_pitch_cutoff_keeps_the_host_display_path():
         },
     )
     writes = [w for m, c in host.calls if m == "grid.parameters.set" for w in c["writes"]]
-    assert writes and writes[0].get("display") == "800 Hz"
+    assert writes
+    assert writes[0].get("display") == "800 Hz"
 
 
 def test_describe_exposes_schema_facts_scales_footprint_and_category():
@@ -158,8 +162,11 @@ def test_describe_exposes_schema_facts_scales_footprint_and_category():
     except grid_docs.DocsUnavailable:
         pytest.skip("Bitwig install not present")
     value = next(p for p in desc["parameters"] if p["id"] == "VALUE")
-    assert desc["footprint"] == {"width": 1, "height": 1} and desc["category"]
-    assert value["rawScale"]["scale"] == "cbrt_gain" and value["minimum"] == 0.0 and value["default"] == 1.0
+    assert desc["footprint"] == {"width": 1, "height": 1}
+    assert desc["category"]
+    assert value["rawScale"]["scale"] == "cbrt_gain"
+    assert value["minimum"] == 0.0
+    assert value["default"] == 1.0
     svf = grid_docs.describe({"type": "SVF"})
     assert next(p for p in svf["parameters"] if p["id"] == "TYPE")["options"][0] == {"value": 0, "label": "Low-pass"}
     lag = grid_docs.describe({"type": "Lag"})
@@ -173,14 +180,16 @@ def test_query_returns_category_and_finds_filters_by_category():
         matches = grid_docs.describe({"query": "filter", "limit": 10})["matches"]
     except grid_docs.DocsUnavailable:
         pytest.skip("Bitwig install not present")
-    assert all("category" in m for m in matches) and {"SVF", "Low-pass"} <= {m["name"] for m in matches}
+    assert all("category" in m for m in matches)
+    assert {"SVF", "Low-pass"} <= {m["name"] for m in matches}
 
 
 def test_filter_cutoff_mod_is_linear_and_oscillator_pitch_mod_is_cube_root():
     cutoff = raw_scales.SCALES["linear_st120"]
     assert raw_scales.RAW_SCALES[("Comb", "CUTOFF_MOD")].scale == "linear_st120"
     assert raw_scales.RAW_SCALES[("Sine", "PITCH_MOD")].scale == "cbrt_st120"
-    assert fits(cutoff, 0.5, "60.00 st") and fits(cutoff, 0.584804, "70.18 st")
+    assert fits(cutoff, 0.5, "60.00 st")
+    assert fits(cutoff, 0.584804, "70.18 st")
     assert not fits(raw_scales.SCALES["cbrt_st120"], 0.5, "60.00 st")
     assert fits(raw_scales.SCALES["cbrt_st120"], 0.5, "15.00 st")
     for t in ("SVF", "Low-pass LD", "Low-pass MG", "Sallen-Key", "XP", "Rasp", "Ripple", "Comb", "Fizz"):

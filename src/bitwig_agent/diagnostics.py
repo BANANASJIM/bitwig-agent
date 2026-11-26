@@ -8,10 +8,12 @@ process start time to the `Starting application` headers.
 from __future__ import annotations
 
 import base64
+import contextlib
 import json
 import os
 import re
 import sys
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -58,7 +60,7 @@ def parse_line(line: str) -> tuple[datetime, str, str, str] | None:
     return ts, " ".join(tokens[:-1]), (tokens[-1].lower() if tokens else ""), msg
 
 
-def read_back(path: Path, size: int, done) -> tuple[int, bytes, bool]:
+def read_back(path: Path, size: int, done: Callable[[bytes], bool]) -> tuple[int, bytes, bool]:
     """Read chunks from the end until done(view) or MAX_READ. Returns (offset of view, view, hit cap)."""
     start, buf = size, b""
     with path.open("rb") as f:
@@ -92,10 +94,8 @@ def bitwig_processes() -> int | None:
         return None
     count = 0
     for p in Path("/proc").glob("[0-9]*/comm"):
-        try:
+        with contextlib.suppress(OSError):
             count += p.read_text().strip() == "BitwigStudio"
-        except OSError:
-            pass
     return count
 
 
@@ -202,24 +202,25 @@ async def diagnostics(client: Any, args: dict[str, Any], timeout_ms: int) -> dic
         (base + m.start(), m.group(0).decode("utf-8", "replace"), header_time(m.group(0)))
         for m in HEADER.finditer(data)
     ]
-    headers = [h for h in headers if h[2]]
+    sections = [(offset, text, when) for offset, text, when in headers if when]
 
     reasons: list[str] = []
-    chosen, method = None, "latest_section"
+    chosen: tuple[int, str, datetime] | None = None
+    method = "latest_section"
     if started:
-        near = [h for h in headers if abs(h[2] - started) <= START_TOLERANCE]
+        near = [h for h in sections if abs(h[2] - started) <= START_TOLERANCE]
         if near:
             chosen, method = min(near, key=lambda h: abs(h[2] - started)), "pid_start_time"
         else:
             reasons.append("no log start header within 120 s of the instance's process start")
     else:
         reasons.append(instance_error or "instance start time unavailable (non-Linux or no pid)")
-    if chosen is None and headers:
-        chosen = headers[-1]
+    if chosen is None and sections:
+        chosen = sections[-1]
     if chosen is None:
         reasons.append("no 'Starting application' header found; the whole readable tail was used")
-    idx = headers.index(chosen) if chosen else -1
-    later = headers[idx + 1 :] if chosen else []
+    idx = sections.index(chosen) if chosen else -1
+    later = sections[idx + 1 :] if chosen else []
     if later:
         reasons.append(
             f"{len(later)} later Bitwig start(s) in the same log; their lines may interleave with this instance's"
@@ -242,7 +243,7 @@ async def diagnostics(client: Any, args: dict[str, Any], timeout_ms: int) -> dic
             with path.open("rb") as f:
                 f.seek(m["h"])
                 valid = f.read(len(m["l"].encode())).decode("utf-8", "replace") == m["l"]
-        if valid:
+        if m and valid:
             read_from, window = m["o"], {"sinceMarker": True}
         else:
             warnings.append("sinceMarker is stale or from another instance/log; used the sinceSeconds window instead")
@@ -275,7 +276,7 @@ async def diagnostics(client: Any, args: dict[str, Any], timeout_ms: int) -> dic
             "certain": method == "pid_start_time" and not reasons,
             "instance": instance,
             "sectionStart": chosen[2].isoformat(timespec="seconds") if chosen else None,
-            "sectionsSeen": len(headers),
+            "sectionsSeen": len(sections),
         },
     }
     if reasons:

@@ -7,6 +7,7 @@ links of the 'Bitwig Studio' output ports are ever touched; a capture only adds 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import shutil
@@ -31,7 +32,7 @@ RATE = 48000
 
 
 def fail(code: str, message: str, outcome: str = "not_dispatched", **details: Any) -> BridgeError:
-    error = {"code": code, "message": message, "outcome": outcome}
+    error: dict[str, Any] = {"code": code, "message": message, "outcome": outcome}
     if details:
         error["details"] = details
     return BridgeError(error)
@@ -60,7 +61,7 @@ def run(args: list[str], timeout: float = RUN_TIMEOUT) -> tuple[int, str, str]:
     return done.returncode, done.stdout, done.stderr
 
 
-def spawn(args: list[str]) -> subprocess.Popen:
+def spawn(args: list[str]) -> subprocess.Popen[bytes]:
     return subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
 
 
@@ -94,8 +95,7 @@ def save_state(previous: dict[str, list[str]]) -> None:
         path.unlink(missing_ok=True)
         return
     path.parent.mkdir(parents=True, exist_ok=True)
-    handle = tempfile.NamedTemporaryFile("w", dir=path.parent, delete=False, encoding="utf-8")
-    with handle:
+    with tempfile.NamedTemporaryFile("w", dir=path.parent, delete=False, encoding="utf-8") as handle:
         json.dump({"previous": previous}, handle)
     os.replace(handle.name, path)
 
@@ -163,9 +163,8 @@ def route(args: dict[str, Any]) -> dict[str, Any]:
         created = ensure_sink()
         previous = {k: list(v) for k, v in saved.items()}
         for out, target in links:
-            if not target.startswith(f"{SINK}:"):
-                if target not in previous.setdefault(out, []):
-                    previous[out].append(target)
+            if not target.startswith(f"{SINK}:") and target not in previous.setdefault(out, []):
+                previous[out].append(target)
         save_state(previous)  # persist before touching any link so restore can always undo
         for out, target in links:
             if not target.startswith(f"{SINK}:"):
@@ -303,8 +302,9 @@ def bitwig_outputs() -> list[str]:
     if code != 0:
         raise fail("audio_tool_failed", f"pw-link -o failed: {err.strip() or code}")
     ports = [line.strip() for line in out.splitlines()]
-    found = [p for p in (f"{NODE}:out1", f"{NODE}:out2") if p in ports]
-    if len(found) != 2:
+    wanted = (f"{NODE}:out1", f"{NODE}:out2")
+    found = [p for p in wanted if p in ports]
+    if len(found) != len(wanted):
         raise fail(
             "bitwig_not_found",
             f"Expected '{NODE}:out1' and '{NODE}:out2' in pw-link -o; is Bitwig running with its audio engine on?",
@@ -373,7 +373,9 @@ async def capture(bridge: Any, args: dict[str, Any], timeout_ms: int) -> dict[st
         if proc.poll() is not None:
             err = (proc.stderr.read() or b"").decode(errors="replace").strip() if proc.stderr else ""
             raise fail("audio_tool_failed", f"pw-record exited early: {err or proc.returncode}")
-        for src, dst in zip(sources, inputs):  # only links this capture creates; the user's links are never changed
+        for src, dst in zip(
+            sources, inputs, strict=False
+        ):  # only links this capture creates; the user's links are never changed
             link([src, dst], "connect")
             created.append((src, dst))
         if from_start:
@@ -386,10 +388,8 @@ async def capture(bridge: Any, args: dict[str, Any], timeout_ms: int) -> dict[st
         elapsed = time.monotonic() - started
     finally:
         if transport_started:
-            try:
+            with contextlib.suppress(BridgeError):  # the main flow's error is more useful; state is reported below
                 await bridge.call("transport.set", {"playing": False}, timeout_ms)
-            except BridgeError:
-                pass  # the error from the main flow, if any, is more useful; transport state is reported below
         if proc is not None and proc.poll() is None:
             proc.send_signal(signal.SIGINT)  # lets pw-record finalize the WAV header
             try:
@@ -398,10 +398,8 @@ async def capture(bridge: Any, args: dict[str, Any], timeout_ms: int) -> dict[st
                 proc.kill()
                 proc.wait()
         for src, dst in created:
-            try:
+            with contextlib.suppress(BridgeError):
                 run(["pw-link", "-d", src, dst])
-            except BridgeError:
-                pass
         if solo:
             solo_block.update(await restore_solo(bridge, previous_solo, changed, timeout_ms))
     stats = await asyncio.to_thread(audio_analysis.analyze, {"path": path, "mode": "level", "windowSeconds": 60})

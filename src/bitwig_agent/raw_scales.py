@@ -13,12 +13,16 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 _TEXT = re.compile(r"([+-]?(?:\d+(?:\.(\d*))?|\.(\d+)))\s*([A-Za-z%]+)", re.ASCII)
 _JAVA_TRIM = "".join(map(chr, range(33)))
-_ident = lambda n: n  # noqa: E731
+
+
+def _ident(n: float) -> float:
+    return n
 
 
 @dataclass(frozen=True)
@@ -76,7 +80,7 @@ SCALES = {
             "cbrt_hz",
             "raw = cbrt(Hz); range +-3 = +-27 Hz",
             {"hz": _ident, "khz": lambda n: n * 1000},
-            lambda f: math.cbrt(f),
+            math.cbrt,
             lambda r: r**3,
             example='{"display": "1.5 Hz"}',
         ),
@@ -140,7 +144,7 @@ _OSCILLATORS = (
 )
 _RATE_BY_TIMEBASE = {"by": "TIMEBASE", "options": {0: "linear_hz", 1: "linear_khz"}}
 
-RAW_SCALES: dict[tuple[str, str], Entry] = {}
+RAW_SCALES: dict[tuple[str | None, str], Entry] = {}
 
 
 def _add(types: tuple[str, ...] | list[str], pid: str, entry: Entry) -> None:
@@ -292,7 +296,7 @@ UNVERIFIED: dict[tuple[str, str], str] = {}
 
 def scale_for(type_name: str | None, pid: str, context: dict[str, Any] | None = None) -> tuple[Entry, Scale] | None:
     """The recorded (entry, scale) for a parameter; conditional entries need the controlling enum value in `context`."""
-    entry = RAW_SCALES.get((type_name, pid))
+    entry = RAW_SCALES.get((type_name, pid)) if type_name is not None else None
     if entry is None:
         return None
     name = entry.scale
@@ -323,8 +327,10 @@ def parse(scale: Scale, text: str | None) -> tuple[float, float, float] | None:
     """(base value, base lower, base upper) for the display precision of `text`, or None when unparsable."""
     if not isinstance(text, str):
         return None
-    m = _TEXT.fullmatch(text.replace("−", "-").strip(_JAVA_TRIM))
-    fn = scale.suffixes.get(m.group(4).lower()) if m else None
+    m = _TEXT.fullmatch(text.replace("\u2212", "-").strip(_JAVA_TRIM))
+    if m is None:
+        return None
+    fn = scale.suffixes.get(m.group(4).lower())
     if fn is None:
         return None
     fraction = m.group(2) if m.group(2) is not None else m.group(3) if m.group(3) is not None else ""
@@ -340,7 +346,7 @@ def convert(
     found = scale_for(type_name, pid, context)
     if found is None:
         raise ValueError(f"no verified scale for {type_name!r} {pid}")
-    entry, scale = found
+    _entry, scale = found
     parsed = parse(scale, text)
     if parsed is None:
         raise ValueError(f"display {text!r} must be a number with a unit suffix {sorted(scale.suffixes)}")

@@ -1,6 +1,7 @@
 """host.diagnostics against synthetic Bitwig logs (no real log, no Bitwig)."""
 
 import asyncio
+import re
 from datetime import datetime, timedelta
 
 import pytest
@@ -55,13 +56,14 @@ def header(t):
 def test_registered():
     assert "host.diagnostics" in CLIENT_SIDE
     for bad in ({"sinceSeconds": 0}, {"sinceSeconds": 5, "sinceMarker": "x"}, {"maxEvents": 0}):
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=re.escape("1 validation error for HostDiagnosticsArgs")):
             validate_call("host.diagnostics", bad)
 
 
 def test_missing_log_is_unsupported(log):
     result = run()
-    assert result["status"] == "unsupported" and result["searched"] == [str(log)]
+    assert result["status"] == "unsupported"
+    assert result["searched"] == [str(log)]
 
 
 def test_classifies_and_dedups(log):
@@ -107,8 +109,10 @@ def test_classifies_and_dedups(log):
         "exception",
         "other",
     ]
-    assert events[0]["count"] == 2 and events[0]["gridComponent"] == "nitro"
-    assert events[5]["detailLines"] == 2 and "at a.b" not in events[5]["message"]
+    assert events[0]["count"] == 2
+    assert events[0]["gridComponent"] == "nitro"
+    assert events[5]["detailLines"] == 2
+    assert "at a.b" not in events[5]["message"]
     assert result["summary"]["counts"]["grid_rejected"] == 3
     assert result["summary"]["gridRejectedComponents"] == ["flt", "nitro"]
     assert result["summary"]["engineReady"] is False
@@ -124,7 +128,8 @@ def test_window_and_max_events(log):
     assert [e["message"] for e in run()["events"]] == [f"problem {i}" for i in range(5)]
     assert "old problem" in [e["message"] for e in run({"sinceSeconds": 7200})["events"]]
     capped = run({"maxEvents": 2})
-    assert [e["message"] for e in capped["events"]] == ["problem 3", "problem 4"] and capped["droppedOlderEvents"] == 3
+    assert [e["message"] for e in capped["events"]] == ["problem 3", "problem 4"]
+    assert capped["droppedOlderEvents"] == 3
 
 
 def test_marker_returns_only_new_events(log):
@@ -134,7 +139,8 @@ def test_marker_returns_only_new_events(log):
     with log.open("a") as f:
         f.write(line(NOW, "x", "error", "second"))
     second = run({"sinceMarker": first["marker"]})
-    assert [e["message"] for e in second["events"]] == ["second"] and second["window"] == {"sinceMarker": True}
+    assert [e["message"] for e in second["events"]] == ["second"]
+    assert second["window"] == {"sinceMarker": True}
     assert run({"sinceMarker": second["marker"]})["events"] == []
 
 
@@ -143,7 +149,8 @@ def test_stale_marker_falls_back(log):
     marker = run()["marker"]
     log.write_text(header(NOW - timedelta(seconds=30)) + line(NOW, "x", "error", "fresh start"))
     result = run({"sinceMarker": marker})
-    assert [e["message"] for e in result["events"]] == ["fresh start"] and "stale" in result["warnings"][0]
+    assert [e["message"] for e in result["events"]] == ["fresh start"]
+    assert "stale" in result["warnings"][0]
     assert run({"sinceMarker": "garbage!"})["warnings"]
 
 
@@ -159,12 +166,13 @@ def test_attribution_by_process_start(log, monkeypatch):
     result = run({"sinceSeconds": 7200})
     assert [e["message"] for e in result["events"]] == ["from A"]
     att = result["attribution"]
-    assert (
-        att["method"] == "pid_start_time" and att["certain"] is False and "later Bitwig start" in att["uncertainty"][0]
-    )
+    assert att["method"] == "pid_start_time"
+    assert att["certain"] is False
+    assert "later Bitwig start" in att["uncertainty"][0]
     monkeypatch.setattr(diagnostics, "process_start", lambda pid: b - timedelta(seconds=2))
     result = run({"sinceSeconds": 7200})
-    assert [e["message"] for e in result["events"]] == ["from B"] and result["attribution"]["certain"] is True
+    assert [e["message"] for e in result["events"]] == ["from B"]
+    assert result["attribution"]["certain"] is True
 
 
 def test_no_instance_is_uncertain_latest_section(log):
@@ -173,7 +181,9 @@ def test_no_instance_is_uncertain_latest_section(log):
     result = run({"sinceSeconds": 7200}, Bridge(fail=True))
     assert [e["message"] for e in result["events"]] == ["B"]
     att = result["attribution"]
-    assert att["method"] == "latest_section" and att["certain"] is False and att["instance"] is None
+    assert att["method"] == "latest_section"
+    assert att["certain"] is False
+    assert att["instance"] is None
     assert "status unavailable" in att["uncertainty"][0]
 
 

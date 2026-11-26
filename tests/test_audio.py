@@ -3,13 +3,16 @@
 import asyncio
 import json
 import math
+import re
 import struct
 import wave
+from pathlib import Path
 
 import pytest
 
 from bitwig_agent import audio, client_side
-from bitwig_agent.catalog import validate_call
+from bitwig_agent.catalog import CLIENT_SIDE, TOOLS, validate_call
+from bitwig_agent.cli import execute, parse_arguments
 from bitwig_agent.client import BridgeError
 
 RATE = 48000
@@ -18,7 +21,9 @@ RATE = 48000
 def write_wav(path, samples, rate=RATE, header_zero=False):
     frames = b"".join(struct.pack("<hh", int(s * 32767), int(s * 32767)) for s in samples)
     with wave.open(str(path), "wb") as w:
-        w.setnchannels(2), w.setsampwidth(2), w.setframerate(rate)
+        w.setnchannels(2)
+        w.setsampwidth(2)
+        w.setframerate(rate)
         w.writeframes(frames)
     if header_zero:  # streamed header as parec leaves it
         raw = bytearray(path.read_bytes())
@@ -69,15 +74,18 @@ def test_level_reports_peak_rms_and_silence(tmp_path):
     r = run_analyze(p, mode="level")
     assert r["peak"] == pytest.approx(0.5, abs=0.01)
     assert r["rms"] == pytest.approx(0.5 / 2, abs=0.01)  # sine rms over half the file
-    assert 0.4 < r["silenceRatio"] < 0.6 and r["clipping"] is False
-    assert r["windows"][0]["t"] == 0 and r["windows"][-1]["rms"] == 0
+    assert 0.4 < r["silenceRatio"] < 0.6
+    assert r["clipping"] is False
+    assert r["windows"][0]["t"] == 0
+    assert r["windows"][-1]["rms"] == 0
 
 
 def test_level_flags_clipping_and_tolerates_streamed_header(tmp_path):
     p = tmp_path / "c.wav"
     write_wav(p, [1.0, -1.0] * 4800, header_zero=True)
     r = run_analyze(p, mode="level")
-    assert r["clipping"] is True and r["durationSeconds"] == pytest.approx(0.2, abs=0.001)
+    assert r["clipping"] is True
+    assert r["durationSeconds"] == pytest.approx(0.2, abs=0.001)
 
 
 def test_onsets_and_skip(tmp_path):
@@ -87,7 +95,8 @@ def test_onsets_and_skip(tmp_path):
     assert r["count"] == 4
     assert all(abs(t - (0.1 + 0.125 * i)) < 0.012 for i, t in enumerate(r["onsets"]))
     skipped = run_analyze(p, mode="onsets", skipSeconds=0.3)
-    assert skipped["count"] == 2 and skipped["onsets"][0] > 0.3
+    assert skipped["count"] == 2
+    assert skipped["onsets"][0] > 0.3
 
 
 def test_silent_file_reports_silent(tmp_path):
@@ -106,7 +115,8 @@ def test_mono_pitch_summary_and_grid(tmp_path):
     s = r["summary"]
     assert s["range"] == {"min": 57, "max": 72, "semitones": 15}
     assert s["intervals"] == [2, 1, 12, -1, -14, 0, 7]
-    assert s["leaps"] == 3 and s["pitchClassNames"][0] == "C"
+    assert s["leaps"] == 3
+    assert s["pitchClassNames"][0] == "C"
     assert s["stepwiseRatio"] == pytest.approx(4 / 7, abs=0.01)
     assert r["grid"]["positions16"] == [0, 1, 2, 3, 4, 5, 6, 7]  # 0.125 s = one 16th at 120 BPM
 
@@ -115,8 +125,11 @@ def test_probe_means(tmp_path):
     p = tmp_path / "p.wav"
     write_wav(p, [0.5] * (RATE // 5) + [-0.25] * (RATE // 5))
     r = run_analyze(p, mode="probe")
-    assert r["count"] == 40 and r["means"][0] == 0.5 and r["means"][-1] == -0.25
-    assert r["max"] == 0.5 and r["min"] == -0.25
+    assert r["count"] == 40
+    assert r["means"][0] == 0.5
+    assert r["means"][-1] == -0.25
+    assert r["max"] == 0.5
+    assert r["min"] == -0.25
     assert run_analyze(p, mode="probe", skipSeconds=0.2)["means"][0] == -0.25
 
 
@@ -128,9 +141,9 @@ def test_analyze_errors(tmp_path):
     assert e.value.error["code"] == "invalid_params"
     with pytest.raises(BridgeError):
         run_analyze(tmp_path / "missing.wav", mode="level")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=re.escape("1 validation error for AudioAnalyzeArgs")):
         validate_call("audio.analyze", {"path": "relative.wav", "mode": "level"})
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=re.escape("1 validation error for AudioAnalyzeArgs")):
         validate_call("audio.analyze", {"path": "/tmp/a.mp3", "mode": "level"})
 
 
@@ -146,7 +159,7 @@ class FakePW:
         self.calls.append(args)
         if args[:2] == ["pw-link", "-l"]:
             text = "alsa_output.pci:playback_FL\n  |<- Bitwig Studio:out1\nalsa_output.pci:playback_FR\n  |<- Bitwig Studio:out2\n"
-            ports = {}
+            ports: dict[str, list[str]] = {}
             for a, b in sorted(self.links):
                 ports.setdefault(a, []).append(b)
             for a, targets in ports.items():
@@ -176,7 +189,7 @@ class FakePW:
         raise AssertionError(args)
 
 
-NODES = []  # capture nodes the fake pw-record has "created"
+NODES: list[str] = []  # capture nodes the fake pw-record has "created"
 SINK_LINKS = {("Bitwig Studio:out1", "bwtest:playback_FL"), ("Bitwig Studio:out2", "bwtest:playback_FR")}
 
 
@@ -198,14 +211,18 @@ def route(mode):
 def test_silent_then_restore_relinks_exactly(pw):
     original = set(pw.links)
     r = route("silent")
-    assert r["silent"] and r["sinkCreated"]
+    assert r["silent"]
+    assert r["sinkCreated"]
     assert pw.links == SINK_LINKS
     assert audio.state_path().exists()
     again = route("silent")  # idempotent: no second sink, previous targets kept
-    assert again["sinkCreated"] is False and pw.links == SINK_LINKS
+    assert again["sinkCreated"] is False
+    assert pw.links == SINK_LINKS
     assert route("status")["silent"] is True
     r = route("restore")
-    assert pw.links == original and r["silent"] is False and not audio.state_path().exists()
+    assert pw.links == original
+    assert r["silent"] is False
+    assert not audio.state_path().exists()
     assert route("restore")["restored"] == []
 
 
@@ -213,7 +230,8 @@ def test_other_applications_are_never_touched(pw):
     route("silent")
     route("restore")
     touched = [c for c in pw.calls if c[0] == "pw-link" and c[1] != "-l"]
-    assert touched and all(any(p.startswith("Bitwig Studio:") for p in c) for c in touched)
+    assert touched
+    assert all(any(p.startswith("Bitwig Studio:") for p in c) for c in touched)
 
 
 def test_silent_without_bitwig_links_fails(pw):
@@ -227,7 +245,8 @@ def test_unsupported_platform(monkeypatch):
     monkeypatch.setattr(audio.sys, "platform", "darwin")
     with pytest.raises(BridgeError) as e:
         route("status")
-    assert e.value.error["code"] == "unsupported_platform" and e.value.error["outcome"] == "not_dispatched"
+    assert e.value.error["code"] == "unsupported_platform"
+    assert e.value.error["outcome"] == "not_dispatched"
 
 
 class FakeProc:
@@ -239,7 +258,6 @@ class FakeProc:
 
     def send_signal(self, sig):
         self.signals.append(sig)
-        from pathlib import Path
 
         write_wav(Path(self.path), notes([60, 62], total=0.6))
         self.returncode = 0
@@ -305,19 +323,20 @@ def test_capture_requires_silent_route(tmp_path, monkeypatch, pw):
     bridge, spawned, params, timeout = capture(tmp_path, monkeypatch)
     with pytest.raises(BridgeError) as e:
         asyncio.run(client_side.run("audio.capture", bridge, params, timeout))
-    assert e.value.error["code"] == "not_silent" and not spawned and not bridge.calls
+    assert e.value.error["code"] == "not_silent"
+    assert not spawned
+    assert not bridge.calls
 
 
 def test_capture_from_start_orders_transport_and_reports_levels(tmp_path, monkeypatch, pw):
     route("silent")
     bridge, spawned, params, timeout = capture(tmp_path, monkeypatch)
     result = asyncio.run(client_side.run("audio.capture", bridge, params, timeout))
-    assert (
-        spawned[0][0] == "pw-record"
-        and "node.autoconnect=false" in spawned[0][2]
-        and "node.name=bwagent-capture-" in spawned[0][2]
-    )
-    assert "bwtest.monitor" not in spawned[0] and "@DEFAULT_MONITOR@" not in spawned[0]
+    assert spawned[0][0] == "pw-record"
+    assert "node.autoconnect=false" in spawned[0][2]
+    assert "node.name=bwagent-capture-" in spawned[0][2]
+    assert "bwtest.monitor" not in spawned[0]
+    assert "@DEFAULT_MONITOR@" not in spawned[0]
     assert result["source"]["ports"] == ["Bitwig Studio:out1", "Bitwig Studio:out2"]
     assert bridge.calls == [
         ("status", {}),
@@ -327,18 +346,20 @@ def test_capture_from_start_orders_transport_and_reports_levels(tmp_path, monkey
         ("transport.set", {"playing": True}),
         ("transport.set", {"playing": False}),
     ]
-    assert result["peak"] > 0.5 and result["clipping"] is False and result["silent"] is False
+    assert result["peak"] > 0.5
+    assert result["clipping"] is False
+    assert result["silent"] is False
     assert result["durationSeconds"] == pytest.approx(0.6, abs=0.01)
 
 
 def test_capture_overwrite_rules_and_no_transport(tmp_path, monkeypatch, pw):
     route("silent")
     (tmp_path / "out.wav").write_bytes(b"x")
-    bridge, spawned, params, timeout = capture(tmp_path, monkeypatch)
+    bridge, _spawned, params, timeout = capture(tmp_path, monkeypatch)
     with pytest.raises(BridgeError) as e:
         asyncio.run(client_side.run("audio.capture", bridge, params, timeout))
     assert e.value.error["code"] == "file_exists"
-    bridge, spawned, params, timeout = capture(tmp_path, monkeypatch, overwrite=True, fromStart=False)
+    bridge, _spawned, params, timeout = capture(tmp_path, monkeypatch, overwrite=True, fromStart=False)
     asyncio.run(client_side.run("audio.capture", bridge, params, timeout))
     assert [m for m, _ in bridge.calls] == ["status", "context.get"]
 
@@ -347,7 +368,8 @@ def test_capture_allow_audible_records_bitwig_ports_not_the_default_monitor(tmp_
     bridge, spawned, params, timeout = capture(tmp_path, monkeypatch, allowAudible=True)
     before = set(pw.links)
     result = asyncio.run(client_side.run("audio.capture", bridge, params, timeout))
-    assert result["audible"] is True and "@DEFAULT_MONITOR@" not in spawned[0]
+    assert result["audible"] is True
+    assert "@DEFAULT_MONITOR@" not in spawned[0]
     node = result["source"]["node"]
     assert ["pw-link", "Bitwig Studio:out1", f"{node}:input_FL"] in pw.calls
     assert ["pw-link", "Bitwig Studio:out2", f"{node}:input_FR"] in pw.calls
@@ -360,7 +382,7 @@ def test_capture_allow_audible_records_bitwig_ports_not_the_default_monitor(tmp_
 
 def test_capture_unlinks_its_own_links_when_it_fails(tmp_path, monkeypatch, pw):
     route("silent")
-    bridge, spawned, params, timeout = capture(tmp_path, monkeypatch)
+    bridge, _spawned, params, timeout = capture(tmp_path, monkeypatch)
     before = set(pw.links)
 
     async def broken(method, params, timeout_ms=5000, _call=bridge.call):
@@ -380,14 +402,16 @@ def test_capture_needs_bitwig_output_ports(tmp_path, monkeypatch, pw):
     monkeypatch.setattr(audio, "bitwig_outputs", lambda: (_ for _ in ()).throw(audio.fail("bitwig_not_found", "x")))
     with pytest.raises(BridgeError) as e:
         asyncio.run(client_side.run("audio.capture", bridge, params, timeout))
-    assert e.value.error["code"] == "bitwig_not_found" and not spawned
+    assert e.value.error["code"] == "bitwig_not_found"
+    assert not spawned
 
 
 def test_capture_reports_other_playing_tracks(tmp_path, monkeypatch, pw):
     route("silent")
     bridge, _, params, timeout = capture(tmp_path, monkeypatch, playing=[("a", "Kick"), ("b", "Pad")])
     result = asyncio.run(client_side.run("audio.capture", bridge, params, timeout))
-    assert result["otherTracksPlaying"] == ["Kick", "Pad"] and "mix" in result["warnings"][0]
+    assert result["otherTracksPlaying"] == ["Kick", "Pad"]
+    assert "mix" in result["warnings"][0]
     bridge, _, params, timeout = capture(tmp_path, monkeypatch, playing=[("a", "Kick")], overwrite=True)
     assert asyncio.run(client_side.run("audio.capture", bridge, params, timeout))["otherTracksPlaying"] == []
 
@@ -400,20 +424,24 @@ def test_capture_solo_track_refuses_while_others_play(tmp_path, monkeypatch, pw)
     )
     with pytest.raises(BridgeError) as e:
         asyncio.run(client_side.run("audio.capture", bridge, params, timeout))
-    assert e.value.error["code"] == "not_isolated" and e.value.error["outcome"] == "not_applied" and not spawned
+    assert e.value.error["code"] == "not_isolated"
+    assert e.value.error["outcome"] == "not_applied"
+    assert not spawned
     assert e.value.error["details"]["otherTracksPlaying"] == ["Pad"]
     assert not [m for m, _ in bridge.calls if m == "tracks.set"]
     # the solo track needs no playing launcher clip (a Poly Grid sounds without one)
     bridge, spawned, params, timeout = capture(tmp_path, monkeypatch, solo={solo: False}, soloTrack=solo)
     result = asyncio.run(client_side.run("audio.capture", bridge, params, timeout))
-    assert result["otherTracksPlaying"] == [] and "warnings" not in result and spawned
+    assert result["otherTracksPlaying"] == []
+    assert "warnings" not in result
+    assert spawned
 
 
 def test_capture_solo_really_solos_and_restores(tmp_path, monkeypatch, pw):
     route("silent")
     solo = "00000000-0000-0000-0000-000000000001"
     states = {solo: False, "b": True, "c": False}
-    bridge, spawned, params, timeout = capture(tmp_path, monkeypatch, solo=states, soloTrack=solo)
+    bridge, _spawned, params, timeout = capture(tmp_path, monkeypatch, solo=states, soloTrack=solo)
     seen = []
     inner = bridge.call
 
@@ -427,7 +455,9 @@ def test_capture_solo_really_solos_and_restores(tmp_path, monkeypatch, pw):
     result = asyncio.run(client_side.run("audio.capture", bridge, params, timeout))
     assert seen == [{solo: True, "b": False, "c": False}]
     assert bridge.solo == states  # restored
-    assert result["soloed"] == solo and result["previousSolo"] == ["b"] and result["unsoloed"] == ["b"]
+    assert result["soloed"] == solo
+    assert result["previousSolo"] == ["b"]
+    assert result["unsoloed"] == ["b"]
     assert result["restored"] == [{"trackId": "b", "solo": True}, {"trackId": solo, "solo": False}]
     assert "restoreFailed" not in result
 
@@ -436,7 +466,7 @@ def test_capture_solo_restores_on_failure_and_reports_restore_errors(tmp_path, m
     route("silent")
     solo = "00000000-0000-0000-0000-000000000001"
     states = {solo: False, "b": True}
-    bridge, spawned, params, timeout = capture(tmp_path, monkeypatch, solo=states, soloTrack=solo)
+    bridge, _spawned, params, timeout = capture(tmp_path, monkeypatch, solo=states, soloTrack=solo)
     inner = bridge.call
 
     async def broken(method, p, t=5000):
@@ -448,7 +478,7 @@ def test_capture_solo_restores_on_failure_and_reports_restore_errors(tmp_path, m
     with pytest.raises(BridgeError):
         asyncio.run(client_side.run("audio.capture", bridge, params, timeout))
     assert bridge.solo == states
-    bridge, spawned, params, timeout = capture(tmp_path, monkeypatch, solo=states, soloTrack=solo, overwrite=True)
+    bridge, _spawned, params, timeout = capture(tmp_path, monkeypatch, solo=states, soloTrack=solo, overwrite=True)
     bridge.fail_set = solo  # restoring the target (solo off) fails
     result = asyncio.run(client_side.run("audio.capture", bridge, params, timeout))
     assert result["restoreFailed"][0]["trackId"] == solo
@@ -460,11 +490,13 @@ def test_capture_solo_refuses_unreadable_or_unknown_tracks(tmp_path, monkeypatch
     bridge, spawned, params, timeout = capture(tmp_path, monkeypatch, solo={"b": False}, soloTrack=solo)
     with pytest.raises(BridgeError) as e:
         asyncio.run(client_side.run("audio.capture", bridge, params, timeout))
-    assert e.value.error["code"] == "unknown_track" and not spawned
+    assert e.value.error["code"] == "unknown_track"
+    assert not spawned
     bridge, spawned, params, timeout = capture(tmp_path, monkeypatch, solo={solo: None}, soloTrack=solo)
     with pytest.raises(BridgeError) as e:
         asyncio.run(client_side.run("audio.capture", bridge, params, timeout))
-    assert e.value.error["code"] == "solo_unreadable" and not spawned
+    assert e.value.error["code"] == "solo_unreadable"
+    assert not spawned
 
 
 def test_capture_stop_others_stops_then_records(tmp_path, monkeypatch, pw):
@@ -479,11 +511,14 @@ def test_capture_stop_others_stops_then_records(tmp_path, monkeypatch, pw):
         stopOthers=True,
     )
     result = asyncio.run(client_side.run("audio.capture", bridge, params, timeout))
-    assert ("launcher.stop", {"trackId": "b"}) in bridge.calls and (
+    assert ("launcher.stop", {"trackId": "b"}) in bridge.calls
+    assert (
         "launcher.stop",
         {"trackId": solo},
     ) not in bridge.calls
-    assert result["stoppedTracks"] == ["Pad"] and result["otherTracksPlaying"] == [] and spawned
+    assert result["stoppedTracks"] == ["Pad"]
+    assert result["otherTracksPlaying"] == []
+    assert spawned
 
 
 def test_capture_validation():
@@ -493,21 +528,21 @@ def test_capture_validation():
         {"seconds": 1, "outPath": "a.wav"},
         {"seconds": 1, "outPath": "/tmp/a.flac"},
     ):
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=re.escape("1 validation error for AudioCaptureArgs")):
             validate_call("audio.capture", bad)
 
 
 def test_cli_and_catalog_expose_tools():
-    from bitwig_agent.catalog import CLIENT_SIDE, TOOLS
-    from bitwig_agent.cli import execute, parse_arguments
 
     assert {"audio.route", "audio.capture", "audio.analyze"} <= CLIENT_SIDE <= set(TOOLS)
     params, _ = parse_arguments("audio.capture", ["seconds=2", "outPath=/tmp/x.wav", "fromStart=false"], None, None)
     assert params == {"seconds": 2.0, "outPath": "/tmp/x.wav", "fromStart": False}
     payload, code = asyncio.run(execute(["audio.analyze", "path=/nonexistent/x.wav", "mode=level"]))
-    assert code == 1 and payload["error"]["code"] == "invalid_params"
+    assert code == 1
+    assert payload["error"]["code"] == "invalid_params"
     payload, code = asyncio.run(execute(["describe", "audio.route"]))
-    assert code == 0 and json.dumps(payload)
+    assert code == 0
+    assert json.dumps(payload)
 
 
 def test_flux_counts_overlapping_long_decay_notes(tmp_path):
@@ -515,10 +550,12 @@ def test_flux_counts_overlapping_long_decay_notes(tmp_path):
     p = tmp_path / "ov.wav"
     write_wav(p, overlapping(seq))
     r = run_analyze(p, mode="onsets")
-    assert r["method"] == "flux" and r["count"] == len(seq)
+    assert r["method"] == "flux"
+    assert r["count"] == len(seq)
     assert all(abs(t - (0.1 + 0.1 * i)) < 0.03 for i, t in enumerate(r["onsets"]))
     old = run_analyze(p, mode="onsets", method="envelope")
-    assert old["method"] == "envelope" and old["count"] < len(seq)
+    assert old["method"] == "envelope"
+    assert old["count"] < len(seq)
 
 
 def test_mono_pitch_default_follows_flux_on_overlaps(tmp_path):
@@ -535,15 +572,19 @@ def test_capture_refuses_an_inactive_engine_before_touching_anything(tmp_path, m
     bridge.engine = False
     with pytest.raises(BridgeError) as e:
         asyncio.run(client_side.run("audio.capture", bridge, params, timeout))
-    assert e.value.error["code"] == "engine_inactive" and e.value.error["outcome"] == "not_applied"
+    assert e.value.error["code"] == "engine_inactive"
+    assert e.value.error["outcome"] == "not_applied"
     assert "project.activateEngine" in e.value.error["message"]
-    assert not spawned and bridge.calls == [("status", {})]
+    assert not spawned
+    assert bridge.calls == [("status", {})]
 
 
 def write_stereo(path, left, right, rate=RATE):
-    frames = b"".join(struct.pack("<hh", int(a * 32767), int(b * 32767)) for a, b in zip(left, right))
+    frames = b"".join(struct.pack("<hh", int(a * 32767), int(b * 32767)) for a, b in zip(left, right, strict=False))
     with wave.open(str(path), "wb") as w:
-        w.setnchannels(2), w.setsampwidth(2), w.setframerate(rate)
+        w.setnchannels(2)
+        w.setsampwidth(2)
+        w.setframerate(rate)
         w.writeframes(frames)
 
 
@@ -560,10 +601,13 @@ def test_bands_places_energy_and_reports_stereo_correlation(tmp_path):
     wav = tmp_path / "bands.wav"
     write_stereo(wav, low, low)
     out = run_bands({"path": str(wav), "mode": "bands", "windowSeconds": 1})
-    assert out["stereoCorrelation"] == 1.0 and len(out["windows"]) == 3
+    assert out["stereoCorrelation"] == 1.0
+    assert len(out["windows"]) == 3
     row = out["windows"][0]
-    assert row["bandsDb"]["low"] > -0.5 and row["bandsDb"]["air"] is None or row["bandsDb"]["air"] < -40
-    assert 90 < row["centroidHz"] < 120 and row["t"] == 0.0 and 0.3 < row["rms"] < 0.4
+    assert (row["bandsDb"]["low"] > -0.5 and row["bandsDb"]["air"] is None) or row["bandsDb"]["air"] < -40
+    assert 90 < row["centroidHz"] < 120
+    assert row["t"] == 0.0
+    assert 0.3 < row["rms"] < 0.4
     write_stereo(wav, low, [-v for v in low])
     assert run_bands({"path": str(wav), "mode": "bands", "windowSeconds": 1})["stereoCorrelation"] == -1.0
     write_stereo(wav, tone(8800, 1.5), tone(8800, 1.5))
@@ -586,17 +630,16 @@ def test_bands_key_chroma_and_spectrogram(tmp_path):
     a3 = tone(220, 1.5)
     write_stereo(wav, a3, a3)
     out = run_bands({"path": str(wav), "mode": "bands", "key": "A:aeolian", "spectrogramPath": str(png)})
-    assert out["chroma"]["inKeyShare"] == 1.0 and out["chroma"]["topPitchClasses"][0]["name"] == "A"
+    assert out["chroma"]["inKeyShare"] == 1.0
+    assert out["chroma"]["topPitchClasses"][0]["name"] == "A"
     assert out["windows"][0]["chroma"]["inKeyShare"] == 1.0
     assert run_bands({"path": str(wav), "mode": "bands", "key": "C#:ionian"})["chroma"]["inKeyShare"] == 0.0
     data = png.read_bytes()
     width, height = struct.unpack(">II", data[16:24])
-    assert (
-        data[:8] == b"\x89PNG\r\n\x1a\n"
-        and (width, height) == (out["spectrogram"]["width"], 256)
-        and data.endswith(b"IEND\xaeB`\x82")
-    )
-    with pytest.raises(ValueError):
+    assert data[:8] == b"\x89PNG\r\n\x1a\n"
+    assert (width, height) == (out["spectrogram"]["width"], 256)
+    assert data.endswith(b"IEND\xaeB`\x82")
+    with pytest.raises(ValueError, match=re.escape("1 validation error for AudioAnalyzeArgs")):
         validate_call("audio.analyze", {"path": str(wav), "mode": "level", "key": "A:aeolian"})
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=re.escape("1 validation error for AudioAnalyzeArgs")):
         validate_call("audio.analyze", {"path": str(wav), "mode": "bands", "key": "H:aeolian"})

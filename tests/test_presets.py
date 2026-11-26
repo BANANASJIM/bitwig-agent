@@ -65,7 +65,8 @@ def names(result):
 
 def test_plain_headers_are_read_and_encrypted_ones_degrade_to_paths(library):
     result = presets.search({}, library)
-    assert result["scanned"]["presets"] == 4 and result["scanned"]["metadataReadable"] == 2
+    assert result["scanned"]["presets"] == 4
+    assert result["scanned"]["metadataReadable"] == 2
     by = {p["name"]: p for p in result["presets"]}
     pad = by["Warm Pad Study"]
     assert (pad["device"], pad["deviceType"], pad["category"], pad["creator"], pad["comment"]) == (
@@ -84,7 +85,8 @@ def test_plain_headers_are_read_and_encrypted_ones_degrade_to_paths(library):
         ["Presets", "Convolution"],
         False,
     )
-    assert "device" not in room and room["insert"] == {"kind": "file", "path": room["path"]}
+    assert "device" not in room
+    assert room["insert"] == {"kind": "file", "path": room["path"]}
     assert Path(room["path"]).is_absolute()
 
 
@@ -98,12 +100,15 @@ def test_query_filters_rank_and_page(library):
     assert names(presets.search({"category": "drums"}, library)) == ["Kick Heavy"]  # folder when no metadata
     assert names(presets.search({"query": "nothing-here"}, library)) == []
     page = presets.search({"limit": 2, "offset": 1}, library)
-    assert page["window"] == {"offset": 1, "limit": 2, "total": 4, "complete": False} and len(page["presets"]) == 2
+    assert page["window"] == {"offset": 1, "limit": 2, "total": 4, "complete": False}
+    assert len(page["presets"]) == 2
 
 
 def test_missing_roots_are_reported_not_invented(tmp_path):
     result = presets.search({"query": "x"}, [("user", tmp_path / "absent")])
-    assert result["presets"] == [] and result["roots"] == [] and result["window"]["total"] == 0
+    assert result["presets"] == []
+    assert result["roots"] == []
+    assert result["window"]["total"] == 0
 
 
 def test_env_override_replaces_default_roots(monkeypatch, tmp_path):
@@ -126,7 +131,8 @@ def test_blob_values_do_not_hide_later_keys():
 
 
 def test_truncated_or_garbage_headers_do_not_raise():
-    assert presets.read_meta(b"") is None and presets.read_meta(b"BtWg" + b"\x00" * 10) is None
+    assert presets.read_meta(b"") is None
+    assert presets.read_meta(b"BtWg" + b"\x00" * 10) is None
     full = _plain("Polymer", "note_to_audio", "Pad", "Ada")
     for cut in range(0, len(full), 7):
         presets.read_meta(full[:cut])  # never raises

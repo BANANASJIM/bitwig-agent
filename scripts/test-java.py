@@ -7,9 +7,9 @@ Gson is checksum-verified by build.py (downloaded only when not cached).
 
 import importlib.util
 import os
-from pathlib import Path
 import shutil
 import subprocess
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 TEST_ROOT = ROOT / "extension/src/test/java"
@@ -31,6 +31,8 @@ def main() -> None:
     # Naming/path convention is intentional: a mispackaged test or missing main
     # fails in Java instead of being silently omitted by a source-text heuristic.
     spec = importlib.util.spec_from_file_location("extension_build", ROOT / "scripts/build.py")
+    assert spec is not None
+    assert spec.loader is not None
     build = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(build)
     classes = build.BUILD / "test-classes"

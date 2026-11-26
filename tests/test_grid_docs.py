@@ -1,7 +1,9 @@
 """grid.describe: parser, mapping and search on synthetic fixtures; coverage against a real install when present."""
 
 import asyncio
+import re
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -34,7 +36,7 @@ chance.out.desc=Short triggers
 chance.extra.desc=Unmatched leftover
 math.out.desc=Shared math out
 """
-SCHEMA = {
+SCHEMA: dict[str, dict[str, Any]] = {
     "Select In": {
         "typeId": "1",
         "inputs": [{"key": "SEL", "name": "Select In"}],
@@ -74,29 +76,38 @@ def test_parse_properties_escapes_and_continuations():
         "back=ends\\\\\nnext=1\nsur=\\ud83d\\ude00\n"
     )
     got = grid_docs.parse_properties(text)
-    assert got["a"] == "1" and got["b"] == "two words" and got["c d"] == "k=v"
-    assert got["long"] == "one two" and got["u"] == "ø →\n!"
-    assert got["empty"] == "" and got["novalue"] == "" and got["back"] == "ends\\" and got["next"] == "1"
+    assert got["a"] == "1"
+    assert got["b"] == "two words"
+    assert got["c d"] == "k=v"
+    assert got["long"] == "one two"
+    assert got["u"] == "ø →\n!"
+    assert got["empty"] == ""
+    assert got["novalue"] == ""
+    assert got["back"] == "ends\\"
+    assert got["next"] == "1"
     assert got["sur"] == "\U0001f600"
 
 
 def test_describe_maps_ports_and_keeps_raw_entries(root):
     docs = grid_docs.get_docs()
     select = grid_docs.describe_module(docs, "Select In", SCHEMA["Select In"])
-    assert (
-        select["resourceId"] == "select_in" and select["description"] == "Fake selector" and select["category"] == "Mix"
-    )
+    assert select["resourceId"] == "select_in"
+    assert select["description"] == "Fake selector"
+    assert select["category"] == "Mix"
     sel = next(p for p in select["ports"] if p["key"] == "SEL")
     assert sel["description"] == "Low routes 1\nhigh routes 2"
     assert select["rawEntries"] == {"select_in.logic_in.desc": "Low routes 1\nhigh routes 2"}
     chance = grid_docs.describe_module(docs, "Chance", SCHEMA["Chance"])
     by_key = {p["key"]: p.get("description") for p in chance["ports"]}
     assert by_key == {"IN": "Trigger in text", "OUT": "Short triggers"}
-    assert "chance.extra.desc" in chance["rawEntries"] and chance["keywords"] == ["weighted", "noise"]
+    assert "chance.extra.desc" in chance["rawEntries"]
+    assert chance["keywords"] == ["weighted", "noise"]
     add = grid_docs.describe_module(docs, "Add", SCHEMA["Add"])  # category-shared entry, no module-own entries
-    assert add["ports"][0]["description"] == "Shared math out" and add["rawEntries"] == {}
+    assert add["ports"][0]["description"] == "Shared math out"
+    assert add["rawEntries"] == {}
     mystery = grid_docs.describe_module(docs, "Mystery", SCHEMA["Mystery"])
-    assert mystery["resourceId"] is None and "note" in mystery
+    assert mystery["resourceId"] is None
+    assert "note" in mystery
 
 
 def test_language_overlay_falls_back_to_english(root):
@@ -114,9 +125,8 @@ def test_search_ranks_name_then_keywords(root, monkeypatch):
 
 
 def test_type_resolution_by_name_loose_name_or_type_id():
-    assert (
-        grid_docs.resolve_type(SCHEMA, "select in") == "Select In" and grid_docs.resolve_type(SCHEMA, "2") == "Chance"
-    )
+    assert grid_docs.resolve_type(SCHEMA, "select in") == "Select In"
+    assert grid_docs.resolve_type(SCHEMA, "2") == "Chance"
     with pytest.raises(ValueError, match="did you mean"):
         grid_docs.resolve_type(SCHEMA, "Chanse")
 
@@ -130,20 +140,23 @@ def test_missing_install_is_an_actionable_error(tmp_path, monkeypatch):
 def test_argument_validation():
     assert validate_call("grid.describe", {"type": "Chance"})[0] == {"type": "Chance"}
     for bad in ({}, {"type": "A", "query": "b"}, {"type": "A", "limit": 3}, {"query": "x", "lang": "xx"}):
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=re.escape("1 validation error for GridDescribeArgs")):
             validate_call("grid.describe", bad)
 
 
 def test_cli_runs_offline(root):
     payload, code = asyncio.run(execute(["grid.describe", "type=Select In"]))
-    assert code == 0 and payload["result"]["description"] == "Fake selector"
+    assert code == 0
+    assert payload["result"]["description"] == "Fake selector"
     payload, code = asyncio.run(execute(["grid.describe", "query=selector", "installationRoot=/nonexistent"]))
-    assert code == 2 and "installationRoot" in payload["error"]["message"]
+    assert code == 2
+    assert "installationRoot" in payload["error"]["message"]
 
 
 def test_overrides_and_aliases_name_real_schema_modules():
     modules = bundled_schema()["modules"]
-    assert set(grid_docs.ID_OVERRIDES) <= set(modules) and set(grid_docs.PREFIX_ALIASES) <= set(modules)
+    assert set(grid_docs.ID_OVERRIDES) <= set(modules)
+    assert set(grid_docs.PREFIX_ALIASES) <= set(modules)
 
 
 @real

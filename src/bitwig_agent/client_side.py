@@ -8,7 +8,8 @@ from typing import Any
 from bitwig_agent import audio, grid_docs, modulator_docs, presets
 from bitwig_agent.diagnostics import diagnostics
 from bitwig_agent.grid_apply import apply as grid_apply
-from bitwig_agent.grid_export import export as grid_export, graph as grid_graph
+from bitwig_agent.grid_export import export as grid_export
+from bitwig_agent.grid_export import graph as grid_graph
 from bitwig_agent.grid_probe import probe as grid_probe
 from bitwig_agent.grid_render import render as grid_render
 

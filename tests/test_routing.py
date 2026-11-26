@@ -119,5 +119,7 @@ def test_sidechain_set_rejects_invalid(changes):
 
 
 def test_routing_tools_are_writes_only_where_they_change_state():
-    assert TOOLS["tracks.routing.get"].read_only and TOOLS["devices.sidechain.get"].read_only
-    assert not TOOLS["tracks.routing.set"].read_only and not TOOLS["devices.sidechain.set"].read_only
+    assert TOOLS["tracks.routing.get"].read_only
+    assert TOOLS["devices.sidechain.get"].read_only
+    assert not TOOLS["tracks.routing.set"].read_only
+    assert not TOOLS["devices.sidechain.set"].read_only

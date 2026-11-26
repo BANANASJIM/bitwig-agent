@@ -13,6 +13,7 @@ import copy
 import json
 import math
 import re
+from typing import Any
 
 from pydantic import ValidationError
 
@@ -73,11 +74,17 @@ SKIPS: dict[tuple[str, str, str], str] = {
 }
 
 
+MAX_BMP_CODEPOINT = 0xFFFF
+MIDI_PITCH_COUNT = 128
+MAX_BEAT = 4194304
+ASTRAL_UTF16_UNITS = 2
+
+
 def as_path(value):
     """Make a vector string an absolute path of the same UTF-16 length."""
     if not value:
         return value
-    return "/a" + value[1:] if ord(value[0]) > 0xFFFF else "/" + value[1:]
+    return "/a" + value[1:] if ord(value[0]) > MAX_BMP_CODEPOINT else "/" + value[1:]
 
 
 def file_insert(params, value):
@@ -91,7 +98,11 @@ def project_path(params, value):
     tail = "/S/S.bwproject"
     body = len(value.encode("utf-16-le", errors="surrogatepass")) // 2 - len(tail) - 1
     if body > 0:
-        filler = "\U0001f600" * (body // 2) + "a" * (body % 2) if any(ord(c) > 0xFFFF for c in value) else "a" * body
+        filler = (
+            "\U0001f600" * (body // 2) + "a" * (body % 2)
+            if any(ord(c) > MAX_BMP_CODEPOINT for c in value)
+            else "a" * body
+        )
         params["path"] = "/" + filler + tail
 
 
@@ -99,8 +110,8 @@ def window_fix(field):
     """Keep the explicit note window self-consistent while one window field sweeps."""
 
     def fix(params, value):
-        if field == "pitchStart" and 0 <= value < 128:
-            params["pitchCount"] = max(1, min(params["pitchCount"], 128 - value))
+        if field == "pitchStart" and 0 <= value < MIDI_PITCH_COUNT:
+            params["pitchCount"] = max(1, min(params["pitchCount"], MIDI_PITCH_COUNT - value))
         if "edits" in params and "stepSizeBeats" in params:
             params["edits"] = [
                 {"op": "clear", "beat": params["startStep"] * params["stepSizeBeats"], "pitch": params["pitchStart"]}
@@ -145,7 +156,7 @@ def automation_fix(field):
 
     def fix(params, value):
         box = params.get("range")
-        if box and isinstance(value, (int, float)) and 0 <= value <= 4194304:
+        if box and isinstance(value, (int, float)) and 0 <= value <= MAX_BEAT:
             if field == "startBeat":
                 box["endBeat"] = max(box["endBeat"], value)
             elif field == "endBeat":
@@ -278,10 +289,10 @@ def leaves(schema, defs, path=()):
             for name, sub in node.get("properties", {}).items():
                 if name == "timeoutMs":
                     continue
-                yield path + (name,), sub
-                yield from leaves(sub, defs, path + (name,))
+                yield (*path, name), sub
+                yield from leaves(sub, defs, (*path, name))
         elif node.get("type") == "array":
-            yield from leaves(node["items"], defs, path + (0,))
+            yield from leaves(node["items"], defs, (*path, 0))
 
 
 def bound_vectors(node, defs):
@@ -310,7 +321,12 @@ def bound_vectors(node, defs):
                 # Java counts UTF-16 units; U+1F600 is two.
                 yield (
                     f"maxLength={top} utf16",
-                    ("\U0001f600" * (top // 2 - 1) + "a" * (2 + top % 2)) if top >= 2 else "a" * top,
+                    (
+                        "\U0001f600" * (top // ASTRAL_UTF16_UNITS - 1)
+                        + "a" * (ASTRAL_UTF16_UNITS + top % ASTRAL_UTF16_UNITS)
+                    )
+                    if top >= ASTRAL_UTF16_UNITS
+                    else "a" * top,
                     True,
                 )
                 yield "maxLength+ utf16", "\U0001f600" * (top // 2 + 1), False
@@ -381,7 +397,7 @@ async def run(port):
     """Compare both validators on every vector; return the number checked."""
     checked = 0
     problems = []
-    covered = {}  # (method, field, vector) -> some base was accepted by pydantic
+    covered: dict[Any, bool] = {}  # (method, field, vector) -> some base was accepted by pydantic
     for method in sorted(set(TOOLS) - CLIENT_SIDE):
         seen = set()
         for label, params, field, expect in cases(method):

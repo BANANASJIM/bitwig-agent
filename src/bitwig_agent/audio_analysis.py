@@ -8,7 +8,7 @@ import struct
 import sys
 import zlib
 from array import array
-from itertools import accumulate
+from itertools import accumulate, pairwise
 from statistics import median
 from typing import Any
 
@@ -24,11 +24,23 @@ MAX_PROBE = 2000
 MAX_WINDOWS = 600
 
 
+WAVE_FORMAT_PCM = 1
+WAVE_FORMAT_IEEE_FLOAT = 3
+WAVE_FORMAT_EXTENSIBLE = 0xFFFE
+EXTENSIBLE_MIN_FMT_SIZE = 26
+MIN_SAMPLE_RATE = 8000
+QUIET_RMS = 0.001
+LEAP_SEMITONES = 5
+STEP_SEMITONES = 2
+SEMITONE_CENTS = 100
+MIN_ENERGY = 1e-12
+
+
 class WavError(ValueError):
     pass
 
 
-def read_wav(path: str, all_channels: bool = False):
+def read_wav(path: str, all_channels: bool = False) -> tuple[int, int, Any]:
     """Return (sampleRate, channels, first-channel samples as floats in -1..1), or a list of every channel's samples
     with all_channels=True. Tolerates streamed headers."""
     try:
@@ -48,7 +60,9 @@ def read_wav(path: str, all_channels: bool = False):
         body = pos + 8
         if tag == b"fmt ":
             fmt = struct.unpack_from("<HHIIHH", data, body)
-            if fmt[0] == 0xFFFE and size >= 26:  # WAVE_FORMAT_EXTENSIBLE: the sub-format GUID starts with the real tag
+            if (
+                fmt[0] == WAVE_FORMAT_EXTENSIBLE and size >= EXTENSIBLE_MIN_FMT_SIZE
+            ):  # the sub-format GUID starts with the real tag
                 fmt = (struct.unpack_from("<H", data, body + 24)[0], *fmt[1:])
         elif tag == b"data":
             # parec/libsndfile may leave 0 or 0xFFFFFFFF in a header it could not finalize.
@@ -59,23 +73,24 @@ def read_wav(path: str, all_channels: bool = False):
     if fmt is None or pcm is None:
         raise WavError("WAV has no fmt or data chunk")
     tag, channels, rate, _, _, bits = fmt
-    if channels < 1 or rate < 8000:
+    if channels < 1 or rate < MIN_SAMPLE_RATE:
         raise WavError("Unsupported channel count or sample rate")
     width = bits // 8
     frame = width * channels
     pcm = pcm[: len(pcm) // frame * frame]
-    if tag == 1 and bits == 16:
+    samples: array[Any]
+    if (tag, bits) == (WAVE_FORMAT_PCM, 16):
         samples = array("h", pcm)
         scale = 1 / 32768
-    elif tag == 1 and bits == 32:
+    elif (tag, bits) == (WAVE_FORMAT_PCM, 32):
         samples = array("i", pcm)
         scale = 1 / 2147483648
-    elif tag == 1 and bits == 24:
+    elif (tag, bits) == (WAVE_FORMAT_PCM, 24):
         samples = array("i", (int.from_bytes(pcm[i : i + 3], "little", signed=True) for i in range(0, len(pcm), 3)))
         scale = 1 / 8388608
-    elif tag == 3 and bits == 32:
+    elif (tag, bits) == (WAVE_FORMAT_IEEE_FLOAT, 32):
         samples, scale = array("f", pcm), 1.0
-    elif tag == 3 and bits == 64:
+    elif (tag, bits) == (WAVE_FORMAT_IEEE_FLOAT, 64):
         samples, scale = array("d", pcm), 1.0
     else:
         raise WavError(f"Unsupported WAV encoding (format {tag}, {bits}-bit); use 16/24/32-bit PCM or float")
@@ -91,15 +106,15 @@ def _db(value: float) -> float | None:
     return round(20 * math.log10(value), 2) if value > 0 else None
 
 
-def _envelope(x: array, hop: int) -> list[float]:
+def _envelope(x: array[Any], hop: int) -> list[float]:
     return [max(map(abs, x[i : i + hop])) for i in range(0, len(x) - hop + 1, hop)]
 
 
-def _rms(seg: array) -> float:
+def _rms(seg: array[Any]) -> float:
     return math.sqrt(sum(v * v for v in seg) / len(seg)) if len(seg) else 0.0
 
 
-def level(x: array, rate: int, window_seconds: float) -> dict[str, Any]:
+def level(x: array[Any], rate: int, window_seconds: float) -> dict[str, Any]:
     peak = max(map(abs, x), default=0.0)
     rms = _rms(x)
     window_seconds = max(window_seconds, len(x) / rate / MAX_WINDOWS)
@@ -108,7 +123,7 @@ def level(x: array, rate: int, window_seconds: float) -> dict[str, Any]:
     for i in range(0, len(x), size):
         seg = x[i : i + size]
         rows.append({"t": round(i / rate, 3), "peak": round(max(map(abs, seg)), 4), "rms": round(_rms(seg), 4)})
-    quiet = sum(1 for r in rows if r["rms"] < 0.001)
+    quiet = sum(1 for r in rows if r["rms"] < QUIET_RMS)
     return {
         "peak": round(peak, 4),
         "peakDb": _db(peak),
@@ -121,7 +136,7 @@ def level(x: array, rate: int, window_seconds: float) -> dict[str, Any]:
     }
 
 
-def onsets(x: array, rate: int, threshold: float, skip: float) -> tuple[list[float], dict[str, Any]]:
+def onsets(x: array[Any], rate: int, threshold: float, skip: float) -> tuple[list[float], dict[str, Any]]:
     """Rising crossings of threshold*max of a 5 ms peak envelope; times are seconds from file start."""
     hop = max(1, int(HOP_SECONDS * rate))
     first = int(skip * rate) // hop
@@ -165,13 +180,13 @@ def _fft(values: list[complex]) -> list[complex]:
 _WINDOW = [0.5 - 0.5 * math.cos(2 * math.pi * i / FFT_SIZE) for i in range(FFT_SIZE)]
 
 
-def pitch_at(x: array, rate: int, start: int) -> float | None:
+def pitch_at(x: array[Any], rate: int, start: int) -> float | None:
     """Dominant spectral peak 10 ms after an onset, as fractional MIDI (parabolic interpolation); None if too short."""
     begin = start + int(0.01 * rate)
     seg = x[begin : begin + FFT_SIZE]
     if len(seg) < FFT_SIZE:
         return None
-    spectrum = _fft([complex(v * w) for v, w in zip(seg, _WINDOW)])
+    spectrum = _fft([complex(v * w) for v, w in zip(seg, _WINDOW, strict=False)])
     low = max(2, int(30 * FFT_SIZE / rate))
     mags = [abs(c) for c in spectrum[: FFT_SIZE // 2]]
     k = max(range(low, len(mags) - 1), key=mags.__getitem__)
@@ -192,7 +207,7 @@ MIN_SEPARATION = 0.04  # seconds between onsets
 _FLUX_WINDOW = [0.5 - 0.5 * math.cos(2 * math.pi * i / FLUX_SIZE) for i in range(FLUX_SIZE)]
 
 
-def _decimate(x: array, rate: int) -> tuple[array, int]:
+def _decimate(x: array[Any], rate: int) -> tuple[array[Any], int]:
     """Average-and-drop to about FLUX_RATE (crude low-pass; onsets need no high band)."""
     factor = max(1, round(rate / FLUX_RATE))
     if factor == 1:
@@ -200,21 +215,21 @@ def _decimate(x: array, rate: int) -> tuple[array, int]:
     return array("d", (sum(x[i : i + factor]) / factor for i in range(0, len(x) - factor + 1, factor))), rate // factor
 
 
-def spectral_flux(x: array, rate: int) -> tuple[list[float], float]:
+def spectral_flux(x: array[Any], rate: int) -> tuple[list[float], float]:
     """Half-wave rectified log-magnitude flux per 10 ms hop, and the hop length in seconds."""
     y, yrate = _decimate(x, rate)
     hop = max(1, round(FLUX_HOP * yrate / FLUX_RATE))
     bins = min(max(2, int(FLUX_MAX_HZ * FLUX_SIZE / yrate)), FLUX_SIZE // 2)
     flux, previous = [], None
     for start in range(0, len(y) - FLUX_SIZE + 1, hop):
-        spectrum = _fft([complex(v * w) for v, w in zip(y[start : start + FLUX_SIZE], _FLUX_WINDOW)])
+        spectrum = _fft([complex(v * w) for v, w in zip(y[start : start + FLUX_SIZE], _FLUX_WINDOW, strict=False)])
         mags = [math.log1p(200 * abs(c) / FLUX_SIZE) for c in spectrum[1:bins]]
-        flux.append(0.0 if previous is None else sum(max(0.0, a - b) for a, b in zip(mags, previous)))
+        flux.append(0.0 if previous is None else sum(max(0.0, a - b) for a, b in zip(mags, previous, strict=False)))
         previous = mags
     return flux, hop * (rate / yrate) / rate
 
 
-def flux_onsets(x: array, rate: int, threshold: float, skip: float) -> tuple[list[float], dict[str, Any]]:
+def flux_onsets(x: array[Any], rate: int, threshold: float, skip: float) -> tuple[list[float], dict[str, Any]]:
     """Peaks of the spectral flux: a new note over a long decaying tail still adds new energy per bin, which an
     amplitude envelope cannot see. A peak is a local maximum that beats its neighbourhood median by
     threshold*max(flux) and sits MIN_SEPARATION after the previous one; its time is refined to the steepest envelope rise."""
@@ -251,7 +266,9 @@ def flux_onsets(x: array, rate: int, threshold: float, skip: float) -> tuple[lis
     return found, info
 
 
-def find_onsets(x: array, rate: int, threshold: float, skip: float, method: str) -> tuple[list[float], dict[str, Any]]:
+def find_onsets(
+    x: array[Any], rate: int, threshold: float, skip: float, method: str
+) -> tuple[list[float], dict[str, Any]]:
     if method == "envelope":
         times, info = onsets(x, rate, threshold, skip)
         return times, {**info, "method": "envelope"}
@@ -262,7 +279,7 @@ NAMES = ("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
 
 
 def mono_pitch(
-    x: array, rate: int, threshold: float, skip: float, bpm: float | None, method: str = "flux"
+    x: array[Any], rate: int, threshold: float, skip: float, bpm: float | None, method: str = "flux"
 ) -> dict[str, Any]:
     times, info = find_onsets(x, rate, threshold, skip, method)
     notes = []
@@ -274,20 +291,20 @@ def mono_pitch(
     if not notes:
         return {**result, "notes": []}
     rounded = [round(m) for _, m in notes]
-    ivs = [b - a for a, b in zip(rounded, rounded[1:])]
-    leaps = [i for i, v in enumerate(ivs) if abs(v) >= 5]
-    recovered = [i for i in leaps if i + 1 < len(ivs) and ivs[i + 1] * ivs[i] < 0 and abs(ivs[i + 1]) <= 2]
+    ivs = [b - a for a, b in pairwise(rounded)]
+    leaps = [i for i, v in enumerate(ivs) if abs(v) >= LEAP_SEMITONES]
+    recovered = [i for i in leaps if i + 1 < len(ivs) and ivs[i + 1] * ivs[i] < 0 and abs(ivs[i + 1]) <= STEP_SEMITONES]
     pcs = sorted({m % 12 for m in rounded})
     summary: dict[str, Any] = {
         "pitchClasses": pcs,
         "pitchClassNames": [NAMES[p] for p in pcs],
         "range": {"min": min(rounded), "max": max(rounded), "semitones": max(rounded) - min(rounded)},
-        "tuneError": round(sum(abs(m - r) for (_, m), r in zip(notes, rounded)) / len(notes), 3),
+        "tuneError": round(sum(abs(m - r) for (_, m), r in zip(notes, rounded, strict=False)) / len(notes), 3),
     }
     if ivs:
         summary.update(
             intervals=ivs[:MAX_ONSETS],
-            stepwiseRatio=round(sum(abs(v) <= 2 for v in ivs) / len(ivs), 3),
+            stepwiseRatio=round(sum(abs(v) <= STEP_SEMITONES for v in ivs) / len(ivs), 3),
             repeatRatio=round(sum(v == 0 for v in ivs) / len(ivs), 3),
             leaps=len(leaps),
             leapRecoveryRatio=round(len(recovered) / len(leaps), 3) if leaps else 1.0,
@@ -311,7 +328,7 @@ def mono_pitch(
     return result
 
 
-def probe(x: array, rate: int, skip: float) -> dict[str, Any]:
+def probe(x: array[Any], rate: int, skip: float) -> dict[str, Any]:
     """Signed means over 10 ms windows: the file as a scope trace of a logic/CV signal."""
     size = max(1, rate // 100)
     start = int(skip * rate)
@@ -358,14 +375,14 @@ def parse_key(key: str) -> tuple[int, str]:
     return (pc + {"": 0, "#": 1, "b": -1}[accidental]) % 12, mode.lower()
 
 
-def _frame(x: array, start: int) -> tuple[list[float], list[float]]:
+def _frame(x: array[Any], start: int) -> tuple[list[float], list[float]]:
     """Power and magnitude of bins 0..N/2 of one Hann-windowed frame."""
-    spectrum = _fft([complex(v * w) for v, w in zip(x[start : start + FFT_SIZE], _WINDOW)])
+    spectrum = _fft([complex(v * w) for v, w in zip(x[start : start + FFT_SIZE], _WINDOW, strict=False)])
     mags = [abs(c) for c in spectrum[: FFT_SIZE // 2 + 1]]
     return [m * m for m in mags], mags
 
 
-def _lowpass_decimate(x: array, factor: int) -> array:
+def _lowpass_decimate(x: array[Any], factor: int) -> array[Any]:
     """Two cascaded boxcar averages (sinc^2 low-pass), then keep every factor-th sample."""
     if factor == 1:
         return x
@@ -375,10 +392,10 @@ def _lowpass_decimate(x: array, factor: int) -> array:
     return array("d", [(acc[i + factor] - acc[i]) / factor for i in range(0, len(once) - factor + 1, factor)])
 
 
-_PITCH_CLASS_MAPS: dict[tuple[int, int], tuple[int, list[int]]] = {}
+_PITCH_CLASS_MAPS: dict[tuple[int, float], tuple[int, list[int]]] = {}
 
 
-def _pitch_class_map(n: int, rate: int) -> tuple[int, list[int]]:
+def _pitch_class_map(n: int, rate: float) -> tuple[int, list[int]]:
     key = (n, rate)
     if key not in _PITCH_CLASS_MAPS:
         lo, hi = max(1, math.ceil(CHROMA_LOW * n / rate)), min(n // 2, int(CHROMA_HIGH * n / rate))
@@ -386,7 +403,7 @@ def _pitch_class_map(n: int, rate: int) -> tuple[int, list[int]]:
     return _PITCH_CLASS_MAPS[key]
 
 
-def _chroma(x: array, rate: int) -> list[float]:
+def _chroma(x: array[Any], rate: int) -> list[float]:
     """Pitch-class power of one window: decimate to ~CHROMA_RATE, one Hann FFT over the whole window
     (resolution 1/window seconds, enough to separate semitones at 50 Hz), fold every bin's power in CHROMA_LOW..CHROMA_HIGH."""
     factor = max(1, rate // CHROMA_RATE)
@@ -398,7 +415,7 @@ def _chroma(x: array, rate: int) -> list[float]:
         size = 1 << (n - 1).bit_length()
         mean = sum(seg) / n
         w = [0.5 - 0.5 * math.cos(2 * math.pi * i / n) for i in range(n)]
-        spectrum = _fft([complex((v - mean) * c) for v, c in zip(seg, w)] + [0j] * (size - n))
+        spectrum = _fft([complex((v - mean) * c) for v, c in zip(seg, w, strict=False)] + [0j] * (size - n))
         lo, classes = _pitch_class_map(size, yrate)
         for k, pc in enumerate(classes, lo):
             c = spectrum[k]
@@ -451,14 +468,14 @@ def spectral_peaks(power: list[float], rate: int) -> list[dict[str, Any]]:
             "cents": round((midi - nearest) * 100),
         }
         if (
-            1200 * math.log2((freq + rate / FFT_SIZE) / freq) > 100
+            1200 * math.log2((freq + rate / FFT_SIZE) / freq) > SEMITONE_CENTS
         ):  # one bin is wider than a semitone here: the note name is a guess
             row["approximate"] = True
         out.append(row)
     return out
 
 
-def bands(x: array, rate: int, window_seconds: float, key: str | None, shift: float) -> dict[str, Any]:
+def bands(x: array[Any], rate: int, window_seconds: float, key: str | None, shift: float) -> dict[str, Any]:
     """Per-window band energy relative to the window's total power (dB), spectral centroid and RMS; optional in-key chroma."""
     nyquist = rate / 2
     edges = [
@@ -486,20 +503,20 @@ def bands(x: array, rate: int, window_seconds: float, key: str | None, shift: fl
         hop = max(FFT_SIZE, (end - begin - FFT_SIZE) // (FRAMES_PER_WINDOW - 1))
         power, weighted = [0.0] * (FFT_SIZE // 2 + 1), 0.0
         for start in range(begin, end - FFT_SIZE + 1, hop):
-            p, mags = _frame(x, start)
-            power = [a + b for a, b in zip(power, p)]
-        all_power = [a + b for a, b in zip(all_power, power)]
+            p, _mags = _frame(x, start)
+            power = [a + b for a, b in zip(power, p, strict=False)]
+        all_power = [a + b for a, b in zip(all_power, power, strict=False)]
         total = sum(power[1:])
         row: dict[str, Any] = {"t": round(begin / rate + shift, 3), "rms": round(_rms(x[begin:end]), 4)}
         if total > 0:
-            weighted = sum(f * v for f, v in zip(freqs[1:], power[1:]))
+            weighted = sum(f * v for f, v in zip(freqs[1:], power[1:], strict=False))
             row["bandsDb"] = {n: _rel_db(sum(power[max(lo, 1) : hi]), total) for n, lo, hi in edges}
             row["centroidHz"] = round(weighted / total)
         else:
             row["bandsDb"], row["centroidHz"] = {n: None for n, _, _ in edges}, None
         if scale is not None:
             chroma = _chroma(x[begin:end], rate)
-            all_chroma = [a + b for a, b in zip(all_chroma, chroma)]
+            all_chroma = [a + b for a, b in zip(all_chroma, chroma, strict=False)]
             row["chroma"] = _chroma_report(chroma, scale)
         rows.append(row)
     out: dict[str, Any] = {
@@ -521,7 +538,7 @@ def bands(x: array, rate: int, window_seconds: float, key: str | None, shift: fl
     return out
 
 
-def stereo_correlation(left: array, right: array | None, skip: int) -> float | None:
+def stereo_correlation(left: array[Any], right: array[Any] | None, skip: int) -> float | None:
     """Pearson correlation of the two channels over the whole (skipped) file; None for mono or a silent channel."""
     if right is None:
         return None
@@ -533,7 +550,7 @@ def stereo_correlation(left: array, right: array | None, skip: int) -> float | N
     saa = sum(v * v for v in a) - n * ma * ma
     sbb = sum(v * v for v in b) - n * mb * mb
     sab = sum(map(float.__mul__, a, b)) - n * ma * mb
-    return round(sab / math.sqrt(saa * sbb), 3) if saa > 1e-12 and sbb > 1e-12 else None
+    return round(sab / math.sqrt(saa * sbb), 3) if saa > MIN_ENERGY and sbb > MIN_ENERGY else None
 
 
 # ---- spectrogram ----------------------------------------------------------------------------------------
@@ -545,7 +562,7 @@ def _color(level: float) -> bytes:
     pos = min(max(level, 0.0), 1.0) * (len(_PALETTE) - 1)
     i = min(int(pos), len(_PALETTE) - 2)
     f = pos - i
-    return bytes(round(a + (b - a) * f) for a, b in zip(_PALETTE[i], _PALETTE[i + 1]))
+    return bytes(round(a + (b - a) * f) for a, b in zip(_PALETTE[i], _PALETTE[i + 1], strict=False))
 
 
 def write_png(path: str, width: int, height: int, rgb_rows: list[bytes]) -> None:
@@ -566,7 +583,7 @@ def write_png(path: str, width: int, height: int, rgb_rows: list[bytes]) -> None
         raise WavError(f"Cannot write {path}: {exc.strerror}") from exc
 
 
-def spectrogram(x: array, rate: int, path: str) -> dict[str, Any]:
+def spectrogram(x: array[Any], rate: int, path: str) -> dict[str, Any]:
     """Log-frequency PNG (low frequencies at the bottom, time left to right), SPEC_RANGE_DB below the loudest cell."""
     if len(x) < FFT_SIZE:
         raise WavError("Audio is shorter than one analysis frame; no spectrogram")
@@ -585,14 +602,13 @@ def spectrogram(x: array, rate: int, path: str) -> dict[str, Any]:
         cells.append([max(mags[a:b]) for a, b in ranges])
     peak = max((v for col in cells for v in col), default=0.0)
     floor = peak * 10 ** (-SPEC_RANGE_DB / 20)
-    rows = []
-    for r in range(SPEC_ROWS - 1, -1, -1):
-        rows.append(
-            b"".join(
-                _color(0.0 if cells[c][r] <= floor else 1 + 20 * math.log10(cells[c][r] / peak) / SPEC_RANGE_DB)
-                for c in range(columns)
-            )
+    rows = [
+        b"".join(
+            _color(0.0 if cells[c][r] <= floor else 1 + 20 * math.log10(cells[c][r] / peak) / SPEC_RANGE_DB)
+            for c in range(columns)
         )
+        for r in range(SPEC_ROWS - 1, -1, -1)
+    ]
     write_png(path, columns, SPEC_ROWS, rows)
     return {
         "path": path,
@@ -641,7 +657,7 @@ def analyze(args: dict[str, Any]) -> dict[str, Any]:
             "count": len(times),
             "onsets": times[:MAX_ONSETS],
             "truncated": len(times) > MAX_ONSETS,
-            "intervals": [round(b - a, 4) for a, b in zip(times, times[1:])][:MAX_ONSETS],
+            "intervals": [round(b - a, 4) for a, b in pairwise(times)][:MAX_ONSETS],
         }
     return {**base, **mono_pitch(x, rate, threshold, skip, args.get("bpm"), args.get("method", "flux"))}
 

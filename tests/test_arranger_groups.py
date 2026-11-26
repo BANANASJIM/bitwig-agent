@@ -78,7 +78,7 @@ def test_arranger_copy_and_list():
 
 
 @pytest.mark.parametrize(
-    "op,payload",
+    ("op", "payload"),
     [("move", {"startBeats": 32}), ("resize", {"lengthBeats": 8}), ("rename", {"name": "Chorus"}), ("delete", {})],
 )
 def test_arranger_edit_ops_take_exactly_their_payload(op, payload):

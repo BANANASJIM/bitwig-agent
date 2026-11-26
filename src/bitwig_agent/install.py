@@ -2,18 +2,17 @@
 
 import argparse
 import hashlib
-from http.client import HTTPException
-from importlib.metadata import version
 import json
 import os
-from pathlib import Path
 import re
 import sys
 import tempfile
 import time
+from http.client import HTTPException
+from importlib.metadata import version
+from pathlib import Path
 from urllib.error import URLError
 from urllib.request import urlopen
-
 
 _EXTENSION = "BitwigAgent.bwextension"
 _RELEASES = "https://github.com/BANANASJIM/bitwig-agent/releases/download"

@@ -33,10 +33,12 @@ def _fail(message: str, code: str = "invalid_params") -> BridgeError:
     return BridgeError({"code": code, "message": message, "outcome": "not_dispatched"})
 
 
-async def read_all(client: Any, target: dict[str, Any], timeout_ms: int, params: bool) -> tuple[list[dict], list[dict]]:
+async def read_all(
+    client: Any, target: dict[str, Any], timeout_ms: int, params: bool
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Every module and cable of the device (all pages)."""
-    rows: list[dict] = []
-    cables: dict[tuple, dict] = {}
+    rows: list[dict[str, Any]] = []
+    cables: dict[tuple[Any, ...], dict[str, Any]] = {}
     total, step = None, PARAM_PAGE if params else PAGE
     while total is None or len(rows) < total:
         page = await client.call(
@@ -64,7 +66,7 @@ async def read_all(client: Any, target: dict[str, Any], timeout_ms: int, params:
     return rows, list(cables.values())
 
 
-def module_names(rows: list[dict]) -> tuple[dict[str, str], list[str], list[str]]:
+def module_names(rows: list[dict[str, Any]]) -> tuple[dict[str, str], list[str], list[str]]:
     """instanceId -> name (customName, else generated), the generated names, and customNames that are not unique."""
     counts = Counter(r["customName"] for r in rows if r.get("customName"))
     names, generated = {}, []
@@ -81,7 +83,7 @@ def module_names(rows: list[dict]) -> tuple[dict[str, str], list[str], list[str]
 def _same(a: Any, b: Any) -> bool:
     if type(a) in (int, float) and type(b) in (int, float) and type(a) is not bool and type(b) is not bool:
         return math.isclose(a, b, rel_tol=1e-9, abs_tol=1e-12)
-    return a == b
+    return bool(a == b)
 
 
 def export_params(row: dict[str, Any], mode: str, warnings: list[str], name: str) -> dict[str, Any]:
@@ -117,7 +119,7 @@ def export_params(row: dict[str, Any], mode: str, warnings: list[str], name: str
     return out
 
 
-def build(rows: list[dict], cables: list[dict], mode: str, namespace: str | None) -> dict[str, Any]:
+def build(rows: list[dict[str, Any]], cables: list[dict[str, Any]], mode: str, namespace: str | None) -> dict[str, Any]:
     """Named modules, cables and the outside names they reference."""
     names, generated, duplicates = module_names(rows)
     warnings: list[str] = []

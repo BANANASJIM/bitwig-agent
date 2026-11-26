@@ -13,11 +13,13 @@ import math
 import re
 import struct
 import time
+from collections.abc import Callable, Iterable
 from importlib import resources
-from typing import Any
+from typing import Any, cast
 
 from bitwig_agent import raw_scales
 from bitwig_agent.client import BridgeError
+from bitwig_agent.diagnostics import diagnostics
 from bitwig_agent.schema import TOPOLOGY_TIMEOUT_MS
 
 BUNDLED_HOST_VERSION = "6.1.4"
@@ -39,6 +41,9 @@ _schema_cache: dict[str, Any] = {}
 _notes_cache: dict[str, Any] = {}
 
 
+PREVIEW_ITEMS = 10
+
+
 def bundled_schema() -> dict[str, Any]:
     if not _schema_cache:
         text = resources.files("bitwig_agent").joinpath("data/grid_schema_6_1_4.json").read_text(encoding="utf-8")
@@ -57,17 +62,17 @@ def _norm(text: str) -> str:
     return "".join(ch for ch in text.casefold() if ch.isalnum())
 
 
-def _near(word: str, choices) -> str:
+def _near(word: str, choices: Iterable[str]) -> str:
     close = difflib.get_close_matches(word, list(choices), n=4, cutoff=0.5)
     return f" Did you mean: {', '.join(map(repr, close))}?" if close else ""
 
 
-def _valid(choices, limit: int = 40) -> str:
+def _valid(choices: Iterable[str], limit: int = 40) -> str:
     keys = sorted(choices)
     return f" Valid: {', '.join(keys[:limit])}{' ...' if len(keys) > limit else ''}." if keys else " It has none."
 
 
-def _hint(word: str, choices) -> str:
+def _hint(word: str, choices: Iterable[str]) -> str:
     """Did-you-mean (case-insensitive and substring matches first) plus the full list of valid ids."""
     keys = list(choices)
     folded = {k.casefold(): k for k in keys}
@@ -188,7 +193,8 @@ def generated_name(row: dict[str, Any]) -> str:
 
 
 # Mirror of GridDisplayUnits.java: natural = what the display text measures (Hz, percent points, dB).
-DISPLAY_UNITS = {
+Converter = Callable[[float], float]
+DISPLAY_UNITS: dict[str, tuple[dict[str, float], Converter | None, Converter | None]] = {
     "hertz": (
         {"hz": 1.0, "khz": 1000.0},
         lambda f: 69 + 12 * math.log2(f / 440) if f > 0 else math.nan,
@@ -201,11 +207,11 @@ DISPLAY_UNITS = {
 # Seconds parameters: the raw<->seconds mapping is not uniform, so only (module type, parameter) pairs whose default
 # raw/display pair fits one mapping exactly are writable by display. Natively measured on 6.1.4 (notes: grid_notes_6_1_4.json);
 # every row is (mapping, default raw, default display) and is re-checked against the bundled schema by a test.
-SECONDS_SCALES = {
+SECONDS_SCALES: dict[str, tuple[Converter, Converter]] = {
     "cbrt": (lambda s: math.cbrt(s) if s >= 0 else math.nan, lambda raw: raw**3),
     "log10": (lambda s: math.log10(s) if s > 0 else math.nan, lambda raw: 10**raw),
 }
-SECONDS_PARAMS = {
+SECONDS_PARAMS: dict[tuple[str | None, str], tuple[str, float, str]] = {
     ("AD", "ATTACK"): ("cbrt", 0.2717, "20.1 ms"),
     ("AD", "DECAY"): ("cbrt", 0.694, "334 ms"),
     ("ADSR", "ATTACK"): ("cbrt", 0.2217, "10.9 ms"),
@@ -247,7 +253,9 @@ def parse_quantity(unit: str, text: str | None) -> tuple[float, float] | None:
     if not isinstance(text, str) or unit not in DISPLAY_UNITS:
         return None
     m = _TEXT.fullmatch(text.replace("\u2212", "-").strip(_JAVA_TRIM))
-    scale = DISPLAY_UNITS[unit][0].get(m.group(4).lower()) if m else None
+    if m is None:
+        return None
+    scale = DISPLAY_UNITS[unit][0].get(m.group(4).lower())
     if scale is None:
         return None
     fraction = m.group(2) if m.group(2) is not None else m.group(3) if m.group(3) is not None else ""
@@ -285,7 +293,7 @@ def check_display(
     if (type_name, pid) in raw_scales.RAW_SCALES and raw_scales.scale_for(type_name, pid, context) is None:
         raise SpecError(
             [
-                f"{pid}: its raw scale depends on {raw_scales.RAW_SCALES[(type_name, pid)].scale['by']}; set it to Hertz/Kilohertz in the same module to write by display, or write the raw value"
+                f"{pid}: its raw scale depends on {cast(dict[str, Any], raw_scales.RAW_SCALES[(type_name, pid)].scale)['by']}; set it to Hertz/Kilohertz in the same module to write by display, or write the raw value"
             ]
         )
     if raw_scales.is_client(type_name, pid, context):  # recorded scale: converted here, no live pair needed
@@ -305,6 +313,8 @@ def check_display(
         if scale is None:
             raise SpecError([f"{pid}: no verified seconds scale for {type_name!r}; write the raw value instead"])
         to_raw, from_raw = SECONDS_SCALES[scale[0]]
+    assert to_raw is not None
+    assert from_raw is not None
     wanted = parse_quantity(unit, text)
     if wanted is None:
         raise SpecError(
@@ -387,10 +397,10 @@ def order_moves(
     parked: set[str] = set()
     plan: list[tuple[str, tuple[int, int]]] = []
 
-    def rect(n, at):
+    def rect(n: str, at: tuple[int, int]) -> tuple[int, int, int, int]:
         return (at[0], at[1], *size.get(n, (1, 1)))
 
-    def free(n, at):
+    def free(n: str, at: tuple[int, int]) -> bool:
         r = rect(n, at)
         return not any(overlaps(r, f) for f in fixed) and not any(
             overlaps(r, rect(m, q)) for m, q in pos.items() if m != n
@@ -405,20 +415,20 @@ def order_moves(
                 todo.remove(n)
                 progressed = True
         if todo and not progressed:
-            n = next((m for m in todo if m not in parked), None)
-            if n is None:
+            stuck = next((m for m in todo if m not in parked), None)
+            if stuck is None:
                 raise SpecError(["footprints cannot be ordered into a collision-free move sequence"])
             right = max(
                 [f[0] + f[2] for f in fixed]
                 + [q[0] + size.get(m, (1, 1))[0] for m, q in pos.items()]
                 + [q[0] + size.get(m, (1, 1))[0] for m, q in target.items()]
             )
-            spot = (right + 2, pos[n][1])
-            if spot == pos[n] or not free(n, spot):
+            spot = (right + 2, pos[stuck][1])
+            if spot == pos[stuck] or not free(stuck, spot):
                 raise SpecError(["footprints cannot be ordered into a collision-free move sequence"])
-            pos[n] = spot
-            plan.append((n, spot))
-            parked.add(n)
+            pos[stuck] = spot
+            plan.append((stuck, spot))
+            parked.add(stuck)
     return plan
 
 
@@ -427,7 +437,7 @@ STEP_ENTRIES, STEP_BOUND = 256, 128
 
 
 def f32(x: float) -> float:
-    return struct.unpack("f", struct.pack("f", x))[0]
+    return float(struct.unpack("f", struct.pack("f", x))[0])
 
 
 def is_steps(raw: Any) -> bool:
@@ -511,7 +521,7 @@ def value_matches(kind: str, want: dict[str, Any], row_param: dict[str, Any]) ->
         ):
             return True  # converted client-side: the live raw already is the converted value
         return display_matches(
-            want.get("display", want.get("shown")), row_param.get("display"), row_param.get("numericUnit")
+            cast(str, want.get("display", want.get("shown"))), row_param.get("display"), row_param.get("numericUnit")
         )
     live, new = row_param.get("value"), want["value"]
     if kind == "boolean":
@@ -519,7 +529,7 @@ def value_matches(kind: str, want: dict[str, Any], row_param: dict[str, Any]) ->
     if kind == "string":
         return type(live) is str and live == new
     if kind == "float":
-        return type(live) in (int, float) and math.isclose(live, new, rel_tol=1e-9, abs_tol=1e-12)
+        return type(live) in (int, float) and math.isclose(cast(float, live), new, rel_tol=1e-9, abs_tol=1e-12)
     return type(live) is int and live == new
 
 
@@ -582,7 +592,7 @@ class Apply:
             self.topo_written |= method not in ("grid.parameters.set", "grid.connections.set", "grid.voicing.set")
         try:
             host_params = params if method in ("grid.capabilities", "grid.catalog") else {**self.target, **params}
-            result = await self.client.call(method, host_params, timeout)
+            result: dict[str, Any] = await self.client.call(method, host_params, timeout)
         except BridgeError as exc:
             raise Stop(method, {"error": exc.error}, exc.error.get("outcome", "unknown")) from exc
         return result
@@ -593,8 +603,7 @@ class Apply:
             result.get("status") not in (None, "observed")
             or result.get("batchStatus") not in (None, "applied")
             or result.get("completion") == "unknown"
-            or result.get("matchesRequested") is False
-            and method == "grid.connections.set"
+            or (result.get("matchesRequested") is False and method == "grid.connections.set")
             or any(e.get("status") not in CLEAN for e in entries or [])
         )
         if bad:
@@ -607,9 +616,11 @@ class Apply:
             raise Stop(method, result, "unknown" if unknown else "not_applied")
 
     # ---- reads -----------------------------------------------------------------------------------------------
-    async def read_graph(self, *, params: bool = False, ids: list[str] | None = None) -> tuple[list[dict], list[dict]]:
-        rows: list[dict] = []
-        conns: list[dict] = []
+    async def read_graph(
+        self, *, params: bool = False, ids: list[str] | None = None
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        rows: list[dict[str, Any]] = []
+        conns: list[dict[str, Any]] = []
         offset = 0
         while True:
             req: dict[str, Any] = {"moduleOffset": offset, "moduleLimit": READ_PAGE, "includeParameters": params}
@@ -637,8 +648,8 @@ class Apply:
             )
         return rows, conns
 
-    async def read_params(self, ids: list[str]) -> dict[str, dict]:
-        rows: dict[str, dict] = {}
+    async def read_params(self, ids: list[str]) -> dict[str, dict[str, Any]]:
+        rows: dict[str, dict[str, Any]] = {}
         for i in range(0, len(ids), READ_IDS):
             got, _ = await self.read_graph(params=True, ids=ids[i : i + READ_IDS])
             rows.update({r["instanceId"]: r for r in got})
@@ -706,7 +717,7 @@ class Apply:
                 problems += exc.problems
                 continue
             info = self.info[type_name] if self.info else None
-            writes: dict[str, dict] = {}
+            writes: dict[str, dict[str, Any]] = {}
             for pid, raw in (m.get("params") or {}).items():
                 if is_steps(
                     raw
@@ -761,18 +772,18 @@ class Apply:
             src, dst = self.split_endpoint(c["from"], problems), self.split_endpoint(c["to"], problems)
             if not src or not dst:
                 continue
-            for (name, port), want, label in ((src, "outputs", "output"), (dst, "inputs", "input")):
+            for (name, port), side, label in ((src, "outputs", "output"), (dst, "inputs", "input")):
                 info = self.resolved.get(name, {}).get("info")
-                if info is not None and port not in {p["key"] for p in info[want]}:
+                if info is not None and port not in {p["key"] for p in info[side]}:
                     problems.append(
-                        f"{name!r} ({self.resolved[name]['typeName']}) has no {label} {port!r}.{_hint(port, [p['key'] for p in info[want]])}"
+                        f"{name!r} ({self.resolved[name]['typeName']}) has no {label} {port!r}.{_hint(port, [p['key'] for p in info[side]])}"
                     )
             self.edges.append((src[0], src[1], dst[0], dst[1]))
         if problems:
             raise SpecError(problems)
 
     # ---- planning --------------------------------------------------------------------------------------------
-    def plan_params(self, name: str, row: dict | None) -> tuple[list[dict], int]:
+    def plan_params(self, name: str, row: dict[str, Any] | None) -> tuple[list[dict[str, Any]], int]:
         """Writes for one module against a live row (None: module not inserted yet, everything is a write)."""
         entry = self.resolved[name]
         writes, matched = [], 0
@@ -823,7 +834,9 @@ class Apply:
                 "shown" in want and (entry["typeName"], pid) in raw_scales.RAW_SCALES
             ):
                 try:
-                    check_display_live(pid, want.get("display", want.get("shown")), lp, entry["typeName"], ctx)
+                    check_display_live(
+                        pid, cast(str, want.get("display", want.get("shown"))), lp, entry["typeName"], ctx
+                    )
                 except SpecError as exc:
                     raise SpecError([f"{name!r}: {p}" for p in exc.problems]) from exc
             writes.append(
@@ -844,7 +857,9 @@ class Apply:
         return writes, matched
 
     @staticmethod
-    def plan_steps(name: str, row: dict, pid: str, lp: dict, wanted: list[float]) -> dict | None:
+    def plan_steps(
+        name: str, row: dict[str, Any], pid: str, lp: dict[str, Any], wanted: list[float]
+    ) -> dict[str, Any] | None:
         """CAS write for a step array against the live row, or None when the live prefix already holds the values (float32 compare)."""
         if lp.get("kind") != "steps":
             raise SpecError([f"{name!r}: {pid} is {lp.get('kind')} live, not a step array"])
@@ -856,7 +871,7 @@ class Apply:
             raise SpecError(
                 [f"{name!r}: the live row of {pid} returned {len(live)} entries, fewer than the {n} wanted"]
             )
-        if all(f32(a) == f32(b) for a, b in zip(live, wanted)):
+        if all(f32(a) == f32(b) for a, b in zip(live, wanted, strict=False)):
             return None
         count = lp.get("stepCount")
         return {
@@ -868,7 +883,7 @@ class Apply:
             **({"full": True} if count is None or n > count else {}),
         }
 
-    def plan_connections(self, rows: dict[str, dict], conns: list[dict]) -> list[dict]:
+    def plan_connections(self, rows: dict[str, dict[str, Any]], conns: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Edits (as host entries + readable fields) for rows keyed by module name; modules absent from rows are new."""
         incoming = {
             (c["targetModuleId"], c["targetPortKey"]): (c["sourceModuleId"], c["sourcePortKey"])
@@ -876,7 +891,8 @@ class Apply:
             if c["sourceModuleId"] not in self.gone_ids and c["targetModuleId"] not in self.gone_ids
         }
         name_of = {r["instanceId"]: r.get("customName") or generated_name(r) for r in [*self.rows0, *rows.values()]}
-        edits, wanted = [], set()
+        edits: list[dict[str, Any]] = []
+        wanted: set[tuple[str, str]] = set()
         for src, sport, dst, dport in self.edges:
             drow, srow = rows.get(dst), rows.get(src)
             if drow is not None:
@@ -886,7 +902,7 @@ class Apply:
             if drow and srow and current == desired:
                 self.matched["connections"] += 1
                 continue
-            edit = {
+            edit: dict[str, Any] = {
                 "from": f"{src}.{sport}",
                 "to": f"{dst}.{dport}",
                 "previous": f"{name_of.get(current[0], current[0])}.{current[1]}" if current else None,
@@ -904,7 +920,7 @@ class Apply:
             for name, row in rows.items():
                 if name in self.external:  # referenced only: never pruned
                     continue
-                outside = bool(self.namespace) and not name.startswith(self.namespace) and not self.prune_all
+                outside = bool(self.namespace and not name.startswith(self.namespace)) and not self.prune_all
                 for port in row.get("inputs", []):
                     key = (row["instanceId"], port["key"])
                     if key in incoming and key not in wanted:
@@ -942,14 +958,14 @@ class Apply:
                         text.format(
                             n=len(items),
                             ns=self.namespace,
-                            l="; ".join(items[:10]) + (" ..." if len(items) > 10 else ""),
+                            l="; ".join(items[:PREVIEW_ITEMS]) + (" ..." if len(items) > PREVIEW_ITEMS else ""),
                         )
                     )
             if undeclared:
                 self.warn(
                     f"pruneAll: disconnecting {len(undeclared)} input(s) the spec does not declare: "
-                    + "; ".join(undeclared[:10])
-                    + (" ..." if len(undeclared) > 10 else "")
+                    + "; ".join(undeclared[:PREVIEW_ITEMS])
+                    + (" ..." if len(undeclared) > PREVIEW_ITEMS else "")
                 )
         return edits
 
@@ -965,7 +981,7 @@ class Apply:
                     )
         return problems
 
-    def live_checks(self, rows: dict[str, dict]) -> None:
+    def live_checks(self, rows: dict[str, dict[str, Any]]) -> None:
         """Port validation against live rows, needed when no bundled schema covers the host version."""
         problems = []
         for src, sport, dst, dport in self.edges:
@@ -978,10 +994,15 @@ class Apply:
             raise SpecError(problems)
 
     # ---- phases ----------------------------------------------------------------------------------------------
-    def footprints(self, existing, rows, deletes):
+    def footprints(
+        self, existing: dict[str, dict[str, Any]], rows: list[dict[str, Any]], deletes: list[dict[str, Any]]
+    ) -> list[str]:
         """Sizes of spec modules, rects of untouched modules, and offline overlap validation of the spec layout."""
         gone = {r["instanceId"] for r in deletes}
-        known = lambda v: type(v) is int  # noqa: E731
+
+        def known(v: Any) -> bool:
+            return type(v) is int
+
         self.size: dict[str, tuple[int, int]] = {}
         for n in self.names:
             info = self.resolved[n]["info"]
@@ -1011,7 +1032,7 @@ class Apply:
             ]
             problems += [
                 f"{a!r} at {ra[:2]} overlaps existing module {fn}, which the spec does not manage"
-                for fn, f in zip(fixed_names, self.fixed)
+                for fn, f in zip(fixed_names, self.fixed, strict=False)
                 if overlaps(ra, f)
             ]
         return problems
@@ -1023,12 +1044,12 @@ class Apply:
             for k in ("moduleInsert", "moduleMove", "moduleRename")
             if isinstance(self.caps.get(k), dict) and type(self.caps[k].get("maximumModules")) is int
         ]
-        return min(found + [MAX_DEVICE_MODULES])
+        return int(min([*found, MAX_DEVICE_MODULES]))
 
     def admission(self, inserting: bool, deleting: bool) -> list[str]:
         caps, problems = self.caps, []
-        sections = {
-            k: caps.get(k)
+        sections: dict[str, dict[str, Any]] = {
+            k: caps[k]
             for k in ("moduleInsert", "moduleMove", "moduleRename", "moduleDelete")
             if isinstance(caps.get(k), dict)
         }
@@ -1041,7 +1062,7 @@ class Apply:
         return problems
 
     @staticmethod
-    def unreadable_names(caps, rows) -> list[str]:
+    def unreadable_names(caps: Any, rows: list[dict[str, Any]]) -> list[str]:
         bad = [r for r in rows if not isinstance(r.get("customName"), str)]
         problems = (
             [f"{len(bad)} module(s) report no readable customName; refusing to write because identity would be unknown"]
@@ -1074,13 +1095,13 @@ class Apply:
         problems = self.unreadable_names(self.caps, rows)
         if problems:
             raise SpecError(problems)
-        by_custom: dict[str, list[dict]] = {}
+        by_custom: dict[str, list[dict[str, Any]]] = {}
         for r in rows:
             by_custom.setdefault(r["customName"] or generated_name(r), []).append(
                 r
             )  # unnamed: matched by its generated name
         existing = {}
-        replaced: list[dict] = []
+        replaced: list[dict[str, Any]] = []
         for name in self.names:
             found = by_custom.get(name, [])
             if len(found) > 1:
@@ -1131,17 +1152,17 @@ class Apply:
             if stale:
                 self.warn(
                     f"pruneAll: deleting {len(stale)} module(s) the spec does not declare: "
-                    + ", ".join(map(label_of, stale[:10]))
-                    + (" ..." if len(stale) > 10 else "")
+                    + ", ".join(map(label_of, stale[:PREVIEW_ITEMS]))
+                    + (" ..." if len(stale) > PREVIEW_ITEMS else "")
                 )
             if replaced:
                 self.warn(
                     f"pruneAll: replacing {len(replaced)} module(s) whose type changed: "
                     + ", ".join(
                         f"{label_of(r)} ({r.get('typeName') or r.get('typeId')} -> {self.resolved[label_of(r)]['typeName']})"
-                        for r in replaced[:10]
+                        for r in replaced[:PREVIEW_ITEMS]
                     )
-                    + (" ..." if len(replaced) > 10 else "")
+                    + (" ..." if len(replaced) > PREVIEW_ITEMS else "")
                 )
         elif self.prune and self.namespace:
             deletes += [
@@ -1156,8 +1177,8 @@ class Apply:
         self.dropped = self.dropped_cables(replaced, rows, conns)
         if self.dropped:
             self.warnings.append(
-                f"replace drops {len(self.dropped)} cable(s) the spec does not declare: {'; '.join(self.dropped[:10])}"
-                + (" ..." if len(self.dropped) > 10 else "")
+                f"replace drops {len(self.dropped)} cable(s) the spec does not declare: {'; '.join(self.dropped[:PREVIEW_ITEMS])}"
+                + (" ..." if len(self.dropped) > PREVIEW_ITEMS else "")
             )
         self.measured_warnings(existing)
         await self.trap_warnings(existing)
@@ -1201,7 +1222,7 @@ class Apply:
             await self.execute(deletes, inserts, current, pending)
         except Stop as stop:
             return self.report_stop(stop, pending)
-        except Exception as exc:  # noqa: BLE001 - keep the report of work already dispatched
+        except Exception as exc:
             raw = {"error": {"code": "internal_error", "message": f"{type(exc).__name__}: {exc}", "outcome": "unknown"}}
             return self.report_stop(Stop("internal", raw, "unknown"), pending)
         return self.report("applied" if any(self.applied.values()) else "unchanged")
@@ -1223,7 +1244,7 @@ class Apply:
         self.voicing_expected = {k: live[k] for k in self.voicing_set}
         self.matched["voicingFields"] = len(self.voicing_want) - len(self.voicing_set)
 
-    def dry_run(self, existing, conns, deletes, inserts, current) -> dict[str, Any]:
+    def dry_run(self, existing: Any, conns: Any, deletes: Any, inserts: Any, current: Any) -> dict[str, Any]:
         param_plan, planned_params = [], 0
         for name in self.names:
             writes, matched = self.pre_params[name]
@@ -1270,7 +1291,13 @@ class Apply:
             notes.append(
                 "no bundled schema for this host version: ports, parameters and footprints of inserted modules are validated only after insertion"
             )
-        result = {"status": "dryRun", "planned": planned, "alreadyMatched": self.matched, "plan": plan, "steps": []}
+        result: dict[str, Any] = {
+            "status": "dryRun",
+            "planned": planned,
+            "alreadyMatched": self.matched,
+            "plan": plan,
+            "steps": [],
+        }
         result |= {"wouldFail": self.would_fail} if self.would_fail else {}
         return (
             result
@@ -1279,7 +1306,9 @@ class Apply:
             | self.notes_field(notes)
         )
 
-    def dropped_cables(self, replaced: list[dict], rows: list[dict], conns: list[dict]) -> list[str]:
+    def dropped_cables(
+        self, replaced: list[dict[str, Any]], rows: list[dict[str, Any]], conns: list[dict[str, Any]]
+    ) -> list[str]:
         """Live cables on replaced modules that the spec does not re-declare (deleting the module removes them)."""
         gone = {r["instanceId"] for r in replaced}
         label = {r["instanceId"]: r.get("customName") or r.get("name") for r in rows}
@@ -1292,7 +1321,7 @@ class Apply:
                     out.append(f"{s}.{c['sourcePortKey']} -> {t}.{c['targetPortKey']}")
         return out
 
-    def measured_warnings(self, existing: dict[str, dict]) -> None:
+    def measured_warnings(self, existing: dict[str, dict[str, Any]]) -> None:
         """Cheap checks against measured behaviour: an oscillator PITCH_IN is inert while PITCH_MOD is 0."""
         for _src, _sport, dst, dport in self.edges:
             info = self.resolved.get(dst, {}).get("info")
@@ -1311,7 +1340,7 @@ class Apply:
                     f"{dst}: PITCH_IN is connected but PITCH_MOD is 0, so it has no effect (raw 1.0 = 120 semitones)"
                 )
 
-    def known_value(self, name: str, pid: str, existing: dict[str, dict]) -> Any:
+    def known_value(self, name: str, pid: str, existing: dict[str, dict[str, Any]]) -> Any:
         """Value of a parameter after the apply when certain: given in the spec, or the default of a module not inserted yet."""
         given = self.resolved[name]["params"].get(pid)
         if given is not None:
@@ -1334,7 +1363,7 @@ class Apply:
                 self._poly = False
         return self._poly
 
-    async def trap_warnings(self, existing: dict[str, dict]) -> None:
+    async def trap_warnings(self, existing: dict[str, dict[str, Any]]) -> None:
         """Measured traps (grid_notes rules): ignored phase cable, filter keytrack in a Poly Grid, dangling modules."""
         rules = measured_notes().get("rules", {})
         label = {r["instanceId"]: r["customName"] for r in self.rows0}
@@ -1390,7 +1419,7 @@ class Apply:
             self.raw_scale_warnings(name, type_name, ids, ignored, rules.get("rawNonLinear"), rules.get("rawTiny"))
 
     def unit_ignores_time(
-        self, name: str, ids: dict[str, Any], existing: dict[str, dict], rule: dict[str, Any] | None
+        self, name: str, ids: dict[str, Any], existing: dict[str, dict[str, Any]], rule: dict[str, Any] | None
     ) -> bool:
         """Warn when TIME is written while UNIT is a note value; True when the TIME is covered by that warning."""
         if (
@@ -1425,8 +1454,7 @@ class Apply:
         for pid, spec in params.items():
             want, raw = spec["want"], spec["raw"]
             if (
-                skip_time
-                and pid == "TIME"
+                (skip_time and pid == "TIME")
                 or type(raw) not in (int, float)
                 or not want
                 or "shown" in want
@@ -1460,7 +1488,7 @@ class Apply:
     async def transport_blocks(self) -> list[dict[str, str]]:
         try:
             state = await self.client.call("transport.get", {}, self.timeout_ms)
-        except Exception:  # noqa: BLE001 - preflight is advisory
+        except Exception:
             return []
         busy = [k for k in ("playing", "recording") if isinstance(state, dict) and state.get(k) is True]
         return (
@@ -1474,7 +1502,7 @@ class Apply:
             else []
         )
 
-    async def preflight(self, existing, conns, deletes, inserts) -> list[dict[str, str]]:
+    async def preflight(self, existing: Any, conns: Any, deletes: Any, inserts: Any) -> list[dict[str, str]]:
         """What a real apply would be refused for, knowable now without writing."""
         out: list[dict[str, str]] = []
         kept = self.matched["connections"]
@@ -1540,7 +1568,7 @@ class Apply:
         pos[mid] = (actual["x"], actual["y"]) if actual else at
         self.steps.append({"op": "move", "name": name, "to": list(pos[mid])})
 
-    async def execute(self, deletes, inserts, current, pending) -> None:
+    async def execute(self, deletes: Any, inserts: Any, current: Any, pending: Any) -> None:
         self.phase = "voicing"
         if self.voicing_set:
             result = await self.call(
@@ -1596,7 +1624,7 @@ class Apply:
             size = next_insert_batch(size, self.clock() - started, result)
             added = {r["instanceId"]: r for r in result.get("modulesAdded", [])}
             fresh = []
-            for n, e in zip(chunk, entries):
+            for n, e in zip(chunk, entries, strict=False):
                 if e.get("status") == "applied" and e.get("moduleId"):
                     self.ids[n] = e["moduleId"]
                     self.unnamed[e["moduleId"]] = n
@@ -1676,7 +1704,7 @@ class Apply:
                 await self.move_to(name, pos, at)
         self.phase = "params"
         with_params = [n for n in self.names if self.resolved[n]["params"]]
-        writes: list[dict] = []
+        writes: list[dict[str, Any]] = []
         try:
             if not self.topo_written:  # nothing structural changed since the validation read: reuse its CAS values
                 for n in with_params:
@@ -1741,7 +1769,7 @@ class Apply:
             chunk = edits[i : i + CONNECTION_BATCH]
             result = await self.call("grid.connections.set", {"connections": [e["write"] for e in chunk]}, write=True)
             entries = result.get("connections", [])
-            done = [e for e, r in zip(chunk, entries) if r.get("status") == "applied"]
+            done = [e for e, r in zip(chunk, entries, strict=False) if r.get("status") == "applied"]
             self.applied["connections"] += sum(1 for e in done if e["from"])
             self.applied["disconnected"] += sum(1 for e in done if not e["from"])
             self.matched["connections"] += sum(1 for e in entries if e.get("status") == "already_matched")
@@ -1814,11 +1842,10 @@ async def with_marker(client: Any, result: dict[str, Any], wrote: bool, timeout_
     """After a build, attach a host.diagnostics marker: sinceMarker=<it> shows only rejections that happened after the build."""
     if not wrote or result.get("status") == "dryRun":
         return result
-    from bitwig_agent.diagnostics import diagnostics  # local: keeps the log reader out of the pure planning path
 
     try:
         marker = (await diagnostics(client, {"maxEvents": 1, "sinceSeconds": 1}, timeout_ms)).get("marker")
-    except Exception:  # noqa: BLE001 - diagnostics are best effort
+    except Exception:
         marker = None
     return result | ({"diagnosticsMarker": marker} if marker else {})
 
@@ -1851,7 +1878,7 @@ async def apply(client: Any, args: dict[str, Any], timeout_ms: int = 5000) -> di
         ) from stop
     except BridgeError:
         raise
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         if run.wrote:
             raw = {"error": {"code": "internal_error", "message": f"{type(exc).__name__}: {exc}", "outcome": "unknown"}}
             return run.report_stop(Stop("internal", raw, "unknown"), {})

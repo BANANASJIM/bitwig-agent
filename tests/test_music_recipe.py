@@ -2,6 +2,7 @@ import argparse
 import importlib.util
 import json
 from pathlib import Path
+from typing import Any, ClassVar
 
 import pytest
 
@@ -11,6 +12,8 @@ def recipe():
     spec = importlib.util.spec_from_file_location(
         "grid_music_recipe", Path(__file__).resolve().parents[1] / "examples/grid_music.py"
     )
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -44,7 +47,7 @@ async def test_recipe_stops_after_session_changes_during_creation(tmp_path, monk
             if method == "status":
                 return {"status": "observed", "projectName": "Disposable"}
             if method == "transport.get":
-                project_name = "Disposable"
+                project_name: str | None = "Disposable"
                 if created and transition == "project_changed":
                     project_name = "Other"
                 elif created and transition == "project_unobserved":
@@ -134,7 +137,7 @@ async def test_recipe_rejects_mixed_or_incomplete_inputs_before_connecting(
         pytest.fail("Invalid authoring inputs must not connect to the host")
 
     monkeypatch.setattr(recipe, "BridgeClient", unexpected_client)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="--from-scratch"):
         await recipe.create(args)
     assert not args.artifacts.exists()
 
@@ -320,12 +323,12 @@ GRID_TARGET = {"trackId": TRACK_ID, "deviceIndex": 0, "expectedDeviceName": "Pol
 class FakeGrid:
     """Just enough native behavior for the diff/batch protocol; counts every call."""
 
-    TYPES = {"Union": "type-union", "ADSR": "type-adsr", "Audio Out": "type-out"}
+    TYPES: ClassVar[dict[str, str]] = {"Union": "type-union", "ADSR": "type-adsr", "Audio Out": "type-out"}
 
     def __init__(self):
         self.calls = []
-        self.modules = {}
-        self.cables = {}  # (targetModuleId, targetPortKey) -> source endpoint
+        self.modules: dict[str, Any] = {}
+        self.cables: dict[tuple[str, str], Any] = {}  # (targetModuleId, targetPortKey) -> source endpoint
         for number in range(2):
             self.add(f"default-{number}", "type-default", [], [])
         self.cables[("default-1", "IN")] = {"moduleId": "default-0", "portKey": "OUT"}
@@ -405,22 +408,33 @@ class FakeGrid:
                 "ADSR": ([{"key": "IN", "name": "Signal In"}], [{"key": "OUT", "name": "Signal Out"}]),
                 "Audio Out": ([{"key": "IN", "name": "Audio In"}], []),
             }[name]
-            floats = lambda *names: [
-                {
-                    "supported": True,
-                    "parameterId": f"{name}.{item}",
-                    "name": item,
-                    "kind": "float",
-                    "value": 0.5,
-                    "minimum": 0.0,
-                    "maximum": 2.0,
-                }
-                for item in names
-            ]
-            booleans = lambda *names: [
-                {"supported": True, "parameterId": f"{name}.{item}", "name": item, "kind": "boolean", "value": False}
-                for item in names
-            ]
+
+            def floats(*names):
+                return [
+                    {
+                        "supported": True,
+                        "parameterId": f"{name}.{item}",
+                        "name": item,
+                        "kind": "float",
+                        "value": 0.5,
+                        "minimum": 0.0,
+                        "maximum": 2.0,
+                    }
+                    for item in names
+                ]
+
+            def booleans(*names):
+                return [
+                    {
+                        "supported": True,
+                        "parameterId": f"{name}.{item}",
+                        "name": item,
+                        "kind": "boolean",
+                        "value": False,
+                    }
+                    for item in names
+                ]
+
             parameters = {
                 "Union": booleans("Key Tracking")
                 + floats("Pitch Offset", "Saw Level", "Triangle Level", "Pulse Level"),
@@ -511,7 +525,7 @@ class FakeGrid:
         raise AssertionError(method)
 
 
-_RECIPE = []
+_RECIPE: list[Any] = []
 
 
 def recipe_module():
@@ -525,11 +539,14 @@ async def test_grid_patch_uses_diffs_and_one_parameter_batch(recipe, label):
     grid = FakeGrid()
     report = await recipe.build_grid(grid, GRID_TARGET, FakeGrid.TYPES, label)
     methods = [method for method, _ in grid.calls]
-    assert methods.count("grid.parameters.set") == 1 and "grid.parameters.get" not in methods
+    assert methods.count("grid.parameters.set") == 1
+    assert "grid.parameters.get" not in methods
     batch = next(params for method, params in grid.calls if method == "grid.parameters.set")
     assert len(batch["writes"]) == 12
     # 1 read, 2 deletes, 3 inserts, 1 filtered read, 1 batch, 1 cable batch, 1 final read
-    assert len(grid.calls) == 10 and methods.count("grid.connections.set") == 1 and methods.count("grid.get") == 3
+    assert len(grid.calls) == 10
+    assert methods.count("grid.connections.set") == 1
+    assert methods.count("grid.get") == 3
     filtered = next(params for method, params in grid.calls if method == "grid.get" and "moduleIds" in params)
     assert len(filtered["moduleIds"]) == 2
     assert {
@@ -537,7 +554,8 @@ async def test_grid_patch_uses_diffs_and_one_parameter_batch(recipe, label):
         for item in grid.modules[batch["writes"][0]["moduleId"]]["parameters"]
         if item["parameterId"] == "ADSR.Model"
     } == {3}
-    assert len(report["expectedPatch"]["connections"]) == 2 and len(grid.cables) == 2
+    assert len(report["expectedPatch"]["connections"]) == 2
+    assert len(grid.cables) == 2
 
 
 @pytest.mark.anyio

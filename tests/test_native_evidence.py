@@ -4,15 +4,17 @@ import copy
 import hashlib
 import importlib.util
 import json
-from pathlib import Path
+import re
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
-
 POLICY = Path(__file__).resolve().parents[1] / "scripts/evidence_mix.py"
 spec = importlib.util.spec_from_file_location("native_mix_policy", POLICY)
+assert spec is not None
+assert spec.loader is not None
 mix_policy = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mix_policy)
 
@@ -43,6 +45,8 @@ def test_inconsistent_mix_evidence_is_rejected_with_optimized_python(changes):
     code = """
 import importlib.util, json, sys
 spec = importlib.util.spec_from_file_location('mix_policy', sys.argv[1])
+assert spec is not None
+assert spec.loader is not None
 policy = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(policy)
 row = json.loads(sys.argv[2])
@@ -53,7 +57,11 @@ except ValueError:
 raise SystemExit(7)
 """
     result = subprocess.run(
-        [sys.executable, "-O", "-c", code, str(POLICY), json.dumps(row)], capture_output=True, text=True, timeout=10
+        [sys.executable, "-O", "-c", code, str(POLICY), json.dumps(row)],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
 
@@ -87,6 +95,8 @@ def test_audio_evidence_binds_hashes_to_consumed_pcm(tmp_path, monkeypatch, repl
     pytest.importorskip("scipy.signal", reason="Requires the native-music dependency group")
     path = Path(__file__).resolve().parents[1] / "scripts/evidence_audio.py"
     spec = importlib.util.spec_from_file_location("audio_evidence", path)
+    assert spec is not None
+    assert spec.loader is not None
     audio = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(audio)
     time = np.arange(16384) / 48000
@@ -127,7 +137,7 @@ def test_audio_evidence_binds_hashes_to_consumed_pcm(tmp_path, monkeypatch, repl
 
     monkeypatch.setattr(sf, "read", replace_after_decode)
     if replacement == "input":
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=re.escape("Input changed since predeclaration")):
             audio.analyze(tmp_path)
     else:
         result = audio.analyze(tmp_path)

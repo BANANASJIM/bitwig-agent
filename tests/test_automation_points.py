@@ -1,3 +1,5 @@
+from typing import Any
+
 import pytest
 from pydantic import ValidationError
 
@@ -12,7 +14,7 @@ GRID = {
     "moduleId": MODULE,
     "parameterId": "CUTOFF",
 }
-SET = {
+SET: dict[str, Any] = {
     "trackId": TRACK,
     "target": {"kind": "volume"},
     "expectedCount": 0,

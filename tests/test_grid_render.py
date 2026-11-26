@@ -3,9 +3,11 @@
 import asyncio
 import copy
 import json
+import re
 import shutil
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -76,7 +78,8 @@ def run(host, tmp_path, name="out.svg", **extra):
 def test_fixture_pages_completely_and_renders_wellformed_svg(tmp_path):
     host = FakeGrid(FIXTURE["modules"], FIXTURE["connections"])
     result = run(host, tmp_path)
-    assert len(FIXTURE["modules"]) > 128 and result["moduleCount"] == len(FIXTURE["modules"])
+    assert len(FIXTURE["modules"]) > 128
+    assert result["moduleCount"] == len(FIXTURE["modules"])
     assert result["connectionCount"] == len(FIXTURE["connections"])
     structure = [p for m, p in host.calls if not p["includeParameters"]]
     assert [p["moduleOffset"] for p in structure] == [0, 64, 128]
@@ -87,8 +90,10 @@ def test_fixture_pages_completely_and_renders_wellformed_svg(tmp_path):
     comment = next(m for m in FIXTURE["modules"] if m["typeName"] == "Comment")
     assert comment["parameters"][0]["value"].strip().split("\n")[0][:10] in text  # comment TEXT is drawn
     assert any(m["typeName"] == "Label" and m["customName"][:8] in text for m in FIXTURE["modules"])
-    assert result["status"] == "rendered" and result["bytes"] == (tmp_path / "out.svg").stat().st_size
-    assert result["density"] <= 1 and result["boundingBox"]["width"] > 0
+    assert result["status"] == "rendered"
+    assert result["bytes"] == (tmp_path / "out.svg").stat().st_size
+    assert result["density"] <= 1
+    assert result["boundingBox"]["width"] > 0
 
 
 def test_overlaps_unconnected_sections_and_density(tmp_path):
@@ -108,23 +113,24 @@ def test_overlaps_unconnected_sections_and_density(tmp_path):
     assert [m["name"] for m in result["unconnected"]] == ["lonely"]  # comments are never "unconnected"
     sections = {s["prefix"]: s for s in result["sections"]}
     assert set(sections) == {"H: ", "M: "}
-    assert (
-        sections["H: "]["boundingBox"] == {"x": 0, "y": 0, "width": 3, "height": 1}
-        and sections["H: "]["moduleCount"] == 2
-    )
+    assert sections["H: "]["boundingBox"] == {"x": 0, "y": 0, "width": 3, "height": 1}
+    assert sections["H: "]["moduleCount"] == 2
     assert result["boundingBox"] == {"x": 0, "y": 0, "width": 11, "height": 4}
     assert result["density"] == round(len({(0, 0), (1, 0), (2, 0), (5, 0), (0, 3), (8, 0), (9, 0), (10, 0)}) / 44, 3)
     assert result["namespace"] == {"prefix": "H: ", "moduleCount": 2}
     svg = (tmp_path / "out.svg").read_text(encoding="utf-8")
     ET.fromstring(svg)
-    assert "hello &lt;&amp;&gt; world" in svg and 'opacity="0.3"' in svg
+    assert "hello &lt;&amp;&gt; world" in svg
+    assert 'opacity="0.3"' in svg
     # structure first; parameters are fetched only for the Comment
     assert [p.get("moduleIds") for m, p in host.calls if p["includeParameters"]] == [["note"]]
 
 
 def test_categories_come_from_one_table():
-    assert grid_render.category("ADSR") == "envelope" and grid_render.category("Label") == "text"
-    assert grid_render.category("Audio Out") == "output" and grid_render.category("Frobnicator") == "other"
+    assert grid_render.category("ADSR") == "envelope"
+    assert grid_render.category("Label") == "text"
+    assert grid_render.category("Audio Out") == "output"
+    assert grid_render.category("Frobnicator") == "other"
     assert grid_render.category("Low-pass 12") == "filter"
 
 
@@ -136,7 +142,7 @@ def test_show_connections_false_and_scale(tmp_path):
     on, off = (ET.parse(tmp_path / n).getroot() for n in ("on.svg", "off.svg"))
     assert len([e for e in on.iter() if e.tag.endswith("path")]) == 1
     assert not [e for e in off.iter() if e.tag.endswith("path")]
-    assert float(off.get("width")) == 2 * float(on.get("width"))
+    assert float(cast(str, off.get("width"))) == 2 * float(cast(str, on.get("width")))
 
 
 def test_refuses_overwrite_unless_asked(tmp_path):
@@ -145,7 +151,8 @@ def test_refuses_overwrite_unless_asked(tmp_path):
     host.calls.clear()
     with pytest.raises(BridgeError) as err:
         run(host, tmp_path)
-    assert err.value.error["code"] == "file_exists" and host.calls == []  # refused before reading
+    assert err.value.error["code"] == "file_exists"
+    assert host.calls == []
     assert run(host, tmp_path, overwrite=True)["status"] == "rendered"
 
 
@@ -160,10 +167,11 @@ def test_incomplete_paging_fails_instead_of_drawing_part(tmp_path):
         return result
 
     host.cap = 2
-    host.call = short
+    host.call = short  # type: ignore[method-assign]
     with pytest.raises(BridgeError) as err:
         run(host, tmp_path)
-    assert err.value.error["code"] == "graph_incomplete" and not (tmp_path / "out.svg").exists()
+    assert err.value.error["code"] == "graph_incomplete"
+    assert not (tmp_path / "out.svg").exists()
 
 
 def test_validation_and_exposure(tmp_path):
@@ -173,7 +181,7 @@ def test_validation_and_exposure(tmp_path):
         {"outPath": str(tmp_path / "x"), "format": "gif"},
         {"outPath": str(tmp_path / "x"), "scale": 9},
     ):
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=re.escape("1 validation error for GridRenderArgs")):
             validate_call("grid.render", {**TARGET, **bad})
     assert "grid.render" in CLIENT_SIDE
     params, _ = parse_arguments(
@@ -188,7 +196,8 @@ def test_validation_and_exposure(tmp_path):
         None,
         None,
     )
-    assert params["overwrite"] is True and params["expectedDeviceName"] == "Poly Grid"
+    assert params["overwrite"] is True
+    assert params["expectedDeviceName"] == "Poly Grid"
 
 
 def test_png_uses_converter_or_errors_clearly(tmp_path, monkeypatch):
@@ -196,7 +205,8 @@ def test_png_uses_converter_or_errors_clearly(tmp_path, monkeypatch):
     monkeypatch.setattr(grid_render.shutil, "which", lambda name: None)
     with pytest.raises(BridgeError) as err:
         run(host, tmp_path, "a.png", format="png")
-    assert "rsvg-convert or magick" in err.value.error["message"] and host.calls == []
+    assert "rsvg-convert or magick" in err.value.error["message"]
+    assert host.calls == []
     monkeypatch.undo()
     if grid_render._converter() is None:
         pytest.skip("no SVG converter installed")

@@ -3,11 +3,11 @@
 
 import hashlib
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import tomllib
 import zipfile
+from pathlib import Path
 
 from tooling import download_verified
 
@@ -30,16 +30,17 @@ def classes_digest(classes):
     return digest.hexdigest()[:12]
 
 
+def git_output(*args):
+    return subprocess.run(["git", "-C", str(ROOT), *args], check=True, capture_output=True, text=True).stdout.strip()
+
+
 def build_properties(classes):
     """Package version, git short SHA with dirty flag ("unknown" outside git), and a class-content hash."""
     version = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
     try:
-        git = lambda *args: subprocess.run(
-            ["git", "-C", str(ROOT), *args], check=True, capture_output=True, text=True
-        ).stdout.strip()
-        build = git("rev-parse", "--short", "HEAD")
+        build = git_output("rev-parse", "--short", "HEAD")
         # Untracked .claude/ (agent worktrees) is local tooling, not source: it must not mark the build dirty.
-        if git("status", "--porcelain", "--", ".", ":(exclude).claude"):
+        if git_output("status", "--porcelain", "--", ".", ":(exclude).claude"):
             build += "-dirty"
     except (OSError, subprocess.CalledProcessError):
         build = "unknown"
@@ -53,6 +54,8 @@ def compile_java(sources, target, classpath):
             os.environ.get("JAVAC", "javac"),
             "--release",
             "11",
+            "-Xlint:all",
+            "-Werror",
             "-encoding",
             "UTF-8",
             "-cp",

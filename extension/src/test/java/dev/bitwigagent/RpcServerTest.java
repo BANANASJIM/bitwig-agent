@@ -369,7 +369,8 @@ public final class RpcServerTest {
                     checks++;
                 }
             }
-            try (Socket unexpected = new Socket("127.0.0.1", port)) {
+            try {
+                new Socket("127.0.0.1", port).close();
                 throw new AssertionError("Listener remained open");
             } catch (ConnectException expected) {
                 checks++;

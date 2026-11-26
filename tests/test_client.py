@@ -1,16 +1,18 @@
 import asyncio
 import json
+import re
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
 
-from bitwig_agent.client import BridgeClient, BridgeError, MAX_BYTES, configured_port
 from bitwig_agent.catalog import TOOLS, validate_call
+from bitwig_agent.client import MAX_BYTES, BridgeClient, BridgeError, configured_port, package_version
 from bitwig_agent.schema import SetArgs
 
 pytestmark = pytest.mark.anyio
 
-SET = {
+SET: dict[str, Any] = {
     "trackId": "12345678-1234-1234-1234-123456789abc",
     "deviceIndex": 0,
     "expectedDeviceName": "Polymer",
@@ -65,16 +67,16 @@ async def test_untrustworthy_response_rejected_without_retry(host, reply):
 
 @pytest.mark.parametrize("timeout", [99, 10001, True, 5000.0])
 async def test_invalid_timeout_rejected_before_connection(host, timeout):
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=re.escape("timeoutMs must be an integer in 100..10000")):
         await BridgeClient(host.port).call("status", {}, timeout)
     assert host.connections == 0
 
 
 async def test_topology_edits_allow_a_60_second_timeout(host):
     target = {"trackId": "12345678-1234-1234-1234-123456789abc", "deviceIndex": 0, "expectedDeviceName": "Poly Grid"}
-    with pytest.raises(ValueError, match="100..60000"):
+    with pytest.raises(ValueError, match=r"100\.\.60000"):
         await BridgeClient(host.port).call("grid.modules.insert", {**target, "typeName": "Add", "x": 0, "y": 0}, 60001)
-    with pytest.raises(ValueError, match="100..10000"):
+    with pytest.raises(ValueError, match=r"100\.\.10000"):
         await BridgeClient(host.port).call(
             "grid.parameters.get", {**target, "moduleId": target["trackId"], "parameterId": "P"}, 60000
         )
@@ -92,8 +94,9 @@ async def test_connection_refused_is_not_dispatched():
 
 
 async def test_large_or_nonfinite_request_rejected_before_connection(host):
-    for params in [{"large": "x" * MAX_BYTES}, {"value": float("nan")}]:
-        with pytest.raises(ValueError):
+    unsendable: list[dict[str, Any]] = [{"large": "x" * MAX_BYTES}, {"value": float("nan")}]
+    for params in unsendable:
+        with pytest.raises(ValueError, match=r"validation errors? for SetArgs"):
             await BridgeClient(host.port).call("parameters.set", params)
     assert host.connections == 0
 
@@ -116,7 +119,7 @@ def test_port_environment(monkeypatch):
     assert configured_port() == 62222
     for value in ["0", "65536", "not-a-port"]:
         monkeypatch.setenv("BITWIG_AGENT_PORT", value)
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"BITWIG_AGENT_PORT must be in|invalid literal"):
             configured_port()
 
 
@@ -163,7 +166,6 @@ async def test_invalid_layer_client_arguments_do_not_connect(host, changes):
 
 
 async def test_status_flags_extension_version_mismatch(host):
-    from bitwig_agent.client import package_version
 
     host.reply = lambda r: {
         "id": r["id"],
@@ -196,7 +198,5 @@ async def test_oversized_grid_get_response_says_to_lower_module_limit(host):
     params = {"trackId": SET["trackId"], "deviceIndex": 0, "expectedDeviceName": "Grid", "moduleLimit": 256}
     with pytest.raises(BridgeError) as caught:
         await BridgeClient(host.port).call("grid.get", params)
-    assert (
-        "lower moduleLimit" in caught.value.error["message"]
-        and "includeParameters=false" in caught.value.error["message"]
-    )
+    assert "lower moduleLimit" in caught.value.error["message"]
+    assert "includeParameters=false" in caught.value.error["message"]

@@ -1,6 +1,6 @@
 import pytest
 
-from bitwig_agent.catalog import CLIENT_SIDE, TOOLS, NOTE_WINDOW
+from bitwig_agent.catalog import CLIENT_SIDE, NOTE_WINDOW, TOOLS
 
 pytestmark = pytest.mark.anyio
 
@@ -113,7 +113,7 @@ async def test_unknown_tool_does_not_open_tcp(mcp_session, host):
 
 
 @pytest.mark.parametrize(
-    "method,params",
+    ("method", "params"),
     [
         ("actions.invoke", {}),
         ("actions.invoke", {"actionId": ""}),
@@ -161,7 +161,7 @@ async def test_absent_fields_and_explicit_nullable_fields_remain_distinct_over_m
 
 
 @pytest.mark.parametrize(
-    "method,params",
+    ("method", "params"),
     [
         ("transport.set", {}),
         ("transport.set", {"playing": "false"}),
@@ -263,7 +263,8 @@ async def test_mcp_discovery_publishes_required_nullable_connection_contract(mcp
     assert set(schema["required"]) == {"trackId", "deviceIndex", "expectedDeviceName"}
     assert {tuple(sorted(branch["required"])) for branch in schema["oneOf"]} == {("x", "y"), ("modules",)}
     assert {"typeId", "typeName", "modules"} <= set(schema["properties"])
-    assert schema["properties"]["modules"]["minItems"] == 1 and schema["properties"]["modules"]["maxItems"] == 16
+    assert schema["properties"]["modules"]["minItems"] == 1
+    assert schema["properties"]["modules"]["maxItems"] == 16
     for field in ("x", "y"):
         coordinate = schema["properties"][field]
         assert coordinate["type"] == "integer"
@@ -494,7 +495,7 @@ async def test_modulator_mcp_rejects_invalid_args_before_tcp(mcp_session, host, 
     assert host.connections == 0
 
 
-@pytest.mark.parametrize("value", ["", " \tMacro α𝄞\n "])
+@pytest.mark.parametrize("value", ["", " \tMacro \u03b1𝄞\n "])
 async def test_modulator_mcp_preserves_raw_string_and_unavailable_metadata(mcp_session, host, value):
     params = {**TOOLS["modulators.parameters.get"].examples[0], "parameterId": ""}
     result = {
@@ -560,7 +561,7 @@ async def test_modulator_mcp_preserves_read_errors_without_retry(mcp_session, ho
 
 
 @pytest.mark.parametrize(
-    "field,value",
+    ("field", "value"),
     [
         ("offset", True),
         ("offset", 1.0),
@@ -609,7 +610,7 @@ async def test_grid_rename_mcp_missing_name_is_not_defaulted_to_reset(mcp_sessio
 
 
 async def test_grid_rename_mcp_preserves_unknown_raw_reset_outcome_without_retry(mcp_session, host):
-    params = {**TARGET, "moduleId": TRACK, "expectedCustomName": " \tα𝄞 ", "customName": ""}
+    params = {**TARGET, "moduleId": TRACK, "expectedCustomName": " \t\u03b1𝄞 ", "customName": ""}
     error = {
         "code": "stale_context",
         "message": "Inspect actual raw name",

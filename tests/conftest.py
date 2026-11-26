@@ -17,6 +17,7 @@ class MockHost:
     def __init__(self):
         self.requests = []
         self.connections = 0
+        self.port = 0
         self.reply = lambda request: {"id": request["id"], "result": {"status": "observed"}}
         self.delay = 0
         self.tasks = set()
@@ -65,8 +66,7 @@ async def mcp_session(host):
         args=["-c", "from bitwig_agent.server import main; main()"],
         env=dict(os.environ, BITWIG_AGENT_PORT=str(host.port)),
     )
-    async with stdio_client(params) as (read, write):
-        async with ClientSession(read, write) as session:
-            initialized = await session.initialize()
-            assert initialized.server_info.name == "Bitwig Agent"
-            yield session
+    async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
+        initialized = await session.initialize()
+        assert initialized.server_info.name == "Bitwig Agent"
+        yield session

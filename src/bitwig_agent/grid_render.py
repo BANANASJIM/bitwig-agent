@@ -186,10 +186,12 @@ async def _get(client: Any, target: dict[str, Any], timeout_ms: int, **extra: An
     return result
 
 
-async def read_layout(client: Any, target: dict[str, Any], timeout_ms: int) -> tuple[list[dict], list[dict]]:
+async def read_layout(
+    client: Any, target: dict[str, Any], timeout_ms: int
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """All modules and cables of the device, paging until the window is complete. Structure only."""
-    rows: list[dict] = []
-    cables: dict[tuple, dict] = {}
+    rows: list[dict[str, Any]] = []
+    cables: dict[tuple[Any, ...], dict[str, Any]] = {}
     total = None
     while total is None or len(rows) < total:
         page = await _get(client, target, timeout_ms, moduleOffset=len(rows), moduleLimit=PAGE, includeParameters=False)
@@ -229,17 +231,17 @@ async def read_comment_text(client: Any, target: dict[str, Any], timeout_ms: int
 
 
 # ---- analysis --------------------------------------------------------------------------------------------
-def _box(rows: list[dict]) -> dict[str, int]:
+def _box(rows: list[dict[str, Any]]) -> dict[str, int]:
     x0, y0 = min(r["x"] for r in rows), min(r["y"] for r in rows)
     x1, y1 = max(r["x"] + r["width"] for r in rows), max(r["y"] + r["height"] for r in rows)
     return {"x": x0, "y": y0, "width": x1 - x0, "height": y1 - y0}
 
 
-def _label(row: dict) -> str:
+def _label(row: dict[str, Any]) -> str:
     return (row.get("customName") or "").strip() or row["typeName"]
 
 
-def _ref(row: dict) -> dict[str, Any]:
+def _ref(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "name": _label(row),
         "type": row["typeName"],
@@ -250,7 +252,7 @@ def _ref(row: dict) -> dict[str, Any]:
     }
 
 
-def summarize(rows: list[dict], cables: list[dict], namespace: str | None = None) -> dict[str, Any]:
+def summarize(rows: list[dict[str, Any]], cables: list[dict[str, Any]], namespace: str | None = None) -> dict[str, Any]:
     if not rows:
         return {
             "moduleCount": 0,
@@ -264,8 +266,8 @@ def summarize(rows: list[dict], cables: list[dict], namespace: str | None = None
             "sections": [],
             "density": 0.0,
         }
-    owner: dict[tuple[int, int], dict] = {}
-    pairs: dict[tuple[str, str], tuple[dict, dict]] = {}
+    owner: dict[tuple[int, int], dict[str, Any]] = {}
+    pairs: dict[tuple[str, str], tuple[dict[str, Any], dict[str, Any]]] = {}
     for r in rows:
         for cx in range(r["x"], r["x"] + r["width"]):
             for cy in range(r["y"], r["y"] + r["height"]):
@@ -279,7 +281,7 @@ def summarize(rows: list[dict], cables: list[dict], namespace: str | None = None
     for r in rows:
         key = category(r["typeName"])
         cats[key] = cats.get(key, 0) + 1
-    groups: dict[str, list[dict]] = {}
+    groups: dict[str, list[dict[str, Any]]] = {}
     for r in rows:
         m = SECTION_PREFIX.match((r.get("customName") or "").strip())
         if m:
@@ -319,15 +321,16 @@ def _wrap(text: str, px: float, size: float, lines: int = 12) -> list[str]:
     return out[:lines]
 
 
-def _port_y(row: dict, ports: list[dict], key: str) -> float:
+def _port_y(row: dict[str, Any], ports: list[dict[str, Any]], key: str) -> float:
     keys = [p["key"] for p in ports]
     i = keys.index(key) if key in keys else 0
-    return row["y"] + row["height"] * (i + 0.5) / max(1, len(keys))
+    y: float = row["y"] + row["height"] * (i + 0.5) / max(1, len(keys))
+    return y
 
 
 def draw(
-    rows: list[dict],
-    cables: list[dict],
+    rows: list[dict[str, Any]],
+    cables: list[dict[str, Any]],
     texts: dict[str, str],
     *,
     namespace: str | None,
@@ -339,7 +342,10 @@ def draw(
     x0, y0 = box["x"] - pad, box["y"] - pad
     W, H = (box["width"] + 2 * pad) * CELL, (box["height"] + 2 * pad) * CELL + 34
     by_id = {r["instanceId"]: r for r in rows}
-    inside = (lambda r: (r.get("customName") or "").startswith(namespace)) if namespace else (lambda r: True)
+
+    def inside(row: dict[str, Any]) -> bool:
+        return not namespace or (row.get("customName") or "").startswith(namespace)
+
     o = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{W * scale:.0f}" height="{H * scale:.0f}" viewBox="0 0 {W} {H}" font-family="sans-serif">',
         f'<rect width="{W}" height="{H}" fill="#1e1f22"/>',

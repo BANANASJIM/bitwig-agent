@@ -12,13 +12,14 @@ preflight, NOT music/UI/persistence E2E acceptance. See smoke-native.py --help.
 """
 
 import argparse
-from datetime import datetime, timezone
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
 import time
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 LAYERS = ("lint", "offline", "java", "fixture", "native")
@@ -56,7 +57,7 @@ def main() -> int:
             continue
         print(f"RUN [{layer}]: {DESCRIPTIONS[layer]}", flush=True)
         started = time.monotonic()
-        result = {"layer": layer, "scope": DESCRIPTIONS[layer]}
+        result: dict[str, Any] = {"layer": layer, "scope": DESCRIPTIONS[layer]}
         if layer in {"java", "fixture"} and not (
             os.environ.get("BITWIG_API_JAR") and Path(os.environ["BITWIG_API_JAR"]).is_file()
         ):
@@ -96,7 +97,7 @@ def main() -> int:
         print(f"{result['status'].upper()} [{layer}] {result.get('reason', '')}", flush=True)
         outcomes.append(result)
     report = {
-        "recordedAt": datetime.now(timezone.utc).isoformat(),
+        "recordedAt": datetime.now(UTC).isoformat(),
         "layers": outcomes,
         "boundary": "Passing checks are scoped evidence, not host E2E completion or user approval.",
     }

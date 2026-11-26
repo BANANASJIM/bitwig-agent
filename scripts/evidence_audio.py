@@ -11,12 +11,15 @@ import json
 from io import BytesIO
 from pathlib import Path
 
+STEREO_CHANNELS = 2
+MAX_INPUT_PEAK = 0.15
+
 
 def analyze(out: Path) -> dict:
     """Evaluate declared audio thresholds without operating Bitwig or saving files."""
     import numpy as np
-    import soundfile as sf
-    from scipy.signal import correlate
+    import soundfile as sf  # type: ignore[import-untyped]
+    from scipy.signal import correlate  # type: ignore[import-untyped]
 
     declaration_path = out / "music-predeclaration.json"
     declaration_bytes = declaration_path.read_bytes()
@@ -27,10 +30,10 @@ def analyze(out: Path) -> dict:
     if source_hash != declaration["inputSha256"]:
         raise ValueError("Input changed since predeclaration")
     source, rate = sf.read(BytesIO(source_bytes), always_2d=True, dtype="float64")
-    if source.shape[1] != 2 or not np.isfinite(source).all():
+    if source.shape[1] != STEREO_CHANNELS or not np.isfinite(source).all():
         raise ValueError("Finite stereo input required")
     input_peak = float(np.abs(source).max())
-    if input_peak > 0.15 or np.any(np.sqrt(np.mean(source * source, axis=0)) < limits["inputRmsMinimum"]):
+    if input_peak > MAX_INPUT_PEAK or np.any(np.sqrt(np.mean(source * source, axis=0)) < limits["inputRmsMinimum"]):
         raise ValueError("Input peak/RMS violates predeclared musical input bounds")
     if np.array_equal(source[:, 0], source[:, 1]):
         raise ValueError("Asymmetric stereo input required")
@@ -42,7 +45,7 @@ def analyze(out: Path) -> dict:
         audio_bytes = Path(path).read_bytes()
         audio_hash = hashlib.sha256(audio_bytes).hexdigest()
         audio, sample_rate = sf.read(BytesIO(audio_bytes), always_2d=True, dtype="float64")
-        if sample_rate != rate or audio.shape[1] != 2 or not np.isfinite(audio).all():
+        if sample_rate != rate or audio.shape[1] != STEREO_CHANNELS or not np.isfinite(audio).all():
             raise ValueError("Native render format differs or contains non-finite samples")
         channels = []
         for channel in range(2):

@@ -1,5 +1,7 @@
 """Argument contracts of the mixer-display, send, meter, marker and time-signature tools (host-free)."""
 
+import re
+
 import pytest
 
 from bitwig_agent.catalog import TOOLS, validate_call
@@ -13,7 +15,7 @@ def ok(method, **args):
 
 
 def bad(method, **args):
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=re.escape("1 validation error for ")):
         validate_call(method, args)
 
 
@@ -26,9 +28,12 @@ def test_new_tools_are_registered_with_examples():
         "markers.rename",
         "markers.delete",
     ):
-        assert name in TOOLS and TOOLS[name].examples
-    assert TOOLS["tracks.meters"].read_only and TOOLS["markers.list"].read_only
-    assert not TOOLS["tracks.sends.set"].read_only and not TOOLS["markers.insert"].read_only
+        assert name in TOOLS
+        assert TOOLS[name].examples
+    assert TOOLS["tracks.meters"].read_only
+    assert TOOLS["markers.list"].read_only
+    assert not TOOLS["tracks.sends.set"].read_only
+    assert not TOOLS["markers.insert"].read_only
 
 
 def test_send_addressing_and_value_rules():

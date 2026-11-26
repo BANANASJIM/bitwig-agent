@@ -35,17 +35,25 @@ def _fail(code: str, message: str, outcome: str = "not_dispatched", **details: A
 Source = tuple[str, str] | None  # (moduleId, portKey) feeding an input, None = unconnected
 
 
-def _incoming(cables: list[dict], inputs: set[tuple[str, str]]) -> dict[tuple[str, str], Source]:
+def _incoming(cables: list[dict[str, Any]], inputs: set[tuple[str, str]]) -> dict[tuple[str, str], Source]:
     live = {(c["targetModuleId"], c["targetPortKey"]): (c["sourceModuleId"], c["sourcePortKey"]) for c in cables}
     return {key: live.get(key) for key in inputs}
 
 
+def _end(source: Source) -> dict[str, Any] | None:
+    return None if source is None else {"moduleId": source[0], "portKey": source[1]}
+
+
 def _edit(key: tuple[str, str], expected: Source, source: Source) -> dict[str, Any]:
-    end = lambda s: None if s is None else {"moduleId": s[0], "portKey": s[1]}  # noqa: E731
-    return {"targetModuleId": key[0], "targetPortKey": key[1], "expectedSource": end(expected), "source": end(source)}
+    return {
+        "targetModuleId": key[0],
+        "targetPortKey": key[1],
+        "expectedSource": _end(expected),
+        "source": _end(source),
+    }
 
 
-async def _set(client: Any, target: dict, edits: list[dict], timeout_ms: int) -> None:
+async def _set(client: Any, target: dict[str, Any], edits: list[dict[str, Any]], timeout_ms: int) -> None:
     for start in range(0, len(edits), MAX_EDITS):
         result = await client.call(
             "grid.connections.set", {**target, "connections": edits[start : start + MAX_EDITS]}, timeout_ms
@@ -68,7 +76,7 @@ def _label(key: tuple[str, str], source: Source, names: dict[str, str]) -> dict[
 
 async def _restore(
     client: Any,
-    target: dict,
+    target: dict[str, Any],
     original: dict[tuple[str, str], Source],
     probing: dict[tuple[str, str], Source],
     names: dict[str, str],
@@ -77,7 +85,7 @@ async def _restore(
     """Put every Audio Out input back. A cable is only cut/rewired when it still shows the original or the probe wiring;
     anything else was changed by someone else meanwhile and is left alone and reported."""
     try:
-        rows, cables = await read_all(client, target, min(timeout_ms, MAX_TIMEOUT_MS), False)
+        _rows, cables = await read_all(client, target, min(timeout_ms, MAX_TIMEOUT_MS), False)
         current = _incoming(cables, set(original))
         edits, foreign = [], []
         for key, want in original.items():
@@ -167,7 +175,7 @@ async def probe(client: Any, args: dict[str, Any], timeout_ms: int) -> dict[str,
         (r for r in outs if any(original.get((r["instanceId"], i["key"])) for i in r.get("inputs", []))), outs[0]
     )
     probe_end = (source["instanceId"], port_key)
-    probing: dict[tuple[str, str], Source] = {k: None for k in original}
+    probing: dict[tuple[str, str], Source] = dict.fromkeys(original)
     probing[(chosen["instanceId"], chosen["inputs"][0]["key"])] = probe_end
     edits = [_edit(k, original[k], probing[k]) for k in original if original[k] != probing[k]]
     if len(edits) > MAX_EDITS:
@@ -215,6 +223,7 @@ async def probe(client: Any, args: dict[str, Any], timeout_ms: int) -> dict[str,
             )
         if capture_error is not None:
             raise capture_error
+        assert captured is not None
         analysis_args = {"path": wav, "mode": args["mode"], **{k: args[k] for k in PASS_THROUGH if k in args}}
         analysis = await audio.analyze(analysis_args)
     finally:

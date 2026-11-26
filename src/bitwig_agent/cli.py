@@ -6,7 +6,7 @@ import argparse
 import asyncio
 import json
 import sys
-from typing import Any
+from typing import Any, NoReturn
 
 from bitwig_agent.catalog import CLIENT_SIDE, TOOLS, invalid_params_message, unknown_arguments_message, validate_call
 from bitwig_agent.client import BridgeClient, BridgeError, configured_port, load_json
@@ -23,7 +23,7 @@ def load_file(value: str) -> Any:
 
 
 class ArgumentParser(argparse.ArgumentParser):
-    def error(self, message: str) -> None:
+    def error(self, message: str) -> NoReturn:
         raise ValueError(message)
 
 

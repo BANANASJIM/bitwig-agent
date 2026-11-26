@@ -155,10 +155,18 @@
       "count": 1
     },
     {
+      "tokens": 50,
+      "files": [
+        "tests/test_mcp.py",
+        "tests/test_mcp.py"
+      ],
+      "count": 1
+    },
+    {
       "tokens": 51,
       "files": [
-        "tests/test_audio.py",
-        "tests/test_audio.py"
+        "tests/test_grid_apply.py",
+        "tests/test_grid_apply.py"
       ],
       "count": 1
     },
@@ -171,35 +179,35 @@
       "count": 1
     },
     {
-      "tokens": 51,
+      "tokens": 52,
       "files": [
         "tests/test_mcp.py",
         "tests/test_mcp.py"
       ],
-      "count": 2
+      "count": 1
     },
     {
-      "tokens": 53,
+      "tokens": 54,
+      "files": [
+        "tests/test_cli.py",
+        "tests/test_cli.py"
+      ],
+      "count": 1
+    },
+    {
+      "tokens": 54,
+      "files": [
+        "tests/test_cli.py",
+        "tests/test_cli.py",
+        "tests/test_cli.py"
+      ],
+      "count": 1
+    },
+    {
+      "tokens": 54,
       "files": [
         "tests/test_cli.py",
         "tests/test_mcp.py"
-      ],
-      "count": 1
-    },
-    {
-      "tokens": 54,
-      "files": [
-        "tests/test_cli.py",
-        "tests/test_cli.py"
-      ],
-      "count": 1
-    },
-    {
-      "tokens": 54,
-      "files": [
-        "tests/test_cli.py",
-        "tests/test_cli.py",
-        "tests/test_cli.py"
       ],
       "count": 1
     },
@@ -208,6 +216,14 @@
       "files": [
         "tests/test_audio.py",
         "tests/test_audio.py"
+      ],
+      "count": 1
+    },
+    {
+      "tokens": 60,
+      "files": [
+        "src/bitwig_agent/audio.py",
+        "src/bitwig_agent/grid_probe.py"
       ],
       "count": 1
     },
@@ -244,7 +260,7 @@
       "count": 1
     },
     {
-      "tokens": 83,
+      "tokens": 84,
       "files": [
         "tests/test_cli.py",
         "tests/test_mcp.py"
@@ -252,7 +268,7 @@
       "count": 1
     },
     {
-      "tokens": 95,
+      "tokens": 96,
       "files": [
         "src/bitwig_agent/grid_export.py",
         "src/bitwig_agent/grid_render.py"

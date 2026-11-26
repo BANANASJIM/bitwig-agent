@@ -15,20 +15,25 @@ file identity and actual reopen/music/UI behavior require independent evidence.
 
 import argparse
 import asyncio
-from contextlib import contextmanager
-from datetime import datetime, timezone
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
 import subprocess
 import sys
+from contextlib import contextmanager
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import cast
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from mcp.types import TextContent
 
 from bitwig_agent.catalog import TOOLS
+
+TCP_ROW_FIELDS = 10
+MAX_PORT = 65535
 
 
 class NativeRunStopped(RuntimeError):
@@ -102,7 +107,7 @@ def has_owned_loopback_listener(table, port, owned_sockets, *, byteorder=sys.byt
     mapped_loopback = b"\x00" * 10 + b"\xff\xff" + loopback
     for line in table.splitlines()[1:]:
         row = line.split()
-        if len(row) < 10 or row[3] != "0A" or row[9] not in owned_sockets:
+        if len(row) < TCP_ROW_FIELDS or row[3] != "0A" or row[9] not in owned_sockets:
             continue
         try:
             address, port_hex = row[1].split(":")
@@ -135,7 +140,7 @@ class NativeTarget:
             raise ValueError("Explicit X window ID is required")
         if type(config["pid"]) is not int or config["pid"] <= 1:
             raise ValueError("pid must identify the existing Bitwig process")
-        if type(config["port"]) is not int or not 1 <= config["port"] <= 65535:
+        if type(config["port"]) is not int or not 1 <= config["port"] <= MAX_PORT:
             raise ValueError("port must be in 1..65535")
         self.config = config
         self.fixture = Path(config["fixture"])
@@ -225,87 +230,86 @@ async def probe(target, report):
     calls_path = target.artifacts / "calls.jsonl"
     raw_results_path = target.artifacts / "mcp-results.jsonl"
     outcome_guard = NativeOutcomeGuard()
-    async with stdio_client(server) as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            advertised = {tool.name for tool in (await session.list_tools()).tools}
+    async with stdio_client(server) as (read, write), ClientSession(read, write) as session:
+        await session.initialize()
+        advertised = {tool.name for tool in (await session.list_tools()).tools}
 
-            async def call(method, params=None):
-                with outcome_guard.attempt():
-                    if method not in TOOLS or not TOOLS[method].read_only:
-                        raise RuntimeError(f"Refusing non-read-only method: {method}")
-                    target.guard()
-                    arguments = params or {}
-                    response = await session.call_tool(method, arguments)
-                    raw_record = {
-                        "time": datetime.now(timezone.utc).isoformat(),
-                        "method": method,
-                        "params": arguments,
-                        "response": response.model_dump(mode="json", by_alias=True),
-                    }
-                    with raw_results_path.open("a", encoding="utf-8") as output:
-                        output.write(json.dumps(raw_record, allow_nan=False) + "\n")
-                    body = response.structured_content or json.loads(response.content[0].text)
-                    record = {
-                        "time": datetime.now(timezone.utc).isoformat(),
-                        "method": method,
-                        "params": arguments,
-                        "isError": response.is_error,
-                        "response": body,
-                    }
-                    with calls_path.open("a", encoding="utf-8") as output:
-                        output.write(json.dumps(record, ensure_ascii=False, allow_nan=False) + "\n")
-                    outcome_guard.observe(body)
-                    if response.is_error:
-                        raise RuntimeError(f"Native {method} failed; inspect calls.jsonl (no retry)")
-                    result = body["result"]
-                    if result.get("status") != "observed":
-                        raise RuntimeError(f"Native {method} did not return an observed read")
-                    return result
+        async def call(method, params=None):
+            with outcome_guard.attempt():
+                if method not in TOOLS or not TOOLS[method].read_only:
+                    raise RuntimeError(f"Refusing non-read-only method: {method}")
+                target.guard()
+                arguments = params or {}
+                response = await session.call_tool(method, arguments)
+                raw_record = {
+                    "time": datetime.now(UTC).isoformat(),
+                    "method": method,
+                    "params": arguments,
+                    "response": response.model_dump(mode="json", by_alias=True),
+                }
+                with raw_results_path.open("a", encoding="utf-8") as output:
+                    output.write(json.dumps(raw_record, allow_nan=False) + "\n")
+                body = response.structured_content or json.loads(cast(TextContent, response.content[0]).text)
+                record = {
+                    "time": datetime.now(UTC).isoformat(),
+                    "method": method,
+                    "params": arguments,
+                    "isError": response.is_error,
+                    "response": body,
+                }
+                with calls_path.open("a", encoding="utf-8") as output:
+                    output.write(json.dumps(record, ensure_ascii=False, allow_nan=False) + "\n")
+                outcome_guard.observe(body)
+                if response.is_error:
+                    raise RuntimeError(f"Native {method} failed; inspect calls.jsonl (no retry)")
+                result = body["result"]
+                if result.get("status") != "observed":
+                    raise RuntimeError(f"Native {method} did not return an observed read")
+                return result
 
-            before = await call("status")
-            report["beforeStatus"] = before
-            if before.get("projectName") != target.fixture.stem:
-                raise RuntimeError("Observed project name differs from explicit fixture; refusing further queries")
-            capabilities = await call("capabilities")
-            if set(capabilities["methods"]) != advertised:
-                raise RuntimeError("Native Java registry differs from the installed MCP adapter")
-            report["beforeTransport"] = await call("transport.get")
-            tracks = await call("tracks.list")
-            report["trackWindow"] = tracks.get("window")
-            await call("devices.catalog")
-            await call("actions.list")
-            report["deviceReadScope"] = (
-                "First observed top-level device per returned track; not all devices or private Grid topology"
-            )
-            device_count = 0
-            for track in tracks["tracks"]:
-                track_params = {"trackId": track["trackId"]}
-                await call("tracks.get", track_params)
-                await call("launcher.list", track_params)
-                devices = await call("devices.list", track_params)
-                if devices["devices"]:
-                    device = devices["devices"][0]
-                    params = {
-                        **track_params,
-                        "deviceIndex": device["deviceIndex"],
-                        "expectedDeviceName": device["name"],
-                    }
-                    await call("devices.get", params)
-                    await call("devices.remote.get", params)
-                    await call("parameters.list", params)
-                    device_count += 1
-            report["tracksRead"] = len(tracks["tracks"])
-            report["devicesRead"] = device_count
-            if not tracks["tracks"]:
-                report["notExercised"].append("Per-track/launcher/device reads: fixture has no observed tracks")
-            elif not device_count:
-                report["notExercised"].append("devices.get/devices.remote.get/parameters.list: no observed devices")
-            report["notExercised"].append("notes.read: selects a GUI clip; excluded from no-selection preflight")
-            report["afterTransport"] = await call("transport.get")
-            report["afterStatus"] = await call("status")
-            if report["afterStatus"].get("projectName") != target.fixture.stem:
-                raise RuntimeError("Project name changed during read-only probe")
+        before = await call("status")
+        report["beforeStatus"] = before
+        if before.get("projectName") != target.fixture.stem:
+            raise RuntimeError("Observed project name differs from explicit fixture; refusing further queries")
+        capabilities = await call("capabilities")
+        if set(capabilities["methods"]) != advertised:
+            raise RuntimeError("Native Java registry differs from the installed MCP adapter")
+        report["beforeTransport"] = await call("transport.get")
+        tracks = await call("tracks.list")
+        report["trackWindow"] = tracks.get("window")
+        await call("devices.catalog")
+        await call("actions.list")
+        report["deviceReadScope"] = (
+            "First observed top-level device per returned track; not all devices or private Grid topology"
+        )
+        device_count = 0
+        for track in tracks["tracks"]:
+            track_params = {"trackId": track["trackId"]}
+            await call("tracks.get", track_params)
+            await call("launcher.list", track_params)
+            devices = await call("devices.list", track_params)
+            if devices["devices"]:
+                device = devices["devices"][0]
+                params = {
+                    **track_params,
+                    "deviceIndex": device["deviceIndex"],
+                    "expectedDeviceName": device["name"],
+                }
+                await call("devices.get", params)
+                await call("devices.remote.get", params)
+                await call("parameters.list", params)
+                device_count += 1
+        report["tracksRead"] = len(tracks["tracks"])
+        report["devicesRead"] = device_count
+        if not tracks["tracks"]:
+            report["notExercised"].append("Per-track/launcher/device reads: fixture has no observed tracks")
+        elif not device_count:
+            report["notExercised"].append("devices.get/devices.remote.get/parameters.list: no observed devices")
+        report["notExercised"].append("notes.read: selects a GUI clip; excluded from no-selection preflight")
+        report["afterTransport"] = await call("transport.get")
+        report["afterStatus"] = await call("status")
+        if report["afterStatus"].get("projectName") != target.fixture.stem:
+            raise RuntimeError("Project name changed during read-only probe")
 
 
 def describe_error(error):
@@ -348,7 +352,7 @@ def main():
         print(report["error"], file=sys.stderr)
         return 1
     finally:
-        report["recordedAt"] = datetime.now(timezone.utc).isoformat()
+        report["recordedAt"] = datetime.now(UTC).isoformat()
         (target.artifacts / "report.json").write_text(
             json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
         )

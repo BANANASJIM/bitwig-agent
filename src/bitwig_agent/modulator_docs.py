@@ -14,7 +14,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from bitwig_agent.grid_docs import DocsUnavailable, LANGS, _tokens, localization_dir, read_properties
+from bitwig_agent.grid_docs import LANGS, DocsUnavailable, _tokens, localization_dir, read_properties
 
 GENERAL = "modulator_general"
 # Display name -> extra Modulators-resources prefixes, only where the prefix is not `<id>` or `<id>-modulator`.
@@ -27,13 +27,14 @@ LIVE_FACTS = "kind, value, range and options of each control: read them live wit
 
 
 DOCUMENTED_STATUS = "documented_display_values_unverified_against_raw"
-_DOCUMENTED = re.compile(r"['‘’]([-+−]?\d+(?:\.\d+)?)['‘’]\s*=\s*([^\n•]+)")
+_DOCUMENTED = re.compile(r"['\u2018\u2019]([-+\u2212]?\d+(?:\.\d+)?)['\u2018\u2019]\s*=\s*([^\n•]+)")
 
 
 def documented_values(text: str) -> list[dict[str, str]]:
     """`'-3.00' = 8 beats` pairs Bitwig's help lists for a control (display text, not verified raw values)."""
     return [
-        {"display": value.replace("−", "-"), "meaning": meaning.strip()} for value, meaning in _DOCUMENTED.findall(text)
+        {"display": value.replace("\u2212", "-"), "meaning": meaning.strip()}
+        for value, meaning in _DOCUMENTED.findall(text)
     ]
 
 
@@ -120,7 +121,7 @@ class ModulatorDocs:
 _cache: dict[tuple[str, str], ModulatorDocs] = {}
 
 
-def get_docs(root: str | os.PathLike | None = None, lang: str = "en") -> ModulatorDocs:
+def get_docs(root: str | os.PathLike[str] | None = None, lang: str = "en") -> ModulatorDocs:
     if lang not in LANGS:
         raise ValueError(f"lang must be one of {', '.join(LANGS)}")
     directory = localization_dir(root)

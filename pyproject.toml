@@ -66,6 +66,30 @@ ignore = ["E501"]
 [tool.ruff.lint.mccabe]
 max-complexity = 12
 
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["PLR2004"]
+
+# refactor debt: remove an entry when the function it covers is split
+"examples/grid_music.py" = ["C901", "PLR0912", "PLR0915"]
+"scripts/bound_parity.py" = ["PLR0911"]
+"scripts/evidence_audio.py" = ["C901", "PLC0415", "PLR0915"]
+"scripts/smoke-mcp-java.py" = ["PLR0915"]
+"scripts/smoke-native.py" = ["PLR0915"]
+"src/bitwig_agent/audio.py" = ["C901", "PLR0912", "PLR0915"]
+"src/bitwig_agent/audio_analysis.py" = ["C901", "PLR0912", "PLR0913", "PLR0915", "PLR0917"]
+"src/bitwig_agent/cli.py" = ["C901", "PLR0912"]
+"src/bitwig_agent/client.py" = ["C901", "PLR0912", "PLR0915"]
+"src/bitwig_agent/diagnostics.py" = ["C901", "PLR0911", "PLR0912", "PLR0915"]
+"src/bitwig_agent/grid_apply.py" = ["C901", "PLR0912", "PLR0913", "PLR0915", "PLR0917"]
+"src/bitwig_agent/grid_docs.py" = ["C901", "PLR0912", "PLR0915"]
+"src/bitwig_agent/grid_probe.py" = ["C901", "PLR0912", "PLR0913", "PLR0915", "PLR0917"]
+"src/bitwig_agent/grid_render.py" = ["PLR0913"]
+"src/bitwig_agent/raw_scales.py" = ["PLR0913", "PLR0917"]
+"src/bitwig_agent/schema.py" = ["C901", "PLR0912"]
+"tests/test_audio.py" = ["PLR0911"]
+"tests/test_grid_render.py" = ["PLR0913", "PLR0917"]
+"tests/test_music_recipe.py" = ["C901", "PLR0913", "PLR0917"]
+
 [tool.mypy]
 python_version = "3.11"
 strict = true

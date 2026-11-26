@@ -1,10 +1,10 @@
 """Native preflight safety parsing only; no host, /proc or desktop access."""
 
-import importlib.util
-from pathlib import Path
 import asyncio
+import importlib.util
 import json
 from contextlib import asynccontextmanager
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -12,6 +12,8 @@ from mcp.types import CallToolResult, TextContent
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts/smoke-native.py"
 spec = importlib.util.spec_from_file_location("native_smoke", SCRIPT)
+assert spec is not None
+assert spec.loader is not None
 native_smoke = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(native_smoke)
 
@@ -27,7 +29,7 @@ def table(address, *, port="EEF4", state="0A", inode="16083494"):
 
 
 @pytest.mark.parametrize(
-    "address,byteorder",
+    ("address", "byteorder"),
     [
         ("0100007F", "little"),
         # Native host observation supplied by root: TCP4 connections work while the
@@ -58,7 +60,7 @@ def test_rejects_wildcard_other_addresses_and_malformed_addresses(address):
 
 
 @pytest.mark.parametrize(
-    "changes,owners",
+    ("changes", "owners"),
     [
         ({"inode": "999999"}, {"16083494"}),
         ({}, set()),
@@ -91,7 +93,8 @@ def test_nested_task_group_failures_retain_actionable_leaf_causes():
     detail = native_smoke.describe_error(error)
     assert "devices.remote.get" in detail
     assert "tracks.get" in detail
-    assert "RuntimeError" in detail and "TimeoutError" in detail
+    assert "RuntimeError" in detail
+    assert "TimeoutError" in detail
 
 
 @pytest.mark.parametrize(
@@ -221,11 +224,9 @@ def test_probe_failure_latches_before_a_caught_failure_can_continue(monkeypatch,
 def test_cancelled_native_attempt_keeps_uncertainty_latched():
     guard = native_smoke.NativeOutcomeGuard()
     cancellation = asyncio.CancelledError()
-    with pytest.raises(asyncio.CancelledError) as caught:
-        with guard.attempt():
-            raise cancellation
+    with pytest.raises(asyncio.CancelledError) as caught, guard.attempt():
+        raise cancellation
     assert caught.value is cancellation
     assert guard.stopped
-    with pytest.raises(native_smoke.NativeRunStopped):
-        with guard.attempt():
-            pytest.fail("A caught cancellation must not reopen native admission")
+    with pytest.raises(native_smoke.NativeRunStopped), guard.attempt():
+        pytest.fail("A caught cancellation must not reopen native admission")

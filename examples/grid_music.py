@@ -12,13 +12,17 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from datetime import datetime, timezone
 import hashlib
 import json
-from pathlib import Path
 import sys
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
 
 from bitwig_agent.client import BridgeClient, BridgeError, configured_port
+
+LOOP_LENGTH_BEATS = 8
+DURATION_TOLERANCE_BEATS = 1e-6
 
 
 def note(beat: float, pitch: int, duration: float, velocity: int) -> dict:
@@ -91,14 +95,17 @@ def checked_notes(readback: dict, window: dict, edits: list[dict]) -> None:
         or observed.keys() != expected.keys()
         or readback.get("continuingAtWindowStart") != []
         or readback.get("loopStartBeats") != 0
-        or readback.get("loopLengthBeats") != 8
+        or readback.get("loopLengthBeats") != LOOP_LENGTH_BEATS
         or readback.get("loopEnabled") is not True
         or readback.get("playStartBeats") != 0
     ):
         raise RuntimeError("Observed note onsets or clip bounds differ from the authored phrase")
     for key, wanted in expected.items():
         actual = observed[key]
-        if abs(actual["durationBeats"] - wanted["durationBeats"]) > 1e-6 or actual["velocity"] != wanted["velocity"]:
+        if (
+            abs(actual["durationBeats"] - wanted["durationBeats"]) > DURATION_TOLERANCE_BEATS
+            or actual["velocity"] != wanted["velocity"]
+        ):
             raise RuntimeError(f"Observed duration/velocity differs at {key}")
 
 
@@ -190,10 +197,11 @@ async def build_grid(call, target: dict, types: dict[str, str], label: str) -> d
         ("ADSR", "Affect Voice Lifetime", "boolean", True),
     ]
     settings += [
-        ("ADSR", name, "float", value) for name, value in zip(("Attack", "Decay", "Sustain", "Release"), envelope)
+        ("ADSR", name, "float", value)
+        for name, value in zip(("Attack", "Decay", "Sustain", "Release"), envelope, strict=False)
     ]
     # Resolve EVERY needed port/control before dependent control/cable writes.
-    expected = {
+    expected: dict[str, Any] = {
         "moduleTypes": {key: value["typeId"] for key, value in modules.items()},
         "parameters": [],
         "connections": [],
@@ -203,10 +211,8 @@ async def build_grid(call, target: dict, types: dict[str, str], label: str) -> d
         matches = [item for item in module["parameters"] if item.get("name") == name]
         if len(matches) != 1 or matches[0].get("supported") is not True or matches[0].get("kind") != kind:
             raise RuntimeError(f"Missing, ambiguous or unsupported {module_name} control {name}")
-        if (
-            sum(item.get("parameterId") == matches[0]["parameterId"] for item in module["parameters"]) != 1
-            or kind == "float"
-            and not matches[0]["minimum"] <= value <= matches[0]["maximum"]
+        if sum(item.get("parameterId") == matches[0]["parameterId"] for item in module["parameters"]) != 1 or (
+            kind == "float" and not matches[0]["minimum"] <= value <= matches[0]["maximum"]
         ):
             raise RuntimeError(f"Ambiguous identifier or unsupported raw range: {module_name} {name}")
         expected["parameters"].append(
@@ -253,7 +259,7 @@ async def build_grid(call, target: dict, types: dict[str, str], label: str) -> d
         or len(written["writes"]) != len(writes)
         or any(
             item.get("status") not in ("applied", "already_matched") or item.get("value") != wanted["value"]
-            for item, wanted in zip(written["writes"], expected["parameters"])
+            for item, wanted in zip(written["writes"], expected["parameters"], strict=False)
         )
     ):
         raise RuntimeError("Native parameter batch did not establish the requested control values")
@@ -366,7 +372,7 @@ async def create(args: argparse.Namespace) -> int:
         }:
             await safety_guard()
         params = params or {}
-        entry = {"at": datetime.now(timezone.utc).isoformat(), "method": method, "params": params}
+        entry = {"at": datetime.now(UTC).isoformat(), "method": method, "params": params}
         try:
             result = await client.call(method, params)
             entry["result"] = result
@@ -395,10 +401,8 @@ async def create(args: argparse.Namespace) -> int:
         if "expectedDeviceName" in params:
             identity = result["target"]
             # Reads also corroborate the native owning track; write results echo only the explicit identity.
-            if (
-                any(identity.get(key) != params[key] for key in ("trackId", "deviceIndex", "expectedDeviceName"))
-                or method == "grid.get"
-                and identity.get("nativeOwningTrack") != "corroborated_before_and_after_capture"
+            if any(identity.get(key) != params[key] for key in ("trackId", "deviceIndex", "expectedDeviceName")) or (
+                method == "grid.get" and identity.get("nativeOwningTrack") != "corroborated_before_and_after_capture"
             ):
                 raise RuntimeError(f"{method} did not corroborate the owned Grid target")
         return result
@@ -482,7 +486,12 @@ async def create(args: argparse.Namespace) -> int:
                 report["createdTracks"][-1]["patch"] = await build_grid(call, target, types, label)
             await call(
                 "launcher.create",
-                {"trackId": track_id, "slotIndex": 0, "lengthBeats": 8, "name": f"{label} eight-beat sketch"},
+                {
+                    "trackId": track_id,
+                    "slotIndex": 0,
+                    "lengthBeats": LOOP_LENGTH_BEATS,
+                    "name": f"{label} eight-beat sketch",
+                },
             )
             report["createdTracks"][-1]["slotIndex"] = 0
             window = {

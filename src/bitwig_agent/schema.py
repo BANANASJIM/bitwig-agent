@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-from decimal import Decimal
+import itertools
 import math
 import re
+from decimal import Decimal
 from pathlib import PurePosixPath
-from typing import Annotated, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Self, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic.config import JsonDict
 
 Nonempty = Annotated[str, Field(min_length=1, max_length=4096)]
 TrackId = Annotated[
@@ -17,9 +19,30 @@ TrackId = Annotated[
 UnitValue = Annotated[float, Field(ge=0, le=1)]
 
 
-def omitted(**kwargs):
+UTF16_BYTES_PER_UNIT = 2
+MAX_RAW_STRING_UNITS = 1024
+MAX_PROJECT_NAME_UNITS = 128
+MIDI_PITCH_COUNT = 128
+MAX_TIME_SIGNATURE_NUMERATOR = 32
+MIN_PROJECT_PATH_PARTS = 3
+FLOAT_BIT_DEPTH = 32
+ANCHOR_FIELDS = frozenset({"deviceIndex", "expectedDeviceName"})
+FIRST_PRINTABLE_ASCII = 32
+DELETE_CHARACTER = 127
+LAST_C1_CONTROL = 159
+
+
+def has_control_character(text: str) -> bool:
+    return any(ord(c) < FIRST_PRINTABLE_ASCII or DELETE_CHARACTER <= ord(c) <= LAST_C1_CONTROL for c in text)
+
+
+def drop_default(schema: JsonDict) -> None:
+    schema.pop("default", None)
+
+
+def omitted(**kwargs: Any) -> Any:
     """Absent is allowed; explicit null is not part of the wire contract."""
-    return Field(default=None, json_schema_extra=lambda schema: schema.pop("default", None), **kwargs)
+    return Field(default=None, json_schema_extra=drop_default, **kwargs)
 
 
 def validate_local_path(value: str) -> None:
@@ -29,7 +52,7 @@ def validate_local_path(value: str) -> None:
         or value.startswith("//")
         or str(path) != value
         or ".." in path.parts
-        or any(ord(c) < 32 or 127 <= ord(c) <= 159 for c in value)
+        or has_control_character(value)
     ):
         raise ValueError("path must be an absolute normalized path without control characters")
 
@@ -38,7 +61,7 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid", allow_inf_nan=False)
 
     @model_validator(mode="after")
-    def validate_host_string_lengths(self):
+    def validate_host_string_lengths(self) -> Self:
         # Java String.length counts UTF-16 units, unlike JSON Schema maxLength.
         for key, field in type(self).model_fields.items():
             value = getattr(self, key)
@@ -153,7 +176,7 @@ class ModulatorInsertArgs(StatusArgs):
     )
 
     @model_validator(mode="after")
-    def validate_one_type(self):
+    def validate_one_type(self) -> Self:
         if len({"typeName", "typeId"} & self.model_fields_set) != 1:
             raise ValueError("supply exactly one of typeName or typeId")
         return self
@@ -185,7 +208,7 @@ class ModulatorParameterSetArgs(StatusArgs):
     )
 
     @model_validator(mode="after")
-    def validate_raw(self):
+    def validate_raw(self) -> Self:
         details = {
             key: getattr(self, key) for key in ("expectedValue", "value", "display") if key in self.model_fields_set
         }
@@ -215,7 +238,7 @@ class ModulatorControlTarget(StrictModel):
 MAP_TARGET = "The control to modulate: {moduleId, parameterId} for a Grid module control, or {modulatorId, parameterId} for another modulator's control, both on this device."
 
 
-class ModulatorUnmapArgs(StatusArgs):
+class ModulatorMappingArgs(StatusArgs):
     parent: DeviceParent
     modulatorId: TrackId = Field(description="Source modulator. " + MODULATOR_ID)
     outputId: str = omitted(
@@ -223,10 +246,13 @@ class ModulatorUnmapArgs(StatusArgs):
         description="Source output id from modulators.get outputs; may be omitted when the modulator has exactly one output.",
     )
     target: GridControlTarget | ModulatorControlTarget = Field(description=MAP_TARGET)
+
+
+class ModulatorUnmapArgs(ModulatorMappingArgs):
     expectedAmount: ModulationAmount = Field(description="Exact current amount of the mapping, from modulators.get.")
 
 
-class ModulatorMapArgs(ModulatorUnmapArgs):
+class ModulatorMapArgs(ModulatorMappingArgs):
     expectedAmount: ModulationAmount | None = Field(
         description="null when this output does not map to target yet (creates it); else the exact current amount (changes it)."
     )
@@ -261,7 +287,7 @@ class ModulatorDescribeArgs(ModulatorCatalogArgs):
     )
 
     @model_validator(mode="after")
-    def validate_one_selector(self):
+    def validate_one_selector(self) -> Self:
         if len({"type", "query"} & self.model_fields_set) != 1:
             raise ValueError("supply exactly one of type or query")
         return self
@@ -323,7 +349,7 @@ class GridModuleSpec(StrictModel):
     y: int = Field(ge=-(2**31), le=2**31 - 1, description=INT32_DESCRIPTION)
 
     @model_validator(mode="after")
-    def validate_one_type(self):
+    def validate_one_type(self) -> Self:
         if len({"typeId", "typeName"} & self.model_fields_set) != 1:
             raise ValueError("supply exactly one of typeId or typeName")
         return self
@@ -347,12 +373,12 @@ class GridModuleInsertArgs(GridWriteArgs):
     )
 
     @model_validator(mode="after")
-    def validate_one_form(self):
+    def validate_one_form(self) -> Self:
         single = {"typeId", "typeName", "x", "y"} & self.model_fields_set
         if "modules" in self.model_fields_set:
             if single:
                 raise ValueError("supply either modules or the single-insertion fields, not both")
-        elif not (GRID_INSERT_FIELDS <= single and len(single & {"typeId", "typeName"}) == 1):
+        elif not (single >= GRID_INSERT_FIELDS and len(single & {"typeId", "typeName"}) == 1):
             raise ValueError("supply modules, or x, y and exactly one of typeId or typeName")
         return self
 
@@ -407,7 +433,7 @@ class GridConnectionSetArgs(GridWriteArgs):
 
     model_config = ConfigDict(
         json_schema_extra={
-            "oneOf": [{"required": sorted(GRID_CONNECTION_FIELDS)}, {"required": ["connections"]}],
+            "oneOf": [{"required": [*sorted(GRID_CONNECTION_FIELDS)]}, {"required": ["connections"]}],
         }
     )
 
@@ -429,7 +455,7 @@ class GridConnectionSetArgs(GridWriteArgs):
     )
 
     @model_validator(mode="after")
-    def validate_one_form(self):
+    def validate_one_form(self) -> Self:
         supplied = GRID_CONNECTION_FIELDS & self.model_fields_set
         if "connections" in self.model_fields_set:
             if supplied:
@@ -517,24 +543,27 @@ class GridRawWrite(StrictModel):
         description="Exact native parameter ID from grid.get, not a name; empty is valid, at most 1024 UTF-16 code units.",
     )
     model_config = ConfigDict(
-        json_schema_extra={
-            "oneOf": [
-                {
-                    "properties": {
-                        "expectedKind": {"enum": kinds},
-                        "expectedValue": value_schema,
-                        "value": value_schema,
+        json_schema_extra=cast(
+            "JsonDict",
+            {
+                "oneOf": [
+                    {
+                        "properties": {
+                            "expectedKind": {"enum": kinds},
+                            "expectedValue": value_schema,
+                            "value": value_schema,
+                        }
                     }
-                }
-                for kinds, value_schema in (
-                    (["boolean"], {"type": "boolean"}),
-                    (["integer", "enum"], {"type": "integer", "minimum": -(2**31), "maximum": 2**31 - 1}),
-                    (["float"], {"type": "number"}),
-                    (["string"], {"type": "string", "maxLength": 1024}),
-                )
-            ]
-            + [{"properties": {"expectedKind": {"enum": ["steps"]}}}],
-        }
+                    for kinds, value_schema in (
+                        (["boolean"], {"type": "boolean"}),
+                        (["integer", "enum"], {"type": "integer", "minimum": -(2**31), "maximum": 2**31 - 1}),
+                        (["float"], {"type": "number"}),
+                        (["string"], {"type": "string", "maxLength": 1024}),
+                    )
+                ]
+                + [{"properties": {"expectedKind": {"enum": ["steps"]}}}],
+            },
+        )
     )
 
     expectedKind: Literal["float", "integer", "enum", "boolean", "string", "steps"] = Field(
@@ -557,13 +586,13 @@ class GridRawWrite(StrictModel):
 
     @field_validator("expectedValue", "value", "expectedValues", "values", mode="before")
     @classmethod
-    def validate_raw_number(cls, value):
+    def validate_raw_number(cls, value: Any) -> Any:
         if type(value) is list:
             return value  # steps arrays: items are validated as finite floats by the field type
         if type(value) not in (bool, int, float, str):
             raise ValueError("raw value must be a JSON boolean, number or string, never null")
         if type(value) is str:
-            if len(value.encode("utf-16-le", errors="surrogatepass")) > 2048:
+            if len(value.encode("utf-16-le", errors="surrogatepass")) > MAX_RAW_STRING_UNITS * UTF16_BYTES_PER_UNIT:
                 raise ValueError("string value must be at most 1024 UTF-16 code units")
         elif type(value) is not bool:
             try:
@@ -575,7 +604,7 @@ class GridRawWrite(StrictModel):
         return value
 
     @model_validator(mode="after")
-    def validate_raw_kind(self):
+    def validate_raw_kind(self) -> Self:
         given = self.model_fields_set
         if self.expectedKind == "steps":
             if {"expectedValue", "value", "display"} & given or not {"expectedValues", "values"} <= given:
@@ -624,7 +653,7 @@ class GridParameterSetArgs(ParameterArgs):
 
     model_config = ConfigDict(
         json_schema_extra={
-            "oneOf": [{"required": sorted(GRID_WRITE_FIELDS)}, {"required": ["writes"]}],
+            "oneOf": [{"required": [*sorted(GRID_WRITE_FIELDS)]}, {"required": ["writes"]}],
         }
     )
 
@@ -654,7 +683,7 @@ class GridParameterSetArgs(ParameterArgs):
     )
 
     @model_validator(mode="after")
-    def validate_one_form(self):
+    def validate_one_form(self) -> Self:
         supplied = GRID_WRITE_FIELDS & self.model_fields_set
         if "writes" in self.model_fields_set:
             if supplied or WRITE_DETAILS & self.model_fields_set:
@@ -699,7 +728,7 @@ class GridVoicingSetArgs(ParameterArgs):
     )
 
     @model_validator(mode="after")
-    def validate_voicing(self):
+    def validate_voicing(self) -> Self:
         want = self.set.model_fields_set
         if not want:
             raise ValueError("set must name at least one voicing field")
@@ -718,25 +747,26 @@ class DeviceSetArgs(ParameterArgs):
     enabled: bool
 
 
-def validate_insertion(self):
-    if self.kind == "file":
-        if "id" in self.model_fields_set or "path" not in self.model_fields_set:
+def validate_insertion(model: Any) -> None:
+    if model.kind == "file":
+        if "id" in model.model_fields_set or "path" not in model.model_fields_set:
             raise ValueError("file insertion requires path and forbids id")
-        validate_local_path(self.path)
+        validate_local_path(model.path)
     else:
-        if "path" in self.model_fields_set or "id" not in self.model_fields_set:
+        if "path" in model.model_fields_set or "id" not in model.model_fields_set:
             raise ValueError("plug-in insertion requires id and forbids path")
-        if self.kind == "bitwig" and not re.fullmatch(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", self.id):
+        if model.kind == "bitwig" and not re.fullmatch(
+            r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", model.id
+        ):
             raise ValueError("bitwig id must be a canonical UUID")
-        if self.kind == "vst2" and (
-            not re.fullmatch(r"-?(0|[1-9][0-9]{0,9})", self.id) or not -(2**31) <= int(self.id) < 2**31
+        if model.kind == "vst2" and (
+            not re.fullmatch(r"-?(0|[1-9][0-9]{0,9})", model.id) or not -(2**31) <= int(model.id) < 2**31
         ):
             raise ValueError("vst2 id must be a signed int32 decimal string")
-        if self.kind == "vst3" and not re.fullmatch(r"[0-9a-fA-F]{32}", self.id):
+        if model.kind == "vst3" and not re.fullmatch(r"[0-9a-fA-F]{32}", model.id):
             raise ValueError("vst3 id must be 32 hexadecimal characters")
-        if self.kind == "clap" and not re.fullmatch(r"[!-~]{1,256}", self.id):
+        if model.kind == "clap" and not re.fullmatch(r"[!-~]{1,256}", model.id):
             raise ValueError("clap id must be 1..256 printable non-whitespace ASCII characters")
-    return self
 
 
 class DeviceInsertArgs(DeviceArgs):
@@ -751,21 +781,22 @@ class DeviceInsertArgs(DeviceArgs):
     expectedDeviceName: Nonempty = omitted(description="Exact name of the anchor device.")
 
     @model_validator(mode="after")
-    def validate_identifier(self):
+    def validate_identifier(self) -> Self:
         anchored = self.position in ("before", "after")
-        given = {"deviceIndex", "expectedDeviceName"} & self.model_fields_set
-        if anchored and len(given) != 2:
+        given = ANCHOR_FIELDS & self.model_fields_set
+        if anchored and given != ANCHOR_FIELDS:
             raise ValueError("position before/after requires deviceIndex and expectedDeviceName")
         if not anchored and given:
             raise ValueError("deviceIndex and expectedDeviceName are only for position before/after")
-        return validate_insertion(self)
+        validate_insertion(self)
+        return self
 
 
 class DeviceMoveArgs(ParameterArgs):
     toIndex: int = Field(ge=0, le=15)
 
     @model_validator(mode="after")
-    def validate_move(self):
+    def validate_move(self) -> Self:
         if self.toIndex == self.deviceIndex:
             raise ValueError("toIndex equals deviceIndex; nothing to move")
         return self
@@ -780,8 +811,9 @@ class LayerInsertArgs(LayerListArgs):
     position: Literal["start", "end"] = omitted(description="Start or end of the layer's chain; default end.")
 
     @model_validator(mode="after")
-    def validate_identifier(self):
-        return validate_insertion(self)
+    def validate_identifier(self) -> Self:
+        validate_insertion(self)
+        return self
 
 
 class PresetSearchArgs(StatusArgs):
@@ -835,7 +867,7 @@ class ClipNote(StrictModel):
     durationBeats: float = Field(ge=1 / 128, le=4096)
 
 
-def check_note_spans(notes) -> None:
+def check_note_spans(notes: list[Any]) -> None:
     """Grid-independent checks; the extension derives or validates the grid itself."""
     seen: set[tuple[Decimal, int]] = set()
     spans: dict[int, list[tuple[Decimal, Decimal]]] = {}
@@ -864,7 +896,7 @@ class ClipCreateArgs(ClipArgs):
     detail: Literal["compact", "full"] = omitted()
 
     @model_validator(mode="after")
-    def validate_notes(self):
+    def validate_notes(self) -> Self:
         if "notes" not in self.model_fields_set:
             if {"channel", "detail"} & self.model_fields_set:
                 raise ValueError("channel and detail are only valid together with notes")
@@ -899,7 +931,7 @@ class ClipSettingsSetArgs(ClipSettingsArgs):
     )
 
     @model_validator(mode="after")
-    def validate_settings(self):
+    def validate_settings(self) -> Self:
         settings = self.model_fields_set - {"trackId", "slotIndex", "expectedClipName", "timeoutMs"}
         if not settings:
             raise ValueError("supply at least one clip setting")
@@ -935,7 +967,7 @@ class ClipEditArgs(ClipSettingsArgs):
     targetSlotIndex: Annotated[int, Field(ge=0, le=15)] = omitted()
 
     @model_validator(mode="after")
-    def validate_op_fields(self):
+    def validate_op_fields(self) -> Self:
         payload = self.model_fields_set & set().union(*CLIP_EDIT_OPS.values())
         if self.semitones == 0:
             raise ValueError("semitones must be nonzero")
@@ -965,7 +997,7 @@ class ArrangerClipCreateArgs(DeviceArgs):
     channel: Annotated[int, Field(ge=0, le=15)] = omitted()
 
     @model_validator(mode="after")
-    def validate_notes(self):
+    def validate_notes(self) -> Self:
         if "notes" not in self.model_fields_set:
             if "channel" in self.model_fields_set:
                 raise ValueError("channel is only valid together with notes")
@@ -1003,7 +1035,7 @@ class ArrangerClipEditArgs(DeviceArgs):
     name: Annotated[str, Field(min_length=1, max_length=128)] = omitted()
 
     @model_validator(mode="after")
-    def validate_op_fields(self):
+    def validate_op_fields(self) -> Self:
         payload = self.model_fields_set & set().union(*ARRANGER_EDIT_OPS.values())
         if payload != ARRANGER_EDIT_OPS[self.op]:
             raise ValueError(f"op {self.op} takes exactly {sorted(ARRANGER_EDIT_OPS[self.op]) or 'no extra fields'}")
@@ -1022,7 +1054,7 @@ class AutomationTarget(StrictModel):
     )
 
     @model_validator(mode="after")
-    def validate_kind_fields(self):
+    def validate_kind_fields(self) -> Self:
         grid = {"deviceIndex", "expectedDeviceName", "moduleId", "parameterId"}
         given = self.model_fields_set & grid
         if given != (grid if self.kind == "grid" else set()):
@@ -1037,7 +1069,7 @@ class AutomationRange(StrictModel):
     endBeat: float = Field(ge=0, le=4194304)
 
     @model_validator(mode="after")
-    def validate_order(self):
+    def validate_order(self) -> Self:
         if self.startBeat > self.endBeat:
             raise ValueError("startBeat must not exceed endBeat")
         return self
@@ -1068,9 +1100,9 @@ class AutomationPointsSetArgs(DeviceArgs):
     )
 
     @model_validator(mode="after")
-    def validate_points(self):
+    def validate_points(self) -> Self:
         beats = [point.beat for point in self.points]
-        if any(b <= a for a, b in zip(beats, beats[1:])):
+        if any(b <= a for a, b in itertools.pairwise(beats)):
             raise ValueError("point beats must be strictly increasing")
         if "range" in self.model_fields_set and any(not self.range.startBeat <= b <= self.range.endBeat for b in beats):
             raise ValueError("every point must lie inside range")
@@ -1086,10 +1118,13 @@ ROUTING_TRACK_ID = "A track of the current 16-track window (tracks.list); for a 
 
 
 class RoutingEntry(StrictModel):
+    if TYPE_CHECKING:
+        kind: str
+
     trackId: TrackId = omitted(description=ROUTING_TRACK_ID)
 
     @model_validator(mode="after")
-    def validate_track(self):
+    def validate_track(self) -> Self:
         if ("trackId" in self.model_fields_set) != (self.kind in ROUTING_TRACK_KINDS):
             raise ValueError(f"trackId is required for {sorted(ROUTING_TRACK_KINDS)} and not allowed otherwise")
         return self
@@ -1119,7 +1154,7 @@ class ObservedEntry(RoutingEntry):
     )
 
     @model_validator(mode="after")
-    def validate_name(self):
+    def validate_name(self) -> Self:
         if ("name" in self.model_fields_set) != (self.kind == "other"):
             raise ValueError("name is required for kind other and not allowed otherwise")
         if "nativeType" in self.model_fields_set and self.kind != "other":
@@ -1152,7 +1187,7 @@ class TrackRoutingSetArgs(DeviceArgs):
     )
 
     @model_validator(mode="after")
-    def validate_pairs(self):
+    def validate_pairs(self) -> Self:
         given = self.model_fields_set
         if not given & {"output", "input"}:
             raise ValueError("supply output, input or both")
@@ -1192,7 +1227,7 @@ class SidechainSetArgs(ParameterArgs):
     )
 
     @model_validator(mode="after")
-    def validate_component(self):
+    def validate_component(self) -> Self:
         given = self.model_fields_set
         if ("componentIndex" in given) == ("componentId" in given):
             raise ValueError("supply exactly one of componentIndex or componentId")
@@ -1205,7 +1240,7 @@ class ClipImportArgs(ClipArgs):
     path: Nonempty
 
     @model_validator(mode="after")
-    def validate_path(self):
+    def validate_path(self) -> Self:
         validate_local_path(self.path)
         return self
 
@@ -1226,13 +1261,13 @@ class NoteWindowArgs(ClipArgs):
         return bool(GRID_FIELDS & self.model_fields_set)
 
     @model_validator(mode="after")
-    def validate_pitch_window(self):
+    def validate_pitch_window(self) -> Self:
         supplied = GRID_FIELDS & self.model_fields_set
         if supplied and supplied != GRID_FIELDS:
             raise ValueError(
                 "stepSizeBeats, startStep, steps, pitchStart and pitchCount must be supplied together or all omitted"
             )
-        if supplied and self.pitchStart + self.pitchCount > 128:
+        if supplied and self.pitchStart + self.pitchCount > MIDI_PITCH_COUNT:
             raise ValueError("pitchStart + pitchCount must not exceed 128")
         return self
 
@@ -1245,7 +1280,7 @@ class NoteEdit(StrictModel):
     durationBeats: Annotated[float, Field(ge=1 / 128, le=4096)] = omitted()
 
     @model_validator(mode="after")
-    def validate_operation(self):
+    def validate_operation(self) -> Self:
         supplied = self.model_fields_set & {"velocity", "durationBeats"}
         if self.op == "set" and supplied != {"velocity", "durationBeats"}:
             raise ValueError("set requires velocity and durationBeats")
@@ -1259,7 +1294,7 @@ class NoteEditArgs(NoteWindowArgs):
     detail: Literal["compact", "full"] = omitted()
 
     @model_validator(mode="after")
-    def validate_edits(self):
+    def validate_edits(self) -> Self:
         if not self.explicit_window:
             check_note_spans(self.edits)
             return self
@@ -1320,19 +1355,23 @@ class TransportSetArgs(StatusArgs):
     @field_validator("timeSignature")
     @classmethod
     def validate_signature(cls, value: str) -> str:
-        if not re.fullmatch(r"[1-9][0-9]?/(1|2|4|8|16|32)", value, re.ASCII) or int(value.split("/")[0]) > 32:
+        if (
+            not re.fullmatch(r"[1-9][0-9]?/(1|2|4|8|16|32)", value, re.ASCII)
+            or int(value.split("/", maxsplit=1)[0]) > MAX_TIME_SIGNATURE_NUMERATOR
+        ):
             raise ValueError(
                 "timeSignature must be numerator/denominator: numerator 1..32, denominator 1, 2, 4, 8, 16 or 32"
             )
         return value
 
     @model_validator(mode="after")
-    def require_change(self):
+    def require_change(self) -> Self:
         if not self.model_fields_set - {"timeoutMs"}:
             raise ValueError("transport.set requires at least one changed field")
-        if {"loopStartBeats", "loopDurationBeats"} <= self.model_fields_set:
-            if not math.isfinite(self.loopStartBeats + self.loopDurationBeats):
-                raise ValueError("loopStartBeats + loopDurationBeats must be finite")
+        if {"loopStartBeats", "loopDurationBeats"} <= self.model_fields_set and not math.isfinite(
+            self.loopStartBeats + self.loopDurationBeats
+        ):
+            raise ValueError("loopStartBeats + loopDurationBeats must be finite")
         return self
 
 
@@ -1361,7 +1400,7 @@ class TrackSetArgs(DeviceArgs):
     )
 
     @model_validator(mode="after")
-    def require_change(self):
+    def require_change(self) -> Self:
         if not self.model_fields_set - {"timeoutMs", "trackId"}:
             raise ValueError("tracks.set requires at least one changed field")
         for group in (("volumeNormalized", "volumeDb", "volumeDisplay"), ("panNormalized", "panPercent", "panDisplay")):
@@ -1389,7 +1428,7 @@ class TrackSendSetArgs(DeviceArgs):
     )
 
     @model_validator(mode="after")
-    def validate_send(self):
+    def validate_send(self) -> Self:
         fields = self.model_fields_set
         if ("sendIndex" in fields) == ("sendName" in fields):
             raise ValueError("supply exactly one of sendIndex or sendName")
@@ -1405,7 +1444,7 @@ class TrackMetersArgs(StatusArgs):
     windowMs: int = Field(ge=50, le=5000)
 
     @model_validator(mode="after")
-    def unique_tracks(self):
+    def unique_tracks(self) -> Self:
         if len({t.lower() for t in self.trackIds}) != len(self.trackIds):
             raise ValueError("trackIds must be unique")
         return self
@@ -1448,15 +1487,15 @@ class ProjectSaveAsArgs(StrictModel):
     allowAnyPath: bool = omitted(description="Allow a path outside Bitwig's configured projects folder.")
 
     @model_validator(mode="after")
-    def validate_path(self):
+    def validate_path(self) -> Self:
         validate_local_path(self.path)
         path = PurePosixPath(self.path)
-        if len(path.parts) < 3 or not path.name.endswith(PROJECT_EXTENSION):
+        if len(path.parts) < MIN_PROJECT_PATH_PARTS or not path.name.endswith(PROJECT_EXTENSION):
             raise ValueError(f"path must name a {PROJECT_EXTENSION} file inside a folder")
         name = path.name[: -len(PROJECT_EXTENSION)]
         if (
             not name
-            or len(name.encode("utf-16-le", errors="surrogatepass")) // 2 > 128
+            or len(name.encode("utf-16-le", errors="surrogatepass")) // UTF16_BYTES_PER_UNIT > MAX_PROJECT_NAME_UNITS
             or name != name.strip()
             or name.startswith(".")
             or name.lower() == "template"
@@ -1485,7 +1524,7 @@ class RenderRangeArgs(StrictModel):
     )
 
     @model_validator(mode="after")
-    def validate_range(self):
+    def validate_range(self) -> Self:
         if self.endBeats <= self.startBeats or self.endBeats - self.startBeats > RENDER_MAX_LENGTH:
             raise ValueError("endBeats must be after startBeats, at most 65536 beats later")
         return self
@@ -1509,22 +1548,16 @@ class ExportAudioArgs(RenderRangeArgs):
     overwrite: bool = omitted(description="Allow replacing existing files with the same names.")
 
     @model_validator(mode="after")
-    def validate_export(self):
+    def validate_export(self) -> Self:
         if len({value.lower() for value in self.sources}) != len(self.sources):
             raise ValueError("sources must be distinct")
         validate_local_path(self.directory)
         name = self.baseName
-        if (
-            name != name.strip()
-            or name.startswith(".")
-            or "/" in name
-            or "\\" in name
-            or any(ord(c) < 32 or 127 <= ord(c) <= 159 for c in name)
-        ):
+        if name != name.strip() or name.startswith(".") or "/" in name or "\\" in name or has_control_character(name):
             raise ValueError(
                 "baseName must not contain '/', '\\', control characters, a leading dot or surrounding whitespace"
             )
-        if self.format == "flac" and self.bitDepth == 32:
+        if self.format == "flac" and self.bitDepth == FLOAT_BIT_DEPTH:
             raise ValueError("flac supports bitDepth 16 or 24")
         return self
 
@@ -1536,7 +1569,7 @@ class BounceInPlaceArgs(RenderRangeArgs):
     tap: Literal["pre_fx", "pre_fader", "post_fader"]
 
     @model_validator(mode="after")
-    def validate_distinct(self):
+    def validate_distinct(self) -> Self:
         if len({value.lower() for value in self.trackIds}) != len(self.trackIds):
             raise ValueError("trackIds must be distinct")
         return self
@@ -1555,7 +1588,7 @@ class TrackGroupArgs(StatusArgs):
     name: Nonempty = omitted()
 
     @model_validator(mode="after")
-    def validate_distinct(self):
+    def validate_distinct(self) -> Self:
         if len({value.lower() for value in self.trackIds}) != len(self.trackIds):
             raise ValueError("trackIds must be distinct")
         return self
@@ -1597,7 +1630,7 @@ class RemoteSlotSpec(StrictModel):
     )
 
     @model_validator(mode="after")
-    def validate_module(self):
+    def validate_module(self) -> Self:
         if len({"moduleId", "moduleName"} & self.model_fields_set) != 1:
             raise ValueError("supply exactly one of moduleId or moduleName")
         return self
@@ -1617,7 +1650,7 @@ class RemoteDefineArgs(ParameterArgs):
     )
 
     @model_validator(mode="after")
-    def validate_distinct(self):
+    def validate_distinct(self) -> Self:
         pairs = [((s.moduleId or "").lower(), s.moduleName or "", s.parameterId) for s in self.slots if s is not None]
         if len(pairs) != len(set(pairs)):
             raise ValueError("slots must not repeat a module/parameter pair")
@@ -1676,7 +1709,7 @@ class GridApplyModule(StrictModel):
     )
 
     @model_validator(mode="after")
-    def validate_one_type(self):
+    def validate_one_type(self) -> Self:
         if len({"type", "typeId"} & self.model_fields_set) != 1:
             raise ValueError("supply exactly one of type or typeId")
         return self
@@ -1733,7 +1766,7 @@ class GridRenderArgs(ParameterArgs):
     scale: float = omitted(ge=0.25, le=4, description="Image scale factor (default 1).")
 
     @model_validator(mode="after")
-    def validate_path(self):
+    def validate_path(self) -> Self:
         validate_local_path(self.outPath)
         return self
 
@@ -1753,7 +1786,7 @@ class GridExportArgs(ParameterArgs):
     overwrite: bool = omitted(description="Replace an existing file at outPath.")
 
     @model_validator(mode="after")
-    def validate_path(self):
+    def validate_path(self) -> Self:
         if self.outPath is not None:
             validate_local_path(self.outPath)
         return self
@@ -1802,7 +1835,7 @@ class GridProbeArgs(ParameterArgs):
         return _wav_path(value)
 
     @model_validator(mode="after")
-    def validate_options(self):
+    def validate_options(self) -> Self:
         if self.overwrite and not self.outPath:
             raise ValueError("overwrite applies with outPath only")
         if self.key and self.mode != "bands":
@@ -1852,7 +1885,7 @@ class GridApplyArgs(StatusArgs):
     )
 
     @model_validator(mode="after")
-    def validate_spec(self):
+    def validate_spec(self) -> Self:
         if "voicing" in self.model_fields_set and not self.voicing.model_fields_set:
             raise ValueError("voicing must name at least one field")
         if self.pruneAll and (self.namespace or self.allowOutsideDisconnect):
@@ -1952,7 +1985,7 @@ class AudioAnalyzeArgs(StatusArgs):
         return value
 
     @model_validator(mode="after")
-    def validate_bands_only(self):
+    def validate_bands_only(self) -> Self:
         if self.mode != "bands" and (self.key or self.spectrogramPath):
             raise ValueError("key and spectrogramPath apply to mode=bands only")
         return self
@@ -1978,7 +2011,7 @@ class GridDescribeArgs(StatusArgs):
     )
 
     @model_validator(mode="after")
-    def validate_one_selector(self):
+    def validate_one_selector(self) -> Self:
         if len({"type", "query"} & self.model_fields_set) != 1:
             raise ValueError("supply exactly one of type or query")
         if "limit" in self.model_fields_set and "query" not in self.model_fields_set:
@@ -1998,7 +2031,7 @@ class HostDiagnosticsArgs(StatusArgs):
     maxEvents: int = omitted(ge=1, le=500, description="Keep the newest N deduplicated events (default 50).")
 
     @model_validator(mode="after")
-    def validate_window(self):
+    def validate_window(self) -> Self:
         if {"sinceSeconds", "sinceMarker"} <= self.model_fields_set:
             raise ValueError("supply at most one of sinceSeconds or sinceMarker")
         return self

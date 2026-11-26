@@ -22,6 +22,9 @@ _KEY_RE = re.compile(rb"[A-Za-z0-9_]{1,64}")
 _STRING, _BLOB, _STRING_LIST = 0x08, 0x0D, 0x19
 
 
+CREATOR_AND_PACKAGE_PARTS = 2
+
+
 def default_roots() -> list[tuple[str, Path]]:
     """(source, root) pairs: BITWIG_PRESET_ROOTS (os.pathsep list) replaces the defaults."""
     if os.environ.get("BITWIG_PRESET_ROOTS"):
@@ -48,7 +51,8 @@ def read_meta(data: bytes) -> dict[str, Any] | None:
     at = data.find(b"meta", 0, 128)
     if at < 0:
         return None
-    pos, meta = at + 4, {}
+    pos = at + 4
+    meta: dict[str, Any] = {}
     try:
         while pos + 8 <= len(data):
             marker, klen = struct.unpack_from(">II", data, pos)
@@ -86,7 +90,7 @@ def _entry(source: str, root: Path, path: Path, parts: tuple[str, ...]) -> dict[
     entry: dict[str, Any] = {"name": name, "path": str(path), "source": source}
     if source == "package":
         entry["creator"] = parts[0] if len(parts) > 1 else None
-        entry["package"] = parts[1] if len(parts) > 2 else None
+        entry["package"] = parts[1] if len(parts) > CREATOR_AND_PACKAGE_PARTS else None
         entry["folders"] = list(parts[2:-1])
     else:
         entry["folders"] = list(parts[:-1])

@@ -4,9 +4,10 @@ import os
 import sys
 
 import pytest
+from pydantic import ValidationError
 
+from bitwig_agent.catalog import NOTE_WINDOW, TARGET, TOOLS, TRACK, invalid_params_message, validate_call
 from bitwig_agent.cli import execute, main, parse_arguments, parser
-from bitwig_agent.catalog import NOTE_WINDOW, TARGET, TOOLS, TRACK
 
 pytestmark = pytest.mark.anyio
 
@@ -34,7 +35,7 @@ async def test_typed_arguments_forward_without_null_defaults(host, monkeypatch):
             f"trackId={TRACK}",
             "mute=false",
             "volumeNormalized=0.25",
-            "name=Sketch = α",
+            "name=Sketch = \u03b1",
             "--timeout-ms",
             "250",
         ]
@@ -42,7 +43,7 @@ async def test_typed_arguments_forward_without_null_defaults(host, monkeypatch):
     assert code == 0
     assert payload == {"result": result}
     request = host.requests[0]
-    assert request["params"] == {"trackId": TRACK, "mute": False, "volumeNormalized": 0.25, "name": "Sketch = α"}
+    assert request["params"] == {"trackId": TRACK, "mute": False, "volumeNormalized": 0.25, "name": "Sketch = \u03b1"}
     assert request["timeoutMs"] == 250
     assert host.connections == 1
 
@@ -226,10 +227,10 @@ async def test_grid_move_cli_rejects_non_integer_tokens_before_tcp(host, monkeyp
 
 @pytest.mark.parametrize("raw", [False, True])
 @pytest.mark.parametrize(
-    "expected,source",
+    ("expected", "source"),
     [
         (None, {"moduleId": TRACK, "portKey": ""}),
-        ({"moduleId": TRACK, "portKey": "out=α"}, None),
+        ({"moduleId": TRACK, "portKey": "out=\u03b1"}, None),
         (None, None),
     ],
 )
@@ -477,7 +478,7 @@ async def test_modulator_generated_help_and_parse_work_offline(monkeypatch, meth
 
 
 @pytest.mark.parametrize("raw", [False, True])
-@pytest.mark.parametrize("value", ["", " \tMacro α𝄞\n "])
+@pytest.mark.parametrize("value", ["", " \tMacro \u03b1𝄞\n "])
 async def test_modulator_cli_preserves_raw_string_and_null_metadata(host, monkeypatch, raw, value):
     monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
     params = {**TOOLS["modulators.parameters.get"].examples[0], "parameterId": ""}
@@ -550,10 +551,10 @@ async def test_modulator_cli_preserves_host_error_without_retry(host, monkeypatc
 
 @pytest.mark.parametrize("raw", [False, True])
 @pytest.mark.parametrize(
-    "expected,requested",
+    ("expected", "requested"),
     [
         ("", ""),
-        (" \t原音=𝄞\n", "  Lead = α  "),
+        (" \t原音=𝄞\n", "  Lead = \u03b1  "),
         ("null", "false"),
         ("𝄞" * 512, ""),
         ("", '"quoted"'),
@@ -589,7 +590,7 @@ async def test_grid_rename_cli_rejects_invalid_raw_json_name_before_tcp(host, mo
 @pytest.mark.parametrize("raw", [False, True])
 async def test_grid_rename_cli_unknown_preserves_native_uncertainty_without_retry(host, monkeypatch, raw):
     monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
-    params = {**TARGET, "moduleId": TRACK, "expectedCustomName": " \tα ", "customName": ""}
+    params = {**TARGET, "moduleId": TRACK, "expectedCustomName": " \t\u03b1 ", "customName": ""}
     arguments = ["--params", json.dumps(params)] if raw else [f"{key}={value}" for key, value in params.items()]
     error = {
         "code": "stale_context",
@@ -606,9 +607,6 @@ async def test_grid_rename_cli_unknown_preserves_native_uncertainty_without_retr
 
 
 def test_unknown_argument_names_closest_field():
-    from pydantic import ValidationError
-    import pytest
-    from bitwig_agent.catalog import invalid_params_message, validate_call
 
     with pytest.raises(ValidationError) as error:
         validate_call("grid.connections.set", {"moduleId": "x"})
@@ -619,9 +617,6 @@ def test_unknown_argument_names_closest_field():
 
 
 def test_unknown_argument_synonyms_hint_but_never_alias():
-    from pydantic import ValidationError
-    import pytest
-    from bitwig_agent.catalog import invalid_params_message, validate_call
 
     target = {"trackId": "12345678-1234-1234-1234-123456789abc", "deviceIndex": 0, "expectedDeviceName": "Poly Grid"}
     for method, bad, want in (
@@ -632,13 +627,11 @@ def test_unknown_argument_synonyms_hint_but_never_alias():
         with pytest.raises(ValidationError) as error:
             validate_call(method, bad)
         message = invalid_params_message(method, error.value)
-        assert "no alias is accepted" in message and all(w in message for w in want), message
+        assert "no alias is accepted" in message, message
+        assert all(w in message for w in want), message
 
 
 def test_nested_unknown_argument_names_full_path_and_siblings():
-    from pydantic import ValidationError
-    import pytest
-    from bitwig_agent.catalog import invalid_params_message, validate_call
 
     args = {
         "trackId": "abcdef01-2345-6789-abcd-0123456789ab",
@@ -654,5 +647,8 @@ def test_nested_unknown_argument_names_full_path_and_siblings():
         validate_call("arranger.clips.create", args)
     message = invalid_params_message("arranger.clips.create", error.value)
     assert "notes[1].channel" in message
-    assert "Accepted at notes[]: " in message and "durationBeats" in message and "velocity" in message
-    assert "notes (did you mean notes?)" not in message and "notes.1" not in message
+    assert "Accepted at notes[]: " in message
+    assert "durationBeats" in message
+    assert "velocity" in message
+    assert "notes (did you mean notes?)" not in message
+    assert "notes.1" not in message

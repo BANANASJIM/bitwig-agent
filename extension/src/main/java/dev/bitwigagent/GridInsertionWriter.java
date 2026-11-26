@@ -246,10 +246,6 @@ final class GridInsertionWriter {
         return failures + 1;
     }
 
-    /**
-     * Same-device batch: types and geometry first (any failure inserts nothing), then entries run in order through the
-     * ordinary single path, each settling before the next starts; stops at the first failure or unknown.
-     */
     /** Minimum time left before the RPC deadline to start another batch entry (a load plus its delivery). */
     static final long NEXT_ENTRY_MARGIN_NANOS = java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(1500);
     /** The next entry also needs this many times the slowest entry so far: verification reads grow with the graph. */
@@ -257,6 +253,10 @@ final class GridInsertionWriter {
     /** Monotonic clock for entry durations; replaceable by host-free tests. */
     java.util.function.LongSupplier clock = System::nanoTime;
 
+    /**
+     * Same-device batch: types and geometry first (any failure inserts nothing), then entries run in order through the
+     * ordinary single path, each settling before the next starts; stops at the first failure or unknown.
+     */
     void insertAll(
             Object proxy,
             UUID trackId,

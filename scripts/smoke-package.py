@@ -7,12 +7,12 @@ run outside the checkout; no extension download, installation, or host calls.
 
 import argparse
 import asyncio
-from importlib.metadata import version
 import json
-from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from importlib.metadata import version
+from pathlib import Path
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -36,20 +36,22 @@ def main() -> None:
         ]["bitwig-agent"]
 
         async def check() -> None:
-            async with stdio_client(StdioServerParameters(**config, cwd=cwd)) as streams:
-                async with ClientSession(*streams) as session:
-                    initialized = await session.initialize()
-                    if initialized.server_info.version != installed_version:
-                        raise RuntimeError(f"MCP version mismatch: {initialized.server_info.version}")
-                    tools = await session.list_tools()
-                    names = {tool.name for tool in tools.tools}
-                    if not {"tracks.list", "notes.edit"} <= names:
-                        raise RuntimeError(f"Missing expected MCP tools: {names}")
-                    print(
-                        f"{initialized.server_info.name} {installed_version}: "
-                        f"{len(names)} tools via installed configuration; "
-                        f"MCP SDK {version('mcp')}; no native-host calls"
-                    )
+            async with (
+                stdio_client(StdioServerParameters(**config, cwd=cwd)) as streams,
+                ClientSession(*streams) as session,
+            ):
+                initialized = await session.initialize()
+                if initialized.server_info.version != installed_version:
+                    raise RuntimeError(f"MCP version mismatch: {initialized.server_info.version}")
+                tools = await session.list_tools()
+                names = {tool.name for tool in tools.tools}
+                if not {"tracks.list", "notes.edit"} <= names:
+                    raise RuntimeError(f"Missing expected MCP tools: {names}")
+                print(
+                    f"{initialized.server_info.name} {installed_version}: "
+                    f"{len(names)} tools via installed configuration; "
+                    f"MCP SDK {version('mcp')}; no native-host calls"
+                )
 
         asyncio.run(asyncio.wait_for(check(), timeout=30))
 

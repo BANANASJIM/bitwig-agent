@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import math
 from array import array
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 OFFSET = -0.691  # BS.1770 constant: K-weighted energy -> LKFS
 ABS_GATE = -70.0
@@ -21,6 +22,11 @@ TP_CANDIDATE_FRACTION = 0.5  # only intervals touching a sample >= -6 dB below t
 TP_MAX_INTERVALS = 150_000
 TP_HALF_TAPS = 12  # 24 taps per phase
 MAX_SECONDS = 1800
+
+
+STEREO_CHANNELS = 2
+SURROUND_5_1_CHANNELS = 6
+MIN_PERCENTILE_POINTS = 2
 
 
 def _shelf(rate: int) -> tuple[tuple[float, float, float], tuple[float, float]]:
@@ -84,9 +90,9 @@ def sub_block_energies(x: Sequence[float], rate: int) -> list[float]:
 def channel_weights(channels: int) -> tuple[list[float], str]:
     if channels == 1:
         return [1.0], "mono"
-    if channels == 2:
+    if channels == STEREO_CHANNELS:
         return [1.0, 1.0], "stereo"
-    if channels == 6:
+    if channels == SURROUND_5_1_CHANNELS:
         return [1.0, 1.0, 1.0, 0.0, 1.41, 1.41], "5.1_wav_order_L_R_C_LFE_Ls_Rs"
     return [1.0] * channels, "assumed_all_front_weight_1"
 
@@ -109,14 +115,14 @@ def _windows(per_sub: list[float], span: int) -> list[float]:
 
 def _percentile(sorted_values: list[float], q: float) -> float:
     pos = q * (len(sorted_values) - 1)
-    lo = int(math.floor(pos))
+    lo = math.floor(pos)
     hi = min(lo + 1, len(sorted_values) - 1)
     return sorted_values[lo] + (sorted_values[hi] - sorted_values[lo]) * (pos - lo)
 
 
 def integrated(block_energies: list[float]) -> tuple[float | None, dict[str, Any]]:
     loud = [_lufs(e) for e in block_energies]
-    kept = [e for e, l in zip(block_energies, loud) if l > ABS_GATE]
+    kept = [e for e, level in zip(block_energies, loud, strict=True) if level > ABS_GATE]
     info: dict[str, Any] = {
         "blocks": len(block_energies),
         "absoluteGated": len(kept),
@@ -126,19 +132,19 @@ def integrated(block_energies: list[float]) -> tuple[float | None, dict[str, Any
     if not kept:
         return None, info
     threshold = _lufs(sum(kept) / len(kept)) + REL_GATE_LU
-    final = [e for e, l in zip(block_energies, loud) if l > ABS_GATE and l > threshold]
+    final = [e for e, level in zip(block_energies, loud, strict=True) if level > ABS_GATE and level > threshold]
     info.update(relativeGated=len(final), relativeThresholdLufs=round(threshold, 2))
     return _lufs(sum(final) / len(final)), info
 
 
 def loudness_range(short_term_energies: list[float]) -> float | None:
-    loud = [(_lufs(e)) for e in short_term_energies]
-    kept = [(e, l) for e, l in zip(short_term_energies, loud) if l > ABS_GATE]
+    loud = [_lufs(e) for e in short_term_energies]
+    kept = [(e, level) for e, level in zip(short_term_energies, loud, strict=True) if level > ABS_GATE]
     if not kept:
         return None
     threshold = _lufs(sum(e for e, _ in kept) / len(kept)) + LRA_REL_GATE_LU
-    final = sorted(l for _, l in kept if l > threshold)
-    if len(final) < 2:
+    final = sorted(level for _, level in kept if level > threshold)
+    if len(final) < MIN_PERCENTILE_POINTS:
         return None
     return _percentile(final, 0.95) - _percentile(final, 0.10)
 
@@ -189,9 +195,8 @@ def true_peak(x: Sequence[float]) -> tuple[float, float]:
             continue
         seg = x[i - lo_pad : i + hi_pad + 1]
         for taps in _PHASES:
-            v = abs(sum(t * s for t, s in zip(taps, seg)))
-            if v > best:
-                best = v
+            v = abs(sum(t * s for t, s in zip(taps, seg, strict=False)))
+            best = max(best, v)
     return peak, best
 
 
@@ -199,7 +204,7 @@ def _db(value: float) -> float | None:
     return round(20 * math.log10(value), 2) if value > 0 else None
 
 
-def analyze(channels: list[array], rate: int) -> dict[str, Any]:
+def analyze(channels: list[array[Any]], rate: int) -> dict[str, Any]:
     if not channels or not len(channels[0]):
         raise ValueError("no samples to measure")
     seconds = len(channels[0]) / rate
@@ -208,9 +213,9 @@ def analyze(channels: list[array], rate: int) -> dict[str, Any]:
             f"loudness is limited to {MAX_SECONDS} s of audio per call (this file has {seconds:.0f} s); use skipSeconds or a shorter capture"
         )
     weights, layout = channel_weights(len(channels))
-    per_channel = [sub_block_energies(ch, rate) if w else [] for ch, w in zip(channels, weights)]
-    count = min((len(e) for e, w in zip(per_channel, weights) if w), default=0)
-    weighted = [sum(w * e[i] for e, w in zip(per_channel, weights) if w) for i in range(count)]
+    per_channel = [sub_block_energies(ch, rate) if w else [] for ch, w in zip(channels, weights, strict=False)]
+    count = min((len(e) for e, w in zip(per_channel, weights, strict=False) if w), default=0)
+    weighted = [sum(w * e[i] for e, w in zip(per_channel, weights, strict=False) if w) for i in range(count)]
     momentary = _windows(weighted, MOMENTARY_SUB)
     short = _windows(weighted, SHORT_TERM_SUB)
     value, gating = integrated(momentary)

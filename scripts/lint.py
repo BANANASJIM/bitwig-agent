@@ -92,7 +92,9 @@ def ruff_format(fix: bool) -> bool:
 
 
 def mypy(fix: bool) -> bool:
-    return run([sys.executable, "-m", "mypy"])
+    strict = run([sys.executable, "-m", "mypy"])
+    loose = run([sys.executable, "-m", "mypy", "--config-file", "config/mypy-loose.toml"])
+    return strict and loose
 
 
 def java_format(fix: bool) -> bool:

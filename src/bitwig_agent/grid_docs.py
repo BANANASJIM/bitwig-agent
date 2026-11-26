@@ -50,6 +50,9 @@ PREFIX_ALIASES: dict[str, tuple[str, ...]] = {
 }
 
 
+MIN_PLURAL_STEM_LENGTH = 3
+
+
 class DocsUnavailable(ValueError):
     """The Bitwig resource files cannot be found or read."""
 
@@ -127,7 +130,7 @@ def read_properties(path: Path) -> dict[str, str]:
     return parse_properties(text)
 
 
-def localization_dir(root: str | os.PathLike | None = None) -> Path:
+def localization_dir(root: str | os.PathLike[str] | None = None) -> Path:
     """Explicit root, else BITWIG_INSTALLATION_ROOT, else the install holding BITWIG_API_JAR, else known defaults."""
     candidates: list[Path] = []
     if root:
@@ -203,7 +206,7 @@ class Docs:
 _cache: dict[tuple[str, str], Docs] = {}
 
 
-def get_docs(root: str | os.PathLike | None = None, lang: str = "en") -> Docs:
+def get_docs(root: str | os.PathLike[str] | None = None, lang: str = "en") -> Docs:
     if lang not in LANGS:
         raise ValueError(f"lang must be one of {', '.join(LANGS)}")
     directory = localization_dir(root)
@@ -241,7 +244,7 @@ def _candidate_names(key: str, name: str) -> list[str]:
 
 
 def _stem(word: str) -> str:
-    return word[:-1] if len(word) > 3 and word.endswith("s") else word
+    return word[:-1] if len(word) > MIN_PLURAL_STEM_LENGTH and word.endswith("s") else word
 
 
 PARAM_FACTS = ("kind", "numericUnit", "minimum", "maximum", "default", "defaultDisplay", "options")
@@ -317,18 +320,18 @@ def describe_module(docs: Docs, name: str, info: dict[str, Any]) -> dict[str, An
     # Leftover module-specific entries: pair them with an undescribed item when exactly one fits.
     for rest in [r for r in own if r.endswith(".desc") and r not in claimed]:
         stem = rest[:-5]
-        direction = "in" if stem.endswith("_in") else "out" if stem.endswith("_out") else None
+        wanted_direction: str | None = "in" if stem.endswith("_in") else "out" if stem.endswith("_out") else None
         words = {_stem(w) for w in re.findall(r"[^\W_]+", stem.casefold())} - {"in", "out"}
         fits = [
             i
             for i in items
             if "description" not in i["row"]
-            and (direction is None or i["direction"] in (direction, None))
+            and (wanted_direction is None or i["direction"] in (wanted_direction, None))
             and words
             and words <= {_stem(w) for w in re.findall(r"[^\W_]+", (i["name"] or "").casefold())}
         ]
-        if direction and not fits:  # `logic_in` for the lone undescribed input
-            fits = [i for i in items if "description" not in i["row"] and i["direction"] == direction]
+        if wanted_direction and not fits:  # `logic_in` for the lone undescribed input
+            fits = [i for i in items if "description" not in i["row"] and i["direction"] == wanted_direction]
         if len(fits) == 1:
             fits[0]["row"]["description"] = own[rest]
             claimed.add(rest)
@@ -412,7 +415,7 @@ def search(docs: Docs, modules: dict[str, Any], query: str, limit: int) -> list[
     return ranked[:limit]
 
 
-def mapping_report(root: str | os.PathLike | None = None, lang: str = "en") -> dict[str, Any]:
+def mapping_report(root: str | os.PathLike[str] | None = None, lang: str = "en") -> dict[str, Any]:
     docs = get_docs(root, lang)
     modules = bundled_schema()["modules"]
     unmapped = [n for n in modules if docs.resource_id(n) is None]

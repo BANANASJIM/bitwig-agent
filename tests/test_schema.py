@@ -1,7 +1,18 @@
+from typing import Any
+
 import pytest
 from pydantic import ValidationError
 
-from bitwig_agent.catalog import LAYER_PARENT, LAYER_TARGET, NOTE_WINDOW, TARGET, TRACK, TOOLS, validate_call
+from bitwig_agent.catalog import (
+    LAYER_PARENT,
+    LAYER_TARGET,
+    NOTE_WINDOW,
+    TARGET,
+    TOOLS,
+    TRACK,
+    max_timeout_ms,
+    validate_call,
+)
 
 
 def note(**changes):
@@ -46,7 +57,7 @@ def test_chords_adjacent_notes_and_absolute_window_offsets_are_valid():
 
 
 @pytest.mark.parametrize(
-    "kind,fields",
+    ("kind", "fields"),
     [
         ("file", {"path": "relative.bwpreset"}),
         ("file", {"path": "/tmp/../preset.bwpreset"}),
@@ -155,7 +166,7 @@ def test_launcher_import_requires_explicit_target_and_path(field):
 
 
 @pytest.mark.parametrize(
-    "method,args,field",
+    ("method", "args", "field"),
     [
         ("tracks.set", {"trackId": TRACK, "mute": False}, "name"),
         ("transport.set", {"playing": False}, "loopDurationBeats"),
@@ -198,7 +209,7 @@ def test_transport_rejects_finite_fields_whose_loop_end_overflows():
 
 
 @pytest.mark.parametrize(
-    "field,values",
+    ("field", "values"),
     [
         ("query", [None, 1, True, [], "x" * 129, "𝄞" * 65]),
         ("offset", [-1, 100001, 0.0, "0", True, None]),
@@ -212,7 +223,7 @@ def test_grid_catalog_rejects_unbounded_or_coerced_queries(field, values):
 
 
 @pytest.mark.parametrize(
-    "field,values",
+    ("field", "values"),
     [
         ("moduleOffset", [-1, 100001, 0.0, "0", True, None]),
         ("moduleLimit", [0, 257, 1.0, "1", False, None]),
@@ -235,7 +246,7 @@ def test_grid_get_requires_every_explicit_device_identity_field(field):
 
 
 @pytest.mark.parametrize(
-    "method,args,extra",
+    ("method", "args", "extra"),
     [
         ("grid.capabilities", {}, {"trackId": TRACK}),
         ("grid.capabilities", {}, {"force": True}),
@@ -270,7 +281,7 @@ def test_grid_accepts_explicit_false_and_unicode_window_boundaries():
 
 
 @pytest.mark.parametrize(
-    "parameter_id,module_id",
+    ("parameter_id", "module_id"),
     [
         ("", TRACK.upper()),
         ("x" * 1024, TRACK),
@@ -286,7 +297,7 @@ def test_grid_parameter_get_preserves_exact_ids_and_utf16_boundary(parameter_id,
 
 
 @pytest.mark.parametrize(
-    "field,values",
+    ("field", "values"),
     [
         (
             "moduleId",
@@ -337,7 +348,7 @@ GRID_SET = {
 
 
 @pytest.mark.parametrize(
-    "kind,expected,value",
+    ("kind", "expected", "value"),
     [
         ("boolean", False, True),
         ("integer", -(2**31), 2**31 - 1),
@@ -349,7 +360,7 @@ GRID_SET = {
 )
 def test_grid_parameter_set_preserves_raw_types_without_normalizing(kind, expected, value):
     args = {**GRID_SET, "expectedKind": kind, "expectedValue": expected, "value": value}
-    params, timeout = validate_call("grid.parameters.set", args)
+    params, _timeout = validate_call("grid.parameters.set", args)
     assert params == args
     assert type(params["expectedValue"]) is type(expected)
     assert type(params["value"]) is type(value)
@@ -481,7 +492,7 @@ def test_grid_module_move_leaves_dynamic_geometry_bounds_to_host(value):
 
 
 @pytest.mark.parametrize(
-    "method,args",
+    ("method", "args"),
     [
         ("grid.modules.move", GRID_MOVE),
         ("grid.modules.delete", GRID_MODULE),
@@ -495,7 +506,7 @@ def test_grid_module_edits_require_each_explicit_field(method, args):
 
 
 @pytest.mark.parametrize(
-    "method,args",
+    ("method", "args"),
     [
         ("grid.modules.move", GRID_MOVE),
         ("grid.modules.delete", GRID_MODULE),
@@ -546,6 +557,7 @@ def test_grid_module_delete_accepts_no_coordinate_options(field):
 
 GRID_CONNECTION = {**TARGET, "targetModuleId": TRACK, "targetPortKey": "", "expectedSource": None, "source": None}
 GRID_SOURCE = {"moduleId": TRACK, "portKey": ""}
+GRID_SOURCE_NON_STRING_KEY: dict[Any, Any] = {**GRID_SOURCE, 1: "not-a-string-key"}
 
 
 @pytest.mark.parametrize("expected", [None, GRID_SOURCE])
@@ -585,7 +597,7 @@ def test_grid_connection_requires_every_target_and_cas_field(field):
         {**GRID_SOURCE, "portKey": False},
         {**GRID_SOURCE, "portKey": []},
         {**GRID_SOURCE, "extra": True},
-        {**GRID_SOURCE, 1: "not-a-string-key"},
+        GRID_SOURCE_NON_STRING_KEY,
     ],
 )
 def test_grid_connection_rejects_malformed_nested_endpoints(field, value):
@@ -774,7 +786,7 @@ def test_layer_set_rejects_invalid_write_identity(field, value):
 
 
 @pytest.mark.parametrize(
-    "field,value",
+    ("field", "value"),
     [
         ("layerId", TRACK),
         ("childDeviceIndex", 0),
@@ -818,7 +830,7 @@ def test_modulator_parent_reuses_strict_root_device_contract(method, changes):
 
 
 @pytest.mark.parametrize(
-    "field,values",
+    ("field", "values"),
     [
         ("offset", [None, True, 1.0, "1", -1, 100001]),
         ("limit", [None, False, 1.0, "1", 0, 129]),
@@ -831,7 +843,7 @@ def test_modulator_pagination_requires_bounded_integer_tokens(field, values):
 
 
 def test_modulator_defaults_are_local_and_layer_wire_shape_is_unchanged():
-    model = TOOLS["modulators.list"].model.model_validate({"parent": TARGET})
+    model: Any = TOOLS["modulators.list"].model.model_validate({"parent": TARGET})
     assert (model.offset, model.limit) == (0, 64)
     assert validate_call("modulators.list", {"parent": TARGET}) == ({"parent": TARGET}, 5000)
     assert validate_call("devices.layers.list", {"parent": TARGET}) == ({"parent": TARGET}, 5000)
@@ -979,7 +991,9 @@ def test_launcher_create_notes_fail_before_dispatch_when_invalid():
     base = {"trackId": TRACK, "slotIndex": 0, "lengthBeats": 4, "name": "Sketch"}
     n = {"beat": 0, "pitch": 60, "velocity": 90, "durationBeats": 1}
     params, _ = validate_call("launcher.create", {**base, "notes": [n, {**n, "op": "set", "beat": 1}], "channel": 2})
-    assert params["notes"][0] == n and params["channel"] == 2
+    assert params["notes"][0] == n
+    assert params["channel"] == 2
+    bad: Any
     for bad in (
         {"notes": [{**n, "beat": 3.5}]},
         {"notes": [n, n]},
@@ -1074,6 +1088,7 @@ def test_grid_get_accepts_module_filter_and_diagnostics_and_rejects_bad_ones():
     params, _ = validate_call("grid.get", {**TARGET, "moduleIds": [TRACK], "diagnostics": True})
     assert params == {**TARGET, "moduleIds": [TRACK], "diagnostics": True}
     assert validate_call("grid.get", {**TARGET, "moduleIds": [TRACK] * 256})
+    bad: Any
     for bad in ([], [TRACK] * 257, ["not-a-uuid"], [None], None, TRACK):
         with pytest.raises(ValidationError):
             validate_call("grid.get", {**TARGET, "moduleIds": bad})
@@ -1083,7 +1098,7 @@ def test_grid_get_accepts_module_filter_and_diagnostics_and_rejects_bad_ones():
 
 
 @pytest.mark.parametrize(
-    "method,args",
+    ("method", "args"),
     [
         ("grid.modules.insert", GRID_INSERT),
         ("grid.modules.move", GRID_MOVE),
@@ -1178,7 +1193,6 @@ def test_project_save_is_a_write_tool_without_arguments():
 
 
 def test_project_save_as_takes_a_final_bwproject_path_and_explicit_flags():
-    from bitwig_agent.catalog import max_timeout_ms
 
     path = "/home/me/Bitwig Studio/Projects/Song/Song.bwproject"
     assert TOOLS["project.saveAs"].read_only is False
@@ -1209,7 +1223,6 @@ def test_project_save_as_takes_a_final_bwproject_path_and_explicit_flags():
 
 
 def test_export_audio_and_bounce_in_place_are_strict_long_write_tools():
-    from bitwig_agent.catalog import max_timeout_ms
 
     track = "12345678-1234-1234-1234-123456789abc"
     base = {
@@ -1236,15 +1249,12 @@ def test_export_audio_and_bounce_in_place_are_strict_long_write_tools():
         )[0]["bitDepth"]
         == 24
     )
-    assert (
-        TOOLS["export.audio"].read_only is False
-        and TOOLS["bounce.inPlace"].read_only is False
-        and TOOLS["render.status"].read_only is True
-    )
-    assert (
-        max_timeout_ms("export.audio") == max_timeout_ms("bounce.inPlace") == 60000
-        and max_timeout_ms("render.status") == 10000
-    )
+    assert TOOLS["export.audio"].read_only is False
+    assert TOOLS["bounce.inPlace"].read_only is False
+    assert TOOLS["render.status"].read_only is True
+    assert max_timeout_ms("export.audio") == max_timeout_ms("bounce.inPlace") == 60000
+    assert max_timeout_ms("render.status") == 10000
+    bad: Any
     for bad in (
         {"sources": []},
         {"sources": ["master", "master"]},
@@ -1317,7 +1327,7 @@ def test_grid_insert_batch_is_exclusive_bounded_and_per_entry_strict():
 def test_grid_parameter_set_display_replaces_value_for_float_only():
     display = {key: value for key, value in GRID_SET.items() if key != "value"} | {"display": "1.2 kHz"}
     assert validate_call("grid.parameters.set", display)[0] == display
-    batch = {
+    batch: dict[str, Any] = {
         **TARGET,
         "writes": [
             {key: display[key] for key in ("moduleId", "parameterId", "expectedKind", "expectedValue", "display")},
@@ -1440,7 +1450,7 @@ def test_clips_edit_requires_exact_target():
 
 
 @pytest.mark.parametrize(
-    "expected,value", [("", "x"), ("Pad\n\U0001f600 ", ""), ("a" * 1024, "b" * 1024), ("1", "true")]
+    ("expected", "value"), [("", "x"), ("Pad\n\U0001f600 ", ""), ("a" * 1024, "b" * 1024), ("1", "true")]
 )
 def test_grid_parameter_set_accepts_string_panel_text_verbatim(expected, value):
     args = {**GRID_SET, "expectedKind": "string", "expectedValue": expected, "value": value}
@@ -1473,7 +1483,7 @@ def test_grid_parameter_set_rejects_display_for_string_kind():
         validate_call("grid.parameters.set", args)
 
 
-@pytest.mark.parametrize("kind,field", [("float", "value"), ("boolean", "expectedValue"), ("integer", "value")])
+@pytest.mark.parametrize(("kind", "field"), [("float", "value"), ("boolean", "expectedValue"), ("integer", "value")])
 def test_grid_parameter_set_rejects_text_for_scalar_kinds(kind, field):
     base = {"float": (0.25, 0.5), "boolean": (False, True), "integer": (0, 1)}[kind]
     args = {**GRID_SET, "expectedKind": kind, "expectedValue": base[0], "value": base[1], field: "text"}
@@ -1555,7 +1565,8 @@ def test_grid_reads_accept_full_for_step_arrays():
 
 
 def test_grid_voicing_get_and_set():
-    assert TOOLS["grid.voicing.get"].read_only and not TOOLS["grid.voicing.set"].read_only
+    assert TOOLS["grid.voicing.get"].read_only
+    assert not TOOLS["grid.voicing.set"].read_only
     assert validate_call("grid.voicing.get", TARGET)
     args = {**TARGET, "expected": {"voices": 1, "monoMode": "true_mono"}, "set": {"voices": 8, "monoMode": "digi_mono"}}
     params, _ = validate_call("grid.voicing.set", args)
@@ -1599,7 +1610,8 @@ def test_grid_voicing_set_rejects_bad_values_and_missing_preconditions(changes):
 
 
 def test_remote_page_define_and_delete():
-    assert not TOOLS["devices.remote.define"].read_only and not TOOLS["devices.remote.deletePage"].read_only
+    assert not TOOLS["devices.remote.define"].read_only
+    assert not TOOLS["devices.remote.deletePage"].read_only
     slot = {"moduleId": TRACK, "parameterId": "VALUE"}
     args = {
         **TARGET,

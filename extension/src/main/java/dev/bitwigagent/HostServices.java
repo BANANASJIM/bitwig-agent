@@ -71,10 +71,7 @@ final class HostServices implements AutoCloseable {
             arrangerAutomationWriteEnabled = value;
             publishSafety();
         });
-        transport.isClipLauncherAutomationWriteEnabled().addValueObserver((BooleanValueChangedCallback) value -> {
-            clipLauncherAutomationWriteEnabled = value;
-            publishSafety();
-        });
+        observeClipLauncherAutomationWrite(transport);
         tracks = host.createTrackBank(TRACKS, SENDS, SCENES, true);
         tracks.scrollPosition().markInterested();
         tracks.itemCount().addValueObserver((IntegerValueChangedCallback) count -> tracksObserved = true);
@@ -105,6 +102,14 @@ final class HostServices implements AutoCloseable {
     }
 
     /** Controller-thread composition: domains share the gate, never their native bindings. */
+    @SuppressWarnings("deprecation")
+    private void observeClipLauncherAutomationWrite(Transport transport) {
+        transport.isClipLauncherAutomationWriteEnabled().addValueObserver((BooleanValueChangedCallback) value -> {
+            clipLauncherAutomationWriteEnabled = value;
+            publishSafety();
+        });
+    }
+
     Bitwig614Runtime nativeRuntime(HostOperation operation) {
         check(operation);
         if (nativeRuntime == null)
