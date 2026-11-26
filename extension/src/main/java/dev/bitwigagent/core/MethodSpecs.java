@@ -25,13 +25,22 @@ public final class MethodSpecs {
     public static final class Spec {
         public final boolean readOnly, projectWrite, engineRequired;
         public final int defaultTimeoutMs, maxTimeoutMs;
+        public final SchemaValidator params, timeout;
 
-        private Spec(boolean readOnly, Set<String> requires, int defaultTimeoutMs, int maxTimeoutMs) {
+        private Spec(
+                boolean readOnly,
+                Set<String> requires,
+                int defaultTimeoutMs,
+                int maxTimeoutMs,
+                SchemaValidator params,
+                SchemaValidator timeout) {
             this.readOnly = readOnly;
             this.projectWrite = requires.contains("projectReady");
             this.engineRequired = requires.contains("engine");
             this.defaultTimeoutMs = defaultTimeoutMs;
             this.maxTimeoutMs = maxTimeoutMs;
+            this.params = params;
+            this.timeout = timeout;
         }
     }
 
@@ -150,7 +159,46 @@ public final class MethodSpecs {
         }
         int def = integer(method, "defaultTimeoutMs"), max = integer(method, "maxTimeoutMs");
         if (def < minTimeoutMs || def > max) throw new IllegalStateException(name + " has an invalid timeout range");
-        return new Spec(flag(method, "readOnly"), requires, def, max);
+        return new Spec(
+                flag(method, "readOnly"), requires, def, max, paramsSchema(name, method), timeoutSchema(name, method));
+    }
+
+    private static JsonObject properties(String name, JsonObject method) {
+        JsonObject schema = method.getAsJsonObject("inputSchema");
+        if (schema == null
+                || !schema.has("properties")
+                || !schema.get("properties").isJsonObject())
+            throw new IllegalStateException(name + " inputSchema has no properties");
+        return schema.getAsJsonObject("properties");
+    }
+
+    private static SchemaValidator compileSchema(String name, JsonObject schema, String label) {
+        try {
+            return SchemaValidator.compile(schema, label);
+        } catch (IllegalStateException e) {
+            throw new IllegalStateException(name + " inputSchema: " + e.getMessage(), e);
+        }
+    }
+
+    /** timeoutMs travels in the request envelope, so it is not part of the params schema. */
+    private static SchemaValidator paramsSchema(String name, JsonObject method) {
+        properties(name, method);
+        JsonObject schema = method.getAsJsonObject("inputSchema").deepCopy();
+        schema.getAsJsonObject("properties").remove("timeoutMs");
+        return compileSchema(name, schema, "params");
+    }
+
+    /** The envelope's timeoutMs is checked by the schema's own node for it. */
+    private static SchemaValidator timeoutSchema(String name, JsonObject method) {
+        JsonElement node = properties(name, method).get("timeoutMs");
+        if (node == null) throw new IllegalStateException(name + " inputSchema has no timeoutMs");
+        JsonObject properties = new JsonObject();
+        properties.add("timeoutMs", node.deepCopy());
+        JsonObject schema = new JsonObject();
+        schema.addProperty("type", "object");
+        schema.addProperty("additionalProperties", false);
+        schema.add("properties", properties);
+        return compileSchema(name, schema, "request");
     }
 
     private static boolean flag(JsonObject object, String key) {

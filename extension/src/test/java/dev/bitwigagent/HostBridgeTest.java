@@ -585,7 +585,7 @@ public final class HostBridgeTest {
         params.addProperty("trackId", Fake.TRACK_ID);
         JsonObject devices = call(host, bridge, "devices.list", params);
         assertTrue(devices.getAsJsonArray("devices").size() == 2, "only existing devices listed");
-        params.addProperty("trackId", "outside");
+        params.addProperty("trackId", "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee");
         CompletableFuture<JsonObject> future = bridge.handle("devices.list", params, host.deadline());
         host.next();
         assertRpcError("outside_window", future);
@@ -937,6 +937,24 @@ public final class HostBridgeTest {
         assertRpcError("invalid_params", bridge.handle("modulators.parameters.get", modulators, host.deadline()));
         assertRpcError("invalid_params", bridge.handle("modulators.parameters.set", modulators, host.deadline()));
         assertTrue(host.tasks.isEmpty(), "strict validation rejects every invalid domain request before scheduling");
+    }
+
+    @Test
+    void theSchemaRunsBeforeTheModuleAndFillsDefaults() {
+        Fake host = new Fake();
+        HostBridge bridge = host.bridge();
+        assertEquals(
+                100,
+                bridge.validate("actions.list", new JsonObject()).get("limit").getAsInt());
+        JsonObject fraction = target();
+        fraction.add("deviceIndex", JsonParser.parseString("1.0"));
+        assertRpcError("invalid_params", bridge.handle("parameters.list", fraction, host.deadline()));
+        JsonObject newline = target();
+        newline.addProperty("trackId", Fake.TRACK_ID + "\n");
+        assertRpcError("invalid_params", bridge.handle("parameters.list", newline, host.deadline()));
+        RpcException refused = assertThrows(RpcException.class, () -> bridge.validate("parameters.list", newline));
+        assertTrue(refused.getMessage().contains("params.trackId"), refused.getMessage());
+        assertTrue(host.tasks.isEmpty(), "a schema rejection schedules nothing");
     }
 
     @Test

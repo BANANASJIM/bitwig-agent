@@ -20,6 +20,7 @@ CORE_TESTS = (
     "dev/bitwigagent/RpcServerTest.java",
     "dev/bitwigagent/HostBridgeTest.java",
     "dev/bitwigagent/core/MethodSpecsTest.java",
+    "dev/bitwigagent/core/SchemaValidatorTest.java",
 )
 TIMEOUT_SECONDS = 600
 

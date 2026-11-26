@@ -3,6 +3,7 @@ package dev.bitwigagent;
 import com.bitwig.extension.controller.api.*;
 import com.google.gson.JsonObject;
 import dev.bitwigagent.core.MethodSpecs;
+import dev.bitwigagent.core.SchemaValidator;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 
@@ -100,17 +101,27 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
                             + "; handlers without a bundle method: " + unspecified);
     }
 
-    void validate(String method, JsonObject params) {
-        modules.get(method).validate(method, params);
+    /** Validate a request against its schema and the module's rules; returns it with schema defaults filled. */
+    JsonObject validate(String method, JsonObject params) {
+        JsonObject filled = checkSchema(specs, method, params);
+        modules.get(method).validate(method, filled);
+        return filled;
+    }
+
+    static JsonObject checkSchema(MethodSpecs specs, String method, JsonObject params) {
+        try {
+            return specs.get(method).params.apply(params);
+        } catch (SchemaValidator.Violation violation) {
+            throw Errors.invalid(violation.getMessage());
+        }
     }
 
     @Override
     public CompletableFuture<JsonObject> handle(String method, JsonObject params, long deadlineNanos) {
         HostOperation operation = new HostOperation(deadlineNanos);
         try {
-            validate(method, params);
+            JsonObject copy = validate(method, params);
             HostModule module = modules.get(method);
-            JsonObject copy = params.deepCopy();
             operation.safetyAtEnqueue = transportSafety.observation();
             scheduler.schedule(
                     operation,

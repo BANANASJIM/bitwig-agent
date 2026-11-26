@@ -1,10 +1,12 @@
-"""Python/Java contract parity: send schema-derived bound vectors straight to the Java validator.
+"""Python/Java contract parity: send schema-derived vectors straight to the Java validator.
 
 Imported by smoke-mcp-java.py and run against its fixture RpcServer. For every
 method, walk the pydantic JSON schema; each numeric/length/item bound is sent at
-the bound (accept) and just beyond it (reject), and every optional field the
-catalog examples never include is sent once. The raw TCP request bypasses the
-Python adapter, so the JVM's own validator decides; its verdict must equal
+the bound (accept) and just beyond it (reject), every optional field the catalog
+examples never include is sent once, and every object gets an unknown field, every
+field a wrong-typed and a null value, every required field is dropped and every
+pattern gets a trailing newline. The raw TCP request bypasses the Python adapter, so
+the JVM's own validation (schema, then module rules) decides; its verdict must equal
 pydantic's. No codegen: vectors are derived from the schema at run time.
 """
 
@@ -186,7 +188,24 @@ def automation_fix(field):
     return fix
 
 
+def with_partner(key, value):
+    """An expected* entry only counts with the entry it guards."""
+
+    def fix(params, _):
+        params.setdefault(key, value)
+
+    return fix
+
+
 FIXUPS = {
+    **{
+        ("tracks.routing.set", f"expectedInput.{f}"): with_partner("input", {"kind": "all_ins"})
+        for f in ("name", "nativeType")
+    },
+    **{
+        ("tracks.routing.set", f"expectedOutput.{f}"): with_partner("output", {"kind": "none"})
+        for f in ("name", "nativeType")
+    },
     **{
         (m, f"range.{f}"): automation_fix(f)
         for m in ("automation.points.get", "automation.points.set")
@@ -294,16 +313,36 @@ def ensure(root, path, schema, defs):
 
 
 def leaves(schema, defs, path=()):
-    """Yield (path, node) for every named property, descending objects and array item 0."""
-    for node in variants(schema, defs):
+    """Yield (path, node, required) for every named property, descending objects and array item 0."""
+    alternatives = variants(schema, defs)
+    for node in alternatives:
         if node.get("type") == "object":
             for name, sub in node.get("properties", {}).items():
                 if name == "timeoutMs":
                     continue
-                yield (*path, name), sub
+                yield (
+                    (*path, name),
+                    sub,
+                    len(alternatives) == 1 and name in node.get("required", ()),
+                    node if len(alternatives) > 1 else None,
+                )
                 yield from leaves(sub, defs, (*path, name))
         elif node.get("type") == "array":
-            yield from leaves(node["items"], defs, (*path, 0))
+            items = node["items"]
+            if not any(v.get("type") in ("object", "array") for v in variants(items, defs)):
+                yield (*path, 0), items, False, None
+            yield from leaves(items, defs, (*path, 0))
+
+
+def containers(schema, defs, path=()):
+    """Yield (path, node) of every object the schema describes: the root, nested objects and array item 0 objects."""
+    for node in variants(schema, defs):
+        if node.get("type") == "object" and "properties" in node:
+            yield path, node
+            for name, sub in node["properties"].items():
+                yield from containers(sub, defs, (*path, name))
+        elif node.get("type") == "array":
+            yield from containers(node["items"], defs, (*path, 0))
 
 
 def bound_vectors(node, defs):
@@ -350,6 +389,51 @@ def bound_vectors(node, defs):
                 yield "maxItems+", s["maxItems"] + 1, False
 
 
+WRONG_TYPES: tuple[tuple[str, Any], ...] = (
+    ("boolean", True),
+    ("string", "zz"),
+    ("integer", 1),
+    ("number", 1.5),
+    ("array", []),
+    ("object", {}),
+)
+ENUM_STRANGER = "zz-not-a-member"
+UNKNOWN_FIELD = "zzUnknown"
+INDEXES = frozenset("0123456789")
+UTF16_WORDING = r"utf-16|characters|too long|at most"
+# values may not outnumber expectedValues, so growing values past its maximum grows its partner past the same one.
+PARTNERS = {
+    ("grid.parameters.set", "values"): "expectedValues",
+    ("grid.parameters.set", "writes.0.values"): "writes.0.expectedValues",
+}
+
+
+def allowed_kinds(node, defs):
+    """JSON kinds the schema accepts at node, including null inside anyOf."""
+    node = resolve(node, defs)
+    kinds = set()
+    for branch in node.get("anyOf", [node]):
+        kinds.add(resolve(branch, defs).get("type"))
+    if "number" in kinds:
+        kinds.add("integer")
+    return kinds
+
+
+def type_vectors(node, defs):
+    """Yield (label, value, expectation): a wrong-typed value and a null at a field, plus a non-member for enums."""
+    kinds = allowed_kinds(node, defs)
+    if None in kinds:
+        return
+    wrong = [(k, v) for k, v in WRONG_TYPES if k not in kinds]
+    for label, value in wrong[:2]:
+        yield f"wrong type {label}", value, "reject"
+    if "integer" in kinds and "number" not in kinds:
+        yield "float for integer", 1.0, "reject"
+    yield "null", None, "reject" if "null" not in kinds else "same"
+    if any("enum" in v for v in variants(node, defs)):
+        yield "enum non-member", ENUM_STRANGER, "reject"
+
+
 def python_verdict(method, params):
     try:
         TOOLS[method].model.model_validate(params)
@@ -371,47 +455,211 @@ async def java_verdict(port, method, params):
     return error is None, error
 
 
+def render(field):
+    """A dotted field name as the Java validator spells it: .name and [index]."""
+    if field == "<root>":
+        return ""
+    return "".join(f"[{part}]" if part in INDEXES else f".{part}" for part in field.split("."))
+
+
+BOUND_REJECTS = ("min-", "max+", "maxLength+", "maxLength+ utf16", "minLength-", "maxItems+", "minItems-")
+
+
+def is_bound_reject(label):
+    """Rejects that sweep a bound, so their base must be valid apart from the bound."""
+    tail = label.split(" ", 1)[1]
+    return tail in BOUND_REJECTS
+
+
+def names_field(label, field, error):
+    """A rejection is only agreement when Java's message points at the mutated field."""
+    message = error["message"]
+    leaf = field.rsplit(".", 1)[-1]
+    word = rf"\b{re.escape(leaf)}\b"
+    if label.endswith(" missing"):
+        return re.search(rf"missing required fields?[^;]*{word}", message) is not None
+    named = [field, PARTNERS.get((label.split(":")[0], field), field)]
+    if any(f"params{render(name)}" in message for name in named):
+        return True
+    # the module checks own UTF-16 limits and name the bare field with their own wording
+    return "utf16" in label and re.search(word, message) and re.search(UTF16_WORDING, message, re.I) is not None
+
+
+def edit(example, path, doc, owner=None):
+    """A copy of the example with the containers of path created; returns (params, parent, key). doc is (schema, defs)."""
+    params = copy.deepcopy(example)
+    parent, key = ensure(params, path, *doc)
+    if owner is not None:  # the field belongs to one anyOf form: build the container as exactly that form
+        parent.clear()
+        parent.update(generate(owner, doc[1]))
+    if isinstance(key, int) and len(parent) <= key:
+        parent.append(None)
+    return params, parent, key
+
+
+def fetch(parent, key):
+    if isinstance(parent, list):
+        return parent[key] if key < len(parent) else None
+    return parent.get(key)
+
+
+def bound_cases(method, example, leaf, doc):
+    path, node, _, owner = leaf
+    defs = doc[1]
+    name = ".".join(map(str, path))
+    for label, value, accept in bound_vectors(node, defs):
+        params, parent, key = edit(example, path, doc, owner)
+        if label.startswith(("minItems", "maxItems")):
+            current = fetch(parent, key)
+            template = current[0] if current else generate(variants(node, defs)[0]["items"], defs)
+            parent[key] = [vary(copy.deepcopy(template), i) for i in range(value)]
+        else:
+            parent[key] = value
+        if (method, name) in FIXUPS:
+            FIXUPS[method, name](params, value)
+        yield f"{method}:{name} {label}", params, name, "accept" if accept else "reject"
+
+
+def shape_cases(method, example, leaf, doc):
+    """Wrong-typed and null values, a dropped required field and a pattern with a trailing newline."""
+    path, node, required, owner = leaf
+    defs = doc[1]
+    name = ".".join(map(str, path))
+    for label, value, expect in type_vectors(node, defs):
+        params, parent, key = edit(example, path, doc, owner)
+        parent[key] = value
+        yield f"{method}:{name} {label}", params, name, expect
+    if required:
+        params, parent, key = edit(example, path, doc, owner)
+        parent.pop(key, None)
+        yield f"{method}:{name} missing", params, name, "reject"
+    for variant in variants(node, defs):
+        params, parent, key = edit(example, path, doc, owner)
+        current = fetch(parent, key)
+        if "pattern" in variant and isinstance(current, str) and re.search(variant["pattern"], current):
+            parent[key] = current + "\n"
+            yield f"{method}:{name} pattern trailing newline", params, name, "reject"
+
+
+def oneof_cases(method, example, container, doc):
+    """Exactly-one-of forms: neither and both for required-field forms, a mismatched value for kind-selected forms."""
+    path, node = container
+    defs = doc[1]
+    where = ".".join(map(str, path)) or "<root>"
+    branches = node["oneOf"]
+    if all(branch.get("required") for branch in branches):
+        union = [key for branch in branches for key in branch["required"]]
+        params, parent, _ = edit(example, (*path, UNKNOWN_FIELD), doc)
+        for key in union:
+            parent.pop(key, None)
+        yield f"{method}:{where} oneOf neither form", params, where, "reject"
+        params, parent, _ = edit(example, (*path, UNKNOWN_FIELD), doc)
+        for key in union:
+            parent[key] = generate(node["properties"][key], defs)
+        yield f"{method}:{where} oneOf both forms", params, where, "reject"
+        return
+    for branch in branches:
+        fields = branch["properties"]
+        selector = next((key for key, field in fields.items() if "enum" in field), None)
+        typed = {key: field for key, field in fields.items() if "type" in field}
+        if selector is None or not typed:
+            continue
+        params, parent, _ = edit(example, (*path, UNKNOWN_FIELD), doc)
+        parent[selector] = fields[selector]["enum"][0]
+        for key, field in typed.items():
+            wrong = [
+                value
+                for kind, value in WRONG_TYPES
+                if kind in allowed_kinds(node["properties"][key], defs) and kind not in allowed_kinds(field, defs)
+            ]
+            parent[key] = wrong[0]
+        yield f"{method}:{where} oneOf {selector}={parent[selector]} mismatch", params, where, "reject"
+
+
+def owns(example, path, schema):
+    """Whether the example uses the exactly-one-of form that the field at path belongs to."""
+    branches = [b["required"] for b in schema.get("oneOf", ()) if b.get("required")]
+    owner = next((b for b in branches if path[0] in b), None)
+    used = next((b for b in branches if set(b) <= set(example)), None)
+    return owner is None or owner is used
+
+
 def cases(method):
     """Yield (label, params, field, expectation) for one method."""
     spec = TOOLS[method]
     schema = spec.model.model_json_schema()
     defs = schema.get("$defs", {})
+    doc = (schema, defs)
     sent = {key for example in spec.examples for key in example}
     for example in map(host_paths, spec.examples):
-        for path, node in leaves(schema, defs):
+        for container, node in containers(schema, defs):
+            params, parent, key = edit(example, (*container, UNKNOWN_FIELD), doc)
+            parent[key] = 1
+            where = ".".join(map(str, container)) or "<root>"
+            yield f"{method}:{where} unknown field", params, where, "reject"
+            if "oneOf" in node:
+                yield from oneof_cases(method, example, (container, node), doc)
+        for path, node, required, owner in leaves(schema, defs):
             name = ".".join(map(str, path))
+            if not owns(example, path, schema):
+                continue  # another example uses the form this field belongs to
             top_level_gap = len(path) == 1 and path[0] not in example
             if top_level_gap and path[0] in sent:
                 continue  # an example that carries this field covers it
-            base = copy.deepcopy(example)
-            parent, key = ensure(base, path, schema, defs)
             if top_level_gap:  # optional field the examples never send
+                base, parent, key = edit(example, path, doc, owner)
                 parent[key] = generate(node, defs)
                 if (method, name) in FIXUPS:
                     FIXUPS[method, name](base, parent[key])
                 yield f"{method}:{name} optional", base, name, "optional"
-            for label, value, accept in bound_vectors(node, defs):
-                params = copy.deepcopy(example)
-                parent, key = ensure(params, path, schema, defs)
-                if label.startswith(("minItems", "maxItems")):
-                    current = parent.get(key) if isinstance(parent, dict) else parent[key]
-                    template = current[0] if current else generate(variants(node, defs)[0]["items"], defs)
-                    parent[key] = [vary(copy.deepcopy(template), i) for i in range(value)]
-                else:
-                    parent[key] = value
-                if (method, name) in FIXUPS:
-                    FIXUPS[method, name](params, value)
-                yield f"{method}:{name} {label}", params, name, "accept" if accept else "reject"
+            yield from bound_cases(method, example, (path, node, required, owner), doc)
+            yield from shape_cases(method, example, (path, node, required, owner), doc)
+
+
+class Ledger:
+    """What the vectors have shown so far: problems and, per vector family, whether any base was valid."""
+
+    def __init__(self):
+        self.problems = []
+        self.covered = {}  # accept vector -> some base was accepted by pydantic
+        self.proven = {}  # bound reject -> some valid base showed Java naming the field
+        self.twin = {}  # (method, field, utf16) -> the preceding accept vector was valid
+
+    def judge(self, method, vector, py, java, error):
+        label, _, field, expect = vector
+        twin_key = (method, field, "utf16" in label)
+        if py != java:
+            self.problems.append(
+                f"MISMATCH {label}: python={'accept' if py else 'reject'} java={'accept' if java else 'reject'} {error}"
+            )
+        elif expect in ("accept", "optional"):
+            self.covered[label] = self.covered.get(label, False) or py
+            self.twin[twin_key] = py
+        elif expect == "reject" and py:
+            self.problems.append(f"{label}: both sides accept a value the schema forbids")
+        elif is_bound_reject(label) and self.twin.get(twin_key) is False:
+            self.proven.setdefault(label, False)  # the base itself is invalid: this reject proves nothing
+        elif expect == "reject" and not names_field(label, field, error):
+            self.problems.append(f"VACUOUS {label}: Java rejected without naming params{render(field)}: {error}")
+        elif is_bound_reject(label) and twin_key in self.twin:
+            self.proven[label] = True
+
+    def vacuous(self):
+        return [
+            f"VACUOUS {label}: no example base is valid with this vector, so it never exercised the bound"
+            for label, ok in {**self.covered, **self.proven}.items()
+            if not ok
+        ]
 
 
 async def run(port):
     """Compare both validators on every vector; return the number checked."""
     checked = 0
-    problems = []
-    covered: dict[Any, bool] = {}  # (method, field, vector) -> some base was accepted by pydantic
+    ledger = Ledger()
     for method in sorted(set(TOOLS) - CLIENT_SIDE):
         seen = set()
-        for label, params, field, expect in cases(method):
+        for vector in cases(method):
+            label, params, field, expect = vector
             key = (label, json.dumps(params, sort_keys=True))
             if key in seen or SKIPS.get((method, field, expect)) or SKIPS.get((method, field, "all")):
                 continue
@@ -419,14 +667,7 @@ async def run(port):
             py = python_verdict(method, params)
             java, error = await java_verdict(port, method, params)
             checked += 1
-            if py != java:
-                problems.append(
-                    f"MISMATCH {label}: python={'accept' if py else 'reject'} java={'accept' if java else 'reject'} {error}"
-                )
-            elif expect != "reject":
-                covered[label] = covered.get(label, False) or py
-            elif py:
-                problems.append(f"{label}: both sides accept a value beyond the schema bound")
+            ledger.judge(method, vector, py, java, error)
     insert = TOOLS["grid.modules.insert"].examples[0]
     for name in ("<", "=", ">", "\u2260", "\u2264", "\u2265", "Slope \u2197", "---", "\u00b2"):
         for params in (
@@ -438,12 +679,8 @@ async def run(port):
             java, error = await java_verdict(port, "grid.modules.insert", params)
             checked += 1
             if not (py and java):
-                problems.append(f"typeName {name!r} must be accepted by both: python={py} java={java} {error}")
-    problems += [
-        f"VACUOUS {label}: no example base is valid with this vector, so it never exercised the bound"
-        for label, ok in covered.items()
-        if not ok
-    ]
+                ledger.problems.append(f"typeName {name!r} must be accepted by both: python={py} java={java} {error}")
+    problems = ledger.problems + ledger.vacuous()
     if problems:
-        raise AssertionError(f"bound parity failed ({checked} vectors):\n" + "\n".join(problems))
+        raise AssertionError(f"vector parity failed ({checked} vectors):\n" + "\n".join(problems))
     return checked

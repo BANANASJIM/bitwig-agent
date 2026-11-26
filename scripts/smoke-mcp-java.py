@@ -14,7 +14,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-import bound_parity
+import vector_parity
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from tooling import host_paths
@@ -154,10 +154,10 @@ async def exercise(folder: Path, api: Path) -> None:  # noqa: PLR0915
             # Exercise the actual MCP validation boundary, not model validation alone.
             invalid = await session.call_tool("status", {"unexpected": True})
             require(invalid.is_error, "MCP accepted an extra argument")
-            vectors = await bound_parity.run(port)
+            vectors = await vector_parity.run(port)
         print(
             f"PASS: {len(names)} matching Java/MCP tools, {calls} example roundtrips, "
-            f"Unicode, strict MCP arguments, unknown outcome propagation, {vectors} bound/optional parity vectors. "
+            f"Unicode, strict MCP arguments, unknown outcome propagation, {vectors} generated parity vectors. "
             "FIXTURE ONLY; no native host."
         )
     finally:

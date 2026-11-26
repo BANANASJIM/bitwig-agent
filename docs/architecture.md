@@ -40,7 +40,7 @@ The main sources are under [`extension/src/main/java/dev/bitwigagent`](https://g
 
 - `BitwigAgentExtension` creates the bridge/listener, forwards controller flushes and closes services on exit.
 - `RpcServer` owns transport framing, admission and bounded response delivery. It does not own project state, selection or domain business logic.
-- `core.MethodSpecs` reads the `protocol.json` bundle generated from the Python `protocol/` package (method names, timeouts, write/engine flags). `HostBridge` registers each `HostModule` by method name, fails at start-up if the bundle and the registered handlers differ, routes validation to the owning module and schedules each `HostOperation` through the `Scheduler`. Each module validates its own parameters in `HostModule.validate`.
+- `core.MethodSpecs` reads the `protocol.json` bundle generated from the Python `protocol/` package (method names, timeouts, write/engine flags). `HostBridge` registers each `HostModule` by method name, fails at start-up if the bundle and the registered handlers differ, checks every request against the method's exported JSON Schema (`core.SchemaValidator`, which also fills schema defaults and refuses to load a schema using a keyword it does not implement), routes validation to the owning module and schedules each `HostOperation` through the `Scheduler`. Each module still validates its own parameters in `HostModule.validate`.
 - Shared host state is split by job, and `HostBridge` passes each module only the services it uses:
   - `Scheduler` owns the one clock, deadlines, `schedule` and `poll`, so no module times its own loop.
   - `TrackWindow` owns the fixed track, device and parent banks and slot lookup by track id.

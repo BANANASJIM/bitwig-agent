@@ -34,7 +34,9 @@ public final class MethodSpecsTest {
 
     public static JsonObject method(boolean host, boolean readOnly, String requires, int def, int max) {
         return JsonParser.parseString("{\"host\":" + host + ",\"readOnly\":" + readOnly + ",\"requires\":[" + requires
-                        + "],\"defaultTimeoutMs\":" + def + ",\"maxTimeoutMs\":" + max + "}")
+                        + "],\"defaultTimeoutMs\":" + def + ",\"maxTimeoutMs\":" + max
+                        + ",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"timeoutMs\":{\"type\":\"integer\",\"minimum\":100,\"maximum\":"
+                        + max + ",\"default\":" + def + "}},\"additionalProperties\":false}}")
                 .getAsJsonObject();
     }
 
