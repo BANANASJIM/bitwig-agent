@@ -3,16 +3,10 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from bitwig_agent.catalog import (
-    LAYER_PARENT,
-    LAYER_TARGET,
-    NOTE_WINDOW,
-    TARGET,
-    TOOLS,
-    TRACK,
-    max_timeout_ms,
-    validate_call,
-)
+from bitwig_agent.protocol import TOOLS, max_timeout_ms, validate_call
+from bitwig_agent.protocol.base import TARGET, TRACK
+from bitwig_agent.protocol.devices import LAYER_PARENT, LAYER_TARGET
+from bitwig_agent.protocol.launcher import NOTE_WINDOW
 
 
 def note(**changes):

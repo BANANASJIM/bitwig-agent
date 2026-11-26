@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from bitwig_agent.catalog import TOOLS, validate_call
+from bitwig_agent.protocol import TOOLS, validate_call
 
 TRACK = "11111111-1111-1111-1111-111111111111"
 OTHER = "22222222-2222-2222-2222-222222222222"

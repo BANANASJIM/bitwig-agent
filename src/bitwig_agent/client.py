@@ -11,8 +11,8 @@ import uuid
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 
-from bitwig_agent.catalog import CLIENT_SIDE, TOOLS, max_timeout_ms, validate_call
 from bitwig_agent.errors import BridgeError, bridge_error
+from bitwig_agent.protocol import CLIENT_SIDE, TOOLS, max_timeout_ms, validate_call
 
 MAX_BYTES = 1024 * 1024
 METHODS = frozenset(TOOLS) - CLIENT_SIDE

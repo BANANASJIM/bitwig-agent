@@ -30,8 +30,8 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.types import TextContent
 
-from bitwig_agent.catalog import TOOLS
 from bitwig_agent.client import MAX_PORT
+from bitwig_agent.protocol import TOOLS
 
 TCP_ROW_FIELDS = 10
 

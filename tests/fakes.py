@@ -10,8 +10,8 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from bitwig_agent import grid_apply
-from bitwig_agent.catalog import validate_call
 from bitwig_agent.errors import BridgeError
+from bitwig_agent.protocol import validate_call
 
 WRITES = {
     "grid.modules.insert",

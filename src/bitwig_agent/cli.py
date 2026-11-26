@@ -8,10 +8,10 @@ import json
 import sys
 from typing import Any, NoReturn
 
-from bitwig_agent.catalog import CLIENT_SIDE, TOOLS, invalid_params_message, unknown_arguments_message, validate_call
 from bitwig_agent.client import BridgeClient, configured_port, load_json
 from bitwig_agent.client_side import run as run_client_side
 from bitwig_agent.errors import BridgeError
+from bitwig_agent.protocol import CLIENT_SIDE, TOOLS, invalid_params_message, unknown_arguments_message, validate_call
 
 
 def load_file(value: str) -> Any:

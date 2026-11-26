@@ -11,9 +11,9 @@ import pytest
 from fakes import NODES, RATE, SINK_LINKS, FakeBridge, FakeProc, FakePW, notes, overlapping, write_wav
 
 from bitwig_agent import audio, client_side
-from bitwig_agent.catalog import CLIENT_SIDE, TOOLS, validate_call
 from bitwig_agent.cli import execute, parse_arguments
 from bitwig_agent.errors import BridgeError
+from bitwig_agent.protocol import CLIENT_SIDE, TOOLS, validate_call
 
 
 def run_analyze(path, **args):

@@ -7,8 +7,8 @@ from datetime import datetime, timedelta
 import pytest
 
 from bitwig_agent import client_side, diagnostics
-from bitwig_agent.catalog import CLIENT_SIDE, validate_call
 from bitwig_agent.errors import BridgeError
+from bitwig_agent.protocol import CLIENT_SIDE, validate_call
 
 
 def stamp(t):

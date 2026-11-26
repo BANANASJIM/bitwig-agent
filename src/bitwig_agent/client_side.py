@@ -1,4 +1,4 @@
-"""Dispatch for catalog.CLIENT_SIDE tools: Python composites over the host methods."""
+"""Dispatch for protocol.CLIENT_SIDE tools: Python composites over the host methods."""
 
 from __future__ import annotations
 

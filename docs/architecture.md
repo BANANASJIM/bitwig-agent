@@ -22,8 +22,7 @@ The extension binds `127.0.0.1:61172`; the Python client connects to IPv4 loopba
 
 | Public source | Responsibility |
 |---|---|
-| [`schema.py`](https://github.com/BANANASJIM/bitwig-agent/blob/main/src/bitwig_agent/schema.py) | Strict typed request models and cross-field constraints |
-| [`catalog.py`](https://github.com/BANANASJIM/bitwig-agent/blob/main/src/bitwig_agent/catalog.py) | One method catalog, descriptions, examples, read-only hints and validation used by both adapters |
+| [`protocol/`](https://github.com/BANANASJIM/bitwig-agent/blob/main/src/bitwig_agent/protocol) | One module per domain: strict typed request models with cross-field constraints plus that domain's catalog entries (descriptions, examples, read-only hints); the registry and validation are used by both adapters |
 | [`client.py`](https://github.com/BANANASJIM/bitwig-agent/blob/main/src/bitwig_agent/client.py) | Bounded strict JSON, one-shot loopback requests, unique correlation IDs, response validation and conservative outcomes |
 | [`server.py`](https://github.com/BANANASJIM/bitwig-agent/blob/main/src/bitwig_agent/server.py) | MCP tool discovery and invocation over stdio; preserves the JSON envelope as structured content and text |
 | [`cli.py`](https://github.com/BANANASJIM/bitwig-agent/blob/main/src/bitwig_agent/cli.py) | CLI discovery/schema/help and dispatch through the shared client |

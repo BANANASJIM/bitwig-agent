@@ -20,7 +20,7 @@ from typing import Any, cast
 from bitwig_agent import raw_scales
 from bitwig_agent.diagnostics import diagnostics
 from bitwig_agent.errors import BridgeError, bridge_error
-from bitwig_agent.schema import TOPOLOGY_TIMEOUT_MS
+from bitwig_agent.protocol.base import TOPOLOGY_TIMEOUT_MS
 
 BUNDLED_HOST_VERSION = "6.1.4"
 INSERT_BATCH, PARAM_BATCH, CONNECTION_BATCH, READ_IDS, READ_PAGE = 16, 64, 32, 32, 128

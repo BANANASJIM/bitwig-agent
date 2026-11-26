@@ -8,8 +8,8 @@ from typing import Any
 import pytest
 
 from bitwig_agent import modulator_docs
-from bitwig_agent.catalog import CLIENT_SIDE, TOOLS, validate_call
 from bitwig_agent.cli import execute
+from bitwig_agent.protocol import CLIENT_SIDE, TOOLS, validate_call
 
 REAL_ROOT = Path("/opt/bitwig-studio")
 real = pytest.mark.skipif(

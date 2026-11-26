@@ -4,7 +4,7 @@ import re
 
 import pytest
 
-from bitwig_agent.catalog import TOOLS, validate_call
+from bitwig_agent.protocol import TOOLS, validate_call
 
 TRACK = "12345678-1234-1234-1234-123456789abc"
 OTHER = "12345678-1234-1234-1234-123456789abd"

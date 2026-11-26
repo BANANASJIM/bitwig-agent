@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from bitwig_agent.catalog import validate_call
+from bitwig_agent.protocol import validate_call
 
 TARGET = {"trackId": "11111111-1111-1111-1111-111111111111", "slotIndex": 0, "expectedClipName": "Verse"}
 

@@ -6,8 +6,10 @@ import sys
 import pytest
 from pydantic import ValidationError
 
-from bitwig_agent.catalog import NOTE_WINDOW, TARGET, TOOLS, TRACK, invalid_params_message, validate_call
 from bitwig_agent.cli import execute, main, parse_arguments, parser
+from bitwig_agent.protocol import TOOLS, invalid_params_message, validate_call
+from bitwig_agent.protocol.base import TARGET, TRACK
+from bitwig_agent.protocol.launcher import NOTE_WINDOW
 
 pytestmark = pytest.mark.anyio
 

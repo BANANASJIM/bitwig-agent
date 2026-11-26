@@ -7,10 +7,10 @@ import pytest
 from pydantic import ValidationError
 
 from bitwig_agent import client_side
-from bitwig_agent.catalog import CLIENT_SIDE, TOOLS, validate_call
 from bitwig_agent.client import MAX_BYTES, BridgeClient, configured_port, package_version
 from bitwig_agent.errors import BridgeError
-from bitwig_agent.schema import SetArgs
+from bitwig_agent.protocol import CLIENT_SIDE, TOOLS, validate_call
+from bitwig_agent.protocol.parameters import SetArgs
 
 pytestmark = pytest.mark.anyio
 

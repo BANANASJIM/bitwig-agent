@@ -7,8 +7,8 @@ import struct
 import pytest
 
 from bitwig_agent import audio, loudness
-from bitwig_agent.catalog import validate_call
 from bitwig_agent.errors import BridgeError
+from bitwig_agent.protocol import validate_call
 
 RATE = 48000
 
