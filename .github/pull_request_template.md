@@ -22,8 +22,11 @@ Behaviour an agent or user will notice, or "None".
 
 ## Evidence
 
-- `pixi run check` / CI
-- Native E2E on an isolated test instance, if host behaviour or native bindings changed
+Reproducible evidence only: a CI run link, or a command with its key output or artifact path. "Tests pass" is not evidence.
+
+- CI run:
+- Native E2E on an isolated test instance, if host behaviour or native bindings changed: script, log path, pass/fail derived from the recorded responses
+- Refactors: the invariant check that proves behaviour is unchanged (for example, a before/after schema dump hash)
 
 ## Risks and follow-ups
 
