@@ -2,54 +2,30 @@ package dev.bitwigagent;
 
 import com.bitwig.extension.controller.api.ControllerHost;
 import com.google.gson.JsonObject;
+import dev.bitwigagent.core.MethodSpecs;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
-import java.util.function.BiConsumer;
 
 /** Composition and the single network-to-host boundary; domain state belongs to modules. */
 public final class HostBridge implements RpcServer.Handler, AutoCloseable {
-    static final Set<String> PROJECT_WRITES = Set.of(
-            "tracks.create",
-            "devices.insert",
-            "launcher.create",
-            "launcher.import",
-            "scenes.append",
-            "scenes.duplicate",
-            "scenes.delete",
-            "grid.voicing.set",
-            "devices.delete",
-            "devices.move",
-            "devices.layers.insert",
-            "tracks.group",
-            "tracks.delete",
-            "arranger.clips.create",
-            "arranger.clips.copyFromLauncher",
-            "arranger.clips.edit",
-            "grid.modules.insert",
-            "grid.modules.move",
-            "grid.modules.delete",
-            "grid.modules.rename",
-            "grid.connections.set",
-            "grid.parameters.set",
-            "tracks.routing.set",
-            "devices.sidechain.set");
-    private static final Map<String, BiConsumer<String, JsonObject>> VALIDATORS = validators();
+    private final MethodSpecs specs;
     private final HostServices services;
     private final Map<String, HostModule> modules = new HashMap<>();
     private final List<HostModule> domains = new ArrayList<>();
 
-    public HostBridge(ControllerHost host) {
-        this(host, System::nanoTime);
+    public HostBridge(ControllerHost host, MethodSpecs specs) {
+        this(host, specs, System::nanoTime);
     }
 
     /** Test seam: injectable clock for the project settle window. */
-    HostBridge(ControllerHost host, java.util.function.LongSupplier clock) {
+    HostBridge(ControllerHost host, MethodSpecs specs, java.util.function.LongSupplier clock) {
+        this.specs = specs;
         services = new HostServices(host, clock);
         ParameterModule parameters = new ParameterModule(services);
         register(parameters);
         ProjectModule project = new ProjectModule(services);
         RenderModule render = new RenderModule(services);
-        register(new DiscoveryModule(services, parameters, project, render));
+        register(new DiscoveryModule(services, specs, parameters, project, render));
         register(new ActionModule(services));
         register(project);
         TransportModule transport = new TransportModule(services);
@@ -65,16 +41,15 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
         register(new MeterModule(services));
         register(new ArrangerModule(services));
         register(new AutomationModule(services));
-        register(new RoutingModule(services));
+        register(new RoutingModule(services, specs));
         register(render);
         register(new ContextModule(services, transport, mix, launcher));
         register(new GridModule(services));
-        ModulatorEditModule modulatorEdits = new ModulatorEditModule(services);
+        ModulatorEditModule modulatorEdits = new ModulatorEditModule(services, specs);
         register(new ModulatorModule(services, null, modulatorEdits));
         register(modulatorEdits);
         register(new ExtensionModule(services, () -> domains));
-        if (!modules.keySet().equals(VALIDATORS.keySet()))
-            throw new IllegalStateException("Module dispatch and validation registries differ");
+        requireHandlersMatch();
     }
 
     /** Test seam. */
@@ -90,51 +65,21 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
         }
     }
 
-    private static Map<String, BiConsumer<String, JsonObject>> validators() {
-        Map<String, BiConsumer<String, JsonObject>> methods = new TreeMap<>();
-        registerValidator(methods, DiscoveryModule.METHODS, DiscoveryModule::validateParams);
-        registerValidator(methods, ParameterModule.METHODS, ParameterModule::validateParams);
-        registerValidator(methods, ActionModule.METHODS, ActionModule::validateParams);
-        registerValidator(methods, ProjectModule.METHODS, ProjectModule::validateParams);
-        registerValidator(methods, TransportModule.METHODS, TransportModule::validateParams);
-        registerValidator(methods, MixModule.METHODS, MixModule::validateParams);
-        registerValidator(methods, SceneModule.METHODS, SceneModule::validateParams);
-        registerValidator(methods, MarkerModule.METHODS, MarkerModule::validateParams);
-        registerValidator(methods, MeterModule.METHODS, MeterModule::validateParams);
-        registerValidator(methods, DeviceModule.METHODS, DeviceModule::validateParams);
-        registerValidator(methods, LauncherModule.METHODS, LauncherModule::validateParams);
-        registerValidator(methods, LauncherSettingsModule.METHODS, LauncherSettingsModule::validateParams);
-        registerValidator(methods, ArrangerModule.METHODS, ArrangerModule::validateParams);
-        registerValidator(methods, AutomationModule.METHODS, AutomationModule::validateParams);
-        registerValidator(methods, RoutingModule.METHODS, RoutingModule::validateParams);
-        registerValidator(methods, RenderModule.METHODS, RenderModule::validateParams);
-        registerValidator(methods, GridModule.METHODS, GridModule::validateParams);
-        registerValidator(methods, ModulatorModule.METHODS, ModulatorModule::validateParams);
-        registerValidator(methods, ModulatorEditModule.METHODS, ModulatorEditModule::validateParams);
-        registerValidator(methods, ContextModule.METHODS, ContextModule::validateParams);
-        registerValidator(methods, ExtensionModule.METHODS, ExtensionModule::validateParams);
-        return Collections.unmodifiableMap(methods);
+    private void requireHandlersMatch() {
+        Set<String> unhandled = new TreeSet<>(specs.methods());
+        unhandled.removeAll(modules.keySet());
+        Set<String> unspecified = new TreeSet<>(modules.keySet());
+        unspecified.removeAll(specs.methods());
+        if (!unhandled.isEmpty() || !unspecified.isEmpty())
+            throw new IllegalStateException(
+                    "Protocol bundle and registered handlers differ; bundle methods without a handler: " + unhandled
+                            + "; handlers without a bundle method: " + unspecified);
     }
 
-    private static void registerValidator(
-            Map<String, BiConsumer<String, JsonObject>> registry,
-            Set<String> methods,
-            BiConsumer<String, JsonObject> validator) {
-        for (String method : methods) {
-            if (registry.putIfAbsent(method, validator) != null)
-                throw new IllegalStateException("Duplicate host validator: " + method);
-        }
-    }
-
-    /** The same allowlist drives transport admission, host validation and capability discovery. */
-    static Set<String> supportedMethods() {
-        return VALIDATORS.keySet();
-    }
-
-    static void validate(String method, JsonObject params) {
-        BiConsumer<String, JsonObject> validator = VALIDATORS.get(method);
-        if (validator == null) throw Errors.notApplied(ErrorCode.UNKNOWN_METHOD, "Unsupported method: " + method);
-        validator.accept(method, params);
+    void validate(String method, JsonObject params) {
+        HostModule module = modules.get(method);
+        if (module == null) throw Errors.notApplied(ErrorCode.UNKNOWN_METHOD, "Unsupported method: " + method);
+        module.validate(method, params);
     }
 
     @Override
@@ -142,8 +87,8 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
         HostOperation operation = new HostOperation(deadlineNanos);
         try {
             validate(method, params);
-            JsonObject copy = params.deepCopy();
             HostModule module = modules.get(method);
+            JsonObject copy = params.deepCopy();
             services.schedule(
                     operation,
                     () -> {
@@ -162,9 +107,9 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
 
     /** Structure writes need a settled project; launches need an active engine. Returns whether to warn (playback start with inactive engine). */
     boolean preflight(String method, JsonObject params) {
-        if (PROJECT_WRITES.contains(method)) services.requireProjectReady();
-        if (method.equals("launcher.launch")) services.requireEngineActive("the clip launch");
-        if (method.equals("scenes.launch")) services.requireEngineActive("the scene launch");
+        MethodSpecs.Spec spec = specs.get(method);
+        if (spec.projectWrite) services.requireProjectReady();
+        if (spec.engineRequired) services.requireEngineActive(method);
         return method.equals("transport.set")
                 && params.has("playing")
                 && params.get("playing").getAsBoolean()

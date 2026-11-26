@@ -4,6 +4,7 @@ import static dev.bitwigagent.HostServices.*;
 
 import com.bitwig.extension.controller.api.*;
 import com.google.gson.*;
+import dev.bitwigagent.core.MethodSpecs;
 import java.util.*;
 
 /** Runtime discovery of implemented surfaces, bounded host windows and explicit exclusions. */
@@ -12,12 +13,15 @@ final class DiscoveryModule implements HostModule {
             Set.of("status", "tracks.list", "devices.list", "devices.layers.list", "capabilities");
     private static final BuildInfo BUILD = BuildInfo.load();
     private final HostServices s;
+    private final MethodSpecs specs;
     private final ParameterModule parameters;
     private final ProjectModule project;
     private final RenderModule render;
 
-    DiscoveryModule(HostServices s, ParameterModule parameters, ProjectModule project, RenderModule render) {
+    DiscoveryModule(
+            HostServices s, MethodSpecs specs, ParameterModule parameters, ProjectModule project, RenderModule render) {
         this.s = s;
+        this.specs = specs;
         this.parameters = parameters;
         this.project = project;
         this.render = render;
@@ -91,7 +95,7 @@ final class DiscoveryModule implements HostModule {
         result.add("extension", BUILD.toJson());
         JsonArray methods = new JsonArray();
         JsonObject domains = new JsonObject();
-        for (String method : HostBridge.supportedMethods()) {
+        for (String method : specs.methods()) {
             methods.add(method);
             String domain = method.contains(".") ? method.substring(0, method.indexOf('.')) : "discovery";
             if (!domains.has(domain)) domains.add(domain, new JsonArray());

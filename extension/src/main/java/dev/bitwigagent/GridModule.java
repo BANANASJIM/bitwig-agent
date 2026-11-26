@@ -24,16 +24,6 @@ final class GridModule implements HostModule {
             "grid.topology.reconcile",
             "devices.remote.define",
             "devices.remote.deletePage");
-    /** Topology edits verify against a full graph read per entry; large graphs need more than the default 10 s ceiling. */
-    static final Set<String> LONG_TIMEOUT_METHODS = Set.of(
-            "grid.modules.insert",
-            "grid.modules.move",
-            "grid.modules.delete",
-            "grid.modules.rename",
-            "grid.connections.set",
-            "grid.topology.reconcile");
-
-    static final int MAX_TOPOLOGY_TIMEOUT_MS = 60000;
     private final HostServices s;
     private GridAdapter adapter;
 

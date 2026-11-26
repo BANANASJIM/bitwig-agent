@@ -353,7 +353,7 @@ public final class RoutingModuleTest {
     static final class Fixture {
         final TransportMixFixture host = new TransportMixFixture();
         final Adapter adapter = new Adapter();
-        final RoutingModule module = new RoutingModule(host.services, adapter);
+        final RoutingModule module = new RoutingModule(host.services, TransportMixFixture.SPECS, adapter);
 
         void observeDevice(String name) {
             TransportMixFixture.Node devices = host.tracks[0].child("createDeviceBank"), device = devices.item(0);

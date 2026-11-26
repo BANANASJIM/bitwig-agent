@@ -27,14 +27,18 @@ assert spec.loader is not None
 build = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(build)
 
+TEST_ROOT = ROOT / "extension/src/test/java"
 FIXTURE = """
 package dev.bitwigagent;
 import com.google.gson.*;
+import dev.bitwigagent.core.MethodSpecs;
 import java.util.concurrent.CompletableFuture;
 public class McpTransportFixture {
   public static void main(String[] args) throws Exception {
-    try (RpcServer server = new RpcServer(0, (method, params, deadline) -> {
-      HostBridge.validate(method, params);
+    MethodSpecs specs = MethodSpecs.load();
+    HostBridge bridge = new HostBridgeTest.Fake().bridge(specs);
+    try (RpcServer server = new RpcServer(0, specs, (method, params, deadline) -> {
+      bridge.validate(method, params);
       if (method.equals("parameters.set")) {
         CompletableFuture<JsonObject> failed = new CompletableFuture<>();
         failed.completeExceptionally(new RpcException("fixture_unknown", "Observed ambiguity", "unknown"));
@@ -45,7 +49,7 @@ public class McpTransportFixture {
       result.addProperty("fixtureOnly", true);
       result.addProperty("method", method);
       result.add("echo", params);
-      result.add("supportedMethods", new Gson().toJsonTree(HostBridge.supportedMethods()));
+      result.add("supportedMethods", new Gson().toJsonTree(specs.methods()));
       return CompletableFuture.completedFuture(result);
     })) {
       server.start();
@@ -71,7 +75,12 @@ async def exercise(folder: Path, api: Path) -> None:  # noqa: PLR0915
     fixture = folder / "McpTransportFixture.java"
     fixture.write_text(FIXTURE, encoding="utf-8")
     gson = build.gson_jar()
-    build.compile_java([*build.verification_sources(), fixture], folder, [gson, api], build.lint_flag(api))
+    build.compile_java(
+        [*build.verification_sources(), *sorted(TEST_ROOT.rglob("*.java")), fixture],
+        folder,
+        [gson, api],
+        build.lint_flag(api),
+    )
     build.write_protocol_bundle(folder)
     process = await asyncio.create_subprocess_exec(
         "java",

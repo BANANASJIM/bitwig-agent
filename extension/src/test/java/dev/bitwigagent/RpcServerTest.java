@@ -1,6 +1,8 @@
 package dev.bitwigagent;
 
 import com.google.gson.*;
+import dev.bitwigagent.core.MethodSpecs;
+import dev.bitwigagent.core.MethodSpecsTest;
 import java.io.*;
 import java.net.*;
 import java.nio.charset.StandardCharsets;
@@ -10,6 +12,7 @@ import java.util.concurrent.atomic.*;
 
 /** Runs against actual TCP sockets; requires the API jar, never a native host instance. */
 public final class RpcServerTest {
+    private static final MethodSpecs SPECS = TransportMixFixture.SPECS;
     private static int checks;
 
     private static void check(boolean condition, String message) {
@@ -72,7 +75,7 @@ public final class RpcServerTest {
     }
 
     private static void gridIntegerTokenValidation() throws Exception {
-        try (RpcServer server = new RpcServer(0, (method, params, until) -> {
+        try (RpcServer server = new RpcServer(0, SPECS, (method, params, until) -> {
             if (method.equals("grid.modules.move") || method.equals("grid.modules.insert"))
                 GridModule.validateParams(method, params);
             else GridParameterWriter.Request.parse(params);
@@ -110,7 +113,7 @@ public final class RpcServerTest {
 
     private static void gridConnectionNullContract() throws Exception {
         GridSnapshotReaderTest.ConnectionFixture fixture = new GridSnapshotReaderTest.ConnectionFixture();
-        try (RpcServer server = new RpcServer(0, (method, params, until) -> {
+        try (RpcServer server = new RpcServer(0, SPECS, (method, params, until) -> {
             GridModule.validateParams(method, params);
             HostOperation op = fixture.start(GridConnectionWriter.Request.parse(params));
             if (!op.result.isDone()) fixture.next();
@@ -149,7 +152,7 @@ public final class RpcServerTest {
     }
 
     private static void nullableObservations() throws Exception {
-        try (RpcServer server = new RpcServer(0, (method, params, until) -> {
+        try (RpcServer server = new RpcServer(0, SPECS, (method, params, until) -> {
             JsonObject item = new JsonObject();
             item.add("name", JsonNull.INSTANCE);
             item.add("normalizedValue", JsonNull.INSTANCE);
@@ -181,7 +184,7 @@ public final class RpcServerTest {
     private static void validation() throws Exception {
         AtomicInteger calls = new AtomicInteger();
         AtomicLong deadline = new AtomicLong();
-        try (RpcServer server = new RpcServer(0, (method, params, until) -> {
+        try (RpcServer server = new RpcServer(0, SPECS, (method, params, until) -> {
             calls.incrementAndGet();
             deadline.set(until);
             return CompletableFuture.completedFuture(ok());
@@ -223,12 +226,16 @@ public final class RpcServerTest {
                     call(server, request("a", "{}", "60001").replace("status", "grid.modules.insert")),
                     "invalid_request",
                     "not_dispatched");
-            check(
-                    RpcServer.maxTimeoutMs("grid.modules.insert") == 60000
-                            && RpcServer.maxTimeoutMs("grid.connections.set") == 60000
-                            && RpcServer.maxTimeoutMs("status") == 10000
-                            && RpcServer.maxTimeoutMs("grid.parameters.set") == 10000,
-                    "only topology edits get the 60 s timeout ceiling");
+            for (String method : MethodSpecsTest.LONG_TIMEOUT)
+                error(
+                        call(server, request("a", "{}", "60001").replace("status", method)),
+                        "invalid_request",
+                        "not_dispatched");
+            for (String method : List.of("grid.parameters.set", "project.save", "render.status"))
+                error(
+                        call(server, request("a", "{}", "10001").replace("status", method)),
+                        "invalid_request",
+                        "not_dispatched");
             error(
                     call(server, request("a", "{}", null).replace("status", "unknown")),
                     "method_not_found",
@@ -237,6 +244,16 @@ public final class RpcServerTest {
             for (int i = 0; i < badUtf8.length; i++) if (badUtf8[i] == '?') badUtf8[i] = (byte) 0xff;
             error(call(server, badUtf8), "invalid_request", "not_dispatched");
             check(calls.get() == accepted, "Invalid input never invokes handler");
+            for (String method : MethodSpecsTest.LONG_TIMEOUT)
+                check(
+                        call(server, request("a", "{}", "60000").replace("status", method))
+                                .has("result"),
+                        method + " admits the 60 s ceiling");
+            check(
+                    call(server, request("a", "{}", null).replace("status", "project.saveAs"))
+                                    .has("result")
+                            && deadline.get() - System.nanoTime() > TimeUnit.SECONDS.toNanos(25),
+                    "an omitted timeoutMs takes the method's spec default");
             try (Socket socket = connect(server)) {
                 socket.getOutputStream()
                         .write(request("half", "{}", null).trim().getBytes(StandardCharsets.UTF_8));
@@ -274,7 +291,7 @@ public final class RpcServerTest {
     private static void deadlines() throws Exception {
         AtomicInteger calls = new AtomicInteger();
         CompletableFuture<JsonObject> pending = new CompletableFuture<>();
-        try (RpcServer server = new RpcServer(0, (method, params, until) -> {
+        try (RpcServer server = new RpcServer(0, SPECS, (method, params, until) -> {
             calls.incrementAndGet();
             return pending;
         })) {
@@ -284,7 +301,7 @@ public final class RpcServerTest {
             pending.complete(ok());
             check(calls.get() == 1, "No automatic retry");
         }
-        try (RpcServer server = new RpcServer(0, (method, params, until) -> {
+        try (RpcServer server = new RpcServer(0, SPECS, (method, params, until) -> {
             CompletableFuture<JsonObject> failure = new CompletableFuture<>();
             failure.completeExceptionally(new RpcException("target_changed", "Target changed", "not_dispatched"));
             return failure;
@@ -299,7 +316,7 @@ public final class RpcServerTest {
         AtomicInteger calls = new AtomicInteger();
         CompletableFuture<JsonObject> hold = new CompletableFuture<>();
         List<Socket> occupying = new ArrayList<>();
-        try (RpcServer server = new RpcServer(0, (method, params, until) -> {
+        try (RpcServer server = new RpcServer(0, SPECS, (method, params, until) -> {
             calls.incrementAndGet();
             entered.countDown();
             return hold;
@@ -328,7 +345,7 @@ public final class RpcServerTest {
     }
 
     private static void responseLimit() throws Exception {
-        try (RpcServer server = new RpcServer(0, (method, params, until) -> {
+        try (RpcServer server = new RpcServer(0, SPECS, (method, params, until) -> {
             JsonObject result = ok();
             result.addProperty("large", "x".repeat(RpcServer.MAX_RESPONSE_BYTES));
             return CompletableFuture.completedFuture(result);
@@ -341,7 +358,7 @@ public final class RpcServerTest {
     private static void overloadAndClose() throws Exception {
         AtomicInteger calls = new AtomicInteger();
         CountDownLatch four = new CountDownLatch(4);
-        RpcServer server = new RpcServer(0, (method, params, until) -> {
+        RpcServer server = new RpcServer(0, SPECS, (method, params, until) -> {
             calls.incrementAndGet();
             four.countDown();
             return new CompletableFuture<>();

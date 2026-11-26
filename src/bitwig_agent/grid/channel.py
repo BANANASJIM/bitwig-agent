@@ -7,12 +7,9 @@ from typing import Any, TypeVar
 
 from bitwig_agent.errors import BridgeError
 from bitwig_agent.grid.read import GridCall
-from bitwig_agent.protocol.base import TOPOLOGY_TIMEOUT_MS
+from bitwig_agent.protocol import TOOLS
 
 WRITE_TIMEOUT_MS = 10000
-TOPOLOGY_WRITES = frozenset(
-    {"grid.modules.insert", "grid.modules.move", "grid.modules.delete", "grid.modules.rename", "grid.connections.set"}
-)
 CLEAN = ("applied", "already_matched")
 TARGETLESS = ("grid.capabilities", "grid.catalog")
 NON_TOPOLOGY_WRITES = ("grid.parameters.set", "grid.connections.set", "grid.voicing.set")
@@ -54,8 +51,9 @@ class Channel:
         self.topo_written = False
 
     def _timeout(self, method: str, write: bool) -> int:
-        if method in TOPOLOGY_WRITES:
-            return TOPOLOGY_TIMEOUT_MS
+        ceiling = TOOLS[method].max_timeout_ms
+        if ceiling > WRITE_TIMEOUT_MS:
+            return ceiling
         return max(self.timeout_ms, WRITE_TIMEOUT_MS) if write else self.timeout_ms
 
     async def call(self, method: str, params: dict[str, Any], *, write: bool = False) -> dict[str, Any]:

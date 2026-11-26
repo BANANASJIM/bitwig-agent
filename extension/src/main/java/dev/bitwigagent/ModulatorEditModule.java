@@ -1,6 +1,7 @@
 package dev.bitwigagent;
 
 import com.google.gson.*;
+import dev.bitwigagent.core.MethodSpecs;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Consumer;
@@ -14,23 +15,19 @@ final class ModulatorEditModule implements HostModule {
             "modulators.parameters.set",
             "modulators.map",
             "modulators.unmap");
-    static final Set<String> WRITES = Set.of(
-            "modulators.insert",
-            "modulators.delete",
-            "modulators.parameters.set",
-            "modulators.map",
-            "modulators.unmap");
     static final int MAX_RESPONSE_CHARS = 240000;
     private final HostServices s;
+    private final MethodSpecs specs;
     private ModulatorEditor editor;
     private String unavailable;
 
-    ModulatorEditModule(HostServices services) {
-        this(services, null);
+    ModulatorEditModule(HostServices services, MethodSpecs specs) {
+        this(services, specs, null);
     }
 
-    ModulatorEditModule(HostServices services, ModulatorEditor injected) {
+    ModulatorEditModule(HostServices services, MethodSpecs specs, ModulatorEditor injected) {
         s = services;
+        this.specs = specs;
         editor = injected;
     }
 
@@ -141,7 +138,7 @@ final class ModulatorEditModule implements HostModule {
     public void dispatch(HostOperation op, String method, JsonObject p) {
         s.check(op);
         ModulatorEditor edits = editor(op);
-        final boolean writing = WRITES.contains(method);
+        final boolean writing = !specs.get(method).readOnly;
         final HostServices.SafetyObservation safety = writing ? s.stoppedSafety(op) : null;
         final DeviceSources.RootReadTicket target = s.sources.rootRead(p.getAsJsonObject("parent"));
         final UUID trackId = UUID.fromString(target.trackId);

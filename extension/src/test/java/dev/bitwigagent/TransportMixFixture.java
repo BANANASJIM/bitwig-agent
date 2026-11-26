@@ -3,6 +3,7 @@ package dev.bitwigagent;
 import com.bitwig.extension.callback.*;
 import com.bitwig.extension.controller.api.*;
 import com.google.gson.*;
+import dev.bitwigagent.core.MethodSpecs;
 import java.lang.reflect.*;
 import java.util.*;
 import java.util.concurrent.CompletionException;
@@ -10,6 +11,7 @@ import java.util.function.Consumer;
 
 /** Test-only host proxies: explicit callbacks and queued host tasks, no Bitwig process. */
 final class TransportMixFixture {
+    static final MethodSpecs SPECS = MethodSpecs.load();
     static final String A = "00000000-0000-0000-0000-000000000001";
     static final String B = "00000000-0000-0000-0000-000000000002";
     static final String C = "00000000-0000-0000-0000-000000000003";

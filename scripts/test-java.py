@@ -13,7 +13,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 TEST_ROOT = ROOT / "extension/src/test/java"
-CORE_TESTS = {"dev.bitwigagent.RpcServerTest", "dev.bitwigagent.HostBridgeTest"}
+CORE_TESTS = {"dev.bitwigagent.RpcServerTest", "dev.bitwigagent.HostBridgeTest", "dev.bitwigagent.core.MethodSpecsTest"}
 
 
 def main() -> None:
