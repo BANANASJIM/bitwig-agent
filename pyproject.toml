@@ -42,14 +42,6 @@ bitwig-agent = "bitwig_agent.server:main"
 bitwig-agent-rpc = "bitwig_agent.cli:main"
 bitwig-agent-install = "bitwig_agent.install:main"
 
-[dependency-groups]
-dev = [
-    "mypy==2.4.1",
-    "pytest>=8.3,<9",
-    "ruff==0.17.6",
-]
-native-music = ["numpy>=2,<3", "scipy>=1.15,<2", "soundfile>=0.13,<1"]
-
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
@@ -73,3 +65,65 @@ max-complexity = 12
 python_version = "3.11"
 strict = true
 files = ["src/bitwig_agent"]
+
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["linux-64", "linux-aarch64", "osx-arm64"]
+
+[tool.pixi.pypi-dependencies]
+bitwig-agent = { path = ".", editable = true }
+
+[tool.pixi.feature.py311.dependencies]
+python = "3.11.*"
+
+[tool.pixi.feature.py314.dependencies]
+python = "3.14.*"
+
+[tool.pixi.feature.mcp-min.pypi-dependencies]
+mcp = "==2.3.0"
+
+[tool.pixi.feature.dev.dependencies]
+mypy = "==2.4.1"
+pytest = ">=8.3,<9"
+ruff = "==0.17.6"
+
+[tool.pixi.feature.native-music.dependencies]
+numpy = ">=2,<3"
+scipy = ">=1.15,<2"
+pysoundfile = ">=0.13,<1"
+
+[tool.pixi.feature.java.dependencies]
+openjdk = "25.*"
+pmd = "*"
+
+[tool.pixi.feature.package.dependencies]
+hatchling = "*"
+python-build = "*"
+skills-ref = "*"
+
+[tool.pixi.environments]
+default = ["py314", "dev", "native-music", "java", "package", "workstation"]
+py314 = ["py314", "dev", "native-music", "package"]
+py311 = ["py311", "dev", "native-music", "package"]
+py311-mcp-min = ["py311", "mcp-min", "dev", "native-music", "package"]
+
+[tool.pixi.feature.dev.tasks]
+test = "pytest -q"
+
+[tool.pixi.feature.java.tasks]
+lint = "python scripts/lint.py"
+fmt = "python scripts/lint.py --fix"
+cpd-baseline = "python scripts/lint.py --update-cpd-baseline"
+test-java = "python scripts/test-java.py"
+fixture = "python scripts/smoke-mcp-java.py"
+extension = "python scripts/build.py"
+
+[tool.pixi.feature.package.tasks]
+dist = "python -m build --no-isolation --outdir dist"
+smoke-dist = "python scripts/smoke-dists.py"
+validate-skills = "agentskills validate skills/bitwig-agent"
+
+[tool.pixi.feature.workstation.tasks]
+check = "python scripts/check.py"
+build = { depends-on = ["dist", "extension"] }
+install = { cmd = "bitwig-agent-install --extension build/BitwigAgent.bwextension", depends-on = ["extension"] }

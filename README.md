@@ -15,22 +15,22 @@
 
 ## Quickstart
 
-You need your own compatible Bitwig Studio installation. The released extension needs **no JDK**. Choose **one** installation route below; do not leave an older uv-installed command shadowing an Arch installation on `PATH`.
+You need your own compatible Bitwig Studio installation. The released extension needs **no JDK**. Choose **one** installation route below; do not leave an older pipx-installed command shadowing an Arch installation on `PATH`.
 
 ### 1. Install
 
-#### uv
+#### pipx
 
-Use [uv](https://docs.astral.sh/uv/getting-started/installation/) with Python 3.11+:
+Use [pipx](https://pipx.pypa.io/stable/installation/) with Python 3.11+:
 
 ```sh
-uv tool install bitwig-agent
+pipx install bitwig-agent
 bitwig-agent-install
 ```
 
 This installs the Python tools, then downloads and verifies the matching extension before copying it into your Bitwig Extensions directory. Changed existing bytes are backed up; identical bytes are left untouched.
 
-See [uvx, upgrades and offline installation](https://github.com/BANANASJIM/bitwig-agent/blob/main/INSTALL.md).
+See [one-off runs, upgrades and offline installation](https://github.com/BANANASJIM/bitwig-agent/blob/main/INSTALL.md).
 
 #### Arch Linux / AUR
 

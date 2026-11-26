@@ -19,11 +19,11 @@ Python and Java are a matched release pair. The installer derives the GitHub rel
 
 The Python wheel is not a bundle of the Java extension, Bitwig, a JDK or all transitive Python dependencies. The installer downloads the extension and manifest separately, or copies an explicitly supplied local extension. Manual `--extension` installation trusts the caller's provenance/checksum check. A hash in the same release manifest checks integrity against that manifest, not an independent signing authority or native compatibility.
 
-## Python tools: uv, uvx and the lockfile
+## Python tools: pipx and the lockfile
 
-`uv tool install bitwig-agent` is the persistent PyPI installation: isolated dependencies, exposed entrypoints and a stable environment from which to generate MCP configuration. `uvx --from bitwig-agent==0.4.0 <entrypoint>` is version-pinned ephemeral/cached execution, not persistent configuration. Both can fetch dependencies and neither installs/enables a Bitwig controller merely by resolving the Python package. See [working commands](../INSTALL.md#persistent-uv-tools-and-ephemeral-uvx).
+`pipx install bitwig-agent` is the persistent PyPI installation: isolated dependencies, exposed entrypoints and a stable environment from which to generate MCP configuration. `pipx run --spec bitwig-agent==0.4.0 <entrypoint>` is version-pinned ephemeral/cached execution, not persistent configuration. Both can fetch dependencies and neither installs/enables a Bitwig controller merely by resolving the Python package. See [working commands](../INSTALL.md#persistent-pipx-installation-and-one-off-runs).
 
-The package declares Python 3.11+, `mcp>=2.3.0,<3` and `pydantic>=2.12,<3`. Version `0.2.0` and later use the [MCP 2 low-level API](https://github.com/modelcontextprotocol/python-sdk/blob/v2.3.0/docs/migration.md#lowlevel-server), matching Arch's current system SDK; it does not retain an SDK 1 compatibility path or bundle a private Python environment. [`uv.lock`](https://github.com/BANANASJIM/bitwig-agent/blob/main/uv.lock) pins the source/development environment, not downstream installations. Use `uv sync --locked` for reproducible contribution; minimum-MCP checks use `--no-sync` after substitution so uv cannot silently restore the locked SDK.
+The package declares Python 3.11+, `mcp>=2.3.0,<3` and `pydantic>=2.12,<3`. Version `0.2.0` and later use the [MCP 2 low-level API](https://github.com/modelcontextprotocol/python-sdk/blob/v2.3.0/docs/migration.md#lowlevel-server), matching Arch's current system SDK; it does not retain an SDK 1 compatibility path or bundle a private Python environment. [`pixi.lock`](https://github.com/BANANASJIM/bitwig-agent/blob/main/pixi.lock) pins the source/development environments, not downstream installations. Use `pixi install --locked` for reproducible contribution; the `py311-mcp-min` environment pins the minimum supported MCP SDK in the lock itself.
 
 `README.md` is also the PyPI long description. Use absolute public URLs for repository files: relative links resolve beneath the PyPI project page, not GitHub. Changing that embedded description requires a new package version, never replacement files under an existing version.
 
@@ -36,7 +36,7 @@ The reviewed recipe lives in [`packaging/aur`](https://github.com/BANANASJIM/bit
 The package is named `bitwig-agent`, not `bitwig-agent-bin`: its Python component is built from the versioned Python source distribution. The same-version prebuilt Java extension uses the Arch Java packaging exception for Java artifacts. This avoids requiring a user's proprietary Bitwig host JAR merely to package the public Python tools.
 
 - Build Python with the standard `python-build --no-isolation` / `python-installer --destdir` path and declared build dependencies.
-- Use Arch's system `python-mcp` and `python-pydantic` at runtime. No runtime uv, embedded private virtualenv or pip-driven package-manager hook is needed.
+- Use Arch's system `python-mcp` and `python-pydantic` at runtime. No runtime pipx, embedded private virtualenv or pip-driven package-manager hook is needed.
 - Put the prebuilt extension at `/usr/share/bitwig-agent/BitwigAgent.bwextension`, with license/notices in the package's standard shared locations.
 - Install public guides under `/usr/share/doc/bitwig-agent/`, retaining their `docs/` subdirectory, and the copyable skill under `/usr/share/bitwig-agent/skills/bitwig-agent/`. A skill consumer copies the whole skill directory rather than only `SKILL.md`.
 - Do not run network package resolution from `package()` or a post-install hook. Source retrieval and hash verification belong to `makepkg`'s source phase.
@@ -64,10 +64,10 @@ Version `0.2.0` replaces the private 6.1.3 adapter with the exact 6.1.4 bindings
 
 ## Build once, promote the same artifacts
 
-The maintainer builds the Python wheel, Python sdist and Java extension from one reviewed source/version snapshot. Java building requires the maintainer's own licensed host JAR and JDK 25+; public CI is not supplied with the proprietary JAR. The extension targets Java 11 bytecode but its Bitwig 6.1.4 loader superclass requires JDK 25 to read during building/checking.
+The maintainer builds the Python wheel, Python sdist and Java extension from one reviewed source/version snapshot. Java building requires the maintainer's own licensed host JAR (pixi supplies JDK 25); public CI is not supplied with the proprietary JAR. The extension targets Java 11 bytecode but its Bitwig 6.1.4 loader superclass requires JDK 25 to read during building/checking.
 
 1. Update matching versions and installation links, resolve the lockfile, and run the applicable [verification layers](../VERIFICATION.md). Record which layers actually ran.
-2. Build wheel and sdist with `uv build`, then the extension with `uv run --locked python scripts/build.py`.
+2. Build wheel, sdist and extension with `pixi run build`.
 3. Inspect packaged contents and licenses. Do not include the host JAR, proprietary factory assets, credentials, private diagnostics or machine configuration.
 4. Record real SHA-256 values in `SHA256SUMS` using exactly the three bare asset filenames. Finalize and validate the Arch recipe and `.SRCINFO` from those same bytes before committing/tagging; its exclusion from the sdist avoids checksum recursion.
 5. Tag the reviewed source and recipe, then publish all four unchanged assets on the matching `v0.4.0` GitHub release.
@@ -118,7 +118,8 @@ The public CI and local checks cover package content, dependencies, CLI discover
 
 ## Primary references
 
-- [uv tools: persistent installation and ephemeral execution](https://docs.astral.sh/uv/guides/tools/)
+- [pipx documentation](https://pipx.pypa.io/stable/)
+- [pixi documentation](https://pixi.sh/latest/)
 - [Arch Python package guidelines](https://wiki.archlinux.org/title/Python_package_guidelines)
 - [Arch Java package guidelines](https://wiki.archlinux.org/title/Java_package_guidelines)
 - [AUR submission guidelines](https://wiki.archlinux.org/title/AUR_submission_guidelines)

@@ -4,47 +4,40 @@ Keep changes focused on helping agents complete real Bitwig tasks. Domain operat
 
 ## Source setup
 
-End users should use the [released wheel and extension](README.md#quickstart) when its host boundary fits. Current source requires a checkout, Python 3.11+, [uv](https://docs.astral.sh/uv/getting-started/installation/), **JDK 25+**, and your own licensed **Bitwig 6.1.4 / API 25** installation. Its loader superclass uses class-file version 69, so JDK 25 is needed to compile/run Java checks; generated extension classes still target Java 11. This is a clean private-binding cutover, not simultaneous 6.1.3/6.1.4 support; published `0.1.2` remains unchanged.
+End users should use the [released wheel and extension](README.md#quickstart) when its host boundary fits. Current source requires a checkout, [pixi](https://pixi.sh/latest/installation/), and your own licensed **Bitwig 6.1.4 / API 25** installation. Pixi supplies Python, JDK 25 and PMD from conda-forge; the extension's loader superclass uses class-file version 69, so JDK 25 is needed to compile/run Java checks, while generated extension classes still target Java 11. This is a clean private-binding cutover, not simultaneous 6.1.3/6.1.4 support; published `0.1.2` remains unchanged.
 
 From the repository root:
 
 ```sh
-uv sync --locked
-export BITWIG_API_JAR=/path/to/installed/bitwig.jar
-export JAVAC=/path/to/jdk25/bin/javac
-export JAVA=/path/to/jdk25/bin/java
-uv run --locked python scripts/build.py
-uv run --locked bitwig-agent-install --extension build/BitwigAgent.bwextension
+pixi install --locked
+pixi run install
 ```
 
-The API JAR defaults to `/opt/bitwig-studio/bin/bitwig.jar`; override it for your installation. The build downloads and verifies pinned Gson on first use. Neither the proprietary host JAR nor JDK is bundled. Installation does not enable the controller: follow [the enable/connect steps](README.md#2-enable-in-bitwig). For a checkout-based MCP configuration, run `uv run --locked bitwig-agent-install --mcp-config`; keep the checkout environment available to the client.
+`install` builds `build/BitwigAgent.bwextension` and copies it into your Bitwig Extensions directory. The extension build compiles against your installed host JAR, `/opt/bitwig-studio/bin/bitwig.jar` unless `BITWIG_API_JAR` names another. The build downloads and verifies pinned Gson on first use. The proprietary host JAR is not bundled. Installation does not enable the controller: follow [the enable/connect steps](README.md#2-enable-in-bitwig). The checkout's CLI and MCP server run from its editable pixi environment (`pixi run bitwig-agent-rpc list`). For a checkout-based MCP configuration, run `pixi run bitwig-agent-install --mcp-config`; keep the checkout's `.pixi` environment available to the client. Pixi cannot install PyPI-only applications globally, so there is no pixi equivalent of a tool install.
 
 ## Development checks
 
-Use Python 3.11+ and uv. Install optional audio-analysis dependencies so the offline suite exercises its PCM checks rather than skipping them:
+Everything runs through pixi tasks; the default environment includes the optional audio-analysis dependencies, so the offline suite exercises its PCM checks rather than skipping them.
 
-```sh
-uv sync --locked --group native-music
-uv run --locked python scripts/check.py --layer offline
-```
+| Task | Does |
+|---|---|
+| `pixi run test` | host-free Python tests |
+| `pixi run lint` | static gates below |
+| `pixi run fmt` | apply ruff fixes and reformat Python and Java |
+| `pixi run cpd-baseline` | rewrite `config/cpd-baseline.json` |
+| `pixi run test-java` | simulated-host Java tests |
+| `pixi run fixture` | real MCP/Java fixture |
+| `pixi run check` | lint, offline, Java and fixture layers (`scripts/check.py` defaults) |
+| `pixi run dist` | sdist and wheel in `dist/` |
+| `pixi run extension` | `build/BitwigAgent.bwextension` |
+| `pixi run build` | `dist` and `extension` |
+| `pixi run install` | build and install the extension, see above |
+| `pixi run smoke-dist` | install each built distribution into a fresh venv and smoke it (`--mcp VERSION` pins the MCP SDK) |
+| `pixi run validate-skills` | Agent Skills format check |
 
-For the Java build, simulated-host checks and real MCP/Java fixture, install JDK 25+ and supply your own compatible Bitwig API JAR:
+`extension` (and so `build` and `install`) needs your own compatible Bitwig host JAR (default `/opt/bitwig-studio/bin/bitwig.jar`; override with `BITWIG_API_JAR`). `test-java` and `fixture` use the checksum-pinned public extension API unless `BITWIG_API_JAR` is set. Pixi provides JDK 25 and PMD, so no Java toolchain setup is needed. CI's other environments (`py311`, `py314`, `py311-mcp-min`, which pins the minimum supported MCP SDK) run with `pixi run -e ENVIRONMENT test`.
 
-```sh
-export BITWIG_API_JAR=/path/to/installed/bitwig.jar
-export JAVAC=/path/to/jdk25/bin/javac
-export JAVA=/path/to/jdk25/bin/java
-uv run --locked python scripts/build.py
-uv run --locked python scripts/check.py
-```
-
-The `lint` layer needs neither the API jar nor Bitwig; it downloads checksum-pinned palantir-java-format (native binary, or the pinned JVM jars where none exists for the host) and PMD CPD into `build/deps` (PMD needs `java` on `PATH`, or `JAVA` set). Run it alone, or apply fixes and reformat:
-
-```sh
-uv run --locked python scripts/check.py --layer lint
-uv run --locked python scripts/lint.py --fix
-uv run --locked python scripts/lint.py --update-cpd-baseline
-```
+The `lint` task needs neither the API jar nor Bitwig; it downloads only the checksum-pinned palantir-java-format (native binary, or the pinned JVM jars where none exists for the host) into `build/deps`. Run a single layer through `pixi run python scripts/check.py --layer lint`.
 
 It runs `ruff check`, `ruff format --check`, strict `mypy` on `src/bitwig_agent` (non-strict on scripts, tests and examples), the Java format check and duplicate detection. `config/cpd-baseline.json` lists existing duplicates; only new ones fail, so update it only when a refactor removes some. Ruff per-file ignores under "refactor debt" in `pyproject.toml` may shrink, never grow. Javac runs with `-Xlint:all -Werror`. `git config blame.ignoreRevsFile .git-blame-ignore-revs` hides the mechanical format commit from blame.
 
@@ -69,9 +62,8 @@ See [packaging and release promotion](docs/packaging.md) for the complete artifa
 2. Build the Python wheel **and sdist**, plus the matching extension:
 
    ```sh
-   uv sync --locked
-   uv build
-   uv run --locked python scripts/build.py
+   pixi install --locked
+   pixi run build
    sha256sum dist/bitwig_agent-0.4.0-py3-none-any.whl dist/bitwig_agent-0.4.0.tar.gz build/BitwigAgent.bwextension
    ```
 
@@ -88,13 +80,13 @@ Neither a pending PyPI publisher nor an AUR recipe establishes public package av
 
 The portable skill is [`skills/bitwig-agent`](https://github.com/BANANASJIM/bitwig-agent/tree/main/skills/bitwig-agent). Keep its main `SKILL.md` short; place focused guidance one directory level down in `references/`, with every reference directly reachable from `SKILL.md`. Bundle its MIT `LICENSE` so the folder can be copied alone. Links outside that folder must use public repository URLs, not checkout-relative paths. Do not embed host identities, private paths, credentials, global client configuration changes or a tool permission grant.
 
-Use the [Agent Skills specification](https://agentskills.io/specification) and the demonstration `skills-ref` validator pinned to the reviewed source commit:
+Use the [Agent Skills specification](https://agentskills.io/specification) and the demonstration `agentskills` reference validator (conda-forge `skills-ref`, version-locked in `pixi.lock`):
 
 ```sh
-uvx --from "git+https://github.com/agentskills/agentskills.git@69ef37e9424c0a7ea9dd2293b559e43ec8176379#subdirectory=skills-ref" skills-ref validate skills/bitwig-agent
+pixi run validate-skills
 ```
 
-This command fetches a validation tool; it is not a production DAW dependency. Format/frontmatter validation does **not** establish correct tool use, native behavior, compatibility, permissions or musical acceptance. Separately review the copied folder's local references and safety instructions: fresh schema/target discovery, explicit permission, unknown-stop discipline and no implicit GUI fallback.
+The validator is a development dependency, not a production DAW dependency. Format/frontmatter validation does **not** establish correct tool use, native behavior, compatibility, permissions or musical acceptance. Separately review the copied folder's local references and safety instructions: fresh schema/target discovery, explicit permission, unknown-stop discipline and no implicit GUI fallback.
 
 ## Repository map and architecture
 

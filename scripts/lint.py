@@ -17,7 +17,6 @@ import subprocess
 import sys
 import tempfile
 import xml.etree.ElementTree as ET
-import zipfile
 from collections import defaultdict
 from pathlib import Path
 
@@ -91,9 +90,6 @@ PALANTIR_JARS = [
 JAVAC_PACKAGES = ["api", "code", "file", "main", "model", "parser", "processing", "tree", "util"]
 PALANTIR_FLAGS = ["--palantir", "--skip-reflowing-long-strings"]
 
-PMD_VERSION = "7.29.0"
-PMD_SHA256 = "d27177c185b837fa57f097e482d1253468aa035379c5eb2671fa0a279109b179"
-PMD_URL = f"https://github.com/pmd/pmd/releases/download/pmd_releases%2F{PMD_VERSION}/pmd-dist-{PMD_VERSION}-bin.zip"
 CPD_RUNS = {
     "java": (100, ".java", ("extension/src",)),
     "python": (50, ".py", ("src", "tests", "scripts", "examples")),
@@ -115,10 +111,6 @@ def java_sources() -> list[str]:
     return tracked("extension/src", suffix=".java")
 
 
-def java_command() -> str:
-    return os.environ.get("JAVA") or "java"
-
-
 def formatter_command() -> list[str]:
     key = (platform.system(), platform.machine())
     if key in PALANTIR_BINARIES:
@@ -136,42 +128,19 @@ def formatter_command() -> list[str]:
         for path, sha256 in PALANTIR_JARS
     ]
     exports = [f"--add-exports=jdk.compiler/com.sun.tools.javac.{name}=ALL-UNNAMED" for name in JAVAC_PACKAGES]
-    return [java_command(), *exports, "-cp", os.pathsep.join(jars), "com.palantir.javaformat.java.Main"]
+    return ["java", *exports, "-cp", os.pathsep.join(jars), "com.palantir.javaformat.java.Main"]
 
 
-def pmd_command() -> list[str]:
-    home = DEPS / f"pmd-bin-{PMD_VERSION}"
-    if not home.exists():
-        archive = download_verified(PMD_URL, PMD_SHA256, DEPS / f"pmd-dist-{PMD_VERSION}-bin.zip", 300 * 1024 * 1024)
-        staging = Path(tempfile.mkdtemp(dir=DEPS))
-        try:
-            with zipfile.ZipFile(archive) as bundle:
-                bundle.extractall(staging)
-            (staging / f"pmd-bin-{PMD_VERSION}").rename(home)
-        finally:
-            shutil.rmtree(staging, ignore_errors=True)
-    if platform.system() == "Windows":
-        return [str(home / "bin" / "pmd.bat")]
-    return ["bash", str(home / "bin" / "pmd")]
-
-
-def java_environment() -> dict[str, str]:
-    env = dict(os.environ)
-    if env.get("JAVA"):
-        env["PATH"] = str(Path(env["JAVA"]).resolve().parent) + os.pathsep + env["PATH"]
-    return env
-
-
-def run(command: list[str], env: dict[str, str] | None = None) -> bool:
-    return subprocess.run(command, cwd=ROOT, env=env, check=False).returncode == 0
+def run(command: list[str]) -> bool:
+    return subprocess.run(command, cwd=ROOT, check=False).returncode == 0
 
 
 def ruff_check(fix: bool) -> bool:
-    return run([sys.executable, "-m", "ruff", "check", *(["--fix"] if fix else []), *python_sources()])
+    return run(["ruff", "check", *(["--fix"] if fix else []), *python_sources()])
 
 
 def ruff_format(fix: bool) -> bool:
-    return run([sys.executable, "-m", "ruff", "format", *([] if fix else ["--check"]), *python_sources()])
+    return run(["ruff", "format", *([] if fix else ["--check"]), *python_sources()])
 
 
 def mypy(fix: bool) -> bool:
@@ -191,7 +160,7 @@ def mypy(fix: bool) -> bool:
 
 def java_format(fix: bool) -> bool:
     flags = ["--replace"] if fix else ["--dry-run", "--set-exit-if-changed"]
-    return run([*formatter_command(), *PALANTIR_FLAGS, *flags, *java_sources()], java_environment())
+    return run([*formatter_command(), *PALANTIR_FLAGS, *flags, *java_sources()])
 
 
 def cpd_duplicates(language: str) -> dict[tuple[str, ...], tuple[int, int]]:
@@ -201,7 +170,8 @@ def cpd_duplicates(language: str) -> dict[tuple[str, ...], tuple[int, int]]:
         listing = Path(scratch) / "files.txt"
         listing.write_text("\n".join(str(ROOT / name) for name in files) + "\n")
         command = [
-            *pmd_command(),
+            "bash",
+            shutil.which("pmd") or "pmd",  # the conda wrapper has no shebang
             "cpd",
             "--minimum-tokens",
             str(minimum_tokens),
@@ -213,9 +183,7 @@ def cpd_duplicates(language: str) -> dict[tuple[str, ...], tuple[int, int]]:
             "xml",
             "--no-fail-on-violation",
         ]
-        result = subprocess.run(
-            command, cwd=ROOT, env=java_environment(), check=True, stdout=subprocess.PIPE, text=True
-        )
+        result = subprocess.run(command, cwd=ROOT, check=True, stdout=subprocess.PIPE, text=True)
     namespace = {"c": "https://pmd-code.org/schema/cpd-report"}
     report = ET.fromstring(result.stdout)
     if len(report.findall("c:file", namespace)) != len(files):

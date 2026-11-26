@@ -75,7 +75,7 @@ def compile_java(sources, target, classpath, lint="-Xlint:all"):
     target.mkdir(parents=True, exist_ok=True)
     subprocess.run(
         [
-            os.environ.get("JAVAC", "javac"),
+            "javac",
             "--release",
             "11",
             lint,

@@ -113,12 +113,12 @@ It only reads from Bitwig and writes `outPath`; it refuses to replace an existin
 
 ## Make Grid instruments without preset files
 
-The recipe runs from a source checkout with `uv sync --locked` (see [contributor setup](CONTRIBUTING.md#source-setup)); it is not installed as a tool by the wheel.
+The recipe runs from a source checkout with `pixi install --locked` (see [contributor setup](CONTRIBUTING.md#source-setup)); it is not installed as a tool by the wheel.
 
 [examples/grid_music.py](examples/grid_music.py) creates two muted, disarmed instrument tracks and eight beats of pluck notes and pad chords. In `--from-scratch` mode it discovers the installed factory Poly Grid and native MODULE catalog, replaces only the new devices' default modules, constructs Union → ADSR → Audio Out, and configures contrasting triangle pluck/pad envelopes through fresh typed raw CAS:
 
 ```sh
-uv run --locked python examples/grid_music.py \
+pixi run python examples/grid_music.py \
   --from-scratch \
   --project 'EXACT DISPOSABLE PROJECT NAME' \
   --artifacts /absolute/path/new-evidence-directory \

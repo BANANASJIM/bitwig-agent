@@ -4,7 +4,7 @@ This skill is portable instructions, not an installer or permission grant. Copy 
 
 ## Missing tools or extension
 
-Use the public [installation guide](https://github.com/BANANASJIM/bitwig-agent/blob/main/INSTALL.md) for current commands and matching release assets. Persistent `uv tool install bitwig-agent` from PyPI is preferred for ongoing MCP use; `uvx --from bitwig-agent==0.2.0 <entrypoint>` is version-pinned ephemeral/cached execution. Do not treat an absolute interpreter path in a temporary uv cache as permanent client configuration.
+Use the public [installation guide](https://github.com/BANANASJIM/bitwig-agent/blob/main/INSTALL.md) for current commands and matching release assets. Persistent `pipx install bitwig-agent` from PyPI is preferred for ongoing MCP use; `pipx run --spec bitwig-agent==0.2.0 <entrypoint>` is version-pinned ephemeral/cached execution. Do not treat an absolute interpreter path in a temporary cache as permanent client configuration.
 
 The installed Python package and enabled Java extension must match. `bitwig-agent-install` installs/downloads the matching extension and can replace user files, so it requires installation permission. `bitwig-agent-install --mcp-config` only prints configuration; it does not edit global settings or install the extension. Review and merge that JSON according to the client's instructions. Offline `list`, `describe` and version commands are not host connectivity evidence; `status` contacts the running extension. Starting `bitwig-agent` by hand starts a stdio server awaiting a client, not a GUI or host test.
 
@@ -21,7 +21,7 @@ Native tests can run on an isolated headless display (`weston --backend=headless
 The [Agent Skills specification](https://agentskills.io/specification) defines the frontmatter and directory format. To validate a source-checkout skill folder with the pinned reference implementation:
 
 ```sh
-uvx --from "git+https://github.com/agentskills/agentskills.git@69ef37e9424c0a7ea9dd2293b559e43ec8176379#subdirectory=skills-ref" skills-ref validate skills/bitwig-agent
+pipx run --spec "git+https://github.com/agentskills/agentskills.git@69ef37e9424c0a7ea9dd2293b559e43ec8176379#subdirectory=skills-ref" skills-ref validate skills/bitwig-agent
 ```
 
 For a copied skill, replace the final argument with that folder's actual path. The command downloads a validation tool and needs appropriate network/tool-execution permission; do not run it automatically as part of a musical task. `skills-ref` is a demonstration validator, not a Bitwig runtime dependency.
