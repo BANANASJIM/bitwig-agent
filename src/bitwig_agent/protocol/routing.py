@@ -15,7 +15,6 @@ from bitwig_agent.protocol.base import (
     ToolSpec,
     TrackId,
     omitted,
-    tool,
 )
 from bitwig_agent.protocol.limits import TRACK_WINDOW
 
@@ -155,78 +154,90 @@ DEVICES_SIDECHAIN_SET_DESCRIPTION = "Set one sidechain component's source with c
 
 
 SPECS: dict[str, ToolSpec] = {
-    "tracks.routing.get": tool(
+    "tracks.routing.get": ToolSpec(
         TrackRoutingGetArgs,
         TRACKS_ROUTING_GET_DESCRIPTION,
         True,
-        {"trackId": TRACK},
-        {"trackId": TRACK, "includeChoices": True},
+        examples=(
+            {"trackId": TRACK},
+            {"trackId": TRACK, "includeChoices": True},
+        ),
+        summary="Read one track's output chooser and, for audio/instrument/hybrid tracks, its input chooser. output.entry and input.entry are copied verbatim as expectedOutput/expectedInput in tracks.routing.set; kinds lists what a chooser accepts, writable whether it can be set. includeChoices lists every track's accepted entries.",
     ),
-    "tracks.routing.set": tool(
+    "tracks.routing.set": ToolSpec(
         TrackRoutingSetArgs,
         TRACKS_ROUTING_SET_DESCRIPTION,
         False,
-        {
-            "trackId": TRACK,
-            "output": {"kind": "track_audio_input", "trackId": "12345678-1234-1234-1234-123456789abd"},
-            "expectedOutput": {"kind": "track_audio_input", "trackId": "12345678-1234-1234-1234-123456789abe"},
-        },
-        {
-            "trackId": TRACK,
-            "input": {"kind": "post_fader", "trackId": "12345678-1234-1234-1234-123456789abd"},
-            "expectedInput": {"kind": "none"},
-        },
-        {
-            "trackId": TRACK,
-            "input": {"kind": "all_ins"},
-            "expectedInput": {"kind": "other", "name": "exact name from tracks.routing.get"},
-        },
-        {
-            "trackId": TRACK,
-            "output": {"kind": "none"},
-            "expectedOutput": {
-                "kind": "other",
-                "name": "exact name from tracks.routing.get",
-                "nativeType": "from-tracks.routing.get",
+        examples=(
+            {
+                "trackId": TRACK,
+                "output": {"kind": "track_audio_input", "trackId": "12345678-1234-1234-1234-123456789abd"},
+                "expectedOutput": {"kind": "track_audio_input", "trackId": "12345678-1234-1234-1234-123456789abe"},
             },
-        },
+            {
+                "trackId": TRACK,
+                "input": {"kind": "post_fader", "trackId": "12345678-1234-1234-1234-123456789abd"},
+                "expectedInput": {"kind": "none"},
+            },
+            {
+                "trackId": TRACK,
+                "input": {"kind": "all_ins"},
+                "expectedInput": {"kind": "other", "name": "exact name from tracks.routing.get"},
+            },
+            {
+                "trackId": TRACK,
+                "output": {"kind": "none"},
+                "expectedOutput": {
+                    "kind": "other",
+                    "name": "exact name from tracks.routing.get",
+                    "nativeType": "from-tracks.routing.get",
+                },
+            },
+        ),
         requires=PROJECT_READY,
     ),
-    "devices.sidechain.get": tool(
-        SidechainGetArgs, DEVICES_SIDECHAIN_GET_DESCRIPTION, True, {**TARGET, "expectedDeviceName": "Compressor"}
+    "devices.sidechain.get": ToolSpec(
+        SidechainGetArgs,
+        DEVICES_SIDECHAIN_GET_DESCRIPTION,
+        True,
+        examples=({**TARGET, "expectedDeviceName": "Compressor"},),
+        summary="Read the sidechain source choosers of one top-level device (trackId, deviceIndex, expectedDeviceName from devices.list): the device's own, its modulators', Grid Audio Sidechain modules' and a plug-in's. Copy a component's source as expectedSource in devices.sidechain.set. includeChoices lists the accepted tracks.",
     ),
-    "devices.sidechain.set": tool(
+    "devices.sidechain.set": ToolSpec(
         SidechainSetArgs,
         DEVICES_SIDECHAIN_SET_DESCRIPTION,
         False,
-        {
-            **TARGET,
-            "expectedDeviceName": "Compressor",
-            "componentIndex": 0,
-            "expectedComponentId": "from-devices.sidechain.get",
-            "source": {"kind": "pre_fader", "trackId": "12345678-1234-1234-1234-123456789abd"},
-            "expectedSource": {"kind": "none"},
-        },
-        {
-            **TARGET,
-            "expectedDeviceName": "Dynamics",
-            "componentId": "from-devices.sidechain.get",
-            "source": {"kind": "none"},
-            "expectedSource": {"kind": "post_fader", "trackId": "12345678-1234-1234-1234-123456789abd"},
-        },
-        {
-            **TARGET,
-            "expectedDeviceName": "Polysynth",
-            "componentIndex": 1,
-            "expectedComponentId": "from-devices.sidechain.get",
-            "expectedModulatorId": "abcdef01-2345-6789-abcd-0123456789ab",
-            "source": {"kind": "track_notes", "trackId": "12345678-1234-1234-1234-123456789abd"},
-            "expectedSource": {
-                "kind": "other",
-                "name": "exact name from devices.sidechain.get",
-                "nativeType": "from-devices.sidechain.get",
+        examples=(
+            {
+                **TARGET,
+                "expectedDeviceName": "Compressor",
+                "componentIndex": 0,
+                "expectedComponentId": "from-devices.sidechain.get",
+                "source": {"kind": "pre_fader", "trackId": "12345678-1234-1234-1234-123456789abd"},
+                "expectedSource": {"kind": "none"},
             },
-        },
+            {
+                **TARGET,
+                "expectedDeviceName": "Dynamics",
+                "componentId": "from-devices.sidechain.get",
+                "source": {"kind": "none"},
+                "expectedSource": {"kind": "post_fader", "trackId": "12345678-1234-1234-1234-123456789abd"},
+            },
+            {
+                **TARGET,
+                "expectedDeviceName": "Polysynth",
+                "componentIndex": 1,
+                "expectedComponentId": "from-devices.sidechain.get",
+                "expectedModulatorId": "abcdef01-2345-6789-abcd-0123456789ab",
+                "source": {"kind": "track_notes", "trackId": "12345678-1234-1234-1234-123456789abd"},
+                "expectedSource": {
+                    "kind": "other",
+                    "name": "exact name from devices.sidechain.get",
+                    "nativeType": "from-devices.sidechain.get",
+                },
+            },
+        ),
         requires=PROJECT_READY,
+        summary="Set one sidechain component's source with expectedSource from a fresh devices.sidechain.get; address it by componentIndex and expectedComponentId. A kind the component does not accept is kind_mismatch.",
     ),
 }

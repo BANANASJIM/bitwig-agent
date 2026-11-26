@@ -127,7 +127,7 @@ Generate configuration from the installed environment:
 bitwig-agent-install --mcp-config
 ```
 
-Use that JSON rather than a bare executable name: GUI clients may not inherit the shell's tool `PATH`. The generated command is an absolute Python interpreter path with `-m bitwig_agent`; keep the virtual-environment path intact rather than replacing it with a resolved system-Python symlink. If you move/reinstall the tool environment, regenerate the configuration. The static [example](examples/mcp-config.json) uses `bitwig-agent` and therefore needs that executable on the client's `PATH` (or an absolute executable path substituted). No configuration is installed automatically. Do not replace an existing client configuration wholesale if it contains other servers.
+Use that JSON rather than a bare executable name: GUI clients may not inherit the shell's tool `PATH`. The generated command is an absolute Python interpreter path with `-m bitwig_agent`; keep the virtual-environment path intact rather than replacing it with a resolved system-Python symlink. If you move/reinstall the tool environment, regenerate the configuration. The static [example](examples/mcp-config.json) uses `bitwig-agent-mcp` and therefore needs that executable on the client's `PATH` (or an absolute executable path substituted). No configuration is installed automatically. Do not replace an existing client configuration wholesale if it contains other servers.
 
 ### Writes refused after an unresolved write
 

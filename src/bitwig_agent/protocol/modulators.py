@@ -13,7 +13,6 @@ from bitwig_agent.protocol.base import (
     ToolSpec,
     TrackId,
     omitted,
-    tool,
 )
 from bitwig_agent.protocol.devices import DeviceParent
 from bitwig_agent.protocol.grid import GridRawWrite
@@ -199,104 +198,129 @@ MODULATORS_UNMAP_DESCRIPTION = "Remove one modulation mapping (Bitwig's undoable
 
 
 SPECS: dict[str, ToolSpec] = {
-    "modulators.capabilities": tool(StatusArgs, MODULATORS_CAPABILITIES_DESCRIPTION, True),
-    "modulators.list": tool(
+    "modulators.capabilities": ToolSpec(StatusArgs, MODULATORS_CAPABILITIES_DESCRIPTION, True),
+    "modulators.list": ToolSpec(
         ModulatorListArgs,
         MODULATORS_LIST_DESCRIPTION,
         True,
-        {"parent": {"trackId": TRACK, "deviceIndex": 0, "expectedDeviceName": "Polymer"}, "offset": 0, "limit": 64},
+        examples=(
+            {"parent": {"trackId": TRACK, "deviceIndex": 0, "expectedDeviceName": "Polymer"}, "offset": 0, "limit": 64},
+        ),
     ),
-    "modulators.parameters.get": tool(
+    "modulators.parameters.get": ToolSpec(
         ModulatorParameterGetArgs,
         MODULATORS_PARAMETERS_GET_DESCRIPTION,
         True,
-        {
-            "parent": {"trackId": TRACK, "deviceIndex": 0, "expectedDeviceName": "Polymer"},
-            "modulatorId": "abcdef01-2345-6789-abcd-0123456789ab",
-            "parameterId": "LABEL",
-        },
+        examples=(
+            {
+                "parent": {"trackId": TRACK, "deviceIndex": 0, "expectedDeviceName": "Polymer"},
+                "modulatorId": "abcdef01-2345-6789-abcd-0123456789ab",
+                "parameterId": "LABEL",
+            },
+        ),
     ),
-    "modulators.catalog": tool(
-        ModulatorCatalogArgs, MODULATORS_CATALOG_DESCRIPTION, True, {}, {"query": "random step sequence"}, host=False
+    "modulators.catalog": ToolSpec(
+        ModulatorCatalogArgs,
+        MODULATORS_CATALOG_DESCRIPTION,
+        True,
+        examples=(
+            {},
+            {"query": "random step sequence"},
+        ),
+        host=False,
     ),
-    "modulators.describe": tool(
+    "modulators.describe": ToolSpec(
         ModulatorDescribeArgs,
         MODULATORS_DESCRIBE_DESCRIPTION,
         True,
-        {"type": "Beat LFO"},
-        {"query": "envelope follower"},
+        examples=(
+            {"type": "Beat LFO"},
+            {"query": "envelope follower"},
+        ),
         host=False,
     ),
-    "modulators.get": tool(
+    "modulators.get": ToolSpec(
         ModulatorGetArgs,
         MODULATORS_GET_DESCRIPTION,
         True,
-        {"parent": TARGET},
-        {"parent": TARGET, "modulatorId": "abcdef01-2345-6789-abcd-0123456789ab"},
+        examples=(
+            {"parent": TARGET},
+            {"parent": TARGET, "modulatorId": "abcdef01-2345-6789-abcd-0123456789ab"},
+        ),
+        summary="Read every device modulator of one root device (or one by modulatorId): parameters, outputs and their mappings (target, amount, enabled). Discover parent with tracks.list and devices.list. complete=false lists unsupported controls.",
     ),
-    "modulators.insert": tool(
+    "modulators.insert": ToolSpec(
         ModulatorInsertArgs,
         MODULATORS_INSERT_DESCRIPTION,
         False,
-        {"parent": TARGET, "expectedCount": 0, "typeName": "Random"},
-        {"parent": TARGET, "expectedCount": 1, "typeId": "bf29a7b0-91dc-4851-8a94-c63f358f3cda"},
+        examples=(
+            {"parent": TARGET, "expectedCount": 0, "typeName": "Random"},
+            {"parent": TARGET, "expectedCount": 1, "typeId": "bf29a7b0-91dc-4851-8a94-c63f358f3cda"},
+        ),
     ),
-    "modulators.delete": tool(
+    "modulators.delete": ToolSpec(
         ModulatorDeleteArgs,
         MODULATORS_DELETE_DESCRIPTION,
         False,
-        {"parent": TARGET, "modulatorId": "abcdef01-2345-6789-abcd-0123456789ab", "expectedCount": 1},
+        examples=({"parent": TARGET, "modulatorId": "abcdef01-2345-6789-abcd-0123456789ab", "expectedCount": 1},),
     ),
-    "modulators.parameters.set": tool(
+    "modulators.parameters.set": ToolSpec(
         ModulatorParameterSetArgs,
         MODULATORS_PARAMETERS_SET_DESCRIPTION,
         False,
-        {
-            "parent": TARGET,
-            "modulatorId": "abcdef01-2345-6789-abcd-0123456789ab",
-            "parameterId": "from-modulators.get",
-            "expectedKind": "float",
-            "expectedValue": 0.5,
-            "value": 0.25,
-        },
-        {
-            "parent": TARGET,
-            "modulatorId": "abcdef01-2345-6789-abcd-0123456789ab",
-            "parameterId": "from-modulators.get",
-            "expectedKind": "float",
-            "expectedValue": 0.5,
-            "display": "2 Hz",
-        },
+        examples=(
+            {
+                "parent": TARGET,
+                "modulatorId": "abcdef01-2345-6789-abcd-0123456789ab",
+                "parameterId": "from-modulators.get",
+                "expectedKind": "float",
+                "expectedValue": 0.5,
+                "value": 0.25,
+            },
+            {
+                "parent": TARGET,
+                "modulatorId": "abcdef01-2345-6789-abcd-0123456789ab",
+                "parameterId": "from-modulators.get",
+                "expectedKind": "float",
+                "expectedValue": 0.5,
+                "display": "2 Hz",
+            },
+        ),
     ),
-    "modulators.map": tool(
+    "modulators.map": ToolSpec(
         ModulatorMapArgs,
         MODULATORS_MAP_DESCRIPTION,
         False,
-        {
-            "parent": TARGET,
-            "modulatorId": "abcdef01-2345-6789-abcd-0123456789ab",
-            "target": {"moduleId": "abcdef02-2345-6789-abcd-0123456789ab", "parameterId": "DECAY"},
-            "expectedAmount": None,
-            "amount": 0.5,
-        },
-        {
-            "parent": TARGET,
-            "modulatorId": "abcdef01-2345-6789-abcd-0123456789ab",
-            "outputId": "from-modulators.get",
-            "target": {"modulatorId": "abcdef03-2345-6789-abcd-0123456789ab", "parameterId": "from-modulators.get"},
-            "expectedAmount": 0.5,
-            "amount": -0.25,
-        },
+        examples=(
+            {
+                "parent": TARGET,
+                "modulatorId": "abcdef01-2345-6789-abcd-0123456789ab",
+                "target": {"moduleId": "abcdef02-2345-6789-abcd-0123456789ab", "parameterId": "DECAY"},
+                "expectedAmount": None,
+                "amount": 0.5,
+            },
+            {
+                "parent": TARGET,
+                "modulatorId": "abcdef01-2345-6789-abcd-0123456789ab",
+                "outputId": "from-modulators.get",
+                "target": {"modulatorId": "abcdef03-2345-6789-abcd-0123456789ab", "parameterId": "from-modulators.get"},
+                "expectedAmount": 0.5,
+                "amount": -0.25,
+            },
+        ),
+        summary="Route a modulator output to a control on the same device: target {moduleId|modulatorId, parameterId}. expectedAmount null creates the mapping, a number changes its amount (-1..1). Needs a stopped transport.",
     ),
-    "modulators.unmap": tool(
+    "modulators.unmap": ToolSpec(
         ModulatorUnmapArgs,
         MODULATORS_UNMAP_DESCRIPTION,
         False,
-        {
-            "parent": TARGET,
-            "modulatorId": "abcdef01-2345-6789-abcd-0123456789ab",
-            "target": {"moduleId": "abcdef02-2345-6789-abcd-0123456789ab", "parameterId": "DECAY"},
-            "expectedAmount": 0.5,
-        },
+        examples=(
+            {
+                "parent": TARGET,
+                "modulatorId": "abcdef01-2345-6789-abcd-0123456789ab",
+                "target": {"moduleId": "abcdef02-2345-6789-abcd-0123456789ab", "parameterId": "DECAY"},
+                "expectedAmount": 0.5,
+            },
+        ),
     ),
 }

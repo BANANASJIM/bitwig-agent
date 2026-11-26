@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import Field
 
-from bitwig_agent.protocol.base import StatusArgs, ToolSpec, omitted, tool
+from bitwig_agent.protocol.base import StatusArgs, ToolSpec, omitted
 
 
 class PresetSearchArgs(StatusArgs):
@@ -34,11 +34,11 @@ PRESETS_SEARCH_DESCRIPTION = "Search the user's preset library and installed pac
 
 
 SPECS: dict[str, ToolSpec] = {
-    "presets.search": tool(
+    "presets.search": ToolSpec(
         PresetSearchArgs,
         PRESETS_SEARCH_DESCRIPTION,
         True,
-        {"query": "warm pad", "device": "Polymer", "limit": 10},
+        examples=({"query": "warm pad", "device": "Polymer", "limit": 10},),
         host=False,
     ),
 }

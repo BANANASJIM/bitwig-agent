@@ -18,7 +18,6 @@ from bitwig_agent.protocol.base import (
     TrackId,
     long_timeout,
     omitted,
-    tool,
 )
 from bitwig_agent.protocol.limits import LONG_TIMEOUT_MS
 
@@ -475,7 +474,7 @@ GRID_CAPABILITIES_DESCRIPTION = 'Grid availability summary under the exact Bitwi
 GRID_CATALOG_DESCRIPTION = "Read native Grid MODULE type UUIDs and names, not devices or module instances. Version/hash gated. query (max 128 UTF-16 units) ignores case, spaces, hyphens and punctuation and every word must match inside the name: 'lowpass' and 'low pass' find 'Low-pass', 'Low-pass LD', 'Low-pass MG'. When nothing matches, suggestions lists up to five nearest names. offset 0..100000, limit 1..256 (default 64), deterministic ordering. The native catalog has no category or tag, so query matches names only (e.g. 'Low-pass', not 'Filter'). Inspect window completeness; catalog presence does not prove graph or parameter coverage."
 GRID_GET_DESCRIPTION = "Read a Grid graph without selecting or changing the device. Discover trackId with tracks.list, then deviceIndex and exact expectedDeviceName with devices.list. Use includeParameters=false for layout, wiring and naming. moduleIds (1..256 instanceIds) returns only those modules with their parameters, so one module's parameterId/kind/value/range needs no paging; absent ids are listed in missingModuleIds. moduleOffset 0..100000, moduleLimit 1..256 (default 64). Rows have instanceId (current UUID, changes on project reopen), typeId, localKey, x/y, width/height, ports (key, name, connected) and parameters. A parameter row's kind and value are a valid expectedKind/expectedValue for grid.parameters.set while still current. diagnostics=true adds native modelClass/path and coverage notes. A kind:string row is a string panel (e.g. Comment text); write it with grid.parameters.set expectedKind string. A kind:steps row is a step table (Steps, Pitches, Gates, Probabilities, Accents): values is the first stepCount entries of an arrayLength-entry array (full:true returns up to 256), minimum/maximum -128..128 is only a sanity bound (observed natively: Pitches in Grid pitch units, Gates 1/0, Accents 0/0.5/1, Probabilities 0..1); write it with expectedKind steps. Child models that carry no user data (engine feeds, indicators) are not listed: the module row has internalChildren and they never make the read incomplete. Inspect window, complete (false for structure-only or filtered reads) and unsupported; pages are independent observations, with no native revision."
 GRID_PARAMETERS_GET_DESCRIPTION = "Read one Grid parameter plus native editContext observations. Optional for ordinary writes, since grid.get rows already carry kind and value; use it for a fresh single-control value or a coupled boolean panel's linked parameter. moduleId is a grid.get instanceId and parameterId its exact id (may be empty), never a name or type UUID. String panels report kind:string with null labels. Step tables report kind:steps (full:true for all 256 entries). editContext is an observation, not write authorization."
-GRID_PARAMETERS_SET_DESCRIPTION = 'Set Grid parameters in the native RAW domain (not normalized): one write, or a batch on one device. Single: moduleId, parameterId, expectedKind, expectedValue, and value. Batch: writes=[{moduleId, parameterId, expectedKind, expectedValue, value}], 1..64, no repeated pair. Pitch-unit parameters are raw MIDI notes (Low-pass CUTOFF 84 shows "1.05 kHz"). Instead of value, a float write may give display ("1.2 kHz", "440 Hz", "50 %", "-12 dB") for numericUnit hertz, percent or decibel only: the host converts it after confirming the unit scale against the row\'s current raw/display pair, any other unit is rejected with unsupported_unit, and the result\'s displayMismatch compares the post-write display with your text (never rewritten). expectedKind/expectedValue stay required. Take the ids, kind and value from a recent grid.get (or grid.parameters.get); a stale expectation is rejected (stale_context), even for a no-op. Batch: every CAS runs first and any failure writes nothing (error names each failing entry); then writes dispatch in order and stop at the first entry that is neither applied nor already_matched; later entries are not_applied with reason not_reached. Single results and each batch entry carry the post-write display string (e.g. "2.09 kHz") when observable, so a raw value\'s meaning needs no extra read. Batch result: writes[] with the outcome of every entry (applied, already_matched, not_applied, unknown) and a reason when it did not succeed, written, and outcome = the worst entry; on unknown inspect state, never retry. Boolean takes a JSON bool; integer/enum an int32 token (enum is a listed option value, not an ordinal); float a finite number; range is checked, nothing is clamped. String (string panels such as Comment text): expectedKind string, JSON strings of at most 1024 UTF-16 units, kept verbatim (empty and newlines allowed), compare-and-set against the current text. A Label module shows the module name, so change it with grid.modules.rename. Needs recording and automation write off (a playing transport is fine). Boolean panels also move their linked bipolar value, which the result reports. Step tables (kind steps, Steps/Pitches/Gates/Probabilities/Accents): expectedKind steps, expectedValues = the live entries from step 0 as read by grid.get (normally the first stepCount, or all 256 with full:true; the CAS window is its own length), values = 1..256 entries within -128..128 written from step 0 (never longer than expectedValues; shorter leaves the rest; nothing beyond the prefix changes; 32-bit floats; nothing clamped). Whole-array write with exact readback (previousValues, requestedValues in the result); valid in batch entries. A Probabilities table is one write per row, e.g. a transition matrix as one batch.'
+GRID_PARAMETERS_SET_DESCRIPTION = 'Set Grid parameters in the native RAW domain (not normalized): one write, or a batch on one device. Single: moduleId, parameterId, expectedKind, expectedValue, and value. Batch: writes=[{moduleId, parameterId, expectedKind, expectedValue, value}], 1..64, no repeated pair. Pitch-unit parameters are raw MIDI notes (Low-pass CUTOFF 84 shows "1.05 kHz"). Instead of value, a float write may give display ("1.2 kHz", "440 Hz", "50 %", "-12 dB") for numericUnit hertz, percent or decibel only: the host converts it after confirming the unit scale against the row\'s current raw/display pair, any other unit is rejected with unsupported_unit, and the result\'s displayMismatch compares the post-write display with your text (never rewritten). expectedKind/expectedValue stay required. Take the ids, kind and value from a recent grid.get (or grid.parameters.get); a stale expectation is rejected (stale_context), even for a no-op. Batch: every CAS runs first and any failure writes nothing (error names each failing entry); then writes dispatch in order and stop at the first entry that is neither applied nor already_matched; later entries are not_applied with reason not_reached. Single results and each batch entry carry the post-write display string (e.g. "2.09 kHz") when observable, so a raw value\'s meaning needs no extra read. Batch result: writes[] with the outcome of every entry (applied, already_matched, not_applied, unknown) and a reason when it did not succeed, written, and outcome = the worst entry; on unknown inspect state, never retry. Boolean takes a JSON bool; integer/enum an int32 token (enum is a listed option value, not an ordinal); float a finite number; range is checked, nothing is clamped. String (string panels such as Comment text): expectedKind string, JSON strings of at most 1024 UTF-16 units, kept verbatim (empty and newlines allowed), compare-and-set against the current text. A Label module shows the module name, so rename the module through grid.apply. Needs recording and automation write off (a playing transport is fine). Boolean panels also move their linked bipolar value, which the result reports. Step tables (kind steps, Steps/Pitches/Gates/Probabilities/Accents): expectedKind steps, expectedValues = the live entries from step 0 as read by grid.get (normally the first stepCount, or all 256 with full:true; the CAS window is its own length), values = 1..256 entries within -128..128 written from step 0 (never longer than expectedValues; shorter leaves the rest; nothing beyond the prefix changes; 32-bit floats; nothing clamped). Whole-array write with exact readback (previousValues, requestedValues in the result); valid in batch entries. A Probabilities table is one write per row, e.g. a transition matrix as one batch.'
 GRID_VOICING_GET_DESCRIPTION = "Read a Grid device's voicing (Poly Grid only): voices 1..64, voiceStacking 1..16, monoMode true_mono|digi_mono (the stored mode, what plays when voices is 1), retriggerMode never|on_note_on|always, notePriority last|high|low, legatoGlide, stealSameKey, allowOverlappingNotes, plus mode (poly when voices > 1, else the stored monoMode). Note Grid and FX Grid have no voicing model: supported:false with a reason. Same explicit device target as grid.get. The editContext observation is omitted unless detail=full."
 GRID_VOICING_SET_DESCRIPTION = (
     "Change a Poly Grid device's voicing: expected = exact current values from grid.voicing.get (at least every field in set; extra fields are more preconditions), set = new values (at least one field). Stale expectations are rejected (stale_context) before dispatch, even for a no-op; nothing is clamped. Fields are written in the order voices, voiceStacking, monoMode, retriggerMode, notePriority, legatoGlide, stealSameKey, allowOverlappingNotes, then everything read back exactly; changedUnrequested lists fields the native change moved besides those asked for. Digi mono is monoMode digi_mono with voices 1. Note Grid / FX Grid reject unsupported_scope. "
@@ -525,196 +524,247 @@ GRID_CONNECTIONS_SET_DESCRIPTION = (
 
 
 SPECS: dict[str, ToolSpec] = {
-    "grid.capabilities": tool(GridCapabilitiesArgs, GRID_CAPABILITIES_DESCRIPTION, True, {}, {"detail": "full"}),
-    "grid.catalog": tool(
-        GridCatalogArgs, GRID_CATALOG_DESCRIPTION, True, {}, {"query": "osc", "offset": 0, "limit": 32}
+    "grid.capabilities": ToolSpec(
+        GridCapabilitiesArgs,
+        GRID_CAPABILITIES_DESCRIPTION,
+        True,
+        examples=(
+            {},
+            {"detail": "full"},
+        ),
     ),
-    "grid.get": tool(
+    "grid.catalog": ToolSpec(
+        GridCatalogArgs,
+        GRID_CATALOG_DESCRIPTION,
+        True,
+        examples=(
+            {},
+            {"query": "osc", "offset": 0, "limit": 32},
+        ),
+    ),
+    "grid.get": ToolSpec(
         GridGetArgs,
         GRID_GET_DESCRIPTION,
         True,
-        {**TARGET, "moduleOffset": 0, "moduleLimit": 32, "includeParameters": False},
-        {**TARGET, "moduleIds": ["abcdef01-2345-6789-abcd-0123456789ab"]},
+        examples=(
+            {**TARGET, "moduleOffset": 0, "moduleLimit": 32, "includeParameters": False},
+            {**TARGET, "moduleIds": ["abcdef01-2345-6789-abcd-0123456789ab"]},
+        ),
     ),
-    "grid.parameters.get": tool(
+    "grid.parameters.get": ToolSpec(
         GridParameterGetArgs,
         GRID_PARAMETERS_GET_DESCRIPTION,
         True,
-        {**TARGET, "moduleId": "abcdef01-2345-6789-abcd-0123456789ab", "parameterId": "from-grid.get"},
+        examples=({**TARGET, "moduleId": "abcdef01-2345-6789-abcd-0123456789ab", "parameterId": "from-grid.get"},),
     ),
-    "grid.parameters.set": tool(
+    "grid.parameters.set": ToolSpec(
         GridParameterSetArgs,
         GRID_PARAMETERS_SET_DESCRIPTION,
         False,
-        {
-            **TARGET,
-            "moduleId": "abcdef01-2345-6789-abcd-0123456789ab",
-            "parameterId": "from-grid.get",
-            "expectedKind": "float",
-            "expectedValue": 0.25,
-            "value": 0.5,
-        },
-        {
-            **TARGET,
-            "writes": [
-                {
-                    "moduleId": "abcdef01-2345-6789-abcd-0123456789ab",
-                    "parameterId": "from-grid.get",
-                    "expectedKind": "float",
-                    "expectedValue": 84,
-                    "display": "1.2 kHz",
-                },
-                {
-                    "moduleId": "abcdef01-2345-6789-abcd-0123456789ab",
-                    "parameterId": "from-grid.get-2",
-                    "expectedKind": "boolean",
-                    "expectedValue": False,
-                    "value": True,
-                },
-                {
-                    "moduleId": "abcdef01-2345-6789-abcd-0123456789ab",
-                    "parameterId": "from-grid.get-3",
-                    "expectedKind": "string",
-                    "expectedValue": "",
-                    "value": "Pad section",
-                },
-            ],
-        },
-        {
-            **TARGET,
-            "moduleId": "abcdef01-2345-6789-abcd-0123456789ab",
-            "parameterId": "from-grid.get",
-            "expectedKind": "string",
-            "expectedValue": "",
-            "value": "Pad section",
-        },
-        {
-            **TARGET,
-            "writes": [
-                {
-                    "moduleId": "abcdef01-2345-6789-abcd-0123456789ab",
-                    "parameterId": "from-grid.get",
-                    "expectedKind": "string",
-                    "expectedValue": "",
-                    "value": "Pad section",
-                }
-            ],
-        },
-        {
-            **TARGET,
-            "moduleId": "abcdef01-2345-6789-abcd-0123456789ab",
-            "parameterId": "from-grid.get",
-            "expectedKind": "steps",
-            "expectedValues": [0.0, 0.0, 0.0, 0.0],
-            "values": [0.5, 0.25],
-        },
-        {
-            **TARGET,
-            "writes": [
-                {
-                    "moduleId": "abcdef01-2345-6789-abcd-0123456789ab",
-                    "parameterId": "from-grid.get",
-                    "expectedKind": "steps",
-                    "expectedValues": [0.0, 0.0, 0.0, 0.0],
-                    "values": [1.0, 0.0, 0.5, 0.0],
-                }
-            ],
-        },
+        examples=(
+            {
+                **TARGET,
+                "moduleId": "abcdef01-2345-6789-abcd-0123456789ab",
+                "parameterId": "from-grid.get",
+                "expectedKind": "float",
+                "expectedValue": 0.25,
+                "value": 0.5,
+            },
+            {
+                **TARGET,
+                "writes": [
+                    {
+                        "moduleId": "abcdef01-2345-6789-abcd-0123456789ab",
+                        "parameterId": "from-grid.get",
+                        "expectedKind": "float",
+                        "expectedValue": 84,
+                        "display": "1.2 kHz",
+                    },
+                    {
+                        "moduleId": "abcdef01-2345-6789-abcd-0123456789ab",
+                        "parameterId": "from-grid.get-2",
+                        "expectedKind": "boolean",
+                        "expectedValue": False,
+                        "value": True,
+                    },
+                    {
+                        "moduleId": "abcdef01-2345-6789-abcd-0123456789ab",
+                        "parameterId": "from-grid.get-3",
+                        "expectedKind": "string",
+                        "expectedValue": "",
+                        "value": "Pad section",
+                    },
+                ],
+            },
+            {
+                **TARGET,
+                "moduleId": "abcdef01-2345-6789-abcd-0123456789ab",
+                "parameterId": "from-grid.get",
+                "expectedKind": "string",
+                "expectedValue": "",
+                "value": "Pad section",
+            },
+            {
+                **TARGET,
+                "writes": [
+                    {
+                        "moduleId": "abcdef01-2345-6789-abcd-0123456789ab",
+                        "parameterId": "from-grid.get",
+                        "expectedKind": "string",
+                        "expectedValue": "",
+                        "value": "Pad section",
+                    }
+                ],
+            },
+            {
+                **TARGET,
+                "moduleId": "abcdef01-2345-6789-abcd-0123456789ab",
+                "parameterId": "from-grid.get",
+                "expectedKind": "steps",
+                "expectedValues": [0.0, 0.0, 0.0, 0.0],
+                "values": [0.5, 0.25],
+            },
+            {
+                **TARGET,
+                "writes": [
+                    {
+                        "moduleId": "abcdef01-2345-6789-abcd-0123456789ab",
+                        "parameterId": "from-grid.get",
+                        "expectedKind": "steps",
+                        "expectedValues": [0.0, 0.0, 0.0, 0.0],
+                        "values": [1.0, 0.0, 0.5, 0.0],
+                    }
+                ],
+            },
+        ),
         requires=PROJECT_READY,
+        summary="Set Grid parameters in RAW native units, one write or a batch (writes). Take moduleId, parameterId, expectedKind and expectedValue from a recent grid.get (stale is rejected). An enum value is the option value, not an ordinal. display ('1.2 kHz') works for Hz, % and dB.",
     ),
-    "grid.voicing.get": tool(GridVoicingGetArgs, GRID_VOICING_GET_DESCRIPTION, True, TARGET),
-    "grid.voicing.set": tool(
+    "grid.voicing.get": ToolSpec(GridVoicingGetArgs, GRID_VOICING_GET_DESCRIPTION, True, examples=(TARGET,)),
+    "grid.voicing.set": ToolSpec(
         GridVoicingSetArgs,
         GRID_VOICING_SET_DESCRIPTION,
         False,
-        {**TARGET, "expected": {"voices": 1, "voiceStacking": 1}, "set": {"voices": 8, "voiceStacking": 2}},
-        {**TARGET, "expected": {"voices": 1, "monoMode": "true_mono"}, "set": {"monoMode": "digi_mono"}},
+        examples=(
+            {**TARGET, "expected": {"voices": 1, "voiceStacking": 1}, "set": {"voices": 8, "voiceStacking": 2}},
+            {**TARGET, "expected": {"voices": 1, "monoMode": "true_mono"}, "set": {"monoMode": "digi_mono"}},
+        ),
         requires=PROJECT_READY,
+        expose=False,
     ),
-    "grid.modules.insert": tool(
+    "grid.modules.insert": ToolSpec(
         GridModuleInsertArgs,
         GRID_MODULES_INSERT_DESCRIPTION,
         False,
-        {**TARGET, "typeName": "Low-pass", "x": 4, "y": 2},
-        {
-            **TARGET,
-            "modules": [
-                {"typeId": "abcdef01-2345-6789-abcd-0123456789ab", "x": 4, "y": 2},
-                {"typeName": "Low-pass", "x": 8, "y": 2},
-            ],
-        },
+        examples=(
+            {**TARGET, "typeName": "Low-pass", "x": 4, "y": 2},
+            {
+                **TARGET,
+                "modules": [
+                    {"typeId": "abcdef01-2345-6789-abcd-0123456789ab", "x": 4, "y": 2},
+                    {"typeName": "Low-pass", "x": 8, "y": 2},
+                ],
+            },
+        ),
         requires=PROJECT_READY,
+        expose=False,
     ),
-    "grid.modules.rename": tool(
+    "grid.modules.rename": ToolSpec(
         GridModuleRenameArgs,
         GRID_MODULES_RENAME_DESCRIPTION,
         False,
-        {
-            **TARGET,
-            "moduleId": "abcdef01-2345-6789-abcd-0123456789ab",
-            "expectedCustomName": "",
-            "customName": "Lead = \u03b1",
-        },
-        {
-            **TARGET,
-            "moduleId": "abcdef01-2345-6789-abcd-0123456789ab",
-            "expectedCustomName": "Lead = \u03b1",
-            "customName": "",
-        },
+        examples=(
+            {
+                **TARGET,
+                "moduleId": "abcdef01-2345-6789-abcd-0123456789ab",
+                "expectedCustomName": "",
+                "customName": "Lead = \u03b1",
+            },
+            {
+                **TARGET,
+                "moduleId": "abcdef01-2345-6789-abcd-0123456789ab",
+                "expectedCustomName": "Lead = \u03b1",
+                "customName": "",
+            },
+        ),
         requires=PROJECT_READY,
+        expose=False,
     ),
-    "grid.modules.move": tool(
+    "grid.modules.move": ToolSpec(
         GridModuleMoveArgs,
         GRID_MODULES_MOVE_DESCRIPTION,
         False,
-        {**TARGET, "moduleId": "abcdef01-2345-6789-abcd-0123456789ab", "expectedX": 0, "expectedY": 0, "x": 4, "y": 2},
+        examples=(
+            {
+                **TARGET,
+                "moduleId": "abcdef01-2345-6789-abcd-0123456789ab",
+                "expectedX": 0,
+                "expectedY": 0,
+                "x": 4,
+                "y": 2,
+            },
+        ),
         requires=PROJECT_READY,
+        expose=False,
     ),
-    "grid.modules.delete": tool(
+    "grid.modules.delete": ToolSpec(
         GridModuleEditArgs,
         GRID_MODULES_DELETE_DESCRIPTION,
         False,
-        {**TARGET, "moduleId": "abcdef01-2345-6789-abcd-0123456789ab"},
+        examples=({**TARGET, "moduleId": "abcdef01-2345-6789-abcd-0123456789ab"},),
         requires=PROJECT_READY,
+        expose=False,
     ),
-    "grid.connections.set": tool(
+    "grid.connections.set": ToolSpec(
         GridConnectionSetArgs,
         GRID_CONNECTIONS_SET_DESCRIPTION,
         False,
-        {
-            **TARGET,
-            "targetModuleId": "abcdef01-2345-6789-abcd-0123456789ab",
-            "targetPortKey": "from-grid.get-input",
-            "expectedSource": None,
-            "source": {"moduleId": "abcdef02-2345-6789-abcd-0123456789ab", "portKey": "from-grid.get-output"},
-        },
-        {
-            **TARGET,
-            "targetModuleId": "abcdef01-2345-6789-abcd-0123456789ab",
-            "targetPortKey": "from-grid.get-input",
-            "expectedSource": {"moduleId": "abcdef02-2345-6789-abcd-0123456789ab", "portKey": "from-grid.get-output"},
-            "source": None,
-        },
-        {
-            **TARGET,
-            "connections": [
-                {
-                    "targetModuleId": "abcdef01-2345-6789-abcd-0123456789ab",
-                    "targetPortKey": "from-grid.get-input",
-                    "expectedSource": {
-                        "moduleId": "abcdef02-2345-6789-abcd-0123456789ab",
-                        "portKey": "from-grid.get-output",
+        examples=(
+            {
+                **TARGET,
+                "targetModuleId": "abcdef01-2345-6789-abcd-0123456789ab",
+                "targetPortKey": "from-grid.get-input",
+                "expectedSource": None,
+                "source": {"moduleId": "abcdef02-2345-6789-abcd-0123456789ab", "portKey": "from-grid.get-output"},
+            },
+            {
+                **TARGET,
+                "targetModuleId": "abcdef01-2345-6789-abcd-0123456789ab",
+                "targetPortKey": "from-grid.get-input",
+                "expectedSource": {
+                    "moduleId": "abcdef02-2345-6789-abcd-0123456789ab",
+                    "portKey": "from-grid.get-output",
+                },
+                "source": None,
+            },
+            {
+                **TARGET,
+                "connections": [
+                    {
+                        "targetModuleId": "abcdef01-2345-6789-abcd-0123456789ab",
+                        "targetPortKey": "from-grid.get-input",
+                        "expectedSource": {
+                            "moduleId": "abcdef02-2345-6789-abcd-0123456789ab",
+                            "portKey": "from-grid.get-output",
+                        },
+                        "source": {
+                            "moduleId": "abcdef03-2345-6789-abcd-0123456789ab",
+                            "portKey": "from-grid.get-output",
+                        },
                     },
-                    "source": {"moduleId": "abcdef03-2345-6789-abcd-0123456789ab", "portKey": "from-grid.get-output"},
-                },
-                {
-                    "targetModuleId": "abcdef03-2345-6789-abcd-0123456789ab",
-                    "targetPortKey": "from-grid.get-input",
-                    "expectedSource": None,
-                    "source": {"moduleId": "abcdef02-2345-6789-abcd-0123456789ab", "portKey": "from-grid.get-output"},
-                },
-            ],
-        },
+                    {
+                        "targetModuleId": "abcdef03-2345-6789-abcd-0123456789ab",
+                        "targetPortKey": "from-grid.get-input",
+                        "expectedSource": None,
+                        "source": {
+                            "moduleId": "abcdef02-2345-6789-abcd-0123456789ab",
+                            "portKey": "from-grid.get-output",
+                        },
+                    },
+                ],
+            },
+        ),
         requires=PROJECT_READY,
+        expose=False,
     ),
 }

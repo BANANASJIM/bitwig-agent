@@ -9,7 +9,7 @@ This guide describes the public Python/Java implementation. [PROTOCOL.md](../PRO
 | Boundary | Interface | Owner and responsibility |
 |---|---|---|
 | Human to agent | Task, scope and explicit permissions | Human owns acceptance and permission; agent owns planning and evidence interpretation |
-| MCP client to Python adapter | MCP over stdio | Client launches `bitwig-agent`; adapter exposes the shared catalog and returns structured/text envelopes |
+| MCP client to Python adapter | MCP over stdio | Client launches `bitwig-agent-mcp`; adapter exposes the shared catalog and returns structured/text envelopes |
 | CLI to Python client | `bitwig-agent-rpc` | Same catalog/validation, with offline list/describe/help and host-facing calls |
 | Python to Java extension | One newline-delimited JSON request/response per loopback TCP connection | Correlation, bounds, deadlines and error/outcome preservation; no replay |
 | Network handler to controller host | Scheduled domain operation | Java validates and schedules; network threads do not operate the host model |
@@ -26,7 +26,7 @@ The extension binds `127.0.0.1:61172`; the Python client connects to IPv4 loopba
 | [`client.py`](https://github.com/BANANASJIM/bitwig-agent/blob/main/src/bitwig_agent/client.py) | Bounded strict JSON, one-shot loopback requests, unique correlation IDs, response validation and conservative outcomes |
 | [`core/`](https://github.com/BANANASJIM/bitwig-agent/blob/main/src/bitwig_agent/core) | The one call path and discovery data both front ends use: `invoke` validates, dispatches to the host client or a composed handler and wraps the outcome in an envelope; `views` reads the method table; `composed` maps the client-side tool names to their handlers |
 | Composed tools: [`grid/`](https://github.com/BANANASJIM/bitwig-agent/blob/main/src/bitwig_agent/grid), [`audio/`](https://github.com/BANANASJIM/bitwig-agent/blob/main/src/bitwig_agent/audio), `presets.py`, `modulator_docs.py`, `diagnostics.py` | Client-side tools registered in `composed.HANDLERS`: they call the host through `BridgeClient` or read the local Bitwig install and audio files, and never touch the host model directly |
-| [`frontends/mcp.py`](https://github.com/BANANASJIM/bitwig-agent/blob/main/src/bitwig_agent/frontends/mcp.py) | MCP tool discovery and invocation over stdio (`bitwig-agent`); preserves the JSON envelope as structured content and text |
+| [`frontends/mcp.py`](https://github.com/BANANASJIM/bitwig-agent/blob/main/src/bitwig_agent/frontends/mcp.py) | MCP tool discovery and invocation over stdio (`bitwig-agent-mcp`); the exposed methods plus `help`; the result (or error) object is the structured content and its text |
 | [`frontends/cli.py`](https://github.com/BANANASJIM/bitwig-agent/blob/main/src/bitwig_agent/frontends/cli.py) | CLI argument parsing and discovery layout on top of `core` (`bitwig-agent-rpc`); exit code from the envelope |
 | [`install.py`](https://github.com/BANANASJIM/bitwig-agent/blob/main/src/bitwig_agent/install.py) | Release-version extension download/copy, integrity check, backups and printed MCP configuration |
 

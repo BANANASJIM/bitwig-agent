@@ -6,7 +6,7 @@ from typing import Annotated, Self
 
 from pydantic import Field, field_validator, model_validator
 
-from bitwig_agent.protocol.base import Nonempty, StatusArgs, ToolSpec, UnitValue, omitted, tool
+from bitwig_agent.protocol.base import Nonempty, StatusArgs, ToolSpec, UnitValue, omitted
 
 MAX_TIME_SIGNATURE_NUMERATOR = 32
 
@@ -63,12 +63,14 @@ TRANSPORT_SET_DESCRIPTION = "Change only supplied transport fields; e.g. tempoBp
 
 
 SPECS: dict[str, ToolSpec] = {
-    "transport.get": tool(StatusArgs, TRANSPORT_GET_DESCRIPTION, True),
-    "transport.set": tool(
+    "transport.get": ToolSpec(StatusArgs, TRANSPORT_GET_DESCRIPTION, True),
+    "transport.set": ToolSpec(
         TransportSetArgs,
         TRANSPORT_SET_DESCRIPTION,
         False,
-        {"tempoBpm": 120.0, "playing": False},
-        {"preRoll": "one_bar", "punchInEnabled": True, "metronomeVolumeNormalized": 0.5},
+        examples=(
+            {"tempoBpm": 120.0, "playing": False},
+            {"preRoll": "one_bar", "punchInEnabled": True, "metronomeVolumeNormalized": 0.5},
+        ),
     ),
 }

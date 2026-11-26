@@ -16,7 +16,6 @@ from bitwig_agent.protocol.base import (
     TrackId,
     UnitValue,
     omitted,
-    tool,
 )
 from bitwig_agent.protocol.limits import DEVICE_WINDOW
 
@@ -95,61 +94,66 @@ AUTOMATION_POINTS_SET_DESCRIPTION = "Replace the arranger automation points of o
 
 
 SPECS: dict[str, ToolSpec] = {
-    "automation.points.get": tool(
+    "automation.points.get": ToolSpec(
         AutomationPointsGetArgs,
         AUTOMATION_POINTS_GET_DESCRIPTION,
         True,
-        {"trackId": TRACK, "target": {"kind": "volume"}},
-        {
-            "trackId": TRACK,
-            "target": {
-                "kind": "grid",
-                "deviceIndex": 0,
-                "expectedDeviceName": "Poly Grid",
-                "moduleId": "abcdef01-2345-6789-abcd-0123456789ab",
-                "parameterId": "CUTOFF",
+        examples=(
+            {"trackId": TRACK, "target": {"kind": "volume"}},
+            {
+                "trackId": TRACK,
+                "target": {
+                    "kind": "grid",
+                    "deviceIndex": 0,
+                    "expectedDeviceName": "Poly Grid",
+                    "moduleId": "abcdef01-2345-6789-abcd-0123456789ab",
+                    "parameterId": "CUTOFF",
+                },
+                "range": {"startBeat": 0, "endBeat": 16},
             },
-            "range": {"startBeat": 0, "endBeat": 16},
-        },
+        ),
     ),
-    "automation.points.set": tool(
+    "automation.points.set": ToolSpec(
         AutomationPointsSetArgs,
         AUTOMATION_POINTS_SET_DESCRIPTION,
         False,
-        {
-            "trackId": TRACK,
-            "target": {"kind": "volume"},
-            "expectedCount": 0,
-            "expectedHash": EMPTY_HASH,
-            "points": [
-                {"beat": 0, "value": 0.2, "interpolation": "linear"},
-                {"beat": 16, "value": 0.8, "interpolation": "linear"},
-            ],
-            "range": {"startBeat": 0, "endBeat": 16},
-        },
-        {
-            "trackId": TRACK,
-            "target": {"kind": "pan"},
-            "expectedCount": 0,
-            "expectedHash": EMPTY_HASH,
-            "points": [{"beat": 0, "value": 0.5, "interpolation": "hold"}],
-        },
-        {
-            "trackId": TRACK,
-            "target": {
-                "kind": "grid",
-                "deviceIndex": 0,
-                "expectedDeviceName": "Poly Grid",
-                "moduleId": "abcdef01-2345-6789-abcd-0123456789ab",
-                "parameterId": "CUTOFF",
+        examples=(
+            {
+                "trackId": TRACK,
+                "target": {"kind": "volume"},
+                "expectedCount": 0,
+                "expectedHash": EMPTY_HASH,
+                "points": [
+                    {"beat": 0, "value": 0.2, "interpolation": "linear"},
+                    {"beat": 16, "value": 0.8, "interpolation": "linear"},
+                ],
+                "range": {"startBeat": 0, "endBeat": 16},
             },
-            "expectedCount": 0,
-            "expectedHash": EMPTY_HASH,
-            "points": [
-                {"beat": 32, "value": 0.1, "interpolation": "linear"},
-                {"beat": 48, "value": 0.9, "interpolation": "hold"},
-            ],
-            "range": {"startBeat": 32, "endBeat": 64},
-        },
+            {
+                "trackId": TRACK,
+                "target": {"kind": "pan"},
+                "expectedCount": 0,
+                "expectedHash": EMPTY_HASH,
+                "points": [{"beat": 0, "value": 0.5, "interpolation": "hold"}],
+            },
+            {
+                "trackId": TRACK,
+                "target": {
+                    "kind": "grid",
+                    "deviceIndex": 0,
+                    "expectedDeviceName": "Poly Grid",
+                    "moduleId": "abcdef01-2345-6789-abcd-0123456789ab",
+                    "parameterId": "CUTOFF",
+                },
+                "expectedCount": 0,
+                "expectedHash": EMPTY_HASH,
+                "points": [
+                    {"beat": 32, "value": 0.1, "interpolation": "linear"},
+                    {"beat": 48, "value": 0.9, "interpolation": "hold"},
+                ],
+                "range": {"startBeat": 32, "endBeat": 64},
+            },
+        ),
+        summary="Replace the automation points of one parameter within range (the whole lane if omitted); expectedCount and expectedHash must match a fresh automation.points.get. Needs a stopped transport.",
     ),
 }

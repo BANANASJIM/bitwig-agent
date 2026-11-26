@@ -4,6 +4,7 @@ from typing import Annotated, Literal, Self
 
 from pydantic import Field, model_validator
 
+from bitwig_agent.protocol.annotations import EDIT
 from bitwig_agent.protocol.base import (
     MAX_BEAT,
     TRACK,
@@ -13,10 +14,9 @@ from bitwig_agent.protocol.base import (
     has_control_character,
     long_timeout,
     omitted,
-    tool,
     validate_local_path,
 )
-from bitwig_agent.protocol.limits import LONG_DEFAULT_TIMEOUT_MS, LONG_TIMEOUT_MS, TRACK_WINDOW
+from bitwig_agent.protocol.limits import LONG_DEFAULT_TIMEOUT_MS, TRACK_WINDOW
 
 FLOAT_BIT_DEPTH = 32
 RENDER_MAX_BEATS = MAX_BEAT
@@ -87,50 +87,50 @@ class BounceInPlaceArgs(RenderRangeArgs):
 
 
 EXPORT_AUDIO_DESCRIPTION = (
-    "Render a beat range of the master and/or tracks to audio files without the Export Audio dialog, through the job the dialog starts (6.1.4-gated). One file per source in directory: <baseName>.<format>, or <baseName>-01, -02, ... in sources order for several. Refused before dispatch (an error, nothing changed): an existing file unless overwrite (target_exists), a missing directory, playing transport/recording/automation write, a render already running (busy), Bitwig's own refusals (host_refused: engine not connected, no project directory, recording), missing files/plugins (needs_confirmation: Bitwig would ask in a dialog). outcome applied only after the job's completion latch and every file read back: new or changed, nonempty, a valid WAV/FLAC header with the requested bit depth and sample rate, at least one frame. Completed but not verified: job_failed (an error if nothing was written, else outcome unknown). On success Bitwig may open the folder in the file manager (mayOpenFileManager). timeoutMs default "
+    "Render a beat range of the master and/or tracks to audio files without the Export Audio dialog, through the job the dialog starts (6.1.4-gated). One file per source in directory: <baseName>.<format>, or <baseName>-01, -02, ... in sources order for several. Refused before dispatch (an error, nothing changed): an existing file unless overwrite (target_exists), a missing directory, playing transport/recording/automation write, a render already running (busy), Bitwig's own refusals (host_refused: engine not connected, no project directory, recording), missing files/plugins (needs_confirmation: Bitwig would ask in a dialog). outcome applied only after the job's completion latch and every file read back: new or changed, nonempty, a valid WAV/FLAC header with the requested bit depth and sample rate, at least one frame. Completed but not verified: job_failed (an error if nothing was written, else outcome unknown). On success Bitwig may open the folder in the file manager (mayOpenFileManager). The call waits up to "
     + str(LONG_DEFAULT_TIMEOUT_MS)
-    + ", up to "
-    + str(LONG_TIMEOUT_MS)
-    + "; a longer render returns outcome unknown, reason deadline and job: follow it with jobs.get; further renders are busy until it completes or you ack its job hold after inspecting. Never retry unknown."
+    + " ms; a longer render returns outcome unknown, reason deadline and job: follow it with jobs.get; further renders are busy until it completes or you ack its job hold after inspecting. Never retry unknown."
 )
 BOUNCE_IN_PLACE_DESCRIPTION = (
-    "Bounce a beat range of audio/instrument tracks in place (6.1.4-gated; Bitwig's Bounce in Place shows no dialog): each track's main arranger lane gets one audio clip over [startBeats, endBeats) replacing what was there, in one undoable action; the audio lives in the project's managed audio folder. Same refusals as export.audio before dispatch (group tracks: unsupported_scope). outcome applied only after the job's completion latch and arranger readback of every track: exactly one new audio clip at the range and nothing else overlapping it (the new clips are in tracks[].clip). An instrument track becomes Hybrid (tracks[].trackTypeBefore/trackTypeAfter, warning); Undo reverts that, deleting the clip does not. Completed with no lane changed: job_failed (an error, nothing changed); any other readback difference: outcome unknown, reason readback_mismatch, and further bounces are refused until you inspect arranger.clips.list and ack the hold. timeoutMs default "
+    "Bounce a beat range of audio/instrument tracks in place (6.1.4-gated; Bitwig's Bounce in Place shows no dialog): each track's main arranger lane gets one audio clip over [startBeats, endBeats) replacing what was there, in one undoable action; the audio lives in the project's managed audio folder. Same refusals as export.audio before dispatch (group tracks: unsupported_scope). outcome applied only after the job's completion latch and arranger readback of every track: exactly one new audio clip at the range and nothing else overlapping it (the new clips are in tracks[].clip). An instrument track becomes Hybrid (tracks[].trackTypeBefore/trackTypeAfter, warning); Undo reverts that, deleting the clip does not. Completed with no lane changed: job_failed (an error, nothing changed); any other readback difference: outcome unknown, reason readback_mismatch, and further bounces are refused until you inspect arranger.clips.list and ack the hold. The call waits up to "
     + str(LONG_DEFAULT_TIMEOUT_MS)
-    + ", up to "
-    + str(LONG_TIMEOUT_MS)
-    + "; a longer job returns outcome unknown, reason deadline and job: follow it with jobs.get, which also verifies it. Never retry unknown; undo with the Undo action."
+    + " ms; a longer job returns outcome unknown, reason deadline and job: follow it with jobs.get, which also verifies it. Never retry unknown; undo with the Undo action."
 )
 
 
 SPECS: dict[str, ToolSpec] = {
-    "export.audio": tool(
+    "export.audio": ToolSpec(
         ExportAudioArgs,
         EXPORT_AUDIO_DESCRIPTION,
         False,
-        {
-            "sources": ["master"],
-            "directory": "/home/me/Music/Exports",
-            "baseName": "Agent Sketch",
-            "startBeats": 0,
-            "endBeats": 64,
-            "format": "wav",
-            "bitDepth": 24,
-        },
-        {
-            "sources": [TRACK],
-            "directory": "/home/me/Music/Stems",
-            "baseName": "Stem",
-            "startBeats": 0,
-            "endBeats": 64,
-            "format": "flac",
-            "tap": "pre_fader",
-            "overwrite": True,
-        },
+        examples=(
+            {
+                "sources": ["master"],
+                "directory": "/home/me/Music/Exports",
+                "baseName": "Agent Sketch",
+                "startBeats": 0,
+                "endBeats": 64,
+                "format": "wav",
+                "bitDepth": 24,
+            },
+            {
+                "sources": [TRACK],
+                "directory": "/home/me/Music/Stems",
+                "baseName": "Stem",
+                "startBeats": 0,
+                "endBeats": 64,
+                "format": "flac",
+                "tap": "pre_fader",
+                "overwrite": True,
+            },
+        ),
+        annotations=EDIT,
     ),
-    "bounce.inPlace": tool(
+    "bounce.inPlace": ToolSpec(
         BounceInPlaceArgs,
         BOUNCE_IN_PLACE_DESCRIPTION,
         False,
-        {"trackIds": [TRACK], "startBeats": 0, "endBeats": 16, "tap": "post_fader"},
+        examples=({"trackIds": [TRACK], "startBeats": 0, "endBeats": 16, "tap": "post_fader"},),
+        annotations=EDIT,
     ),
 }

@@ -2,32 +2,58 @@
 
 from __future__ import annotations
 
+import json
+import re
 from dataclasses import dataclass
 from typing import Any
 
 from bitwig_agent.client import package_version
-from bitwig_agent.protocol import CLIENT_SIDE, TOOLS, unknown_arguments_message, unknown_method_message
+from bitwig_agent.protocol import (
+    CLIENT_SIDE,
+    TOOLS,
+    ToolSpec,
+    unknown_arguments_message,
+    unknown_method_message,
+)
+from bitwig_agent.protocol.annotations import READ, Annotations, resolve
+from bitwig_agent.protocol.limits import DESCRIPTION_LIMIT
+from bitwig_agent.protocol.topics import TOPICS
 
 
 @dataclass(frozen=True)
 class ToolView:
     name: str
     description: str
-    example: dict[str, Any]
     input_schema: dict[str, Any]
-    read_only: bool
+    annotations: Annotations
+
+
+HELP_NAME = "help"
+HELP_DESCRIPTION = (
+    "Guidance beyond a tool's short description. Without topic: the topic names and every tool. "
+    "topic=<topic> returns that guide; topic=<tool name> returns the tool's full description and an example."
+)
+HELP_SCHEMA = {
+    "type": "object",
+    "properties": {"topic": {"type": "string", "description": "A topic or a tool name; omit to list them."}},
+    "additionalProperties": False,
+}
 
 
 def version() -> str:
     return package_version()
 
 
+def _exposed() -> dict[str, ToolSpec]:
+    return {name: spec for name, spec in TOOLS.items() if spec.expose}
+
+
 def names() -> list[str]:
-    return list(TOOLS)
+    return list(_exposed())
 
 
 def exists(name: str) -> bool:
-    return name in TOOLS
+    return name in _exposed()
 
 
 def is_composed(name: str) -> bool:
@@ -37,25 +63,96 @@ def is_composed(name: str) -> bool:
 def index(prefix: str = "") -> dict[str, dict[str, Any]]:
     return {
         name: {"description": spec.description, "readOnly": spec.read_only}
-        for name, spec in TOOLS.items()
+        for name, spec in _exposed().items()
         if not prefix or name.startswith(prefix)
     }
 
 
 def method(name: str) -> dict[str, Any]:
+    if not exists(name):
+        raise ValueError(unknown_method_message(name))
     return {"method": name, **TOOLS[name].describe()}
 
 
+HELP_POINTER = " Full guide: help {name}."
+_SENTENCE_END = re.compile(r"(?<!e\.g)(?<!i\.e)\.\s+(?=[A-Z])")
+
+
+def _lead(name: str, text: str, budget: int) -> str:
+    """The leading whole sentences of text that fit budget."""
+    lead = ""
+    start = 0
+    for match in _SENTENCE_END.finditer(text):
+        sentence = text[start : match.end()].strip()
+        if len(lead) + len(sentence) + 1 > budget:
+            break
+        lead = f"{lead} {sentence}".strip()
+        start = match.end()
+    if not lead:
+        raise ValueError(f"No whole sentence of {name} fits {budget} characters: give it a summary")
+    return lead
+
+
+def _advertised(name: str, spec: ToolSpec) -> str:
+    """What the agent reads with the tool: the description, or its summary and a help pointer, then the example."""
+    example = f" Example arguments: {json.dumps(spec.examples[0], ensure_ascii=False)}" if spec.examples[0] else ""
+    if len(spec.description) + len(example) <= DESCRIPTION_LIMIT:
+        return spec.description + example
+    pointer = HELP_POINTER.format(name=name)
+    budget = DESCRIPTION_LIMIT - len(pointer) - len(example)
+    lead = spec.summary or _lead(name, spec.description, budget)
+    if len(lead) > budget:
+        raise ValueError(f"The summary of {name} is {len(lead)} characters, over its {budget} budget")
+    return lead + pointer + example
+
+
+def _without_timeout(schema: dict[str, Any]) -> dict[str, Any]:
+    schema = {**schema, "properties": {k: v for k, v in schema["properties"].items() if k != "timeoutMs"}}
+    if "required" in schema:
+        schema["required"] = [key for key in schema["required"] if key != "timeoutMs"]
+    return schema
+
+
 def tools() -> list[ToolView]:
-    return [
-        ToolView(name, spec.description, spec.examples[0], spec.model.model_json_schema(), spec.read_only)
-        for name, spec in TOOLS.items()
+    """What an MCP client is offered: the exposed methods, the timeout left to the client, and help."""
+    views = [
+        ToolView(
+            name,
+            _advertised(name, spec),
+            _without_timeout(spec.model.model_json_schema()),
+            resolve(name, spec.annotations),
+        )
+        for name, spec in _exposed().items()
     ]
+    return [*views, ToolView(HELP_NAME, HELP_DESCRIPTION, HELP_SCHEMA, READ)]
+
+
+def instructions() -> str:
+    return f"{TOPICS['loop']} Call help for more: {', '.join(TOPICS)}, or any tool name."
+
+
+def help(topic: str | None = None) -> dict[str, Any]:
+    if topic is None:
+        return {"topics": list(TOPICS), "tools": names()}
+    if topic in TOPICS:
+        return {"topic": topic, "text": TOPICS[topic]}
+    if not exists(topic):
+        raise ValueError(
+            f"Unknown topic or tool: {topic}. Topics: {', '.join(TOPICS)}; call help without topic for all."
+        )
+    spec = TOOLS[topic]
+    return {
+        "tool": topic,
+        "description": spec.description,
+        "example": spec.examples[0],
+        "requires": list(spec.requires),
+        "readOnly": spec.read_only,
+    }
 
 
 def field_types(name: str) -> dict[str, Any]:
     """Field name to its JSON schema type (None where the schema gives none)."""
-    if name not in TOOLS:
+    if not exists(name):
         raise ValueError(unknown_method_message(name))
     return {key: prop.get("type") for key, prop in TOOLS[name].model.model_json_schema()["properties"].items()}
 

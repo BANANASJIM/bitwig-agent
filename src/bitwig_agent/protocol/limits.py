@@ -16,6 +16,9 @@ LONG_DEFAULT_TIMEOUT_MS = 30000
 # How long the client waits past a request's deadline for the host's own answer.
 RESPONSE_GRACE_MS = 1000
 
+# What an agent reads per tool: the advertised description and its example fit this many characters.
+DESCRIPTION_LIMIT = 600
+
 MAX_REQUEST_BYTES = 1 << 20
 MAX_RESPONSE_BYTES = 16 << 20
 

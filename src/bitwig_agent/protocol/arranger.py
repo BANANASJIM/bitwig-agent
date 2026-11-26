@@ -5,7 +5,8 @@ from typing import Annotated, Literal, Self
 
 from pydantic import Field, model_validator
 
-from bitwig_agent.protocol.base import MAX_BEAT, PROJECT_READY, TRACK, DeviceArgs, StrictModel, ToolSpec, omitted, tool
+from bitwig_agent.protocol.annotations import ADD
+from bitwig_agent.protocol.base import MAX_BEAT, PROJECT_READY, TRACK, DeviceArgs, StrictModel, ToolSpec, omitted
 from bitwig_agent.protocol.launcher import CLIP, check_note_spans
 from bitwig_agent.protocol.limits import BEAT_GRID, BEAT_GRID_LABEL, MAX_CLIP_BEATS, SCENE_WINDOW
 
@@ -89,65 +90,72 @@ ARRANGER_CLIPS_EDIT_DESCRIPTION = "Edit one arranger clip found by clipIndex fro
 
 
 SPECS: dict[str, ToolSpec] = {
-    "arranger.clips.list": tool(ArrangerClipListArgs, ARRANGER_CLIPS_LIST_DESCRIPTION, True, {"trackId": TRACK}),
-    "arranger.clips.create": tool(
+    "arranger.clips.list": ToolSpec(
+        ArrangerClipListArgs, ARRANGER_CLIPS_LIST_DESCRIPTION, True, examples=({"trackId": TRACK},)
+    ),
+    "arranger.clips.create": ToolSpec(
         ArrangerClipCreateArgs,
         ARRANGER_CLIPS_CREATE_DESCRIPTION,
         False,
-        {
-            "trackId": TRACK,
-            "startBeats": 16,
-            "lengthBeats": 16,
-            "name": "Verse",
-            "notes": [{"beat": 0, "pitch": 60, "velocity": 100, "durationBeats": 1}],
-        },
-        {"trackId": TRACK, "startBeats": 0, "lengthBeats": 4, "name": "Intro"},
-        {
-            "trackId": TRACK,
-            "startBeats": 64,
-            "lengthBeats": 4096,
-            "name": "Pad",
-            "notes": [{"beat": 0, "pitch": 48, "velocity": 80, "durationBeats": 16}],
-            "channel": 1,
-        },
+        examples=(
+            {
+                "trackId": TRACK,
+                "startBeats": 16,
+                "lengthBeats": 16,
+                "name": "Verse",
+                "notes": [{"beat": 0, "pitch": 60, "velocity": 100, "durationBeats": 1}],
+            },
+            {"trackId": TRACK, "startBeats": 0, "lengthBeats": 4, "name": "Intro"},
+            {
+                "trackId": TRACK,
+                "startBeats": 64,
+                "lengthBeats": 4096,
+                "name": "Pad",
+                "notes": [{"beat": 0, "pitch": 48, "velocity": 80, "durationBeats": 16}],
+                "channel": 1,
+            },
+        ),
         requires=PROJECT_READY,
     ),
-    "arranger.clips.copyFromLauncher": tool(
+    "arranger.clips.copyFromLauncher": ToolSpec(
         ArrangerCopyArgs,
         ARRANGER_CLIPS_COPY_FROM_LAUNCHER_DESCRIPTION,
         False,
-        {**CLIP, "expectedClipName": "Sketch", "startBeats": 0},
+        examples=({**CLIP, "expectedClipName": "Sketch", "startBeats": 0},),
         requires=PROJECT_READY,
+        annotations=ADD,
     ),
-    "arranger.clips.edit": tool(
+    "arranger.clips.edit": ToolSpec(
         ArrangerClipEditArgs,
         ARRANGER_CLIPS_EDIT_DESCRIPTION,
         False,
-        {
-            "trackId": TRACK,
-            "clipIndex": 0,
-            "expectedStartBeats": 16,
-            "expectedName": "Verse",
-            "op": "move",
-            "startBeats": 32,
-        },
-        {
-            "trackId": TRACK,
-            "clipIndex": 0,
-            "expectedStartBeats": 16,
-            "expectedName": "Verse",
-            "op": "resize",
-            "lengthBeats": 8,
-        },
-        {
-            "trackId": TRACK,
-            "clipIndex": 1,
-            "expectedStartBeats": 32,
-            "expectedName": "",
-            "op": "rename",
-            "name": "Chorus",
-        },
-        {"trackId": TRACK, "clipIndex": 0, "expectedStartBeats": 16, "expectedName": "Verse", "op": "delete"},
+        examples=(
+            {
+                "trackId": TRACK,
+                "clipIndex": 0,
+                "expectedStartBeats": 16,
+                "expectedName": "Verse",
+                "op": "move",
+                "startBeats": 32,
+            },
+            {
+                "trackId": TRACK,
+                "clipIndex": 0,
+                "expectedStartBeats": 16,
+                "expectedName": "Verse",
+                "op": "resize",
+                "lengthBeats": 8,
+            },
+            {
+                "trackId": TRACK,
+                "clipIndex": 1,
+                "expectedStartBeats": 32,
+                "expectedName": "",
+                "op": "rename",
+                "name": "Chorus",
+            },
+            {"trackId": TRACK, "clipIndex": 0, "expectedStartBeats": 16, "expectedName": "Verse", "op": "delete"},
+        ),
         requires=PROJECT_READY,
     ),
 }

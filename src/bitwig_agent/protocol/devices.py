@@ -5,6 +5,7 @@ from typing import Annotated, Any, Literal, Self
 
 from pydantic import Field, model_validator
 
+from bitwig_agent.protocol.annotations import SET
 from bitwig_agent.protocol.base import (
     MAX_STRING_UNITS,
     PROJECT_READY,
@@ -19,7 +20,6 @@ from bitwig_agent.protocol.base import (
     TrackId,
     UnitValue,
     omitted,
-    tool,
     validate_local_path,
 )
 from bitwig_agent.protocol.limits import DEVICE_WINDOW, REMOTE_PAGE_SLOTS
@@ -212,90 +212,108 @@ DEVICES_REMOTE_DELETE_PAGE_DESCRIPTION = "Delete one named preset Remote Control
 
 
 SPECS: dict[str, ToolSpec] = {
-    "devices.list": tool(DeviceArgs, DEVICES_LIST_DESCRIPTION, True, {"trackId": TRACK}),
-    "devices.get": tool(ParameterArgs, DEVICES_GET_DESCRIPTION, True, TARGET),
-    "devices.layers.list": tool(LayerListArgs, DEVICES_LAYERS_LIST_DESCRIPTION, True, {"parent": LAYER_PARENT}),
-    "devices.set": tool(DeviceSetArgs, DEVICES_SET_DESCRIPTION, False, {**TARGET, "enabled": False}),
-    "devices.select": tool(ParameterArgs, DEVICES_SELECT_DESCRIPTION, False, TARGET),
-    "devices.catalog": tool(StatusArgs, DEVICES_CATALOG_DESCRIPTION, True),
-    "devices.insert": tool(
+    "devices.list": ToolSpec(DeviceArgs, DEVICES_LIST_DESCRIPTION, True, examples=({"trackId": TRACK},)),
+    "devices.get": ToolSpec(ParameterArgs, DEVICES_GET_DESCRIPTION, True, examples=(TARGET,)),
+    "devices.layers.list": ToolSpec(
+        LayerListArgs, DEVICES_LAYERS_LIST_DESCRIPTION, True, examples=({"parent": LAYER_PARENT},)
+    ),
+    "devices.set": ToolSpec(DeviceSetArgs, DEVICES_SET_DESCRIPTION, False, examples=({**TARGET, "enabled": False},)),
+    "devices.select": ToolSpec(ParameterArgs, DEVICES_SELECT_DESCRIPTION, False, examples=(TARGET,)),
+    "devices.catalog": ToolSpec(StatusArgs, DEVICES_CATALOG_DESCRIPTION, True),
+    "devices.insert": ToolSpec(
         DeviceInsertArgs,
         DEVICES_INSERT_DESCRIPTION,
         False,
-        {
-            "trackId": TRACK,
-            "expectedDeviceCount": 2,
-            "kind": "clap",
-            "id": "org.example.synth",
-            "position": "before",
-            "deviceIndex": 1,
-            "expectedDeviceName": "EQ-5",
-        },
+        examples=(
+            {
+                "trackId": TRACK,
+                "expectedDeviceCount": 2,
+                "kind": "clap",
+                "id": "org.example.synth",
+                "position": "before",
+                "deviceIndex": 1,
+                "expectedDeviceName": "EQ-5",
+            },
+        ),
         requires=PROJECT_READY,
+        summary="Insert a native device, plug-in or preset into a track's chain: expectedDeviceCount from devices.list, position end|start|before|after (anchor by deviceIndex and exact expectedDeviceName), kind bitwig|vst2|vst3|clap with id, or kind=file with an absolute path. The requested identity is not proven: check requestedIdentifierVerified.",
     ),
-    "devices.delete": tool(ParameterArgs, DEVICES_DELETE_DESCRIPTION, False, TARGET, requires=PROJECT_READY),
-    "devices.move": tool(
+    "devices.delete": ToolSpec(
+        ParameterArgs, DEVICES_DELETE_DESCRIPTION, False, examples=(TARGET,), requires=PROJECT_READY
+    ),
+    "devices.move": ToolSpec(
         DeviceMoveArgs,
         DEVICES_MOVE_DESCRIPTION,
         False,
-        {**TARGET, "deviceIndex": 3, "toIndex": 1},
+        examples=({**TARGET, "deviceIndex": 3, "toIndex": 1},),
         requires=PROJECT_READY,
     ),
-    "devices.layers.insert": tool(
+    "devices.layers.insert": ToolSpec(
         LayerInsertArgs,
         DEVICES_LAYERS_INSERT_DESCRIPTION,
         False,
-        {
-            "parent": LAYER_PARENT,
-            "layerId": LAYER_TARGET["layerId"],
-            "expectedChildCount": 1,
-            "kind": "clap",
-            "id": "org.example.effect",
-            "position": "end",
-        },
+        examples=(
+            {
+                "parent": LAYER_PARENT,
+                "layerId": LAYER_TARGET["layerId"],
+                "expectedChildCount": 1,
+                "kind": "clap",
+                "id": "org.example.effect",
+                "position": "end",
+            },
+        ),
         requires=PROJECT_READY,
     ),
-    "devices.remote.get": tool(ParameterArgs, DEVICES_REMOTE_GET_DESCRIPTION, True, TARGET),
-    "devices.remote.page": tool(
+    "devices.remote.get": ToolSpec(ParameterArgs, DEVICES_REMOTE_GET_DESCRIPTION, True, examples=(TARGET,)),
+    "devices.remote.page": ToolSpec(
         RemotePageArgs,
         DEVICES_REMOTE_PAGE_DESCRIPTION,
         False,
-        {**TARGET, "contextToken": "from-devices.remote.get", "pageIndex": 0, "expectedPageName": "Main"},
+        examples=({**TARGET, "contextToken": "from-devices.remote.get", "pageIndex": 0, "expectedPageName": "Main"},),
     ),
-    "devices.remote.set": tool(
+    "devices.remote.set": ToolSpec(
         RemoteSetArgs,
         DEVICES_REMOTE_SET_DESCRIPTION,
         False,
-        {
-            **TARGET,
-            "contextToken": "from-devices.remote.get",
-            "expectedPageName": "Main",
-            "parameterIndex": 0,
-            "expectedParameterName": "Cutoff",
-            "normalizedValue": 0.5,
-        },
+        examples=(
+            {
+                **TARGET,
+                "contextToken": "from-devices.remote.get",
+                "expectedPageName": "Main",
+                "parameterIndex": 0,
+                "expectedParameterName": "Cutoff",
+                "normalizedValue": 0.5,
+            },
+        ),
     ),
-    "devices.remote.define": tool(
+    "devices.remote.define": ToolSpec(
         RemoteDefineArgs,
         DEVICES_REMOTE_DEFINE_DESCRIPTION,
         False,
-        {
-            **TARGET,
-            "pageName": "Macros",
-            "slots": [
-                {"moduleId": "abcdef01-2345-6789-abcd-0123456789ab", "parameterId": "VALUE", "label": "darkness"},
-                None,
-                {"moduleName": "Mx: grit", "parameterId": "VALUE"},
-            ],
-        },
-        {
-            **TARGET,
-            "pageName": "Macros",
-            "mode": "replace",
-            "slots": [{"moduleName": "Mx: darkness", "parameterId": "VALUE"}],
-        },
+        examples=(
+            {
+                **TARGET,
+                "pageName": "Macros",
+                "slots": [
+                    {"moduleId": "abcdef01-2345-6789-abcd-0123456789ab", "parameterId": "VALUE", "label": "darkness"},
+                    None,
+                    {"moduleName": "Mx: grit", "parameterId": "VALUE"},
+                ],
+            },
+            {
+                **TARGET,
+                "pageName": "Macros",
+                "mode": "replace",
+                "slots": [{"moduleName": "Mx: darkness", "parameterId": "VALUE"}],
+            },
+        ),
+        annotations=SET,
+        summary="Define a named Remote Controls page on a Grid device: up to 8 slots {moduleId|moduleName, parameterId, label?} or null. mode create refuses an existing name, replace redefines it. Needs recording and automation write off.",
     ),
-    "devices.remote.deletePage": tool(
-        RemoteDeletePageArgs, DEVICES_REMOTE_DELETE_PAGE_DESCRIPTION, False, {**TARGET, "pageName": "Macros"}
+    "devices.remote.deletePage": ToolSpec(
+        RemoteDeletePageArgs,
+        DEVICES_REMOTE_DELETE_PAGE_DESCRIPTION,
+        False,
+        examples=({**TARGET, "pageName": "Macros"},),
     ),
 }

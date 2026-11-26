@@ -1,4 +1,5 @@
 import asyncio
+import dataclasses
 import json
 import os
 import sys
@@ -6,6 +7,10 @@ import sys
 import pytest
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+
+from bitwig_agent.core.invoke import invoke
+from bitwig_agent.frontends.mcp import envelope_result
+from bitwig_agent.protocol import TOOLS
 
 
 @pytest.fixture
@@ -60,6 +65,13 @@ async def host():
 
 
 @pytest.fixture
+def all_methods(monkeypatch):
+    """Expose every method in this process, for tests of the building blocks the surface hides."""
+    for name, spec in list(TOOLS.items()):
+        monkeypatch.setitem(TOOLS, name, dataclasses.replace(spec, expose=True))
+
+
+@pytest.fixture
 async def mcp_session(host):
     params = StdioServerParameters(
         command=sys.executable,
@@ -70,3 +82,16 @@ async def mcp_session(host):
         initialized = await session.initialize()
         assert initialized.server_info.name == "Bitwig Agent"
         yield session
+
+
+class CoreCaller:
+    """Calls a method below the MCP adapter and shapes the answer as the adapter would."""
+
+    async def call_tool(self, name, arguments):
+        return envelope_result(await invoke(name, arguments))
+
+
+@pytest.fixture
+async def core(host, all_methods, monkeypatch):
+    monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
+    return CoreCaller()

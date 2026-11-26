@@ -8,6 +8,7 @@ from typing import Annotated, Any, Self
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.config import JsonDict
 
+from bitwig_agent.protocol.annotations import Annotations
 from bitwig_agent.protocol.limits import (
     DEFAULT_TIMEOUT_MS,
     DEVICE_WINDOW,
@@ -192,9 +193,12 @@ class ToolSpec:
     model: type[BaseModel]
     description: str
     read_only: bool
-    examples: tuple[dict[str, Any], ...]
+    examples: tuple[dict[str, Any], ...] = ({},)
     requires: tuple[str, ...] = ()
     host: bool = True
+    expose: bool = True
+    annotations: Annotations | None = None
+    summary: str = ""
 
     @property
     def project_write(self) -> bool:
@@ -218,14 +222,3 @@ class ToolSpec:
             "inputSchema": self.model.model_json_schema(),
             "examples": list(self.examples),
         }
-
-
-def tool(
-    model: type[BaseModel],
-    description: str,
-    read_only: bool,
-    *examples: dict[str, Any],
-    requires: tuple[str, ...] = (),
-    host: bool = True,
-) -> ToolSpec:
-    return ToolSpec(model, description, read_only, examples or ({},), requires, host)

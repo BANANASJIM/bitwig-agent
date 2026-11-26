@@ -61,7 +61,7 @@ CLIENT_SIDE = frozenset(name for name, spec in TOOLS.items() if not spec.host)
 
 
 def unknown_method_message(method: str) -> str:
-    return f"Unknown method: {method}. Use list or describe <method> offline."
+    return f"Unknown method: {method}. Call help to list the available methods."
 
 
 def validate_call(method: str, arguments: dict[str, Any]) -> tuple[dict[str, Any], int]:
