@@ -86,7 +86,7 @@ class _Rewire:
             result = await self.write("grid.connections.set", {"connections": edits[start : start + MAX_EDITS]})
             if result.get("batchStatus") != "applied":
                 raise bridge_error(
-                    "not_applied",
+                    "internal_error",
                     f"grid.connections.set reported batchStatus {result.get('batchStatus')!r}",
                     "unknown",
                     result=result,

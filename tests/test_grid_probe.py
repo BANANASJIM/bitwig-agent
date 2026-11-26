@@ -252,7 +252,8 @@ def test_partial_rewire_is_restored_from_the_real_state(rig):
     host.h_connections_set = lambda p: half(p) if host.set_calls == 1 else original_set(p)
     with pytest.raises(BridgeError) as e:
         probe(host)
-    assert e.value.error["code"] == "not_applied"
+    assert e.value.error["code"] == "internal_error"
+    assert e.value.error["outcome"] == "unknown"
     assert host.conns == host.original
 
 
