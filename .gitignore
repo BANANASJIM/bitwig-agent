@@ -8,6 +8,7 @@ build/
 *.egg-info/
 .DS_Store
 dist/
+protocol.json
 .claude/
 
 # Local credentials and runtime configuration.
@@ -24,7 +25,6 @@ dist/
 /research/
 /review/
 /docs/history/
-/AGENTS.md
 /HANDOFF.md
 /scripts/grid-compatibility.py
 /scripts/inventory-api.py

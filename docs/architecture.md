@@ -24,8 +24,9 @@ The extension binds `127.0.0.1:61172`; the Python client connects to IPv4 loopba
 |---|---|
 | [`protocol/`](https://github.com/BANANASJIM/bitwig-agent/blob/main/src/bitwig_agent/protocol) | One module per domain: strict typed request models with cross-field constraints plus that domain's catalog entries (descriptions, examples, read-only hints); the registry and validation are used by both adapters |
 | [`client.py`](https://github.com/BANANASJIM/bitwig-agent/blob/main/src/bitwig_agent/client.py) | Bounded strict JSON, one-shot loopback requests, unique correlation IDs, response validation and conservative outcomes |
-| [`server.py`](https://github.com/BANANASJIM/bitwig-agent/blob/main/src/bitwig_agent/server.py) | MCP tool discovery and invocation over stdio; preserves the JSON envelope as structured content and text |
-| [`cli.py`](https://github.com/BANANASJIM/bitwig-agent/blob/main/src/bitwig_agent/cli.py) | CLI discovery/schema/help and dispatch through the shared client |
+| [`core/`](https://github.com/BANANASJIM/bitwig-agent/blob/main/src/bitwig_agent/core) | The one call path and discovery data both front ends use: `invoke` validates, dispatches to the host client or a composed handler and wraps the outcome in an envelope; `views` reads the method table; `composed` holds the client-side handlers |
+| [`frontends/mcp.py`](https://github.com/BANANASJIM/bitwig-agent/blob/main/src/bitwig_agent/frontends/mcp.py) | MCP tool discovery and invocation over stdio; preserves the JSON envelope as structured content and text |
+| [`frontends/cli.py`](https://github.com/BANANASJIM/bitwig-agent/blob/main/src/bitwig_agent/frontends/cli.py) | CLI argument parsing and discovery layout on top of `core`; exit code from the envelope |
 | [`install.py`](https://github.com/BANANASJIM/bitwig-agent/blob/main/src/bitwig_agent/install.py) | Release-version extension download/copy, integrity check, backups and printed MCP configuration |
 
 The catalog is not a planner. Tool examples are schema examples, not live target IDs. Tool annotations are hints, not authority or a proof that a call has no side effects. For example, `notes.read` selects a clip.
@@ -42,7 +43,7 @@ The main sources are under [`extension/src/main/java/dev/bitwigagent`](https://g
 - `HostServices` owns shared host proxies and scheduling. `HostOperation` tracks deadlines and completion. Host API work crosses the scheduler boundary rather than running on the network thread.
 - `DeviceSources` owns fixed root/layer/child addresses and continuity observations. `ParameterModule` owns continuously observed source-specific parameter data and the single shared active binding/request. Switching flat or nested targets invalidates the prior binding.
 - Discovery, Actions, transport, mix, devices and Launcher/MIDI have separate domain modules and observations. Their result semantics differ: a dispatch-only Action is not equivalent to an acknowledged parameter change.
-- `GridModule` separates target/RPC guards from bounded graph serialization and scalar, boolean-panel and topology writers. `GridTopologyQuarantine` shares native lifetime admission across topology editors.
+- `GridModule` separates target/RPC guards from bounded graph serialization and scalar, boolean-panel and topology writers. `GridTopologyQuarantine` serializes native topology lifetimes and keeps one quarantine record per Grid device, released only by `grid.topology.reconcile`.
 - `ProjectModule` owns `project.save` (public Save action) and `project.saveAs`; `ProjectSaveAsPlan` mirrors the native folder rules host-free and `Bitwig614ProjectSaveAsAccess` calls the dialog-free save pipeline with a completion callback.
 - `RenderModule` owns `export.audio`, `bounce.inPlace` and `render.status`; `RenderPlan` names the output files and checks their headers host-free, and `Bitwig614RenderAccess` starts the native render jobs and exposes their completion latch (bounce readback reuses `Bitwig614ArrangerAccess`).
 - `RoutingModule` owns `tracks.routing.*` and `devices.sidechain.*` (validation, bank/device targets, stopped-transport safety and quarantine); `Bitwig614RoutingAccess` binds the native output/input choosers and sidechain components, enforces audio/note kinds, checks cycles before writing and reads every write back by identity.
@@ -61,11 +62,11 @@ The unnamed-package [`BitwigAgent614GridInsertion.java`](https://github.com/BANA
 4. The domain rechecks the relevant target, context and safety observations. If eligible, it dispatches the operation and observes the method-specific completion evidence.
 5. The reply carries a result or an error with its outcome. MCP/CLI preserve that distinction. The agent must inspect per-field verification, mutation/dispatch flags and completion—not merely whether a JSON result exists.
 
-`not_dispatched` means the client did not dispatch a request; `not_applied` is a host/domain rejection before the relevant operation was applied. `unknown` means the operation may have occurred. A transport timeout after dispatch, late response failure or stale target after dispatch must not become "failed, therefore retry." Some successful envelopes also report `completion: unknown`; an `observed` status does not cancel that uncertainty.
+Outcome semantics (`not_dispatched`, `not_applied`, `unknown`) and recovery rules are defined once in [PROTOCOL.md](../PROTOCOL.md#core-discovery-and-direct-parameters); a transport timeout after dispatch is `unknown`, never "failed, therefore retry." Some successful envelopes also report `completion: unknown`; an `observed` status does not cancel that uncertainty.
 
 The deadline is not cancellation or rollback. The client adds a short response-delivery grace without extending/replaying the host request. It never retries automatically. One call can have several native effects, and undo-aware native dispatch does not establish one-call/one-Undo grouping.
 
-On uncertainty, stop the writer, retain the response and ownership record, and reconcile through authorized inspection. Do not blindly retry through either the API or GUI. Unresolved Launcher mutations and native topology lifetimes have specific quarantine rules. Topology admission can survive extension classloader replacement in the same JVM; a required full host restart and inspection does not prove rollback. Follow the exact [protocol recovery boundaries](../PROTOCOL.md#shared-topology-lifecycle-admission), not an improvised reset.
+On uncertainty, stop the writer, retain the response and ownership record, and reconcile through authorized inspection. Do not blindly retry through either the API or GUI. Unresolved Launcher mutations and native topology lifetimes have specific quarantine rules. Topology admission can survive extension classloader replacement in the same JVM; a device quarantine is released by `grid.topology.reconcile` after inspection, and a restart never proves rollback. Follow the exact [protocol recovery boundaries](../PROTOCOL.md#shared-topology-lifecycle-admission), not an improvised reset.
 
 ## What a target means
 
@@ -81,7 +82,22 @@ Names can change, same-metadata replacement can be ambiguous, and module/modulat
 - String panels are written only through `grid.parameters.set`/`grid.apply` (Grid modules, e.g. Comment TEXT). Arranger clips (`arranger.clips.*`), arranger automation points (`automation.points.*`) and track routing/device sidechains (`tracks.routing.*`, `devices.sidechain.*`, bank tracks only; hardware entries deferred) use version-gated native access; launcher automation, automation clips and dedicated master/cue tools are outside the structured surface.
 - Version `0.2.0` maps private access to **Bitwig 6.1.4 / API 25** and the exact loaded host-JAR hash; the older `0.1.2` release retains its 6.1.3 boundary. This is a single-version cutover, not a compatibility platform. [Native evidence](../VERIFICATION.md) is bounded to exercised Linux cases; a host package or successful macOS/Windows Python install does not extend it. Do not bypass the gate.
 
-The agent can explicitly use separately authorized Computer Use for an unsupported operation, but there is no implicit GUI fallback. The scratch music recipe's Pad VOICES 8 step is one such explicit gap, not a hidden voice-count API. See [usage](../USAGE.md#make-grid-instruments-without-preset-files).
+The agent can explicitly use separately authorized Computer Use for an unsupported operation, but there is no implicit GUI fallback.
+
+## Repository map
+
+| Path | Responsibility |
+|---|---|
+| `src/bitwig_agent/` | Schemas/catalog, transport, MCP, CLI and release installer |
+| `extension/src/main/java/dev/bitwigagent/` | Host services, domains and bounded native adapters |
+| `extension/src/test/`, `tests/` | Simulated-host Java checks and host-free Python regressions |
+| `scripts/` | Source builds/checks and offline evidence helpers |
+| `examples/` | Client configuration and explicit opt-in music recipes |
+| `docs/` | Public architecture, installation navigation and packaging guides |
+| `packaging/aur/` | Reviewed AUR recipe and synchronized `.SRCINFO` |
+| `skills/bitwig-agent/` | Copyable Agent Skills instructions, focused references and MIT license |
+
+Python layers import leftward (a test enforces the `protocol/` rule): `protocol/` (request models and method metadata; stdlib and pydantic only), `client`, composed tools (`grid/`, audio, presets), then `server` / `cli`. Java layers: `rpc`, `core`, `host`, domain modules, `bitwig614`.
 
 ## Evidence is layered
 

@@ -1,23 +1,18 @@
 package dev.bitwigagent;
 
 import static dev.bitwigagent.NativeReadContext.Field.*;
+import static dev.bitwigagent.RpcAssert.*;
+import static org.junit.jupiter.api.Assertions.*;
 
 import java.util.EnumMap;
 import java.util.IdentityHashMap;
+import org.junit.jupiter.api.Test;
 
 /** Host-free common read policy tests; no fake Grid graph or native compatibility claim. */
 public final class NativeReadContextTest {
-    private static int assertions;
 
-    public static void main(String[] args) {
-        readObservationsAreNotWriteGates();
-        projectLifecycleIsCheckedWithoutProjectAncestorLookup();
-        guardsRetainOriginalContextIdentities();
-        unavailablePredicatesRetainTheCallingDomain();
-        System.out.println("NativeReadContextTest: " + assertions + " assertions");
-    }
-
-    private static void readObservationsAreNotWriteGates() {
+    @Test
+    void readObservationsAreNotWriteGates() {
         Fixture f = new Fixture();
         f.values.put(INITIALIZED, false);
         Object foreignRoot = new Object(), foreignDefaultContext = new Object();
@@ -25,10 +20,10 @@ public final class NativeReadContextTest {
         f.values.put(CURRENT_DT, null);
         f.override(f.defaultDt, DT_CONTEXT, foreignDefaultContext);
         NativeReadContext.Capture captured = f.capture(true);
-        check(
+        assertTrue(
                 captured.root == foreignRoot && !captured.initialized && captured.current == null,
                 "read capture preserves uninitialized, non-project root and absent current transaction observations");
-        check(
+        assertTrue(
                 !captured.attachedContext.get("rootIsOwningProject").getAsBoolean()
                         && captured.attachedContext
                                 .get("currentDtContextMatches")
@@ -41,61 +36,64 @@ public final class NativeReadContextTest {
         f.defaultSupported = false;
         f.forbidDefault = true;
         NativeReadContext.Capture unsupported = f.capture(true);
-        check(
+        assertTrue(
                 !unsupported.hasDefault
                         && unsupported.defaultDt == null
                         && unsupported.attachedContext.get("defaultDtPresent").isJsonNull(),
                 "unsupported default accessor is not invoked and remains unknown rather than false readiness");
         NativeReadContext.Capture lean = f.capture(false);
-        check(
+        assertTrue(
                 lean.lifecycle == null && lean.attachedContext == null && lean.context == f.context,
                 "guard captures retain actual native identities without constructing response JSON");
     }
 
-    private static void projectLifecycleIsCheckedWithoutProjectAncestorLookup() {
+    @Test
+    void projectLifecycleIsCheckedWithoutProjectAncestorLookup() {
         Fixture f = new Fixture();
         NativeReadContext.Capture captured = f.capture(true);
-        check(
+        assertTrue(
                 captured.lifecycle.size() == 3
                         && !captured.lifecycle.get("projectDeleted").getAsBoolean(),
                 "project is an independently checked lifecycle participant, not an ancestor of itself");
         f.override(f.project, DELETED, true);
-        expect("stale_context", () -> f.capture(false));
+        assertNotApplied("stale_context", () -> f.capture(false));
         f.override(f.project, DELETED, false);
         f.override(f.project, CONTEXT, new Object());
-        expect("stale_context", () -> f.capture(false));
+        assertNotApplied("stale_context", () -> f.capture(false));
         Fixture moved = new Fixture();
         moved.override(moved.models[0], PROJECT, new Object());
-        expect("stale_context", () -> moved.capture(false));
+        assertNotApplied("stale_context", () -> moved.capture(false));
         Fixture detached = new Fixture();
         detached.override(detached.models[1], CONTEXT, null);
-        expect("stale_context", () -> detached.capture(false));
+        assertNotApplied("stale_context", () -> detached.capture(false));
     }
 
-    private static void guardsRetainOriginalContextIdentities() {
+    @Test
+    void guardsRetainOriginalContextIdentities() {
         for (NativeReadContext.Field field : new NativeReadContext.Field[] {ROOT, CURRENT_DT, DEFAULT_DT}) {
             Fixture f = new Fixture();
             NativeReadContext.Capture before = f.capture(false);
             f.values.put(field, new Object());
-            expect("stale_context", () -> f.contexts.guard(before, f.models, f.labels, () -> {}));
+            assertNotApplied("stale_context", () -> f.contexts.guard(before, f.models, f.labels, () -> {}));
         }
         Fixture rebound = new Fixture();
         NativeReadContext.Capture before = rebound.capture(false);
         Object other = new Object();
         rebound.values.put(CONTEXT, other);
         rebound.values.put(DT_CONTEXT, other);
-        expect("stale_context", () -> rebound.contexts.guard(before, rebound.models, rebound.labels, () -> {}));
+        assertNotApplied(
+                "stale_context", () -> rebound.contexts.guard(before, rebound.models, rebound.labels, () -> {}));
         Fixture defaultOwner = new Fixture();
         NativeReadContext.Capture oldDefault = defaultOwner.capture(false);
         defaultOwner.override(defaultOwner.defaultDt, DT_CONTEXT, new Object());
-        expect(
+        assertNotApplied(
                 "stale_context",
                 () -> defaultOwner.contexts.guard(oldDefault, defaultOwner.models, defaultOwner.labels, () -> {}));
         Fixture currentOwner = new Fixture();
         currentOwner.override(currentOwner.current, DT_CONTEXT, new Object());
-        expect("stale_context", () -> currentOwner.capture(false));
+        assertNotApplied("stale_context", () -> currentOwner.capture(false));
         Fixture cancelled = new Fixture();
-        expect(
+        assertNotApplied(
                 "cancelled",
                 () -> cancelled.contexts.capture(
                         cancelled.project,
@@ -107,15 +105,16 @@ public final class NativeReadContextTest {
                         false));
     }
 
-    private static void unavailablePredicatesRetainTheCallingDomain() {
+    @Test
+    void unavailablePredicatesRetainTheCallingDomain() {
         Fixture f = new Fixture();
         f.values.put(CONTEXT_THREAD, null);
-        expect("modulator_unavailable", () -> f.capture(false));
+        assertNotApplied("modulator_unavailable", () -> f.capture(false));
         f.values.put(CONTEXT_THREAD, false);
-        expect("modulator_unavailable", () -> f.capture(false));
+        assertNotApplied("modulator_unavailable", () -> f.capture(false));
         f.values.put(CONTEXT_THREAD, true);
         f.values.put(DISPOSED, true);
-        expect("stale_context", () -> f.capture(false));
+        assertNotApplied("stale_context", () -> f.capture(false));
     }
 
     private static final class Fixture implements NativeReadContext.Access {
@@ -169,21 +168,5 @@ public final class NativeReadContextTest {
         public ErrorCode unavailableCode() {
             return ErrorCode.MODULATOR_UNAVAILABLE;
         }
-    }
-
-    private static void expect(String code, Runnable call) {
-        try {
-            call.run();
-            throw new AssertionError("Expected " + code);
-        } catch (RpcException error) {
-            check(
-                    code.equals(error.code) && "not_applied".equals(error.outcome),
-                    "exact read failure code/outcome: " + code);
-        }
-    }
-
-    private static void check(boolean value, String message) {
-        assertions++;
-        if (!value) throw new AssertionError(message);
     }
 }

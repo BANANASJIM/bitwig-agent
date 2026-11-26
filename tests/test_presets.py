@@ -6,7 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from bitwig_agent import presets
-from bitwig_agent.client_side import run
+from bitwig_agent.core.composed import run
 from bitwig_agent.protocol import CLIENT_SIDE, validate_call
 
 

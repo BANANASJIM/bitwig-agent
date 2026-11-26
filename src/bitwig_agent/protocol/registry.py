@@ -19,26 +19,7 @@ from bitwig_agent.protocol import (
     tracks,
     transport,
 )
-from bitwig_agent.protocol.base import MAX_TIMEOUT_MS, ToolSpec
-
-# Composed in Python from host methods; never sent to the host as one request.
-CLIENT_SIDE = frozenset(
-    {
-        "modulators.catalog",
-        "modulators.describe",
-        "grid.apply",
-        "grid.export",
-        "grid.graph",
-        "grid.probe",
-        "grid.render",
-        "grid.describe",
-        "audio.route",
-        "audio.capture",
-        "audio.analyze",
-        "host.diagnostics",
-        "presets.search",
-    }
-)
+from bitwig_agent.protocol.base import ToolSpec
 
 TOOL_ORDER = (
     "status",
@@ -186,16 +167,15 @@ def _collect() -> dict[str, ToolSpec]:
 TOOLS: dict[str, ToolSpec] = _collect()
 
 
-def max_timeout_ms(method: str) -> int:
-    """The method's timeoutMs ceiling (topology edits allow longer than the default)."""
-    for constraint in TOOLS[method].model.model_fields["timeoutMs"].metadata:
-        if getattr(constraint, "le", None) is not None:
-            return int(constraint.le)
-    return MAX_TIMEOUT_MS
+CLIENT_SIDE = frozenset(name for name, spec in TOOLS.items() if not spec.host)
+
+
+def unknown_method_message(method: str) -> str:
+    return f"Unknown method: {method}. Use list or describe <method> offline."
 
 
 def validate_call(method: str, arguments: dict[str, Any]) -> tuple[dict[str, Any], int]:
     if method not in TOOLS:
-        raise ValueError(f"Unknown method: {method}. Use list or describe <method> offline.")
+        raise ValueError(unknown_method_message(method))
     args: Any = TOOLS[method].model.model_validate(arguments)
     return args.model_dump(exclude={"timeoutMs"}, exclude_unset=True, by_alias=True), args.timeoutMs

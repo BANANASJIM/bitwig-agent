@@ -2,6 +2,7 @@ package dev.bitwigagent;
 
 import com.bitwig.extension.controller.ControllerExtension;
 import com.bitwig.extension.controller.api.ControllerHost;
+import dev.bitwigagent.core.MethodSpecs;
 import java.io.IOException;
 
 public final class BitwigAgentExtension extends ControllerExtension {
@@ -17,8 +18,9 @@ public final class BitwigAgentExtension extends ControllerExtension {
     @Override
     public void init() {
         int port = configuredPort(System.getenv("BITWIG_AGENT_PORT"));
-        bridge = new HostBridge(host);
-        server = new RpcServer(port, bridge);
+        MethodSpecs specs = MethodSpecs.load();
+        bridge = new HostBridge(host, specs);
+        server = new RpcServer(port, specs, bridge);
         try {
             server.start();
             host.println("Bitwig Agent listening on 127.0.0.1:" + port);

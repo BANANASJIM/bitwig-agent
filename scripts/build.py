@@ -28,6 +28,10 @@ def gson_jar():
     return dependency("gson")
 
 
+def junit_jar():
+    return dependency("junit-console")
+
+
 def api_jar():
     """Installed host jar when BITWIG_API_JAR is set, else the checksum-pinned public extension API."""
     setting = os.environ.get("BITWIG_API_JAR")
@@ -94,6 +98,13 @@ def compile_java(sources, target, classpath, lint="-Xlint:all"):
     )
 
 
+def write_protocol_bundle(directory):
+    """Generated from the Python protocol into a classes directory; never committed."""
+    subprocess.run(
+        [sys.executable, "-m", "bitwig_agent.protocol", "export", "--out", str(directory / "protocol.json")], check=True
+    )
+
+
 def build():
     default = LINUX_HOST_JAR if sys.platform.startswith("linux") else None
     api = Path(os.environ.get("BITWIG_API_JAR") or default or "")
@@ -104,6 +115,7 @@ def build():
     if classes.exists():
         shutil.rmtree(classes)
     compile_java(sorted(SOURCES.rglob("*.java")), classes, [api, dependency])
+    write_protocol_bundle(classes)
     resources = ROOT / "extension/src/main/resources"
     service = resources / "META-INF/services/com.bitwig.extension.ExtensionDefinition"
     if not service.is_file():

@@ -5,7 +5,7 @@ from typing import Annotated, Literal, Self
 
 from pydantic import Field, model_validator
 
-from bitwig_agent.protocol.base import MAX_BEAT, TRACK, DeviceArgs, StrictModel, ToolSpec, omitted, tool
+from bitwig_agent.protocol.base import MAX_BEAT, PROJECT_READY, TRACK, DeviceArgs, StrictModel, ToolSpec, omitted, tool
 from bitwig_agent.protocol.launcher import CLIP, check_note_spans
 
 
@@ -103,12 +103,14 @@ SPECS: dict[str, ToolSpec] = {
             "notes": [{"beat": 0, "pitch": 48, "velocity": 80, "durationBeats": 16}],
             "channel": 1,
         },
+        requires=PROJECT_READY,
     ),
     "arranger.clips.copyFromLauncher": tool(
         ArrangerCopyArgs,
         ARRANGER_CLIPS_COPY_FROM_LAUNCHER_DESCRIPTION,
         False,
         {**CLIP, "expectedClipName": "Sketch", "startBeats": 0},
+        requires=PROJECT_READY,
     ),
     "arranger.clips.edit": tool(
         ArrangerClipEditArgs,
@@ -139,5 +141,6 @@ SPECS: dict[str, ToolSpec] = {
             "name": "Chorus",
         },
         {"trackId": TRACK, "clipIndex": 0, "expectedStartBeats": 16, "expectedName": "Verse", "op": "delete"},
+        requires=PROJECT_READY,
     ),
 }

@@ -85,12 +85,33 @@ TRACK = "12345678-1234-1234-1234-123456789abc"
 TARGET = {"trackId": TRACK, "deviceIndex": 0, "expectedDeviceName": "Poly Grid"}
 
 
+PROJECT_READY = ("projectReady",)
+ENGINE = ("engine",)
+
+
 @dataclass(frozen=True)
 class ToolSpec:
     model: type[BaseModel]
     description: str
     read_only: bool
     examples: tuple[dict[str, Any], ...]
+    requires: tuple[str, ...] = ()
+    host: bool = True
+
+    @property
+    def project_write(self) -> bool:
+        return PROJECT_READY[0] in self.requires
+
+    @property
+    def default_timeout_ms(self) -> int:
+        return int(self.model.model_fields["timeoutMs"].default)
+
+    @property
+    def max_timeout_ms(self) -> int:
+        for constraint in self.model.model_fields["timeoutMs"].metadata:
+            if getattr(constraint, "le", None) is not None:
+                return int(constraint.le)
+        return MAX_TIMEOUT_MS
 
     def describe(self) -> dict[str, Any]:
         return {
@@ -101,5 +122,12 @@ class ToolSpec:
         }
 
 
-def tool(model: type[BaseModel], description: str, read_only: bool, *examples: dict[str, Any]) -> ToolSpec:
-    return ToolSpec(model, description, read_only, examples or ({},))
+def tool(
+    model: type[BaseModel],
+    description: str,
+    read_only: bool,
+    *examples: dict[str, Any],
+    requires: tuple[str, ...] = (),
+    host: bool = True,
+) -> ToolSpec:
+    return ToolSpec(model, description, read_only, examples or ({},), requires, host)

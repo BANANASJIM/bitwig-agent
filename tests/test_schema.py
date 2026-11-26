@@ -3,7 +3,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from bitwig_agent.protocol import TOOLS, max_timeout_ms, validate_call
+from bitwig_agent.protocol import TOOLS, validate_call
 from bitwig_agent.protocol.base import TARGET, TRACK
 from bitwig_agent.protocol.devices import LAYER_PARENT, LAYER_TARGET
 from bitwig_agent.protocol.launcher import NOTE_WINDOW
@@ -1200,7 +1200,7 @@ def test_project_save_as_takes_a_final_bwproject_path_and_explicit_flags():
         "overwrite": True,
         "allowAnyPath": False,
     }
-    assert max_timeout_ms("project.saveAs") == 60000
+    assert TOOLS["project.saveAs"].max_timeout_ms == 60000
     for bad in (
         {},
         {"path": "Song/Song.bwproject"},
@@ -1250,8 +1250,8 @@ def test_export_audio_and_bounce_in_place_are_strict_long_write_tools():
     assert TOOLS["export.audio"].read_only is False
     assert TOOLS["bounce.inPlace"].read_only is False
     assert TOOLS["render.status"].read_only is True
-    assert max_timeout_ms("export.audio") == max_timeout_ms("bounce.inPlace") == 60000
-    assert max_timeout_ms("render.status") == 10000
+    assert TOOLS["export.audio"].max_timeout_ms == TOOLS["bounce.inPlace"].max_timeout_ms == 60000
+    assert TOOLS["render.status"].max_timeout_ms == 10000
     bad: Any
     for bad in (
         {"sources": []},
@@ -1305,10 +1305,9 @@ def test_grid_insert_batch_is_exclusive_bounded_and_per_entry_strict():
     base = {key: GRID_INSERT[key] for key in TARGET}
     params, _ = validate_call("grid.modules.insert", {**base, "modules": [entry, {"typeId": TRACK, "x": 8, "y": 2}]})
     assert params["modules"][1] == {"typeId": TRACK, "x": 8, "y": 2}
-    validate_call("grid.modules.insert", {**base, "modules": [entry] * 16})
+    validate_call("grid.modules.insert", {**base, "modules": [entry] * 17})
     for bad in (
         {**base, "modules": []},
-        {**base, "modules": [entry] * 17},
         {**base, "modules": [entry], "x": 1},
         {**base, "modules": [entry], "typeName": "a"},
         {**base, "modules": [{"x": 1, "y": 1}]},
@@ -1404,7 +1403,7 @@ def test_clips_edit_accepts_one_operation(fields):
         {"op": "duplicateContent", "amount": 1},
         {"op": "resize", "lengthBeats": 0},
         {"op": "resize", "lengthBeats": 4097},
-        {"op": "resize", "lengthBeats": 1.5},
+        {"op": "resize", "lengthBeats": 1 / 256},
         {"op": "color", "rgb": "ff0000"},
         {"op": "color", "rgb": "#ff00"},
         {"op": "color", "rgb": "#gg0000"},

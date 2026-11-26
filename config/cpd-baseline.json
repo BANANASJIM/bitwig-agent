@@ -26,62 +26,6 @@
     },
     {
       "files": [
-        "extension/src/test/java/dev/bitwigagent/ArrangerModuleTest.java",
-        "extension/src/test/java/dev/bitwigagent/AutomationModuleTest.java"
-      ],
-      "count": 3,
-      "tokens": 386
-    },
-    {
-      "files": [
-        "extension/src/test/java/dev/bitwigagent/ArrangerModuleTest.java",
-        "extension/src/test/java/dev/bitwigagent/LauncherSettingsModuleTest.java"
-      ],
-      "count": 3,
-      "tokens": 325
-    },
-    {
-      "files": [
-        "extension/src/test/java/dev/bitwigagent/ArrangerModuleTest.java",
-        "extension/src/test/java/dev/bitwigagent/RoutingModuleTest.java"
-      ],
-      "count": 1,
-      "tokens": 109
-    },
-    {
-      "files": [
-        "extension/src/test/java/dev/bitwigagent/AutomationModuleTest.java",
-        "extension/src/test/java/dev/bitwigagent/LauncherSettingsModuleTest.java"
-      ],
-      "count": 3,
-      "tokens": 325
-    },
-    {
-      "files": [
-        "extension/src/test/java/dev/bitwigagent/AutomationModuleTest.java",
-        "extension/src/test/java/dev/bitwigagent/RoutingModuleTest.java"
-      ],
-      "count": 1,
-      "tokens": 109
-    },
-    {
-      "files": [
-        "extension/src/test/java/dev/bitwigagent/DeviceModuleTest.java",
-        "extension/src/test/java/dev/bitwigagent/HostBridgeTest.java"
-      ],
-      "count": 1,
-      "tokens": 100
-    },
-    {
-      "files": [
-        "extension/src/test/java/dev/bitwigagent/LauncherSettingsModuleTest.java",
-        "extension/src/test/java/dev/bitwigagent/RoutingModuleTest.java"
-      ],
-      "count": 1,
-      "tokens": 109
-    },
-    {
-      "files": [
         "extension/src/test/java/dev/bitwigagent/MixModuleTest.java",
         "extension/src/test/java/dev/bitwigagent/MixModuleTest.java"
       ],
@@ -100,19 +44,11 @@
   "python": [
     {
       "files": [
-        "src/bitwig_agent/grid_docs.py",
+        "src/bitwig_agent/grid/docs.py",
         "src/bitwig_agent/modulator_docs.py"
       ],
       "count": 2,
       "tokens": 83
-    },
-    {
-      "files": [
-        "src/bitwig_agent/grid_export.py",
-        "src/bitwig_agent/grid_render.py"
-      ],
-      "count": 1,
-      "tokens": 85
     },
     {
       "files": [

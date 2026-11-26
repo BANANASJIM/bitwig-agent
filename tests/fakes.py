@@ -9,8 +9,10 @@ import wave
 from pathlib import Path
 from typing import Any, ClassVar
 
-from bitwig_agent import grid_apply
 from bitwig_agent.errors import BridgeError
+from bitwig_agent.frontends import cli
+from bitwig_agent.grid import bundled, values
+from bitwig_agent.grid.apply import apply as apply_spec
 from bitwig_agent.protocol import validate_call
 
 WRITES = {
@@ -33,7 +35,7 @@ def seconds_text(type_name, raw):
 
 class FakeGrid:
     def __init__(self, version="6.1.4"):
-        self.catalog = grid_apply.bundled_schema()["modules"]
+        self.catalog = bundled.bundled_schema()["modules"]
         self.version = version
         self.mods: dict[str, dict] = {}
         self.conns: dict[tuple[str, str], tuple[str, str]] = {}
@@ -56,7 +58,7 @@ class FakeGrid:
         params = {}
         for p in info["parameters"]:
             params[p["parameterId"]] = {**p, "value": p["default"], "display": p.get("defaultDisplay")}
-        if type_name in grid_apply.STEP_TYPES:  # the bundled schema has no step arrays; the live row carries one
+        if type_name in values.STEP_TYPES:  # the bundled schema has no step arrays; the live row carries one
             params["DATA"] = {"parameterId": "DATA", "kind": "steps", "value": [0.0] * 64, "display": None}
         self.mods[iid] = {
             "instanceId": iid,
@@ -231,9 +233,9 @@ class FakeGrid:
             if w["expectedKind"] == "steps":
                 n = len(w["expectedValues"])
                 assert len(w["values"]) <= n <= 64
-                if [grid_apply.f32(x) for x in par["value"][:n]] != [grid_apply.f32(x) for x in w["expectedValues"]]:
+                if [values.f32(x) for x in par["value"][:n]] != [values.f32(x) for x in w["expectedValues"]]:
                     raise BridgeError({"code": "stale_context", "message": "stale", "outcome": "not_applied"})
-                par["value"][: len(w["values"])] = [grid_apply.f32(x) for x in w["values"]]
+                par["value"][: len(w["values"])] = [values.f32(x) for x in w["values"]]
                 entries.append({"moduleId": w["moduleId"], "parameterId": w["parameterId"], "status": "applied"})
                 continue
             if (par["kind"], par["value"]) != (w["expectedKind"], w["expectedValue"]):
@@ -313,7 +315,7 @@ SPEC: dict[str, Any] = {
 
 def apply_grid(host, spec, **extra):
     args, timeout = validate_call("grid.apply", {**copy.deepcopy(spec), **extra})
-    return asyncio.run(grid_apply.apply(host, args, timeout))
+    return asyncio.run(apply_spec(host, args, timeout))
 
 
 class LayoutGrid:
@@ -702,3 +704,9 @@ class FakeBridge:
             self.solo[params["trackId"]] = params["solo"]
             return {}
         return {}
+
+
+def parse_arguments(
+    method: str, pairs: list[str], raw: str | None, timeout_ms: int | None
+) -> tuple[dict[str, Any], int]:
+    return validate_call(method, cli.parse_arguments(method, pairs, raw, timeout_ms))

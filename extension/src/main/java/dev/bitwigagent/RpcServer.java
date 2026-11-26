@@ -3,6 +3,7 @@ package dev.bitwigagent;
 import com.google.gson.*;
 import com.google.gson.stream.JsonReader;
 import com.google.gson.stream.JsonToken;
+import dev.bitwigagent.core.MethodSpecs;
 import java.io.*;
 import java.net.*;
 import java.nio.ByteBuffer;
@@ -16,12 +17,13 @@ public final class RpcServer implements AutoCloseable {
         CompletableFuture<JsonObject> handle(String method, JsonObject params, long deadlineNanos);
     }
 
-    public static final int MAX_BYTES = 1024 * 1024;
-    private static final Set<String> METHODS = HostBridge.supportedMethods();
+    public static final int MAX_REQUEST_BYTES = 1024 * 1024;
+    public static final int MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
     private static final Set<String> FIELDS =
             Collections.unmodifiableSet(new HashSet<>(Arrays.asList("id", "method", "params", "timeoutMs")));
     private static final Gson GSON = new GsonBuilder().serializeNulls().create();
     private final int port;
+    private final MethodSpecs specs;
     private final Handler handler;
     private final ThreadPoolExecutor workers = new ThreadPoolExecutor(
             4, 4, 0, TimeUnit.SECONDS, new ArrayBlockingQueue<Runnable>(8), daemonFactory("bitwig-agent-rpc-worker"));
@@ -32,9 +34,10 @@ public final class RpcServer implements AutoCloseable {
     private ServerSocket listener;
     private Thread acceptThread;
 
-    public RpcServer(int port, Handler handler) {
+    public RpcServer(int port, MethodSpecs specs, Handler handler) {
         if (port < 0 || port > 65535) throw new IllegalArgumentException("Invalid port");
         this.port = port;
+        this.specs = Objects.requireNonNull(specs);
         this.handler = Objects.requireNonNull(handler);
         timer.setRemoveOnCancelPolicy(true);
     }
@@ -127,11 +130,12 @@ public final class RpcServer implements AutoCloseable {
             for (String key : request.keySet())
                 if (!FIELDS.contains(key)) throw invalid("Unknown request field: " + key);
             String method = string(request, "method");
-            if (!METHODS.contains(method))
+            if (!specs.contains(method))
                 throw Errors.of(ErrorCode.METHOD_NOT_FOUND, "Unknown method", Outcome.NOT_DISPATCHED);
             if (!request.has("params") || !request.get("params").isJsonObject())
                 throw invalid("params must be an object");
-            int timeout = 5000;
+            MethodSpecs.Spec spec = specs.get(method);
+            int timeout = spec.defaultTimeoutMs;
             if (request.has("timeoutMs")) {
                 JsonElement value = request.get("timeoutMs");
                 if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isNumber())
@@ -141,8 +145,8 @@ public final class RpcServer implements AutoCloseable {
                 } catch (ArithmeticException | NumberFormatException e) {
                     throw invalid("timeoutMs must be an integer");
                 }
-                int max = maxTimeoutMs(method);
-                if (timeout < 100 || timeout > max) throw invalid("timeoutMs must be 100-" + max + " for " + method);
+                if (timeout < MIN_TIMEOUT_MS || timeout > spec.maxTimeoutMs)
+                    throw invalid("timeoutMs must be " + MIN_TIMEOUT_MS + "-" + spec.maxTimeoutMs + " for " + method);
             }
             extendExpiry.accept(timeout);
             long deadline = acceptedAt + TimeUnit.MILLISECONDS.toNanos(timeout);
@@ -187,15 +191,7 @@ public final class RpcServer implements AutoCloseable {
         }
     }
 
-    static final int MAX_TIMEOUT_MS = 10000, SOCKET_EXPIRY_MS = 15000, SOCKET_GRACE_MS = 5000;
-
-    static int maxTimeoutMs(String method) {
-        return GridModule.LONG_TIMEOUT_METHODS.contains(method)
-                        || ProjectModule.SAVE_AS.equals(method)
-                        || RenderModule.LONG.contains(method)
-                ? GridModule.MAX_TOPOLOGY_TIMEOUT_MS
-                : MAX_TIMEOUT_MS;
-    }
+    static final int MIN_TIMEOUT_MS = 100, SOCKET_EXPIRY_MS = 15000, SOCKET_GRACE_MS = 5000;
 
     private static JsonObject envelope(String id) {
         JsonObject response = new JsonObject();
@@ -225,7 +221,7 @@ public final class RpcServer implements AutoCloseable {
             int b = input.read();
             if (b == -1) throw invalid("Request must end with newline");
             if (b == '\n') break;
-            if (bytes.size() >= MAX_BYTES) throw invalid("Request exceeds 1 MiB");
+            if (bytes.size() >= MAX_REQUEST_BYTES) throw invalid("Request exceeds " + mebibytes(MAX_REQUEST_BYTES));
             bytes.write(b);
         }
         String text = StandardCharsets.UTF_8
@@ -277,18 +273,24 @@ public final class RpcServer implements AutoCloseable {
         }
     }
 
+    private static String mebibytes(int bytes) {
+        return (bytes >> 20) + " MiB";
+    }
+
     private static void send(Socket socket, JsonObject response) throws IOException {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         OutputStream bounded = new FilterOutputStream(bytes) {
             @Override
             public void write(int b) throws IOException {
-                if (bytes.size() >= MAX_BYTES) throw new IOException("Response exceeds 1 MiB");
+                if (bytes.size() >= MAX_RESPONSE_BYTES)
+                    throw new IOException("Response exceeds " + mebibytes(MAX_RESPONSE_BYTES));
                 out.write(b);
             }
 
             @Override
             public void write(byte[] b, int off, int len) throws IOException {
-                if ((long) bytes.size() + len > MAX_BYTES) throw new IOException("Response exceeds 1 MiB");
+                if ((long) bytes.size() + len > MAX_RESPONSE_BYTES)
+                    throw new IOException("Response exceeds " + mebibytes(MAX_RESPONSE_BYTES));
                 out.write(b, off, len);
             }
         };

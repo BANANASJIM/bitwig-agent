@@ -6,7 +6,8 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from bitwig_agent import client_side, diagnostics
+from bitwig_agent import diagnostics
+from bitwig_agent.core import composed
 from bitwig_agent.errors import BridgeError
 from bitwig_agent.protocol import CLIENT_SIDE, validate_call
 
@@ -43,7 +44,7 @@ def log(tmp_path, monkeypatch):
 
 def run(args=None, bridge=None):
     params, timeout = validate_call("host.diagnostics", args or {})
-    return asyncio.run(client_side.run("host.diagnostics", bridge or Bridge({"pid": 1}), params, timeout))
+    return asyncio.run(composed.run("host.diagnostics", bridge or Bridge({"pid": 1}), params, timeout))
 
 
 NOW = datetime.now().replace(microsecond=0)

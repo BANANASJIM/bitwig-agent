@@ -1,27 +1,27 @@
 package dev.bitwigagent;
 
+import static dev.bitwigagent.RpcAssert.*;
+import static org.junit.jupiter.api.Assertions.*;
+
 import com.google.gson.JsonObject;
 import java.io.IOException;
 import java.nio.file.*;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.Test;
 
 /** Host-free project.saveAs: path planning on a temporary tree and a simulated native save; not native acceptance. */
-public final class ProjectSaveAsTest {
-    private static int assertions;
+public final class ProjectModuleTest {
     private static final List<Path> temporary = new ArrayList<>();
 
-    public static void main(String[] args) throws Exception {
-        validationIsStrict();
-        planningMirrorsNativeFolderRules();
-        observedSaveNeedsCallbackFileFlagAndName();
-        refusalsAndFailuresKeepTheirOutcome();
-        missingCallbackStaysPendingAndUnknown();
+    @AfterAll
+    static void deleteTemporaryTrees() throws Exception {
         for (Path tree : temporary) delete(tree);
-        System.out.println("ProjectSaveAsTest: " + assertions + " assertions (simulated native save only)");
     }
 
-    private static void validationIsStrict() {
+    @Test
+    void validationIsStrict() {
         ProjectModule.validateParams(
                 "project.saveAs", params(TestPaths.absolute("/home/u/Bitwig Studio/Projects/Song/Song.bwproject")));
         for (String bad : List.of(
@@ -48,52 +48,49 @@ public final class ProjectSaveAsTest {
         invalid(flag, "allowAnyPath must be boolean");
         JsonObject saveExtra = new JsonObject();
         saveExtra.addProperty("path", "/p/Song/Song.bwproject");
-        try {
-            ProjectModule.validateParams("project.save", saveExtra);
-            throw new AssertionError("project.save accepted a path");
-        } catch (RpcException expected) {
-            check(expected.code.equals("invalid_params"), "project.save still takes no parameters");
+        {
+            RpcException expected =
+                    assertThrows(RpcException.class, () -> ProjectModule.validateParams("project.save", saveExtra));
+            assertTrue(expected.code.equals("invalid_params"), "project.save still takes no parameters");
         }
-        check(
-                RpcServer.maxTimeoutMs("project.saveAs") == 60000 && RpcServer.maxTimeoutMs("project.save") == 10000,
-                "only saveAs gets the long timeout");
     }
 
-    private static void planningMirrorsNativeFolderRules() throws IOException {
+    @Test
+    void planningMirrorsNativeFolderRules() throws IOException {
         Path home = temp("bwa-saveas"), root = Files.createDirectories(home.resolve("Bitwig Studio/Projects"));
         Files.createFile(root.resolve(ProjectSaveAsPlan.MARKER)); // Bitwig ignores markers in the projects root chain.
         ProjectSaveAsPlan plan =
                 ProjectSaveAsPlan.resolve(root.resolve("Song/Song.bwproject"), root, home, false, false);
-        check(
+        assertTrue(
                 plan.dispatchPath.equals(root.resolve("Song.bwproject"))
                         && plan.folder.equals(root.resolve("Song"))
                         && plan.newFolder
                         && plan.name.equals("Song")
                         && !plan.before.exists,
                 "new project is dispatched as <dir>/Name.bwproject so Bitwig creates <dir>/Name/");
-        refused(
+        assertNotApplied(
                 "invalid_target",
                 () -> ProjectSaveAsPlan.resolve(root.resolve("Song.bwproject"), root, home, false, false));
-        refused(
+        assertNotApplied(
                 "invalid_target",
                 () -> ProjectSaveAsPlan.resolve(root.resolve("Song/Other.bwproject"), root, home, false, false));
-        refused(
+        assertNotApplied(
                 "invalid_target",
                 () -> ProjectSaveAsPlan.resolve(root.resolve("Missing/Song/Song.bwproject"), root, home, false, false));
-        refused(
+        assertNotApplied(
                 "path_not_allowed",
                 () -> ProjectSaveAsPlan.resolve(home.resolve("Song/Song.bwproject"), root, home, false, false));
-        refused(
+        assertNotApplied(
                 "path_not_allowed",
                 () -> ProjectSaveAsPlan.resolve(root.resolve("Song/Song.bwproject"), null, home, false, false));
         Files.createDirectories(home.resolve("Elsewhere"));
-        check(
+        assertTrue(
                 ProjectSaveAsPlan.resolve(home.resolve("Elsewhere/Song/Song.bwproject"), root, home, false, true)
                         .newFolder,
                 "allowAnyPath lifts only the root check");
         Path outside = temp("bwa-outside");
         Files.createSymbolicLink(root.resolve("link"), outside);
-        refused(
+        assertNotApplied(
                 "path_not_allowed",
                 () -> ProjectSaveAsPlan.resolve(root.resolve("link/Song/Song.bwproject"), root, home, false, false));
 
@@ -101,61 +98,64 @@ public final class ProjectSaveAsTest {
         Files.createFile(existing.resolve(ProjectSaveAsPlan.MARKER));
         Files.createDirectories(existing.resolve("versions"));
         plan = ProjectSaveAsPlan.resolve(existing.resolve("Alt.bwproject"), root, home, false, false);
-        check(
+        assertTrue(
                 plan.dispatchPath.equals(existing.resolve("Alt.bwproject"))
                         && plan.folder.equals(existing)
                         && !plan.newFolder,
                 "inside an existing project folder the file is saved where named");
-        check(
+        assertTrue(
                 ProjectSaveAsPlan.resolve(existing.resolve("versions/V2.bwproject"), root, home, false, false)
                         .folder
                         .equals(existing),
                 "subfolders belong to the nearest marked project folder");
-        refused(
+        assertNotApplied(
                 "invalid_target",
                 () -> ProjectSaveAsPlan.resolve(existing.resolve("missing/V2.bwproject"), root, home, false, false));
         Files.write(existing.resolve("Existing.bwproject"), new byte[] {1, 2, 3});
-        refused(
+        assertNotApplied(
                 "target_exists",
                 () -> ProjectSaveAsPlan.resolve(existing.resolve("Existing.bwproject"), root, home, false, false));
         plan = ProjectSaveAsPlan.resolve(existing.resolve("Existing.bwproject"), root, home, true, false);
-        check(plan.before.exists && plan.before.size == 3, "overwrite records the previous file for change detection");
+        assertTrue(
+                plan.before.exists && plan.before.size == 3,
+                "overwrite records the previous file for change detection");
 
         Files.createDirectories(root.resolve("Empty"));
         plan = ProjectSaveAsPlan.resolve(root.resolve("Empty/Empty.bwproject"), root, home, false, false);
-        check(
+        assertTrue(
                 !plan.newFolder && plan.dispatchPath.equals(root.resolve("Empty.bwproject")),
                 "an empty unmarked folder is adopted like Bitwig does");
         Files.createDirectories(root.resolve("Busy"));
         Files.createFile(root.resolve("Busy/notes.txt"));
-        refused(
+        assertNotApplied(
                 "target_exists",
                 () -> ProjectSaveAsPlan.resolve(root.resolve("Busy/Busy.bwproject"), root, home, true, false));
 
         Path stray = Files.createFile(home.resolve("Bitwig Studio").resolve(ProjectSaveAsPlan.MARKER));
-        refused(
+        assertNotApplied(
                 "invalid_target",
                 () -> ProjectSaveAsPlan.resolve(root.resolve("Fresh/Fresh.bwproject"), root, home, false, false));
         Files.delete(stray);
 
         ProjectSaveAsPlan.Stat none = ProjectSaveAsPlan.Stat.of(root.resolve("nothing.bwproject"));
         Path written = Files.write(root.resolve("w.bwproject"), new byte[] {1});
-        check(
+        assertTrue(
                 ProjectSaveAsPlan.Stat.of(written).writtenSince(none)
                         && !ProjectSaveAsPlan.Stat.of(written).writtenSince(ProjectSaveAsPlan.Stat.of(written)),
                 "a file counts as written only if new or changed and nonempty");
     }
 
-    private static void observedSaveNeedsCallbackFileFlagAndName() throws IOException {
+    @Test
+    void observedSaveNeedsCallbackFileFlagAndName() throws IOException {
         Sim sim = new Sim();
         sim.fixture.project.child("isModified").emit(true);
         HostOperation op = sim.start(sim.root.resolve("Song/Song.bwproject"), false);
         sim.drain();
         JsonObject result = op.result.join();
-        check(
+        assertTrue(
                 sim.dispatches == 1 && sim.dispatched.equals(sim.root.resolve("Song.bwproject")),
                 "one dispatch at the planned native path");
-        check(
+        assertTrue(
                 result.get("status").getAsString().equals("observed")
                         && result.get("saved").getAsBoolean()
                         && result.get("createdProjectFolder").getAsBoolean()
@@ -163,18 +163,18 @@ public final class ProjectSaveAsTest {
                         && result.get("projectName").getAsString().equals("Song")
                         && result.get("fileBytes").getAsLong() > 0,
                 "saved only with callback, written file, isModified=false and the new name");
-        check(sim.module.unresolved().isEmpty(), "completed callback leaves nothing pending");
+        assertTrue(sim.module.unresolved().isEmpty(), "completed callback leaves nothing pending");
         HostOperation again = sim.start(sim.root.resolve("Song/Song.bwproject"), false);
         sim.drain();
-        TransportMixFixture.error(again, "target_exists");
-        check(sim.dispatches == 1, "existing target is refused before dispatch");
+        assertRpcError("target_exists", again);
+        assertTrue(sim.dispatches == 1, "existing target is refused before dispatch");
         // Name must change too: a stale name keeps the result unobserved.
         Sim stale = new Sim();
         stale.renames = false;
         op = stale.start(stale.root.resolve("Other/Other.bwproject"), false, 150);
         stale.drainUntil(op);
         result = op.result.join();
-        check(
+        assertTrue(
                 result.get("status").getAsString().equals("dispatched")
                         && result.get("outcome").getAsString().equals("unknown")
                         && result.get("nativeCompletion").getAsString().equals("completed")
@@ -182,52 +182,54 @@ public final class ProjectSaveAsTest {
                 "completion without the expected project name is not reported saved");
     }
 
-    private static void refusalsAndFailuresKeepTheirOutcome() throws IOException {
+    @Test
+    void refusalsAndFailuresKeepTheirOutcome() throws IOException {
         Sim refused = new Sim();
         refused.refusal = "Project is already in the process of being saved";
         HostOperation op = refused.start(refused.root.resolve("Song/Song.bwproject"), false);
         refused.drain();
-        RpcException error = TransportMixFixture.error(op, "save_refused");
-        check(
+        RpcException error = assertRpcError("save_refused", op);
+        assertTrue(
                 error.outcome.equals("not_applied") && error.getMessage().contains("already"),
                 "native refusal is not_applied with its message");
         Sim failed = new Sim();
         failed.failure = "IOException: disk full";
         op = failed.start(failed.root.resolve("Song/Song.bwproject"), false);
         failed.drain();
-        error = TransportMixFixture.error(op, "save_failed");
-        check(
+        error = assertRpcError("save_failed", op);
+        assertTrue(
                 error.outcome.equals("unknown") && error.getMessage().contains("disk full"),
                 "native failure after the job started is unknown");
-        check(failed.module.unresolved().isEmpty(), "a failure callback also ends the pending state");
+        assertTrue(failed.module.unresolved().isEmpty(), "a failure callback also ends the pending state");
     }
 
-    private static void missingCallbackStaysPendingAndUnknown() throws IOException {
+    @Test
+    void missingCallbackStaysPendingAndUnknown() throws IOException {
         Sim silent = new Sim();
         silent.silent = true;
         HostOperation op = silent.start(silent.root.resolve("Song/Song.bwproject"), false, 150);
         silent.drainUntil(op);
         JsonObject result = op.result.join();
-        check(
+        assertTrue(
                 result.get("outcome").getAsString().equals("unknown")
                         && result.get("nativeCompletion").getAsString().equals("pending"),
                 "no callback within the deadline is unknown, never retried");
-        check(
+        assertTrue(
                 silent.dispatches == 1 && silent.module.unresolved().size() == 1,
                 "pending native save is listed as unresolved");
         HostOperation busy = silent.start(silent.root.resolve("Again/Again.bwproject"), false);
         silent.drain();
-        TransportMixFixture.error(busy, "busy");
+        assertRpcError("busy", busy);
         HostOperation save = silent.fixture.submit(silent.module, "project.save", new JsonObject());
         silent.drain();
-        TransportMixFixture.error(save, "busy");
+        assertRpcError("busy", save);
         silent.late.completed();
-        check(silent.module.unresolved().isEmpty(), "a late callback clears the pending state");
+        assertTrue(silent.module.unresolved().isEmpty(), "a late callback clears the pending state");
     }
 
     /** Simulated native side: Bitwig's observable effects of a save, or a refusal/failure callback. */
     private static final class Sim {
-        final TransportMixFixture fixture = new TransportMixFixture();
+        final HostFixture fixture = new HostFixture();
         final Deque<Runnable> document = new ArrayDeque<>();
         final Path home, root;
         final ProjectModule module;
@@ -334,25 +336,6 @@ public final class ProjectSaveAsTest {
     }
 
     private static void invalid(JsonObject params, String label) {
-        try {
-            ProjectModule.validateParams("project.saveAs", params);
-            throw new AssertionError("accepted " + label);
-        } catch (RpcException error) {
-            check(error.code.equals("invalid_params"), "invalid: " + label);
-        }
-    }
-
-    private static void refused(String code, Runnable action) {
-        try {
-            action.run();
-            throw new AssertionError("expected " + code);
-        } catch (RpcException error) {
-            check(error.code.equals(code) && error.outcome.equals("not_applied"), code + ": " + error.getMessage());
-        }
-    }
-
-    private static void check(boolean value, String message) {
-        assertions++;
-        if (!value) throw new AssertionError(message);
+        assertRpcError("invalid_params", () -> ProjectModule.validateParams("project.saveAs", params));
     }
 }

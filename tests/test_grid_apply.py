@@ -8,12 +8,12 @@ from datetime import datetime
 from typing import Any
 
 import pytest
-from fakes import SPEC, TARGET, FakeGrid, apply_grid
+from fakes import SPEC, TARGET, FakeGrid, apply_grid, parse_arguments
 from pydantic import ValidationError
 
-from bitwig_agent import grid_apply, raw_scales
-from bitwig_agent.cli import parse_arguments
+from bitwig_agent import raw_scales
 from bitwig_agent.errors import BridgeError
+from bitwig_agent.grid import bundled, display, execute, layout, problems, values
 from bitwig_agent.protocol import validate_call
 
 
@@ -75,7 +75,7 @@ def test_topology_writes_get_the_long_timeout():
 
 def test_insert_batches_shrink_when_entries_are_slow(monkeypatch):
     host = FakeGrid()
-    monkeypatch.setattr(grid_apply, "monotonic", lambda: host.now)
+    monkeypatch.setattr(execute, "monotonic", lambda: host.now)
     host.insert_seconds = 2.0  # 16 entries x 2 s = 32 s > 25% of the 60 s timeout
     spec = {"target": TARGET, "modules": [{"name": f"M{i}", "type": "Add", "x": i * 3, "y": 0} for i in range(30)]}
     assert apply_grid(host, spec)["applied"]["inserted"] == 30
@@ -84,7 +84,7 @@ def test_insert_batches_shrink_when_entries_are_slow(monkeypatch):
 
 def test_insert_batches_start_halved_on_a_large_graph():
     host = FakeGrid()
-    for i in range(grid_apply.LARGE_GRAPH_MODULES):
+    for i in range(execute.LARGE_GRAPH_MODULES):
         host.add("Add", f"other {i}", x=i * 3, y=40)
     spec = {"target": TARGET, "modules": [{"name": f"M{i}", "type": "Add", "x": i * 3, "y": 0} for i in range(20)]}
     assert apply_grid(host, spec)["applied"]["inserted"] == 20
@@ -93,10 +93,10 @@ def test_insert_batches_start_halved_on_a_large_graph():
 
 def test_next_insert_batch_uses_slowest_entry_and_host_time_stops():
     applied = [{"status": "applied"}] * 4
-    assert grid_apply.next_insert_batch(16, 0.04, {"modules": applied}) == 16
-    assert grid_apply.next_insert_batch(16, 0.04, {"modules": applied, "slowestEntryMs": 5000}) == 3
+    assert execute.next_insert_batch(16, 0.04, {"modules": applied}) == 16
+    assert execute.next_insert_batch(16, 0.04, {"modules": applied, "slowestEntryMs": 5000}) == 3
     cut = {"modules": applied + [{"status": "not_dispatched"}] * 4, "stopReason": "deadline_margin"}
-    assert grid_apply.next_insert_batch(8, 0.04, cut) == 4
+    assert execute.next_insert_batch(8, 0.04, cut) == 4
 
 
 def test_param_change_only():
@@ -332,10 +332,10 @@ def test_schema_and_cli_surface(tmp_path):
 
 
 def test_display_comparison_uses_live_precision():
-    assert grid_apply.display_matches("1.2 kHz", "1.20 kHz", "hertz")
-    assert grid_apply.display_matches("1200 Hz", "1.20 kHz", "hertz")
-    assert not grid_apply.display_matches("1.2 kHz", "1.19 kHz", "hertz")
-    assert not grid_apply.display_matches("50 %", None, "percent")
+    assert display.display_matches("1.2 kHz", "1.20 kHz", "hertz")
+    assert display.display_matches("1200 Hz", "1.20 kHz", "hertz")
+    assert not display.display_matches("1.2 kHz", "1.19 kHz", "hertz")
+    assert not display.display_matches("50 %", None, "percent")
 
 
 def test_partial_insert_batch_still_names_what_landed_and_reapply_converges():
@@ -418,7 +418,7 @@ def test_zero_default_display_is_rejected_offline_but_raw_value_works():
 
 
 def parsed_quantity(unit, text):
-    result = grid_apply.parse_quantity(unit, text)
+    result = display.parse_quantity(unit, text)
     assert result is not None
     return result
 
@@ -429,7 +429,7 @@ def test_display_parser_accepts_sign_unicode_minus_and_leading_dot():
     assert q("decibel", "\u22126 dB")[0] == -6
     assert q("percent", ".5 %")[0] == 0.5
     assert q("hertz", "1.2 kHz")[0] == 1200
-    assert grid_apply.display_matches("+6.2 dB", "6.20 dB", "decibel")
+    assert display.display_matches("+6.2 dB", "6.20 dB", "decibel")
 
 
 def test_overlapping_spec_layout_is_rejected_offline():
@@ -539,10 +539,10 @@ def test_park_spot_is_always_free_and_converges():
 
 def test_order_moves_is_bounded_on_impossible_layouts():
     size = {"A": (3, 1), "B": (3, 1)}
-    plan = grid_apply.order_moves({"A": (0, 0), "B": (3, 0)}, {"A": (3, 0), "B": (0, 0)}, size, [])
+    plan = layout.order_moves({"A": (0, 0), "B": (3, 0)}, {"A": (3, 0), "B": (0, 0)}, size, [])
     assert len(plan) <= 4
-    with pytest.raises(grid_apply.SpecError):  # the target is blocked by an unmovable module
-        grid_apply.order_moves({"A": (0, 0)}, {"A": (5, 0)}, {"A": (1, 1)}, [(5, 0, 1, 1)])
+    with pytest.raises(problems.SpecError):  # the target is blocked by an unmovable module
+        layout.order_moves({"A": (0, 0)}, {"A": (5, 0)}, {"A": (1, 1)}, [(5, 0, 1, 1)])
 
 
 def test_host_capabilities_bound_the_spec_and_block_quarantined_topology():
@@ -553,12 +553,21 @@ def test_host_capabilities_bound_the_spec_and_block_quarantined_topology():
         apply_grid(host, spec)
     assert "host limit is 3" in err.value.error["message"]
     assert host.writes() == []
-    host.caps_extra = {"moduleInsert": {"available": True, "maximumModules": 8, "topologyQuarantined": True}}
+    quarantined = {"origin": "native_failure", "trackId": TARGET["trackId"], "device": TARGET["trackId"] + "/1"}
+    host.caps_extra = {"topologyQuarantine": {"state": "quarantined", "devices": [quarantined]}}
     with pytest.raises(BridgeError) as err:
         apply_grid(host, spec)
-    assert "topologyQuarantined" in err.value.error["message"]
+    assert "grid.topology.reconcile" in err.value.error["message"]
     assert host.writes() == []
     assert apply_grid(host, spec, dryRun=True)["status"] == "dryRun"
+    other = {**quarantined, "trackId": "22222222-2222-2222-2222-222222222222"}
+    host.caps_extra = {"topologyQuarantine": {"state": "quarantined", "devices": [other]}}
+    assert apply_grid(host, spec)["status"] == "applied"
+    host = FakeGrid()
+    host.caps_extra = {"topologyAdmissionBlocked": True}
+    with pytest.raises(BridgeError) as err:
+        apply_grid(host, spec)
+    assert "pending" in err.value.error["message"]
     host.caps_extra = {"moduleInsert": {"available": False}}
     with pytest.raises(BridgeError):
         apply_grid(host, spec)
@@ -588,7 +597,7 @@ def test_unchanged_spec_reads_only_what_it_needs():
 
 
 def test_display_grammar_matches_the_host_trim_and_ascii_digits():
-    q = grid_apply.parse_quantity
+    q = display.parse_quantity
     assert q("decibel", "\u00a06 dB") is None
     assert q("decibel", "٣ dB") is None
     assert parsed_quantity("decibel", " 6 dB\t")[0] == 6
@@ -736,9 +745,9 @@ def test_notes_and_pitch_mod_warning():
 
 
 def test_notes_file_is_value_free_and_covers_catalog_types():
-    notes = grid_apply.measured_notes()
+    notes = bundled.measured_notes()
     assert notes["hostVersion"] == "6.1.4"
-    assert set(notes["modules"]) <= set(grid_apply.bundled_schema()["modules"])
+    assert set(notes["modules"]) <= set(bundled.bundled_schema()["modules"])
 
 
 # --- seconds display writes ----------------------------------------------------------------------------------
@@ -803,7 +812,7 @@ def test_unverified_seconds_display_is_rejected_offline(module, param, text):
 
 
 def test_seconds_table_matches_bundled_schema_and_nothing_else_fits():
-    schema = grid_apply.bundled_schema()["modules"]
+    schema = bundled.bundled_schema()["modules"]
     seen = set()
     for name, info in schema.items():
         for p in info["parameters"]:
@@ -813,33 +822,25 @@ def test_seconds_table_matches_bundled_schema_and_nothing_else_fits():
             shown = parsed_quantity("seconds", p["defaultDisplay"])
             fits = [
                 k
-                for k, (_, from_raw) in grid_apply.SECONDS_SCALES.items()
+                for k, (_, from_raw) in display.SECONDS_SCALES.items()
                 if abs(from_raw(p["default"]) - shown[0]) <= shown[1] * 1.000001
             ]
-            args = (
-                key[1],
-                p["defaultDisplay"],
-                "seconds",
-                p["default"],
-                p["defaultDisplay"],
-                p["minimum"],
-                p["maximum"],
-                name,
-            )
-            if key in grid_apply.SECONDS_PARAMS:
-                mapping, raw, display = grid_apply.SECONDS_PARAMS[key]
+            basis = display.DisplayBasis("seconds", p["default"], p["defaultDisplay"], p["minimum"], p["maximum"])
+            args = (key[1], p["defaultDisplay"], basis, name)
+            if key in display.SECONDS_PARAMS:
+                mapping, raw, default_display = display.SECONDS_PARAMS[key]
                 seen.add(key)
                 assert fits == [mapping]
-                assert display == p["defaultDisplay"]
+                assert default_display == p["defaultDisplay"]
                 assert abs(raw - p["default"]) < 1e-4
-                assert grid_apply.check_display(*args) == pytest.approx(p["default"], abs=0.01)
+                assert display.check_display(*args) == pytest.approx(p["default"], abs=0.01)
             elif key in raw_scales.RAW_SCALES:  # linear seconds: covered by test_raw_scales
                 continue
             else:  # not writable by display: no mapping fits, or the only fit is the ambiguous raw 1.0
                 assert fits == [] or p["default"] == 1.0, key
-                with pytest.raises(grid_apply.SpecError):
-                    grid_apply.check_display(*args)
-    assert seen == set(grid_apply.SECONDS_PARAMS)
+                with pytest.raises(problems.SpecError):
+                    display.check_display(*args)
+    assert seen == set(display.SECONDS_PARAMS)
     assert {"AD", "ADSR", "Logic Delay", "Gate Length"} <= {n for n, _ in seen}
 
 
@@ -1020,7 +1021,7 @@ def test_steps_are_written_with_prefix_cas_and_idempotent():
     spec = steps_spec([1, 0, 0.5, 0.1])
     result = apply_grid(host, spec)
     assert result["status"] == "applied"
-    assert host.param("S", "DATA")[:5] == [1.0, 0.0, 0.5, grid_apply.f32(0.1), 0.0]
+    assert host.param("S", "DATA")[:5] == [1.0, 0.0, 0.5, values.f32(0.1), 0.0]
     sent = [c for m, c in host.calls if m == "grid.parameters.set"]
     entry = next(w for c in sent for w in c["writes"] if w["expectedKind"] == "steps")
     assert entry["expectedValues"] == [0.0] * 4

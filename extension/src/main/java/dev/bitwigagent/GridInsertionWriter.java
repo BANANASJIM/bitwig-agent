@@ -29,7 +29,6 @@ final class GridInsertionWriter {
         void execute(Runnable event);
     }
 
-    static final int MAX_BATCH = 16;
     /** Exactly one of typeId or typeName; typeName is resolved against the native catalog before anything is loaded. */
     static final class Request {
         final UUID typeId;
@@ -66,11 +65,8 @@ final class GridInsertionWriter {
 
         static List<Request> parseBatch(JsonObject p) {
             JsonElement modules = p.get("modules");
-            if (!modules.isJsonArray()
-                    || modules.getAsJsonArray().size() < 1
-                    || modules.getAsJsonArray().size() > MAX_BATCH)
-                throw Errors.notApplied(
-                        ErrorCode.INVALID_PARAMS, "modules must be an array of 1.." + MAX_BATCH + " insertions.");
+            if (!modules.isJsonArray() || modules.getAsJsonArray().size() < 1)
+                throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "modules must be a non-empty array of insertions.");
             List<Request> out = new ArrayList<>();
             for (JsonElement element : modules.getAsJsonArray()) {
                 if (!element.isJsonObject())
@@ -115,12 +111,13 @@ final class GridInsertionWriter {
             Runnable dispatch,
             Consumer<JsonObject> complete,
             Consumer<Throwable> fail) {
-        quarantine.requireAvailable();
         values.documentThread();
         check.run();
         Request request = resolveNames(List.of(given), check).get(0);
         requireKnownModule(request.typeId, check);
         GridSnapshotReader.NativeTarget target = snapshots.target(proxy, trackId);
+        String device = GridTopologyQuarantine.device(trackId, target.graph);
+        quarantine.requireAvailable(device);
         Layout before = layout(target.graph, check);
         before.capacity();
         before.bounds(null);
@@ -131,7 +128,7 @@ final class GridInsertionWriter {
         check.run();
         JsonObject graphBefore =
                 snapshots.snapshot(proxy, trackId, 0, GridTopologyContext.MAX_MODULES, false, false, null, check);
-        String owner = quarantine.reserve();
+        String owner = quarantine.reserve(device);
         Lifetime lifetime =
                 new Lifetime(owner, proxy, trackId, request, target, before, context, check, complete, fail);
         lifetime.graphBefore = graphBefore;
@@ -273,11 +270,12 @@ final class GridInsertionWriter {
             Runnable dispatch,
             Consumer<JsonObject> complete,
             Consumer<Throwable> fail) {
-        quarantine.requireAvailable();
         values.documentThread();
         check.run();
         List<Request> requests = resolveNames(given, check);
         GridSnapshotReader.NativeTarget target = snapshots.target(proxy, trackId);
+        String device = GridTopologyQuarantine.device(trackId, target.graph);
+        quarantine.requireAvailable(device);
         Layout before = layout(target.graph, check);
         before.capacity(requests.size());
         before.requested(requests);
@@ -486,6 +484,7 @@ final class GridInsertionWriter {
         final String owner;
         final Object proxy;
         final UUID trackId;
+        final String device;
         final Request request;
         final GridSnapshotReader.NativeTarget target;
         final Layout before;
@@ -513,6 +512,7 @@ final class GridInsertionWriter {
             this.owner = owner;
             this.proxy = proxy;
             this.trackId = trackId;
+            this.device = GridTopologyQuarantine.device(trackId, target.graph);
             this.request = request;
             this.target = target;
             this.before = before;
@@ -628,7 +628,7 @@ final class GridInsertionWriter {
         private void poison(Throwable error) {
             lifecycleError = error;
             try {
-                quarantine.poison(detail(GridTopologyQuarantine.NATIVE, error));
+                quarantine.poison(owner, device, detail(error));
             } catch (Throwable guardError) {
                 lifecycleError = guardError;
             } // Guard itself retains inaccessible/fail-closed state.
@@ -639,8 +639,7 @@ final class GridInsertionWriter {
          */
         private void mismatch(Throwable error) {
             try {
-                if (!quarantine.mismatch(owner, detail(GridTopologyQuarantine.SETTLEMENT, error)))
-                    lifecycleError = error;
+                if (!quarantine.mismatch(owner, device, detail(error))) lifecycleError = error;
             } catch (Throwable guardError) {
                 lifecycleError = guardError;
             }
@@ -651,12 +650,9 @@ final class GridInsertionWriter {
             }
         }
 
-        private String detail(String origin, Throwable error) {
+        private JsonObject detail(Throwable error) {
             JsonObject d = new JsonObject();
-            d.addProperty("origin", origin);
             d.addProperty("operation", "insert");
-            d.addProperty("trackId", trackId.toString());
-            d.addProperty("device", deviceToken(target.graph));
             d.addProperty("typeId", request.typeId.toString());
             d.add("requestedPosition", GridModuleWriter.position(request.x, request.y));
             if (incoming != null) d.addProperty("moduleId", incoming.id.toString());
@@ -672,7 +668,7 @@ final class GridInsertionWriter {
             String message = String.valueOf(error.getMessage());
             why.addProperty("message", message.substring(0, Math.min(message.length(), 512)));
             d.add("error", why);
-            return d.toString();
+            return d;
         }
 
         private void notifyFailure(Throwable error) {
@@ -767,10 +763,6 @@ final class GridInsertionWriter {
             ErrorCode.STALE_CONTEXT,
             ErrorCode.UNSAFE_STATE,
             ErrorCode.GRID_BOUNDS_EXCEEDED);
-    /** JVM-lifetime identity of a native Grid graph, so reconcile re-reads the same device, not just the same track. */
-    static String deviceToken(Object graph) {
-        return Integer.toHexString(System.identityHashCode(graph));
-    }
 
     static boolean settlementMismatch(Throwable error) {
         return error instanceof RpcException
@@ -779,17 +771,19 @@ final class GridInsertionWriter {
     }
 
     /**
-     * Releases a settlement-mismatch quarantine only after re-reading the recorded device: every module mapped with a
-     * unique UUID and valid footprint, a complete bounded graph, idle topology context and no pending native placement.
-     * Native-failure and pending states are reported, never released. Reads only; nothing native is invoked.
+     * Releases the quarantine of this one device (native failure or settlement mismatch) after re-reading it: every
+     * module mapped with a unique UUID and valid footprint, a complete bounded graph, idle topology context and no
+     * pending native placement. Reads only; nothing native is invoked and no other device is affected.
      */
     JsonObject reconcile(Object proxy, UUID trackId, Runnable check) {
         values.documentThread();
         check.run();
-        String origin = quarantine.origin(), detail = quarantine.detail();
+        GridSnapshotReader.NativeTarget target = snapshots.target(proxy, trackId);
+        String device = GridTopologyQuarantine.device(trackId, target.graph);
+        String origin = quarantine.origin(device), detail = quarantine.detail(device);
         JsonObject result = HostServices.observed();
         result.addProperty("operation", "topology_reconcile");
-        result.addProperty("quarantineBefore", origin == null ? "idle" : origin);
+        result.addProperty("quarantineBefore", origin == null ? "none" : origin);
         JsonObject recorded = null;
         try {
             if (detail != null) recorded = JsonParser.parseString(detail).getAsJsonObject();
@@ -797,33 +791,8 @@ final class GridInsertionWriter {
             recorded = null;
         }
         if (recorded != null) result.add("recorded", recorded);
-        String refusal0 = origin == null
-                ? "Topology admission is not quarantined; nothing to release."
-                : "pending".equals(origin)
-                        ? "A native insertion callback is still outstanding; it settles by itself, reconcile cannot cancel it."
-                        : !GridTopologyQuarantine.SETTLEMENT.equals(origin)
-                                ? "Native-failure quarantine needs a full Bitwig restart; reconcile does not release it."
-                                : recorded == null || !recorded.has("trackId")
-                                        ? "Quarantine detail is missing or malformed; staying quarantined."
-                                        : !trackId.toString()
-                                                        .equals(recorded.get("trackId")
-                                                                .getAsString())
-                                                ? "Quarantine was recorded on track "
-                                                        + recorded.get("trackId")
-                                                                .getAsString() + "; reconcile that device."
-                                                : null;
-        String refusal = refusal0;
-        boolean ours = refusal == null; // Otherwise still verify and report the given device, but never release.
         JsonObject found = new JsonObject();
         try {
-            GridSnapshotReader.NativeTarget target = snapshots.target(proxy, trackId);
-            if (ours
-                    && (!recorded.has("device")
-                            || !deviceToken(target.graph)
-                                    .equals(recorded.get("device").getAsString()))) {
-                ours = false;
-                refusal = "Quarantine was recorded on another Grid device of this track; reconcile that device.";
-            }
             Layout now = layout(target.graph, check);
             contexts.capture(target.target, target.graph, now.modules, null, check);
             nativeWriter.requirePlacementReady(target.graph);
@@ -832,11 +801,11 @@ final class GridInsertionWriter {
             now.same(layout(target.graph, check));
             snapshots.guardTarget(target, proxy, trackId);
             found.addProperty("moduleCount", now.rows.size());
-            if (ours && recorded.has("modulesBefore"))
+            if (recorded != null && recorded.has("modulesBefore"))
                 found.addProperty("modulesBefore", recorded.get("modulesBefore").getAsInt());
             found.addProperty(
                     "connectionCount", graph.getAsJsonArray("connections").size());
-            if (ours && recorded.has("moduleId")) {
+            if (recorded != null && recorded.has("moduleId")) {
                 Row module = now.find(UUID.fromString(recorded.get("moduleId").getAsString()));
                 JsonObject late = new JsonObject();
                 late.addProperty("moduleId", recorded.get("moduleId").getAsString());
@@ -862,23 +831,27 @@ final class GridInsertionWriter {
             found.add("inconsistency", why);
             result.add("found", found);
             result.addProperty("released", false);
-            result.addProperty("reason", ours ? "Graph is not consistent; staying quarantined." : refusal);
+            result.addProperty(
+                    "reason",
+                    origin == null
+                            ? "Graph is not consistent."
+                            : "Graph is not consistent; the device stays quarantined.");
             return result;
         }
         result.add("found", found);
-        if (!ours) {
+        if (origin == null) {
             result.addProperty("released", false);
-            result.addProperty("reason", refusal);
+            result.addProperty("reason", "This device is not quarantined; nothing to release.");
             return result;
         }
         check.run();
-        boolean released = quarantine.reconcile(detail);
+        boolean released = quarantine.reconcile(device, detail);
         result.addProperty("released", released);
         if (!released) result.addProperty("reason", "Quarantine state changed during reconcile; staying as it is.");
         result.addProperty(
                 "next",
                 released
-                        ? "Topology writes are admitted again; read with grid.get before the next write."
+                        ? "Topology writes on this device are admitted again; read with grid.get before the next write."
                         : "Inspect grid.capabilities.");
         return result;
     }

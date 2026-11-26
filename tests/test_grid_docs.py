@@ -7,9 +7,9 @@ from typing import Any
 
 import pytest
 
-from bitwig_agent import grid_docs
-from bitwig_agent.cli import execute
-from bitwig_agent.grid_apply import bundled_schema
+from bitwig_agent.frontends.cli import execute
+from bitwig_agent.grid import docs as grid_docs
+from bitwig_agent.grid.bundled import bundled_schema
 from bitwig_agent.protocol import validate_call
 
 REAL_ROOT = Path("/opt/bitwig-studio")

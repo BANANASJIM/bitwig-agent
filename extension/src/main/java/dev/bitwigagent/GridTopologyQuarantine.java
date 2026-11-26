@@ -1,26 +1,25 @@
 package dev.bitwigagent;
 
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Properties;
 import java.util.UUID;
 import java.util.function.Supplier;
 
 /**
  * String-only process coordination; no extension/native objects survive in System properties.
- * Two quarantine kinds: native failure (sticky until JVM restart) and settlement mismatch (the native lifetime
- * finished but its later graph check disagreed; only an explicit reconcile that re-verifies the graph releases it).
+ * One marker serializes native topology lifetimes (idle or pending owner). A failed or unverified topology edit
+ * quarantines only the Grid device it touched, as one String record per device; other devices keep working.
+ * A record survives extension replacement and is released only by an explicit {@link #reconcile} after re-verification.
  */
 final class GridTopologyQuarantine {
     static final String KEY = "dev.bitwigagent.grid.topology.native-lifetime.v1";
-    /** Bounded JSON describing why the marker is quarantined (origin, operation, target, error); diagnostic only. */
-    static final String DETAIL_KEY = KEY + ".detail";
-
-    static final int MAX_DETAIL = 4096;
+    static final String DEVICE_PREFIX = KEY + ".device.";
     static final String NATIVE = "native_failure", SETTLEMENT = "settlement_mismatch";
-    private static final String IDLE = "v1:idle",
-            PENDING = "v1:pending:",
-            POISONED = "v1:quarantined",
-            MISMATCH = "v1:quarantined:settlement";
+    private static final String IDLE = "v1:idle", PENDING = "v1:pending:";
     private final Supplier<Properties> properties;
     private volatile boolean inaccessible;
 
@@ -34,6 +33,11 @@ final class GridTopologyQuarantine {
 
     GridTopologyQuarantine(Supplier<Properties> properties) {
         this.properties = properties;
+    }
+
+    /** Identity of one native Grid device for the lifetime of the JVM. */
+    static String device(UUID trackId, Object graph) {
+        return trackId + "/" + Integer.toHexString(System.identityHashCode(graph));
     }
 
     private Properties properties() {
@@ -57,7 +61,7 @@ final class GridTopologyQuarantine {
             }
             if (!(value instanceof String)) throw new IllegalStateException("Non-string topology marker");
             String text = (String) value;
-            if (IDLE.equals(text) || POISONED.equals(text) || MISMATCH.equals(text)) return text;
+            if (IDLE.equals(text)) return text;
             if (text.startsWith(PENDING)
                     && text.substring(PENDING.length())
                             .matches("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")) return text;
@@ -77,80 +81,174 @@ final class GridTopologyQuarantine {
         }
     }
 
-    private void detail(Properties p, String detail) {
+    private String record(Properties p, String device) {
         try {
-            if (detail == null) p.remove(DETAIL_KEY);
-            else p.setProperty(DETAIL_KEY, detail.length() > MAX_DETAIL ? detail.substring(0, MAX_DETAIL) : detail);
-        } catch (RuntimeException ignored) {
-            /* Diagnostic only; the marker alone decides admission. */
+            Object value = p.get(DEVICE_PREFIX + device);
+            return value == null ? null : value instanceof String ? (String) value : "{}";
+        } catch (RuntimeException error) {
+            inaccessible = true;
+            throw unavailable();
         }
     }
 
+    private void quarantine(Properties p, String device, String origin, JsonObject detail) {
+        JsonObject record = detail == null ? new JsonObject() : detail.deepCopy();
+        record.addProperty("origin", origin);
+        record.addProperty("device", device);
+        record.addProperty("trackId", device.substring(0, device.indexOf('/')));
+        try {
+            p.setProperty(DEVICE_PREFIX + device, record.toString());
+        } catch (RuntimeException error) {
+            inaccessible = true;
+            throw unavailable();
+        }
+    }
+
+    private static String originOf(String record) {
+        try {
+            JsonElement origin =
+                    JsonParser.parseString(record).getAsJsonObject().get("origin");
+            return origin != null && SETTLEMENT.equals(origin.getAsString()) ? SETTLEMENT : NATIVE;
+        } catch (RuntimeException malformed) {
+            return NATIVE;
+        }
+    }
+
+    private static String deviceBlocked(String record) {
+        return "This Grid device is quarantined (" + originOf(record)
+                + "): a topology edit on it ended with an unknown outcome. Other devices and domains keep working and project.save is allowed. "
+                + "Inspect with grid.get, then call grid.topology.reconcile on this device to release it; do not retry or assume rollback.";
+    }
+
+    private String pendingReason(Properties p) {
+        return state(p).startsWith(PENDING)
+                ? "A native Grid topology lifetime is pending; timeout/disconnection is not cancellation. A late native callback settles it; missing settlement requires full Bitwig JVM restart."
+                : null;
+    }
+
+    /** Process-level reason topology writes are blocked on every device (pending lifetime, bad marker), or null. */
     String blockedReason() {
         try {
             Properties p = properties();
             synchronized (p) {
-                String state = state(p);
-                if (IDLE.equals(state)) return null;
-                if (MISMATCH.equals(state))
-                    return "Grid topology is quarantined: an insertion's native callbacks returned but its later graph check disagreed. "
-                            + "Inspect with grid.get, then call grid.topology.reconcile on that device; it releases once the graph is consistent and nothing native is pending, no restart needed.";
-                return state.startsWith(PENDING)
-                        ? "A native Grid topology lifetime is pending; timeout/disconnection is not cancellation. A late native callback settles it; missing settlement requires full Bitwig JVM restart."
-                        : "Grid topology is process-quarantined after a native lifecycle failure; fully restart Bitwig and inspect state, do not retry or assume rollback.";
+                return pendingReason(p);
             }
         } catch (RpcException error) {
             return error.getMessage();
         }
     }
 
+    String blockedReason(String device) {
+        try {
+            Properties p = properties();
+            synchronized (p) {
+                String pending = pendingReason(p), record = record(p, device);
+                return pending != null ? pending : record == null ? null : deviceBlocked(record);
+            }
+        } catch (RpcException error) {
+            return error.getMessage();
+        }
+    }
+
+    /** Every quarantined device (origin, device, trackId and the recorded detail); empty if the marker is inaccessible. */
+    List<JsonObject> quarantinedDevices() {
+        List<JsonObject> out = new ArrayList<>();
+        try {
+            Properties p = properties();
+            synchronized (p) {
+                state(p);
+                for (Object key : new ArrayList<>(p.keySet())) {
+                    if (!(key instanceof String) || !((String) key).startsWith(DEVICE_PREFIX)) continue;
+                    String device = ((String) key).substring(DEVICE_PREFIX.length());
+                    try {
+                        out.add(JsonParser.parseString(record(p, device)).getAsJsonObject());
+                    } catch (RuntimeException malformed) {
+                        JsonObject fallback = new JsonObject();
+                        fallback.addProperty("origin", NATIVE);
+                        fallback.addProperty("device", device);
+                        out.add(fallback);
+                    }
+                }
+            }
+        } catch (RpcException ignored) {
+            /* Reported through blockedReason(). */
+        }
+        return out;
+    }
+
+    /** True if any device is quarantined or the marker is unreadable. */
     boolean quarantined() {
         try {
             Properties p = properties();
             synchronized (p) {
-                String state = state(p);
-                return POISONED.equals(state) || MISMATCH.equals(state);
+                state(p);
+            }
+        } catch (RpcException error) {
+            return true;
+        }
+        return !quarantinedDevices().isEmpty();
+    }
+
+    boolean quarantined(String device) {
+        try {
+            Properties p = properties();
+            synchronized (p) {
+                state(p);
+                return record(p, device) != null;
             }
         } catch (RpcException error) {
             return true;
         }
     }
-    /** null (idle), "pending", NATIVE or SETTLEMENT; malformed/inaccessible reads as NATIVE. */
-    String origin() {
+
+    boolean pending() {
         try {
             Properties p = properties();
             synchronized (p) {
-                String state = state(p);
-                return IDLE.equals(state)
-                        ? null
-                        : state.startsWith(PENDING) ? "pending" : MISMATCH.equals(state) ? SETTLEMENT : NATIVE;
+                return state(p).startsWith(PENDING);
+            }
+        } catch (RpcException error) {
+            return false;
+        }
+    }
+
+    /** null (not quarantined), NATIVE or SETTLEMENT; a malformed record reads as NATIVE. */
+    String origin(String device) {
+        try {
+            Properties p = properties();
+            synchronized (p) {
+                state(p);
+                String record = record(p, device);
+                return record == null ? null : originOf(record);
             }
         } catch (RpcException error) {
             return NATIVE;
         }
     }
-    /** Recorded detail JSON text, or null. */
-    String detail() {
+
+    /** Recorded JSON text of the device quarantine, or null. */
+    String detail(String device) {
         try {
             Properties p = properties();
             synchronized (p) {
-                Object value = p.get(DETAIL_KEY);
-                return value instanceof String ? (String) value : null;
+                return record(p, device);
             }
         } catch (RuntimeException error) {
             return null;
         }
     }
 
-    void requireAvailable() {
-        String reason = blockedReason();
+    void requireAvailable(String device) {
+        String reason = blockedReason(device);
         if (reason != null) throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, reason);
     }
 
-    String reserve() {
+    String reserve(String device) {
         Properties p = properties();
         synchronized (p) {
-            if (!IDLE.equals(state(p))) throw unavailable();
+            String pending = pendingReason(p), record = record(p, device);
+            if (pending != null || record != null)
+                throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, pending != null ? pending : deviceBlocked(record));
             String owner = UUID.randomUUID().toString();
             set(p, PENDING + owner);
             return owner;
@@ -169,69 +267,68 @@ final class GridTopologyQuarantine {
         synchronized (p) {
             if (!state(p).equals(PENDING + owner)) return false;
             set(p, IDLE);
-            detail(p, null);
             return true;
         }
     }
 
-    void poison() {
-        poison(null);
-    }
-    /** Sticky native-failure quarantine; overrides a settlement mismatch, never downgraded. */
-    void poison(String detail) {
+    /** Native failure on {@code device}; also ends the owner's reservation so other devices stay admitted. */
+    void poison(String owner, String device, JsonObject detail) {
         Properties p = properties();
         synchronized (p) {
-            state(p);
-            set(p, POISONED);
-            if (detail != null) detail(p, detail);
+            boolean owned = state(p).equals(PENDING + owner);
+            quarantine(p, device, NATIVE, detail);
+            if (owned) set(p, IDLE);
         }
     }
     /**
      * Settlement of {@code owner} observed a graph that disagreed with its expectation after the native lifetime
-     * finished. Only the matching pending owner may enter the recoverable state; anything else fails closed (sticky).
+     * finished. Only the matching owner may record the recoverable kind, and a native failure already recorded on the
+     * device is never downgraded; anything else fails closed as a native failure.
      */
-    boolean mismatch(String owner, String detail) {
+    boolean mismatch(String owner, String device, JsonObject detail) {
         Properties p = properties();
         synchronized (p) {
-            if (!state(p).equals(PENDING + owner)) {
-                set(p, POISONED);
-                return false;
-            }
-            set(p, MISMATCH);
-            detail(p, detail);
-            return true;
+            boolean owned = state(p).equals(PENDING + owner), recorded = record(p, device) != null;
+            boolean recoverable = owned && !(recorded && NATIVE.equals(originOf(record(p, device))));
+            if (recoverable || !recorded) quarantine(p, device, recoverable ? SETTLEMENT : NATIVE, detail);
+            if (owned) set(p, IDLE);
+            return recoverable;
         }
     }
-    /** Releases a settlement mismatch only if it is still the one the caller verified against (same detail text). */
-    boolean reconcile(String verifiedDetail) {
+    /** Releases a device quarantine only if it is still the record the caller verified against (same text). */
+    boolean reconcile(String device, String verifiedRecord) {
         Properties p = properties();
         synchronized (p) {
-            if (!MISMATCH.equals(state(p))) return false;
-            Object now = p.get(DETAIL_KEY);
-            if (verifiedDetail == null ? now != null : !verifiedDetail.equals(now)) return false;
-            set(p, IDLE);
-            detail(p, null);
+            state(p);
+            String now = record(p, device);
+            if (now == null || !now.equals(verifiedRecord)) return false;
+            try {
+                p.remove(DEVICE_PREFIX + device);
+            } catch (RuntimeException error) {
+                inaccessible = true;
+                throw unavailable();
+            }
             return true;
         }
     }
 
-    void invoke(Runnable mutation) {
-        String owner = reserve();
+    void invoke(String device, Runnable mutation) {
+        String owner = reserve(device);
         try {
             mutation.run();
         } catch (Throwable error) {
             JsonObject detail = new JsonObject();
-            detail.addProperty("origin", NATIVE);
             detail.addProperty("operation", "synchronous_topology_edit");
             JsonObject why = new JsonObject();
             why.addProperty("code", error.getClass().getSimpleName());
             String message = String.valueOf(error.getMessage());
             why.addProperty("message", message.substring(0, Math.min(message.length(), 512)));
             detail.add("error", why);
-            poison(detail.toString());
+            poison(owner, device, detail);
             RpcException translated = Errors.notApplied(
                     ErrorCode.GRID_UNAVAILABLE,
-                    "Native Grid topology operation/callback failed; outcome unknown. Process topology guard quarantined; fully restart Bitwig, inspect state and do not assume rollback.");
+                    "Native Grid topology operation/callback failed; outcome unknown. This Grid device is quarantined; other devices and project.save keep working. "
+                            + "Inspect with grid.get, then call grid.topology.reconcile on this device; do not retry or assume rollback.");
             translated.initCause(error);
             throw translated;
         }
@@ -241,6 +338,6 @@ final class GridTopologyQuarantine {
     private static RpcException unavailable() {
         return Errors.notApplied(
                 ErrorCode.GRID_UNAVAILABLE,
-                "Native Grid topology process marker is pending, quarantined, malformed or inaccessible. Admission fails closed across extension replacement; full Bitwig JVM restart may be required.");
+                "Native Grid topology process marker is pending, malformed or inaccessible. Admission fails closed across extension replacement; full Bitwig JVM restart may be required.");
     }
 }

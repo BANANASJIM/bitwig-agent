@@ -91,11 +91,19 @@ AUDIO_ANALYZE_DESCRIPTION = "Offline WAV analysis of one absolute .wav (channel 
 
 
 SPECS: dict[str, ToolSpec] = {
-    "audio.route": tool(AudioRouteArgs, AUDIO_ROUTE_DESCRIPTION, False, {"mode": "silent"}),
+    "audio.route": tool(AudioRouteArgs, AUDIO_ROUTE_DESCRIPTION, False, {"mode": "silent"}, host=False),
     "audio.capture": tool(
-        AudioCaptureArgs, AUDIO_CAPTURE_DESCRIPTION, False, {"seconds": 8, "outPath": "/tmp/bitwig-capture.wav"}
+        AudioCaptureArgs,
+        AUDIO_CAPTURE_DESCRIPTION,
+        False,
+        {"seconds": 8, "outPath": "/tmp/bitwig-capture.wav"},
+        host=False,
     ),
     "audio.analyze": tool(
-        AudioAnalyzeArgs, AUDIO_ANALYZE_DESCRIPTION, True, {"path": "/tmp/bitwig-capture.wav", "mode": "level"}
+        AudioAnalyzeArgs,
+        AUDIO_ANALYZE_DESCRIPTION,
+        True,
+        {"path": "/tmp/bitwig-capture.wav", "mode": "level"},
+        host=False,
     ),
 }

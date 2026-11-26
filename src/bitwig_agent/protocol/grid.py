@@ -8,6 +8,7 @@ from pydantic.config import JsonDict
 
 from bitwig_agent.protocol.base import (
     MAX_STRING_UNITS,
+    PROJECT_READY,
     TARGET,
     TOPOLOGY_TIMEOUT_MS,
     UTF16_BYTES_PER_UNIT,
@@ -96,8 +97,8 @@ class GridModuleInsertArgs(GridWriteArgs):
     typeName: str = omitted(min_length=1, max_length=128, description="Single form: " + TYPE_NAME_DESCRIPTION)
     x: int = omitted(ge=-(2**31), le=2**31 - 1, description="Single form: " + INT32_DESCRIPTION)
     y: int = omitted(ge=-(2**31), le=2**31 - 1, description="Single form: " + INT32_DESCRIPTION)
-    modules: Annotated[list[GridModuleSpec], Field(min_length=1, max_length=16)] = omitted(
-        description="Batch form: 1..16 insertions on this device, each {typeId|typeName, x, y}. All types and limits are checked first (any failure inserts nothing); then entries insert in order, each settling before the next, and stop at the first failure."
+    modules: Annotated[list[GridModuleSpec], Field(min_length=1)] = omitted(
+        description="Batch form: one or more insertions on this device, each {typeId|typeName, x, y}. All types and limits are checked first (any failure inserts nothing); then entries insert in order, each settling before the next, and stop at the first failure."
     )
 
     @model_validator(mode="after")
@@ -466,14 +467,14 @@ class GridVoicingSetArgs(ParameterArgs):
 DIFF = 'Result is a diff, absent when empty: modulesAdded (full rows with ports, wire them at once), modulesRemoved, modulesMoved, modulesRenamed, connectionsChanged (any cable changed anywhere, including native repair), moduleCount; graphComplete=false with graphUnsupported if coverage was partial. graph="full" returns the whole bounded graph instead.'
 LONG = "timeoutMs up to 60000 (verification reads the whole graph). "
 SAFE = "Needs a stopped, nonrecording, nonautomation state, a complete bounded graph of at most 1024 modules, and the explicit device target (trackId from tracks.list; deviceIndex and exact expectedDeviceName from devices.list). "
-UNK = "Never retry an unknown outcome: inspect with grid.get. A native setter/callback failure quarantines further topology edits until Bitwig restarts; an insertion whose later graph check disagreed is quarantined too but recoverable with grid.topology.reconcile (grid.capabilities topologyQuarantine says which)."
+UNK = "Never retry an unknown outcome: inspect with grid.get. A native setter/callback failure, or an insertion whose later graph check disagreed, quarantines topology edits to that one device only (other devices and project.save keep working): inspect with grid.get, then release it with grid.topology.reconcile on that device; no Bitwig restart (grid.capabilities topologyQuarantine.devices lists them)."
 GRID_CAPABILITIES_DESCRIPTION = 'Grid availability summary under the exact Bitwig 6.1.4/loaded-JAR hash gate: gatePassed, available, hostVersion, reads and writers booleans (reasons only for unavailable ones), topologyQuarantined/topologyAdmissionBlocked. Unavailable write bindings do not disable reads; binding availability is not native runtime, DSP or undo verification. detail="full" returns every binding\'s coverage, operation and limits (~2k tokens).'
 GRID_CATALOG_DESCRIPTION = "Read native Grid MODULE type UUIDs and names, not devices or module instances. Version/hash gated. query (max 128 UTF-16 units) ignores case, spaces, hyphens and punctuation and every word must match inside the name: 'lowpass' and 'low pass' find 'Low-pass', 'Low-pass LD', 'Low-pass MG'. When nothing matches, suggestions lists up to five nearest names. offset 0..100000, limit 1..256 (default 64), deterministic ordering. The native catalog has no category or tag, so query matches names only (e.g. 'Low-pass', not 'Filter'). Inspect window completeness; catalog presence does not prove graph or parameter coverage."
 GRID_GET_DESCRIPTION = "Read a Grid graph without selecting or changing the device. Discover trackId with tracks.list, then deviceIndex and exact expectedDeviceName with devices.list. Use includeParameters=false for layout, wiring and naming. moduleIds (1..256 instanceIds) returns only those modules with their parameters, so one module's parameterId/kind/value/range needs no paging; absent ids are listed in missingModuleIds. moduleOffset 0..100000, moduleLimit 1..256 (default 64). Rows have instanceId (current UUID, changes on project reopen), typeId, localKey, x/y, width/height, ports (key, name, connected) and parameters. A parameter row's kind and value are a valid expectedKind/expectedValue for grid.parameters.set while still current. diagnostics=true adds native modelClass/path and coverage notes. A kind:string row is a string panel (e.g. Comment text); write it with grid.parameters.set expectedKind string. A kind:steps row is a step table (Steps, Pitches, Gates, Probabilities, Accents): values is the first stepCount entries of an arrayLength-entry array (full:true returns up to 256), minimum/maximum -128..128 is only a sanity bound (observed natively: Pitches in Grid pitch units, Gates 1/0, Accents 0/0.5/1, Probabilities 0..1); write it with expectedKind steps. Child models that carry no user data (engine feeds, indicators) are not listed: the module row has internalChildren and they never make the read incomplete. Inspect window, complete (false for structure-only or filtered reads) and unsupported; pages are independent observations, with no native revision."
 GRID_PARAMETERS_GET_DESCRIPTION = "Read one Grid parameter plus native editContext observations. Optional for ordinary writes, since grid.get rows already carry kind and value; use it for a fresh single-control value or a coupled boolean panel's linked parameter. moduleId is a grid.get instanceId and parameterId its exact id (may be empty), never a name or type UUID. String panels report kind:string with null labels. Step tables report kind:steps (full:true for all 256 entries). editContext is an observation, not write authorization."
 GRID_PARAMETERS_SET_DESCRIPTION = 'Set Grid parameters in the native RAW domain (not normalized): one write, or a batch on one device. Single: moduleId, parameterId, expectedKind, expectedValue, and value. Batch: writes=[{moduleId, parameterId, expectedKind, expectedValue, value}], 1..64, no repeated pair. Pitch-unit parameters are raw MIDI notes (Low-pass CUTOFF 84 shows "1.05 kHz"). Instead of value, a float write may give display ("1.2 kHz", "440 Hz", "50 %", "-12 dB") for numericUnit hertz, percent or decibel only: the host converts it after confirming the unit scale against the row\'s current raw/display pair, any other unit is rejected not_applied unsupported_unit, and the result\'s displayMismatch compares the post-write display with your text (never rewritten). expectedKind/expectedValue stay required. Take the ids, kind and value from a recent grid.get (or grid.parameters.get); a stale expectation is rejected with outcome not_applied, even for a no-op. Batch: every CAS runs first and any failure writes nothing (error names each failing entry); then writes dispatch in order and stop at the first failure or unknown, later entries report not_dispatched. Single results and each batch entry carry the post-write display string (e.g. "2.09 kHz") when observable, so a raw value\'s meaning needs no extra read. Batch result: per-entry status (applied, already_matched, failed, unknown, not_dispatched), written, overall batchStatus applied|partial|failed|unknown (status stays observed) with completion; on unknown inspect state, never retry. Boolean takes a JSON bool; integer/enum an int32 token (enum is a listed option value, not an ordinal); float a finite number; range is checked, nothing is clamped. String (string panels such as Comment text): expectedKind string, JSON strings of at most 1024 UTF-16 units, kept verbatim (empty and newlines allowed), compare-and-set against the current text. A Label module shows the module name, so change it with grid.modules.rename. Needs a stopped, nonrecording, nonautomation state. Boolean panels also move their linked bipolar value, which the result reports. Step tables (kind steps, Steps/Pitches/Gates/Probabilities/Accents): expectedKind steps, expectedValues = the live entries from step 0 as read by grid.get (normally the first stepCount, or all 256 with full:true; the CAS window is its own length), values = 1..256 entries within -128..128 written from step 0 (never longer than expectedValues; shorter leaves the rest; nothing beyond the prefix changes; 32-bit floats; nothing clamped). Whole-array write with exact readback (previousValues, requestedValues in the result); valid in batch entries. A Probabilities table is one write per row, e.g. a transition matrix as one batch.'
 GRID_TOPOLOGY_RECONCILE_DESCRIPTION = (
-    "Recover a recoverable topology quarantine without restarting Bitwig. Only for grid.capabilities topologyQuarantine.state settlement_mismatch (an insertion's native lifetime finished but its later graph check disagreed), on the device it records (detail.trackId; another Grid on that track is refused). Re-reads that device: every module mapped with a unique UUID and valid footprint, complete bounded graph, idle undo/default context, no pending native placement; releases only if all hold. Returns released, found (moduleCount, modulesBefore, module: the recorded moduleId and whether it was inserted, with its actual position/footprint) or the inconsistency, and the recorded detail. Pending callbacks and native-failure quarantines are reported, never released; otherwise (idle, another device) it is a consistency check that releases nothing. Reads only; read grid.get before the next write. "
+    "Release one quarantined Grid device without restarting Bitwig, after inspecting it with grid.get; any origin listed in grid.capabilities topologyQuarantine.devices (native_failure or settlement_mismatch). Name that device; other devices are never touched and are not blocked meanwhile. Re-reads it: every module mapped with a unique UUID and valid footprint, complete bounded graph, idle undo/default context, no pending native placement; releases only if all hold. Returns released, found (moduleCount, modulesBefore, module: the recorded moduleId and whether it was inserted, with its actual position/footprint) or the inconsistency, and the recorded detail. A device that is not quarantined gets a consistency check that releases nothing; a pending native callback settles by itself. Reads only; read grid.get before the next write. "
     + LONG
 )
 GRID_VOICING_GET_DESCRIPTION = "Read a Grid device's voicing (Poly Grid only): voices 1..64, voiceStacking 1..16, monoMode true_mono|digi_mono (the stored mode, what plays when voices is 1), retriggerMode never|on_note_on|always, notePriority last|high|low, legatoGlide, stealSameKey, allowOverlappingNotes, plus mode (poly when voices > 1, else the stored monoMode). Note Grid and FX Grid have no voicing model: supported:false with a reason. Same explicit device target as grid.get. The editContext observation is omitted unless detail=full."
@@ -483,7 +484,7 @@ GRID_VOICING_SET_DESCRIPTION = (
     + UNK
 )
 GRID_MODULES_INSERT_DESCRIPTION = (
-    "Insert one MODULE type at absolute native anchor x/y (signed int32 tokens; layout may reflow other modules), or a batch of 1..16 on one device. Identify the type by typeId (from grid.catalog) or typeName, a catalog name matched exact string first, then exact ignoring case, then loosely ignoring case, spaces and hyphens ('low pass' = 'Low-pass'); symbol-only names ('<', '≠') and arrows ('Slope ↗') match exactly; a name matching zero or several entries is rejected not_applied with candidates (use typeId when ambiguous). Single: typeId|typeName, x, y; returns moduleId, requestedPosition/actualPosition, matchesRequested and a diff. Batch: modules=[{typeId|typeName, x, y}]: every type and limit is resolved first (any failure inserts nothing); entries then insert in order, each settling before the next (a later insert can push earlier modules right; per-entry actualPosition is taken from the final graph), also stopping with partial when too little of the timeout remains for another load; a footprint-dependent rejection after loading ends the batch unknown, stopping at the first failure or unknown, later entries not_dispatched. Batch result: per-entry modules[] (status applied, failed, unknown, not_dispatched; moduleId, requested/actualPosition), written, batchStatus applied|partial|failed|unknown (status stays observed) with completion, and one diff for the whole batch (none after unknown: inspect with grid.get). "
+    "Insert one MODULE type at absolute native anchor x/y (signed int32 tokens; layout may reflow other modules), or a batch on one device. Identify the type by typeId (from grid.catalog) or typeName, a catalog name matched exact string first, then exact ignoring case, then loosely ignoring case, spaces and hyphens ('low pass' = 'Low-pass'); symbol-only names ('<', '≠') and arrows ('Slope ↗') match exactly; a name matching zero or several entries is rejected not_applied with candidates (use typeId when ambiguous). Single: typeId|typeName, x, y; returns moduleId, requestedPosition/actualPosition, matchesRequested and a diff. Batch: modules=[{typeId|typeName, x, y}]: every type and limit is resolved first (any failure inserts nothing); entries then insert in order, each settling before the next (a later insert can push earlier modules right; per-entry actualPosition is taken from the final graph), also stopping with partial when too little of the timeout remains for another load; a footprint-dependent rejection after loading ends the batch unknown, stopping at the first failure or unknown, later entries not_dispatched. Batch result: per-entry modules[] (status applied, failed, unknown, not_dispatched; moduleId, requested/actualPosition), written, batchStatus applied|partial|failed|unknown (status stays observed) with completion, and one diff for the whole batch (none after unknown: inspect with grid.get). "
     + DIFF
     + " Asynchronous: loaderDispatched and placementDispatched are separate and loading is not placement; a timeout is not cancellation and native loading may outlive it. "
     + SAFE
@@ -620,6 +621,7 @@ SPECS: dict[str, ToolSpec] = {
                 }
             ],
         },
+        requires=PROJECT_READY,
     ),
     "grid.topology.reconcile": tool(GridTopologyReconcileArgs, GRID_TOPOLOGY_RECONCILE_DESCRIPTION, False, TARGET),
     "grid.voicing.get": tool(GridVoicingGetArgs, GRID_VOICING_GET_DESCRIPTION, True, TARGET),
@@ -629,6 +631,7 @@ SPECS: dict[str, ToolSpec] = {
         False,
         {**TARGET, "expected": {"voices": 1, "voiceStacking": 1}, "set": {"voices": 8, "voiceStacking": 2}},
         {**TARGET, "expected": {"voices": 1, "monoMode": "true_mono"}, "set": {"monoMode": "digi_mono"}},
+        requires=PROJECT_READY,
     ),
     "grid.modules.insert": tool(
         GridModuleInsertArgs,
@@ -642,6 +645,7 @@ SPECS: dict[str, ToolSpec] = {
                 {"typeName": "Low-pass", "x": 8, "y": 2},
             ],
         },
+        requires=PROJECT_READY,
     ),
     "grid.modules.rename": tool(
         GridModuleRenameArgs,
@@ -659,18 +663,21 @@ SPECS: dict[str, ToolSpec] = {
             "expectedCustomName": "Lead = \u03b1",
             "customName": "",
         },
+        requires=PROJECT_READY,
     ),
     "grid.modules.move": tool(
         GridModuleMoveArgs,
         GRID_MODULES_MOVE_DESCRIPTION,
         False,
         {**TARGET, "moduleId": "abcdef01-2345-6789-abcd-0123456789ab", "expectedX": 0, "expectedY": 0, "x": 4, "y": 2},
+        requires=PROJECT_READY,
     ),
     "grid.modules.delete": tool(
         GridModuleEditArgs,
         GRID_MODULES_DELETE_DESCRIPTION,
         False,
         {**TARGET, "moduleId": "abcdef01-2345-6789-abcd-0123456789ab"},
+        requires=PROJECT_READY,
     ),
     "grid.connections.set": tool(
         GridConnectionSetArgs,
@@ -710,5 +717,6 @@ SPECS: dict[str, ToolSpec] = {
                 },
             ],
         },
+        requires=PROJECT_READY,
     ),
 }

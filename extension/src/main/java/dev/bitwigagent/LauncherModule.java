@@ -209,7 +209,7 @@ final class LauncherModule implements HostModule {
                     throw Errors.invalid("expectedClipName must contain 1..256 characters");
                 if (op.equals("rename") && Params.string(p, "name").length() > 128)
                     throw Errors.invalid("name must contain 1..128 characters");
-                if (op.equals("resize")) Params.integer(p, "lengthBeats", 1, 4096);
+                if (op.equals("resize")) Params.number(p, "lengthBeats", 1.0 / 128, 4096);
                 if (op.equals("color") && !RGB.matcher(Params.string(p, "rgb")).matches())
                     throw Errors.invalid("rgb must be #RRGGBB");
                 if (op.equals("transpose") && Params.integer(p, "semitones", -48, 48) == 0)
@@ -1113,7 +1113,7 @@ final class LauncherModule implements HostModule {
                     () -> clip.color().set(want[0], want[1], want[2]),
                     "clip_color");
         } else if (kind.equals("resize"))
-            resize(op, id, track, slot, index, Params.integer(p, "lengthBeats", 1, 4096), end);
+            resize(op, id, track, slot, index, Params.number(p, "lengthBeats", 1.0 / 128, 4096), end);
         else gridEdit(op, id, track, slot, index, p, kind, end);
     }
 
@@ -1155,7 +1155,7 @@ final class LauncherModule implements HostModule {
         return out;
     }
 
-    private void resize(HostOperation op, String id, Track track, Slot slot, int index, int length, long end) {
+    private void resize(HostOperation op, String id, Track track, Slot slot, int index, double length, long end) {
         double start = clip.getLoopStart().get();
         BooleanSupplier matches =
                 () -> clip.getLoopLength().get() == length && clip.getPlayStop().get() == start + length;
@@ -1525,8 +1525,8 @@ final class LauncherModule implements HostModule {
         out.addProperty("completeWindow", total == notes.size());
         String continuation = null;
         if (total > notes.size())
-            continuation =
-                    "Subdivide steps or pitchCount to read the remaining onset cells; response is bounded below the 1 MiB transport limit";
+            continuation = "Subdivide steps or pitchCount to read the remaining onset cells; response is capped at "
+                    + NOTE_LIMIT + " rows";
         double loopEnd = clip.getLoopStart().get() + clip.getLoopLength().get(),
                 windowEnd = (w.start + w.steps) * w.size;
         boolean coversLoop = windowEnd >= loopEnd - 1e-9;

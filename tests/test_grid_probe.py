@@ -8,9 +8,10 @@ from typing import Any
 import pytest
 from fakes import NODES, SINK_LINKS, TARGET, FakeGrid, FakeProc, FakePW
 
-from bitwig_agent import audio, grid_probe
+from bitwig_agent import audio
 from bitwig_agent.audio_analysis import FFT_SIZE, spectral_peaks
 from bitwig_agent.errors import BridgeError
+from bitwig_agent.grid import probe as grid_probe
 from bitwig_agent.protocol import CLIENT_SIDE, validate_call
 
 SAFE = {
@@ -251,7 +252,8 @@ def test_partial_rewire_is_restored_from_the_real_state(rig):
     host.h_connections_set = lambda p: half(p) if host.set_calls == 1 else original_set(p)
     with pytest.raises(BridgeError) as e:
         probe(host)
-    assert e.value.error["code"] == "not_applied"
+    assert e.value.error["code"] == "internal_error"
+    assert e.value.error["outcome"] == "unknown"
     assert host.conns == host.original
 
 

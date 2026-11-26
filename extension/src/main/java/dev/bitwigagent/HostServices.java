@@ -339,7 +339,8 @@ final class HostServices implements AutoCloseable {
             if (recording || arrangerAutomation || launcherAutomation)
                 throw Errors.notApplied(
                         ErrorCode.UNSAFE_STATE,
-                        "Recording or automation write is enabled; structural track edits are blocked.");
+                        "Recording or automation write is enabled, so this write is blocked. Turn off recording and"
+                                + " automation write (transport.set), then retry.");
         }
 
         void requireStopped() {
@@ -350,7 +351,10 @@ final class HostServices implements AutoCloseable {
             if (playing || recording || arrangerAutomation || launcherAutomation)
                 throw Errors.notApplied(
                         ErrorCode.UNSAFE_STATE,
-                        "Grid writes require observed stopped transport with recording and automation write disabled.");
+                        "This write needs a stopped transport with recording and automation write off (playing="
+                                + playing + ", recording=" + recording + ", arrangerAutomation=" + arrangerAutomation
+                                + ", launcherAutomation=" + launcherAutomation
+                                + "). Stop playback and turn them off with transport.set, then retry.");
         }
     }
 

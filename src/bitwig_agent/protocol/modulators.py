@@ -217,7 +217,7 @@ SPECS: dict[str, ToolSpec] = {
         },
     ),
     "modulators.catalog": tool(
-        ModulatorCatalogArgs, MODULATORS_CATALOG_DESCRIPTION, True, {}, {"query": "random step sequence"}
+        ModulatorCatalogArgs, MODULATORS_CATALOG_DESCRIPTION, True, {}, {"query": "random step sequence"}, host=False
     ),
     "modulators.describe": tool(
         ModulatorDescribeArgs,
@@ -225,6 +225,7 @@ SPECS: dict[str, ToolSpec] = {
         True,
         {"type": "Beat LFO"},
         {"query": "envelope follower"},
+        host=False,
     ),
     "modulators.get": tool(
         ModulatorGetArgs,

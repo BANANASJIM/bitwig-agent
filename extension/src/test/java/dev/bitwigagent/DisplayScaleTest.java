@@ -1,17 +1,14 @@
 package dev.bitwigagent;
 
+import static org.junit.jupiter.api.Assertions.*;
+
+import org.junit.jupiter.api.Test;
+
 /** Host-free reading of mixer display text; no claim about what Bitwig really prints beyond these shapes. */
 public final class DisplayScaleTest {
-    private static int assertions;
 
-    public static void main(String[] args) {
-        db();
-        pan();
-        tolerance();
-        System.out.println("DisplayScaleTest: " + assertions + " assertions passed (text parsing only)");
-    }
-
-    private static void db() {
+    @Test
+    void db() {
         eq(DisplayScale.parse(DisplayScale.Kind.DB, "-6.0 dB"), -6.0, "plain dB");
         eq(DisplayScale.parse(DisplayScale.Kind.DB, "-12 dB"), -12, "integer dB");
         eq(DisplayScale.parse(DisplayScale.Kind.DB, "+3.5dB"), 3.5, "explicit plus, no space");
@@ -25,7 +22,8 @@ public final class DisplayScaleTest {
         nan(DisplayScale.parse(DisplayScale.Kind.DB, null), "null");
     }
 
-    private static void pan() {
+    @Test
+    void pan() {
         eq(DisplayScale.parse(DisplayScale.Kind.PERCENT, "25% L"), -25, "left suffix");
         eq(DisplayScale.parse(DisplayScale.Kind.PERCENT, "L 25%"), -25, "left prefix");
         eq(DisplayScale.parse(DisplayScale.Kind.PERCENT, "40% R"), 40, "right");
@@ -39,7 +37,8 @@ public final class DisplayScaleTest {
         nan(DisplayScale.parse(DisplayScale.Kind.PERCENT, "left-ish"), "unknown words");
     }
 
-    private static void tolerance() {
+    @Test
+    void tolerance() {
         near(DisplayScale.tolerance("-6.0 dB"), 0.05, "one decimal is a 0.05 half step");
         near(DisplayScale.tolerance("-6 dB"), 0.5, "integer display is a 0.5 half step");
         near(DisplayScale.tolerance("-6.25 dB"), 0.005, "two decimals");
@@ -47,17 +46,14 @@ public final class DisplayScaleTest {
     }
 
     private static void eq(double a, double b, String m) {
-        assertions++;
         if (Math.abs(a - b) > 1e-9) throw new AssertionError(m + ": " + a + " != " + b);
     }
 
     private static void near(double a, double b, String m) {
-        assertions++;
         if (Math.abs(a - b) > 1e-6) throw new AssertionError(m + ": " + a + " != " + b);
     }
 
     private static void nan(double a, String m) {
-        assertions++;
         if (!Double.isNaN(a)) throw new AssertionError(m + ": expected NaN, got " + a);
     }
 }

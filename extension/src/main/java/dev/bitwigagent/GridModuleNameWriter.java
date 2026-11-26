@@ -46,7 +46,6 @@ final class GridModuleNameWriter {
             Runnable dispatch,
             Consumer<JsonObject> complete,
             Consumer<Throwable> fail) {
-        quarantine.requireAvailable();
         values.documentThread();
         check.run();
         if (!values.metadataAvailable(GridSnapshotReader.Metadata.MODULE_NAMES))
@@ -54,6 +53,8 @@ final class GridModuleNameWriter {
                     ErrorCode.GRID_UNAVAILABLE,
                     "Native raw custom-name and effective-name readers are required for module naming.");
         GridSnapshotReader.NativeTarget target = snapshots.target(proxy, trackId);
+        String device = GridTopologyQuarantine.device(trackId, target.graph);
+        quarantine.requireAvailable(device);
         JsonObject graphBefore = snapshots.snapshot(proxy, trackId, 0, MAX_MODULES, false, false, null, check);
         Members before = members(target.graph, check);
         Object selected = before.require(moduleId);
@@ -70,10 +71,10 @@ final class GridModuleNameWriter {
         if (!previous.effective.equals(ready.effective))
             throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Native effective module name changed before dispatch.");
         check.run();
-        quarantine.requireAvailable();
+        quarantine.requireAvailable(device);
         if (changed) {
             dispatch.run();
-            quarantine.invoke(mutation);
+            quarantine.invoke(device, mutation);
         }
         // Native setter return is not an acknowledged edit, UI Undo group, or DSP commit.
         nativeWriter.execute(() -> {

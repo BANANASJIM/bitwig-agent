@@ -13,29 +13,18 @@ import java.util.*;
 final class Bitwig614TrackGroupAccess implements MixModule.GroupAccess {
     private final Bitwig614Runtime.Access a;
     private final NativeReadContext context;
-    private final Class<?> trackClass, groupIface, groupClass, projectType;
-    private final Method target, uuid, alias, aliasUuid, parent, groupTracks, project;
+    private final Bitwig614TrackResolver resolver;
+    private final Class<?> groupClass, projectType;
+    private final Method groupTracks;
 
     Bitwig614TrackGroupAccess(Bitwig614Runtime.Access a) throws ReflectiveOperationException {
         this.a = a;
         context = new NativeReadContext(new Bitwig614ReadContextAccess(a));
-        String iface = "com.bitwig.flt.document.core.iface.", master = "com.bitwig.flt.document.core.master.";
-        trackClass = a.type(master + "zwV");
-        groupIface = a.type(iface + "kWY");
+        resolver = new Bitwig614TrackResolver(a);
+        String master = "com.bitwig.flt.document.core.master.";
         groupClass = a.type(master + "SC");
         projectType = a.type(master + "g2L");
-        Class<?> identity = a.type(iface + "RYd"), channelAlias = a.type("iKU");
-        target = a.exactMethod(
-                a.type("com.bitwig.flt.control_surface.proxy.ControlSurfaceProxy"),
-                "getDeepestTarget",
-                Object.class,
-                false);
-        uuid = a.exactMethod(identity, "kFU", UUID.class, false);
-        alias = a.exactMethod(groupIface, "TD2", channelAlias, false);
-        aliasUuid = a.exactMethod(channelAlias, "kFU", UUID.class, false);
-        parent = a.exactMethod(identity, "QNk", groupIface, false);
         groupTracks = a.exactMethod(groupClass, "MRY", void.class, false, List.class);
-        project = a.exactMethod(a.type("com.bitwig.ramona.core.AVL"), "IwV", Object.class, false, Class.class);
     }
 
     @Override
@@ -49,7 +38,7 @@ final class Bitwig614TrackGroupAccess implements MixModule.GroupAccess {
         check.run();
         List<Object> tracks = resolve(proxies, ids);
         Object common = parent(tracks);
-        Object owningProject = a.invoke(project, common, projectType);
+        Object owningProject = resolver.owner(common, projectType);
         Object[] models = new Object[tracks.size() + 1];
         String[] labels = new String[models.length + 1];
         for (int i = 0; i < tracks.size(); i++) {
@@ -83,14 +72,8 @@ final class Bitwig614TrackGroupAccess implements MixModule.GroupAccess {
     private List<Object> resolve(List<Object> proxies, List<String> ids) {
         List<Object> tracks = new ArrayList<>(proxies.size());
         for (int i = 0; i < proxies.size(); i++) {
-            Object track = a.invoke(target, proxies.get(i));
-            if (!trackClass.isInstance(track))
-                throw Errors.notApplied(
-                        ErrorCode.STALE_CONTEXT, "Track proxy has no attached native track: " + ids.get(i));
-            a.requireModelThread(track);
-            Object identity =
-                    groupIface.isInstance(track) ? a.invoke(aliasUuid, a.invoke(alias, track)) : a.invoke(uuid, track);
-            if (!UUID.fromString(ids.get(i)).equals(identity))
+            Object track = resolver.track(proxies.get(i), ids.get(i));
+            if (!UUID.fromString(ids.get(i)).equals(resolver.identity(track)))
                 throw Errors.notApplied(
                         ErrorCode.STALE_CONTEXT,
                         "Native track UUID differs from the requested trackId " + ids.get(i) + ".");
@@ -104,7 +87,7 @@ final class Bitwig614TrackGroupAccess implements MixModule.GroupAccess {
     private Object parent(List<Object> tracks) {
         Object common = null;
         for (Object track : tracks) {
-            Object owner = a.invoke(parent, track);
+            Object owner = resolver.parent(track);
             if (!groupClass.isInstance(owner))
                 throw Errors.notApplied(ErrorCode.UNSUPPORTED_SCOPE, "Native parent is not a track group.");
             if (common != null && owner != common)

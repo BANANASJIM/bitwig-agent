@@ -1,5 +1,8 @@
 package dev.bitwigagent;
 
+import static dev.bitwigagent.RpcAssert.*;
+import static org.junit.jupiter.api.Assertions.*;
+
 import com.bitwig.extension.callback.*;
 import com.bitwig.extension.controller.api.*;
 import com.google.gson.*;
@@ -9,10 +12,10 @@ import java.nio.file.Path;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.function.*;
+import org.junit.jupiter.api.Test;
 
 /** Consumer tests against API-shaped in-memory host proxies; never native-host evidence. */
 public final class LauncherModuleTest {
-    private static int assertions;
     private static final String ID = "11111111-1111-1111-1111-111111111111";
 
     private static Object stateConstant(String name) {
@@ -26,80 +29,34 @@ public final class LauncherModuleTest {
         throw new IllegalStateException("No NoteStep state " + name);
     }
 
-    public static void main(String[] args) throws Exception {
-        settingsIsolationIsShared();
-        parallelSelectionIsRejectedWhileCursorEditRuns();
-        strictWindowAndBatchValidation();
-        createAndReadActualMusic();
-        createdPlaybackExtentMatchesRequestedLength();
-        collisionsFailBeforeAnyWrite();
-        identityAndDeadlineGuards();
-        selectionDispatchPreventsNotAppliedFailure();
-        cursorLeaseDoesNotBlockLauncherReads();
-        lateOrMissingObservationsRemainDispatched();
-        explicitLaunchAndStopStates();
-        unobservedPlaybackCompletionRemainsUnknown();
-        denseReadReportsItsResponseBoundary();
-        matchingEditsPreserveExistingNotes();
-        loopStartAndPlaybackSafetyFailClosed();
-        delayedGridPropagationKeepsReadinessExplicit();
-        firstGridReadWaitsForNativeDebounce();
-        fileImportValidationAndOccupancy();
-        emptyMidiImportFailsBeforeMutation();
-        fileImportObservesOnlyContentTransition();
-        fileImportSharesCursorLease();
-        fileImportMutationBoundaryGuards();
-        unresolvedImportsKeepTargetQuarantined();
-        completedMutationsReleaseTheirTargets();
-        completedRequestFuturesDoNotReleaseMutations();
-        reboundTargetsRemainQuarantined();
-        preDispatchFailuresDoNotQuarantine();
-        unresolvedCreatesKeepTargetQuarantined();
-        slotsBeyondSceneCountAreRejectedAndNotListed();
-        scenesAreAppendedAtTheEndAndCountIsObserved();
-        omittedWindowIsDerivedFromEdits();
-        omittedReadWindowCoversTheClipLoop();
-        createWritesNotesAfterObservingTheClip();
-        compactEditReportsSummaryAndOnlyUnverifiedEdits();
-        noteRowsUseEditUnitsAndCarryNoConstantProse();
-        echoingAReadRowIsAlreadyMatched();
-        launcherListAndContextExposeTheCursorClip();
-        clipEditValidation();
-        clipEditRenameResizeColor();
-        clipEditNoteOps();
-        clipEditDeleteAndCopy();
-        launcherSetLaunchFields();
-        System.out.println("LauncherModuleTest: " + assertions + " assertions passed (simulated host only)");
-    }
-
-    private static void settingsIsolationIsShared() throws Exception {
+    @Test
+    void settingsIsolationIsShared() throws Exception {
         Fake f = new Fake();
         f.module.settingsWriteGuard = () -> {
             throw Errors.notApplied(ErrorCode.UNRESOLVED_MUTATION, "settings unresolved");
         };
-        expectOutcome("unresolved_mutation", "not_applied", f.start("launcher.create", createTarget()));
-        check(f.creates == 0, "settings quarantine blocks launcher create before dispatch");
+        assertRpcError("unresolved_mutation", "not_applied", f.start("launcher.create", createTarget()));
+        assertTrue(f.creates == 0, "settings quarantine blocks launcher create before dispatch");
         f.module.settingsWriteGuard = () -> {};
         Path file = Files.createTempFile("settings-import-quarantine-", ".wav");
         try {
             f.failImport = true;
             f.start("launcher.import", importTarget(file));
-            try {
-                f.module.requireSettingsSafe(ID, 0);
-                throw new AssertionError("unresolved import admitted settings");
-            } catch (RpcException error) {
-                check(error.code.equals("unresolved_mutation"), "unresolved import blocks native settings");
+            {
+                RpcException error = assertThrows(RpcException.class, () -> f.module.requireSettingsSafe(ID, 0));
+                assertTrue(error.code.equals("unresolved_mutation"), "unresolved import blocks native settings");
             }
         } finally {
             Files.delete(file);
         }
     }
 
-    private static void strictWindowAndBatchValidation() {
+    @Test
+    void strictWindowAndBatchValidation() {
         JsonObject valid = window();
         valid.add("edits", fixture());
         LauncherModule.validateParams("notes.edit", valid);
-        check(
+        assertTrue(
                 LauncherModule.edits(valid, new LauncherModule.Window(valid)).size() == 5,
                 "melody/chord/drum fixture accepted");
         JsonObject bad = valid.deepCopy();
@@ -141,10 +98,10 @@ public final class LauncherModuleTest {
         bad = valid.deepCopy();
         bad.add("edits", tooMany);
         invalid(bad);
-        check(
+        assertTrue(
                 LauncherModule.aligned(new JsonPrimitive(.3), new JsonPrimitive(.1), "beat") == 3,
                 "decimal aligned times are exact");
-        expect(
+        assertRpcError(
                 "invalid_params",
                 () -> LauncherModule.aligned(new JsonPrimitive(.30000000000000004), new JsonPrimitive(.1), "beat"));
         JsonObject clear = window();
@@ -159,17 +116,18 @@ public final class LauncherModuleTest {
         invalid(clear);
     }
 
-    private static void createAndReadActualMusic() throws Exception {
+    @Test
+    void createAndReadActualMusic() throws Exception {
         Fake f = new Fake();
         JsonObject create = target();
         create.addProperty("lengthBeats", 4);
         create.addProperty("name", "Melody + chords 鼓");
         JsonObject created = f.call("launcher.create", create);
-        check(created.get("status").getAsString().equals("observed"), "create observes content/name/length");
-        check(created.get("loopLengthBeats").getAsDouble() == 4, "length comes from clip readback");
-        check(f.slots[0].name.equals("Melody + chords 鼓"), "explicit name written");
-        expectFuture("slot_occupied", f.start("launcher.create", create));
-        check(f.creates == 1, "occupied slot never overwritten");
+        assertTrue(created.get("status").getAsString().equals("observed"), "create observes content/name/length");
+        assertTrue(created.get("loopLengthBeats").getAsDouble() == 4, "length comes from clip readback");
+        assertTrue(f.slots[0].name.equals("Melody + chords 鼓"), "explicit name written");
+        assertRpcError("slot_occupied", f.start("launcher.create", create));
+        assertTrue(f.creates == 1, "occupied slot never overwritten");
         f.put(0, 1, 2, 90, 70, .25); // unrelated channel
         f.put(1, 0, 0, 60, 40, .25); // unrelated clip
         f.put(0, 0, 24, 80, 50, .25); // outside requested window
@@ -177,16 +135,16 @@ public final class LauncherModuleTest {
         edits.add("edits", fixture());
         edits.addProperty("detail", "full");
         JsonObject result = f.call("notes.edit", edits);
-        check(result.get("status").getAsString().equals("observed"), "fresh changed notes verified");
-        check(result.getAsJsonArray("notes").size() == 5, "actual onset count returns chord/melody/drum notes");
-        check(f.notes.containsKey(key(0, 1, 2, 90)), "unrelated channel preserved");
-        check(f.notes.containsKey(key(1, 0, 0, 60)), "unrelated clip preserved");
-        check(f.notes.containsKey(key(0, 0, 24, 80)), "outside window note preserved");
+        assertTrue(result.get("status").getAsString().equals("observed"), "fresh changed notes verified");
+        assertTrue(result.getAsJsonArray("notes").size() == 5, "actual onset count returns chord/melody/drum notes");
+        assertTrue(f.notes.containsKey(key(0, 1, 2, 90)), "unrelated channel preserved");
+        assertTrue(f.notes.containsKey(key(1, 0, 0, 60)), "unrelated clip preserved");
+        assertTrue(f.notes.containsKey(key(0, 0, 24, 80)), "outside window note preserved");
         f.put(0, 0, 0, 60, 37, .75);
         JsonObject read = f.call("notes.read", window());
         JsonObject c = find(read, 60, 0);
-        check(c.get("velocity").getAsInt() == 37, "read returns host change, not request echo");
-        check(c.get("durationBeats").getAsDouble() == .75, "actual duration returned");
+        assertTrue(c.get("velocity").getAsInt() == 37, "read returns host change, not request echo");
+        assertTrue(c.get("durationBeats").getAsDouble() == .75, "actual duration returned");
         JsonObject clear = window();
         JsonArray array = new JsonArray();
         JsonObject e = new JsonObject();
@@ -196,36 +154,38 @@ public final class LauncherModuleTest {
         array.add(e);
         clear.add("edits", array);
         f.call("notes.edit", clear);
-        check(!f.notes.containsKey(key(0, 0, 0, 60)), "clear removes only addressed onset");
-        check(f.notes.containsKey(key(0, 0, 0, 64)), "other chord note preserved after clear");
+        assertTrue(!f.notes.containsKey(key(0, 0, 0, 60)), "clear removes only addressed onset");
+        assertTrue(f.notes.containsKey(key(0, 0, 0, 64)), "other chord note preserved after clear");
         JsonObject later = window();
         later.addProperty("startStep", 16);
         later.addProperty("steps", 16);
-        check(f.call("notes.read", later).getAsJsonArray("notes").size() == 1, "nonzero window maps absolute steps");
+        assertTrue(
+                f.call("notes.read", later).getAsJsonArray("notes").size() == 1, "nonzero window maps absolute steps");
         JsonObject highChannel = window();
         highChannel.addProperty("channel", 15);
         JsonArray highEdits = new JsonArray();
         highEdits.add(set(0, 127, 127, .25));
         highChannel.add("edits", highEdits);
         highChannel.addProperty("detail", "full");
-        check(
+        assertTrue(
                 f.call("notes.edit", highChannel).getAsJsonArray("notes").size() == 1,
                 "channel15 and pitch127 are writable/readable");
-        check(f.notes.containsKey(key(0, 0, 0, 64)), "channel15 edit leaves channel0 intact");
+        assertTrue(f.notes.containsKey(key(0, 0, 0, 64)), "channel15 edit leaves channel0 intact");
     }
 
-    private static void createdPlaybackExtentMatchesRequestedLength() throws Exception {
+    @Test
+    void createdPlaybackExtentMatchesRequestedLength() throws Exception {
         for (int length : new int[] {1, 16, 4096}) {
             Fake f = new Fake();
             JsonObject p = createTarget();
             p.addProperty("lengthBeats", length);
             JsonObject out = f.call("launcher.create", p);
-            check(out.get("status").getAsString().equals("observed"), "created extent is observed");
-            check(
+            assertTrue(out.get("status").getAsString().equals("observed"), "created extent is observed");
+            assertTrue(
                     out.get("playStopBeats").getAsDouble() == length,
                     "play stop must match requested extent instead of the host default four beats");
-            check(f.stopWrites == 1, "new clip playback stop is explicitly initialized once");
-            check(f.slots[1].playStop == 4, "unrelated slot playback stop is preserved");
+            assertTrue(f.stopWrites == 1, "new clip playback stop is explicitly initialized once");
+            assertTrue(f.slots[1].playStop == 4, "unrelated slot playback stop is preserved");
         }
         Fake f = new Fake();
         f.applyStop = false;
@@ -234,14 +194,16 @@ public final class LauncherModuleTest {
         HostOperation op = f.startShort("launcher.create", p);
         f.drain(op);
         JsonObject out = op.result.join();
-        check(out.get("status").getAsString().equals("dispatched"), "unapplied stop cannot claim creation verified");
-        check(out.get("playStopBeats").getAsDouble() == 4, "unapplied stop exposes actual host default");
-        check(out.get("mutationUnresolved").getAsBoolean(), "unapplied stop retains mutation quarantine");
+        assertTrue(
+                out.get("status").getAsString().equals("dispatched"), "unapplied stop cannot claim creation verified");
+        assertTrue(out.get("playStopBeats").getAsDouble() == 4, "unapplied stop exposes actual host default");
+        assertTrue(out.get("mutationUnresolved").getAsBoolean(), "unapplied stop retains mutation quarantine");
         expectQuarantine(f.start("launcher.create", createTarget()), "launcher.create", ID);
-        check(f.stopWrites == 1, "unobserved stop is not automatically retried");
+        assertTrue(f.stopWrites == 1, "unobserved stop is not automatically retried");
     }
 
-    private static void collisionsFailBeforeAnyWrite() throws Exception {
+    @Test
+    void collisionsFailBeforeAnyWrite() throws Exception {
         Fake f = new Fake();
         f.slots[0].content = true;
         f.put(0, 0, 1, 60, 90, .25);
@@ -250,35 +212,37 @@ public final class LauncherModuleTest {
         edits.add(set(0, 36, 100, .25));
         edits.add(set(0, 60, 100, .5));
         p.add("edits", edits);
-        expectFuture("note_collision", f.startAndDrain("notes.edit", p));
-        check(f.writes == 0, "later collision prevents earlier unrelated edit too");
+        assertRpcError("note_collision", f.startAndDrain("notes.edit", p));
+        assertTrue(f.writes == 0, "later collision prevents earlier unrelated edit too");
         f.notes.clear();
         f.put(0, 0, 0, 60, 90, 1);
         edits = new JsonArray();
         edits.add(set(.25, 60, 100, .25));
         p.add("edits", edits);
-        expectFuture("note_collision", f.startAndDrain("notes.edit", p));
-        check(f.writes == 0, "sustained cell never overwrites earlier onset");
+        assertRpcError("note_collision", f.startAndDrain("notes.edit", p));
+        assertTrue(f.writes == 0, "sustained cell never overwrites earlier onset");
     }
 
-    private static void parallelSelectionIsRejectedWhileCursorEditRuns() throws Exception {
+    @Test
+    void parallelSelectionIsRejectedWhileCursorEditRuns() throws Exception {
         Fake f = new Fake();
         f.slots[0].content = true;
         HostOperation edit = f.start("notes.edit", editFixture());
-        check(!edit.result.isDone() && f.services.selectionHeld(), "pending cursor edit holds the selection lease");
-        try {
-            f.services.requireSelectionFree();
-            throw new AssertionError("select must be rejected");
-        } catch (RpcException e) {
-            check(e.code.equals("busy") && e.outcome.equals("not_applied"), "select methods fail fast, not applied");
+        assertTrue(
+                !edit.result.isDone() && f.services.selectionHeld(), "pending cursor edit holds the selection lease");
+        {
+            RpcException e = assertThrows(RpcException.class, () -> f.services.requireSelectionFree());
+            assertTrue(
+                    e.code.equals("busy") && e.outcome.equals("not_applied"), "select methods fail fast, not applied");
         }
         f.drain(edit);
-        check(edit.result.join().get("status").getAsString().equals("observed"), "edit completes undisturbed");
+        assertTrue(edit.result.join().get("status").getAsString().equals("observed"), "edit completes undisturbed");
         f.services.requireSelectionFree();
-        check(!f.services.selectionHeld(), "lease released with the operation");
+        assertTrue(!f.services.selectionHeld(), "lease released with the operation");
     }
 
-    private static void identityAndDeadlineGuards() throws Exception {
+    @Test
+    void identityAndDeadlineGuards() throws Exception {
         Fake f = new Fake();
         f.slots[0].content = true;
         f.slots[1].content = true;
@@ -288,8 +252,8 @@ public final class LauncherModuleTest {
         f.next(); // cursor identity observed, schedule settled binding
         f.selected = 1;
         f.drain(op);
-        expectFuture("target_not_observed", op);
-        check(f.writes == 0, "another selected slot cannot receive explicit writes");
+        assertRpcError("target_not_observed", op);
+        assertTrue(f.writes == 0, "another selected slot cannot receive explicit writes");
         f = new Fake();
         f.slots[0].content = true;
         HostOperation expired = new HostOperation(System.nanoTime() - 1);
@@ -300,51 +264,53 @@ public final class LauncherModuleTest {
                 },
                 0);
         f.drain(expired);
-        expectFuture("deadline_exceeded", expired);
-        check(f.writes == 0, "expired operations never write");
+        assertRpcError("deadline_exceeded", expired);
+        assertTrue(f.writes == 0, "expired operations never write");
         f = new Fake();
         f.slots[0].content = true;
         op = f.start("notes.edit", p);
         f.trackId = "22222222-2222-2222-2222-222222222222";
         f.drain(op);
-        expectFuture("stale_context", op);
-        check(f.writes == 0, "track UUID change aborts cursor edit");
+        assertRpcError("stale_context", op);
+        assertTrue(f.writes == 0, "track UUID change aborts cursor edit");
     }
 
-    private static void selectionDispatchPreventsNotAppliedFailure() throws Exception {
+    @Test
+    void selectionDispatchPreventsNotAppliedFailure() throws Exception {
         Fake f = new Fake();
         f.slots[1].content = true;
         JsonObject p = window();
         p.addProperty("slotIndex", 1);
-        check(f.selected == 0, "scenario starts with a different selected clip");
+        assertTrue(f.selected == 0, "scenario starts with a different selected clip");
         HostOperation op = f.start("notes.read", p);
-        check(f.selected == 1, "explicit note read already changed the selected clip");
+        assertTrue(f.selected == 1, "explicit note read already changed the selected clip");
         f.trackId = "22222222-2222-2222-2222-222222222222";
         f.drain(op);
-        expectFuture("stale_context", op);
-        check(f.writes == 0, "context failure occurs before any note edit");
-        try {
-            op.result.join();
-        } catch (CompletionException error) {
-            check(
-                    ((RpcException) error.getCause()).outcome.equals("unknown"),
+        assertRpcError("stale_context", op);
+        assertTrue(f.writes == 0, "context failure occurs before any note edit");
+        {
+            RpcException error = rejection(op);
+            assertTrue(
+                    error.outcome.equals("unknown"),
                     "selection already dispatched: subsequent context failure cannot claim not_applied");
         }
     }
 
-    private static void cursorLeaseDoesNotBlockLauncherReads() throws Exception {
+    @Test
+    void cursorLeaseDoesNotBlockLauncherReads() throws Exception {
         Fake f = new Fake();
         f.slots[0].content = true;
         HostOperation first = f.start("notes.read", window());
-        expectFuture("busy", f.start("notes.read", window()));
+        assertRpcError("busy", f.start("notes.read", window()));
         JsonObject list = f.call("launcher.list", trackTarget());
-        check(list.getAsJsonArray("slots").size() == 16, "metadata reads proceed while cursor operation pending");
+        assertTrue(list.getAsJsonArray("slots").size() == 16, "metadata reads proceed while cursor operation pending");
         f.drain(first);
-        check(first.result.join().getAsJsonArray("notes").isEmpty(), "empty actual grid read completes");
+        assertTrue(first.result.join().getAsJsonArray("notes").isEmpty(), "empty actual grid read completes");
         f.call("notes.read", window());
     }
 
-    private static void lateOrMissingObservationsRemainDispatched() throws Exception {
+    @Test
+    void lateOrMissingObservationsRemainDispatched() throws Exception {
         Fake f = new Fake();
         f.slots[0].content = true;
         f.emitNotes = false;
@@ -352,39 +318,37 @@ public final class LauncherModuleTest {
         p.add("edits", fixture());
         p.addProperty("detail", "full");
         JsonObject out = f.call("notes.edit", p);
-        check(
+        assertTrue(
                 out.get("status").getAsString().equals("dispatched"),
                 "readback without fresh callbacks does not verify changed write");
-        check(
+        assertTrue(
                 !out.getAsJsonArray("edits")
                         .get(0)
                         .getAsJsonObject()
                         .get("verified")
                         .getAsBoolean(),
                 "per-cell missing observation explicit");
-        check(out.getAsJsonArray("notes").size() == 5, "partial outcome still exposes actual readable notes");
+        assertTrue(out.getAsJsonArray("notes").size() == 5, "partial outcome still exposes actual readable notes");
         f = new Fake();
         f.slots[0].content = true;
         f.failWriteAt = 2;
         HostOperation op = f.startAndDrain("notes.edit", p);
-        expectFuture("host_write_failed", op);
-        try {
-            op.result.join();
-        } catch (CompletionException error) {
-            check(
-                    ((RpcException) error.getCause()).outcome.equals("unknown"),
-                    "partial batch failure is unknown, not not_applied");
+        assertRpcError("host_write_failed", op);
+        {
+            RpcException error = rejection(op);
+            assertTrue(error.outcome.equals("unknown"), "partial batch failure is unknown, not not_applied");
         }
-        check(f.notes.size() == 1, "first applied note preserved; no destructive rollback or replay");
+        assertTrue(f.notes.size() == 1, "first applied note preserved; no destructive rollback or replay");
     }
 
-    private static void explicitLaunchAndStopStates() throws Exception {
+    @Test
+    void explicitLaunchAndStopStates() throws Exception {
         Fake f = new Fake();
         f.slots[0].content = true;
         JsonObject out = f.call("launcher.launch", target());
-        check(out.get("playbackState").getAsString().equals("queued"), "queued launch distinct from playing");
-        check(out.get("status").getAsString().equals("dispatched"), "queue does not claim playback completion");
-        check(
+        assertTrue(out.get("playbackState").getAsString().equals("queued"), "queued launch distinct from playing");
+        assertTrue(out.get("status").getAsString().equals("dispatched"), "queue does not claim playback completion");
+        assertTrue(
                 "not_observed"
                         .equals(out.has("completion") ? out.get("completion").getAsString() : null),
                 "queued launch declares incomplete dispatch for strict consumers");
@@ -392,27 +356,31 @@ public final class LauncherModuleTest {
         f.slots[0].content = true;
         f.launchPlaying = true;
         out = f.call("launcher.launch", target());
-        check(out.get("playbackState").getAsString().equals("playing"), "actual playing state reported");
-        check(out.get("completion").getAsString().equals("observed"), "playing launch declares observed completion");
+        assertTrue(out.get("playbackState").getAsString().equals("playing"), "actual playing state reported");
+        assertTrue(
+                out.get("completion").getAsString().equals("observed"), "playing launch declares observed completion");
         out = f.call("launcher.stop", trackTarget());
-        check(out.get("playbackState").getAsString().equals("stopped"), "explicit track stop observed");
-        check(out.get("completion").getAsString().equals("observed"), "stopped track declares observed completion");
+        assertTrue(out.get("playbackState").getAsString().equals("stopped"), "explicit track stop observed");
+        assertTrue(
+                out.get("completion").getAsString().equals("observed"), "stopped track declares observed completion");
         f = new Fake();
         f.slots[0].content = true;
         f.slots[0].playing = true;
         f.stopped = false;
         f.queueStop = true;
         out = f.call("launcher.stop", trackTarget());
-        check(out.get("playbackState").getAsString().equals("queued"), "queued stop distinct from stopped");
-        check(out.get("status").getAsString().equals("dispatched"), "queued stop does not claim completion");
-        check(out.get("completion").getAsString().equals("not_observed"), "queued stop declares incomplete dispatch");
-        check(f.slots[0].playing && !f.stopped, "queued stop may leave the clip playing");
+        assertTrue(out.get("playbackState").getAsString().equals("queued"), "queued stop distinct from stopped");
+        assertTrue(out.get("status").getAsString().equals("dispatched"), "queued stop does not claim completion");
+        assertTrue(
+                out.get("completion").getAsString().equals("not_observed"), "queued stop declares incomplete dispatch");
+        assertTrue(f.slots[0].playing && !f.stopped, "queued stop may leave the clip playing");
         JsonObject bad = target();
         bad.addProperty("slotIndex", 15);
-        expectFuture("clip_not_found", f.start("launcher.launch", bad));
+        assertRpcError("clip_not_found", f.start("launcher.launch", bad));
     }
 
-    private static void unobservedPlaybackCompletionRemainsUnknown() throws Exception {
+    @Test
+    void unobservedPlaybackCompletionRemainsUnknown() throws Exception {
         for (boolean stop : new boolean[] {false, true}) {
             Fake f = new Fake();
             f.slots[0].content = true;
@@ -420,20 +388,21 @@ public final class LauncherModuleTest {
             f.slots[0].playing = stop;
             f.stopped = !stop;
             JsonObject out = f.call(stop ? "launcher.stop" : "launcher.launch", stop ? trackTarget() : target());
-            check(
+            assertTrue(
                     out.get("status").getAsString().equals("dispatched"),
                     "missing playback observation is not completion");
-            check(
+            assertTrue(
                     out.get("playbackState").getAsString().equals("not_observed"),
                     "neither queue nor desired state observed");
-            check(
+            assertTrue(
                     out.get("completion").getAsString().equals("unknown"),
                     "unobserved launch/stop stops strict consumers");
-            check(f.playbackDispatches == 1, "playback observation never redispatches the operation");
+            assertTrue(f.playbackDispatches == 1, "playback observation never redispatches the operation");
         }
     }
 
-    private static void denseReadReportsItsResponseBoundary() throws Exception {
+    @Test
+    void denseReadReportsItsResponseBoundary() throws Exception {
         Fake f = new Fake();
         f.slots[0].content = true;
         f.slots[0].length = 8;
@@ -441,15 +410,17 @@ public final class LauncherModuleTest {
         JsonObject p = window();
         p.addProperty("steps", 32);
         JsonObject out = f.call("notes.read", p);
-        check(out.get("notesInWindow").getAsInt() == 4096, "dense window reports actual total");
-        check(out.getAsJsonArray("notes").size() == 2048, "response stays bounded");
-        check(!out.get("completeWindow").getAsBoolean() && out.has("continuation"), "dense partial read is explicit");
-        check(
-                out.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8).length < RpcServer.MAX_BYTES,
+        assertTrue(out.get("notesInWindow").getAsInt() == 4096, "dense window reports actual total");
+        assertTrue(out.getAsJsonArray("notes").size() == 2048, "response stays bounded");
+        assertTrue(
+                !out.get("completeWindow").getAsBoolean() && out.has("continuation"), "dense partial read is explicit");
+        assertTrue(
+                out.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8).length < RpcServer.MAX_RESPONSE_BYTES,
                 "dense read fits protocol frame");
     }
 
-    private static void matchingEditsPreserveExistingNotes() throws Exception {
+    @Test
+    void matchingEditsPreserveExistingNotes() throws Exception {
         Fake f = new Fake();
         f.slots[0].content = true;
         f.put(0, 0, 0, 60, 100, .5);
@@ -459,14 +430,16 @@ public final class LauncherModuleTest {
         edits.add(set(0, 60, 100, .5));
         p.add("edits", edits);
         JsonObject out = f.call("notes.edit", p);
-        check(f.writes == 0, "matching set does not replace note or clear expression");
-        check(f.notes.get(key(0, 0, 0, 60)) == existing, "existing note object and unaddressed properties preserved");
-        check(
+        assertTrue(f.writes == 0, "matching set does not replace note or clear expression");
+        assertTrue(
+                f.notes.get(key(0, 0, 0, 60)) == existing, "existing note object and unaddressed properties preserved");
+        assertTrue(
                 out.get("status").getAsString().equals("observed"),
                 "unchanged actual readback verifies without callback replay");
     }
 
-    private static void loopStartAndPlaybackSafetyFailClosed() throws Exception {
+    @Test
+    void loopStartAndPlaybackSafetyFailClosed() throws Exception {
         Fake f = new Fake();
         f.slots[0].content = true;
         f.loopStart = 1;
@@ -474,21 +447,23 @@ public final class LauncherModuleTest {
         JsonArray edits = new JsonArray();
         edits.add(set(0, 60, 100, .5));
         p.add("edits", edits);
-        expectFuture("invalid_params", f.startAndDrain("notes.edit", p));
-        check(f.writes == 0, "notes before observed loop start are rejected before any mutation");
+        assertRpcError("invalid_params", f.startAndDrain("notes.edit", p));
+        assertTrue(f.writes == 0, "notes before observed loop start are rejected before any mutation");
         edits = new JsonArray();
         edits.add(set(1, 60, 100, .5));
         p.add("edits", edits);
-        check(f.call("notes.edit", p).get("status").getAsString().equals("observed"), "note at loop start is accepted");
-        check(f.writes == 1, "loop start bound is inclusive");
+        assertTrue(
+                f.call("notes.edit", p).get("status").getAsString().equals("observed"),
+                "note at loop start is accepted");
+        assertTrue(f.writes == 1, "loop start bound is inclusive");
         for (int flag = 0; flag < 4; flag++) {
             f = new Fake(flag != 3, flag == 0, flag == 1, flag == 2);
             f.slots[0].content = true;
-            expectFuture(flag == 3 ? "not_ready" : "unsafe_state", f.start("launcher.launch", target()));
-            check(
+            assertRpcError(flag == 3 ? "not_ready" : "unsafe_state", f.start("launcher.launch", target()));
+            assertTrue(
                     f.stopped && !f.slots[0].queued && !f.slots[0].playing,
                     "unsafe or unobserved transport never launches clip");
-            check(
+            assertTrue(
                     f.call("launcher.stop", trackTarget())
                             .get("playbackState")
                             .getAsString()
@@ -497,7 +472,8 @@ public final class LauncherModuleTest {
         }
     }
 
-    private static void delayedGridPropagationKeepsReadinessExplicit() throws Exception {
+    @Test
+    void delayedGridPropagationKeepsReadinessExplicit() throws Exception {
         Fake f = new Fake();
         f.slots[0].content = true;
         f.slots[0].length = 32;
@@ -509,17 +485,18 @@ public final class LauncherModuleTest {
         p.addProperty("startStep", 16);
         p.addProperty("stepSizeBeats", .5);
         HostOperation delayed = f.start("notes.read", p);
-        check(f.start == 0 && f.size == .25, "fixture retains old grid after asynchronous reconfiguration");
+        assertTrue(f.start == 0 && f.size == .25, "fixture retains old grid after asynchronous reconfiguration");
         f.next();
         f.applyPendingGrid();
         f.drain(delayed);
         JsonObject out = delayed.result.join();
-        check(find(out, 72, 8) != null, "delayed grid delivered during settling yields new window content");
-        check(out.get("gridGeneration").getAsLong() > before, "window change gets distinct observation generation");
-        check(
+        assertTrue(find(out, 72, 8) != null, "delayed grid delivered during settling yields new window content");
+        assertTrue(
+                out.get("gridGeneration").getAsLong() > before, "window change gets distinct observation generation");
+        assertTrue(
                 out.get("gridReadiness").getAsString().equals("scheduled_settling_not_acknowledged"),
                 "scheduled settling never claims a public API grid acknowledgement");
-        check(
+        assertTrue(
                 !out.has("gridReadinessLimitation") && !out.has("onsetPrecision") && !out.has("selectionSideEffect"),
                 "constant prose lives in the catalog, not every response");
         f.emitNotes = false;
@@ -530,7 +507,7 @@ public final class LauncherModuleTest {
         f.observer.noteStepChanged(f.note(0, 0, 72)); // Old/read-generation callback while new binding is unsettled.
         f.applyPendingGrid();
         f.drain(changed);
-        check(
+        assertTrue(
                 !changed.result
                         .join()
                         .getAsJsonArray("unverifiedEdits")
@@ -541,7 +518,8 @@ public final class LauncherModuleTest {
                 "callback from prior or unsettled window cannot verify a later changed write");
     }
 
-    private static void firstGridReadWaitsForNativeDebounce() throws Exception {
+    @Test
+    void firstGridReadWaitsForNativeDebounce() throws Exception {
         Fake f = new Fake();
         f.slots[0].content = true;
         f.noteStorageStepSize = .25;
@@ -552,14 +530,15 @@ public final class LauncherModuleTest {
         p.addProperty("stepSizeBeats", .125);
         p.addProperty("steps", 32);
         JsonObject out = f.call("notes.read", p);
-        check(out.getAsJsonArray("notes").size() == 2, "first grid read preserves both stored notes");
-        check(
+        assertTrue(out.getAsJsonArray("notes").size() == 2, "first grid read preserves both stored notes");
+        assertTrue(
                 find(out, 64, 2) != null,
                 "first eighth-beat read must not relabel the old quarter-beat cache as beat one");
-        check(f.writes == 0, "grid refresh does not change note content");
+        assertTrue(f.writes == 0, "grid refresh does not change note content");
     }
 
-    private static void fileImportValidationAndOccupancy() throws Exception {
+    @Test
+    void fileImportValidationAndOccupancy() throws Exception {
         Path file = Files.createTempFile("launcher-import-", ".arbitrary");
         try {
             for (String path : new String[] {
@@ -576,38 +555,39 @@ public final class LauncherModuleTest {
                 Fake f = new Fake();
                 JsonObject p = importTarget(file);
                 p.addProperty("path", path);
-                expectFuture("invalid_params", f.start("launcher.import", p));
-                check(f.imports == 0, "malformed path never reaches insertion");
+                assertRpcError("invalid_params", f.start("launcher.import", p));
+                assertTrue(f.imports == 0, "malformed path never reaches insertion");
             }
             Fake f = new Fake();
             JsonObject p = importTarget(file);
             p.addProperty("overwrite", true);
-            expectFuture("invalid_params", f.start("launcher.import", p));
-            check(f.imports == 0, "overwrite option is not accepted");
+            assertRpcError("invalid_params", f.start("launcher.import", p));
+            assertTrue(f.imports == 0, "overwrite option is not accepted");
             p = importTarget(file);
             p.remove("path");
-            expectFuture("invalid_params", f.start("launcher.import", p));
+            assertRpcError("invalid_params", f.start("launcher.import", p));
             p = importTarget(file);
             p.addProperty("slotIndex", 16);
-            expectFuture("invalid_params", f.start("launcher.import", p));
+            assertRpcError("invalid_params", f.start("launcher.import", p));
             p = importTarget(file);
             p.addProperty("trackId", "");
-            expectFuture("invalid_params", f.start("launcher.import", p));
-            check(f.imports == 0, "missing path or malformed explicit target cannot insert");
-            expectFuture(
+            assertRpcError("invalid_params", f.start("launcher.import", p));
+            assertTrue(f.imports == 0, "missing path or malformed explicit target cannot insert");
+            assertRpcError(
                     "file_unavailable",
                     f.start("launcher.import", importTarget(file.resolveSibling(file.getFileName() + ".missing"))));
-            expectFuture("file_unavailable", f.start("launcher.import", importTarget(file.getParent())));
-            check(f.imports == 0, "missing files and directories never reach insertion");
+            assertRpcError("file_unavailable", f.start("launcher.import", importTarget(file.getParent())));
+            assertTrue(f.imports == 0, "missing files and directories never reach insertion");
             f.slots[0].content = true;
-            expectFuture("slot_occupied", f.start("launcher.import", importTarget(file)));
-            check(f.imports == 0 && f.slots[0].content, "occupied content is never replaced");
+            assertRpcError("slot_occupied", f.start("launcher.import", importTarget(file)));
+            assertTrue(f.imports == 0 && f.slots[0].content, "occupied content is never replaced");
         } finally {
             Files.delete(file);
         }
     }
 
-    private static void emptyMidiImportFailsBeforeMutation() throws Exception {
+    @Test
+    void emptyMidiImportFailsBeforeMutation() throws Exception {
         Path file = Files.createTempFile("launcher-empty-", ".MID");
         try {
             javax.sound.midi.Sequence sequence = new javax.sound.midi.Sequence(javax.sound.midi.Sequence.PPQ, 480);
@@ -617,26 +597,26 @@ public final class LauncherModuleTest {
             track.add(new javax.sound.midi.MidiEvent(end, 7680));
             javax.sound.midi.MidiSystem.write(sequence, 1, file.toFile());
             Fake f = new Fake();
-            expectOutcome("empty_midi_file", "not_applied", f.start("launcher.import", importTarget(file)));
-            check(f.imports == 0, "EOT-only MIDI never reaches host insertion");
+            assertRpcError("empty_midi_file", "not_applied", f.start("launcher.import", importTarget(file)));
+            assertTrue(f.imports == 0, "EOT-only MIDI never reaches host insertion");
             javax.sound.midi.ShortMessage zero = new javax.sound.midi.ShortMessage();
             zero.setMessage(javax.sound.midi.ShortMessage.NOTE_ON, 0, 60, 0);
             track.add(new javax.sound.midi.MidiEvent(zero, 0));
             javax.sound.midi.MidiSystem.write(sequence, 1, file.toFile());
-            expectOutcome("empty_midi_file", "not_applied", f.start("launcher.import", importTarget(file)));
-            check(f.imports == 0, "zero-velocity note-on is not a playable note");
+            assertRpcError("empty_midi_file", "not_applied", f.start("launcher.import", importTarget(file)));
+            assertTrue(f.imports == 0, "zero-velocity note-on is not a playable note");
             Files.writeString(file, "not midi");
-            expectOutcome("invalid_midi_file", "not_applied", f.start("launcher.import", importTarget(file)));
-            check(f.imports == 0, "malformed MIDI is rejected before host insertion");
+            assertRpcError("invalid_midi_file", "not_applied", f.start("launcher.import", importTarget(file)));
+            assertTrue(f.imports == 0, "malformed MIDI is rejected before host insertion");
             javax.sound.midi.ShortMessage note = new javax.sound.midi.ShortMessage();
             note.setMessage(javax.sound.midi.ShortMessage.NOTE_ON, 0, 60, 90);
             track.add(new javax.sound.midi.MidiEvent(note, 0));
             javax.sound.midi.MidiSystem.write(sequence, 1, file.toFile());
             HostOperation op = f.start("launcher.import", importTarget(file));
-            check(f.imports == 1, "preflight failures do not quarantine a later valid import");
+            assertTrue(f.imports == 1, "preflight failures do not quarantine a later valid import");
             f.observeContent(0, true);
             f.drain(op);
-            check(
+            assertTrue(
                     op.result.join().get("status").getAsString().equals("observed"),
                     "valid MIDI still uses host content observation");
             javax.sound.midi.Sequence ccSequence = new javax.sound.midi.Sequence(javax.sound.midi.Sequence.PPQ, 480);
@@ -646,7 +626,7 @@ public final class LauncherModuleTest {
             javax.sound.midi.MidiSystem.write(ccSequence, 1, file.toFile());
             Fake ccHost = new Fake();
             HostOperation ccImport = ccHost.start("launcher.import", importTarget(file));
-            check(ccHost.imports == 1, "controller-only MIDI remains eligible for host import");
+            assertTrue(ccHost.imports == 1, "controller-only MIDI remains eligible for host import");
             ccHost.observeContent(0, true);
             ccHost.drain(ccImport);
         } finally {
@@ -654,7 +634,8 @@ public final class LauncherModuleTest {
         }
     }
 
-    private static void fileImportObservesOnlyContentTransition() throws Exception {
+    @Test
+    void fileImportObservesOnlyContentTransition() throws Exception {
         Path file = Files.createTempFile("launcher-import-", ".arbitrary");
         try {
             Fake f = new Fake();
@@ -662,61 +643,62 @@ public final class LauncherModuleTest {
             JsonObject p = importTarget(file);
             p.addProperty("slotIndex", 3);
             HostOperation op = f.start("launcher.import", p);
-            check(
+            assertTrue(
                     f.imports == 1 && file.toString().equals(f.importedPath) && f.importedSlot == 3,
                     "native insertion targets explicit slot, not selected cursor");
-            check(!op.result.isDone(), "dispatch alone does not report observed import");
+            assertTrue(!op.result.isDone(), "dispatch alone does not report observed import");
             f.slots[3].name = "Host content";
             f.observeContent(3, true);
             f.drain(op);
             JsonObject out = op.result.join();
-            check(
+            assertTrue(
                     out.get("status").getAsString().equals("observed")
                             && out.get("verification").getAsString().equals("slot_content_transition"),
                     "fresh content transition is observed");
-            check(
+            assertTrue(
                     !out.get("requestedFileVerified").getAsBoolean(),
                     "content observation never claims file identity or decoding");
-            check(
+            assertTrue(
                     out.getAsJsonObject("slot").get("name").getAsString().equals("Host content"),
                     "response contains host metadata, not path echo");
-            check(f.selected == 5 && !f.slots[0].content, "import does not select cursor or touch other slots");
+            assertTrue(f.selected == 5 && !f.slots[0].content, "import does not select cursor or touch other slots");
             for (int mode = 0; mode < 3; mode++) {
                 f = new Fake();
                 op = f.start("launcher.import", importTarget(file));
                 if (mode == 1) f.slots[0].content = true; // Getter changed without a fresh observer.
                 if (mode == 2) f.observeContent(0, false); // Fresh callback, but no content transition.
                 f.drain(op);
-                expectOutcome("import_not_observed", "unknown", op);
-                check(f.imports == 1, "unobserved insertion is never replayed");
+                assertRpcError("import_not_observed", "unknown", op);
+                assertTrue(f.imports == 1, "unobserved insertion is never replayed");
             }
             f = new Fake();
             op = f.start("launcher.import", importTarget(file));
             f.trackId = "22222222-2222-2222-2222-222222222222";
             f.drain(op);
-            expectOutcome("stale_context", "unknown", op);
-            check(f.imports == 1, "post-dispatch source change stays unknown without retry");
+            assertRpcError("stale_context", "unknown", op);
+            assertTrue(f.imports == 1, "post-dispatch source change stays unknown without retry");
         } finally {
             Files.delete(file);
         }
     }
 
-    private static void fileImportSharesCursorLease() throws Exception {
+    @Test
+    void fileImportSharesCursorLease() throws Exception {
         Path file = Files.createTempFile("launcher-import-", ".arbitrary");
         try {
             Fake f = new Fake();
             HostOperation importing = f.start("launcher.import", importTarget(file));
-            expectFuture("busy", f.start("launcher.import", importTarget(file)));
+            assertRpcError("busy", f.start("launcher.import", importTarget(file)));
             JsonObject create = target();
             create.addProperty("lengthBeats", 4);
             create.addProperty("name", "Cannot race import");
-            expectFuture("busy", f.start("launcher.create", create));
-            expectFuture("busy", f.start("notes.edit", editFixture()));
-            expectFuture("busy", f.start("notes.read", window()));
-            check(
+            assertRpcError("busy", f.start("launcher.create", create));
+            assertRpcError("busy", f.start("notes.edit", editFixture()));
+            assertRpcError("busy", f.start("notes.read", window()));
+            assertTrue(
                     f.imports == 1 && f.creates == 0 && f.writes == 0,
                     "pending import excludes cursor/create/import mutations");
-            check(
+            assertTrue(
                     f.call("launcher.list", trackTarget())
                                     .getAsJsonArray("slots")
                                     .size()
@@ -727,63 +709,64 @@ public final class LauncherModuleTest {
             HostOperation reading = f.start("notes.read", window());
             JsonObject other = importTarget(file);
             other.addProperty("slotIndex", 1);
-            expectFuture("busy", f.start("launcher.import", other));
+            assertRpcError("busy", f.start("launcher.import", other));
             f.drain(reading);
-            check(f.imports == 1, "existing cursor lease also excludes import");
+            assertTrue(f.imports == 1, "existing cursor lease also excludes import");
             other = target();
             other.addProperty("slotIndex", 1);
             other.addProperty("lengthBeats", 4);
             other.addProperty("name", "Creating");
             HostOperation creating = f.start("launcher.create", other);
-            expectFuture("busy", f.start("launcher.import", importTarget(file)));
+            assertRpcError("busy", f.start("launcher.import", importTarget(file)));
             f.drain(creating);
-            check(f.imports == 1, "existing create lease also excludes import");
+            assertTrue(f.imports == 1, "existing create lease also excludes import");
         } finally {
             Files.delete(file);
         }
     }
 
-    private static void fileImportMutationBoundaryGuards() throws Exception {
+    @Test
+    void fileImportMutationBoundaryGuards() throws Exception {
         Path file = Files.createTempFile("launcher-import-", ".arbitrary");
         try {
             for (int flag = 0; flag < 4; flag++) {
                 Fake f = new Fake(flag != 3, flag == 0, flag == 1, flag == 2);
-                expectOutcome(
+                assertRpcError(
                         flag == 3 ? "not_ready" : "unsafe_state",
                         "not_applied",
                         f.start("launcher.import", importTarget(file)));
-                check(f.imports == 0, "unsafe or unobserved transport prevents file insertion");
+                assertTrue(f.imports == 0, "unsafe or unobserved transport prevents file insertion");
             }
             Fake changed = new Fake();
             changed.beforeInsertion = () -> changed.trackId = "22222222-2222-2222-2222-222222222222";
-            expectOutcome("stale_context", "not_applied", changed.start("launcher.import", importTarget(file)));
-            check(changed.imports == 0, "track binding rechecked immediately before native dispatch");
+            assertRpcError("stale_context", "not_applied", changed.start("launcher.import", importTarget(file)));
+            assertTrue(changed.imports == 0, "track binding rechecked immediately before native dispatch");
             Fake scrolled = new Fake();
             scrolled.beforeInsertion = () -> scrolled.bankOffset = 1;
-            expectOutcome("stale_context", "not_applied", scrolled.start("launcher.import", importTarget(file)));
-            check(scrolled.imports == 0, "slot bank offset rechecked immediately before dispatch");
+            assertRpcError("stale_context", "not_applied", scrolled.start("launcher.import", importTarget(file)));
+            assertTrue(scrolled.imports == 0, "slot bank offset rechecked immediately before dispatch");
             Fake occupied = new Fake();
             occupied.beforeInsertion = () -> occupied.observeContent(0, true);
-            expectOutcome("slot_occupied", "not_applied", occupied.start("launcher.import", importTarget(file)));
-            check(occupied.imports == 0, "late slot occupancy cannot be overwritten");
+            assertRpcError("slot_occupied", "not_applied", occupied.start("launcher.import", importTarget(file)));
+            assertTrue(occupied.imports == 0, "late slot occupancy cannot be overwritten");
             Fake unsafe = new Fake();
-            unsafe.beforeInsertion = () -> unsafe.recordObserver.valueChanged(true);
-            expectOutcome("unsafe_state", "not_applied", unsafe.start("launcher.import", importTarget(file)));
-            check(unsafe.imports == 0, "safety is rechecked at mutation boundary");
+            unsafe.beforeInsertion = () -> unsafe.recordNode.emit(true);
+            assertRpcError("unsafe_state", "not_applied", unsafe.start("launcher.import", importTarget(file)));
+            assertTrue(unsafe.imports == 0, "safety is rechecked at mutation boundary");
             Fake cancelled = new Fake();
             HostOperation cancelledOp = new HostOperation(System.nanoTime() + TimeUnit.SECONDS.toNanos(2));
             cancelled.beforeInsertion = () -> cancelledOp.result.completeExceptionally(
                     new RpcException("cancelled", "Fixture cancellation", "not_applied"));
             cancelled.start(cancelledOp, "launcher.import", importTarget(file));
-            expectOutcome("cancelled", "not_applied", cancelledOp);
-            check(
+            assertRpcError("cancelled", "not_applied", cancelledOp);
+            assertTrue(
                     cancelled.imports == 0 && !cancelledOp.dispatched,
                     "cancellation during target resolution prevents dispatch");
             Fake expired = new Fake();
             HostOperation expiredOp = new HostOperation(System.nanoTime() - 1);
             expired.start(expiredOp, "launcher.import", importTarget(file));
-            expectOutcome("deadline_exceeded", "not_applied", expiredOp);
-            check(expired.imports == 0, "expired operation cannot dispatch insertion");
+            assertRpcError("deadline_exceeded", "not_applied", expiredOp);
+            assertTrue(expired.imports == 0, "expired operation cannot dispatch insertion");
             Fake late = new Fake();
             HostOperation lateOp = new HostOperation(System.nanoTime() + TimeUnit.SECONDS.toNanos(2));
             boolean[] resolved = {false};
@@ -797,28 +780,29 @@ public final class LauncherModuleTest {
                 }
             };
             late.start(lateOp, "launcher.import", importTarget(file));
-            expectOutcome("deadline_exceeded", "not_applied", lateOp);
-            check(resolved[0] && late.imports == 0, "deadline rechecked after resolving insertion point");
+            assertRpcError("deadline_exceeded", "not_applied", lateOp);
+            assertTrue(resolved[0] && late.imports == 0, "deadline rechecked after resolving insertion point");
         } finally {
             Files.delete(file);
         }
     }
 
-    private static void unresolvedImportsKeepTargetQuarantined() throws Exception {
+    @Test
+    void unresolvedImportsKeepTargetQuarantined() throws Exception {
         Path file = Files.createTempFile("launcher-quarantine-", ".arbitrary");
         try {
             Fake f = new Fake();
             HostOperation first = f.startShort("launcher.import", importTarget(file));
             f.drain(first);
-            expectOutcome("import_not_observed", "unknown", first);
+            assertRpcError("import_not_observed", "unknown", first);
             HostOperation second = f.start("launcher.import", importTarget(file));
             expectQuarantine(second, "launcher.import", ID);
             expectQuarantine(f.start("launcher.create", createTarget()), "launcher.import", ID);
             expectQuarantine(f.start("notes.edit", editFixture()), "launcher.import", ID);
-            check(
+            assertTrue(
                     f.imports == 1 && f.creates == 0 && f.writes == 0,
                     "unknown import rejects every conflicting content write before native dispatch");
-            check(
+            assertTrue(
                     f.call("launcher.list", trackTarget())
                                     .getAsJsonArray("slots")
                                     .size()
@@ -827,10 +811,10 @@ public final class LauncherModuleTest {
             f.observeContent(0, true);
             f.next(); // A's late callback must never be attributed to B.
             expectQuarantine(second, "launcher.import", ID);
-            check(
+            assertTrue(
                     f.call("notes.read", window()).getAsJsonArray("notes").isEmpty(),
                     "late content remains available for read-only note inspection");
-            check(
+            assertTrue(
                     f.imports == 1 && f.creates == 0 && f.writes == 0 && f.nameWrites == 0,
                     "inspection does not resume or replay the unknown mutation");
             f.observeContent(0, false);
@@ -838,12 +822,12 @@ public final class LauncherModuleTest {
             JsonObject other = importTarget(file);
             other.addProperty("slotIndex", 1);
             HostOperation independent = f.start("launcher.import", other);
-            check(
+            assertTrue(
                     f.imports == 2 && f.importedSlot == 1,
                     "quarantine is target-specific rather than a permanent global cursor lease");
             f.observeContent(1, true);
             f.drain(independent);
-            check(
+            assertTrue(
                     independent.result.join().get("status").getAsString().equals("observed"),
                     "independent slot can complete while original remains unresolved");
             expectQuarantine(f.start("launcher.import", importTarget(file)), "launcher.import", ID);
@@ -852,7 +836,8 @@ public final class LauncherModuleTest {
         }
     }
 
-    private static void completedMutationsReleaseTheirTargets() throws Exception {
+    @Test
+    void completedMutationsReleaseTheirTargets() throws Exception {
         Path file = Files.createTempFile("launcher-completed-", ".arbitrary");
         try {
             Fake f = new Fake();
@@ -861,16 +846,16 @@ public final class LauncherModuleTest {
             f.drain(first);
             f.observeContent(0, false); // Independent host deletion after a positively observed import.
             HostOperation second = f.start("launcher.import", importTarget(file));
-            check(
+            assertTrue(
                     f.imports == 2 && !second.result.isDone(),
                     "observed import releases quarantine without reusing its earlier callback");
             f.observeContent(0, true);
             f.drain(second);
-            check(
+            assertTrue(
                     second.result.join().get("status").getAsString().equals("observed"),
                     "independent same-slot import requires its own fresh completion");
             f = new Fake();
-            check(
+            assertTrue(
                     f.call("launcher.create", createTarget())
                             .get("status")
                             .getAsString()
@@ -878,7 +863,7 @@ public final class LauncherModuleTest {
                     "successful create observes content/name/length");
             f.observeContent(0, false);
             HostOperation imported = f.start("launcher.import", importTarget(file));
-            check(f.imports == 1, "successful creation releases target for an independent empty-slot import");
+            assertTrue(f.imports == 1, "successful creation releases target for an independent empty-slot import");
             f.observeContent(0, true);
             f.drain(imported);
         } finally {
@@ -886,7 +871,8 @@ public final class LauncherModuleTest {
         }
     }
 
-    private static void completedRequestFuturesDoNotReleaseMutations() throws Exception {
+    @Test
+    void completedRequestFuturesDoNotReleaseMutations() throws Exception {
         Path file = Files.createTempFile("launcher-future-", ".arbitrary");
         try {
             for (String method : new String[] {"launcher.import", "launcher.create"}) {
@@ -895,27 +881,27 @@ public final class LauncherModuleTest {
                     f.deferCreate = true;
                     HostOperation first = f.startShort(
                             method, method.equals("launcher.import") ? importTarget(file) : createTarget());
-                    check(
+                    assertTrue(
                             first.dispatched && !first.result.isDone(),
                             "fixture dispatches native mutation before request termination");
                     if (mode == 0) {
                         first.result.cancel(false);
-                        check(first.result.isCancelled(), "request future can be externally cancelled");
+                        assertTrue(first.result.isCancelled(), "request future can be externally cancelled");
                     } else if (mode == 1) {
                         first.result.completeExceptionally(
                                 new RpcException("deadline_exceeded", "Fixture transport timeout", "unknown"));
-                        expectOutcome("deadline_exceeded", "unknown", first);
+                        assertRpcError("deadline_exceeded", "unknown", first);
                     } else {
                         TimeUnit.NANOSECONDS.sleep(Math.max(0, first.deadline - System.nanoTime()) + 1);
                         f.next();
-                        expectOutcome("deadline_exceeded", "unknown", first);
+                        assertRpcError("deadline_exceeded", "unknown", first);
                     }
                     f.next(); // Scheduled host tasks ignore already-completed futures, not the quarantine.
                     expectQuarantine(f.start("launcher.import", importTarget(file)), method, ID);
                     f.observeContent(0, true);
                     expectQuarantine(f.start("notes.edit", editFixture()), method, ID);
                     f.call("notes.read", window());
-                    check(
+                    assertTrue(
                             f.imports + f.creates == 1 && f.writes == 0 && f.nameWrites == 0,
                             "late observation after future termination never resumes a content mutation");
                 }
@@ -925,7 +911,8 @@ public final class LauncherModuleTest {
         }
     }
 
-    private static void reboundTargetsRemainQuarantined() throws Exception {
+    @Test
+    void reboundTargetsRemainQuarantined() throws Exception {
         Path file = Files.createTempFile("launcher-rebound-", ".arbitrary");
         String replacement = "22222222-2222-2222-2222-222222222222";
         try {
@@ -933,22 +920,22 @@ public final class LauncherModuleTest {
             HostOperation first = f.start("launcher.import", importTarget(file));
             f.observeTrackId(replacement);
             f.drain(first);
-            expectOutcome("stale_context", "unknown", first);
+            assertRpcError("stale_context", "unknown", first);
             JsonObject otherTrack = importTarget(file);
             otherTrack.addProperty("trackId", replacement);
             expectQuarantine(f.start("launcher.import", otherTrack), "launcher.import", ID);
             f.observeTrackId(ID);
             expectQuarantine(f.start("launcher.import", importTarget(file)), "launcher.import", ID);
-            check(f.imports == 1, "both original logical target and rebound native slot proxy retain quarantine");
+            assertTrue(f.imports == 1, "both original logical target and rebound native slot proxy retain quarantine");
             f = new Fake();
             first = f.start("launcher.import", importTarget(file));
             f.observeTrackId(replacement);
             f.observeTrackId(ID);
             f.observeContent(0, true);
             f.drain(first);
-            expectOutcome("stale_context", "unknown", first);
+            assertRpcError("stale_context", "unknown", first);
             expectQuarantine(f.start("notes.edit", editFixture()), "launcher.import", ID);
-            check(
+            assertTrue(
                     f.imports == 1 && f.writes == 0,
                     "returning to the old UUID cannot erase an intervening binding change");
         } finally {
@@ -956,32 +943,33 @@ public final class LauncherModuleTest {
         }
     }
 
-    private static void preDispatchFailuresDoNotQuarantine() throws Exception {
+    @Test
+    void preDispatchFailuresDoNotQuarantine() throws Exception {
         Path file = Files.createTempFile("launcher-preflight-", ".arbitrary");
         try {
             Fake f = new Fake();
             JsonObject bad = createTarget();
             bad.addProperty("lengthBeats", 0);
-            expectOutcome("invalid_params", "not_applied", f.start("launcher.create", bad));
-            expectOutcome(
+            assertRpcError("invalid_params", "not_applied", f.start("launcher.create", bad));
+            assertRpcError(
                     "file_unavailable",
                     "not_applied",
                     f.start("launcher.import", importTarget(file.resolveSibling(file.getFileName() + ".missing"))));
             f.observeContent(0, true);
-            expectOutcome("slot_occupied", "not_applied", f.start("launcher.import", importTarget(file)));
-            expectOutcome("slot_occupied", "not_applied", f.start("launcher.create", createTarget()));
+            assertRpcError("slot_occupied", "not_applied", f.start("launcher.import", importTarget(file)));
+            assertRpcError("slot_occupied", "not_applied", f.start("launcher.create", createTarget()));
             f.observeContent(0, false);
             HostOperation cancelled = new HostOperation(System.nanoTime() + TimeUnit.SECONDS.toNanos(2));
             f.beforeInsertion = () -> cancelled.result.completeExceptionally(
                     new RpcException("cancelled", "Fixture pre-dispatch cancellation", "not_applied"));
             f.start(cancelled, "launcher.import", importTarget(file));
-            expectOutcome("cancelled", "not_applied", cancelled);
+            assertRpcError("cancelled", "not_applied", cancelled);
             f.beforeInsertion = () -> {};
             HostOperation valid = f.start("launcher.import", importTarget(file));
-            check(f.imports == 1 && f.creates == 0, "pre-dispatch failures leave no mutation quarantine");
+            assertTrue(f.imports == 1 && f.creates == 0, "pre-dispatch failures leave no mutation quarantine");
             f.observeContent(0, true);
             f.drain(valid);
-            check(
+            assertTrue(
                     valid.result.join().get("status").getAsString().equals("observed"),
                     "valid request after preflight failures completes normally");
         } finally {
@@ -989,7 +977,8 @@ public final class LauncherModuleTest {
         }
     }
 
-    private static void unresolvedCreatesKeepTargetQuarantined() throws Exception {
+    @Test
+    void unresolvedCreatesKeepTargetQuarantined() throws Exception {
         Path file = Files.createTempFile("launcher-create-failure-", ".arbitrary");
         try {
             for (int mode = 0; mode < 4; mode++) {
@@ -1000,14 +989,14 @@ public final class LauncherModuleTest {
                 f.emitCreateContent = mode != 3;
                 HostOperation first = f.startShort("launcher.create", createTarget());
                 f.drain(first);
-                if (mode == 1) expectOutcome("host_write_failed", "unknown", first);
+                if (mode == 1) assertRpcError("host_write_failed", "unknown", first);
                 else {
                     JsonObject out = first.result.join();
-                    check(
+                    assertTrue(
                             out.get("status").getAsString().equals("dispatched")
                                     && out.get("mutationUnresolved").getAsBoolean(),
                             "unobserved creation reports actual unresolved mutation state");
-                    check(
+                    assertTrue(
                             out.get("quarantine").getAsString().equals("extension_instance"),
                             "creation reports conservative quarantine lifetime");
                 }
@@ -1018,15 +1007,15 @@ public final class LauncherModuleTest {
                 expectQuarantine(f.start("notes.edit", editFixture()), "launcher.create", ID);
                 int names = f.nameWrites;
                 f.call("notes.read", window());
-                check(
+                assertTrue(
                         f.creates == 1 && f.imports == 0 && f.writes == 0 && f.nameWrites == names,
                         "failed create cannot be replayed or completed by a later read");
             }
             Fake f = new Fake();
             f.failImport = true;
-            expectOutcome("host_write_failed", "unknown", f.start("launcher.import", importTarget(file)));
+            assertRpcError("host_write_failed", "unknown", f.start("launcher.import", importTarget(file)));
             expectQuarantine(f.start("launcher.create", createTarget()), "launcher.import", ID);
-            check(
+            assertTrue(
                     f.imports == 1 && f.creates == 0,
                     "native insertion exception also retains dispatched mutation quarantine");
         } finally {
@@ -1041,105 +1030,106 @@ public final class LauncherModuleTest {
         return p;
     }
 
-    private static void slotsBeyondSceneCountAreRejectedAndNotListed() throws Exception {
+    @Test
+    void slotsBeyondSceneCountAreRejectedAndNotListed() throws Exception {
         Fake f = new Fake();
         f.scenes = 1;
-        check(f.call("launcher.list", trackTarget()).getAsJsonArray("slots").size() == 1, "list follows scene count");
+        assertTrue(
+                f.call("launcher.list", trackTarget()).getAsJsonArray("slots").size() == 1, "list follows scene count");
         JsonObject far = createTarget();
         far.addProperty("slotIndex", 1);
-        expectOutcome("slot_out_of_range", "not_applied", f.start("launcher.create", far));
-        check(f.creates == 0, "out-of-range create is never dispatched");
+        assertRpcError("slot_out_of_range", "not_applied", f.start("launcher.create", far));
+        assertTrue(f.creates == 0, "out-of-range create is never dispatched");
         HostOperation valid = f.start("launcher.create", createTarget());
-        check(f.creates == 1, "out-of-range rejection leaves no quarantine");
+        assertTrue(f.creates == 1, "out-of-range rejection leaves no quarantine");
         f.observeContent(0, true);
         f.drain(valid);
-        check(valid.result.join().get("status").getAsString().equals("observed"), "in-range create still completes");
+        assertTrue(
+                valid.result.join().get("status").getAsString().equals("observed"), "in-range create still completes");
     }
 
-    private static void scenesAreAppendedAtTheEndAndCountIsObserved() throws Exception {
+    @Test
+    void scenesAreAppendedAtTheEndAndCountIsObserved() throws Exception {
         Fake f = new Fake();
         f.scenes = 3;
         f.put(0, 0, 0, 60, 90, .25); // clip content in slot 0 must stay addressed by the same index
         JsonObject out = f.call("scenes.append", new JsonObject());
-        check(
+        assertTrue(
                 out.get("sceneCountBefore").getAsInt() == 3
                         && out.get("sceneCount").getAsInt() == 4,
                 "default appends one scene, count observed");
-        check(
+        assertTrue(
                 out.get("firstNewSlotIndex").getAsInt() == 3 && f.sceneAppends == 1,
                 "new slot index is the old scene count");
         JsonObject two = new JsonObject();
         two.addProperty("count", 2);
         out = f.call("scenes.append", two);
-        check(out.get("sceneCount").getAsInt() == 6 && f.sceneAppends == 3, "count appends several scenes in one call");
-        check(
+        assertTrue(
+                out.get("sceneCount").getAsInt() == 6 && f.sceneAppends == 3,
+                "count appends several scenes in one call");
+        assertTrue(
                 f.call("launcher.list", trackTarget()).getAsJsonArray("slots").size() == 6,
                 "new scenes appear in the launcher window");
         JsonObject many = new JsonObject();
         many.addProperty("count", 11);
-        expectOutcome("scene_limit", "not_applied", f.start("scenes.append", many));
-        check(f.sceneAppends == 3, "over-limit append is never dispatched");
+        assertRpcError("scene_limit", "not_applied", f.start("scenes.append", many));
+        assertTrue(f.sceneAppends == 3, "over-limit append is never dispatched");
         for (double bad : new double[] {0, 17, 1.5}) {
             JsonObject p = new JsonObject();
             p.addProperty("count", bad);
-            expect("invalid_params", () -> LauncherModule.validateParams("scenes.append", p));
+            assertRpcError("invalid_params", () -> LauncherModule.validateParams("scenes.append", p));
         }
         JsonObject extra = new JsonObject();
         extra.addProperty("trackId", ID);
-        expect("invalid_params", () -> LauncherModule.validateParams("scenes.append", extra));
+        assertRpcError("invalid_params", () -> LauncherModule.validateParams("scenes.append", extra));
         Fake silent = new Fake();
         silent.scenes = 2;
         silent.applyScene = false;
         HostOperation op = silent.startShort("scenes.append", new JsonObject());
         silent.drain(op);
-        expectFuture("scene_count_not_observed", op);
-        check(op.dispatched && silent.sceneAppends == 1, "unobserved count is unknown after exactly one dispatch");
-        try {
-            op.result.join();
-        } catch (CompletionException error) {
-            check(
-                    ((RpcException) error.getCause()).outcome.equals("unknown"),
-                    "unobserved scene append outcome is unknown");
+        assertRpcError("scene_count_not_observed", op);
+        assertTrue(op.dispatched && silent.sceneAppends == 1, "unobserved count is unknown after exactly one dispatch");
+        {
+            RpcException error = rejection(op);
+            assertTrue(error.outcome.equals("unknown"), "unobserved scene append outcome is unknown");
         }
         Fake create = new Fake();
         create.scenes = 1;
         JsonObject far = createTarget();
         far.addProperty("slotIndex", 1);
         HostOperation rejected = create.start("launcher.create", far);
-        expectFuture("slot_out_of_range", rejected);
-        try {
-            rejected.result.join();
-        } catch (CompletionException error) {
-            check(
-                    error.getCause().getMessage().contains("scenes.append"),
-                    "out-of-range message points to scenes.append");
+        assertRpcError("slot_out_of_range", rejected);
+        {
+            RpcException error = rejection(rejected);
+            assertTrue(error.getMessage().contains("scenes.append"), "out-of-range message points to scenes.append");
         }
     }
 
-    private static void omittedWindowIsDerivedFromEdits() throws Exception {
+    @Test
+    void omittedWindowIsDerivedFromEdits() throws Exception {
         Fake f = new Fake();
         f.call("launcher.create", createTarget());
         JsonObject p = target();
         p.add("edits", fixture());
         LauncherModule.validateParams("notes.edit", p);
         LauncherModule.Window w = LauncherModule.deriveEditWindow(p);
-        check(
+        assertTrue(
                 w.exact.compareTo(new java.math.BigDecimal("0.015625")) == 0 && w.start == 0 && w.steps == 96,
                 "grid is the finest one that fits 128 steps");
-        check(w.pitch == 36 && w.pitches == 32, "pitch range comes from the edits");
+        assertTrue(w.pitch == 36 && w.pitches == 32, "pitch range comes from the edits");
         JsonObject out = f.call("notes.edit", p);
-        check(
+        assertTrue(
                 out.get("status").getAsString().equals("observed")
                         && out.getAsJsonObject("window").get("derived").getAsBoolean(),
                 "derived window edit observed and echoed");
-        check(
+        assertTrue(
                 f.notes.containsKey(key(0, 0, 0, 60)) && f.notes.containsKey(key(0, 0, 64, 62)),
                 "notes landed on absolute steps of the derived grid");
         JsonObject quarter = target();
         JsonArray one = new JsonArray();
         one.add(set(2, 61, 90, 2));
         quarter.add("edits", one);
-        check(
+        assertTrue(
                 LauncherModule.deriveEditWindow(quarter).exact.compareTo(new java.math.BigDecimal("0.015625")) == 0,
                 "long notes fall back to the finest grid that still fits");
         JsonObject wholeNote = target();
@@ -1147,14 +1137,14 @@ public final class LauncherModuleTest {
         whole.add(set(0, 61, 90, 256));
         wholeNote.add("edits", whole);
         LauncherModule.Window coarse = LauncherModule.deriveEditWindow(wholeNote);
-        check(
+        assertTrue(
                 coarse.exact.compareTo(new java.math.BigDecimal("2")) == 0 && coarse.steps == 128,
                 "a single 256-beat note derives a coarse grid instead of failing");
         JsonObject fine = target();
         JsonArray finer = new JsonArray();
         finer.add(set(.0625, 61, 90, .125));
         fine.add("edits", finer);
-        check(
+        assertTrue(
                 LauncherModule.deriveEditWindow(fine).exact.compareTo(new java.math.BigDecimal("0.0078125")) == 0,
                 "short fine edits use the finest grid");
         JsonObject wide = target();
@@ -1162,11 +1152,10 @@ public final class LauncherModuleTest {
         spread.add(set(0, 60, 90, .25));
         spread.add(set(40, 60, 90, .25));
         wide.add("edits", spread);
-        try {
-            LauncherModule.validateParams("notes.edit", wide);
-            throw new AssertionError("accepted > 128 steps");
-        } catch (RpcException error) {
-            check(
+        {
+            RpcException error =
+                    assertThrows(RpcException.class, () -> LauncherModule.validateParams("notes.edit", wide));
+            assertTrue(
                     error.code.equals("invalid_params")
                             && error.getMessage().contains("split")
                             && error.getMessage().contains("coarser"),
@@ -1175,12 +1164,12 @@ public final class LauncherModuleTest {
         JsonObject partial = target();
         partial.add("edits", fixture());
         partial.addProperty("steps", 8);
-        expect("invalid_params", () -> LauncherModule.validateParams("notes.edit", partial));
+        assertRpcError("invalid_params", () -> LauncherModule.validateParams("notes.edit", partial));
         JsonObject odd = target();
         JsonArray off = new JsonArray();
         off.add(set(.001, 60, 90, .25));
         odd.add("edits", off);
-        expect("invalid_params", () -> LauncherModule.validateParams("notes.edit", odd));
+        assertRpcError("invalid_params", () -> LauncherModule.validateParams("notes.edit", odd));
         Fake hidden = new Fake();
         hidden.call("launcher.create", createTarget());
         hidden.noteStorageStepSize = 1.0 / 128;
@@ -1192,16 +1181,17 @@ public final class LauncherModuleTest {
         overlap.add("edits", longNote);
         HostOperation rejectedOverlap = hidden.start("notes.edit", overlap);
         hidden.drain(rejectedOverlap);
-        expectFuture("note_collision", rejectedOverlap);
-        check(hidden.writes == 0, "derived window cannot hide a finer existing onset");
+        assertRpcError("note_collision", rejectedOverlap);
+        assertTrue(hidden.writes == 0, "derived window cannot hide a finer existing onset");
         JsonObject explicit = window();
         explicit.add("edits", fixture());
-        check(
+        assertTrue(
                 f.call("notes.edit", explicit).get("status").getAsString().equals("observed"),
                 "explicit windows keep working");
     }
 
-    private static void omittedReadWindowCoversTheClipLoop() throws Exception {
+    @Test
+    void omittedReadWindowCoversTheClipLoop() throws Exception {
         Fake f = new Fake();
         JsonObject create = createTarget();
         create.addProperty("lengthBeats", 13 * 4);
@@ -1209,29 +1199,31 @@ public final class LauncherModuleTest {
         f.put(0, 0, 100, 60, 90, .25); // beat 25
         JsonObject read = f.call("notes.read", target());
         JsonObject w = read.getAsJsonObject("window");
-        check(
+        assertTrue(
                 w.get("stepSizeBeats").getAsDouble() == .25
                         && w.get("steps").getAsInt() == 128
                         && w.get("pitchCount").getAsInt() == 128,
                 "long loop reads 128 steps at 1/16 note");
-        check(
+        assertTrue(
                 !read.get("windowCoversLoop").getAsBoolean()
                         && read.get("continuation").getAsString().contains("startStep=128"),
                 "uncovered loop returns a continuation, not a coarser grid");
-        check(w.get("derived").getAsBoolean() && read.getAsJsonArray("notes").size() == 1, "derived read lists notes");
+        assertTrue(
+                w.get("derived").getAsBoolean() && read.getAsJsonArray("notes").size() == 1,
+                "derived read lists notes");
         Fake g = new Fake();
         g.call("launcher.create", createTarget());
         JsonObject whole = g.call("notes.read", target());
-        check(
+        assertTrue(
                 whole.getAsJsonObject("window").get("stepSizeBeats").getAsDouble() == .125
                         && whole.getAsJsonObject("window").get("steps").getAsInt() == 32,
                 "short loop is read at 1/32 note");
-        check(
+        assertTrue(
                 whole.get("windowCoversLoop").getAsBoolean() && !whole.has("continuation"),
                 "covered loop has no continuation");
         JsonObject partial = target();
         partial.addProperty("steps", 8);
-        expect("invalid_params", () -> LauncherModule.validateParams("notes.read", partial));
+        assertRpcError("invalid_params", () -> LauncherModule.validateParams("notes.read", partial));
     }
 
     private static JsonObject manyEdits(int count) {
@@ -1242,7 +1234,8 @@ public final class LauncherModuleTest {
         return p;
     }
 
-    private static void compactEditReportsSummaryAndOnlyUnverifiedEdits() throws Exception {
+    @Test
+    void compactEditReportsSummaryAndOnlyUnverifiedEdits() throws Exception {
         Fake f = new Fake();
         JsonObject c16 = createTarget();
         c16.addProperty("lengthBeats", 16);
@@ -1250,7 +1243,7 @@ public final class LauncherModuleTest {
         JsonObject p = manyEdits(32);
         JsonObject out = f.call("notes.edit", p);
         JsonObject sum = out.getAsJsonObject("summary");
-        check(
+        assertTrue(
                 out.get("status").getAsString().equals("observed")
                         && sum.get("requested").getAsInt() == 32
                         && sum.get("dispatched").getAsInt() == 32
@@ -1258,7 +1251,7 @@ public final class LauncherModuleTest {
                         && sum.get("verified").getAsInt() == 32
                         && sum.get("unverified").getAsInt() == 0,
                 "compact summary counts every edit");
-        check(
+        assertTrue(
                 !out.has("edits")
                         && !out.has("unverifiedEdits")
                         && !out.has("notes")
@@ -1266,35 +1259,35 @@ public final class LauncherModuleTest {
                 "verified edits and the window listing are not repeated");
         int compact = out.toString().length();
         JsonObject again = f.call("notes.edit", p);
-        check(
+        assertTrue(
                 again.getAsJsonObject("summary").get("alreadyMatched").getAsInt() == 32
                         && again.getAsJsonObject("summary").get("dispatched").getAsInt() == 0,
                 "unchanged edits are alreadyMatched, not applied");
         JsonObject full = manyEdits(32);
         full.addProperty("detail", "full");
         JsonObject fullOut = f.call("notes.edit", full);
-        check(
+        assertTrue(
                 fullOut.getAsJsonArray("edits").size() == 32
                         && fullOut.getAsJsonArray("notes").size() == 32
                         && fullOut.get("status").getAsString().equals("observed"),
                 "detail=full returns today's window listing and every edit");
         System.out.println("notes.edit 32 notes: compact " + compact + " chars, full "
                 + fullOut.toString().length() + " chars");
-        check(compact * 3 < fullOut.toString().length(), "compact is much smaller");
+        assertTrue(compact * 3 < fullOut.toString().length(), "compact is much smaller");
         Fake silent = new Fake();
         silent.call("launcher.create", createTarget());
         silent.emitNotes = false;
         JsonObject bad = silent.call("notes.edit", manyEdits(3));
-        check(
+        assertTrue(
                 bad.get("status").getAsString().equals("dispatched")
                         && bad.get("verification").getAsString().equals("partial_or_unobserved"),
                 "fail-closed status is unchanged");
-        check(
+        assertTrue(
                 bad.getAsJsonObject("summary").get("unverified").getAsInt() == 3
                         && bad.getAsJsonArray("unverifiedEdits").size() == 3,
                 "every unverified edit is listed");
         JsonObject item = bad.getAsJsonArray("unverifiedEdits").get(0).getAsJsonObject();
-        check(
+        assertTrue(
                 !item.get("verified").getAsBoolean()
                         && item.get("observed").getAsJsonObject().get("pitch").getAsInt() == 48,
                 "unverified entry carries the observed cell");
@@ -1303,17 +1296,18 @@ public final class LauncherModuleTest {
         invalid(wrong);
         JsonObject read = window();
         read.addProperty("detail", "full");
-        expect("invalid_params", () -> LauncherModule.validateParams("notes.read", read));
+        assertRpcError("invalid_params", () -> LauncherModule.validateParams("notes.read", read));
     }
 
-    private static void echoingAReadRowIsAlreadyMatched() throws Exception {
+    @Test
+    void echoingAReadRowIsAlreadyMatched() throws Exception {
         Fake f = new Fake();
         f.slots[0].content = true;
         f.put(0, 0, 0, 60, 64, .5);
         f.notes.get(key(0, 0, 0, 60)).exact = 0.5; // GUI value 0.5 reads as MIDI 64
         JsonObject row =
                 f.call("notes.read", window()).getAsJsonArray("notes").get(0).getAsJsonObject();
-        check(row.get("velocity").getAsInt() == 64, "host 0.5 reads as MIDI 64");
+        assertTrue(row.get("velocity").getAsInt() == 64, "host 0.5 reads as MIDI 64");
         JsonObject p = window();
         JsonArray edits = new JsonArray();
         edits.add(set(
@@ -1323,7 +1317,7 @@ public final class LauncherModuleTest {
                 row.get("durationBeats").getAsDouble()));
         p.add("edits", edits);
         JsonObject out = f.call("notes.edit", p);
-        check(
+        assertTrue(
                 f.writes == 0
                         && out.getAsJsonObject("summary").get("alreadyMatched").getAsInt() == 1
                         && out.getAsJsonObject("summary").get("dispatched").getAsInt() == 0
@@ -1331,16 +1325,17 @@ public final class LauncherModuleTest {
                 "echoing a read row back is alreadyMatched with no rewrite");
     }
 
-    private static void noteRowsUseEditUnitsAndCarryNoConstantProse() throws Exception {
+    @Test
+    void noteRowsUseEditUnitsAndCarryNoConstantProse() throws Exception {
         Fake f = new Fake();
         f.slots[0].content = true;
         f.put(0, 0, 4, 61, 100, 1.5);
         JsonObject read = f.call("notes.read", window());
         JsonObject row = read.getAsJsonArray("notes").get(0).getAsJsonObject();
-        check(
+        assertTrue(
                 row.keySet().equals(java.util.Set.of("beat", "pitch", "velocity", "durationBeats")),
                 "rows are beat/pitch/velocity/durationBeats only");
-        check(
+        assertTrue(
                 row.get("velocity").getAsInt() == 100 && row.get("beat").getAsDouble() == 1.0,
                 "velocity is MIDI 1..127 and beat is absolute");
         for (String gone : new String[] {
@@ -1350,8 +1345,8 @@ public final class LauncherModuleTest {
             "identityVerification",
             "completeClip",
             "scope"
-        }) check(!read.has(gone), gone + " no longer repeated per response");
-        check(
+        }) assertTrue(!read.has(gone), gone + " no longer repeated per response");
+        assertTrue(
                 read.has("gridReadiness")
                         && read.has("completeWindow")
                         && read.get("window").getAsJsonObject().get("channel").getAsInt() == 0,
@@ -1363,24 +1358,25 @@ public final class LauncherModuleTest {
         later.addProperty("startStep", 2);
         later.addProperty("steps", 4);
         for (JsonElement v : f.call("notes.read", later).getAsJsonArray("continuingAtWindowStart"))
-            check(
+            assertTrue(
                     v.getAsJsonObject().get("state").getAsString().equals("NoteSustain"),
                     "continuing rows are marked, not copyable onsets");
-        check(
+        assertTrue(
                 LauncherModule.midiVelocity(1 / 127.0) == 1
                         && LauncherModule.midiVelocity(1.0) == 127
                         && LauncherModule.midiVelocity(0.0) == 1,
                 "velocity conversion stays within 1..127");
     }
 
-    private static void launcherListAndContextExposeTheCursorClip() throws Exception {
+    @Test
+    void launcherListAndContextExposeTheCursorClip() throws Exception {
         Fake f = new Fake();
         f.call("launcher.create", createTarget());
         f.slots[2].content = true;
         f.slots[2].name = "Other";
         f.selected = 0;
         JsonObject list = f.call("launcher.list", trackTarget());
-        check(
+        assertTrue(
                 list.getAsJsonArray("slots")
                                 .get(0)
                                 .getAsJsonObject()
@@ -1392,14 +1388,14 @@ public final class LauncherModuleTest {
                                 .get("selected")
                                 .getAsBoolean(),
                 "launcher.list marks the cursor clip slot");
-        check(f.module.cursorSlotIndex(0, f.tracks[0]) == 0, "cursor clip resolves to its slot");
+        assertTrue(f.module.cursorSlotIndex(0, f.tracks[0]) == 0, "cursor clip resolves to its slot");
         f.selected = 2;
         f.writes = 0;
-        check(f.module.cursorSlotIndex(0, f.tracks[0]) == 2, "cursor follows the UI selection");
+        assertTrue(f.module.cursorSlotIndex(0, f.tracks[0]) == 2, "cursor follows the UI selection");
         f.selected = 1; // selected but empty: no clip is the cursor clip
-        check(f.module.cursorSlotIndex(0, f.tracks[0]) == -1, "an empty selected slot is not a cursor clip");
+        assertTrue(f.module.cursorSlotIndex(0, f.tracks[0]) == -1, "an empty selected slot is not a cursor clip");
         com.google.gson.JsonArray occupied = f.module.occupiedSlots(0, f.tracks[0]);
-        check(
+        assertTrue(
                 occupied.size() == 2
                         && occupied.get(1).getAsJsonObject().get("slotIndex").getAsInt() == 2
                         && occupied.get(1)
@@ -1409,12 +1405,15 @@ public final class LauncherModuleTest {
                                 .equals("Other"),
                 "only occupied slots listed");
         f.bankOffset = 1;
-        check(f.module.occupiedSlots(0, f.tracks[0]) == null, "unobserved bank offset yields null, not a guess");
-        check(f.module.cursorSlotIndex(0, f.tracks[0]) == -2, "cursor clip is not determinable off scene offset zero");
-        check(f.writes == 0 && f.creates == 1, "context reads never write");
+        assertTrue(f.module.occupiedSlots(0, f.tracks[0]) == null, "unobserved bank offset yields null, not a guess");
+        assertTrue(
+                f.module.cursorSlotIndex(0, f.tracks[0]) == -2,
+                "cursor clip is not determinable off scene offset zero");
+        assertTrue(f.writes == 0 && f.creates == 1, "context reads never write");
     }
 
-    private static void createWritesNotesAfterObservingTheClip() throws Exception {
+    @Test
+    void createWritesNotesAfterObservingTheClip() throws Exception {
         Fake f = new Fake();
         JsonObject p = createTarget();
         JsonArray notes = new JsonArray();
@@ -1423,39 +1422,39 @@ public final class LauncherModuleTest {
         notes.add(set(3, 67, 90, 1));
         p.add("notes", notes);
         JsonObject out = f.call("launcher.create", p);
-        check(
+        assertTrue(
                 out.get("status").getAsString().equals("observed")
                         && out.get("verification").getAsString().equals("slot_content_name_length"),
                 "create verified before notes");
         JsonObject write = out.getAsJsonObject("noteWrite");
-        check(
+        assertTrue(
                 write.get("status").getAsString().equals("observed")
                         && write.getAsJsonObject("summary").get("verified").getAsInt() == 3
                         && !write.has("unverifiedEdits")
                         && !write.has("edits")
                         && !write.has("notes"),
                 "compact verification returned in the same call");
-        check(
+        assertTrue(
                 f.notes.containsKey(key(0, 0, 0, 60)) && f.notes.size() == 3 && f.creates == 1,
                 "all notes written after exactly one create");
-        check(
+        assertTrue(
                 write.getAsJsonObject("window").get("derived").getAsBoolean() && out.get("slot") != null,
                 "create fields and derived window both reported");
         JsonObject early = createTarget();
         JsonArray late = new JsonArray();
         late.add(set(3.5, 60, 90, 1));
         early.add("notes", late);
-        expect("invalid_params", () -> LauncherModule.validateParams("launcher.create", early));
+        assertRpcError("invalid_params", () -> LauncherModule.validateParams("launcher.create", early));
         JsonObject clearOp = createTarget();
         JsonArray bad = new JsonArray();
         JsonObject c = set(0, 60, 90, 1);
         c.addProperty("op", "clear");
         bad.add(c);
         clearOp.add("notes", bad);
-        expect("invalid_params", () -> LauncherModule.validateParams("launcher.create", clearOp));
+        assertRpcError("invalid_params", () -> LauncherModule.validateParams("launcher.create", clearOp));
         JsonObject lone = createTarget();
         lone.addProperty("channel", 1);
-        expect("invalid_params", () -> LauncherModule.validateParams("launcher.create", lone));
+        assertRpcError("invalid_params", () -> LauncherModule.validateParams("launcher.create", lone));
         Fake g = new Fake();
         g.deferCreate = true;
         JsonObject unobserved = createTarget();
@@ -1463,7 +1462,7 @@ public final class LauncherModuleTest {
         HostOperation op = g.startShort("launcher.create", unobserved);
         g.drain(op);
         JsonObject result = op.result.join();
-        check(
+        assertTrue(
                 result.get("status").getAsString().equals("dispatched")
                         && result.get("noteWrite").getAsString().equals("not_attempted")
                         && g.writes == 0,
@@ -1473,10 +1472,10 @@ public final class LauncherModuleTest {
         HostOperation broken = k.startShort("launcher.create", unobserved.deepCopy());
         k.drain(broken);
         JsonObject kept = broken.result.join();
-        check(
+        assertTrue(
                 kept.get("verification").getAsString().equals("slot_content_name_length") && k.slots[0].content,
                 "observed create survives a failing note stage");
-        check(
+        assertTrue(
                 kept.get("status").getAsString().equals("dispatched")
                         && kept.getAsJsonObject("noteWrite")
                                 .get("code")
@@ -1492,7 +1491,7 @@ public final class LauncherModuleTest {
         HostOperation silent = h.startShort("launcher.create", unobserved.deepCopy());
         h.drain(silent);
         JsonObject partial = silent.result.join();
-        check(
+        assertTrue(
                 partial.get("status").getAsString().equals("dispatched")
                         && partial.getAsJsonObject("noteWrite")
                                 .get("verification")
@@ -1502,19 +1501,18 @@ public final class LauncherModuleTest {
     }
 
     private static void expectQuarantine(HostOperation op, String method, String originalId) {
-        expectOutcome("unresolved_mutation", "not_applied", op);
-        try {
-            op.result.join();
-        } catch (CompletionException error) {
-            String message = error.getCause().getMessage();
-            check(
+        assertRpcError("unresolved_mutation", "not_applied", op);
+        {
+            RpcException error = rejection(op);
+            String message = error.getMessage();
+            assertTrue(
                     message.contains(method)
                             && message.contains(originalId)
                             && message.contains("slotIndex=0")
                             && message.contains("extension instance"),
                     "error identifies original unresolved mutation and its reset boundary");
         }
-        check(!op.dispatched, "quarantine rejects before any native content mutation");
+        assertTrue(!op.dispatched, "quarantine rejects before any native content mutation");
     }
 
     // ---- clips.edit ----
@@ -1552,7 +1550,7 @@ public final class LauncherModuleTest {
     private static HostOperation fail(Fake f, JsonObject p, String code, String outcome) throws Exception {
         HostOperation op = f.startShort("clips.edit", p);
         f.drain(op);
-        expectOutcome(code, outcome, op);
+        assertRpcError(code, outcome, op);
         return op;
     }
 
@@ -1561,17 +1559,20 @@ public final class LauncherModuleTest {
     }
 
     private static void rejectClipEdit(JsonObject p) {
-        expect("invalid_params", () -> LauncherModule.validateParams("clips.edit", p));
+        assertRpcError("invalid_params", () -> LauncherModule.validateParams("clips.edit", p));
     }
 
     private static String repeat(int n) {
         return "a".repeat(n);
     }
 
-    private static void clipEditValidation() {
+    @Test
+    void clipEditValidation() {
         validClipEdits(
                 clipEdit("rename", "name", repeat(128)),
                 clipEdit("resize", "lengthBeats", 4096),
+                clipEdit("resize", "lengthBeats", 1.5),
+                clipEdit("resize", "lengthBeats", 1.0 / 128),
                 clipEdit("color", "rgb", "#aB09fF"),
                 clipEdit("transpose", "semitones", -48),
                 clipEdit("transpose", "semitones", 48),
@@ -1591,8 +1592,8 @@ public final class LauncherModuleTest {
         rejectClipEdit(clipEdit("rename", "name", repeat(129)));
         rejectClipEdit(clipEdit("rename", "name", "x", "semitones", 1));
         rejectClipEdit(clipEdit("resize", "lengthBeats", 0));
+        rejectClipEdit(clipEdit("resize", "lengthBeats", 1.0 / 256));
         rejectClipEdit(clipEdit("resize", "lengthBeats", 4097));
-        rejectClipEdit(clipEdit("resize", "lengthBeats", 1.5));
         rejectClipEdit(clipEdit("color", "rgb", "ff0000"));
         rejectClipEdit(clipEdit("color", "rgb", "#ff00"));
         rejectClipEdit(clipEdit("color", "rgb", "#gg0000"));
@@ -1614,27 +1615,28 @@ public final class LauncherModuleTest {
         rejectClipEdit(extra);
     }
 
-    private static void clipEditRenameResizeColor() throws Exception {
+    @Test
+    void clipEditRenameResizeColor() throws Exception {
         Fake f = riff();
         f.selected = 5;
-        expectOutcome(
+        assertRpcError(
                 "stale_target",
                 "not_applied",
                 f.start("clips.edit", clipEditNamed("Wrong", "rename", "name", "Verse")));
-        check(
+        assertTrue(
                 f.nameWrites == 0 && f.selected == 5,
                 "a mismatched expectedClipName is rejected before the cursor moves or anything is written");
         JsonObject r = run(f, clipEdit("rename", "name", "Verse"));
-        check(
+        assertTrue(
                 r.get("status").getAsString().equals("observed")
                         && r.get("verification").getAsString().equals("slot_name")
                         && f.slots[0].name.equals("Verse")
                         && f.nameWrites == 1,
                 "rename is verified by name readback");
-        check(f.module.unresolved().isEmpty(), "rename does not quarantine");
+        assertTrue(f.module.unresolved().isEmpty(), "rename does not quarantine");
         f = riff();
         r = run(f, clipEdit("rename", "name", "Riff"));
-        check(
+        assertTrue(
                 r.get("verification").getAsString().equals("already_matched_readback") && f.nameWrites == 0,
                 "matching name is not rewritten");
         f = riff();
@@ -1642,7 +1644,7 @@ public final class LauncherModuleTest {
         HostOperation op = f.startShort("clips.edit", clipEdit("rename", "name", "Verse"));
         f.drain(op);
         r = op.result.join();
-        check(
+        assertTrue(
                 r.get("status").getAsString().equals("dispatched")
                         && r.get("verification").getAsString().equals("readback_mismatch")
                         && f.module.unresolved().isEmpty(),
@@ -1650,14 +1652,14 @@ public final class LauncherModuleTest {
 
         f = riff();
         r = run(f, clipEdit("resize", "lengthBeats", 8));
-        check(
+        assertTrue(
                 r.get("status").getAsString().equals("observed")
                         && f.slots[0].length == 8
                         && f.slots[0].playStop == 8
                         && r.get("loopLengthBeats").getAsDouble() == 8,
                 "resize is verified by loop length and play stop readback");
         f = riff();
-        check(
+        assertTrue(
                 run(f, clipEdit("resize", "lengthBeats", 4))
                                 .get("verification")
                                 .getAsString()
@@ -1668,25 +1670,25 @@ public final class LauncherModuleTest {
         f.applyLoop = false;
         op = f.startShort("clips.edit", clipEdit("resize", "lengthBeats", 8));
         f.drain(op);
-        check(
+        assertTrue(
                 op.result.join().get("verification").getAsString().equals("readback_mismatch"),
                 "unobserved loop length is not reported as done");
         f = riff();
         f.applyStop = false;
         op = f.startShort("clips.edit", clipEdit("resize", "lengthBeats", 8));
         f.drain(op);
-        check(
+        assertTrue(
                 op.result.join().get("status").getAsString().equals("dispatched"),
                 "unobserved play stop is not reported as done");
 
         f = riff();
         r = run(f, clipEdit("color", "rgb", "#ff8800"));
-        check(
+        assertTrue(
                 r.get("status").getAsString().equals("observed")
                         && r.get("color").getAsString().equals("#ff8800")
                         && f.colorSets == 1,
                 "color is verified by readback");
-        check(
+        assertTrue(
                 run(f, clipEdit("color", "rgb", "#ff8800"))
                                 .get("verification")
                                 .getAsString()
@@ -1697,22 +1699,23 @@ public final class LauncherModuleTest {
         f.applyColor = false;
         op = f.startShort("clips.edit", clipEdit("color", "rgb", "#ff8800"));
         f.drain(op);
-        check(
+        assertTrue(
                 op.result.join().get("verification").getAsString().equals("readback_mismatch"),
                 "unobserved color is dispatched only");
     }
 
-    private static void clipEditNoteOps() throws Exception {
+    @Test
+    void clipEditNoteOps() throws Exception {
         Fake f = riff();
         JsonObject r = run(f, clipEdit("transpose", "semitones", 2));
         JsonObject c = r.getAsJsonObject("compared");
-        check(
+        assertTrue(
                 r.get("status").getAsString().equals("observed")
                         && f.transposes == 1
                         && f.notes.containsKey(key(0, 0, 0, 62))
                         && !f.notes.containsKey(key(0, 0, 0, 60)),
                 "transpose shifts the cells");
-        check(
+        assertTrue(
                 c.get("notesBefore").getAsInt() == 3
                         && c.get("notesAfter").getAsInt() == 3
                         && c.get("pitchMinBefore").getAsInt() == 60
@@ -1720,13 +1723,13 @@ public final class LauncherModuleTest {
                         && c.get("pitchMaxAfter").getAsInt() == 69
                         && c.get("verifiedChannel").getAsInt() == 0,
                 "transpose reports what was compared");
-        check(f.module.unresolved().isEmpty(), "an observed transpose releases its mutation");
-        check(f.selected == 0, "the clip was selected on the cursor");
+        assertTrue(f.module.unresolved().isEmpty(), "an observed transpose releases its mutation");
+        assertTrue(f.selected == 0, "the clip was selected on the cursor");
 
         f = riff();
         f.put(0, 0, 16, 120, 90, 2);
         fail(f, clipEdit("transpose", "semitones", 12), "invalid_params", "not_applied");
-        check(f.transposes == 0 && f.module.unresolved().isEmpty(), "out-of-range transpose changes nothing");
+        assertTrue(f.transposes == 0 && f.module.unresolved().isEmpty(), "out-of-range transpose changes nothing");
         Fake empty = new Fake();
         empty.slots[0].content = true;
         empty.slots[0].name = "Riff";
@@ -1734,23 +1737,23 @@ public final class LauncherModuleTest {
         f = riff();
         f.slots[0].length = 64;
         fail(f, clipEdit("transpose", "semitones", 2), "unverifiable_clip", "not_applied");
-        check(f.transposes == 0, "unverifiable clip is rejected before dispatch");
+        assertTrue(f.transposes == 0, "unverifiable clip is rejected before dispatch");
 
         f = riff();
         f.applyClipOp = false;
         fail(f, clipEdit("transpose", "semitones", 2), "transpose_not_observed", "unknown");
-        check(
+        assertTrue(
                 f.transposes == 1 && f.module.unresolved().size() == 1,
                 "unobserved transpose latches the unresolved mutation list");
         expectQuarantine(f.start("clips.edit", clipEdit("rename", "name", "Verse")), "clips.edit transpose", ID);
         expectQuarantine(f.start("notes.edit", editFixture()), "clips.edit transpose", ID);
         f.call("notes.read", window());
-        check(f.transposes == 1 && f.nameWrites == 0, "no retry and no further write on the quarantined slot");
+        assertTrue(f.transposes == 1 && f.nameWrites == 0, "no retry and no further write on the quarantined slot");
 
         f = riff();
         r = run(f, clipEdit("quantize", "amount", 1));
         c = r.getAsJsonObject("compared");
-        check(
+        assertTrue(
                 r.get("status").getAsString().equals("observed")
                         && f.notes.containsKey(key(0, 0, 4, 67))
                         && f.quantizes == 1
@@ -1760,15 +1763,18 @@ public final class LauncherModuleTest {
         f = riff();
         f.quantizeMoves = false;
         fail(f, clipEdit("quantize", "amount", 0.5), "quantize_not_observed", "unknown");
-        check(f.module.unresolved().size() == 1, "partial quantize with no observed change is unknown and quarantined");
+        assertTrue(
+                f.module.unresolved().size() == 1,
+                "partial quantize with no observed change is unknown and quarantined");
         f = riff();
         f.put(0, 0, 4, 67, 80, 2);
         fail(f, clipEdit("quantize", "amount", 1), "quantize_invariants_violated", "unknown");
-        check(f.module.unresolved().size() == 1, "quantize that changes the onset count is unknown and quarantined");
+        assertTrue(
+                f.module.unresolved().size() == 1, "quantize that changes the onset count is unknown and quarantined");
         f = riff();
         f.quantizeMoves = false;
         r = run(f, clipEdit("quantize", "amount", 1));
-        check(
+        assertTrue(
                 r.get("status").getAsString().equals("dispatched")
                         && r.get("verification").getAsString().equals("no_cell_change")
                         && f.module.unresolved().isEmpty(),
@@ -1776,7 +1782,7 @@ public final class LauncherModuleTest {
 
         f = riff();
         r = run(f, clipEdit("duplicateContent"));
-        check(
+        assertTrue(
                 r.get("status").getAsString().equals("observed")
                         && f.slots[0].length == 8
                         && r.getAsJsonObject("compared")
@@ -1787,7 +1793,7 @@ public final class LauncherModuleTest {
         f = riff();
         f.applyClipOp = false;
         fail(f, clipEdit("duplicateContent"), "duplicateContent_not_observed", "unknown");
-        check(f.module.unresolved().size() == 1, "unobserved duplicateContent is quarantined");
+        assertTrue(f.module.unresolved().size() == 1, "unobserved duplicateContent is quarantined");
     }
 
     // ---- launcher.set launch fields (public cursor-clip properties) ----
@@ -1815,7 +1821,8 @@ public final class LauncherModuleTest {
         return op;
     }
 
-    private static void launcherSetLaunchFields() throws Exception {
+    @Test
+    void launcherSetLaunchFields() throws Exception {
         // Validation: type checks, no empty request, and the two write paths never mix in one call.
         for (JsonObject bad : List.of(
                 launchSet("launchQuantization", 1),
@@ -1823,7 +1830,7 @@ public final class LauncherModuleTest {
                 launchSet("useLoopStartAsQuantizationReference", "yes"),
                 launchSet("launchMode", "trigger", "nextAction", "stop"),
                 launchSet("launchQuantization", "1", "nextActionEnabled", true)))
-            expect("invalid_params", () -> LauncherSettingsModule.validateParams("launcher.set", bad));
+            assertRpcError("invalid_params", () -> LauncherSettingsModule.validateParams("launcher.set", bad));
         LauncherSettingsModule.validateParams(
                 "launcher.set",
                 launchSet(
@@ -1841,33 +1848,33 @@ public final class LauncherModuleTest {
                 f, settings, launchSet("launchQuantization", "1/4", "useLoopStartAsQuantizationReference", true));
         f.drain(op);
         JsonObject r = op.result.join();
-        check(
+        assertTrue(
                 r.get("status").getAsString().equals("observed")
                         && f.launchQuant.equals("1/4")
                         && f.useLoopStart
                         && f.launchSets == 2,
                 "launch fields are written and read back from the cursor clip");
-        check(
+        assertTrue(
                 f.selected == 0 && r.get("selectionSideEffect").getAsString().equals("launcher_cursor_clip_selected"),
                 "the selection side effect is reported");
-        check(
+        assertTrue(
                 r.getAsJsonObject("fields")
                         .getAsJsonObject("launchQuantization")
                         .get("verification")
                         .getAsString()
                         .equals("observer_after_write"),
                 "per-field verification needs a callback after the write");
-        check(
+        assertTrue(
                 r.getAsJsonObject("options").getAsJsonArray("launchMode").size() == 3,
                 "options come from the host's own enum definition");
-        check(f.module.unresolved().isEmpty(), "idempotent absolute setters do not quarantine");
+        assertTrue(f.module.unresolved().isEmpty(), "idempotent absolute setters do not quarantine");
 
         f = riff();
         settings = new LauncherSettingsModule(f.services, f.module);
         op = startSettings(f, settings, launchSet("launchMode", "from_group", "launchQuantization", "default"));
         f.drain(op);
         r = op.result.join();
-        check(
+        assertTrue(
                 r.get("status").getAsString().equals("observed")
                         && f.launchSets == 0
                         && r.getAsJsonObject("fields")
@@ -1882,7 +1889,7 @@ public final class LauncherModuleTest {
         op = startSettings(f, settings, launchSet("launchMode", "gate"));
         f.drain(op);
         r = op.result.join();
-        check(
+        assertTrue(
                 f.launchMode.equals("gate")
                         && r.get("status").getAsString().equals("dispatched")
                         && r.getAsJsonObject("fields")
@@ -1897,13 +1904,13 @@ public final class LauncherModuleTest {
         settings = new LauncherSettingsModule(f.services, f.module);
         op = startSettings(f, settings, launchSet("launchMode", "bogus"));
         f.drain(op);
-        expectOutcome("invalid_params", "not_applied", op);
-        check(
+        assertRpcError("invalid_params", "not_applied", op);
+        assertTrue(
                 f.launchSets == 0 && f.selected == 5,
                 "an option the host does not list is refused before selecting or writing");
         op = startSettings(f, settings, launchSet("launchMode", "trigger", "expectedClipName", "Other"));
         f.drain(op);
-        expectOutcome("stale_target", "not_applied", op);
+        assertRpcError("stale_target", "not_applied", op);
 
         f = riff();
         settings = new LauncherSettingsModule(f.services, f.module);
@@ -1911,7 +1918,7 @@ public final class LauncherModuleTest {
         op = startSettings(f, settings, launchSet("launchMode", "gate"));
         f.drain(op);
         r = op.result.join();
-        check(
+        assertTrue(
                 r.get("status").getAsString().equals("dispatched")
                         && r.get("completion").getAsString().equals("unknown")
                         && r.getAsJsonObject("fields")
@@ -1927,14 +1934,15 @@ public final class LauncherModuleTest {
         settings = new LauncherSettingsModule(f.services, f.module);
         op = startSettings(f, settings, launchSet("launchMode", "gate"));
         f.drain(op);
-        expectOutcome("unsafe_state", "not_applied", op);
-        check(f.launchSets == 0, "a recording state blocks the write");
+        assertRpcError("unsafe_state", "not_applied", op);
+        assertTrue(f.launchSets == 0, "a recording state blocks the write");
     }
 
-    private static void clipEditDeleteAndCopy() throws Exception {
+    @Test
+    void clipEditDeleteAndCopy() throws Exception {
         Fake f = riff();
         JsonObject r = run(f, clipEdit("delete"));
-        check(
+        assertTrue(
                 r.get("status").getAsString().equals("observed")
                         && r.get("verification").getAsString().equals("slot_empty")
                         && !f.slots[0].content
@@ -1948,19 +1956,19 @@ public final class LauncherModuleTest {
         f.slots[0].content = true;
         f.slots[0].name = "Riff";
         fail(f, clipEdit("delete"), "unsafe_state", "not_applied");
-        check(f.deletes == 0, "delete is blocked while recording or playing");
+        assertTrue(f.deletes == 0, "delete is blocked while recording or playing");
         f = riff();
         f.applyDelete = false;
         fail(f, clipEdit("delete"), "delete_not_observed", "unknown");
-        check(f.deletes == 1 && f.module.unresolved().size() == 1, "unobserved delete is unknown and quarantined");
+        assertTrue(f.deletes == 1 && f.module.unresolved().size() == 1, "unobserved delete is unknown and quarantined");
         expectQuarantine(f.start("launcher.create", createTarget()), "clips.edit delete", ID);
         f = riff();
         fail(f, clipEditNamed("Other", "delete"), "stale_target", "not_applied");
-        check(f.deletes == 0, "stale name never reaches delete");
+        assertTrue(f.deletes == 0, "stale name never reaches delete");
 
         f = riff();
         r = run(f, clipEdit("copyTo", "targetSlotIndex", 1));
-        check(
+        assertTrue(
                 r.get("status").getAsString().equals("observed")
                         && f.slots[1].content
                         && f.slots[1].name.equals("Riff")
@@ -1975,11 +1983,11 @@ public final class LauncherModuleTest {
         f = riff();
         f.scenes = 1;
         fail(f, clipEdit("copyTo", "targetSlotIndex", 1), "slot_out_of_range", "not_applied");
-        check(f.copies == 0, "rejected copies never dispatch");
+        assertTrue(f.copies == 0, "rejected copies never dispatch");
         f = riff();
         f.copyName = "Riff copy";
         r = run(f, clipEdit("copyTo", "targetSlotIndex", 1));
-        check(
+        assertTrue(
                 r.get("status").getAsString().equals("observed")
                         && r.getAsJsonObject("nameChanged")
                                 .get("to")
@@ -1987,17 +1995,17 @@ public final class LauncherModuleTest {
                                 .equals("Riff copy")
                         && f.module.unresolved().isEmpty(),
                 "a renamed copy is observed with nameChanged");
-        check(f.slots[0].content && f.slots[0].name.equals("Riff"), "the source clip is untouched");
+        assertTrue(f.slots[0].content && f.slots[0].name.equals("Riff"), "the source clip is untouched");
         f = riff();
         f.applyCopy = false;
         fail(f, clipEdit("copyTo", "targetSlotIndex", 1), "copy_not_observed", "unknown");
-        check(
+        assertTrue(
                 f.copies == 1 && f.module.unresolved().size() == 1,
                 "unobserved copy is unknown and quarantines the target");
         JsonObject create = createTarget();
         create.addProperty("slotIndex", 1);
         HostOperation blocked = f.start("launcher.create", create);
-        expectOutcome("unresolved_mutation", "not_applied", blocked);
+        assertRpcError("unresolved_mutation", "not_applied", blocked);
         f.call("notes.read", window());
     }
 
@@ -2011,15 +2019,6 @@ public final class LauncherModuleTest {
         JsonObject p = window();
         p.add("edits", fixture());
         return p;
-    }
-
-    private static void expectOutcome(String code, String outcome, HostOperation op) {
-        expectFuture(code, op);
-        try {
-            op.result.join();
-        } catch (CompletionException error) {
-            check(((RpcException) error.getCause()).outcome.equals(outcome), "expected outcome " + outcome);
-        }
     }
 
     private static JsonObject trackTarget() {
@@ -2074,32 +2073,7 @@ public final class LauncherModuleTest {
     }
 
     private static void invalid(JsonObject p) {
-        expect("invalid_params", () -> LauncherModule.validateParams("notes.edit", p));
-    }
-
-    private static void expect(String code, Runnable body) {
-        try {
-            body.run();
-            throw new AssertionError("expected " + code);
-        } catch (RpcException error) {
-            check(error.code.equals(code), "expected error " + code + ", got " + error.code);
-        }
-    }
-
-    private static void expectFuture(String code, HostOperation op) {
-        try {
-            op.result.join();
-            throw new AssertionError("expected " + code);
-        } catch (CompletionException error) {
-            check(
-                    error.getCause() instanceof RpcException && ((RpcException) error.getCause()).code.equals(code),
-                    "expected future error " + code + ", got " + error.getCause());
-        }
-    }
-
-    private static void check(boolean condition, String message) {
-        assertions++;
-        if (!condition) throw new AssertionError(message);
+        assertRpcError("invalid_params", () -> LauncherModule.validateParams("notes.edit", p));
     }
 
     private static String key(int slot, int channel, int step, int pitch) {
@@ -2107,6 +2081,7 @@ public final class LauncherModuleTest {
     }
 
     private static final class Fake {
+        final HostFixture base = HostFixture.withoutServices();
         final ArrayDeque<Runnable> tasks = new ArrayDeque<>();
         final Map<String, Note> notes = new HashMap<>();
         final SlotData[] slots = new SlotData[16];
@@ -2143,11 +2118,8 @@ public final class LauncherModuleTest {
         boolean applyScene = true, initialised;
         String importedPath;
         Runnable beforeInsertion = () -> {};
-        final List<BooleanValueChangedCallback> recordObservers = new ArrayList<>();
-        final BooleanValueChangedCallback recordObserver = value -> {
-            for (BooleanValueChangedCallback callback : recordObservers) callback.valueChanged(value);
-        };
-        final List<StringValueChangedCallback> trackIdObservers = new ArrayList<>();
+        FakeHost recordNode;
+        FakeHost trackIdentity;
 
         Fake() {
             this(true, false, false, false);
@@ -2157,47 +2129,36 @@ public final class LauncherModuleTest {
             for (int i = 0; i < 16; i++) slots[i] = new SlotData();
             for (int t = 0; t < 16; t++) {
                 final int trackIndex = t;
-                Node track = new Node(Track.class);
-                track.value("exists", () -> trackIndex == 0);
-                Node identity = new Node(StringValue.class);
-                identity.action("get", a -> trackIndex == 0 ? trackId : "");
-                identity.action("addValueObserver", a -> {
-                    StringValueChangedCallback callback = (StringValueChangedCallback) a[a.length - 1];
-                    if (trackIndex == 0) trackIdObservers.add(callback);
-                    callback.valueChanged(trackIndex == 0 ? trackId : "");
-                    return null;
-                });
-                track.action("channelId", a -> identity.proxy);
-                track.value("name", () -> "Track");
-                track.value("position", () -> trackIndex);
-                track.value("isStopped", () -> stopped);
-                track.value("isQueuedForStop", () -> stopQueued);
-                Node bank = new Node(ClipLauncherSlotBank.class);
-                bank.value("scrollPosition", () -> bankOffset);
-                bank.value("itemCount", () -> scenes);
+                FakeHost track = base.tracks[t];
+                track.live("exists", () -> trackIndex == 0);
+                FakeHost identity = track.attach("channelId", FakeHost.of(StringValue.class, "channelId"))
+                        .reading(() -> trackIndex == 0 ? trackId : "");
+                if (trackIndex == 0) trackIdentity = identity;
+                track.live("name", () -> "Track");
+                track.live("position", () -> trackIndex);
+                track.live("isStopped", () -> stopped);
+                track.live("isQueuedForStop", () -> stopQueued);
+                FakeHost bank = FakeHost.of(ClipLauncherSlotBank.class, "bank");
+                bank.live("scrollPosition", () -> bankOffset);
+                bank.live("itemCount", () -> scenes);
                 ClipLauncherSlot[] slotApis = new ClipLauncherSlot[16];
                 for (int j = 0; j < 16; j++) {
                     final int index = j;
                     SlotData data = slots[j];
-                    Node slot = new Node(ClipLauncherSlot.class);
-                    Node content = new Node(BooleanValue.class);
-                    content.action("get", a -> trackIndex == 0 && data.content);
-                    content.action("addValueObserver", a -> {
-                        BooleanValueChangedCallback callback = (BooleanValueChangedCallback) a[a.length - 1];
-                        if (trackIndex == 0) data.contentObservers.add(callback);
-                        callback.valueChanged(trackIndex == 0 && data.content);
-                        return null;
-                    });
-                    slot.action("hasContent", a -> content.proxy);
-                    slot.value("name", () -> data.name);
-                    slot.value("isPlaying", () -> data.playing);
-                    slot.value("isPlaybackQueued", () -> data.queued);
-                    slot.value("isRecording", () -> false);
-                    slot.action("select", a -> {
+                    FakeHost slot = FakeHost.of(ClipLauncherSlot.class, "slot");
+                    FakeHost content = slot.attach("hasContent", FakeHost.of(BooleanValue.class, "hasContent"))
+                            .reading(() -> trackIndex == 0 && data.content);
+                    if (trackIndex == 0) data.contentNode = content;
+                    slot.live("sceneIndex", () -> index);
+                    slot.live("name", () -> data.name);
+                    slot.live("isPlaying", () -> data.playing);
+                    slot.live("isPlaybackQueued", () -> data.queued);
+                    slot.live("isRecording", () -> false);
+                    slot.on("select", a -> {
                         selected = index;
                         return null;
                     });
-                    slot.action("createEmptyClip", a -> {
+                    slot.on("createEmptyClip", a -> {
                         creates++;
                         if (failCreate)
                             throw Errors.of(
@@ -2209,12 +2170,12 @@ public final class LauncherModuleTest {
                         }
                         return null;
                     });
-                    slot.action("deleteObject", a -> {
+                    slot.on("deleteObject", a -> {
                         deletes++;
                         if (applyDelete && trackIndex == 0) observeContent(index, false);
                         return null;
                     });
-                    slot.action("launch", a -> {
+                    slot.on("launch", a -> {
                         playbackDispatches++;
                         if (emitPlaybackState) {
                             data.playing = launchPlaying;
@@ -2223,8 +2184,8 @@ public final class LauncherModuleTest {
                         }
                         return null;
                     });
-                    Node insertion = new Node(InsertionPoint.class);
-                    insertion.action("copySlotsOrScenes", a -> {
+                    FakeHost insertion = FakeHost.of(InsertionPoint.class, "insertion");
+                    insertion.on("copySlotsOrScenes", a -> {
                         copies++;
                         if (applyCopy && trackIndex == 0) {
                             ClipLauncherSlotOrScene[] sources = (ClipLauncherSlotOrScene[]) a[0];
@@ -2237,7 +2198,7 @@ public final class LauncherModuleTest {
                         }
                         return null;
                     });
-                    insertion.action("insertFile", a -> {
+                    insertion.on("insertFile", a -> {
                         imports++;
                         importedPath = (String) a[0];
                         importedSlot = index;
@@ -2246,14 +2207,14 @@ public final class LauncherModuleTest {
                                     "host_write_failed", "Fixture native insertion failure", Outcome.NOT_APPLIED);
                         return null;
                     });
-                    slot.action("replaceInsertionPoint", a -> {
+                    slot.on("replaceInsertionPoint", a -> {
                         beforeInsertion.run();
-                        return insertion.proxy;
+                        return insertion.proxy();
                     });
-                    slotApis[j] = (ClipLauncherSlot) slot.proxy;
+                    slotApis[j] = slot.proxy(ClipLauncherSlot.class);
                 }
-                bank.action("getItemAt", a -> slotApis[(Integer) a[0]]);
-                bank.action("stop", a -> {
+                bank.on("getItemAt", a -> slotApis[(Integer) a[0]]);
+                bank.on("stop", a -> {
                     playbackDispatches++;
                     if (emitPlaybackState) {
                         stopQueued = queueStop;
@@ -2267,55 +2228,55 @@ public final class LauncherModuleTest {
                     }
                     return null;
                 });
-                track.action("clipLauncherSlotBank", a -> bank.proxy);
-                Node devices = new Node(DeviceBank.class);
-                devices.value("exists", () -> true);
-                devices.value("scrollPosition", () -> 0);
-                devices.value("itemCount", () -> 0);
-                Node[] roots = new Node[16];
+                track.attach("clipLauncherSlotBank", bank);
+                FakeHost devices = FakeHost.of(DeviceBank.class, "devices");
+                devices.live("exists", () -> true);
+                devices.live("scrollPosition", () -> 0);
+                devices.live("itemCount", () -> 0);
+                FakeHost[] roots = new FakeHost[16];
                 for (int d = 0; d < roots.length; d++) roots[d] = emptyDevice(d, true);
-                devices.action("getItemAt", a -> roots[(Integer) a[0]].proxy);
-                track.action("createDeviceBank", a -> devices.proxy);
-                tracks[t] = (Track) track.proxy;
+                devices.on("getItemAt", a -> roots[(Integer) a[0]].proxy());
+                track.attach("createDeviceBank", devices);
+                tracks[t] = track.proxy(Track.class);
             }
-            Node clip = new Node(Clip.class);
-            clip.action("getTrack", a -> tracks[0]);
-            clip.value("exists", () -> slots[selected].content);
-            Node loopLength = new Node(SettableBeatTimeValue.class);
-            loopLength.action("get", a -> slots[selected].length);
-            loopLength.action("addValueObserver", a -> {
+            FakeHost clip = FakeHost.of(Clip.class, "clip");
+            clip.on("getTrack", a -> tracks[0]);
+            clip.live("exists", () -> slots[selected].content);
+            FakeHost loopLength = FakeHost.of(SettableBeatTimeValue.class, "loopLength");
+            loopLength.on("get", a -> slots[selected].length);
+            loopLength.on("addValueObserver", a -> {
                 ((DoubleValueChangedCallback) a[a.length - 1]).valueChanged(slots[selected].length);
                 return null;
             });
-            loopLength.action("set", a -> {
+            loopLength.on("set", a -> {
                 loopSets++;
                 if (applyLoop) slots[selected].length = (Double) a[0];
                 return null;
             });
-            clip.action("getLoopLength", a -> loopLength.proxy);
-            Node colorNode = new Node(SettableColorValue.class);
-            colorNode.action("red", a -> color[0]);
-            colorNode.action("green", a -> color[1]);
-            colorNode.action("blue", a -> color[2]);
-            colorNode.action("set", a -> {
+            clip.on("getLoopLength", a -> loopLength.proxy());
+            FakeHost colorNode = FakeHost.of(SettableColorValue.class, "colorNode");
+            colorNode.on("red", a -> color[0]);
+            colorNode.on("green", a -> color[1]);
+            colorNode.on("blue", a -> color[2]);
+            colorNode.on("set", a -> {
                 colorSets++;
                 if (applyColor) color = new float[] {(Float) a[0], (Float) a[1], (Float) a[2]};
                 return null;
             });
-            clip.action("color", a -> colorNode.proxy);
+            clip.on("color", a -> colorNode.proxy());
             Object quantNode = enumValue(() -> launchQuant, v -> launchQuant = v, new String[] {"default", "1", "1/4"});
             Object modeNode =
                     enumValue(() -> launchMode, v -> launchMode = v, new String[] {"from_group", "trigger", "gate"});
-            clip.action("launchQuantization", a -> quantNode);
-            clip.action("launchMode", a -> modeNode);
-            Node useLoop = new Node(SettableBooleanValue.class);
+            clip.on("launchQuantization", a -> quantNode);
+            clip.on("launchMode", a -> modeNode);
+            FakeHost useLoop = FakeHost.of(SettableBooleanValue.class, "useLoop");
             final List<BooleanValueChangedCallback> useLoopObservers = new ArrayList<>();
-            useLoop.action("get", a -> useLoopStart);
-            useLoop.action("addValueObserver", a -> {
+            useLoop.on("get", a -> useLoopStart);
+            useLoop.on("addValueObserver", a -> {
                 useLoopObservers.add((BooleanValueChangedCallback) a[a.length - 1]);
                 return null;
             });
-            useLoop.action("set", a -> {
+            useLoop.on("set", a -> {
                 launchSets++;
                 if (applyLaunch) {
                     useLoopStart = (Boolean) a[0];
@@ -2323,64 +2284,65 @@ public final class LauncherModuleTest {
                 }
                 return null;
             });
-            clip.action("useLoopStartAsQuantizationReference", a -> useLoop.proxy);
-            clip.action("transpose", a -> {
+            clip.on("useLoopStartAsQuantizationReference", a -> useLoop.proxy());
+            clip.on("transpose", a -> {
                 transposes++;
                 if (applyClipOp) remap(k -> new int[] {k[0], k[1], k[2] + (Integer) a[0]});
                 return null;
             });
-            clip.action("quantize", a -> {
+            clip.on("quantize", a -> {
                 quantizes++;
                 if (applyClipOp && quantizeMoves) remap(k -> new int[] {k[0], k[1] % 2 == 0 ? k[1] : k[1] + 1, k[2]});
                 return null;
             });
-            clip.action("duplicateContent", a -> {
+            clip.on("duplicateContent", a -> {
                 duplicates++;
                 if (applyClipOp) slots[selected].length *= 2;
                 return null;
             });
-            clip.value("getLoopStart", () -> loopStart);
-            clip.value("getPlayStart", () -> 0.0);
-            Node playStop = new Node(SettableBeatTimeValue.class);
-            playStop.action("get", a -> slots[selected].playStop);
-            playStop.action("set", a -> {
+            clip.live("getLoopStart", () -> loopStart);
+            clip.live("getPlayStart", () -> 0.0);
+            FakeHost playStop = FakeHost.of(SettableBeatTimeValue.class, "playStop");
+            playStop.on("get", a -> slots[selected].playStop);
+            playStop.on("set", a -> {
                 stopWrites++;
                 if (applyStop) slots[selected].playStop = (Double) a[0];
                 return null;
             });
-            clip.action("getPlayStop", a -> playStop.proxy);
-            clip.value("isLoopEnabled", () -> true);
-            Node cursorSlot = new Node(ClipLauncherSlot.class);
-            cursorSlot.action("createEqualsValue", a -> {
+            clip.on("getPlayStop", a -> playStop.proxy());
+            clip.live("isLoopEnabled", () -> true);
+            FakeHost cursorSlot = FakeHost.of(ClipLauncherSlot.class, "cursorSlot");
+            cursorSlot.on("createEqualsValue", a -> {
                 Object target = a[0];
                 return value(
                         BooleanValue.class,
                         () -> tracks[0].clipLauncherSlotBank().getItemAt(selected) == target);
             });
-            clip.action("clipLauncherSlot", a -> cursorSlot.proxy);
-            clip.action("setName", a -> {
+            clip.on("clipLauncherSlot", a -> cursorSlot.proxy());
+            clip.on("setName", a -> {
                 nameWrites++;
                 if (applyName) slots[selected].name = (String) a[0];
                 return null;
             });
-            clip.action("setStepSize", a -> {
+            clip.on("setStepSize", a -> {
                 if (deferGridChanges || gridRefreshDelayMillis > 0) {
                     pendingSize = (Double) a[0];
                     gridReadyAt = clockMillis + gridRefreshDelayMillis;
                 } else size = (Double) a[0];
                 return null;
             });
-            clip.action("scrollToStep", a -> {
+            clip.on("scrollToStep", a -> {
                 if (deferGridChanges || gridRefreshDelayMillis > 0) pendingStart = (Integer) a[0];
                 else start = (Integer) a[0];
                 return null;
             });
-            clip.action("addNoteStepObserver", a -> {
+            clip.on("scrollToKey", a -> null);
+            clip.on("addNoteStepObserver", a -> {
                 observer = (NoteStepChangedCallback) a[0];
                 return null;
             });
-            clip.action("getStep", a -> note((Integer) a[0], (Integer) a[1], (Integer) a[2]));
-            clip.action("setStep", a -> {
+            clip.on("getStep", a -> note((Integer) a[0], (Integer) a[1], (Integer) a[2]));
+            clip.on("setStep", a -> {
                 writes++;
                 if (writes == failWriteAt)
                     throw Errors.of("host_write_failed", "fixture interrupted batch", Outcome.NOT_APPLIED);
@@ -2389,57 +2351,44 @@ public final class LauncherModuleTest {
                 if (emitNotes) observer.noteStepChanged(note(c, x, y));
                 return null;
             });
-            clip.action("clearStep", a -> {
+            clip.on("clearStep", a -> {
                 writes++;
                 int c = (Integer) a[0], x = (Integer) a[1], y = (Integer) a[2];
                 notes.remove(key(selected, c, start + x, y));
                 if (emitNotes) observer.noteStepChanged(note(c, x, y));
                 return null;
             });
-            Node trackBank = new Node(TrackBank.class);
-            trackBank.action("getItemAt", a -> tracks[(Integer) a[0]]);
-            trackBank.value("scrollPosition", () -> 0);
-            trackBank.value("itemCount", () -> 1);
-            Node application = new Node(Application.class);
-            application.value("projectName", () -> "Fixture");
-            application.value("hasActiveEngine", () -> true);
-            Node transport = new Node(Transport.class);
-            transport.value("isPlaying", () -> false);
-            Node recordValue = new Node(SettableBooleanValue.class);
-            recordValue.action("get", a -> record);
-            recordValue.action("addValueObserver", a -> {
-                BooleanValueChangedCallback callback = (BooleanValueChangedCallback) a[a.length - 1];
-                recordObservers.add(callback);
-                if (safetyObserved) callback.valueChanged(record);
-                return null;
-            });
-            transport.action("isArrangerRecordEnabled", a -> recordValue.proxy);
-            transport.action(
+            FakeHost trackBank = base.bank;
+            trackBank.live("scrollPosition", () -> 0);
+            trackBank.live("itemCount", () -> 1);
+            FakeHost application = base.application;
+            application.live("projectName", () -> "Fixture");
+            application.live("hasActiveEngine", () -> true);
+            FakeHost transport = base.transport;
+            transport.live("isPlaying", () -> false);
+            recordNode = transport.put("isArrangerRecordEnabled", record);
+            transport.live("isArrangerAutomationWriteEnabled", () -> arrangerAutomation);
+            transport.live("isClipLauncherAutomationWriteEnabled", () -> launcherAutomation);
+            for (String key : List.of(
+                    "isArrangerRecordEnabled",
                     "isArrangerAutomationWriteEnabled",
-                    a -> value(SettableBooleanValue.class, () -> arrangerAutomation, safetyObserved));
-            transport.action(
-                    "isClipLauncherAutomationWriteEnabled",
-                    a -> value(SettableBooleanValue.class, () -> launcherAutomation, safetyObserved));
-            Node host = new Node(ControllerHost.class);
-            host.action("createApplication", a -> application.proxy);
-            host.action("createTransport", a -> transport.proxy);
-            Node sceneBankNode = new Node(SceneBank.class);
-            sceneBankNode.value("itemCount", () -> scenes);
-            trackBank.action("sceneBank", a -> sceneBankNode.proxy);
-            Node project = new Node(Project.class);
-            project.action("createScene", a -> {
+                    "isClipLauncherAutomationWriteEnabled")) transport.child(key).notifyInitial = safetyObserved;
+            FakeHost host = base.host;
+            FakeHost sceneBankNode = trackBank.child("sceneBank");
+            sceneBankNode.live("itemCount", () -> scenes);
+            FakeHost project = base.project;
+            project.on("createScene", a -> {
                 sceneAppends++;
                 if (applyScene) scenes++;
                 return null;
             });
-            host.action("getProject", a -> {
+            host.on("getProject", a -> {
                 // Mirrors Bitwig: the Project is only available while the extension initialises.
                 if (initialised) throw new IllegalStateException("getProject can only be called during init");
-                return project.proxy;
+                return project.proxy(Project.class);
             });
-            host.action("createTrackBank", a -> trackBank.proxy);
-            host.action("createLauncherCursorClip", a -> clip.proxy);
-            host.action("scheduleTask", a -> {
+            host.on("createLauncherCursorClip", a -> clip.proxy());
+            host.on("scheduleTask", a -> {
                 Runnable action = (Runnable) a[0];
                 long delay = ((Number) a[1]).longValue();
                 tasks.add(() -> {
@@ -2449,20 +2398,20 @@ public final class LauncherModuleTest {
                 });
                 return null;
             });
-            services = new HostServices((ControllerHost) host.proxy);
+            services = new HostServices(host.proxy(ControllerHost.class));
             module = new LauncherModule(services);
             initialised = true;
         }
 
         Object enumValue(Supplier<String> get, Consumer<String> apply, String[] options) {
-            Node value = new Node(SettableEnumValue.class);
-            value.action("get", a -> get.get());
+            FakeHost value = FakeHost.of(SettableEnumValue.class, "value");
+            value.on("get", a -> get.get());
             final List<EnumValueChangedCallback> observers = new ArrayList<>();
-            value.action("addValueObserver", a -> {
+            value.on("addValueObserver", a -> {
                 observers.add((EnumValueChangedCallback) a[a.length - 1]);
                 return null;
             });
-            value.action("set", a -> {
+            value.on("set", a -> {
                 launchSets++;
                 if (applyLaunch) {
                     apply.accept((String) a[0]);
@@ -2470,25 +2419,25 @@ public final class LauncherModuleTest {
                 }
                 return null;
             });
-            Node definition = new Node(EnumDefinition.class);
-            definition.action("getValueCount", a -> options.length);
-            definition.action("valueDefinitionAt", a -> {
-                Node option = new Node(EnumValueDefinition.class);
-                option.action("getId", b -> options[(Integer) a[0]]);
-                return option.proxy;
+            FakeHost definition = FakeHost.of(EnumDefinition.class, "definition");
+            definition.on("getValueCount", a -> options.length);
+            definition.on("valueDefinitionAt", a -> {
+                FakeHost option = FakeHost.of(EnumValueDefinition.class, "option");
+                option.on("getId", b -> options[(Integer) a[0]]);
+                return option.proxy();
             });
-            value.action("enumDefinition", a -> definition.proxy);
-            return value.proxy;
+            value.on("enumDefinition", a -> definition.proxy());
+            return value.proxy();
         }
 
         void observeTrackId(String id) {
             trackId = id;
-            for (StringValueChangedCallback callback : trackIdObservers) callback.valueChanged(id);
+            trackIdentity.emit(id);
         }
 
         void observeContent(int slot, boolean content) {
             slots[slot].content = content;
-            for (BooleanValueChangedCallback callback : slots[slot].contentObservers) callback.valueChanged(content);
+            slots[slot].contentNode.emit(content);
         }
 
         void applyPendingGrid() {
@@ -2537,14 +2486,14 @@ public final class LauncherModuleTest {
                 }
             final Note found = on;
             final Object actual = state;
-            Node n = new Node(NoteStep.class);
-            n.action("channel", a -> channel);
-            n.action("x", a -> x);
-            n.action("y", a -> pitch);
-            n.action("state", a -> actual);
-            n.action("velocity", a -> found == null ? 0.0 : found.exact != null ? found.exact : found.velocity / 127.0);
-            n.action("duration", a -> found == null ? 0.0 : found.duration);
-            return (NoteStep) n.proxy;
+            FakeHost n = FakeHost.of(NoteStep.class, "n");
+            n.on("channel", a -> channel);
+            n.on("x", a -> x);
+            n.on("y", a -> pitch);
+            n.on("state", a -> actual);
+            n.on("velocity", a -> found == null ? 0.0 : found.exact != null ? found.exact : found.velocity / 127.0);
+            n.on("duration", a -> found == null ? 0.0 : found.duration);
+            return n.proxy(NoteStep.class);
         }
 
         HostOperation start(String method, JsonObject p) {
@@ -2591,7 +2540,7 @@ public final class LauncherModuleTest {
         boolean content, playing, queued;
         String name = "";
         double length = 4, playStop = 4;
-        final List<BooleanValueChangedCallback> contentObservers = new ArrayList<>();
+        FakeHost contentNode;
     }
 
     private static final class Note {
@@ -2605,85 +2554,46 @@ public final class LauncherModuleTest {
         }
     }
 
-    private static Node emptyDevice(int position, boolean root) {
-        Node device = new Node(Device.class);
-        device.value("exists", () -> false);
-        device.value("name", () -> "");
-        device.value("position", () -> position);
-        device.value("deviceType", () -> "");
-        device.action("addDirectParameterIdObserver", a -> {
+    private static FakeHost emptyDevice(int position, boolean root) {
+        FakeHost device = FakeHost.of(Device.class, "device");
+        device.live("exists", () -> false);
+        device.live("name", () -> "");
+        device.live("position", () -> position);
+        device.live("deviceType", () -> "");
+        device.on("addDirectParameterIdObserver", a -> {
             ((StringArrayValueChangedCallback) a[0]).valueChanged(new String[0]);
             return null;
         });
         if (root) {
-            device.value("hasLayers", () -> false);
-            Node layers = new Node(DeviceLayerBank.class);
-            layers.value("exists", () -> false);
-            layers.value("itemCount", () -> 0);
-            layers.value("scrollPosition", () -> 0);
-            Node[] layerNodes = new Node[2];
+            device.live("hasLayers", () -> false);
+            FakeHost layers = FakeHost.of(DeviceLayerBank.class, "layers");
+            layers.live("exists", () -> false);
+            layers.live("itemCount", () -> 0);
+            layers.live("scrollPosition", () -> 0);
+            FakeHost[] layerNodes = new FakeHost[2];
             for (int l = 0; l < layerNodes.length; l++) {
                 final int index = l;
-                Node layer = layerNodes[l] = new Node(DeviceLayer.class);
-                layer.value("exists", () -> false);
-                layer.value("channelId", () -> "");
-                layer.value("channelIndex", () -> index);
-                layer.value("name", () -> "");
-                Node children = new Node(DeviceBank.class);
-                children.value("exists", () -> false);
-                children.value("itemCount", () -> 0);
-                children.value("scrollPosition", () -> 0);
-                Node[] childNodes = {emptyDevice(0, false), emptyDevice(1, false)};
-                children.action("getItemAt", a -> childNodes[(Integer) a[0]].proxy);
-                layer.action("createDeviceBank", a -> children.proxy);
+                FakeHost layer = layerNodes[l] = FakeHost.of(DeviceLayer.class, "layer");
+                layer.live("exists", () -> false);
+                layer.live("channelId", () -> "");
+                layer.live("channelIndex", () -> index);
+                layer.live("name", () -> "");
+                FakeHost children = FakeHost.of(DeviceBank.class, "children");
+                children.live("exists", () -> false);
+                children.live("itemCount", () -> 0);
+                children.live("scrollPosition", () -> 0);
+                FakeHost[] childNodes = {emptyDevice(0, false), emptyDevice(1, false)};
+                children.on("getItemAt", a -> childNodes[(Integer) a[0]].proxy());
+                layer.on("createDeviceBank", a -> children.proxy());
             }
-            layers.action("getItemAt", a -> layerNodes[(Integer) a[0]].proxy);
-            device.action("createLayerBank", a -> layers.proxy);
+            layers.on("getItemAt", a -> layerNodes[(Integer) a[0]].proxy());
+            device.on("createLayerBank", a -> layers.proxy());
         } else {
-            device.action("createCursorRemoteControlsPage", a -> {
+            device.on("createCursorRemoteControlsPage", a -> {
                 throw new AssertionError("Child remote controls are outside the fixed layer graph");
             });
         }
         return device;
-    }
-
-    private static final class Node implements InvocationHandler {
-        final Object proxy;
-        final Map<String, Function<Object[], Object>> methods = new HashMap<>();
-        final Map<String, Object> children = new HashMap<>();
-        final Map<String, Supplier<Object>> values = new HashMap<>();
-
-        Node(Class<?> type) {
-            proxy = Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[] {type}, this);
-        }
-
-        void action(String name, Function<Object[], Object> fn) {
-            methods.put(name, fn);
-        }
-
-        void value(String name, Supplier<Object> supplier) {
-            values.put(name, supplier);
-        }
-
-        public Object invoke(Object self, Method method, Object[] args) {
-            String name = method.getName();
-            Object[] a = args == null ? new Object[0] : args;
-            if (name.equals("toString")) return "LauncherFixtureProxy";
-            if (name.equals("hashCode")) return System.identityHashCode(self);
-            if (name.equals("equals")) return self == a[0];
-            if (methods.containsKey(name)) return methods.get(name).apply(a);
-            if (values.containsKey(name))
-                return children.computeIfAbsent(
-                        name, k -> LauncherModuleTest.value(method.getReturnType(), values.get(name)));
-            Class<?> type = method.getReturnType();
-            if (type == void.class) return null;
-            if (type == boolean.class) return false;
-            if (type == int.class) return 0;
-            if (type == double.class) return 0.0;
-            if (type == String.class) return "";
-            if (type.isInterface()) return children.computeIfAbsent(name, k -> new Node(type).proxy);
-            throw new AssertionError("unmodeled host method " + method);
-        }
     }
 
     private static Object value(Class<?> type, Supplier<Object> supplier) {
@@ -2691,26 +2601,8 @@ public final class LauncherModuleTest {
     }
 
     private static Object value(Class<?> type, Supplier<Object> supplier, boolean observed) {
-        return Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[] {type}, (self, method, args) -> {
-            if (method.getName().equals("get")) return supplier.get();
-            if (method.getName().equals("addValueObserver")) {
-                if (!observed) return null;
-                Object callback = args[args.length - 1];
-                Object actual = supplier.get();
-                if (callback instanceof BooleanValueChangedCallback)
-                    ((BooleanValueChangedCallback) callback).valueChanged((Boolean) actual);
-                else if (callback instanceof IntegerValueChangedCallback)
-                    ((IntegerValueChangedCallback) callback).valueChanged((Integer) actual);
-                else if (callback instanceof StringValueChangedCallback)
-                    ((StringValueChangedCallback) callback).valueChanged((String) actual);
-                else if (callback instanceof EnumValueChangedCallback)
-                    ((EnumValueChangedCallback) callback).valueChanged((String) actual);
-                else if (callback instanceof DoubleValueChangedCallback)
-                    ((DoubleValueChangedCallback) callback).valueChanged(((Number) actual).doubleValue());
-                return null;
-            }
-            if (method.getReturnType() == void.class) return null;
-            throw new AssertionError("unmodeled value method " + method);
-        });
+        FakeHost node = FakeHost.of(type, "value").reading(supplier);
+        node.notifyInitial = observed;
+        return node.proxy();
     }
 }

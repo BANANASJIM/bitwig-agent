@@ -14,7 +14,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from bitwig_agent.grid_docs import LANGS, DocsUnavailable, _tokens, localization_dir, read_properties
+from bitwig_agent.grid.docs import LANGS, DocsUnavailable, _tokens, localization_dir, read_properties
 
 GENERAL = "modulator_general"
 # Display name -> extra Modulators-resources prefixes, only where the prefix is not `<id>` or `<id>-modulator`.

@@ -2,7 +2,7 @@
 
 `numericUnit` names the unit the host displays, not how the raw value maps to it. This table records the mapping per
 (module type, parameter) so display writes ("-12 st", "-6 dB", "4 Hz") can be converted to raw client-side and agents can read
-the scale in `grid.describe`. Most other seconds scales (cbrt/log10) live in grid_apply.SECONDS_PARAMS.
+the scale in `grid.describe`. Most other seconds scales (cbrt/log10) live in grid/display.py SECONDS_PARAMS.
 
 status: verified = a schema default raw/display pair fits this scale and not the obvious alternatives;
         measured = measured natively, but the schema default does not discriminate (zero or 1.0), so it only has to agree.

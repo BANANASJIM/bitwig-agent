@@ -16,7 +16,7 @@ import java.util.concurrent.atomic.AtomicLongArray;
  */
 final class RenderModule implements HostModule {
     static final String EXPORT = "export.audio", BOUNCE = "bounce.inPlace", STATUS = "render.status";
-    static final Set<String> METHODS = Set.of(EXPORT, BOUNCE, STATUS), LONG = Set.of(EXPORT, BOUNCE);
+    static final Set<String> METHODS = Set.of(EXPORT, BOUNCE, STATUS);
     static final ErrorCode UNAVAILABLE = ErrorCode.RENDER_UNAVAILABLE;
     static final String MASTER = "master";
     static final double MAX_BEATS = 4194304, MAX_LENGTH = 65536, EPS = 1e-6;

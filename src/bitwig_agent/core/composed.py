@@ -1,17 +1,18 @@
-"""Dispatch for protocol.CLIENT_SIDE tools: Python composites over the host methods."""
+"""Handlers for protocol.CLIENT_SIDE tools: Python composites over the host methods."""
 
 from __future__ import annotations
 
 import asyncio
 from typing import Any
 
-from bitwig_agent import audio, grid_docs, modulator_docs, presets
+from bitwig_agent import audio, modulator_docs, presets
 from bitwig_agent.diagnostics import diagnostics
-from bitwig_agent.grid_apply import apply as grid_apply
-from bitwig_agent.grid_export import export as grid_export
-from bitwig_agent.grid_export import graph as grid_graph
-from bitwig_agent.grid_probe import probe as grid_probe
-from bitwig_agent.grid_render import render as grid_render
+from bitwig_agent.grid import docs as grid_docs
+from bitwig_agent.grid.apply import apply as grid_apply
+from bitwig_agent.grid.export import export as grid_export
+from bitwig_agent.grid.export import graph as grid_graph
+from bitwig_agent.grid.probe import probe as grid_probe
+from bitwig_agent.grid.render import render as grid_render
 
 
 async def audio_route(client: Any, args: dict[str, Any], timeout_ms: int) -> dict[str, Any]:

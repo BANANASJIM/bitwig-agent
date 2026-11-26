@@ -5,34 +5,20 @@ import static dev.bitwigagent.ModulatorSnapshotReader.Kind.IDENTIFIED;
 import static dev.bitwigagent.ModulatorSnapshotReader.Kind.MODEL;
 import static dev.bitwigagent.ModulatorSnapshotReader.Kind.MODULATOR;
 import static dev.bitwigagent.ModulatorSnapshotReader.Kind.STRING_PANEL;
+import static dev.bitwigagent.RpcAssert.*;
+import static org.junit.jupiter.api.Assertions.*;
 
 import com.google.gson.*;
 import java.util.*;
 import java.util.function.BiConsumer;
+import org.junit.jupiter.api.Test;
 
 /** Host-free semantic models, not evidence of reachable native compatibility. */
 public final class ModulatorSnapshotReaderTest {
-    private static int assertions;
     private static final UUID TRACK = new UUID(4, 1);
 
-    public static void main(String[] args) {
-        inventoryKeepsIdentitiesSeparateAndNeverReadsValues();
-        unmaterializedRowsRemainMetadataOnly();
-        exactSelectionPreservesEmptyUnicodeAndWhitespace();
-        primaryOwnerAndDirectMembershipFailClosed();
-        duplicatesAndUnknownIdentityFailClosed();
-        sameObjectCurrentUuidAndLiveMembershipAreGuarded();
-        contextAndTargetChangesFailClosed();
-        boundsApplyToActualWorkNotOnlyPage();
-        emptyAndChangingInventoriesRemainHonest();
-        selectedReadDoesNotInspectUnrelatedValuesOrContents();
-        unsupportedAndUnavailableFamiliesStaySeparate();
-        errorsAndCancellationAreNotHidden();
-        runtimeGateIsReadOnlyAndDoesNotClaimAcceptance();
-        System.out.println("ModulatorSnapshotReaderTest: " + assertions + " assertions passed (semantic models only)");
-    }
-
-    private static void inventoryKeepsIdentitiesSeparateAndNeverReadsValues() {
+    @Test
+    void inventoryKeepsIdentitiesSeparateAndNeverReadsValues() {
         Fixture f = new Fixture();
         f.first.put(NAME, "  Raw name \t").put(CUSTOM_NAME, "");
         Node unsupported = f.child(f.contents, "LEVEL", false);
@@ -41,14 +27,15 @@ public final class ModulatorSnapshotReaderTest {
         unsupported.put(VALUE, new Object());
         JsonObject result = f.list(0, 64);
         JsonObject row = result.getAsJsonArray("modulators").get(0).getAsJsonObject();
-        check(row.get("modulatorId").getAsString().equals(f.id(f.first).toString()), "current instance UUID emitted");
-        check(!row.get("modulatorId").equals(row.get("typeId")), "type UUID is not instance identity");
-        check(
+        assertTrue(
+                row.get("modulatorId").getAsString().equals(f.id(f.first).toString()), "current instance UUID emitted");
+        assertTrue(!row.get("modulatorId").equals(row.get("typeId")), "type UUID is not instance identity");
+        assertTrue(
                 row.get("name").getAsString().equals("  Raw name \t")
                         && row.get("customName").getAsString().isEmpty(),
                 "raw names retained separately");
         JsonArray parameters = row.getAsJsonArray("parameters");
-        check(
+        assertTrue(
                 parameters.size() == 3
                         && parameters
                                 .get(0)
@@ -57,49 +44,51 @@ public final class ModulatorSnapshotReaderTest {
                                 .getAsString()
                                 .equals("TEXT"),
                 "direct controls described");
-        check(
+        assertTrue(
                 !parameters.get(1).getAsJsonObject().get("supported").getAsBoolean(),
                 "non-QEE remains explicit unsupported");
-        check(
+        assertTrue(
                 parameters.get(2).getAsJsonObject().get("parameterId").isJsonNull(),
                 "unidentified component gets no guessed identifier");
-        check(
+        assertTrue(
                 !parameters.get(0).getAsJsonObject().has("value") && f.valueReads == 0,
                 "inventory never invokes a value getter");
-        check(
+        assertTrue(
                 !result.get("complete").getAsBoolean()
                         && !result.get("nativeMutation").getAsBoolean(),
                 "partial unsupported read never claims mutation");
-        check(unknown.values.get(PARENT) == f.contents, "inventory does not rewrite ownership");
+        assertTrue(unknown.values.get(PARENT) == f.contents, "inventory does not rewrite ownership");
     }
 
-    private static void unmaterializedRowsRemainMetadataOnly() {
+    @Test
+    void unmaterializedRowsRemainMetadataOnly() {
         Fixture f = new Fixture();
         f.first.put(CONTENTS, null).put(NAME, null).put(CUSTOM_NAME, null);
         JsonObject result = f.list(0, 64),
                 row = result.getAsJsonArray("modulators").get(0).getAsJsonObject();
-        check(
+        assertTrue(
                 !row.get("contentsAvailable").getAsBoolean()
                         && row.get("contentState").getAsString().equals("unmaterialized"),
                 "nonloading absence reported");
-        check(
+        assertTrue(
                 row.get("typeId").isJsonNull()
                         && row.get("parameters").isJsonNull()
                         && row.get("name").isJsonNull(),
                 "unavailable details are null, not empty success");
-        check(!result.get("complete").getAsBoolean() && f.childrenReads == 0, "missing content is not traversed");
-        expect("modulator_unavailable", f::get);
-        check(f.valueReads == 0, "unmaterialized get has no value fallback");
+        assertTrue(!result.get("complete").getAsBoolean() && f.childrenReads == 0, "missing content is not traversed");
+        assertRpcError("modulator_unavailable", f::get);
+        assertTrue(f.valueReads == 0, "unmaterialized get has no value fallback");
     }
 
-    private static void exactSelectionPreservesEmptyUnicodeAndWhitespace() {
+    @Test
+    void exactSelectionPreservesEmptyUnicodeAndWhitespace() {
         Fixture f = new Fixture();
         f.panel.put(PARAMETER_ID, "");
         for (String value : List.of("", "  ", "\n\t", "raw\0text")) {
             f.panel.put(VALUE, value);
             JsonObject result = f.reader.parameter(f.proxy, TRACK, f.id(f.first), "", () -> {});
-            check(result.get("value").getAsString().equals(value), "raw empty/whitespace/control text retained");
-            check(
+            assertTrue(result.get("value").getAsString().equals(value), "raw empty/whitespace/control text retained");
+            assertTrue(
                     result.get("labels").isJsonNull()
                             && result.get("shortLabel").isJsonNull()
                             && result.get("display").isJsonNull(),
@@ -108,235 +97,245 @@ public final class ModulatorSnapshotReaderTest {
         String unicode = "\u00e9\u4e2d\ud83c\udfb5 e\u0301";
         f.panel.put(PARAMETER_ID, "\u6587\u5b57").put(VALUE, unicode);
         JsonObject result = f.reader.parameter(f.proxy, TRACK, f.id(f.first), "\u6587\u5b57", () -> {});
-        check(result.get("value").getAsString().equals(unicode), "Unicode code units preserved without normalization");
-        check(
+        assertTrue(
+                result.get("value").getAsString().equals(unicode),
+                "Unicode code units preserved without normalization");
+        assertTrue(
                 !result.getAsJsonObject("readContext")
                         .get("activeApplicationProjectIdentityChecked")
                         .getAsBoolean(),
                 "owning context is not active-project proof");
-        expect("target_not_found", () -> f.reader.parameter(f.proxy, TRACK, f.id(f.first), "TEXT", () -> {}));
-        expect(
+        assertRpcError("target_not_found", () -> f.reader.parameter(f.proxy, TRACK, f.id(f.first), "TEXT", () -> {}));
+        assertRpcError(
                 "target_not_found",
                 () -> f.reader.parameter(f.proxy, TRACK, new UUID(99, 99), "\u6587\u5b57", () -> {}));
     }
 
-    private static void primaryOwnerAndDirectMembershipFailClosed() {
+    @Test
+    void primaryOwnerAndDirectMembershipFailClosed() {
         Fixture f = new Fixture();
         f.collection.put(PARENT, new Node());
-        expect("stale_context", f::get);
+        assertRpcError("stale_context", f::get);
         f = new Fixture();
         f.first.put(PARENT, new Node());
-        expect("stale_context", f::get);
+        assertRpcError("stale_context", f::get);
         f = new Fixture();
         f.first.put(COLLECTION_OWNER, new Node());
-        expect("stale_context", f::get);
+        assertRpcError("stale_context", f::get);
         f = new Fixture();
         f.contents.put(PARENT, new Node());
-        expect("stale_context", f::get);
+        assertRpcError("stale_context", f::get);
         f = new Fixture();
         f.contents.put(CONTENTS_OWNER, new Node());
-        expect("stale_context", f::get);
+        assertRpcError("stale_context", f::get);
         f = new Fixture();
         f.panel.put(PARENT, new Node());
-        expect("stale_context", f::get);
+        assertRpcError("stale_context", f::get);
         Fixture absent = new Fixture();
         Node outside = absent.modulator();
         UUID outsideId = absent.id(outside);
         absent.rows.remove(outside);
-        expect("target_not_found", () -> absent.reader.parameter(absent.proxy, TRACK, outsideId, "TEXT", () -> {}));
+        assertRpcError(
+                "target_not_found", () -> absent.reader.parameter(absent.proxy, TRACK, outsideId, "TEXT", () -> {}));
         f = new Fixture();
         f.targetOwner = new Node();
-        expect("modulator_unavailable", f::get);
+        assertRpcError("modulator_unavailable", f::get);
         f = new Fixture();
         f.trackId = new UUID(1, 8);
-        expect("stale_context", f::get);
+        assertRpcError("stale_context", f::get);
     }
 
-    private static void duplicatesAndUnknownIdentityFailClosed() {
+    @Test
+    void duplicatesAndUnknownIdentityFailClosed() {
         Fixture f = new Fixture();
         f.modulator().put(ID, f.id(f.first));
-        expect("modulator_unavailable", () -> f.list(0, 1));
+        assertRpcError("modulator_unavailable", () -> f.list(0, 1));
         Fixture repeated = new Fixture();
         repeated.rows.add(repeated.first);
-        expect("modulator_unavailable", repeated::get);
+        assertRpcError("modulator_unavailable", repeated::get);
         Fixture ids = new Fixture();
         ids.child(ids.contents, "TEXT", false);
-        expect("modulator_unavailable", ids::get);
+        assertRpcError("modulator_unavailable", ids::get);
         Fixture empty = new Fixture();
         empty.panel.put(PARAMETER_ID, "");
         empty.child(empty.contents, "", true);
-        expect("modulator_unavailable", () -> empty.list(0, 64));
+        assertRpcError("modulator_unavailable", () -> empty.list(0, 64));
         Fixture objects = new Fixture();
         objects.children(objects.contents).add(objects.panel);
-        expect("modulator_unavailable", objects::get);
+        assertRpcError("modulator_unavailable", objects::get);
         Fixture unknown = new Fixture();
         unknown.rows.add(new Node());
-        expect("modulator_unavailable", unknown::get);
+        assertRpcError("modulator_unavailable", unknown::get);
         Fixture missing = new Fixture();
         UUID requestedId = missing.id(missing.first);
         missing.first.put(ID, null);
-        expect(
+        assertRpcError(
                 "modulator_unavailable",
                 () -> missing.reader.parameter(missing.proxy, TRACK, requestedId, "TEXT", () -> {}));
     }
 
-    private static void sameObjectCurrentUuidAndLiveMembershipAreGuarded() {
+    @Test
+    void sameObjectCurrentUuidAndLiveMembershipAreGuarded() {
         Fixture f = new Fixture();
         UUID original = f.id(f.first);
         f.afterValue = () -> f.first.put(ID, new UUID(7, 7));
-        expect("stale_context", f::get);
-        check(!f.id(f.first).equals(original), "same object changed UUID, not merely replacement");
+        assertRpcError("stale_context", f::get);
+        assertTrue(!f.id(f.first).equals(original), "same object changed UUID, not merely replacement");
         Fixture type = new Fixture();
         type.afterValue = () -> type.contents.put(TYPE_ID, new UUID(8, 8));
-        expect("stale_context", type::get);
+        assertRpcError("stale_context", type::get);
         Fixture content = new Fixture();
         content.afterValue = () -> content.first.put(CONTENTS, null);
-        expect("stale_context", content::get);
+        assertRpcError("stale_context", content::get);
         Fixture parent = new Fixture();
         parent.afterValue = () -> parent.panel.put(PARENT, parent.first);
-        expect("stale_context", parent::get);
+        assertRpcError("stale_context", parent::get);
         Fixture child = new Fixture();
         child.afterValue = () -> child.children(child.contents).set(0, new Node(MODEL));
-        expect("stale_context", child::get);
+        assertRpcError("stale_context", child::get);
         Fixture identifier = new Fixture();
         identifier.afterValue = () -> identifier.panel.put(PARAMETER_ID, "OTHER");
-        expect("stale_context", identifier::get);
+        assertRpcError("stale_context", identifier::get);
         Fixture value = new Fixture();
         value.afterValue = () -> value.panel.put(VALUE, "changed");
-        expect("stale_context", value::get);
+        assertRpcError("stale_context", value::get);
         Fixture order = new Fixture();
         order.modulator();
         order.afterValue = () -> Collections.reverse(order.rows);
-        expect("stale_context", order::get);
+        assertRpcError("stale_context", order::get);
         Fixture count = new Fixture();
         count.afterValue = count::modulator;
-        expect("stale_context", count::get);
+        assertRpcError("stale_context", count::get);
         Fixture wrapper = new Fixture();
         wrapper.freshChildrenWrappers = true;
-        check(
+        assertTrue(
                 wrapper.get().get("value").getAsString().equals("initial"),
                 "fresh unmodifiable live wrappers do not imply membership change");
     }
 
-    private static void contextAndTargetChangesFailClosed() {
+    @Test
+    void contextAndTargetChangesFailClosed() {
         Fixture f = new Fixture();
         f.afterValue = () -> f.target = new Node();
-        expect("stale_context", f::get);
+        assertRpcError("stale_context", f::get);
         Fixture owner = new Fixture();
         owner.afterValue = () -> owner.trackId = new UUID(4, 2);
-        expect("stale_context", owner::get);
+        assertRpcError("stale_context", owner::get);
         Fixture context = new Fixture();
         context.afterValue = () -> context.panel.context = new Node();
-        expect("stale_context", context::get);
+        assertRpcError("stale_context", context::get);
         Fixture project = new Fixture();
         project.panel.project = new Node();
-        expect("stale_context", project::get);
+        assertRpcError("stale_context", project::get);
         Fixture deleted = new Fixture();
         deleted.afterValue = () -> deleted.first.deleted = true;
-        expect("stale_context", deleted::get);
+        assertRpcError("stale_context", deleted::get);
         Fixture disposed = new Fixture();
         disposed.afterValue = () -> disposed.disposed = true;
-        expect("stale_context", disposed::get);
+        assertRpcError("stale_context", disposed::get);
         Fixture dt = new Fixture();
         dt.afterValue = () -> dt.currentDt = new Node();
-        expect("stale_context", dt::get);
+        assertRpcError("stale_context", dt::get);
         Fixture thread = new Fixture();
         thread.panel.thread = false;
-        expect("modulator_unavailable", thread::get);
+        assertRpcError("modulator_unavailable", thread::get);
         Fixture observed = new Fixture();
         observed.initialized = false;
         observed.root = new Node();
         JsonObject attached = observed.get().getAsJsonObject("readContext").getAsJsonObject("attachedContext");
-        check(
+        assertTrue(
                 !attached.get("initialized").getAsBoolean()
                         && !attached.get("rootIsOwningProject").getAsBoolean(),
                 "initialization/root equality remain observations, not invented gates");
         Fixture alias = new Fixture();
         alias.aliased = true;
-        check(
+        assertTrue(
                 alias.get().get("value").getAsString().equals("initial"),
                 "owning channel alias participates in target/context checks");
         alias.afterValue = () -> alias.alias = new Node();
-        expect("modulator_unavailable", alias::get);
+        assertRpcError("modulator_unavailable", alias::get);
     }
 
-    private static void boundsApplyToActualWorkNotOnlyPage() {
+    @Test
+    void boundsApplyToActualWorkNotOnlyPage() {
         Fixture primary = new Fixture();
         primary.countOverride = 4097;
-        expect("modulator_bounds_exceeded", () -> primary.list(100000, 1));
-        check(primary.indexReads == 0, "count bound applies before primary iteration");
+        assertRpcError("modulator_bounds_exceeded", () -> primary.list(100000, 1));
+        assertTrue(primary.indexReads == 0, "count bound applies before primary iteration");
         Fixture children = new Fixture();
         children.contents.put(CHILDREN, Collections.nCopies(257, children.panel));
-        expect("modulator_bounds_exceeded", () -> children.list(0, 1));
+        assertRpcError("modulator_bounds_exceeded", () -> children.list(0, 1));
         Fixture aggregate = new Fixture();
         aggregate.rows.clear();
         for (int i = 0; i < 65; i++) {
             Node row = aggregate.modulator(), contents = aggregate.contents(row);
             for (int j = 0; j < 256; j++) aggregate.child(contents, "control" + j, false);
         }
-        expect("modulator_bounds_exceeded", () -> aggregate.list(0, 128));
+        assertRpcError("modulator_bounds_exceeded", () -> aggregate.list(0, 128));
         Fixture page = new Fixture();
         page.modulator();
         JsonObject result = page.list(1, 1);
         JsonObject window = result.getAsJsonObject("window");
-        check(
+        assertTrue(
                 window.get("total").getAsInt() == 2
                         && window.get("returned").getAsInt() == 1
                         && !result.get("complete").getAsBoolean(),
                 "page is honest independent partial observation");
-        check(
+        assertTrue(
                 page.list(100000, 1).getAsJsonArray("modulators").isEmpty(),
                 "offset outside current collection gives empty bounded page");
         Fixture text = new Fixture();
         text.panel.put(VALUE, "x".repeat(1024));
-        check(text.get().get("value").getAsString().length() == 1024, "exact text bound accepted");
+        assertTrue(text.get().get("value").getAsString().length() == 1024, "exact text bound accepted");
         text.panel.put(VALUE, "x".repeat(1025));
-        expect("modulator_bounds_exceeded", text::get);
+        assertRpcError("modulator_bounds_exceeded", text::get);
         text.panel.put(VALUE, "\ud83c\udfb5".repeat(513));
-        expect("modulator_bounds_exceeded", text::get);
+        assertRpcError("modulator_bounds_exceeded", text::get);
         Fixture id = new Fixture();
         id.panel.put(PARAMETER_ID, "x".repeat(1025));
-        expect("modulator_bounds_exceeded", () -> id.list(0, 1));
+        assertRpcError("modulator_bounds_exceeded", () -> id.list(0, 1));
         Fixture name = new Fixture();
         name.first.put(NAME, "x".repeat(1025));
-        expect("modulator_bounds_exceeded", name::get);
-        expect("invalid_params", () -> page.list(-1, 1));
-        expect("invalid_params", () -> page.list(0, 129));
+        assertRpcError("modulator_bounds_exceeded", name::get);
+        assertRpcError("invalid_params", () -> page.list(-1, 1));
+        assertRpcError("invalid_params", () -> page.list(0, 129));
     }
 
-    private static void emptyAndChangingInventoriesRemainHonest() {
+    @Test
+    void emptyAndChangingInventoriesRemainHonest() {
         Fixture empty = new Fixture();
         empty.rows.clear();
         JsonObject result = empty.list(0, 64);
-        check(
+        assertTrue(
                 result.getAsJsonArray("modulators").isEmpty()
                         && result.getAsJsonObject("window").get("total").getAsInt() == 0,
                 "genuinely empty primary collection is distinct from unmaterialized contents");
-        check(
+        assertTrue(
                 result.get("complete").getAsBoolean() && empty.valueReads == 0,
                 "empty primary observation has no fabricated value reads");
         Fixture missing = new Fixture();
         missing.target = null;
-        expect("target_not_found", missing::get);
+        assertRpcError("target_not_found", missing::get);
         Fixture changed = new Fixture();
         changed.onRead = (field, object) -> {
             if (field == CHILDREN) changed.first.put(ID, new UUID(100, 100));
         };
-        expect("stale_context", () -> changed.list(0, 64));
+        assertRpcError("stale_context", () -> changed.list(0, 64));
         Fixture work = new Fixture();
         work.rows.clear();
         for (int i = 0; i < 33; i++) {
             Node contents = work.contents(work.modulator());
             for (int j = 0; j < 256; j++) work.child(contents, "control" + j, false);
         }
-        expect("modulator_bounds_exceeded", () -> work.list(0, 128));
+        assertRpcError("modulator_bounds_exceeded", () -> work.list(0, 128));
         work.rows.remove(work.rows.size() - 1);
-        check(
+        assertTrue(
                 work.list(0, 128).getAsJsonObject("window").get("total").getAsInt() == 32,
                 "16384 capture plus revalidation visits accepted; exceeding actual work fails");
     }
 
-    private static void selectedReadDoesNotInspectUnrelatedValuesOrContents() {
+    @Test
+    void selectedReadDoesNotInspectUnrelatedValuesOrContents() {
         Fixture f = new Fixture();
         Node other = f.child(f.contents, "OTHER", true);
         other.put(VALUE, "x".repeat(2000));
@@ -348,22 +347,23 @@ public final class ModulatorSnapshotReaderTest {
             if (field == CHILDREN && object == secondContents)
                 throw new AssertionError("unrelated contents traversed by selected get");
         };
-        check(
+        assertTrue(
                 f.get().get("value").getAsString().equals("initial") && f.valueReads == 2,
                 "only selected raw value read and rechecked");
         second.put(NAME, new Object()).put(CUSTOM_NAME, new Object());
-        check(
+        assertTrue(
                 f.list(0, 1).getAsJsonArray("modulators").size() == 1 && f.valueReads == 2,
                 "inventory details are confined to requested page; off-page values/names/contents are not inspected");
         f.panel.put(VALUE, new Object());
-        expect("modulator_unavailable", f::get);
+        assertRpcError("modulator_unavailable", f::get);
     }
 
-    private static void unsupportedAndUnavailableFamiliesStaySeparate() {
+    @Test
+    void unsupportedAndUnavailableFamiliesStaySeparate() {
         Fixture f = new Fixture();
         f.panel.kinds.remove(STRING_PANEL);
-        expect("unsupported_scope", f::get);
-        check(f.valueReads == 0, "unsupported control has no value fallback");
+        assertRpcError("unsupported_scope", f::get);
+        assertTrue(f.valueReads == 0, "unsupported control has no value fallback");
         Fixture unavailable = new Fixture();
         unavailable.strings = false;
         JsonObject descriptor = unavailable
@@ -374,68 +374,56 @@ public final class ModulatorSnapshotReaderTest {
                 .getAsJsonArray("parameters")
                 .get(0)
                 .getAsJsonObject();
-        check(
+        assertTrue(
                 !descriptor.get("supported").getAsBoolean()
                         && descriptor.get("parameterId").getAsString().equals("TEXT"),
                 "discovery survives QEE binding unavailability");
-        expect("modulator_unavailable", unavailable::get);
+        assertRpcError("modulator_unavailable", unavailable::get);
     }
 
-    private static void errorsAndCancellationAreNotHidden() {
+    @Test
+    void errorsAndCancellationAreNotHidden() {
         Fixture f = new Fixture();
         f.onRead = (field, object) -> {
             if (field == VALUE) throw Errors.notApplied(ErrorCode.MODULATOR_UNAVAILABLE, "native getter failed");
         };
-        expect("modulator_unavailable", f::get);
+        assertRpcError("modulator_unavailable", f::get);
         Fixture cancelled = new Fixture();
-        expect(
+        assertRpcError(
                 "cancelled",
                 () -> cancelled.reader.list(cancelled.proxy, TRACK, 0, 64, () -> {
                     throw Errors.notApplied(ErrorCode.CANCELLED, "cancelled");
                 }));
-        check(cancelled.indexReads == 0, "cancellation precedes native collection work");
+        assertTrue(cancelled.indexReads == 0, "cancellation precedes native collection work");
         Fixture deadline = new Fixture();
         deadline.afterValue = () -> deadline.expired = true;
-        expect(
+        assertRpcError(
                 "deadline",
                 () -> deadline.reader.parameter(deadline.proxy, TRACK, deadline.id(deadline.first), "TEXT", () -> {
                     if (deadline.expired) throw Errors.of("deadline", "expired", Outcome.NOT_APPLIED);
                 }));
     }
 
-    private static void runtimeGateIsReadOnlyAndDoesNotClaimAcceptance() {
+    @Test
+    void runtimeGateIsReadOnlyAndDoesNotClaimAcceptance() {
         Bitwig614ModulatorAdapter adapter = new Bitwig614ModulatorAdapter(
                 new Bitwig614Runtime(new Object(), "6.1.2", () -> {}).access(ErrorCode.MODULATOR_UNAVAILABLE));
         JsonObject capabilities = adapter.capabilities();
-        check(
+        assertTrue(
                 !capabilities.getAsJsonObject("runtimeGate").get("available").getAsBoolean(),
                 "wrong runtime version remains closed");
-        check(
+        assertTrue(
                 !capabilities.getAsJsonObject("discovery").get("available").getAsBoolean()
                         && !capabilities
                                 .getAsJsonObject("stringPanelRead")
                                 .get("available")
                                 .getAsBoolean(),
                 "domain capabilities respect runtime failure");
-        check(
+        assertTrue(
                 !capabilities.get("writeAvailable").getAsBoolean()
                         && capabilities.get("nativeVerification").getAsString().equals("not_established_by_binding"),
                 "binding is never native acceptance or write authority");
-        expect("modulator_unavailable", () -> adapter.list(new Object(), TRACK, 0, 64, () -> {}));
-    }
-
-    private static void check(boolean value, String message) {
-        assertions++;
-        if (!value) throw new AssertionError(message);
-    }
-
-    private static void expect(String code, Runnable action) {
-        try {
-            action.run();
-            throw new AssertionError("Expected " + code);
-        } catch (RpcException error) {
-            check(code.equals(error.code), "expected " + code + ", got " + error.code + ": " + error.getMessage());
-        }
+        assertRpcError("modulator_unavailable", () -> adapter.list(new Object(), TRACK, 0, 64, () -> {}));
     }
 
     private static final class Node {
