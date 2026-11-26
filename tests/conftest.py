@@ -63,7 +63,7 @@ async def host():
 async def mcp_session(host):
     params = StdioServerParameters(
         command=sys.executable,
-        args=["-c", "from bitwig_agent.server import main; main()"],
+        args=["-c", "from bitwig_agent.frontends.mcp import main; main()"],
         env=dict(os.environ, BITWIG_AGENT_PORT=str(host.port)),
     )
     async with stdio_client(params) as (read, write), ClientSession(read, write) as session:

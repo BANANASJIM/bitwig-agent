@@ -8,11 +8,10 @@ from datetime import datetime
 from typing import Any
 
 import pytest
-from fakes import SPEC, TARGET, FakeGrid, apply_grid
+from fakes import SPEC, TARGET, FakeGrid, apply_grid, parse_arguments
 from pydantic import ValidationError
 
 from bitwig_agent import raw_scales
-from bitwig_agent.cli import parse_arguments
 from bitwig_agent.errors import BridgeError
 from bitwig_agent.grid import bundled, display, execute, layout, problems, values
 from bitwig_agent.protocol import validate_call

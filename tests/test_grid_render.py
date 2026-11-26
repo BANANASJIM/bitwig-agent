@@ -9,9 +9,8 @@ from pathlib import Path
 from typing import cast
 
 import pytest
-from fakes import LayoutGrid
+from fakes import LayoutGrid, parse_arguments
 
-from bitwig_agent.cli import parse_arguments
 from bitwig_agent.errors import BridgeError
 from bitwig_agent.grid import render as grid_render
 from bitwig_agent.protocol import CLIENT_SIDE, validate_call

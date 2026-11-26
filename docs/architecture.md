@@ -24,8 +24,9 @@ The extension binds `127.0.0.1:61172`; the Python client connects to IPv4 loopba
 |---|---|
 | [`protocol/`](https://github.com/BANANASJIM/bitwig-agent/blob/main/src/bitwig_agent/protocol) | One module per domain: strict typed request models with cross-field constraints plus that domain's catalog entries (descriptions, examples, read-only hints); the registry and validation are used by both adapters |
 | [`client.py`](https://github.com/BANANASJIM/bitwig-agent/blob/main/src/bitwig_agent/client.py) | Bounded strict JSON, one-shot loopback requests, unique correlation IDs, response validation and conservative outcomes |
-| [`server.py`](https://github.com/BANANASJIM/bitwig-agent/blob/main/src/bitwig_agent/server.py) | MCP tool discovery and invocation over stdio; preserves the JSON envelope as structured content and text |
-| [`cli.py`](https://github.com/BANANASJIM/bitwig-agent/blob/main/src/bitwig_agent/cli.py) | CLI discovery/schema/help and dispatch through the shared client |
+| [`core/`](https://github.com/BANANASJIM/bitwig-agent/blob/main/src/bitwig_agent/core) | The one call path and discovery data both front ends use: `invoke` validates, dispatches to the host client or a composed handler and wraps the outcome in an envelope; `views` reads the method table; `composed` holds the client-side handlers |
+| [`frontends/mcp.py`](https://github.com/BANANASJIM/bitwig-agent/blob/main/src/bitwig_agent/frontends/mcp.py) | MCP tool discovery and invocation over stdio; preserves the JSON envelope as structured content and text |
+| [`frontends/cli.py`](https://github.com/BANANASJIM/bitwig-agent/blob/main/src/bitwig_agent/frontends/cli.py) | CLI argument parsing and discovery layout on top of `core`; exit code from the envelope |
 | [`install.py`](https://github.com/BANANASJIM/bitwig-agent/blob/main/src/bitwig_agent/install.py) | Release-version extension download/copy, integrity check, backups and printed MCP configuration |
 
 The catalog is not a planner. Tool examples are schema examples, not live target IDs. Tool annotations are hints, not authority or a proof that a call has no side effects. For example, `notes.read` selects a clip.

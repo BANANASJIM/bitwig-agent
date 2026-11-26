@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from bitwig_agent.errors import BridgeError
+from bitwig_agent.frontends import cli
 from bitwig_agent.grid import bundled, values
 from bitwig_agent.grid.apply import apply as apply_spec
 from bitwig_agent.protocol import validate_call
@@ -703,3 +704,9 @@ class FakeBridge:
             self.solo[params["trackId"]] = params["solo"]
             return {}
         return {}
+
+
+def parse_arguments(
+    method: str, pairs: list[str], raw: str | None, timeout_ms: int | None
+) -> tuple[dict[str, Any], int]:
+    return validate_call(method, cli.parse_arguments(method, pairs, raw, timeout_ms))

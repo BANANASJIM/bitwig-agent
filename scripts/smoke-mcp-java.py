@@ -95,7 +95,7 @@ async def exercise(folder: Path, api: Path) -> None:  # noqa: PLR0915
         port = int((await asyncio.wait_for(process.stdout.readline(), 10)).decode())
         env = dict(os.environ, BITWIG_AGENT_PORT=str(port))
         server = StdioServerParameters(
-            command=sys.executable, args=["-c", "from bitwig_agent.server import main; main()"], env=env
+            command=sys.executable, args=["-c", "from bitwig_agent.frontends.mcp import main; main()"], env=env
         )
         async with stdio_client(server) as (read, write), ClientSession(read, write) as session:
             await session.initialize()
