@@ -995,15 +995,16 @@ final class ClipModule implements HostModule {
                 op,
                 () -> {
                     int offset = state.targets.offsetOf(ref);
-                    state.targets.lease.move(op, offset, () -> transformEntry(child, ref, offset));
+                    state.targets.lease.move(op, offset, () -> transformEntry(op, child, ref, offset));
                 },
                 0);
     }
 
-    private void transformEntry(HostOperation child, JsonObject ref, int offset) {
+    private void transformEntry(HostOperation op, HostOperation child, JsonObject ref, int offset) {
         try {
             LauncherState.Target target = state.target(state.targets.clip(ref, offset));
             state.requireResolved(target.id(), target.scene());
+            op.markDispatched();
             state.selection.handOff(child);
             state.bind(
                     child,
@@ -1012,7 +1013,7 @@ final class ClipModule implements HostModule {
                     () -> NoteGrid.loopWindow(state.clip, 0),
                     state.until(child),
                     (o, t, end, w) -> gridEdit(o, t, "transform", null, end, w, o.result::complete));
-        } catch (RpcException failure) {
+        } catch (RuntimeException failure) {
             child.fail(failure);
         }
     }

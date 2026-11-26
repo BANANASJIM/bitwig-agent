@@ -78,9 +78,9 @@ public final class SceneWindowLeaseTest {
         LauncherFake f = world();
         HostOperation a = operation(f);
         enter(f, a, 16, true, false);
-        assertTrue(lease(f).held());
+        assertFalse(lease(f).admits(operation(f), 0, false), "held");
         finish(a);
-        assertFalse(lease(f).held());
+        assertTrue(lease(f).admits(operation(f), 0, false), "released");
         assertTrue(enter(f, operation(f), 0, true, false)[0], "the exclusive flag went with its holder");
         assertEquals(0, f.bankOffset);
     }

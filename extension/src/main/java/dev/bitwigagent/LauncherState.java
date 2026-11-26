@@ -188,7 +188,9 @@ final class LauncherState {
                     cursorMutation.description()
                             + " Its target binding changed; the mutation stays held until acked after inspection.");
         if (!window.trackMatches(target.id(), target.track)
-                || target.at.offset >= 0 && window.sceneOffset() != target.at.offset)
+                || target.at.offset >= 0
+                        && (window.sceneOffset() != target.at.offset
+                                || target.slot.api.sceneIndex().get() != target.scene()))
             throw Errors.of(Reason.NOT_READY, "The track or the scene window changed", op.dispatched());
     }
 

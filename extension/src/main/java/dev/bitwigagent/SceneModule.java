@@ -73,6 +73,7 @@ final class SceneModule implements HostModule {
         }
         boolean structure = method.equals("scenes.duplicate") || method.equals("scenes.delete");
         targets.enterScene(op, p.getAsJsonObject("target"), false, structure, at -> {
+            requireShown(at);
             switch (method) {
                 case "scenes.set":
                     rename(op, at, p.get("name").getAsString());
@@ -200,6 +201,14 @@ final class SceneModule implements HostModule {
                 });
     }
 
+    private boolean shown(LauncherTargets.Loc at) {
+        return window.scene(at.position()).sceneIndex().get() == at.scene;
+    }
+
+    private void requireShown(LauncherTargets.Loc at) {
+        if (!shown(at)) throw Errors.notApplied(Reason.NOT_READY, "The scene proxy does not show the scene yet.");
+    }
+
     private void rename(HostOperation op, LauncherTargets.Loc at, String name) {
         int position = at.position();
         Scene scene = window.scene(position);
@@ -216,7 +225,7 @@ final class SceneModule implements HostModule {
         scheduler.poll(
                 op,
                 scheduler.observeUntil(op),
-                () -> nameSequence[position] > before && name.equals(observedNames[position]),
+                () -> shown(at) && nameSequence[position] > before && name.equals(observedNames[position]),
                 done -> {
                     JsonObject out = result(done, "observer_after_write");
                     out.add("ref", targets.sceneRef(at.scene, at.offset));
@@ -273,7 +282,7 @@ final class SceneModule implements HostModule {
         scheduler.check(op);
         op.markDispatched();
         window.scene(position).duplicateObject();
-        scheduler.poll(op, scheduler.observeUntil(op), () -> duplicated(offset, index, count, before, clips), done -> {
+        scheduler.poll(op, scheduler.observeUntil(op), () -> shown(at) && duplicated(offset, index, count, before, clips), done -> {
             JsonObject out = result(done, "scene_count_and_window_names");
             out.addProperty("sceneCountBefore", count);
             if (done) completeWithScene(op, out, index + 1);
@@ -333,7 +342,7 @@ final class SceneModule implements HostModule {
         scheduler.check(op);
         op.markDispatched();
         window.scene(at.position()).deleteObject();
-        scheduler.poll(op, scheduler.observeUntil(op), () -> deleted(offset, index, count, before), done -> {
+        scheduler.poll(op, scheduler.observeUntil(op), () -> shown(at) && deleted(offset, index, count, before), done -> {
             JsonObject out = result(done, "scene_count_and_window_names");
             out.addProperty("sceneCountBefore", count);
             out.addProperty("deletedName", before.get(index - offset));

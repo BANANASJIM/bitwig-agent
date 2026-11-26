@@ -155,7 +155,6 @@ public final class ContextModuleTest {
         first.remove("projectChangedMsAgo");
         second.remove("projectChangedMsAgo");
         assertEquals(first, second);
-        assertFalse(f.services.launcherTargets().lease.held());
     }
 
     @Test

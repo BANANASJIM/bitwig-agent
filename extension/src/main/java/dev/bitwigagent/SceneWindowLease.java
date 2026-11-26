@@ -27,11 +27,6 @@ final class SceneWindowLease {
         if (holders.isEmpty()) exclusive = false;
     }
 
-    boolean held() {
-        prune();
-        return !holders.isEmpty();
-    }
-
     /** Whether {@code operation} could hold the window at {@code position} now. */
     boolean admits(HostOperation operation, int position, boolean wantExclusive) {
         prune();
