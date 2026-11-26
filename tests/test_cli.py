@@ -816,6 +816,17 @@ def test_a_methods_own_format_field_is_not_the_output_format():
     assert params["fileType"] == "png"
 
 
+async def test_help_serves_every_topic_offline_and_the_overview_names_them(monkeypatch):
+    monkeypatch.setenv("BITWIG_AGENT_PORT", "not-a-port")
+    overview = (await cli.execute(["--help"])).stdout
+    for topic in views.help()["topics"]:
+        out = await cli.execute(["help", topic])
+        assert (out.code, out.stderr) == (0, "")
+        assert out.stdout.strip() == views.help(topic)["text"].strip()
+        assert topic in overview
+    assert (await cli.execute(["help", "nonsense"])).code == 2
+
+
 async def test_help_layers_are_plain_text_on_stdout_and_exit_zero(monkeypatch):
     monkeypatch.setenv("BITWIG_AGENT_PORT", "not-a-port")
     for argv in ([], ["--help"], ["help"], ["-h"]):

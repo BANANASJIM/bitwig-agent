@@ -180,6 +180,7 @@ def overview() -> str:
             "Usage:",
             "  bitwig-agent <resource> <verb> [--field=value]... [--] [ARGS]   (tracks.set is the same as tracks set)",
             "  bitwig-agent <resource> --help | <resource> <verb> --help | help <resource> <verb>",
+            f"  bitwig-agent help <topic>   topics: {', '.join(views.help()['topics'])}   (start with loop)",
             "",
             "Resources:",
             *(f"  {name:<{width}}  {count} {'method' if count == 1 else 'methods'}" for name, count in counts.items()),
@@ -571,6 +572,8 @@ def describe(path: str, schema: bool, pretty: bool) -> Output:
         return text_out(overview())
     if path == "batch":
         return text_out(BATCH_HELP)
+    if path in views.help()["topics"]:
+        return text_out(views.help(path)["text"])
     if views.exists(path):
         return Output(stdout=text_line(views.method(path), pretty)) if schema else text_out(method_help(path))
     if is_resource(path):
