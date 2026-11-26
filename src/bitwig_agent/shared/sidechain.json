@@ -1,0 +1,4 @@
+{
+  "audioSidechainDevices": ["Compressor+", "Dynamics", "Gate", "Transient Control"],
+  "withoutSidechain": ["Compressor"]
+}

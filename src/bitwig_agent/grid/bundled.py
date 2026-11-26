@@ -8,6 +8,8 @@ from functools import cache
 from importlib import resources
 from typing import Any
 
+from bitwig_agent.protocol.shared import shared as _shared
+
 
 @cache
 def _load(path: str) -> dict[str, Any]:
@@ -16,9 +18,7 @@ def _load(path: str) -> dict[str, Any]:
     return loaded
 
 
-def shared(name: str) -> dict[str, Any]:
-    """`shared/<name>.json`: also bundled into the extension jar, read by both sides."""
-    return _load(f"shared/{name}.json")
+shared = _shared  # `shared/<name>.json`: also bundled into the extension jar, read by both sides
 
 
 def host_version() -> str:

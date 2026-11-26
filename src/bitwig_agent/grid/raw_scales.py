@@ -32,7 +32,6 @@ class Scale:
     suffixes: dict[str, Callable[[float], float]]  # display unit suffix (lower case) -> base value
     to_raw: Callable[[float], float]
     from_raw: Callable[[float], float]
-    client: bool = True  # False: the host's own display write already matches this scale
     example: str = ""  # a display write to suggest when a raw value was written to this non-linear scale
 
 
@@ -319,7 +318,7 @@ def effective(scale: Scale, raw: float) -> str:
 
 def is_client(type_name: str | None, pid: str, context: dict[str, Any] | None = None) -> bool:
     found = scale_for(type_name, pid, context)
-    return bool(found and found[1].client)
+    return found is not None
 
 
 def parse(scale: Scale, text: str | None) -> tuple[float, float, float] | None:
@@ -372,7 +371,7 @@ def describe(type_name: str, pid: str) -> dict[str, Any] | None:
         units = sorted({u for s in entry.scale["options"].values() for u in SCALES[s].suffixes})
     else:
         scale = SCALES[entry.scale]
-        block = {"scale": scale.name, "formula": scale.formula, "displayWrites": scale.client or "host"}
+        block = {"scale": scale.name, "formula": scale.formula, "displayWrites": True}
         units = sorted(scale.suffixes)
     shown = {"db": "dB", "hz": "Hz", "khz": "kHz"}
     block.update(

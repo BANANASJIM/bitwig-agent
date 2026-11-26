@@ -96,7 +96,6 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
         remotes.nativeValues = NativeRemoteValues.on(natives, chains);
         register(remotes);
         ProjectModule projectModule = new ProjectModule(scheduler, application, project, projectState, natives, holds);
-        RenderModule render = new RenderModule(scheduler, window, trackRefs, project, transportSafety, natives, holds);
         register(new DiscoveryModule(host, application, transport, window, projectState, specs, holds, domains));
         register(new TrackListModule(window, trackRefs));
         register(new DeviceListModule(window, trackRefs, chains));
@@ -116,6 +115,16 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
         LauncherState launcher =
                 new LauncherState(host, scheduler, window, transportSafety, selection, lock, holds, launcherTargets);
         register(new LauncherModule(launcher, trackRefs));
+        RenderModule render = new RenderModule(
+                scheduler,
+                window,
+                trackRefs,
+                project,
+                transportSafety,
+                natives,
+                holds,
+                null,
+                slot -> launcher.hasAnyContent(slot));
         NoteModule notes = new NoteModule(launcher);
         register(notes);
         ArrangerModule arranger =

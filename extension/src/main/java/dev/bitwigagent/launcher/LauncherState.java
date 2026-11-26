@@ -31,6 +31,17 @@ public final class LauncherState {
     static final int NOTE_GRID_SETTLE_MS = 150;
     private static final int NOTE_GRID_SIZE = 128;
 
+    /** Whether any slot of scenes 0-15 of the track in this bank slot holds a clip; null while one is unobserved. */
+    public Boolean hasAnyContent(int track) {
+        boolean any = false;
+        for (int j = 0; j < Math.min(HostLimits.SCENES, window.sceneCount()); j++) {
+            Slot slot = slots[track][j];
+            if (!slot.contentReady) return null;
+            any |= slot.observedContent;
+        }
+        return any;
+    }
+
     /** One slot of the window, the track it sits on and the scene it holds now. */
     public static final class Target {
         public final LauncherTargets.Loc at;

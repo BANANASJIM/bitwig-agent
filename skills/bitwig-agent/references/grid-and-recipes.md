@@ -5,7 +5,7 @@ Spec syntax, value forms, units and limits are in `bitwig-agent help grid.apply`
 ## Start here
 
 1. **Preset first if one fits.** `presets search`, then the part workflow in [midi-and-clips](midi-and-clips.md#make-a-new-part). Finish a small instrument-and-notes loop before researching a custom Grid graph.
-2. **Otherwise build a Grid instrument.** `tracks insert` an instrument track, `devices insert` the Poly Grid whose path `devices catalog` lists, then apply the subtractive bass spec from `bitwig-agent help recipes` (edit its names, values and cables) with `grid apply`.
+2. **Otherwise build a Grid instrument.** `tracks insert` an instrument track, `devices insert` the Poly Grid whose path `devices catalog` lists, then apply the subtractive bass spec from `bitwig-agent help recipes` (edit its names, values and cables) with `grid apply`; its `pruneAll` replaces the new device's whole graph, so use it only on a device you just inserted.
 
 ## Work loop
 

@@ -16,7 +16,7 @@ from bitwig_agent.grid import apply as grid_apply
 from bitwig_agent.grid import bundled, display, execute, layout, problems, raw_scales, values
 from bitwig_agent.protocol import TOOLS, validate_call
 from bitwig_agent.protocol.grid import DEVICE as EXAMPLE_DEVICE
-from bitwig_agent.protocol.recipes import BASS_CONNECTIONS, BASS_MODULES, BASS_SPEC, BASS_TWEAK
+from bitwig_agent.protocol.recipes import BASS_MODULES, BASS_SPEC, BASS_TWEAK
 from bitwig_agent.protocol.topics import TOPICS
 
 
@@ -1541,18 +1541,18 @@ def fresh_poly_grid():
 def test_bass_recipe_plans_applies_and_converges_on_a_fresh_poly_grid():
     spec = {"target": DEVICE, **BASS_SPEC}
     host = fresh_poly_grid()
-    host.transport = {"playing": False}
     plan = apply_grid(host, spec, dryRun=True)
     assert "wouldFail" not in plan
-    assert "warnings" not in plan
-    assert plan["planned"]["inserted"] == 1
+    assert [w[:30] for w in plan["warnings"]] == ["pruneAll: deleting 3 module(s)"]  # the only one
+    assert plan["planned"]["inserted"] == 4
+    assert plan["planned"]["deleted"] == 3  # the default Union, ADSR and Audio Out go: the spec is the whole graph
     assert [p["parameterId"] for p in plan["plan"]["params"]] == ["TYPE", "KEYTRACK", "CUTOFF", "RESONANCE", "RELEASE"]
     result = apply_grid(host, spec)
     assert result["outcome"] == "applied"
-    assert "warnings" not in result
-    assert host.source("B: lp", "IN") == ("", "OUT")  # the unmoved oscillator keeps its generated name, unnamed
-    assert host.source("_ADSR_1_-1", "IN") == ("B: lp", "OUT")
-    assert host.source("_Audio Out_4_-1", "IN") == ("_ADSR_1_-1", "OUT")
+    assert sorted(m["customName"] for m in host.mods.values()) == ["B: env", "B: lp", "B: osc", "B: out"]
+    assert host.source("B: lp", "IN") == ("B: osc", "OUT")
+    assert host.source("B: env", "IN") == ("B: lp", "OUT")
+    assert host.source("B: out", "IN") == ("B: env", "OUT")
     assert host.param("B: lp", "KEYTRACK") == 0
     assert apply_grid(host, spec)["outcome"] == "already_matched"
 
@@ -1562,12 +1562,19 @@ def test_bass_recipe_tweak_is_a_partial_apply_that_may_run_while_playing():
     apply_grid(host, {"target": DEVICE, **BASS_SPEC})
     host.transport = {"playing": True}
     tweak = {"target": DEVICE, **BASS_TWEAK}
-    plan = apply_grid(host, tweak, dryRun=True)
-    assert "wouldFail" not in plan
+    assert "wouldFail" not in apply_grid(host, tweak, dryRun=True)
     assert apply_grid(host, tweak)["applied"]["paramsWritten"] == 2
-    moved = {"target": DEVICE, "modules": [*BASS_MODULES[:1], {**BASS_MODULES[1], "y": 6}, *BASS_MODULES[2:]]}
-    moved["connections"] = BASS_CONNECTIONS
-    refused = apply_grid(host, moved, dryRun=True)["wouldFail"]
+
+
+def test_a_move_only_spec_is_structural_and_refused_dry_run_while_playing():
+    host = fresh_poly_grid()
+    apply_grid(host, {"target": DEVICE, **BASS_SPEC})
+    host.transport = {"playing": True}
+    moved = {**BASS_SPEC, "modules": [BASS_MODULES[0], {**BASS_MODULES[1], "y": 6}, *BASS_MODULES[2:]]}
+    plan = apply_grid(host, {"target": DEVICE, **moved}, dryRun=True)
+    assert plan["planned"]["moved"] == 1
+    assert plan["planned"]["inserted"] == 0
+    refused = plan["wouldFail"]
     assert [f["reason"] for f in refused] == ["unsafe_state"]
     assert "playing" in refused[0]["message"]
 

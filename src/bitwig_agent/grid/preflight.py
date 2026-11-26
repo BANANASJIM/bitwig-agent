@@ -39,6 +39,7 @@ def unverified_displays(spec: Spec, plan: Plan) -> list[str]:
 
 
 async def preflight(channel: Channel, spec: Spec, plan: Plan, wiring: WiringPlan) -> list[Refusal]:
+    # pre_moves is every move of an existing module (grid.modules.move), so a move-only spec is structural too
     structural = bool(plan.inserts or plan.deletes or plan.to_name_first or plan.pre_moves or wiring.edits)
     writes = structural or bool(plan.voicing.changes or any(plan.params[n][0] for n in spec.names))
     return await _transport_blocks(channel, structural) if writes else []
