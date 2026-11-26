@@ -38,12 +38,8 @@ final class GridNames {
         if (!hits.isEmpty()) return hits;
         for (T item : items) if (name.apply(item).equalsIgnoreCase(query)) hits.add(item);
         if (!hits.isEmpty() || norm(query).isEmpty()) return hits;
-        for (T item : items) if (same(name.apply(item), query)) hits.add(item);
+        for (T item : items) if (norm(name.apply(item)).equals(norm(query))) hits.add(item);
         return hits;
-    }
-
-    static boolean same(String name, String query) {
-        return norm(name).equals(norm(query));
     }
 
     /** Normalized form, or the lowercased raw text when it is all symbols. */

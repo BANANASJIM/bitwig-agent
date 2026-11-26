@@ -2,14 +2,14 @@ package dev.bitwigagent;
 
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import dev.bitwigagent.core.SharedData;
 import java.util.*;
 import java.util.function.DoubleUnaryOperator;
 import java.util.regex.*;
 
 /**
- * Display-text writes for the few numericUnit tokens whose raw-to-display relation is verified; the only unit table.
- * Evidence: percent raw*100 and decibel raw=dB (recorded grid.get rows, runs/2026-10-17-grid-authoring);
- * hertz raw=MIDI note, f=440*2^((raw-69)/12) (Low-pass CUTOFF 84 -> "1.05 kHz", 96 -> "2.09 kHz" on a 6.1.4 host).
+ * Display-text writes for the few numericUnit tokens whose raw-to-display relation is verified. The unit table, quantity
+ * grammar and tolerance are bitwig_agent/shared/display.json, the same file the Python side reads; only the formulas live here.
  * A token alone does not fix the scale (Detune is hertz-token but linear), so the current raw/display pair of the very
  * parameter must reproduce under the model before any display text is converted.
  */
@@ -24,17 +24,47 @@ final class GridDisplayUnits {
             this.toNatural = toNatural;
         }
     }
-    /** Natural value is what the display text measures: Hz, percent points, dB. */
-    private static final Map<String, Unit> UNITS = Map.of(
-            "hertz",
-                    new Unit(
-                            Map.of("hz", 1.0, "khz", 1000.0),
-                            f -> 69 + 12 * Math.log(f / 440) / Math.log(2),
-                            raw -> 440 * Math.pow(2, (raw - 69) / 12)),
-            "percent", new Unit(Map.of("%", 1.0), p -> p / 100, raw -> raw * 100),
-            "decibel", new Unit(Map.of("db", 1.0), d -> d, raw -> raw));
 
-    private static final Pattern TEXT = Pattern.compile("([+-]?(?:\\d+(?:\\.(\\d*))?|\\.(\\d+)))\\s*([A-Za-z%]+)");
+    private static final JsonObject DATA = SharedData.read("display");
+    /** Natural value is what the display text measures: Hz, percent points, dB. */
+    private static final Map<String, Unit> UNITS = units(DATA.getAsJsonObject("units"));
+
+    private static final JsonObject QUANTITY = DATA.getAsJsonObject("quantity");
+    private static final Pattern TEXT = Pattern.compile(QUANTITY.get("pattern").getAsString());
+    private static final double TOLERANCE_RELATIVE =
+            QUANTITY.get("toleranceRelative").getAsDouble();
+    private static final double TOLERANCE_ABSOLUTE =
+            QUANTITY.get("toleranceAbsolute").getAsDouble();
+
+    static DoubleUnaryOperator[] formula(String name, double factor) {
+        switch (name) {
+            case "midi_note_hz":
+                return new DoubleUnaryOperator[] {
+                    f -> 69 + 12 * Math.log(f / 440) / Math.log(2), raw -> 440 * Math.pow(2, (raw - 69) / 12)
+                };
+            case "scale":
+                return new DoubleUnaryOperator[] {p -> p / factor, raw -> raw * factor};
+            case "identity":
+                return new DoubleUnaryOperator[] {d -> d, raw -> raw};
+            default:
+                throw new IllegalStateException("Unknown display formula " + name);
+        }
+    }
+
+    private static Map<String, Unit> units(JsonObject table) {
+        Map<String, Unit> out = new TreeMap<>();
+        for (Map.Entry<String, JsonElement> entry : table.entrySet()) {
+            JsonObject row = entry.getValue().getAsJsonObject();
+            Map<String, Double> suffixes = new HashMap<>();
+            for (Map.Entry<String, JsonElement> suffix :
+                    row.getAsJsonObject("suffixes").entrySet())
+                suffixes.put(suffix.getKey(), suffix.getValue().getAsDouble());
+            double factor = row.has("factor") ? row.get("factor").getAsDouble() : 1.0;
+            DoubleUnaryOperator[] pair = formula(row.get("formula").getAsString(), factor);
+            out.put(entry.getKey(), new Unit(suffixes, pair[0], pair[1]));
+        }
+        return Collections.unmodifiableMap(out);
+    }
 
     private GridDisplayUnits() {}
 
@@ -57,8 +87,14 @@ final class GridDisplayUnits {
         return new Quantity(Double.parseDouble(m.group(1)) * scale, 0.5 * Math.pow(10, -fraction.length()) * scale);
     }
 
+    /** {natural value, half display step} of {@code text} in the named unit, or null. */
+    static double[] quantity(String unit, String text) {
+        Quantity q = UNITS.containsKey(unit) ? parse(UNITS.get(unit), text) : null;
+        return q == null ? null : new double[] {q.natural, q.halfStep};
+    }
+
     private static boolean near(Quantity shown, double natural) {
-        return Math.abs(shown.natural - natural) <= shown.halfStep * 1.000001 + 1e-12;
+        return Math.abs(shown.natural - natural) <= shown.halfStep * TOLERANCE_RELATIVE + TOLERANCE_ABSOLUTE;
     }
 
     private static RpcException unsupported(String why) {

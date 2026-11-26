@@ -38,7 +38,7 @@ def main() -> None:
     junit = build.junit_jar()
     sources = [*build.verification_sources(), *sorted(TEST_ROOT.rglob("*.java"))]
     build.compile_java(sources, classes, [gson, api, junit], build.lint_flag(api))
-    build.write_protocol_bundle(classes)
+    build.write_resources(classes)
     classpath = os.pathsep.join(map(str, [classes, gson, api]))
     subprocess.run(
         [

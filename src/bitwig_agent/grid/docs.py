@@ -16,6 +16,7 @@ from typing import Any
 from bitwig_agent import raw_scales
 from bitwig_agent.grid.bundled import bundled_schema
 from bitwig_agent.grid.display import SECONDS_PARAMS
+from bitwig_agent.grid.names import resolve
 
 DEFAULT_ROOTS = ("/opt/bitwig-studio",)
 LANGS = ("en", "de", "es", "fr", "ja", "ko", "zh")
@@ -363,14 +364,14 @@ def describe_module(docs: Docs, name: str, info: dict[str, Any]) -> dict[str, An
 
 
 def resolve_type(modules: dict[str, Any], value: str) -> str:
-    if value in modules:
-        return value
-    for name, info in modules.items():
-        if info["typeId"].casefold() == value.casefold():
-            return name
-    matches = [n for n in modules if norm(n) == norm(value)]
+    by_id = [name for name, info in modules.items() if info["typeId"].casefold() == value.casefold()]
+    if by_id:
+        return by_id[0]
+    matches = resolve(modules, str, value)
     if len(matches) == 1:
         return matches[0]
+    if matches:
+        raise ValueError(f"Grid module {value!r} is ambiguous: {matches}; use the exact name or typeId")
     close = difflib.get_close_matches(value, list(modules), n=5, cutoff=0.5)
     raise ValueError(
         f"Unknown Grid module {value!r}" + (f"; did you mean {close}?" if close else "; use query to search")

@@ -8,7 +8,8 @@ from typing import Any, NamedTuple
 
 from bitwig_agent import raw_scales
 from bitwig_agent.grid.display import DisplayBasis, check_display, display_want, enum_context
-from bitwig_agent.grid.problems import SpecError, hint, near, norm
+from bitwig_agent.grid.names import resolve
+from bitwig_agent.grid.problems import SpecError, hint, near
 from bitwig_agent.grid.values import STEP_TYPES, check_steps, check_value, is_steps
 
 
@@ -46,11 +47,7 @@ class TypeCatalog:
                 raise SpecError([f"{spec['name']!r}: typeId {spec['typeId']} is not a catalog module"])
             return spec["typeId"].lower(), name
         wanted = spec["type"]
-        exact = [n for n in self.by_name if n == wanted] or [
-            n for n in self.by_name if n.casefold() == wanted.casefold()
-        ]
-        if not exact and norm(wanted):
-            exact = [n for n in self.by_name if norm(n) == norm(wanted)]
+        exact = resolve(self.by_name, str, wanted)
         if len(exact) != 1:
             raise SpecError([f"{spec['name']!r}: unknown module type {wanted!r}.{near(wanted, self.by_name)}"])
         ids = self.by_name[exact[0]]
