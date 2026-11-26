@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable, Coroutine
 from typing import Any, NamedTuple
 
-from bitwig_agent.errors import bridge_error
+from bitwig_agent.errors import BridgeError, bridge_error
 
-GridCall = Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]]
+GridCall = Callable[[str, dict[str, Any]], Coroutine[Any, Any, dict[str, Any]]]
 PAGE, PARAM_PAGE, IDS_PER_READ, CATALOG_PAGE = 128, 64, 32, 256
 
 
@@ -38,8 +38,13 @@ def host_call(client: Any, target: dict[str, Any], timeout_ms: int) -> GridCall:
 async def _page(call: GridCall, request: dict[str, Any]) -> dict[str, Any]:
     page = await call("grid.get", request)
     if not isinstance(page, dict) or not isinstance(page.get("modules"), list):
-        raise bridge_error(
-            "not_applied", "grid.get returned an unusable result", **(page if isinstance(page, dict) else {})
+        raise BridgeError(
+            {
+                "code": "internal_error",
+                "message": "grid.get returned an unusable result",
+                "outcome": "not_applied",
+                "details": page if isinstance(page, dict) else {},
+            }
         )
     return page
 

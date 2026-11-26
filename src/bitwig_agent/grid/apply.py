@@ -115,21 +115,6 @@ async def with_marker(client: Any, result: dict[str, Any], wrote: bool, timeout_
     return result | ({"diagnosticsMarker": marker} if marker else {})
 
 
-def _unwritten(stop: Stop) -> BridgeError:
-    """The failure of a run that stopped before writing anything."""
-    error = stop.raw.get("error")
-    if error is not None:
-        return BridgeError(error)
-    return BridgeError(
-        {
-            "code": "not_applied",
-            "message": f"{stop.method} returned an unusable result; nothing was written",
-            "outcome": "not_dispatched",
-            "details": stop.raw,
-        }
-    )
-
-
 async def apply(client: Any, args: dict[str, Any], timeout_ms: int = 5000) -> dict[str, Any]:
     """Run a validated grid.apply spec (dict from the protocol's GridApplyArgs) through `client.call(method, params, timeout_ms)`."""
     channel = Channel(client, args["target"], timeout_ms)
@@ -140,7 +125,7 @@ async def apply(client: Any, args: dict[str, Any], timeout_ms: int = 5000) -> di
     except SpecError as exc:
         raise invalid_spec(exc.problems) from exc
     except Stop as stop:
-        raise _unwritten(stop) from stop
+        raise BridgeError(stop.raw["error"]) from stop
     except BridgeError:
         raise
     except Exception as exc:

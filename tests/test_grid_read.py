@@ -19,7 +19,8 @@ class Paged:
     """A host that returns at most `cap` modules per grid.get page and the same cables on every page."""
 
     def __init__(self, modules: list[dict[str, Any]], cap: int = 50):
-        self.modules, self.cap, self.calls = modules, cap, []
+        self.modules, self.cap = modules, cap
+        self.calls: list[tuple[str, dict[str, Any]]] = []
 
     async def __call__(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
         self.calls.append((method, params))
@@ -69,8 +70,8 @@ def test_read_graph_rejects_an_unusable_page(page):
 
     with pytest.raises(BridgeError) as err:
         asyncio.run(read.read_graph(broken))
-    assert err.value.error["code"] == "not_applied"
-    assert err.value.error["outcome"] == "not_dispatched"
+    assert err.value.error["code"] == "internal_error"
+    assert err.value.error["outcome"] == "not_applied"
 
 
 def test_read_params_chunks_ids_and_can_require_every_module():
