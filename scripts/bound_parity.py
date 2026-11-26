@@ -85,13 +85,17 @@ ASTRAL_UTF16_UNITS = 2
 ROOT = os.path.abspath(os.sep)
 
 
+def utf16_units(char):
+    return ASTRAL_UTF16_UNITS if ord(char) > MAX_BMP_CODEPOINT else 1
+
+
 def as_path(value):
     """Make a vector string an absolute path of the same UTF-16 length."""
-    if not value:
-        return value
-    if ord(value[0]) > MAX_BMP_CODEPOINT:
-        return ROOT + "a" + value[1:]
-    return ROOT + value[len(ROOT) :]
+    skipped = replaced = 0
+    while replaced < len(ROOT) and skipped < len(value):
+        replaced += utf16_units(value[skipped])
+        skipped += 1
+    return ROOT + "a" * (replaced - len(ROOT)) + value[skipped:] if value else value
 
 
 def file_insert(params, value):
