@@ -104,8 +104,7 @@ final class GridInsertionWriter {
     }
 
     void insert(
-            Object proxy,
-            UUID trackId,
+            DeviceSources.Source source,
             Request given,
             Runnable check,
             Runnable dispatch,
@@ -115,8 +114,8 @@ final class GridInsertionWriter {
         check.run();
         Request request = resolveNames(List.of(given), check).get(0);
         requireKnownModule(request.typeId, check);
-        GridSnapshotReader.NativeTarget target = snapshots.target(proxy, trackId);
-        String device = GridTopologyQuarantine.device(trackId, target.graph);
+        GridSnapshotReader.NativeTarget target = snapshots.target(source);
+        String device = GridTopologyQuarantine.device(target.ownership.trackId, target.graph);
         quarantine.requireAvailable(device);
         Layout before = layout(target.graph, check);
         before.capacity();
@@ -127,14 +126,13 @@ final class GridInsertionWriter {
         String path = nativeWriter.resolve(request.typeId);
         check.run();
         JsonObject graphBefore =
-                snapshots.snapshot(proxy, trackId, 0, GridTopologyContext.MAX_MODULES, false, false, null, check);
+                snapshots.snapshot(source, 0, GridTopologyContext.MAX_MODULES, false, false, null, check);
         String owner = quarantine.reserve(device);
-        Lifetime lifetime =
-                new Lifetime(owner, proxy, trackId, request, target, before, context, check, complete, fail);
+        Lifetime lifetime = new Lifetime(owner, source, request, target, before, context, check, complete, fail);
         lifetime.graphBefore = graphBefore;
         try {
             Runnable load = nativeWriter.prepareLoad(context.project(), path, lifetime);
-            snapshots.guardTarget(target, proxy, trackId);
+            snapshots.guardTarget(target);
             Layout ready = layout(target.graph, check);
             ready.capacity();
             before.same(ready);
@@ -262,8 +260,7 @@ final class GridInsertionWriter {
      * ordinary single path, each settling before the next starts; stops at the first failure or unknown.
      */
     void insertAll(
-            Object proxy,
-            UUID trackId,
+            DeviceSources.Source source,
             List<Request> given,
             java.util.function.LongSupplier timeLeft,
             Runnable check,
@@ -273,20 +270,19 @@ final class GridInsertionWriter {
         values.documentThread();
         check.run();
         List<Request> requests = resolveNames(given, check);
-        GridSnapshotReader.NativeTarget target = snapshots.target(proxy, trackId);
-        String device = GridTopologyQuarantine.device(trackId, target.graph);
+        GridSnapshotReader.NativeTarget target = snapshots.target(source);
+        String device = GridTopologyQuarantine.device(target.ownership.trackId, target.graph);
         quarantine.requireAvailable(device);
         Layout before = layout(target.graph, check);
         before.capacity(requests.size());
         before.requested(requests);
         JsonObject graphBefore =
-                snapshots.snapshot(proxy, trackId, 0, GridTopologyContext.MAX_MODULES, false, false, null, check);
-        new Batch(proxy, trackId, requests, graphBefore, timeLeft, check, dispatch, complete, fail).next(0);
+                snapshots.snapshot(source, 0, GridTopologyContext.MAX_MODULES, false, false, null, check);
+        new Batch(source, requests, graphBefore, timeLeft, check, dispatch, complete, fail).next(0);
     }
 
     private final class Batch {
-        final Object proxy;
-        final UUID trackId;
+        final DeviceSources.Source source;
         final List<Request> requests;
         final JsonObject graphBefore;
         final Runnable check, dispatch;
@@ -300,8 +296,7 @@ final class GridInsertionWriter {
         final java.util.function.LongSupplier timeLeft;
 
         Batch(
-                Object proxy,
-                UUID trackId,
+                DeviceSources.Source source,
                 List<Request> requests,
                 JsonObject graphBefore,
                 java.util.function.LongSupplier timeLeft,
@@ -310,8 +305,7 @@ final class GridInsertionWriter {
                 Consumer<JsonObject> complete,
                 Consumer<Throwable> fail) {
             this.timeLeft = timeLeft;
-            this.proxy = proxy;
-            this.trackId = trackId;
+            this.source = source;
             this.requests = requests;
             this.graphBefore = graphBefore;
             this.check = check;
@@ -348,8 +342,7 @@ final class GridInsertionWriter {
             long started = clock.getAsLong();
             try {
                 insert(
-                        proxy,
-                        trackId,
+                        source,
                         request,
                         check,
                         () -> {
@@ -465,8 +458,7 @@ final class GridInsertionWriter {
 
     private final class Lifetime implements GridInsertionBridge.Callback {
         final String owner;
-        final Object proxy;
-        final UUID trackId;
+        final DeviceSources.Source source;
         final String device;
         final Request request;
         final GridSnapshotReader.NativeTarget target;
@@ -483,8 +475,7 @@ final class GridInsertionWriter {
 
         Lifetime(
                 String owner,
-                Object proxy,
-                UUID trackId,
+                DeviceSources.Source source,
                 Request request,
                 GridSnapshotReader.NativeTarget target,
                 Layout before,
@@ -493,9 +484,8 @@ final class GridInsertionWriter {
                 Consumer<JsonObject> complete,
                 Consumer<Throwable> fail) {
             this.owner = owner;
-            this.proxy = proxy;
-            this.trackId = trackId;
-            this.device = GridTopologyQuarantine.device(trackId, target.graph);
+            this.source = source;
+            this.device = GridTopologyQuarantine.device(target.ownership.trackId, target.graph);
             this.request = request;
             this.target = target;
             this.before = before;
@@ -522,7 +512,7 @@ final class GridInsertionWriter {
                 values.documentThread();
                 check.run();
                 quarantine.requireOwner(owner);
-                snapshots.guardTarget(target, proxy, trackId);
+                snapshots.guardTarget(target);
                 Layout ready = layout(target.graph, check);
                 ready.capacity();
                 before.same(ready);
@@ -540,7 +530,7 @@ final class GridInsertionWriter {
                             "Loaded singleton has the wrong catalog type or a non-fresh instance UUID.");
                 ready.bounds(incoming);
                 nativeWriter.requirePlacementReady(target.graph);
-                snapshots.guardTarget(target, proxy, trackId);
+                snapshots.guardTarget(target);
                 Layout adjacent = layout(target.graph, check);
                 adjacent.capacity();
                 before.same(adjacent);
@@ -668,12 +658,12 @@ final class GridInsertionWriter {
                 // No RPC check/controller scheduling here: timeout or extension close cannot suppress native
                 // settlement.
                 values.documentThread();
-                snapshots.guardTarget(target, proxy, trackId);
+                snapshots.guardTarget(target);
                 after = layout(target.graph, NATIVE_LIFETIME);
                 contexts.capture(target.target, target.graph, after.modules, context, NATIVE_LIFETIME);
                 nativeWriter.requirePlacementReady(target.graph);
                 if (placementDispatched) before.inserted(after, incoming);
-                snapshots.guardTarget(target, proxy, trackId);
+                snapshots.guardTarget(target);
                 contexts.capture(target.target, target.graph, after.modules, context, NATIVE_LIFETIME);
                 if (lifecycleError != null)
                     return; // Early error/duplicate/cleanup failure is sticky, never normal settlement.
@@ -693,10 +683,10 @@ final class GridInsertionWriter {
                     return;
                 }
                 check.run();
-                JsonObject graph = snapshots.snapshot(
-                        proxy, trackId, 0, GridTopologyContext.MAX_MODULES, false, false, null, check);
+                JsonObject graph =
+                        snapshots.snapshot(source, 0, GridTopologyContext.MAX_MODULES, false, false, null, check);
                 after.same(layout(target.graph, check));
-                snapshots.guardTarget(target, proxy, trackId);
+                snapshots.guardTarget(target);
                 contexts.capture(target.target, target.graph, after.modules, context, check);
                 Row actual = after.find(incoming.id);
                 JsonObject result = Results.outcome(Outcome.APPLIED);
@@ -754,17 +744,17 @@ final class GridInsertionWriter {
      * valid footprint, a complete bounded graph, idle topology context and no pending native placement. Reads only;
      * nothing native is invoked and no other device is affected. Null when {@code proxy} is another device.
      */
-    JsonObject ack(Object proxy, UUID trackId, String device, Runnable check) {
+    JsonObject ack(DeviceSources.Source source, String device, Runnable check) {
         values.documentThread();
         check.run();
         GridSnapshotReader.NativeTarget target;
         try {
-            target = snapshots.target(proxy, trackId);
+            target = snapshots.target(source);
         } catch (RpcException notGrid) {
             if (notGrid.is(Reason.KIND_MISMATCH)) return null;
             throw notGrid;
         }
-        if (!device.equals(GridTopologyQuarantine.device(trackId, target.graph))) return null;
+        if (!device.equals(GridTopologyQuarantine.device(target.ownership.trackId, target.graph))) return null;
         String detail = quarantine.detail(device);
         if (quarantine.origin(device) == null)
             throw Errors.notApplied(Reason.UNKNOWN_HOLD, "This Grid device holds no topology hold.");
@@ -780,9 +770,9 @@ final class GridInsertionWriter {
             contexts.capture(target.target, target.graph, now.modules, null, check);
             nativeWriter.requirePlacementReady(target.graph);
             JsonObject graph =
-                    snapshots.snapshot(proxy, trackId, 0, GridTopologyContext.MAX_MODULES, false, false, null, check);
+                    snapshots.snapshot(source, 0, GridTopologyContext.MAX_MODULES, false, false, null, check);
             now.same(layout(target.graph, check));
-            snapshots.guardTarget(target, proxy, trackId);
+            snapshots.guardTarget(target);
             found.addProperty("moduleCount", now.rows.size());
             if (recorded != null && recorded.has("modulesBefore"))
                 found.addProperty("modulesBefore", recorded.get("modulesBefore").getAsInt());

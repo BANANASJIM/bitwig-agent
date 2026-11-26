@@ -44,22 +44,22 @@ final class GridVoicingWriter {
         this.writable = writable;
     }
 
-    JsonObject get(Object proxy, java.util.UUID trackId, Runnable check) {
-        GridSnapshotReader.NativeTarget target = values.bindTarget(proxy, trackId, check);
+    JsonObject get(DeviceSources.Source source, Runnable check) {
+        GridSnapshotReader.NativeTarget target = values.bindTarget(source, check);
         Object model = nativeAccess.model(target.target);
         JsonObject result = new JsonObject();
         if (model == null) {
             result.addProperty("supported", false);
             result.addProperty(
                     "reason", "no_voicing_model: only Poly Grid has device voicing; Note Grid and FX Grid have none");
-            values.guardTarget(target, proxy, trackId);
+            values.guardTarget(target);
             check.run();
             return finish(result);
         }
         values.requireModelThread(model);
         GridParameterContext.Capture context = contexts.captureVoicing(target.target, target.graph, model, check);
         JsonObject current = nativeAccess.read(model);
-        values.guardTarget(target, proxy, trackId);
+        values.guardTarget(target);
         contexts.guardVoicing(context, target.target, target.graph, model, check);
         check.run();
         result.addProperty("supported", true);
@@ -69,8 +69,8 @@ final class GridVoicingWriter {
         return finish(result);
     }
 
-    JsonObject set(Object proxy, java.util.UUID trackId, Request request, Runnable check, Runnable dispatch) {
-        GridSnapshotReader.NativeTarget target = values.bindTarget(proxy, trackId, check);
+    JsonObject set(DeviceSources.Source source, Request request, Runnable check, Runnable dispatch) {
+        GridSnapshotReader.NativeTarget target = values.bindTarget(source, check);
         Object model = nativeAccess.model(target.target);
         if (model == null)
             throw Errors.notApplied(
@@ -83,7 +83,7 @@ final class GridVoicingWriter {
                 contexts.requireVoicingWritable(target.target, target.graph, model, null, check);
         before = nativeAccess.read(model);
         request.validateCurrent(before);
-        values.guardTarget(target, proxy, trackId);
+        values.guardTarget(target);
         contexts.requireVoicingWritable(target.target, target.graph, model, context, check);
         check.run();
         List<String> changing = new ArrayList<>();
@@ -96,7 +96,7 @@ final class GridVoicingWriter {
             for (String field : changing) nativeAccess.set(model, field, request.set.get(field));
         }
         check.run();
-        values.guardTarget(target, proxy, trackId);
+        values.guardTarget(target);
         contexts.guardVoicing(context, target.target, target.graph, model, check);
         JsonObject current = nativeAccess.read(model);
         for (Map.Entry<String, JsonElement> wanted : request.set.entrySet())

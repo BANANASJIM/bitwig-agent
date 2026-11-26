@@ -86,7 +86,7 @@ public final class ModulatorSnapshotReaderTest {
         f.panel.put(PARAMETER_ID, "");
         for (String value : List.of("", "  ", "\n\t", "raw\0text")) {
             f.panel.put(VALUE, value);
-            JsonObject result = f.reader.parameter(f.proxy, TRACK, f.id(f.first), "", () -> {});
+            JsonObject result = f.reader.parameter(f.source, f.id(f.first), "", () -> {});
             assertTrue(result.get("value").getAsString().equals(value), "raw empty/whitespace/control text retained");
             assertTrue(
                     result.get("labels").isJsonNull()
@@ -96,7 +96,7 @@ public final class ModulatorSnapshotReaderTest {
         }
         String unicode = "\u00e9\u4e2d\ud83c\udfb5 e\u0301";
         f.panel.put(PARAMETER_ID, "\u6587\u5b57").put(VALUE, unicode);
-        JsonObject result = f.reader.parameter(f.proxy, TRACK, f.id(f.first), "\u6587\u5b57", () -> {});
+        JsonObject result = f.reader.parameter(f.source, f.id(f.first), "\u6587\u5b57", () -> {});
         assertTrue(
                 result.get("value").getAsString().equals(unicode),
                 "Unicode code units preserved without normalization");
@@ -105,10 +105,9 @@ public final class ModulatorSnapshotReaderTest {
                         .get("activeApplicationProjectIdentityChecked")
                         .getAsBoolean(),
                 "owning context is not active-project proof");
-        assertRpcError("target_not_found", () -> f.reader.parameter(f.proxy, TRACK, f.id(f.first), "TEXT", () -> {}));
+        assertRpcError("target_not_found", () -> f.reader.parameter(f.source, f.id(f.first), "TEXT", () -> {}));
         assertRpcError(
-                "target_not_found",
-                () -> f.reader.parameter(f.proxy, TRACK, new UUID(99, 99), "\u6587\u5b57", () -> {}));
+                "target_not_found", () -> f.reader.parameter(f.source, new UUID(99, 99), "\u6587\u5b57", () -> {}));
     }
 
     @Test
@@ -135,8 +134,7 @@ public final class ModulatorSnapshotReaderTest {
         Node outside = absent.modulator();
         UUID outsideId = absent.id(outside);
         absent.rows.remove(outside);
-        assertRpcError(
-                "target_not_found", () -> absent.reader.parameter(absent.proxy, TRACK, outsideId, "TEXT", () -> {}));
+        assertRpcError("target_not_found", () -> absent.reader.parameter(absent.source, outsideId, "TEXT", () -> {}));
         f = new Fixture();
         f.targetOwner = new Node();
         assertRpcError("native_unavailable", f::get);
@@ -170,8 +168,7 @@ public final class ModulatorSnapshotReaderTest {
         UUID requestedId = missing.id(missing.first);
         missing.first.put(ID, null);
         assertRpcError(
-                "native_unavailable",
-                () -> missing.reader.parameter(missing.proxy, TRACK, requestedId, "TEXT", () -> {}));
+                "native_unavailable", () -> missing.reader.parameter(missing.source, requestedId, "TEXT", () -> {}));
     }
 
     @Test
@@ -391,7 +388,7 @@ public final class ModulatorSnapshotReaderTest {
         Fixture cancelled = new Fixture();
         assertRpcError(
                 "cancelled",
-                () -> cancelled.reader.list(cancelled.proxy, TRACK, 0, 64, () -> {
+                () -> cancelled.reader.list(cancelled.source, 0, 64, () -> {
                     throw Errors.notApplied(Reason.CANCELLED, "cancelled");
                 }));
         assertTrue(cancelled.indexReads == 0, "cancellation precedes native collection work");
@@ -399,7 +396,7 @@ public final class ModulatorSnapshotReaderTest {
         deadline.afterValue = () -> deadline.expired = true;
         assertRpcError(
                 "deadline",
-                () -> deadline.reader.parameter(deadline.proxy, TRACK, deadline.id(deadline.first), "TEXT", () -> {
+                () -> deadline.reader.parameter(deadline.source, deadline.id(deadline.first), "TEXT", () -> {
                     if (deadline.expired) throw Errors.notApplied(Reason.DEADLINE, "expired");
                 }));
     }
@@ -423,7 +420,7 @@ public final class ModulatorSnapshotReaderTest {
                 !capabilities.get("writeAvailable").getAsBoolean()
                         && capabilities.get("nativeVerification").getAsString().equals("not_established_by_binding"),
                 "binding is never native acceptance or write authority");
-        assertRpcError("host_mismatch", () -> adapter.list(new Object(), TRACK, 0, 64, () -> {}));
+        assertRpcError("host_mismatch", () -> adapter.list(HostFixture.rootSource(TRACK), 0, 64, () -> {}));
     }
 
     private static final class Node {
@@ -443,7 +440,7 @@ public final class ModulatorSnapshotReaderTest {
     }
 
     private static final class Fixture
-            implements ModulatorSnapshotReader.Access, NativeDeviceTarget.Access, NativeReadContext.Access {
+            implements ModulatorSnapshotReader.Access, DeviceSources.Native.Access, NativeReadContext.Access {
         final Node proxy = new Node(),
                 device = new Node(MODEL),
                 owner = new Node(MODEL),
@@ -454,9 +451,10 @@ public final class ModulatorSnapshotReaderTest {
         final List<Node> rows = new ArrayList<>();
         final Node first, contents, panel;
         final ModulatorSnapshotReader reader =
-                new ModulatorSnapshotReader(this, new NativeDeviceTarget(this), new NativeReadContext(this));
+                new ModulatorSnapshotReader(this, new DeviceSources.Native(this), new NativeReadContext(this));
         Object target = device, targetOwner = owner, alias = initialAlias, root = project, currentDt;
         UUID trackId = TRACK;
+        final DeviceSources.Source source = HostFixture.rootSource(TRACK);
         int nextId, valueReads, childrenReads, indexReads;
         Integer countOverride;
         boolean strings = true, aliased, disposed, initialized = true, freshChildrenWrappers, expired;
@@ -513,11 +511,11 @@ public final class ModulatorSnapshotReaderTest {
         }
 
         JsonObject list(int offset, int limit) {
-            return reader.list(proxy, TRACK, offset, limit, () -> {});
+            return reader.list(source, offset, limit, () -> {});
         }
 
         JsonObject get() {
-            return reader.parameter(proxy, TRACK, id(first), (String) panel.values.get(PARAMETER_ID), () -> {});
+            return reader.parameter(source, id(first), (String) panel.values.get(PARAMETER_ID), () -> {});
         }
 
         @Override
@@ -562,7 +560,7 @@ public final class ModulatorSnapshotReaderTest {
         }
 
         @Override
-        public boolean is(NativeDeviceTarget.Kind kind, Object object) {
+        public boolean is(DeviceSources.Native.Kind kind, Object object) {
             switch (kind) {
                 case DEVICE:
                     return object == device;
@@ -578,7 +576,7 @@ public final class ModulatorSnapshotReaderTest {
         }
 
         @Override
-        public Object read(NativeDeviceTarget.Field field, Object object) {
+        public Object read(DeviceSources.Native.Field field, Object object) {
             switch (field) {
                 case TARGET:
                     return target;

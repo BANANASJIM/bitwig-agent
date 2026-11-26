@@ -22,7 +22,7 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
             D = M + "device.";
     private final Bitwig614Runtime.Access a;
     private final NativeReadContext context;
-    private final NativeDeviceTarget targets;
+    private final DeviceSources.Native targets;
     private final Bitwig614TrackResolver resolver;
     private final Class<?> channelType, projectType, portsType, destinationSelector, sourceSelector;
     private final Class<?> audioDestination, noteDestination, preFader, postFader, trackNotes, sourceBus;
@@ -59,7 +59,7 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
     Bitwig614RoutingAccess(Bitwig614Runtime.Access a) throws ReflectiveOperationException {
         this.a = a;
         context = new NativeReadContext(new Bitwig614ReadContextAccess(a));
-        targets = new NativeDeviceTarget(new Bitwig614DeviceTargetAccess(a));
+        targets = new DeviceSources.Native(new Bitwig614DeviceTargetAccess(a));
         a.requireModelThreadAvailable();
         resolver = new Bitwig614TrackResolver(a);
         Class<?> trackType = a.type(M + "zwV");
@@ -820,8 +820,8 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
 
     @Override
     public JsonObject sidechainGet(
-            Object proxy, String trackId, List<RoutingModule.TrackRef> bank, boolean includeChoices, Runnable check) {
-        NativeDeviceTarget.Capture device = targets.capture(proxy, UUID.fromString(trackId), check);
+            DeviceSources.Source source, List<RoutingModule.TrackRef> bank, boolean includeChoices, Runnable check) {
+        DeviceSources.Native.Capture device = targets.capture(source, check);
         Scope scope = new Scope(device.device, List.of(), check);
         Object ports = scope.ports();
         List<Component> components = components(device.device);
@@ -839,7 +839,7 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
         out.addProperty("nativeVersion", Bitwig614Runtime.VERSION);
         out.addProperty("selectionSideEffect", "none");
         scope.guard(check);
-        targets.guard(device, proxy, check);
+        targets.guard(device, check);
         return out;
     }
 
@@ -867,13 +867,12 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
 
     @Override
     public JsonObject sidechainSet(
-            Object proxy,
-            String trackId,
+            DeviceSources.Source source,
             List<RoutingModule.TrackRef> bank,
             JsonObject p,
             Runnable check,
             Runnable beforeWrite) {
-        NativeDeviceTarget.Capture device = targets.capture(proxy, UUID.fromString(trackId), check);
+        DeviceSources.Native.Capture device = targets.capture(source, check);
         List<Component> components = components(device.device);
         Component c = null;
         if (p.has("componentIndex")) {
@@ -940,7 +939,7 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
         Runnable same = () -> {
             if (a.invoke(selector, chosen.model) != chosen.chooser)
                 throw Errors.notApplied(Reason.STALE_CONTEXT, "Component source selector changed during the write.");
-            targets.guard(device, proxy, check);
+            targets.guard(device, check);
         };
         scope.guard(check);
         same.run();

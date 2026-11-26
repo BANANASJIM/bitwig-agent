@@ -156,7 +156,6 @@ final class ModulatorEditModule implements HostModule {
         final Runnable safety =
                 writing ? transportSafety.writeGuard(op, !method.equals("modulators.parameters.set")) : null;
         final DeviceSources.RootReadTicket target = sources.rootRead(p.getAsJsonObject("parent"));
-        final UUID trackId = UUID.fromString(target.trackId);
         final UUID modulatorId =
                 p.has("modulatorId") ? UUID.fromString(p.get("modulatorId").getAsString()) : null;
         final ModulatorEditor.MapRequest mapping = method.equals("modulators.map") || method.equals("modulators.unmap")
@@ -191,12 +190,11 @@ final class ModulatorEditModule implements HostModule {
                                                 + error.getClass().getSimpleName()));
                 switch (method) {
                     case "modulators.get":
-                        complete.accept(edits.get(target.device, trackId, modulatorId, check));
+                        complete.accept(edits.get(target.source, modulatorId, check));
                         break;
                     case "modulators.parameters.set":
                         complete.accept(edits.setParameter(
-                                target.device,
-                                trackId,
+                                target.source,
                                 modulatorId,
                                 p.get("parameterId").getAsString(),
                                 request,
@@ -205,23 +203,13 @@ final class ModulatorEditModule implements HostModule {
                         break;
                     case "modulators.map":
                     case "modulators.unmap":
-                        edits.map(target.device, trackId, mapping, check, dispatch, complete, fail);
+                        edits.map(target.source, mapping, check, dispatch, complete, fail);
                         break;
                     case "modulators.delete":
-                        edits.delete(
-                                target.device, trackId, modulatorId, expectedCount, check, dispatch, complete, fail);
+                        edits.delete(target.source, modulatorId, expectedCount, check, dispatch, complete, fail);
                         break;
                     case "modulators.insert":
-                        edits.insert(
-                                target.device,
-                                trackId,
-                                typeId,
-                                typeName,
-                                expectedCount,
-                                check,
-                                dispatch,
-                                complete,
-                                fail);
+                        edits.insert(target.source, typeId, typeName, expectedCount, check, dispatch, complete, fail);
                         break;
                     default:
                         throw Errors.notApplied(Reason.UNKNOWN_METHOD, "Unknown modulator edit.");

@@ -72,11 +72,11 @@ final class GridRemotePageWriter {
         this.nativeAccess = nativeAccess;
     }
 
-    JsonObject define(Object proxy, UUID trackId, Request request, Runnable check, Runnable dispatch) {
-        GridSnapshotReader.NativeTarget target = values.bindTarget(proxy, trackId, check);
+    JsonObject define(DeviceSources.Source source, Request request, Runnable check, Runnable dispatch) {
+        GridSnapshotReader.NativeTarget target = values.bindTarget(source, check);
         Object device = target.target;
         Host host = host(device);
-        Slot[] wanted = resolve(proxy, trackId, target, device, request, check);
+        Slot[] wanted = resolve(source, target, device, request, check);
         Object existing = existing(host, request.pageName, request.replace);
         if (existing != null)
             for (Slot slot : wanted)
@@ -86,7 +86,7 @@ final class GridRemotePageWriter {
                             "Remote Controls page refuses " + slot.describe() + " (native page eligibility).");
         GridParameterContext.Capture context =
                 contexts.requireRemoteWritable(device, host.host, host.pages, null, check);
-        values.guardTarget(target, proxy, trackId);
+        values.guardTarget(target);
         for (Slot slot : wanted) if (slot != null) values.guardParameter(slot.binding);
         if (existing != existing(host, request.pageName, request.replace))
             throw Errors.notApplied(Reason.STALE_CONTEXT, "The named Remote Controls page changed before dispatch.");
@@ -162,7 +162,7 @@ final class GridRemotePageWriter {
         }
         check.run();
         try {
-            values.guardTarget(target, proxy, trackId);
+            values.guardTarget(target);
             contexts.guardRemote(context, device, host.host, host.pages, check);
             verify(host, page, request, wanted);
         } catch (RpcException error) {
@@ -183,13 +183,13 @@ final class GridRemotePageWriter {
         return finish(result, dispatched, "exact_native_remote_page_readback");
     }
 
-    JsonObject deletePage(Object proxy, UUID trackId, String pageName, Runnable check, Runnable dispatch) {
-        GridSnapshotReader.NativeTarget target = values.bindTarget(proxy, trackId, check);
+    JsonObject deletePage(DeviceSources.Source source, String pageName, Runnable check, Runnable dispatch) {
+        GridSnapshotReader.NativeTarget target = values.bindTarget(source, check);
         Host host = host(target.target);
         Object page = deletable(host, pageName);
         GridParameterContext.Capture context =
                 contexts.requireRemoteWritable(target.target, host.host, host.pages, null, check);
-        values.guardTarget(target, proxy, trackId);
+        values.guardTarget(target);
         if (deletable(host, pageName) != page)
             throw Errors.notApplied(Reason.STALE_CONTEXT, "The named Remote Controls page changed before dispatch.");
         contexts.requireRemoteWritable(target.target, host.host, host.pages, context, check);
@@ -198,7 +198,7 @@ final class GridRemotePageWriter {
         try {
             nativeAccess.deletePage(host.pages, page);
             check.run();
-            values.guardTarget(target, proxy, trackId);
+            values.guardTarget(target);
             contexts.guardRemote(context, target.target, host.host, host.pages, check);
             if (nativeAccess.pages(host.pages).contains(page)
                     || nativeAccess.allPages(host.host).contains(page))
@@ -372,8 +372,7 @@ final class GridRemotePageWriter {
     // ---- slot resolution -------------------------------------------------------------------------------------
 
     private Slot[] resolve(
-            Object proxy,
-            UUID trackId,
+            DeviceSources.Source source,
             GridSnapshotReader.NativeTarget target,
             Object device,
             Request request,
@@ -386,7 +385,7 @@ final class GridRemotePageWriter {
             UUID moduleId =
                     spec.moduleId != null ? spec.moduleId : values.moduleIdNamed(target, spec.moduleName, check);
             GridSnapshotReader.ParameterBinding binding =
-                    values.bindParameter(proxy, trackId, moduleId, spec.parameterId, check);
+                    values.bindParameter(source, moduleId, spec.parameterId, check);
             Slot slot = new Slot(index, spec, moduleId, binding);
             if (!SCALARS.contains(binding.kind))
                 throw Errors.notApplied(

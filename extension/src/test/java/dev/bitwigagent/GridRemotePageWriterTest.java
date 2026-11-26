@@ -1,12 +1,12 @@
 package dev.bitwigagent;
 
+import static dev.bitwigagent.DeviceSources.Native.Field.TARGET;
+import static dev.bitwigagent.DeviceSources.Native.Kind.DEVICE;
 import static dev.bitwigagent.GridSnapshotReader.Field.*;
 import static dev.bitwigagent.GridSnapshotReader.Kind.*;
 import static dev.bitwigagent.GridSnapshotReaderTest.ContextFixture;
 import static dev.bitwigagent.GridSnapshotReaderTest.Fixture;
 import static dev.bitwigagent.GridSnapshotReaderTest.Node;
-import static dev.bitwigagent.NativeDeviceTarget.Field.TARGET;
-import static dev.bitwigagent.NativeDeviceTarget.Kind.DEVICE;
 import static dev.bitwigagent.RpcAssert.*;
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -80,15 +80,14 @@ public final class GridRemotePageWriterTest {
 
         JsonObject define(String json) {
             return writer.define(
-                    model.proxy,
-                    TRACK_ID,
+                    model.source,
                     GridRemotePageWriter.Request.parse(HostFixture.json(json)),
                     () -> {},
                     () -> op.markDispatched());
         }
 
         JsonObject delete(String name) {
-            return writer.deletePage(model.proxy, TRACK_ID, name, () -> {}, () -> op.markDispatched());
+            return writer.deletePage(model.source, name, () -> {}, () -> op.markDispatched());
         }
 
         RpcException defineFailure(String json) {

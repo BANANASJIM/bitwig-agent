@@ -78,7 +78,7 @@ public final class GridStepsVoicingTest {
     }
 
     private static JsonObject inspect(Fixture f, ContextFixture context, String id, boolean full) {
-        return f.reader.parameter(f.proxy, TRACK_ID, MODULE, id, context.reader, full, () -> {});
+        return f.reader.parameter(f.source, MODULE, id, context.reader, full, () -> {});
     }
 
     @Test
@@ -116,7 +116,7 @@ public final class GridStepsVoicingTest {
                         && full.get("valuesComplete").getAsBoolean(),
                 "full exposes all 256 entries");
         JsonObject graph = f.reader
-                .snapshot(f.proxy, TRACK_ID, 0, 64, true, false, null, true, () -> {})
+                .snapshot(f.source, 0, 64, true, false, null, true, () -> {})
                 .getAsJsonArray("modules")
                 .get(0)
                 .getAsJsonObject()
@@ -124,7 +124,7 @@ public final class GridStepsVoicingTest {
                 .get(1)
                 .getAsJsonObject();
         assertTrue(graph.getAsJsonArray("values").size() == 256, "grid.get full reaches the same row");
-        JsonObject plain = f.reader.snapshot(f.proxy, TRACK_ID, 0, 64, true, false, null, () -> {});
+        JsonObject plain = f.reader.snapshot(f.source, 0, 64, true, false, null, () -> {});
         assertTrue(
                 plain.getAsJsonArray("modules")
                                 .get(0)
@@ -180,14 +180,14 @@ public final class GridStepsVoicingTest {
     void internalChildModelsAreNotUnsupported() {
         Fixture f = new Fixture();
         f.first.put(CHILDREN, List.of(new BgP(), new BgP(), new BgP()));
-        JsonObject read = f.reader.snapshot(f.proxy, TRACK_ID, 0, 64, true, false, null, () -> {});
+        JsonObject read = f.reader.snapshot(f.source, 0, 64, true, false, null, () -> {});
         JsonObject module = read.getAsJsonArray("modules").get(0).getAsJsonObject();
         assertTrue(
                 module.getAsJsonArray("parameters").size() == 0
                         && module.get("internalChildren").getAsInt() == 3
                         && !has(read, "unknown_child_model"),
                 "internal models are counted per module, never listed and never unsupported");
-        JsonObject detailed = f.reader.snapshot(f.proxy, TRACK_ID, 0, 64, true, true, null, () -> {});
+        JsonObject detailed = f.reader.snapshot(f.source, 0, 64, true, true, null, () -> {});
         JsonObject row = detailed.getAsJsonArray("modules")
                 .get(0)
                 .getAsJsonObject()
@@ -202,7 +202,7 @@ public final class GridStepsVoicingTest {
                 "diagnostics lists internal rows, still not as unsupported");
         Fixture mixed = new Fixture();
         mixed.first.put(CHILDREN, List.of(new BgP(), new Kiy(), new Mystery()));
-        JsonObject result = mixed.reader.snapshot(mixed.proxy, TRACK_ID, 0, 64, true, false, null, () -> {});
+        JsonObject result = mixed.reader.snapshot(mixed.source, 0, 64, true, false, null, () -> {});
         assertTrue(
                 has(result, "unknown_child_model")
                         && !result.get("complete").getAsBoolean()
@@ -264,7 +264,7 @@ public final class GridStepsVoicingTest {
         }
 
         JsonObject set(GridParameterWriter.Request request) {
-            return writer.set(model.proxy, TRACK_ID, MODULE, "DATA", request, () -> {}, () -> op.markDispatched());
+            return writer.set(model.source, MODULE, "DATA", request, () -> {}, () -> op.markDispatched());
         }
 
         RpcException failure(GridParameterWriter.Request request) {
@@ -403,8 +403,7 @@ public final class GridStepsVoicingTest {
                                 null,
                                 null)
                         .set(
-                                scalarTarget.model.proxy,
-                                TRACK_ID,
+                                scalarTarget.model.source,
                                 MODULE,
                                 "LOCAL_ID",
                                 steps("[0.1]", "[0.1]", false),
@@ -488,13 +487,7 @@ public final class GridStepsVoicingTest {
         {
             RpcException caught = assertThrows(RpcException.class, () -> {
                 none.set(
-                        absent.model.proxy,
-                        TRACK_ID,
-                        MODULE,
-                        "DATA",
-                        steps(absent.json(0, 4), "[0.5]", false),
-                        () -> {},
-                        () -> {
+                        absent.model.source, MODULE, "DATA", steps(absent.json(0, 4), "[0.5]", false), () -> {}, () -> {
                             throw new AssertionError("dispatched without a step binding");
                         });
             });
@@ -504,14 +497,13 @@ public final class GridStepsVoicingTest {
             GridParameterWriter.Entry entry =
                     new GridParameterWriter.Entry(MODULE, "DATA", steps(absent.json(0, 4), "[0.5]", false));
             assertRpcError(
-                    "native_unavailable",
-                    () -> none.setAll(absent.model.proxy, TRACK_ID, List.of(entry), () -> {}, () -> {}));
+                    "native_unavailable", () -> none.setAll(absent.model.source, List.of(entry), () -> {}, () -> {}));
         }
         StepFixture batch = new StepFixture(256, 4);
         GridParameterWriter.Entry entry =
                 new GridParameterWriter.Entry(MODULE, "DATA", steps(batch.json(0, 4), "[0.7,0.8]", false));
-        JsonObject result = batch.writer.setAll(
-                batch.model.proxy, TRACK_ID, List.of(entry), () -> {}, () -> batch.op.markDispatched());
+        JsonObject result =
+                batch.writer.setAll(batch.model.source, List.of(entry), () -> {}, () -> batch.op.markDispatched());
         JsonObject item = result.getAsJsonArray("writes").get(0).getAsJsonObject();
         assertTrue(
                 batch.calls == 1
@@ -526,7 +518,7 @@ public final class GridStepsVoicingTest {
             RpcException caught = assertThrows(
                     RpcException.class,
                     () -> stale.writer.setAll(
-                            stale.model.proxy, TRACK_ID, List.of(bad), () -> {}, () -> stale.op.markDispatched()));
+                            stale.model.source, List.of(bad), () -> {}, () -> stale.op.markDispatched()));
             assertTrue(!caught.unknown && stale.calls == 0, "a stale step entry fails the batch preflight");
         }
     }
@@ -591,11 +583,11 @@ public final class GridStepsVoicingTest {
         }
 
         JsonObject get() {
-            return writer.get(model.proxy, TRACK_ID, () -> {});
+            return writer.get(model.source, () -> {});
         }
 
         JsonObject set(String json) {
-            return writer.set(model.proxy, TRACK_ID, request(json), () -> {}, () -> op.markDispatched());
+            return writer.set(model.source, request(json), () -> {}, () -> op.markDispatched());
         }
 
         RpcException failure(String json) {

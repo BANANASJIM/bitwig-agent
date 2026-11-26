@@ -37,6 +37,14 @@ from bitwig_agent.client import MAX_PORT
 from bitwig_agent.protocol import TOOLS
 from bitwig_agent.protocol.base import REASONS, SUCCEEDED, Outcome
 
+
+def registry_matches(java_methods, advertised):
+    """Java registers exactly the host methods; MCP offers exactly the exposed ones plus help."""
+    host = {name for name, spec in TOOLS.items() if spec.host}
+    exposed = {name for name, spec in TOOLS.items() if spec.expose}
+    return set(java_methods) == host and set(advertised) - {"help"} == exposed
+
+
 TCP_ROW_FIELDS = 10
 
 
@@ -277,8 +285,7 @@ async def probe(target, report):  # noqa: PLR0915
         if before.get("projectName") != target.fixture.stem:
             raise RuntimeError("Observed project name differs from explicit fixture; refusing further queries")
         capabilities = await call("capabilities")
-        unexposed = {name for name, spec in TOOLS.items() if not spec.expose}
-        if set(capabilities["methods"]) != (advertised - {"help"}) | unexposed:
+        if not registry_matches(capabilities["methods"], advertised):
             raise RuntimeError("Native Java registry differs from the installed MCP adapter")
         report["beforeTransport"] = await call("transport.get")
         tracks = await call("tracks.list")

@@ -243,8 +243,7 @@ public final class GridModuleTest {
                 "unverified source cannot advertise any native topology capability");
         {
             RpcException error = assertThrows(RpcException.class, () -> {
-                noSource.snapshot(
-                        new Object(), UUID.fromString(HostFixture.A), 0, 64, true, false, null, false, () -> {});
+                noSource.snapshot(null, 0, 64, true, false, null, false, () -> {});
             });
             assertTrue(
                     error.reason.wire().equals("native_unavailable"), "snapshot requires exact verified identity gate");
@@ -1822,8 +1821,7 @@ public final class GridModuleTest {
 
         @Override
         public JsonObject setParameters(
-                Object proxy,
-                UUID track,
+                DeviceSources.Source source,
                 java.util.List<GridParameterWriter.Entry> writes,
                 Runnable check,
                 Runnable dispatch) {
@@ -1833,8 +1831,7 @@ public final class GridModuleTest {
 
         @Override
         public JsonObject snapshot(
-                Object proxy,
-                UUID expectedTrackId,
+                DeviceSources.Source source,
                 int offset,
                 int limit,
                 boolean parameters,
@@ -1850,19 +1847,14 @@ public final class GridModuleTest {
 
         @Override
         public JsonObject parameter(
-                Object proxy,
-                UUID expectedTrackId,
-                UUID moduleId,
-                String parameterId,
-                boolean fullSteps,
-                Runnable check) {
+                DeviceSources.Source source, UUID moduleId, String parameterId, boolean fullSteps, Runnable check) {
             check.run();
             reads++;
             return new JsonObject();
         }
 
         @Override
-        public JsonObject voicing(Object proxy, UUID expectedTrackId, Runnable check) {
+        public JsonObject voicing(DeviceSources.Source source, Runnable check) {
             check.run();
             reads++;
             return new JsonObject();
@@ -1870,7 +1862,7 @@ public final class GridModuleTest {
 
         @Override
         public JsonObject setVoicing(
-                Object proxy, UUID track, GridVoicingWriter.Request request, Runnable check, Runnable dispatch) {
+                DeviceSources.Source source, GridVoicingWriter.Request request, Runnable check, Runnable dispatch) {
             check.run();
             dispatch.run();
             return new JsonObject();
@@ -1878,7 +1870,7 @@ public final class GridModuleTest {
 
         @Override
         public JsonObject defineRemotePage(
-                Object proxy, UUID track, GridRemotePageWriter.Request request, Runnable check, Runnable dispatch) {
+                DeviceSources.Source source, GridRemotePageWriter.Request request, Runnable check, Runnable dispatch) {
             check.run();
             dispatch.run();
             remoteCalls++;
@@ -1887,7 +1879,7 @@ public final class GridModuleTest {
 
         @Override
         public JsonObject deleteRemotePage(
-                Object proxy, UUID track, String pageName, Runnable check, Runnable dispatch) {
+                DeviceSources.Source source, String pageName, Runnable check, Runnable dispatch) {
             check.run();
             dispatch.run();
             remoteCalls++;
@@ -1896,8 +1888,7 @@ public final class GridModuleTest {
 
         @Override
         public JsonObject setParameter(
-                Object proxy,
-                UUID track,
+                DeviceSources.Source source,
                 UUID module,
                 String parameter,
                 GridParameterWriter.Request request,
@@ -1911,8 +1902,7 @@ public final class GridModuleTest {
 
         @Override
         public void moveModule(
-                Object proxy,
-                UUID track,
+                DeviceSources.Source source,
                 UUID module,
                 GridModuleWriter.Move request,
                 Runnable check,
@@ -1925,8 +1915,7 @@ public final class GridModuleTest {
 
         @Override
         public void deleteModule(
-                Object proxy,
-                UUID track,
+                DeviceSources.Source source,
                 UUID module,
                 Runnable check,
                 Runnable dispatch,
@@ -1938,8 +1927,7 @@ public final class GridModuleTest {
 
         @Override
         public void setConnection(
-                Object proxy,
-                UUID track,
+                DeviceSources.Source source,
                 GridConnectionWriter.Request request,
                 Runnable check,
                 Runnable dispatch,
@@ -1950,8 +1938,7 @@ public final class GridModuleTest {
 
         @Override
         public void setConnections(
-                Object proxy,
-                UUID track,
+                DeviceSources.Source source,
                 java.util.List<GridConnectionWriter.Request> requests,
                 Runnable check,
                 Runnable dispatch,
@@ -1962,8 +1949,7 @@ public final class GridModuleTest {
 
         @Override
         public void insertModule(
-                Object proxy,
-                UUID track,
+                DeviceSources.Source source,
                 GridInsertionWriter.Request request,
                 Runnable check,
                 Runnable dispatch,
@@ -1974,8 +1960,7 @@ public final class GridModuleTest {
 
         @Override
         public void insertModules(
-                Object proxy,
-                UUID track,
+                DeviceSources.Source source,
                 java.util.List<GridInsertionWriter.Request> requests,
                 java.util.function.LongSupplier timeLeft,
                 Runnable check,
@@ -1986,15 +1971,14 @@ public final class GridModuleTest {
         }
 
         @Override
-        public JsonObject ackTopology(Object proxy, UUID track, String device, Runnable check) {
+        public JsonObject ackTopology(DeviceSources.Source source, String device, Runnable check) {
             String nativeDevice = GridInsertionWriterTest.TRACK + device.substring(device.indexOf('/'));
-            return insertion.writer.ack(insertion.model.proxy, GridInsertionWriterTest.TRACK, nativeDevice, check);
+            return insertion.writer.ack(insertion.model.source, nativeDevice, check);
         }
 
         @Override
         public void renameModule(
-                Object proxy,
-                UUID track,
+                DeviceSources.Source source,
                 UUID module,
                 GridModuleNameWriter.Request request,
                 Runnable check,

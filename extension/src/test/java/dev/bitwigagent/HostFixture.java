@@ -4,12 +4,16 @@ import com.bitwig.extension.callback.*;
 import com.bitwig.extension.controller.api.*;
 import com.google.gson.*;
 import dev.bitwigagent.core.MethodSpecs;
+import dev.bitwigagent.core.SchemaValidator;
 import java.util.*;
 import java.util.function.Consumer;
 
 /** A simulated host with a transport, a track bank and queued host tasks; no Bitwig process. */
 final class HostFixture {
     static final MethodSpecs SPECS = MethodSpecs.load();
+    /** The ref schema the bundle exports, compiled by the extension's own validator. */
+    static final SchemaValidator REF_SCHEMA = refSchema();
+
     static final String A = "00000000-0000-0000-0000-000000000001";
     static final String B = "00000000-0000-0000-0000-000000000002";
     static final String C = "00000000-0000-0000-0000-000000000003";
@@ -299,6 +303,47 @@ final class HostFixture {
         });
         device.on("addDirectParameterNameObserver", args -> null);
         device.on("addDirectParameterNormalizedValueObserver", args -> null);
+    }
+
+    private static SchemaValidator refSchema() {
+        try (java.io.Reader in = new java.io.InputStreamReader(
+                MethodSpecs.class.getResourceAsStream(MethodSpecs.RESOURCE), java.nio.charset.StandardCharsets.UTF_8)) {
+            JsonObject refs = JsonParser.parseReader(in).getAsJsonObject().getAsJsonObject("refs");
+            return SchemaValidator.compile(refs.getAsJsonObject("schema"), "ref");
+        } catch (java.io.IOException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    /** One simulated window lent to native-reader fakes, one track per UUID. */
+    private static final class Roots {
+        final HostFixture host = new HostFixture();
+        final Map<UUID, DeviceSources.Source> byTrack = new HashMap<>();
+    }
+
+    private static java.lang.ref.SoftReference<Roots> roots = new java.lang.ref.SoftReference<>(null);
+
+    /**
+     * The first root device of a track carrying {@code track}: the Source a native-reader fake stands behind. Callers
+     * share one window, softly held: each holds tens of thousands of proxies, so the suite keeps at most one it does
+     * not use. A test that changes the Source takes a {@link #freshRootSource} instead.
+     */
+    static synchronized DeviceSources.Source rootSource(UUID track) {
+        Roots shared = roots.get();
+        if (shared == null) roots = new java.lang.ref.SoftReference<>(shared = new Roots());
+        Roots window = shared;
+        return window.byTrack.computeIfAbsent(track, id -> {
+            int slot = window.byTrack.size();
+            if (slot >= DETAILED_TRACKS) throw new IllegalStateException("more shared tracks than detailed slots");
+            window.host.tracks[slot].child("channelId").emit(id.toString());
+            return window.host.services.sources.roots[slot][0];
+        });
+    }
+
+    static DeviceSources.Source freshRootSource(UUID track) {
+        HostFixture f = withoutServices();
+        f.tracks[0].child("channelId").data = track.toString();
+        return new TestServices(f.host.proxy(ControllerHost.class), f.tasks::now).sources.roots[0][0];
     }
 
     HostBridge bridge(MethodSpecs specs) {

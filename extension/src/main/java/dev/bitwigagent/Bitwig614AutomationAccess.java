@@ -130,9 +130,7 @@ final class Bitwig614AutomationAccess implements AutomationModule.Access {
             if (laneSet == null)
                 throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Track has no automation lane set.");
             grid = spec.grid()
-                    ? gridAdapter()
-                            .automationParameter(
-                                    spec.deviceProxy, UUID.fromString(trackId), spec.moduleId, spec.parameterId, check)
+                    ? gridAdapter().automationParameter(spec.device, spec.moduleId, spec.parameterId, check)
                     : null;
             parameter = resolve();
             if (!parameterType.isInstance(parameter))

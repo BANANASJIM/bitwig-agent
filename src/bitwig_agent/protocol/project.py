@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Self
+from typing import Literal, Self
 
 from pydantic import Field, model_validator
 
@@ -55,6 +55,12 @@ class ProjectSaveAsArgs(StrictModel):
         return self
 
 
+class StatusDetailArgs(StatusArgs):
+    detail: Literal["full"] = omitted(
+        description="full adds each domain's binding and coverage section; omitted, status is the brief project state."
+    )
+
+
 class HostDiagnosticsArgs(StatusArgs):
     sinceSeconds: int = omitted(
         ge=1, le=86400, description="Look back this many seconds (default 300); exclusive with sinceMarker."
@@ -87,7 +93,7 @@ HOST_DIAGNOSTICS_DESCRIPTION = "Client-side: host problems invisible through the
 
 
 SPECS: dict[str, ToolSpec] = {
-    "status": ToolSpec(StatusArgs, STATUS_DESCRIPTION, True),
+    "status": ToolSpec(StatusDetailArgs, STATUS_DESCRIPTION, True, examples=({}, {"detail": "full"})),
     "capabilities": ToolSpec(StatusArgs, CAPABILITIES_DESCRIPTION, True),
     "context.get": ToolSpec(StatusArgs, CONTEXT_GET_DESCRIPTION, True),
     "project.save": ToolSpec(StatusArgs, PROJECT_SAVE_DESCRIPTION, False, annotations=SET),

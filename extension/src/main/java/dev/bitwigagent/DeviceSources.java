@@ -6,20 +6,26 @@ import static dev.bitwigagent.Results.*;
 import com.bitwig.extension.callback.*;
 import com.bitwig.extension.controller.api.*;
 import com.google.gson.*;
+import dev.bitwigagent.core.Refs;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicLong;
 
-/** Fixed observed device addresses. Tokens describe continuity, never persistent device identity. */
+/**
+ * Resolves device and chain refs on fixed observed device addresses and corroborates a root device's native owner.
+ * Tokens describe continuity, never persistent device identity.
+ */
 final class DeviceSources {
     static final int LAYERS = 2, CHILDREN = 2;
     final Source[][] roots = new Source[TRACKS][DEVICES];
     final List<Source> all = new ArrayList<>(TRACKS * DEVICES * (1 + LAYERS * CHILDREN));
     private final TrackWindow window;
+    private final TrackRefs trackRefs;
     private final TrackState[] tracks = new TrackState[TRACKS];
     private Integer trackOffset;
 
-    DeviceSources(TrackWindow window) {
+    DeviceSources(TrackWindow window, TrackRefs trackRefs) {
         this.window = window;
+        this.trackRefs = trackRefs;
         window.bank().scrollPosition().addValueObserver((IntegerValueChangedCallback) value -> {
             boolean changed = trackOffset != null && trackOffset != value;
             trackOffset = value;
@@ -55,7 +61,9 @@ final class DeviceSources {
         final int slot;
         final Track proxy;
         Boolean exists;
-        String id;
+        /** Volatile: native callbacks read it as a device's expected owner. */
+        volatile String id;
+
         Integer position, offset, count;
 
         TrackState(int slot, Track proxy) {
@@ -303,6 +311,10 @@ final class DeviceSources {
             return p;
         }
 
+        JsonObject ref() {
+            return Refs.device(layer == null ? trackRefs.ref(track.slot) : layer.ref(), position, name);
+        }
+
         JsonObject address() {
             if (layer == null) return parentJson();
             JsonObject result = new JsonObject();
@@ -476,6 +488,10 @@ final class DeviceSources {
             for (Source child : children) if (child != null) child.changed(structural, name);
         }
 
+        JsonObject ref() {
+            return Refs.chain(branch.root.ref(), id, name);
+        }
+
         void retire() {
             rebound = true;
             for (Source child : children) if (child != null) child.retire();
@@ -496,18 +512,85 @@ final class DeviceSources {
             throw Errors.notApplied(Reason.NOT_READY, "Device name has not been observed.");
     }
 
-    Source root(JsonObject p) {
-        int t = window.trackSlot(p.get("trackId").getAsString());
-        int index = p.get("deviceIndex").getAsInt();
-        TrackState track = tracks[t];
+    /** The device a ref names: stale when it is gone or another device is there now, not_ready while unobserved. */
+    Source device(JsonObject ref, boolean target) {
+        Source source = locate(ref);
+        JsonObject current = source.ref();
+        if (!Refs.matches(ref, current, target))
+            throw Errors.targetChanged("Another device is at this position than the one read.", current);
+        return source;
+    }
+
+    /** The chain a ref names, located by its layer UUID; its name counts only when the chain itself is the target. */
+    Layer chain(JsonObject ref, boolean target) {
+        Layer layer = locateChain(ref);
+        JsonObject current = layer.ref();
+        if (!Refs.matches(ref, current, target)) throw Errors.targetChanged("The chain is not the one read.", current);
+        return layer;
+    }
+
+    /** The device a ref locates, refused when it is gone or unobserved; its compared fields are the caller's to check. */
+    Source locate(JsonObject ref) {
+        int index = ref.get("index").getAsInt();
+        if (!ref.has("chain")) {
+            JsonObject trackRef = ref.getAsJsonObject("track");
+            TrackState track = tracks[trackRefs.locate(trackRef)];
+            Source source = rootAt(track, index);
+            if (!trackRef.get("id").getAsString().equals(track.id))
+                throw Errors.notApplied(Reason.NOT_READY, "The track's identity has not been observed yet.");
+            if (!Boolean.TRUE.equals(source.exists) || source.position != index)
+                throw Errors.targetNotFound(ref, "No device is at this index.");
+            if (!source.present()) throw Errors.notApplied(Reason.NOT_READY, "Device name has not been observed.");
+            return source;
+        }
+        Layer layer = locateChain(ref.getAsJsonObject("chain"));
+        if (index >= CHILDREN)
+            throw Errors.notApplied(
+                    Reason.OUTSIDE_WINDOW, "The device is outside the " + CHILDREN + "-device chain window.");
+        Source child = layer.children[index];
+        if (child.rebound) throw rebound();
+        if (Boolean.FALSE.equals(child.exists) || index >= layer.window.count)
+            throw Errors.targetNotFound(ref, "No device is at this index of the chain.");
+        if (!child.present()) throw Errors.notApplied(Reason.NOT_READY, "Device metadata has not been observed.");
+        return child;
+    }
+
+    private Layer locateChain(JsonObject ref) {
+        JsonObject device = ref.getAsJsonObject("device");
+        if (device.has("chain"))
+            throw Errors.notApplied(Reason.UNSUPPORTED_SCOPE, "Chains of a device inside a chain are not observed.");
+        Source root = device(device, false);
+        requireBranch(root.branch);
+        Layer found = findLayer(root, ref.get("id").getAsString(), Reason.NOT_READY);
+        if (found == null) throw Errors.targetNotFound(ref, "The device has no chain with this id.");
+        if (!found.ready())
+            throw Errors.notApplied(Reason.NOT_READY, "Layer and child window are not ready at offset zero.");
+        return found;
+    }
+
+    private Source rootAt(TrackState track, int index) {
         if (track.offset == null)
             throw Errors.notApplied(Reason.NOT_READY, "Root device window has not been observed.");
         int slot = index - track.offset;
         if (slot < 0 || slot >= DEVICES)
-            throw Errors.notApplied(Reason.OUTSIDE_WINDOW, "Parent is outside the root device window.");
-        Source source = roots[t][slot];
+            throw Errors.notApplied(Reason.OUTSIDE_WINDOW, "Device is outside the root device window.");
+        Source source = roots[track.slot][slot];
         if (!source.metadataReady() || !track.ready())
-            throw Errors.notApplied(Reason.NOT_READY, "Parent metadata/window has not been observed.");
+            throw Errors.notApplied(Reason.NOT_READY, "Device metadata/window has not been observed.");
+        return source;
+    }
+
+    private static RpcException rebound() {
+        return Errors.notApplied(
+                Reason.NOT_READY,
+                "Nested proxy physically rebound; direct callback provenance is unavailable until extension reload.");
+    }
+
+    Source root(JsonObject p) {
+        Source source = rootAt(
+                tracks[window.trackSlot(p.get("trackId").getAsString())],
+                p.get("deviceIndex").getAsInt());
+        TrackState track = source.track;
         if (!source.present() || !track.id.equals(p.get("trackId").getAsString()))
             throw Errors.notApplied(Reason.STALE_TARGET, "Parent address/name no longer matches observed context.");
         if (!source.name.equals(p.get("expectedDeviceName").getAsString()))
@@ -571,7 +654,7 @@ final class DeviceSources {
     }
 
     static final class RootReadTicket {
-        private final Source source;
+        final Source source;
         private final AtomicLong epoch;
         private final long generation;
         final Device device;
@@ -615,10 +698,7 @@ final class DeviceSources {
         if (index >= CHILDREN)
             throw Errors.notApplied(Reason.OUTSIDE_WINDOW, "Child is outside the fixed two-device window.");
         Source child = found.children[index];
-        if (child.rebound)
-            throw Errors.notApplied(
-                    Reason.NOT_READY,
-                    "Nested proxy physically rebound; direct callback provenance is unavailable until extension reload.");
+        if (child.rebound) throw rebound();
         if (!child.present())
             throw Errors.notApplied(Reason.NOT_READY, "Child metadata or ancestor/window context is not ready.");
         if (!child.name.equals(p.get("expectedChildDeviceName").getAsString())
@@ -632,6 +712,16 @@ final class DeviceSources {
     Layer layer(JsonObject parent, String id) {
         Source root = root(parent);
         requireBranch(root.branch);
+        Layer found = findLayer(root, id, Reason.STALE_CONTEXT);
+        if (found == null)
+            throw Errors.notApplied(Reason.STALE_CONTEXT, "Layer UUID is absent from the observed window.");
+        if (!found.ready())
+            throw Errors.notApplied(Reason.NOT_READY, "Layer and child window are not ready at offset zero.");
+        return found;
+    }
+
+    /** The visible layer with this UUID, or null when none has it. */
+    private static Layer findLayer(Source root, String id, Reason ambiguous) {
         Layer found = null;
         for (Layer layer : root.branch.layers) {
             if (layer.slot >= root.branch.window.count) continue;
@@ -639,15 +729,29 @@ final class DeviceSources {
                 throw Errors.notApplied(Reason.NOT_READY, "Layer identity window is not fully observed.");
             if (Boolean.TRUE.equals(layer.exists) && id.equals(layer.id)) {
                 if (found != null)
-                    throw Errors.notApplied(Reason.STALE_CONTEXT, "Layer UUID is ambiguous in the observed window.");
+                    throw Errors.notApplied(ambiguous, "Layer UUID is ambiguous in the observed window.");
                 found = layer;
             }
         }
-        if (found == null)
-            throw Errors.notApplied(Reason.STALE_CONTEXT, "Layer UUID is absent from the observed window.");
-        if (!found.ready())
-            throw Errors.notApplied(Reason.NOT_READY, "Layer and child window are not ready at offset zero.");
         return found;
+    }
+
+    /** The index a position names in a track's root chain or in a chain; an anchor must be a device of it. */
+    int insertionIndex(JsonObject parent, JsonElement position) {
+        if ("chain".equals(Refs.kind(parent))) {
+            Layer layer = chain(parent, false);
+            return Positions.index(position, layer.window.count, anchor -> anchorIn(anchor, s -> s.layer == layer));
+        }
+        TrackState track = tracks[trackRefs.locate(parent)];
+        if (track.count == null) throw Errors.notApplied(Reason.NOT_READY, "The device count is not observed yet.");
+        return Positions.index(
+                position, track.count, anchor -> anchorIn(anchor, s -> s.layer == null && s.track == track));
+    }
+
+    private int anchorIn(JsonObject anchor, java.util.function.Predicate<Source> inParent) {
+        Source source = device(anchor, false);
+        if (!inParent.test(source)) throw Errors.invalid("The anchor device is not in this parent.");
+        return source.position;
     }
 
     private void requireBranch(Branch branch) {
@@ -768,6 +872,124 @@ final class DeviceSources {
             Params.string(p, "contextToken");
             Params.string(p, "parameterId");
             Params.number(p, "value", 0, 1);
+        }
+    }
+
+    /** The native root device behind a device proxy and its owning track, corroborated within one document callback. */
+    static final class Native {
+        enum Kind {
+            DEVICE,
+            TRACK,
+            ALIASED_TRACK,
+            CHANNEL_ALIAS
+        }
+
+        enum Field {
+            TARGET,
+            OWNER_TRACK,
+            TRACK_ALIAS,
+            TRACK_UUID,
+            ALIAS_UUID
+        }
+
+        interface Access {
+            boolean is(Kind kind, Object object);
+
+            Object read(Field field, Object object);
+
+            void documentThread();
+
+            void requireModelThread(Object object);
+        }
+
+        private final Access a;
+
+        Native(Access access) {
+            a = access;
+        }
+
+        /** A chain device has no native target here (unsupported_scope); the owner is the Source's observed track. */
+        Capture capture(Source source, Runnable check) {
+            a.documentThread();
+            check.run();
+            if (source.layer != null)
+                throw Errors.notApplied(Reason.UNSUPPORTED_SCOPE, "A device inside a chain has no native target here.");
+            UUID expected = trackUuid(source);
+            Object device = a.read(Field.TARGET, source.device);
+            if (device == null)
+                throw Errors.notApplied(
+                        Reason.INVALID_TARGET, "The device has no native target; read the device again.");
+            if (!a.is(Kind.DEVICE, device))
+                throw Errors.notApplied(Reason.UNSUPPORTED_SCOPE, "The device is not a mapped root device.");
+            a.requireModelThread(device);
+            Object owner = owningTrack(device), identity = trackIdentity(owner);
+            requireTrackUuid(owner, identity, expected);
+            check.run();
+            return new Capture(source, device, owner, identity, expected);
+        }
+
+        void guard(Capture before, Runnable check) {
+            a.documentThread();
+            check.run();
+            if (!before.trackId.equals(trackUuid(before.source)))
+                throw Errors.notApplied(Reason.STALE_CONTEXT, "The device's track changed during the read.");
+            if (a.read(Field.TARGET, before.source.device) != before.device)
+                throw Errors.notApplied(Reason.STALE_CONTEXT, "The device changed during the read.");
+            a.requireModelThread(before.device);
+            Object owner = owningTrack(before.device), identity = trackIdentity(owner);
+            requireTrackUuid(owner, identity, before.trackId);
+            if (owner != before.owner || identity != before.identity)
+                throw Errors.notApplied(
+                        Reason.STALE_CONTEXT, "The device's track or its channel alias changed during the read.");
+            check.run();
+        }
+
+        private static UUID trackUuid(Source source) {
+            String id = source.track.id;
+            if (!canonicalUuid(id))
+                throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "The device's track UUID is not observed.");
+            return UUID.fromString(id);
+        }
+
+        private Object owningTrack(Object device) {
+            Object owner = a.read(Field.OWNER_TRACK, device);
+            if (!a.is(Kind.TRACK, owner))
+                throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "The device has no mapped native track.");
+            a.requireModelThread(owner);
+            return owner;
+        }
+
+        private Object trackIdentity(Object owner) {
+            if (!a.is(Kind.ALIASED_TRACK, owner)) return owner;
+            Object alias = a.read(Field.TRACK_ALIAS, owner);
+            if (!a.is(Kind.CHANNEL_ALIAS, alias))
+                throw Errors.notApplied(
+                        Reason.NATIVE_UNAVAILABLE, "The device's track channel alias is missing or unsupported.");
+            a.requireModelThread(alias);
+            return alias;
+        }
+
+        private void requireTrackUuid(Object owner, Object identity, UUID expected) {
+            Object value = a.read(a.is(Kind.ALIASED_TRACK, owner) ? Field.ALIAS_UUID : Field.TRACK_UUID, identity);
+            if (!(value instanceof UUID))
+                throw Errors.notApplied(
+                        Reason.NATIVE_UNAVAILABLE, "The device's native track UUID is missing or unsupported.");
+            if (!expected.equals(value))
+                throw Errors.notApplied(Reason.STALE_CONTEXT, "The device belongs to another track than the one read.");
+        }
+
+        static final class Capture {
+            final Source source;
+            final Object device, owner, identity;
+            final UUID trackId;
+
+            Capture(Source source, Object device, Object owner, Object identity, UUID trackId) {
+                this.source = source;
+                this.device = device;
+                this.owner = owner;
+                this.identity = identity;
+                this.trackId = trackId;
+            }
         }
     }
 }

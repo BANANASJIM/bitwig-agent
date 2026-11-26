@@ -1,11 +1,11 @@
 package dev.bitwigagent;
 
+import static dev.bitwigagent.DeviceSources.Native.Field.*;
 import static dev.bitwigagent.GridSnapshotReader.Field.*;
 import static dev.bitwigagent.GridSnapshotReader.Kind.*;
 import static dev.bitwigagent.GridSnapshotReaderTest.Node;
 import static dev.bitwigagent.GridSnapshotReaderTest.outcomes;
 import static dev.bitwigagent.GridSnapshotReaderTest.unsuccessful;
-import static dev.bitwigagent.NativeDeviceTarget.Field.*;
 import static dev.bitwigagent.RpcAssert.*;
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -496,7 +496,7 @@ public final class GridInsertionWriterTest {
                     new GridTopologyQuarantine(f.process).quarantined()
                             && GridTopologyQuarantine.NATIVE.equals(f.guard.origin(device(f))),
                     "healthy later context cannot release translated native conversion failure quarantine");
-            JsonObject released = f.writer.ack(f.model.proxy, TRACK, device(f), () -> {});
+            JsonObject released = f.writer.ack(f.model.source, device(f), () -> {});
             assertTrue(
                     released.get("outcome").getAsString().equals("applied")
                             && !f.guard.quarantined()
@@ -560,17 +560,14 @@ public final class GridInsertionWriterTest {
             Runnable call = () -> {
                 if (move)
                     writer.move(
-                            modules.model.proxy,
-                            TRACK,
+                            modules.model.source,
                             new UUID(1, 1),
                             new GridModuleWriter.Move(7, 3, 10, 3),
                             () -> {},
                             () -> {},
                             value -> {},
                             error -> {});
-                else
-                    writer.delete(
-                            modules.model.proxy, TRACK, new UUID(1, 1), () -> {}, () -> {}, value -> {}, error -> {});
+                else writer.delete(modules.model.source, new UUID(1, 1), () -> {}, () -> {}, value -> {}, error -> {});
             };
             assertRpcError("busy", call);
         }
@@ -610,8 +607,7 @@ public final class GridInsertionWriterTest {
         }
         RpcException error = assertThrows(RpcException.class, () -> {
             f.writer.insert(
-                    f.model.proxy,
-                    TRACK,
+                    f.model.source,
                     new GridInsertionWriter.Request(null, "Low-pass M", 8, 3),
                     () -> {},
                     () -> {},
@@ -640,8 +636,7 @@ public final class GridInsertionWriterTest {
         error = null;
         try {
             f.writer.insert(
-                    f.model.proxy,
-                    TRACK,
+                    f.model.source,
                     new GridInsertionWriter.Request(null, "FILTER", 8, 3),
                     () -> {},
                     () -> {},
@@ -659,8 +654,7 @@ public final class GridInsertionWriterTest {
         error = null;
         try {
             f.writer.insert(
-                    f.model.proxy,
-                    TRACK,
+                    f.model.source,
                     new GridInsertionWriter.Request(null, "Oscilator", 8, 3),
                     () -> {},
                     () -> {},
@@ -692,8 +686,7 @@ public final class GridInsertionWriterTest {
             error = null;
             try {
                 f.writer.insert(
-                        f.model.proxy,
-                        TRACK,
+                        f.model.source,
                         new GridInsertionWriter.Request(null, miss, 8, 3),
                         () -> {},
                         () -> {},
@@ -710,8 +703,7 @@ public final class GridInsertionWriterTest {
         error = null;
         try {
             f.writer.insert(
-                    f.model.proxy,
-                    TRACK,
+                    f.model.source,
                     new GridInsertionWriter.Request(null, "FILTER", 8, 3),
                     () -> {},
                     () -> {},
@@ -814,8 +806,7 @@ public final class GridInsertionWriterTest {
         RpcException named = null;
         try {
             f.writer.insertAll(
-                    f.model.proxy,
-                    TRACK,
+                    f.model.source,
                     List.of(
                             new GridInsertionWriter.Request(null, "alpha", 8, 3),
                             new GridInsertionWriter.Request(null, "gamma", 12, 3)),
@@ -1043,7 +1034,7 @@ public final class GridInsertionWriterTest {
         assertTrue(f.guard.quarantined(device(f)), "duplicate module UUIDs keep the hold");
         f.model.second.put(INSTANCE_ID, new UUID(1, 2));
         assertTrue(
-                f.writer.ack(f.model.proxy, TRACK, OTHER, () -> {}) == null,
+                f.writer.ack(f.model.source, OTHER, () -> {}) == null,
                 "another device's hold is not this proxy's to release");
         JsonObject released = ack(f);
         JsonObject module = released.getAsJsonObject("found").getAsJsonObject("module");
@@ -1084,15 +1075,14 @@ public final class GridInsertionWriterTest {
         int[] edits = {0};
         assertRpcError(
                 "unknown_hold",
-                () -> f.writer.ack(f.model.proxy, TRACK, device(f), () -> {
+                () -> f.writer.ack(f.model.source, device(f), () -> {
                     JsonObject changed = new JsonObject();
                     changed.addProperty("edit", edits[0]++);
                     f.guard.poison("owner", device(f), changed);
                 }));
         assertTrue(f.guard.quarantined(device(f)), "a hold rewritten while it was checked stays");
         f.model.device.put(GRAPH, null);
-        assertTrue(
-                f.writer.ack(f.model.proxy, TRACK, device(f), () -> {}) == null, "a non-Grid device has no Grid hold");
+        assertTrue(f.writer.ack(f.model.source, device(f), () -> {}) == null, "a non-Grid device has no Grid hold");
     }
 
     @Test
@@ -1125,7 +1115,7 @@ public final class GridInsertionWriterTest {
     }
 
     private static JsonObject ack(Fixture f) {
-        return f.writer.ack(f.model.proxy, TRACK, device(f), () -> {});
+        return f.writer.ack(f.model.source, device(f), () -> {});
     }
 
     @Test
@@ -1253,7 +1243,7 @@ public final class GridInsertionWriterTest {
                 Runnable dispatch,
                 Consumer<JsonObject> complete,
                 Consumer<Throwable> fail) {
-            writer.insertAll(model.proxy, TRACK, requests, () -> remaining, check, dispatch, complete, fail);
+            writer.insertAll(model.source, requests, () -> remaining, check, dispatch, complete, fail);
         }
 
         GridInsertionWriter.Request request() {
@@ -1299,7 +1289,7 @@ public final class GridInsertionWriterTest {
                 Runnable dispatch,
                 Consumer<JsonObject> complete,
                 Consumer<Throwable> fail) {
-            writer.insert(model.proxy, TRACK, request, check, dispatch, complete, fail);
+            writer.insert(model.source, request, check, dispatch, complete, fail);
         }
 
         void population(int size) {

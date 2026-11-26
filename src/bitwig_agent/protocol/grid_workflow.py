@@ -15,7 +15,7 @@ from bitwig_agent.protocol.base import (
     StatusArgs,
     StrictModel,
     ToolSpec,
-    TrackId,
+    Uuid,
     long_timeout,
     omitted,
     validate_local_path,
@@ -27,7 +27,7 @@ MAX_APPLY_CONNECTIONS = 4096  # a full 1024-module Grid typically needs more cab
 
 
 class GridApplyTarget(StrictModel):
-    trackId: TrackId
+    trackId: Uuid
     deviceIndex: int = Field(ge=0, le=DEVICE_WINDOW - 1)
     expectedDeviceName: Nonempty
 
@@ -59,7 +59,7 @@ class GridApplyModule(StrictModel):
         max_length=128,
         description="Catalog module name (e.g. 'Multiply'); exactly one of type or typeId.",
     )
-    typeId: TrackId = omitted(description=TYPE_ID_DESCRIPTION)
+    typeId: Uuid = omitted(description=TYPE_ID_DESCRIPTION)
     x: int = Field(ge=-(2**31), le=2**31 - 1)
     y: int = Field(ge=-(2**31), le=2**31 - 1)
     params: dict[str, bool | int | float | str | GridApplyDisplay | GridApplyLabel | GridApplySteps] = omitted(

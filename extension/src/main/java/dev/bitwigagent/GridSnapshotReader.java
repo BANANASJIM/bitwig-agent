@@ -5,7 +5,7 @@ import java.util.*;
 import java.util.stream.Stream;
 
 /** Document-thread traversal, independent of version-specific symbol resolution and RPC targeting. */
-final class GridSnapshotReader {
+final class GridSnapshotReader implements ParameterResolver.ModuleOwners {
     static final int MAX_MODULES = 4096, MAX_CHILDREN = 256, MAX_OPTIONS = 256, MAX_CATALOG = 16384;
     static final int MAX_ITEMS = 131072, MAX_TEXT = 1024;
     /** Step arrays: default exposure when STEPS is unreadable, the full-array cap, and the finite sanity bound for step values (not a per-module range: Pitches are in Grid pitch units, the rest 0..1). */
@@ -118,7 +118,7 @@ final class GridSnapshotReader {
 
     static final Metadata[] METADATA = Metadata.values();
 
-    interface Access extends NativeDeviceTarget.Access {
+    interface Access extends DeviceSources.Native.Access {
         Object read(Field field, Object object);
 
         boolean is(Kind kind, Object object);
@@ -135,11 +135,11 @@ final class GridSnapshotReader {
     }
 
     private final Access a;
-    private final NativeDeviceTarget targets;
+    private final DeviceSources.Native targets;
 
     GridSnapshotReader(Access access) {
         a = access;
-        targets = new NativeDeviceTarget(access);
+        targets = new DeviceSources.Native(access);
     }
 
     JsonObject catalog(String query, int offset, int limit, Runnable check) {
@@ -197,27 +197,25 @@ final class GridSnapshotReader {
         return result;
     }
 
-    JsonObject snapshot(Object proxy, UUID expectedTrackId, int offset, int limit, boolean parameters, Runnable check) {
-        return snapshot(proxy, expectedTrackId, offset, limit, parameters, true, null, check);
+    JsonObject snapshot(DeviceSources.Source source, int offset, int limit, boolean parameters, Runnable check) {
+        return snapshot(source, offset, limit, parameters, true, null, check);
     }
 
     /** diagnostics adds native modelClass/path and constant coverage prose; moduleIds (lowercase UUIDs) selects rows. */
     JsonObject snapshot(
-            Object proxy,
-            UUID expectedTrackId,
+            DeviceSources.Source source,
             int offset,
             int limit,
             boolean parameters,
             boolean diagnostics,
             Set<String> moduleIds,
             Runnable check) {
-        return snapshot(proxy, expectedTrackId, offset, limit, parameters, diagnostics, moduleIds, false, check);
+        return snapshot(source, offset, limit, parameters, diagnostics, moduleIds, false, check);
     }
 
     /** fullSteps exposes up to 256 step-array entries instead of the first STEPS ones. */
     JsonObject snapshot(
-            Object proxy,
-            UUID expectedTrackId,
+            DeviceSources.Source source,
             int offset,
             int limit,
             boolean parameters,
@@ -227,7 +225,7 @@ final class GridSnapshotReader {
             Runnable check) {
         a.documentThread();
         check.run();
-        NativeTarget binding = target(proxy, expectedTrackId);
+        NativeTarget binding = target(source);
         Object graph = binding.graph;
         State state = new State(check);
         state.full = fullSteps;
@@ -318,7 +316,7 @@ final class GridSnapshotReader {
         if (parameters && !a.parametersAvailable()) state.unsupported("typed_parameter_binding_unavailable");
         if (!parameters) state.unsupported("parameters_not_requested");
         check.run();
-        guardTarget(binding, proxy, expectedTrackId);
+        guardTarget(binding);
         JsonObject result = new JsonObject();
         JsonObject deviceMetadata = new JsonObject(), graphMetadata = new JsonObject();
         deviceMetadata.addProperty("modelClass", text(binding.target.getClass().getName()));
@@ -364,18 +362,16 @@ final class GridSnapshotReader {
     }
 
     JsonObject parameter(
-            Object proxy,
-            UUID expectedTrackId,
+            DeviceSources.Source source,
             UUID moduleId,
             String parameterId,
             GridParameterContext contexts,
             Runnable check) {
-        return parameter(proxy, expectedTrackId, moduleId, parameterId, contexts, false, check);
+        return parameter(source, moduleId, parameterId, contexts, false, check);
     }
 
     JsonObject parameter(
-            Object proxy,
-            UUID expectedTrackId,
+            DeviceSources.Source source,
             UUID moduleId,
             String parameterId,
             GridParameterContext contexts,
@@ -384,7 +380,7 @@ final class GridSnapshotReader {
         if (contexts == null)
             throw Errors.notApplied(
                     Reason.NATIVE_UNAVAILABLE, "Required parameter inspection bindings are unavailable.");
-        ParameterBinding binding = bindParameter(proxy, expectedTrackId, moduleId, parameterId, fullSteps, check);
+        ParameterBinding binding = bindParameter(source, moduleId, parameterId, fullSteps, check);
         GridParameterContext.Capture context =
                 contexts.capture(binding.device, binding.graph, binding.module, binding.parameter, binding.kind, check);
         ParameterBinding coupled = binding.kind == Kind.PANEL_BOOLEAN ? bindBipolarParameter(binding) : null;
@@ -420,18 +416,17 @@ final class GridSnapshotReader {
         return result;
     }
 
-    ParameterBinding bindParameter(
-            Object proxy, UUID expectedTrackId, UUID moduleId, String parameterId, Runnable check) {
-        return bindParameter(proxy, expectedTrackId, moduleId, parameterId, false, check);
+    ParameterBinding bindParameter(DeviceSources.Source source, UUID moduleId, String parameterId, Runnable check) {
+        return bindParameter(source, moduleId, parameterId, false, check);
     }
 
     ParameterBinding bindParameter(
-            Object proxy, UUID expectedTrackId, UUID moduleId, String parameterId, boolean fullSteps, Runnable check) {
+            DeviceSources.Source source, UUID moduleId, String parameterId, boolean fullSteps, Runnable check) {
         a.documentThread();
         check.run();
         if (!a.parametersAvailable())
             throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Required typed parameter bindings are unavailable.");
-        NativeTarget target = target(proxy, expectedTrackId);
+        NativeTarget target = target(source);
         State state = new State(check);
         state.full = fullSteps;
         Object module = findModule(target.graph, moduleId, state);
@@ -439,12 +434,12 @@ final class GridSnapshotReader {
         Kind kind = parameterKind(child);
         if (kind == null)
             throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Requested parameter family is unsupported.");
-        return new ParameterBinding(proxy, expectedTrackId, moduleId, parameterId, target, module, child, kind, state);
+        return new ParameterBinding(source, moduleId, parameterId, target, module, child, kind, state);
     }
 
     void guardParameter(ParameterBinding binding) {
         binding.state.guard.run();
-        guardTarget(binding.target, binding.proxy, binding.trackId);
+        guardTarget(binding.target);
         if (findModule(binding.graph, binding.moduleId, binding.state) != binding.module
                 || findParameter(binding.module, binding.parameterId, binding.state) != binding.parameter
                 || parameterKind(binding.parameter) != binding.kind)
@@ -458,15 +453,7 @@ final class GridSnapshotReader {
         Object child = findBipolarParameter(panel);
         String id = text(a.read(Field.PARAMETER_ID, child));
         ParameterBinding result = new ParameterBinding(
-                panel.proxy,
-                panel.trackId,
-                panel.moduleId,
-                id,
-                panel.target,
-                panel.module,
-                child,
-                Kind.FLOAT,
-                panel.state);
+                panel.source, panel.moduleId, id, panel.target, panel.module, child, Kind.FLOAT, panel.state);
         guardParameter(result);
         return result;
     }
@@ -556,15 +543,14 @@ final class GridSnapshotReader {
     static final class ParameterBinding {
         final Object device, graph, module, parameter;
         final Kind kind;
-        private final Object proxy;
-        private final UUID trackId, moduleId;
+        private final DeviceSources.Source source;
+        private final UUID moduleId;
         private final String parameterId;
         private final NativeTarget target;
         private final State state;
 
         ParameterBinding(
-                Object proxy,
-                UUID trackId,
+                DeviceSources.Source source,
                 UUID moduleId,
                 String parameterId,
                 NativeTarget target,
@@ -572,8 +558,7 @@ final class GridSnapshotReader {
                 Object parameter,
                 Kind kind,
                 State state) {
-            this.proxy = proxy;
-            this.trackId = trackId;
+            this.source = source;
             this.moduleId = moduleId;
             this.parameterId = parameterId;
             this.target = target;
@@ -587,6 +572,16 @@ final class GridSnapshotReader {
     }
 
     private Object findModule(Object graph, UUID id, State state) {
+        Object found = lookupModule(graph, id, state);
+        if (found == null)
+            throw Errors.notApplied(
+                    Reason.STALE_CONTEXT,
+                    "Requested module UUID is no longer in the target graph; reacquire grid.get.");
+        return found;
+    }
+
+    /** The graph's module with this instance UUID, or null when it has none. */
+    private Object lookupModule(Object graph, UUID id, State state) {
         Object found = null;
         for (Object module : collect(Field.MODULES, graph, MAX_MODULES, state)) {
             state.check();
@@ -598,14 +593,19 @@ final class GridSnapshotReader {
                 throw Errors.notApplied(Reason.STALE_CONTEXT, "Requested module moved outside the target graph.");
             found = module;
         }
-        if (found == null)
-            throw Errors.notApplied(
-                    Reason.STALE_CONTEXT,
-                    "Requested module UUID is no longer in the target graph; reacquire grid.get.");
         return found;
     }
 
     private Object findParameter(Object module, String id, State state) {
+        Object found = lookupParameter(module, id, state);
+        if (found == null)
+            throw Errors.notApplied(
+                    Reason.STALE_CONTEXT, "Requested exact parameter ID is no longer in the selected module.");
+        return found;
+    }
+
+    /** The module's parameter with this id, or null when it has none. */
+    private Object lookupParameter(Object module, String id, State state) {
         Object found = null;
         for (Object child : collect(Field.CHILDREN, module, MAX_CHILDREN, state)) {
             state.check();
@@ -620,10 +620,31 @@ final class GridSnapshotReader {
                 throw Errors.notApplied(Reason.STALE_CONTEXT, "Requested parameter moved outside the selected module.");
             found = child;
         }
-        if (found == null)
-            throw Errors.notApplied(
-                    Reason.STALE_CONTEXT, "Requested exact parameter ID is no longer in the selected module.");
         return found;
+    }
+
+    @Override
+    public Object owner(DeviceSources.Native.Capture device, UUID id, Runnable check) {
+        Object graph = a.read(Field.GRAPH, device.device);
+        if (graph == null) throw Errors.notApplied(Reason.KIND_MISMATCH, "The device does not contain a Grid graph.");
+        a.requireModelThread(graph);
+        return lookupModule(graph, id, new State(check));
+    }
+
+    @Override
+    public String ownerName(Object owner) {
+        return effectiveModuleName(owner);
+    }
+
+    @Override
+    public Object parameter(Object owner, String key, Runnable check) {
+        return lookupParameter(owner, key, new State(check));
+    }
+
+    @Override
+    public String parameterName(Object parameter) {
+        Object name = a.metadataAvailable(Metadata.PARAMETER_NAMES) ? a.read(Field.PARAMETER_NAME, parameter) : null;
+        return name instanceof String ? (String) name : null;
     }
 
     /** Full bounded module membership for topology writers; opaque graph children cannot be skipped. */
@@ -685,47 +706,43 @@ final class GridSnapshotReader {
     }
 
     /** Document-thread-checked device target for device-level (non-module) operations such as voicing. */
-    NativeTarget bindTarget(Object proxy, UUID expectedTrackId, Runnable check) {
+    NativeTarget bindTarget(DeviceSources.Source source, Runnable check) {
         a.documentThread();
         check.run();
-        return target(proxy, expectedTrackId);
+        return target(source);
     }
 
     void requireModelThread(Object model) {
         a.requireModelThread(model);
     }
 
-    NativeTarget target(Object proxy, UUID expectedTrackId) {
-        NativeDeviceTarget.Capture capture;
+    NativeTarget target(DeviceSources.Source source) {
+        DeviceSources.Native.Capture capture;
         try {
-            capture = targets.capture(proxy, expectedTrackId, () -> {});
+            capture = targets.capture(source, () -> {});
         } catch (RpcException error) {
-            if (error.is(Reason.UNSUPPORTED_SCOPE))
-                throw Errors.notApplied(
-                        Reason.KIND_MISMATCH, "Explicit native device has no mapped Grid graph accessor.");
+            if (error.is(Reason.UNSUPPORTED_SCOPE) && source.layer == null)
+                throw Errors.notApplied(Reason.KIND_MISMATCH, "The device has no mapped Grid graph accessor.");
             throw error;
         }
         Object graph = a.read(Field.GRAPH, capture.device);
-        if (graph == null)
-            throw Errors.notApplied(Reason.KIND_MISMATCH, "Explicit device does not contain a Grid graph.");
+        if (graph == null) throw Errors.notApplied(Reason.KIND_MISMATCH, "The device does not contain a Grid graph.");
         a.requireModelThread(graph);
         return new NativeTarget(capture, graph);
     }
 
-    void guardTarget(NativeTarget binding, Object proxy, UUID expectedTrackId) {
-        if (!binding.ownership.trackId.equals(expectedTrackId))
-            throw Errors.notApplied(Reason.STALE_CONTEXT, "Expected native owning track changed during the read.");
-        targets.guard(binding.ownership, proxy, () -> {});
+    void guardTarget(NativeTarget binding) {
+        targets.guard(binding.ownership, () -> {});
         if (a.read(Field.GRAPH, binding.target) != binding.graph)
-            throw Errors.notApplied(Reason.STALE_CONTEXT, "Explicit native graph changed during the read.");
+            throw Errors.notApplied(Reason.STALE_CONTEXT, "The device's Grid graph changed during the read.");
         a.requireModelThread(binding.graph);
     }
 
     static final class NativeTarget {
         final Object target, graph;
-        final NativeDeviceTarget.Capture ownership;
+        final DeviceSources.Native.Capture ownership;
 
-        NativeTarget(NativeDeviceTarget.Capture ownership, Object graph) {
+        NativeTarget(DeviceSources.Native.Capture ownership, Object graph) {
             this.ownership = ownership;
             this.target = ownership.device;
             this.graph = graph;

@@ -471,7 +471,6 @@ final class GridModule implements HostModule {
                 method.equals("grid.get") || inspection || topology || voicingGet || voicingSet || remotePages
                         ? target(p)
                         : null;
-        final UUID trackUuid = target == null ? null : UUID.fromString(target.trackId);
         final UUID moduleId = (inspection && !batching) || moduleEditing || renaming
                 ? UUID.fromString(p.get("moduleId").getAsString())
                 : null;
@@ -502,8 +501,7 @@ final class GridModule implements HostModule {
                     };
                     if (insertBatch)
                         adapter.insertModules(
-                                target.device,
-                                trackUuid,
+                                target.source,
                                 insertions,
                                 () -> op.deadline - scheduler.now(),
                                 check,
@@ -511,56 +509,48 @@ final class GridModule implements HostModule {
                                 complete,
                                 op::fail);
                     else if (inserting)
-                        adapter.insertModule(target.device, trackUuid, insertion, check, dispatch, complete, op::fail);
+                        adapter.insertModule(target.source, insertion, check, dispatch, complete, op::fail);
                     else if (renaming)
-                        adapter.renameModule(
-                                target.device, trackUuid, moduleId, name, check, dispatch, complete, op::fail);
+                        adapter.renameModule(target.source, moduleId, name, check, dispatch, complete, op::fail);
                     else if (cableBatch)
-                        adapter.setConnections(target.device, trackUuid, cables, check, dispatch, complete, op::fail);
+                        adapter.setConnections(target.source, cables, check, dispatch, complete, op::fail);
                     else if (connection)
-                        adapter.setConnection(target.device, trackUuid, cable, check, dispatch, complete, op::fail);
+                        adapter.setConnection(target.source, cable, check, dispatch, complete, op::fail);
                     else if (moving)
-                        adapter.moveModule(
-                                target.device, trackUuid, moduleId, move, check, dispatch, complete, op::fail);
-                    else adapter.deleteModule(target.device, trackUuid, moduleId, check, dispatch, complete, op::fail);
+                        adapter.moveModule(target.source, moduleId, move, check, dispatch, complete, op::fail);
+                    else adapter.deleteModule(target.source, moduleId, check, dispatch, complete, op::fail);
                     return;
                 }
                 JsonObject value = target == null
                         ? adapter.catalog(query, offset, limit, check)
                         : voicingGet
-                                ? adapter.voicing(target.device, trackUuid, check)
+                                ? adapter.voicing(target.source, check)
                                 : voicingSet
-                                        ? adapter.setVoicing(target.device, trackUuid, voicing, check, () -> {
+                                        ? adapter.setVoicing(target.source, voicing, check, () -> {
                                             check.run();
                                             op.markDispatched();
                                         })
                                         : remoteDefine
-                                                ? adapter.defineRemotePage(
-                                                        target.device, trackUuid, remotePage, check, () -> {
-                                                            check.run();
-                                                            op.markDispatched();
-                                                        })
+                                                ? adapter.defineRemotePage(target.source, remotePage, check, () -> {
+                                                    check.run();
+                                                    op.markDispatched();
+                                                })
                                                 : remoteDelete
                                                         ? adapter.deleteRemotePage(
-                                                                target.device, trackUuid, deletedPage, check, () -> {
+                                                                target.source, deletedPage, check, () -> {
                                                                     check.run();
                                                                     op.markDispatched();
                                                                 })
                                                         : batching
                                                                 ? adapter.setParameters(
-                                                                        target.device,
-                                                                        trackUuid,
-                                                                        entries,
-                                                                        check,
-                                                                        () -> {
+                                                                        target.source, entries, check, () -> {
                                                                             check.run();
                                                                             op.markDispatched();
                                                                         })
                                                                 : writing
                                                                         ? GridDiff.shape(
                                                                                 adapter.setParameter(
-                                                                                        target.device,
-                                                                                        trackUuid,
+                                                                                        target.source,
                                                                                         moduleId,
                                                                                         parameterId,
                                                                                         request,
@@ -572,15 +562,13 @@ final class GridModule implements HostModule {
                                                                                 true)
                                                                         : inspection
                                                                                 ? adapter.parameter(
-                                                                                        target.device,
-                                                                                        trackUuid,
+                                                                                        target.source,
                                                                                         moduleId,
                                                                                         parameterId,
                                                                                         fullSteps,
                                                                                         check)
                                                                                 : adapter.snapshot(
-                                                                                        target.device,
-                                                                                        trackUuid,
+                                                                                        target.source,
                                                                                         offset,
                                                                                         limit,
                                                                                         parameters,
@@ -614,7 +602,6 @@ final class GridModule implements HostModule {
         scheduler.check(op);
         String trackId = device.substring(0, device.indexOf('/'));
         if (adapter == null) adapter = new Bitwig614GridAdapter(natives.get(op).access());
-        UUID trackUuid = UUID.fromString(trackId);
         java.util.List<DeviceSources.RootReadTicket> targets = sources.rootReads(trackId);
         adapter.execute(() -> {
             try {
@@ -624,7 +611,7 @@ final class GridModule implements HostModule {
                         target.check();
                     };
                     check.run();
-                    JsonObject value = adapter.ackTopology(target.device, trackUuid, device, check);
+                    JsonObject value = adapter.ackTopology(target.source, device, check);
                     if (value != null) {
                         deliver(op, target, () -> {}, true, check, value);
                         return;

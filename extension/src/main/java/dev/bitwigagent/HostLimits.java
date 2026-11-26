@@ -6,8 +6,9 @@ import dev.bitwigagent.core.MethodSpecs;
 final class HostLimits {
     static final MethodSpecs.Limits LIMITS = MethodSpecs.load().limits();
     static final int TRACKS = LIMITS.trackWindow, SCENES = LIMITS.sceneWindow;
-    static final int DEVICES = LIMITS.deviceWindow, SENDS = LIMITS.sendWindow, RESOLUTION = 16384;
-    static final double TOLERANCE = 1.0 / (RESOLUTION - 1) + 1e-9;
+    static final int DEVICES = LIMITS.deviceWindow, SENDS = LIMITS.sendWindow;
+    static final int RESOLUTION = LIMITS.parameterResolution;
+    static final double TOLERANCE = LIMITS.normalizedTolerance;
 
     private HostLimits() {}
 }

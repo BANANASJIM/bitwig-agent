@@ -1,10 +1,10 @@
 package dev.bitwigagent;
 
+import static dev.bitwigagent.DeviceSources.Native.Field.*;
+import static dev.bitwigagent.DeviceSources.Native.Kind.*;
 import static dev.bitwigagent.GridSnapshotReader.Field.*;
 import static dev.bitwigagent.GridSnapshotReader.Kind.*;
 import static dev.bitwigagent.GridSnapshotReader.Metadata.*;
-import static dev.bitwigagent.NativeDeviceTarget.Field.*;
-import static dev.bitwigagent.NativeDeviceTarget.Kind.*;
 import static dev.bitwigagent.RpcAssert.*;
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -510,9 +510,11 @@ public final class GridSnapshotReaderTest {
                         .isEmpty(),
                 "catalog is independent of native device ownership");
         Fixture absentRequest = new Fixture();
-        assertRpcError(
-                "native_unavailable",
-                () -> absentRequest.reader.snapshot(absentRequest.proxy, null, 0, 64, true, () -> {}));
+        assertRpcError("native_unavailable", () -> {
+            absentRequest.source = HostFixture.freshRootSource(TRACK_ID);
+            absentRequest.source.track.id = null;
+            absentRequest.reader.snapshot(absentRequest.source, 0, 64, true, () -> {});
+        });
         assertTrue(absentRequest.targetReads == 0, "missing expected UUID fails before native target resolution");
     }
 
@@ -577,7 +579,7 @@ public final class GridSnapshotReaderTest {
         int[] calls = {0};
         assertRpcError(
                 "cancelled",
-                () -> cancelled.reader.snapshot(cancelled.proxy, TRACK_ID, 0, 64, true, () -> {
+                () -> cancelled.reader.snapshot(cancelled.source, 0, 64, true, () -> {
                     if (++calls[0] == 3) throw Errors.notApplied(Reason.CANCELLED, "cancelled mid-traversal");
                 }));
         assertTrue(cancelled.closed == 1, "cancellation closes active stream");
@@ -903,10 +905,9 @@ public final class GridSnapshotReaderTest {
         int[] calls = {0};
         assertRpcError(
                 "cancelled",
-                () -> cancelled.reader.parameter(
-                        cancelled.proxy, TRACK_ID, new UUID(1, 1), "LOCAL_ID", context.reader, () -> {
-                            if (++calls[0] == 5) throw Errors.notApplied(Reason.CANCELLED, "cancelled");
-                        }));
+                () -> cancelled.reader.parameter(cancelled.source, new UUID(1, 1), "LOCAL_ID", context.reader, () -> {
+                    if (++calls[0] == 5) throw Errors.notApplied(Reason.CANCELLED, "cancelled");
+                }));
         assertTrue(cancelled.closed > 0, "cancelled exact lookup closes native streams");
     }
 
@@ -1008,8 +1009,7 @@ public final class GridSnapshotReaderTest {
         foreignProject.values.put(GridParameterContext.Field.PARAMETER_PROJECT, new Object());
         assertRpcError("stale_context", () -> inspect(f, foreignProject, "LOCAL_ID"));
         assertRpcError(
-                "native_unavailable",
-                () -> f.reader.parameter(f.proxy, TRACK_ID, new UUID(1, 1), "LOCAL_ID", null, () -> {}));
+                "native_unavailable", () -> f.reader.parameter(f.source, new UUID(1, 1), "LOCAL_ID", null, () -> {}));
         assertTrue(
                 f.read(0, 64, true).getAsJsonArray("modules").size() == 2,
                 "unavailable inspection context does not disable ordinary graph reads");
@@ -1022,7 +1022,7 @@ public final class GridSnapshotReaderTest {
     }
 
     private static JsonObject inspect(Fixture f, ContextFixture context, String id) {
-        return f.reader.parameter(f.proxy, TRACK_ID, new UUID(1, 1), id, context.reader, () -> {});
+        return f.reader.parameter(f.source, new UUID(1, 1), id, context.reader, () -> {});
     }
 
     private static GridParameterWriter.Request request(String kind, String expected, String value) {
@@ -1077,7 +1077,7 @@ public final class GridSnapshotReaderTest {
     @Test
     void diagnosticsGateNativeIdentityAndModuleFilterSelectsRows() {
         Fixture f = inspectionFixture();
-        JsonObject quiet = f.reader.snapshot(f.proxy, TRACK_ID, 0, 64, true, false, null, () -> {});
+        JsonObject quiet = f.reader.snapshot(f.source, 0, 64, true, false, null, () -> {});
         JsonObject row = quiet.getAsJsonArray("modules").get(0).getAsJsonObject();
         assertTrue(
                 !row.has("modelClass")
@@ -1099,15 +1099,14 @@ public final class GridSnapshotReaderTest {
                                 .getAsJsonObject()
                                 .has("parameterId"),
                 "identity fields writes need stay in the default read");
-        JsonObject loud = f.reader.snapshot(f.proxy, TRACK_ID, 0, 64, true, true, null, () -> {});
+        JsonObject loud = f.reader.snapshot(f.source, 0, 64, true, true, null, () -> {});
         assertTrue(
                 loud.getAsJsonArray("modules").get(0).getAsJsonObject().has("modelClass")
                         && loud.has("coverage")
                         && loud.has("identityCaveat"),
                 "diagnostics restores native class/path and coverage prose");
         String second = new UUID(1, 2).toString(), absent = new UUID(9, 9).toString();
-        JsonObject filtered =
-                f.reader.snapshot(f.proxy, TRACK_ID, 0, 64, true, false, Set.of(second, absent), () -> {});
+        JsonObject filtered = f.reader.snapshot(f.source, 0, 64, true, false, Set.of(second, absent), () -> {});
         assertTrue(
                 filtered.getAsJsonArray("modules").size() == 1
                         && filtered.getAsJsonArray("modules")
@@ -1145,7 +1144,7 @@ public final class GridSnapshotReaderTest {
     }
 
     private static JsonObject batch(WriterFixture f, GridParameterWriter.Entry... entries) {
-        return f.writer.setAll(f.model.proxy, TRACK_ID, List.of(entries), () -> {}, () -> f.op.markDispatched());
+        return f.writer.setAll(f.model.source, List.of(entries), () -> {}, () -> f.op.markDispatched());
     }
 
     /** Settled without success: an error, a cancellation or a result with outcome unknown. */
@@ -1256,25 +1255,46 @@ public final class GridSnapshotReaderTest {
     }
 
     @Test
+    void theResolverFindsAModuleByUuidAndItsParameterByKeyOrNothing() {
+        Fixture f = new Fixture();
+        Node floating = f.parameter(FLOAT, f.first);
+        f.first.put(CHILDREN, List.of(floating));
+        DeviceSources.Native.Capture device = new DeviceSources.Native(f).capture(f.source, () -> {});
+        Object module = f.reader.owner(device, new UUID(1, 1), () -> {});
+        assertSame(f.first, module);
+        assertEquals("Effective module", f.reader.ownerName(module));
+        assertSame(floating, f.reader.parameter(module, "LOCAL_ID", () -> {}));
+        assertEquals("Native control", f.reader.parameterName(floating));
+        assertNull(f.reader.owner(device, new UUID(1, 9), () -> {}), "no such module");
+        assertNull(f.reader.parameter(module, "OTHER", () -> {}), "no such parameter");
+        f.unavailable.add(GridSnapshotReader.Metadata.PARAMETER_NAMES);
+        assertNull(f.reader.parameterName(floating), "unreadable names are null, not guessed");
+        f.device.put(GRAPH, null);
+        assertRpcError("kind_mismatch", () -> f.reader.owner(device, new UUID(1, 1), () -> {}));
+    }
+
+    @Test
     void bindingsRequireCurrentIdentity() {
         Fixture f = new Fixture();
         Node floating = f.parameter(FLOAT, f.first);
         f.first.put(CHILDREN, List.of(floating));
-        GridSnapshotReader.NativeTarget target = f.reader.target(f.proxy, TRACK_ID);
-        assertRpcError("stale_context", () -> f.reader.guardTarget(target, f.proxy, new UUID(9, 9)));
+        f.source = HostFixture.freshRootSource(TRACK_ID);
+        GridSnapshotReader.NativeTarget target = f.reader.target(f.source);
+        f.source.track.id = new UUID(9, 9).toString();
+        assertRpcError("stale_context", () -> f.reader.guardTarget(target));
+        f.source.track.id = TRACK_ID.toString();
         GridSnapshotReader.ParameterBinding scalar =
-                f.reader.bindParameter(f.proxy, TRACK_ID, new UUID(1, 1), "LOCAL_ID", () -> {});
+                f.reader.bindParameter(f.source, new UUID(1, 1), "LOCAL_ID", () -> {});
         assertRpcError("native_unavailable", () -> f.reader.bindBipolarParameter(scalar));
         assertRpcError("stale_context", () -> f.reader.detachedParameter(floating, () -> {}, new ArrayList<>()));
         f.first.put(INSTANCE_ID, "not a uuid");
         assertRpcError("native_unavailable", () -> f.reader.moduleIdNamed(target, "Effective module", () -> {}));
         f.parameters = false;
         assertRpcError(
-                "native_unavailable",
-                () -> f.reader.bindParameter(f.proxy, TRACK_ID, new UUID(1, 1), "LOCAL_ID", () -> {}));
+                "native_unavailable", () -> f.reader.bindParameter(f.source, new UUID(1, 1), "LOCAL_ID", () -> {}));
         PanelFixture panels = new PanelFixture();
         GridSnapshotReader.ParameterBinding panel =
-                panels.model.reader.bindParameter(panels.model.proxy, TRACK_ID, new UUID(1, 1), "PANEL_ID", () -> {});
+                panels.model.reader.bindParameter(panels.model.source, new UUID(1, 1), "PANEL_ID", () -> {});
         GridSnapshotReader.ParameterBinding coupled = panels.model.reader.bindBipolarParameter(panel);
         Node relinked = panels.model
                 .parameter(FLOAT, panels.model.first)
@@ -1309,19 +1329,16 @@ public final class GridSnapshotReaderTest {
                 new GridParameterWriter.Entry(new UUID(1, 1), "PANEL_ID", request("boolean", "true", "false"));
         assertRpcError(
                 "native_unavailable",
-                () -> none.set(
-                        panels.model.proxy, TRACK_ID, new UUID(1, 1), "PANEL_ID", panel.request, () -> {}, () -> {}));
+                () -> none.set(panels.model.source, new UUID(1, 1), "PANEL_ID", panel.request, () -> {}, () -> {}));
         assertRpcError(
-                "native_unavailable",
-                () -> none.setAll(panels.model.proxy, TRACK_ID, List.of(panel), () -> {}, () -> {}));
+                "native_unavailable", () -> none.setAll(panels.model.source, List.of(panel), () -> {}, () -> {}));
         StringFixture strings = new StringFixture();
         GridParameterWriter bare =
                 new GridParameterWriter(strings.model.reader, strings.context.reader, null, null, null);
         GridParameterWriter.Entry text =
                 new GridParameterWriter.Entry(new UUID(1, 1), "TEXT_ID", stringRequest("before", "x"));
         assertRpcError(
-                "native_unavailable",
-                () -> bare.setAll(strings.model.proxy, TRACK_ID, List.of(text), () -> {}, () -> {}));
+                "native_unavailable", () -> bare.setAll(strings.model.source, List.of(text), () -> {}, () -> {}));
         assertTrue(panels.calls == 0 && strings.calls == 0, "nothing is dispatched without a write binding");
     }
 
@@ -1351,8 +1368,7 @@ public final class GridSnapshotReaderTest {
         PanelFixture f = new PanelFixture();
         GridParameterWriter.Entry panel =
                 new GridParameterWriter.Entry(new UUID(1, 1), "PANEL_ID", request("boolean", "true", "false"));
-        JsonObject result =
-                f.writer.setAll(f.model.proxy, TRACK_ID, List.of(panel), () -> {}, () -> f.op.markDispatched());
+        JsonObject result = f.writer.setAll(f.model.source, List.of(panel), () -> {}, () -> f.op.markDispatched());
         JsonObject entry = result.getAsJsonArray("writes").get(0).getAsJsonObject();
         assertTrue(
                 f.calls == 1
@@ -1368,8 +1384,7 @@ public final class GridSnapshotReaderTest {
         PanelFixture broken = new PanelFixture();
         broken.model.first.put(CHILDREN, List.of(broken.panel));
         RpcException error = assertThrows(RpcException.class, () -> {
-            broken.writer.setAll(
-                    broken.model.proxy, TRACK_ID, List.of(panel), () -> {}, () -> broken.op.markDispatched());
+            broken.writer.setAll(broken.model.source, List.of(panel), () -> {}, () -> broken.op.markDispatched());
         });
         assertTrue(
                 !error.unknown && broken.calls == 0 && !broken.op.dispatched(),
@@ -1783,7 +1798,7 @@ public final class GridSnapshotReaderTest {
                 List.of(request("boolean", "true", "false"), request("boolean", "true", "true"))) {
             {
                 RpcException error = assertThrows(RpcException.class, () -> {
-                    writer.set(f.proxy, TRACK_ID, new UUID(1, 1), "TEXT_ID", request, () -> {}, () -> {
+                    writer.set(f.source, new UUID(1, 1), "TEXT_ID", request, () -> {}, () -> {
                         throw new AssertionError("String write dispatched");
                     });
                 });
@@ -1838,8 +1853,7 @@ public final class GridSnapshotReaderTest {
         }
 
         JsonObject set(GridParameterWriter.Request request) {
-            return writer.set(
-                    model.proxy, TRACK_ID, new UUID(1, 1), "TEXT_ID", request, () -> {}, () -> op.markDispatched());
+            return writer.set(model.source, new UUID(1, 1), "TEXT_ID", request, () -> {}, () -> op.markDispatched());
         }
 
         RpcException failure(GridParameterWriter.Request request) {
@@ -1950,16 +1964,9 @@ public final class GridSnapshotReaderTest {
                 new GridParameterWriter(absent.model.reader, absent.context.reader, null, null, null);
         {
             RpcException caught = assertThrows(RpcException.class, () -> {
-                none.set(
-                        absent.model.proxy,
-                        TRACK_ID,
-                        new UUID(1, 1),
-                        "TEXT_ID",
-                        stringRequest("before", "x"),
-                        () -> {},
-                        () -> {
-                            throw new AssertionError("dispatched without a string binding");
-                        });
+                none.set(absent.model.source, new UUID(1, 1), "TEXT_ID", stringRequest("before", "x"), () -> {}, () -> {
+                    throw new AssertionError("dispatched without a string binding");
+                });
             });
             assertTrue(
                     caught.reason.wire().equals("native_unavailable") && !caught.unknown,
@@ -1968,8 +1975,8 @@ public final class GridSnapshotReaderTest {
         StringFixture batch = new StringFixture();
         GridParameterWriter.Entry entry =
                 new GridParameterWriter.Entry(new UUID(1, 1), "TEXT_ID", stringRequest("before", "batched"));
-        JsonObject result = batch.writer.setAll(
-                batch.model.proxy, TRACK_ID, List.of(entry), () -> {}, () -> batch.op.markDispatched());
+        JsonObject result =
+                batch.writer.setAll(batch.model.source, List.of(entry), () -> {}, () -> batch.op.markDispatched());
         JsonObject item = result.getAsJsonArray("writes").get(0).getAsJsonObject();
         assertTrue(
                 batch.calls == 1
@@ -1983,7 +1990,7 @@ public final class GridSnapshotReaderTest {
         {
             RpcException caught = assertThrows(RpcException.class, () -> {
                 stalePre.writer.setAll(
-                        stalePre.model.proxy, TRACK_ID, List.of(bad), () -> {}, () -> stalePre.op.markDispatched());
+                        stalePre.model.source, List.of(bad), () -> {}, () -> stalePre.op.markDispatched());
             });
             assertTrue(!caught.unknown && stalePre.calls == 0, "stale string entry fails the batch preflight");
         }
@@ -2016,8 +2023,8 @@ public final class GridSnapshotReaderTest {
     @Test
     void booleanPanelInspectionKeepsScalarApplicabilityDistinct() {
         PanelFixture f = new PanelFixture();
-        JsonObject result = f.model.reader.parameter(
-                f.model.proxy, TRACK_ID, new UUID(1, 1), "PANEL_ID", f.context.reader, () -> {});
+        JsonObject result =
+                f.model.reader.parameter(f.model.source, new UUID(1, 1), "PANEL_ID", f.context.reader, () -> {});
         JsonObject panel = result.getAsJsonObject("parameter"), context = result.getAsJsonObject("editContext");
         assertTrue(
                 panel.get("kind").getAsString().equals("boolean")
@@ -2318,7 +2325,8 @@ public final class GridSnapshotReaderTest {
         project.context.values.put(NativeReadContext.Field.PROJECT, new Object());
         assertRpcError("stale_context", project.start(null));
         ModuleWriterFixture wrongTrack = new ModuleWriterFixture();
-        wrongTrack.trackId = new UUID(99, 99);
+        wrongTrack.model.source = HostFixture.freshRootSource(TRACK_ID);
+        wrongTrack.model.source.track.id = new UUID(99, 99).toString();
         assertRpcError("stale_context", wrongTrack.start(null));
         ModuleWriterFixture moved = new ModuleWriterFixture();
         moved.model.first.put(MODULE_GRAPH, new Node());
@@ -2405,8 +2413,7 @@ public final class GridSnapshotReaderTest {
         assertRpcError(
                 "unresolved",
                 () -> recreated.delete(
-                        deleteFailure.model.proxy,
-                        TRACK_ID,
+                        deleteFailure.model.source,
                         new UUID(1, 2),
                         () -> {},
                         () -> {
@@ -3039,8 +3046,7 @@ public final class GridSnapshotReaderTest {
         ModuleWriterFixture spare = new ModuleWriterFixture();
         new GridModuleWriter(spare.model.reader, spare.model, spare.context.reader, spare, cable.quarantine)
                 .delete(
-                        spare.model.proxy,
-                        TRACK_ID,
+                        spare.model.source,
                         spare.moduleId,
                         () -> {},
                         () -> otherDeviceDispatched[0] = true,
@@ -3053,8 +3059,7 @@ public final class GridSnapshotReaderTest {
         assertRpcError(
                 "unresolved",
                 () -> blocked.delete(
-                        modules.model.proxy,
-                        TRACK_ID,
+                        modules.model.source,
                         modules.moduleId,
                         () -> {},
                         () -> {
@@ -3180,7 +3185,7 @@ public final class GridSnapshotReaderTest {
                 Runnable dispatch,
                 java.util.function.Consumer<JsonObject> complete,
                 java.util.function.Consumer<Throwable> fail) {
-            writer.set(model.proxy, TRACK_ID, request, check, dispatch, complete, fail);
+            writer.set(model.source, request, check, dispatch, complete, fail);
         }
 
         void next() {
@@ -3198,15 +3203,14 @@ public final class GridSnapshotReaderTest {
                 Runnable dispatch,
                 java.util.function.Consumer<JsonObject> complete,
                 java.util.function.Consumer<Throwable> fail) {
-            writer.setAll(model.proxy, TRACK_ID, requests, check, dispatch, complete, fail);
+            writer.setAll(model.source, requests, check, dispatch, complete, fail);
         }
 
         HostOperation startBatch(List<GridConnectionWriter.Request> requests) {
             HostOperation op = new HostOperation(Long.MAX_VALUE);
             try {
                 writer.setAll(
-                        model.proxy,
-                        TRACK_ID,
+                        model.source,
                         requests,
                         () -> {
                             if (cancelled) throw Errors.notApplied(Reason.CANCELLED, "cancelled");
@@ -3248,7 +3252,7 @@ public final class GridSnapshotReaderTest {
         final java.util.function.Consumer<Runnable> queue;
         final GridTopologyQuarantine quarantine = new GridTopologyQuarantine(new Properties());
         final GridModuleWriter writer = new GridModuleWriter(model.reader, model, context.reader, this, quarantine);
-        UUID trackId = TRACK_ID, moduleId = new UUID(1, 1);
+        UUID moduleId = new UUID(1, 1);
         int calls;
         boolean apply = true, cancelled, moveSupported = true;
         HostOperation current;
@@ -3285,8 +3289,8 @@ public final class GridSnapshotReaderTest {
                 Runnable dispatch,
                 java.util.function.Consumer<JsonObject> complete,
                 java.util.function.Consumer<Throwable> fail) {
-            if (move == null) writer.delete(model.proxy, trackId, moduleId, check, dispatch, complete, fail);
-            else writer.move(model.proxy, trackId, moduleId, move, check, dispatch, complete, fail);
+            if (move == null) writer.delete(model.source, moduleId, check, dispatch, complete, fail);
+            else writer.move(model.source, moduleId, move, check, dispatch, complete, fail);
         }
 
         void next() {
@@ -3417,11 +3421,11 @@ public final class GridSnapshotReaderTest {
         }
 
         JsonObject set(GridParameterWriter.Request request, Runnable check, Runnable dispatch) {
-            return writer.set(model.proxy, TRACK_ID, new UUID(1, 1), "LOCAL_ID", request, check, dispatch);
+            return writer.set(model.source, new UUID(1, 1), "LOCAL_ID", request, check, dispatch);
         }
 
         JsonObject setAll(java.util.List<GridParameterWriter.Entry> entries, Runnable check, Runnable dispatch) {
-            return writer.setAll(model.proxy, TRACK_ID, entries, check, dispatch);
+            return writer.setAll(model.source, entries, check, dispatch);
         }
 
         /** The writer's failure as the request reports it: once dispatched, unknown. */
@@ -3496,8 +3500,7 @@ public final class GridSnapshotReaderTest {
         }
 
         JsonObject set(GridParameterWriter.Request request) {
-            return writer.set(
-                    model.proxy, TRACK_ID, new UUID(1, 1), "PANEL_ID", request, () -> {}, () -> op.markDispatched());
+            return writer.set(model.source, new UUID(1, 1), "PANEL_ID", request, () -> {}, () -> op.markDispatched());
         }
 
         RpcException failure() {
@@ -3607,7 +3610,7 @@ public final class GridSnapshotReaderTest {
             kinds.addAll(Arrays.asList(types));
         }
 
-        Node(NativeDeviceTarget.Kind type) {
+        Node(DeviceSources.Native.Kind type) {
             kinds.add(type);
         }
 
@@ -3616,7 +3619,7 @@ public final class GridSnapshotReaderTest {
             return this;
         }
 
-        Node put(NativeDeviceTarget.Field field, Object value) {
+        Node put(DeviceSources.Native.Field field, Object value) {
             values.put(field, value);
             return this;
         }
@@ -3625,6 +3628,7 @@ public final class GridSnapshotReaderTest {
     static final class Fixture implements GridSnapshotReader.Access {
         final GridSnapshotReader reader = new GridSnapshotReader(this);
         final Node proxy = new Node(), device = new Node(DEVICE), graph = new Node();
+        DeviceSources.Source source = HostFixture.rootSource(TRACK_ID);
         final Node owner = new Node(TRACK).put(TRACK_UUID, TRACK_ID);
         final Map<UUID, Node> types = new HashMap<>();
         final Set<GridSnapshotReader.Metadata> unavailable = EnumSet.noneOf(GridSnapshotReader.Metadata.class);
@@ -3692,16 +3696,17 @@ public final class GridSnapshotReaderTest {
         }
 
         JsonObject read(int offset, int limit, boolean parameters) {
-            return reader.snapshot(proxy, TRACK_ID, offset, limit, parameters, () -> {});
+            return reader.snapshot(source, offset, limit, parameters, () -> {});
         }
 
         @Override
-        public boolean is(NativeDeviceTarget.Kind kind, Object value) {
+        public boolean is(DeviceSources.Native.Kind kind, Object value) {
             return value instanceof Node && ((Node) value).kinds.contains(kind);
         }
 
         @Override
-        public Object read(NativeDeviceTarget.Field field, Object object) {
+        public Object read(DeviceSources.Native.Field field, Object object) {
+            if (object == source.device) object = proxy;
             if (object instanceof Node && ((Node) object).forbidden.contains(field))
                 throw new AssertionError("Forbidden native getter: " + field);
             if (failures.containsKey(field)) throw failures.get(field);

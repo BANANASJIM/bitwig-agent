@@ -50,13 +50,14 @@ public final class MethodSpecs {
                 deviceWindow,
                 sendWindow,
                 remotePageSlots,
+                parameterResolution,
                 minTimeoutMs,
                 maxRequestBytes,
                 maxResponseBytes,
                 defaultPort,
                 maxClipBeats,
                 responseGraceMs;
-        public final double beatGrid;
+        public final double beatGrid, normalizedTolerance;
 
         private Limits(JsonObject object) {
             trackWindow = integer(object, "trackWindow");
@@ -64,6 +65,7 @@ public final class MethodSpecs {
             deviceWindow = integer(object, "deviceWindow");
             sendWindow = integer(object, "sendWindow");
             remotePageSlots = integer(object, "remotePageSlots");
+            parameterResolution = integer(object, "parameterResolution");
             minTimeoutMs = integer(object, "minTimeoutMs");
             maxRequestBytes = integer(object, "maxRequestBytes");
             maxResponseBytes = integer(object, "maxResponseBytes");
@@ -71,14 +73,17 @@ public final class MethodSpecs {
             maxClipBeats = integer(object, "maxClipBeats");
             responseGraceMs = integer(object, "responseGraceMs");
             beatGrid = object.get("beatGrid").getAsDouble();
+            normalizedTolerance = object.get("normalizedTolerance").getAsDouble();
             if (Math.min(Math.min(trackWindow, sceneWindow), Math.min(deviceWindow, sendWindow)) < 1
                     || Math.min(remotePageSlots, minTimeoutMs) < 1
+                    || parameterResolution < 2
                     || Math.min(maxRequestBytes, maxResponseBytes) < 1
                     || defaultPort < 1
                     || defaultPort > 65535
                     || maxClipBeats < 1
                     || responseGraceMs < 2
-                    || !(beatGrid > 0)) throw new IllegalStateException("limits must be positive");
+                    || !(beatGrid > 0)
+                    || !(normalizedTolerance > 0)) throw new IllegalStateException("limits must be positive");
         }
     }
 
@@ -112,14 +117,41 @@ public final class MethodSpecs {
         }
     }
 
+    /** How a ref kind's fields are used: locate finds the object, compared must match, targetOnly when written. */
+    public static final class RefRoles {
+        public final List<String> locate, compared, targetOnly;
+
+        private RefRoles(JsonObject object) {
+            locate = Vocabulary.strings(object.getAsJsonArray("locate"));
+            compared = Vocabulary.strings(object.getAsJsonArray("compared"));
+            targetOnly = Vocabulary.strings(object.getAsJsonArray("targetOnly"));
+            if (locate.isEmpty()) throw new IllegalStateException("a ref kind needs a locating field");
+        }
+    }
+
     private final Map<String, Spec> hostMethods;
     private final Limits limits;
     private final Vocabulary vocabulary;
+    private final Map<String, RefRoles> refRoles;
+    private final Map<String, String> refReads;
+    private final List<String> parameterOwners;
 
-    private MethodSpecs(Map<String, Spec> hostMethods, Limits limits, Vocabulary vocabulary) {
+    private MethodSpecs(Map<String, Spec> hostMethods, Limits limits, Vocabulary vocabulary, JsonObject refs) {
         this.hostMethods = Collections.unmodifiableMap(hostMethods);
         this.limits = limits;
         this.vocabulary = vocabulary;
+        Map<String, RefRoles> roles = new TreeMap<>();
+        for (Map.Entry<String, JsonElement> entry :
+                refs.getAsJsonObject("roles").entrySet())
+            roles.put(entry.getKey(), new RefRoles(entry.getValue().getAsJsonObject()));
+        Map<String, String> reads = new TreeMap<>();
+        for (Map.Entry<String, JsonElement> entry :
+                refs.getAsJsonObject("reads").entrySet())
+            reads.put(entry.getKey(), entry.getValue().getAsString());
+        if (roles.isEmpty() || reads.isEmpty()) throw new IllegalStateException("no ref kinds");
+        this.refRoles = Collections.unmodifiableMap(roles);
+        this.refReads = Collections.unmodifiableMap(reads);
+        this.parameterOwners = Vocabulary.strings(refs.getAsJsonArray("parameterOwners"));
     }
 
     public static MethodSpecs load() {
@@ -143,7 +175,7 @@ public final class MethodSpecs {
                 if (flag(method, "host")) specs.put(entry.getKey(), spec(entry.getKey(), method, limits.minTimeoutMs));
             }
             if (specs.isEmpty()) throw new IllegalStateException("no host methods");
-            return new MethodSpecs(specs, limits, vocabulary);
+            return new MethodSpecs(specs, limits, vocabulary, root.getAsJsonObject("refs"));
         } catch (RuntimeException e) {
             throw new IllegalStateException("Protocol bundle " + RESOURCE + " is malformed: " + e.getMessage(), e);
         }
@@ -227,6 +259,19 @@ public final class MethodSpecs {
 
     public Set<String> methods() {
         return hostMethods.keySet();
+    }
+
+    public Map<String, RefRoles> refRoles() {
+        return refRoles;
+    }
+
+    /** By variant tag (see {@link Refs#tag}), the read method that returns refs of that variant. */
+    public Map<String, String> refReads() {
+        return refReads;
+    }
+
+    public List<String> parameterOwners() {
+        return parameterOwners;
     }
 
     public boolean contains(String method) {

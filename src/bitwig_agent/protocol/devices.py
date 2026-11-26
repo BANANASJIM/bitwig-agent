@@ -17,8 +17,8 @@ from bitwig_agent.protocol.base import (
     StatusArgs,
     StrictModel,
     ToolSpec,
-    TrackId,
     UnitValue,
+    Uuid,
     omitted,
     validate_local_path,
 )
@@ -28,7 +28,7 @@ ANCHOR_FIELDS = frozenset({"deviceIndex", "expectedDeviceName"})
 
 
 class DeviceParent(StrictModel):
-    trackId: TrackId
+    trackId: Uuid
     deviceIndex: int = Field(ge=0, le=DEVICE_WINDOW - 1)
     expectedDeviceName: Nonempty
 
@@ -97,7 +97,7 @@ class DeviceMoveArgs(ParameterArgs):
 
 
 class LayerInsertArgs(LayerListArgs):
-    layerId: TrackId
+    layerId: Uuid
     expectedChildCount: int = Field(ge=0, le=4096)
     kind: Literal["bitwig", "vst2", "vst3", "clap", "file"]
     id: Nonempty = omitted()
@@ -127,7 +127,7 @@ class RemoteSetArgs(ParameterArgs):
 class RemoteSlotSpec(StrictModel):
     """One Remote Control slot: a scalar Grid parameter by module (exactly one of moduleId or moduleName) and parameterId."""
 
-    moduleId: TrackId = omitted(description="Current module instanceId from grid.get.")
+    moduleId: Uuid = omitted(description="Current module instanceId from grid.get.")
     moduleName: str = omitted(
         min_length=1,
         max_length=MAX_STRING_UNITS,

@@ -6,11 +6,13 @@ import com.google.gson.*;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
+import java.util.IdentityHashMap;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
 /** Public API device operations, addressed through fixed, initialization-time bank proxies. */
-final class DeviceModule implements HostModule {
+final class DeviceModule implements HostModule, ParameterResolver.RemotePages {
     static final Set<String> METHODS = Set.of(
             "devices.get",
             "devices.set",
@@ -32,6 +34,7 @@ final class DeviceModule implements HostModule {
     private final TransportSafety transportSafety;
     private final SelectionLease selection;
     private final Source[][] sources = new Source[HostLimits.TRACKS][HostLimits.DEVICES];
+    private final Map<DeviceSources.Source, Source> remoteSources = new IdentityHashMap<>();
     private final InsertionPoint[] ends = new InsertionPoint[HostLimits.TRACKS];
     private final boolean[] countObserved = new boolean[HostLimits.TRACKS];
     private final long[] countSequence = new long[HostLimits.TRACKS];
@@ -63,6 +66,7 @@ final class DeviceModule implements HostModule {
             for (int d = 0; d < HostLimits.DEVICES; d++) {
                 Source source = new Source(deviceSources.roots[t][d], d);
                 sources[t][d] = source;
+                remoteSources.put(source.identity, source);
                 source.identity.listeners.add((structural, name) -> {
                     if (structural) invalidateRemotes(source);
                     if (source.remoteFlushPending) requestRemoteFlush(source);
@@ -207,11 +211,58 @@ final class DeviceModule implements HostModule {
     private static void requireRemotePage(Source source) {
         if (source.remoteRebindPending)
             throw Errors.notApplied(Reason.NOT_READY, "Remote source rebind awaits a host flush.");
-        if (!source.pageNamesObserved
-                || !source.pageCountObserved
-                || !source.pageIndexObserved
-                || !source.pageNameObserved)
+        if (!pageMetadataObserved(source))
             throw Errors.notApplied(Reason.NOT_READY, "Remote page metadata has not been observed.");
+    }
+
+    private static boolean pageMetadataObserved(Source source) {
+        return source.pageNamesObserved
+                && source.pageCountObserved
+                && source.pageIndexObserved
+                && source.pageNameObserved;
+    }
+
+    private Source remoteSource(DeviceSources.Source device) {
+        Source source = remoteSources.get(device);
+        if (source == null)
+            throw Errors.notApplied(
+                    Reason.UNSUPPORTED_SCOPE, "Remote Controls pages of a device inside a chain are not observed.");
+        return source;
+    }
+
+    @Override
+    public String[] pages(DeviceSources.Source device) {
+        Source source = remoteSource(device);
+        return !source.remoteRebindPending && pageMetadataObserved(source)
+                ? source.page.pageNames().get()
+                : null;
+    }
+
+    @Override
+    public int selectedPage(DeviceSources.Source device) {
+        return remoteSource(device).page.selectedPageIndex().get();
+    }
+
+    @Override
+    public long generation(DeviceSources.Source device) {
+        return remoteSource(device).remoteGeneration;
+    }
+
+    @Override
+    public ParameterResolver.Control control(DeviceSources.Source device, int slot) {
+        Source source = remoteSource(device);
+        RemoteControl control = source.controls[slot];
+        Boolean exists = source.controlExistsObserved[slot] ? control.exists().get() : null;
+        boolean readable = Boolean.TRUE.equals(exists) && !source.controlRebindPending[slot];
+        boolean ready = readable
+                && source.controlMappingObserved[slot]
+                && source.controlValuesObserved[slot]
+                && !control.isBeingMapped().get()
+                && Double.isFinite(control.value().get());
+        return new ParameterResolver.Control(
+                exists,
+                readable && source.controlNamesObserved[slot] ? control.name().get() : null,
+                ready);
     }
 
     private void remoteWrite(HostOperation op, String method, JsonObject p, Target target) {

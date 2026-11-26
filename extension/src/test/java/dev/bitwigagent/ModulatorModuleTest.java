@@ -110,7 +110,7 @@ public final class ModulatorModuleTest {
         f.host.next();
         assertTrue(
                 op.result.join().getAsJsonObject("parent").get("deviceIndex").getAsInt() == 1
-                        && f.adapter.proxy == f.host.services.sources.roots[0][0].device,
+                        && f.adapter.source == f.host.services.sources.roots[0][0],
                 "root authority resolves absolute index in the observed nonzero window, not a separate bank");
         assertRpcError("outside_window", f.start("modulators.list", request()));
         f.devices.child("itemCount").emit(1);
@@ -462,7 +462,7 @@ public final class ModulatorModuleTest {
         UUID currentId = UUID.fromString(HostFixture.B);
         Runnable during = () -> {};
         JsonObject last;
-        Object proxy;
+        DeviceSources.Source source;
         int reads;
         boolean onDocument;
         String extra;
@@ -489,9 +489,9 @@ public final class ModulatorModuleTest {
         }
 
         @Override
-        public JsonObject list(Object proxy, UUID track, int offset, int limit, Runnable check) {
+        public JsonObject list(DeviceSources.Source source, int offset, int limit, Runnable check) {
             check.run();
-            this.proxy = proxy;
+            this.source = source;
             reads++;
             during.run();
             check.run();
@@ -515,9 +515,9 @@ public final class ModulatorModuleTest {
         }
 
         @Override
-        public JsonObject parameter(Object proxy, UUID track, UUID modulator, String id, Runnable check) {
+        public JsonObject parameter(DeviceSources.Source source, UUID modulator, String id, Runnable check) {
             check.run();
-            this.proxy = proxy;
+            this.source = source;
             reads++;
             during.run();
             check.run();

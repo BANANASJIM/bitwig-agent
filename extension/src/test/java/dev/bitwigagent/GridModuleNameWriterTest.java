@@ -1,10 +1,10 @@
 package dev.bitwigagent;
 
+import static dev.bitwigagent.DeviceSources.Native.Field.*;
 import static dev.bitwigagent.GridSnapshotReader.Field.*;
 import static dev.bitwigagent.GridSnapshotReader.Kind.*;
 import static dev.bitwigagent.GridSnapshotReader.Metadata.*;
 import static dev.bitwigagent.GridSnapshotReaderTest.Node;
-import static dev.bitwigagent.NativeDeviceTarget.Field.*;
 import static dev.bitwigagent.RpcAssert.*;
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -474,7 +474,7 @@ public final class GridModuleNameWriterTest {
                 Runnable dispatch,
                 Consumer<JsonObject> complete,
                 Consumer<Throwable> fail) {
-            writer.rename(model.proxy, TRACK, moduleId, request, check, dispatch, complete, fail);
+            writer.rename(model.source, moduleId, request, check, dispatch, complete, fail);
         }
 
         void population(int count) {

@@ -52,11 +52,10 @@ final class RoutingModule implements HostModule {
                 TrackRef self, List<TrackRef> bank, JsonObject params, Runnable check, Runnable beforeWrite);
 
         JsonObject sidechainGet(
-                Object deviceProxy, String trackId, List<TrackRef> bank, boolean includeChoices, Runnable check);
+                DeviceSources.Source device, List<TrackRef> bank, boolean includeChoices, Runnable check);
 
         JsonObject sidechainSet(
-                Object deviceProxy,
-                String trackId,
+                DeviceSources.Source device,
                 List<TrackRef> bank,
                 JsonObject params,
                 Runnable check,
@@ -352,10 +351,10 @@ final class RoutingModule implements HostModule {
                             result = bridge.trackSet(target, bank, p, check, beforeWrite);
                             break;
                         case "devices.sidechain.get":
-                            result = bridge.sidechainGet(ticket.device, id, bank, choices, check);
+                            result = bridge.sidechainGet(ticket.source, bank, choices, check);
                             break;
                         default:
-                            result = bridge.sidechainSet(ticket.device, id, bank, p, check, beforeWrite);
+                            result = bridge.sidechainSet(ticket.source, bank, p, check, beforeWrite);
                     }
                     scheduler.schedule(
                             op,

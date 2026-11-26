@@ -13,8 +13,7 @@ interface GridAdapter {
     JsonObject catalog(String query, int offset, int limit, Runnable check);
 
     JsonObject snapshot(
-            Object deviceProxy,
-            UUID expectedTrackId,
+            DeviceSources.Source source,
             int offset,
             int limit,
             boolean parameters,
@@ -24,35 +23,20 @@ interface GridAdapter {
             Runnable check);
 
     JsonObject parameter(
-            Object deviceProxy,
-            UUID expectedTrackId,
-            UUID moduleId,
-            String parameterId,
-            boolean fullSteps,
-            Runnable check);
+            DeviceSources.Source source, UUID moduleId, String parameterId, boolean fullSteps, Runnable check);
 
-    JsonObject voicing(Object deviceProxy, UUID expectedTrackId, Runnable check);
+    JsonObject voicing(DeviceSources.Source source, Runnable check);
 
     JsonObject setVoicing(
-            Object deviceProxy,
-            UUID expectedTrackId,
-            GridVoicingWriter.Request request,
-            Runnable check,
-            Runnable dispatch);
+            DeviceSources.Source source, GridVoicingWriter.Request request, Runnable check, Runnable dispatch);
 
     JsonObject defineRemotePage(
-            Object deviceProxy,
-            UUID expectedTrackId,
-            GridRemotePageWriter.Request request,
-            Runnable check,
-            Runnable dispatch);
+            DeviceSources.Source source, GridRemotePageWriter.Request request, Runnable check, Runnable dispatch);
 
-    JsonObject deleteRemotePage(
-            Object deviceProxy, UUID expectedTrackId, String pageName, Runnable check, Runnable dispatch);
+    JsonObject deleteRemotePage(DeviceSources.Source source, String pageName, Runnable check, Runnable dispatch);
 
     JsonObject setParameter(
-            Object deviceProxy,
-            UUID expectedTrackId,
+            DeviceSources.Source source,
             UUID moduleId,
             String parameterId,
             GridParameterWriter.Request request,
@@ -60,15 +44,13 @@ interface GridAdapter {
             Runnable dispatch);
 
     JsonObject setParameters(
-            Object deviceProxy,
-            UUID expectedTrackId,
+            DeviceSources.Source source,
             java.util.List<GridParameterWriter.Entry> writes,
             Runnable check,
             Runnable dispatch);
 
     void moveModule(
-            Object deviceProxy,
-            UUID expectedTrackId,
+            DeviceSources.Source source,
             UUID moduleId,
             GridModuleWriter.Move request,
             Runnable check,
@@ -77,8 +59,7 @@ interface GridAdapter {
             Consumer<Throwable> fail);
 
     void deleteModule(
-            Object deviceProxy,
-            UUID expectedTrackId,
+            DeviceSources.Source source,
             UUID moduleId,
             Runnable check,
             Runnable dispatch,
@@ -86,8 +67,7 @@ interface GridAdapter {
             Consumer<Throwable> fail);
 
     void renameModule(
-            Object deviceProxy,
-            UUID expectedTrackId,
+            DeviceSources.Source source,
             UUID moduleId,
             GridModuleNameWriter.Request request,
             Runnable check,
@@ -96,8 +76,7 @@ interface GridAdapter {
             Consumer<Throwable> fail);
 
     void setConnections(
-            Object deviceProxy,
-            UUID expectedTrackId,
+            DeviceSources.Source source,
             java.util.List<GridConnectionWriter.Request> requests,
             Runnable check,
             Runnable dispatch,
@@ -105,8 +84,7 @@ interface GridAdapter {
             Consumer<Throwable> fail);
 
     void insertModule(
-            Object deviceProxy,
-            UUID expectedTrackId,
+            DeviceSources.Source source,
             GridInsertionWriter.Request request,
             Runnable check,
             Runnable dispatch,
@@ -114,8 +92,7 @@ interface GridAdapter {
             Consumer<Throwable> fail);
 
     void insertModules(
-            Object deviceProxy,
-            UUID expectedTrackId,
+            DeviceSources.Source source,
             java.util.List<GridInsertionWriter.Request> requests,
             java.util.function.LongSupplier timeLeft,
             Runnable check,
@@ -123,11 +100,10 @@ interface GridAdapter {
             Consumer<JsonObject> complete,
             Consumer<Throwable> fail);
     /** Re-verifies a held device and releases its topology hold if consistent; null when the proxy is another device. */
-    JsonObject ackTopology(Object deviceProxy, UUID expectedTrackId, String device, Runnable check);
+    JsonObject ackTopology(DeviceSources.Source source, String device, Runnable check);
 
     void setConnection(
-            Object deviceProxy,
-            UUID expectedTrackId,
+            DeviceSources.Source source,
             GridConnectionWriter.Request request,
             Runnable check,
             Runnable dispatch,

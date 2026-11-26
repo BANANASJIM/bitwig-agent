@@ -4,6 +4,7 @@ from typing import Any
 
 from bitwig_agent.protocol.base import vocabulary
 from bitwig_agent.protocol.limits import bundle_limits
+from bitwig_agent.protocol.refs import bundle_refs
 from bitwig_agent.protocol.registry import TOOLS
 
 
@@ -11,6 +12,7 @@ def export_bundle() -> dict[str, Any]:
     return {
         **vocabulary(),
         "limits": bundle_limits(),
+        "refs": bundle_refs(),
         "methods": {
             name: {
                 "host": spec.host,

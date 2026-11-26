@@ -6,6 +6,9 @@ SCENE_WINDOW = 16
 DEVICE_WINDOW = 16
 SEND_WINDOW = 8
 REMOTE_PAGE_SLOTS = 8
+PARAMETER_RESOLUTION = 16384
+# One host step of a normalized value; the 1e-9 absorbs float rounding of the step.
+NORMALIZED_TOLERANCE = 1 / (PARAMETER_RESOLUTION - 1) + 1e-9
 
 MIN_TIMEOUT_MS = 100
 DEFAULT_TIMEOUT_MS = 5000
@@ -41,6 +44,8 @@ def bundle_limits() -> dict[str, int | float]:
         "deviceWindow": DEVICE_WINDOW,
         "sendWindow": SEND_WINDOW,
         "remotePageSlots": REMOTE_PAGE_SLOTS,
+        "parameterResolution": PARAMETER_RESOLUTION,
+        "normalizedTolerance": NORMALIZED_TOLERANCE,
         "minTimeoutMs": MIN_TIMEOUT_MS,
         "maxRequestBytes": MAX_REQUEST_BYTES,
         "maxResponseBytes": MAX_RESPONSE_BYTES,
