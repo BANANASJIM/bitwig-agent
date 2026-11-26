@@ -74,7 +74,7 @@ SKIPS: dict[tuple[str, str, str], str] = {
             f,
             "accept",
         ): "endBeats must exceed startBeats by at most 65536, so a bound on one side is reachable only with a matching partner; rejects still run"
-        for m in ("export.audio", "bounce.inPlace")
+        for m in ("export.audio", "tracks.bounce")
         for f in ("startBeats", "endBeats")
     },
 }
@@ -266,6 +266,8 @@ def vary(item, i):
 def generate(schema, defs):  # noqa: PLR0911
     """A minimal valid value for a schema node (cross-field rules are not modelled)."""
     schema = variants(schema, defs)[0]
+    if "const" in schema:
+        return schema["const"]
     if "enum" in schema:
         return schema["enum"][0]
     kind = schema.get("type")
@@ -310,6 +312,8 @@ def ensure(root, path, schema, defs):
         if isinstance(key, int):
             if not node:
                 node.append(container(node_schema, defs))
+            elif not isinstance(node[key], dict | list):
+                node[key] = container(node_schema, defs)
             node = node[key]
         else:
             if not isinstance(node.get(key), dict | list):

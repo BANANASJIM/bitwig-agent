@@ -22,12 +22,12 @@ ACK_DESCRIPTION = (
     "admits writes again (jobs.get keeps reporting it)."
 )
 JOBS_GET_DESCRIPTION = (
-    "State of a long operation (export.audio, bounce.inPlace, project.saveAs) that outlived its request: the request "
+    "State of a long operation (export.audio, tracks.bounce, project.saveAs) that outlived its request: the request "
     "returned outcome unknown, reason deadline, with job=<id>. Returns job {id, method, state "
     "running|completed|unknown|dispatching, outcome (only once completed: applied when verified, not_applied when "
     "nothing changed, else unknown with a reason), ...}; a completed job is verified now (files, arranger readback, "
     "project file and name). Only the current job of its kind is known. A bounce whose first verification is unknown "
-    "refuses further bounces until you inspect arranger.clips.list and ack the hold. Read-only."
+    "refuses further bounces until you inspect arranger.list and ack the hold. Read-only."
 )
 
 SPECS: dict[str, ToolSpec] = {

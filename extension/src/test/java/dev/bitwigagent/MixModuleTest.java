@@ -459,7 +459,7 @@ public final class MixModuleTest {
         HostOperation group = f.submit(module, "tracks.delete", delete(HostFixture.B, "Track 1"));
         f.next();
         assertTrue(!assertRpcError("unsupported_scope", group).unknown && f.tracks[1].actions == 0, "group refused");
-        // An instrument track that bounce.inPlace turned Hybrid stays deletable.
+        // An instrument track that tracks.bounce turned Hybrid stays deletable.
         f.tracks[1].child("trackType").emit("Hybrid");
         f.transport.child("isPlaying").emit(true);
         HostOperation playing = f.submit(module, "tracks.delete", delete(HostFixture.B, "Track 1"));

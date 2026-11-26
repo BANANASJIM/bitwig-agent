@@ -108,7 +108,7 @@ final class TestServices {
     }
 
     RenderModule render(RenderModule.Access access) {
-        return new RenderModule(scheduler, window, project, transportSafety, natives, holds, access);
+        return new RenderModule(scheduler, window, trackRefs, project, transportSafety, natives, holds, access);
     }
 
     RoutingModule routing(MethodSpecs specs, RoutingModule.Access access) {
