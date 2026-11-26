@@ -392,6 +392,7 @@ final class LauncherFake {
         sceneModule = services.scene();
         for (HostModule module : List.of(launcher, noteModule, clipModule, sceneModule))
             for (String method : module.methods()) modules.put(method, module);
+        tasks.advance(ProjectState.SETTLE_NANOS);
         initialised = true;
     }
 
