@@ -1,51 +1,35 @@
 package dev.bitwigagent;
 
+import static dev.bitwigagent.RpcAssert.*;
+import static org.junit.jupiter.api.Assertions.*;
+
 import com.google.gson.*;
 import java.util.List;
+import org.junit.jupiter.api.Test;
 
 /** Deterministic consumer tests; these do not establish native host tempo or seek behavior. */
 public final class TransportModuleTest {
-    private static int assertions;
 
-    public static void main(String[] args) throws InterruptedException {
-        readsExposeActualValuesAndUnits();
-        rejectsInvalidAndEmptyRequestsBeforeScheduling();
-        optionalFieldsRemainUnchanged();
-        recordingAndAutomationGuardPlaybackButNotStop();
-        requiresFreshObservation();
-        expiredAndCancelledWorkNeverWrites();
-        midOperationGuardStopsRemainingFields();
-        stopIsObservedBeforeSeeking();
-        lateStopDoesNotSeekAfterObservationBudget();
-        cancelledStopDoesNotSeekLater();
-        shortTimeoutYieldsBoundedNotObservedNotDeadlineExceeded();
-        safetyChangeWhileStoppingPreventsSeek();
-        sharedSafetyRequiresObservationsButAllowsStop();
-        timeSignatureIsValidatedWrittenAndReadBack();
-        guideSettingsAreReadWrittenAndVerified();
-        storedValueOutsideOptionsCanBeWrittenBack();
-        observedValueWinsWhenGetDisagrees();
-        System.out.println("TransportModuleTest: " + assertions + " assertions passed (simulated host only)");
-    }
-
-    private static void readsExposeActualValuesAndUnits() {
-        TransportMixFixture f = new TransportMixFixture();
+    @Test
+    void readsExposeActualValuesAndUnits() {
+        HostFixture f = new HostFixture();
         TransportModule module = new TransportModule(f.services);
         JsonObject read = f.call(module, "transport.get", new JsonObject());
-        check(read.get("tempoBpm").getAsDouble() == 120, "tempo is raw BPM, not normalized");
-        check(read.get("positionBeats").getAsDouble() == 0, "current playback position read");
-        check(read.getAsJsonObject("units").get("tempoBpm").getAsString().equals("bpm_raw"), "BPM unit explicit");
-        check(
+        assertTrue(read.get("tempoBpm").getAsDouble() == 120, "tempo is raw BPM, not normalized");
+        assertTrue(read.get("positionBeats").getAsDouble() == 0, "current playback position read");
+        assertTrue(read.getAsJsonObject("units").get("tempoBpm").getAsString().equals("bpm_raw"), "BPM unit explicit");
+        assertTrue(
                 read.has("arrangerRecordEnabled")
                         && read.has("arrangerAutomationWriteEnabled")
                         && read.has("clipLauncherAutomationWriteEnabled"),
                 "safety states exposed");
-        check(read.getAsJsonObject("tempoRange").get("maximum").getAsInt() == 666, "supported range metadata");
-        check(f.bankCreations == 1, "transport does not create an extra track bank");
+        assertTrue(read.getAsJsonObject("tempoRange").get("maximum").getAsInt() == 666, "supported range metadata");
+        assertTrue(f.host.calls("createTrackBank") == 1, "transport does not create an extra track bank");
     }
 
-    private static void rejectsInvalidAndEmptyRequestsBeforeScheduling() {
-        TransportMixFixture f = new TransportMixFixture();
+    @Test
+    void rejectsInvalidAndEmptyRequestsBeforeScheduling() {
+        HostFixture f = new HostFixture();
         TransportModule module = new TransportModule(f.services);
         for (String text : List.of(
                 "{}",
@@ -58,87 +42,86 @@ public final class TransportModuleTest {
                 "{\"loopEnabled\":null}",
                 "{\"recording\":true}",
                 "{\"loopStartBeats\":1e308,\"loopDurationBeats\":1e308}")) {
-            TransportMixFixture.error(
-                    f.submit(module, "transport.set", TransportMixFixture.json(text)), "invalid_params");
-            check(f.tasks.isEmpty(), "invalid request must not schedule host work: " + text);
+            assertRpcError("invalid_params", f.submit(module, "transport.set", HostFixture.json(text)));
+            assertTrue(f.tasks.isEmpty(), "invalid request must not schedule host work: " + text);
         }
         for (double invalid : new double[] {Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY}) {
             JsonObject p = new JsonObject();
             p.addProperty("tempoBpm", invalid);
-            TransportMixFixture.error(f.submit(module, "transport.set", p), "invalid_params");
-            check(f.tasks.isEmpty(), "nonfinite BPM must not schedule");
+            assertRpcError("invalid_params", f.submit(module, "transport.set", p));
+            assertTrue(f.tasks.isEmpty(), "nonfinite BPM must not schedule");
         }
-        TransportMixFixture.error(
-                f.submit(module, "transport.get", TransportMixFixture.json("{\"playing\":false}")), "invalid_params");
-        check(f.tasks.isEmpty(), "reads reject extra fields");
-        TransportModule.validateParams("transport.set", TransportMixFixture.json("{\"tempoBpm\":20}"));
-        TransportModule.validateParams("transport.set", TransportMixFixture.json("{\"tempoBpm\":666}"));
+        assertRpcError("invalid_params", f.submit(module, "transport.get", HostFixture.json("{\"playing\":false}")));
+        assertTrue(f.tasks.isEmpty(), "reads reject extra fields");
+        TransportModule.validateParams("transport.set", HostFixture.json("{\"tempoBpm\":20}"));
+        TransportModule.validateParams("transport.set", HostFixture.json("{\"tempoBpm\":666}"));
     }
 
-    private static void optionalFieldsRemainUnchanged() {
-        TransportMixFixture f = new TransportMixFixture();
+    @Test
+    void optionalFieldsRemainUnchanged() {
+        HostFixture f = new HostFixture();
         TransportModule module = new TransportModule(f.services);
-        JsonObject result = f.call(module, "transport.set", TransportMixFixture.json("{\"metronome\":true}"));
-        check(result.get("matchesRequested").getAsBoolean(), "explicit metronome setter observes callback");
-        check(f.transport.child("isMetronomeEnabled").writes == 1, "only supplied field written");
-        check(
+        JsonObject result = f.call(module, "transport.set", HostFixture.json("{\"metronome\":true}"));
+        assertTrue(result.get("matchesRequested").getAsBoolean(), "explicit metronome setter observes callback");
+        assertTrue(f.transport.child("isMetronomeEnabled").writes == 1, "only supplied field written");
+        assertTrue(
                 f.transport.child("tempo").child("value").writes == 0 && f.transport.actions == 0,
                 "tempo and playback left alone");
-        check(f.transport.child("arrangerLoopDuration").writes == 0, "omitted loop duration left alone");
-        result = f.call(module, "transport.set", TransportMixFixture.json("{\"metronome\":true}"));
-        check(
+        assertTrue(f.transport.child("arrangerLoopDuration").writes == 0, "omitted loop duration left alone");
+        result = f.call(module, "transport.set", HostFixture.json("{\"metronome\":true}"));
+        assertTrue(
                 result.getAsJsonObject("fields")
                         .getAsJsonObject("metronome")
                         .get("verification")
                         .getAsString()
                         .equals("already_at_value"),
                 "idempotent no-op explicit");
-        check(f.transport.child("isMetronomeEnabled").writes == 1, "no redundant write for matching value");
+        assertTrue(f.transport.child("isMetronomeEnabled").writes == 1, "no redundant write for matching value");
     }
 
-    private static void recordingAndAutomationGuardPlaybackButNotStop() {
+    @Test
+    void recordingAndAutomationGuardPlaybackButNotStop() {
         for (String safety : List.of(
                 "isArrangerRecordEnabled",
                 "isArrangerAutomationWriteEnabled",
                 "isClipLauncherAutomationWriteEnabled")) {
-            TransportMixFixture f = new TransportMixFixture();
+            HostFixture f = new HostFixture();
             TransportModule module = new TransportModule(f.services);
             f.transport.child(safety).emit(true);
-            HostOperation start = f.submit(module, "transport.set", TransportMixFixture.json("{\"playing\":true}"));
+            HostOperation start = f.submit(module, "transport.set", HostFixture.json("{\"playing\":true}"));
             f.next();
-            check(
-                    TransportMixFixture.error(start, "unsafe_state").outcome.equals("not_applied"),
-                    "unsafe start not applied");
-            HostOperation seek = f.submit(module, "transport.set", TransportMixFixture.json("{\"positionBeats\":8}"));
+            assertTrue(assertRpcError("unsafe_state", start).outcome.equals("not_applied"), "unsafe start not applied");
+            HostOperation seek = f.submit(module, "transport.set", HostFixture.json("{\"positionBeats\":8}"));
             f.next();
-            TransportMixFixture.error(seek, "unsafe_state");
-            check(f.transport.actions == 0, "unsafe start/seek never dispatched");
+            assertRpcError("unsafe_state", seek);
+            assertTrue(f.transport.actions == 0, "unsafe start/seek never dispatched");
             f.transport.child("isPlaying").emit(true);
-            JsonObject stopped = f.call(module, "transport.set", TransportMixFixture.json("{\"playing\":false}"));
-            check(
+            JsonObject stopped = f.call(module, "transport.set", HostFixture.json("{\"playing\":false}"));
+            assertTrue(
                     stopped.get("matchesRequested").getAsBoolean() && f.transport.actions == 1,
                     "explicit stop remains possible");
-            check(f.transport.child(safety).writes == 0, "safety mode not automatically cleared");
+            assertTrue(f.transport.child(safety).writes == 0, "safety mode not automatically cleared");
         }
     }
 
-    private static void requiresFreshObservation() {
-        TransportMixFixture f = new TransportMixFixture();
+    @Test
+    void requiresFreshObservation() {
+        HostFixture f = new HostFixture();
         TransportModule module = new TransportModule(f.services);
-        TransportMixFixture.Node tempo = f.transport.child("tempo").child("value");
-        tempo.emitWrites = false;
-        HostOperation op = f.submit(module, "transport.set", TransportMixFixture.json("{\"tempoBpm\":130}"));
+        FakeHost tempo = f.transport.child("tempo").child("value");
+        tempo.notifyWrites = false;
+        HostOperation op = f.submit(module, "transport.set", HostFixture.json("{\"tempoBpm\":130}"));
         f.next();
-        check(tempo.writes == 1 && !op.result.isDone(), "setter dispatch alone cannot verify tempo");
+        assertTrue(tempo.writes == 1 && !op.result.isDone(), "setter dispatch alone cannot verify tempo");
         f.transport.child("isMetronomeEnabled").emit(true);
         f.next();
-        check(!op.result.isDone(), "unrelated callback cannot verify tempo");
+        assertTrue(!op.result.isDone(), "unrelated callback cannot verify tempo");
         tempo.emit(129.0);
         f.next();
-        check(!op.result.isDone(), "mismatched callback does not verify");
+        assertTrue(!op.result.isDone(), "mismatched callback does not verify");
         tempo.emit(130.0);
         f.next();
-        check(
+        assertTrue(
                 op.result
                         .join()
                         .getAsJsonObject("fields")
@@ -147,30 +130,29 @@ public final class TransportModuleTest {
                         .getAsString()
                         .equals("observer_after_write"),
                 "fresh matching raw callback verifies");
-        check(tempo.writes == 1, "observation retries never repeat mutations");
+        assertTrue(tempo.writes == 1, "observation retries never repeat mutations");
     }
 
-    private static void expiredAndCancelledWorkNeverWrites() {
-        TransportMixFixture f = new TransportMixFixture();
+    @Test
+    void expiredAndCancelledWorkNeverWrites() {
+        HostFixture f = new HostFixture();
         TransportModule module = new TransportModule(f.services);
-        HostOperation expired = f.submit(
-                module, "transport.set", TransportMixFixture.json("{\"playing\":true}"), System.nanoTime() - 1);
+        HostOperation expired =
+                f.submit(module, "transport.set", HostFixture.json("{\"playing\":true}"), System.nanoTime() - 1);
         f.next();
-        check(
-                TransportMixFixture.error(expired, "deadline_exceeded").outcome.equals("not_applied"),
+        assertTrue(
+                assertRpcError("deadline_exceeded", expired).outcome.equals("not_applied"),
                 "expired queue work rejects before dispatch");
-        HostOperation cancelled = f.submit(module, "transport.set", TransportMixFixture.json("{\"playing\":true}"));
+        HostOperation cancelled = f.submit(module, "transport.set", HostFixture.json("{\"playing\":true}"));
         cancelled.result.cancel(false);
         f.next();
-        check(f.transport.actions == 0, "late or cancelled queue callback never plays");
+        assertTrue(f.transport.actions == 0, "late or cancelled queue callback never plays");
     }
 
-    private static void deferStop(TransportMixFixture f) {
+    private static void deferStop(HostFixture f) {
         f.transport.child("isPlaying").emit(true);
         f.transport.child("playPosition").emit(12.0);
-        TransportMixFixture.Custom original = f.transport.custom;
-        f.transport.custom = (name, args) -> {
-            if (!name.equals("stop")) return original.invoke(name, args);
+        f.transport.on("stop", args -> {
             f.mutation();
             f.transport.actions++;
             f.tasks.add(() -> {
@@ -178,179 +160,188 @@ public final class TransportModuleTest {
                 f.transport.child("playPosition").emit(12.5);
             });
             return null;
-        };
+        });
     }
 
-    private static void stopIsObservedBeforeSeeking() {
-        TransportMixFixture f = new TransportMixFixture();
+    @Test
+    void stopIsObservedBeforeSeeking() {
+        HostFixture f = new HostFixture();
         TransportModule module = new TransportModule(f.services);
         deferStop(f);
         HostOperation op =
-                f.submit(module, "transport.set", TransportMixFixture.json("{\"playing\":false,\"positionBeats\":0}"));
+                f.submit(module, "transport.set", HostFixture.json("{\"playing\":false,\"positionBeats\":0}"));
         f.next();
-        check(
+        assertTrue(
                 f.transport.child("playPosition").data.equals(12.0),
                 "seek must wait for the asynchronous stop instead of being overwritten by its final position");
-        check(!op.result.isDone(), "stop dispatch alone does not complete the combined request");
+        assertTrue(!op.result.isDone(), "stop dispatch alone does not complete the combined request");
         f.next();
         f.next();
         JsonObject result = op.result.join();
-        check(result.get("completion").getAsString().equals("observed"), "stop and subsequent seek both observed");
-        check(
+        assertTrue(result.get("completion").getAsString().equals("observed"), "stop and subsequent seek both observed");
+        assertTrue(
                 !result.get("playing").getAsBoolean()
                         && result.get("positionBeats").getAsDouble() == 0,
                 "combined request leaves the transport stopped at the requested position");
-        check(f.transport.actions == 2, "one stop and one seek, without mutation retries");
+        assertTrue(f.transport.actions == 2, "one stop and one seek, without mutation retries");
     }
 
-    private static void lateStopDoesNotSeekAfterObservationBudget() throws InterruptedException {
-        TransportMixFixture f = new TransportMixFixture();
+    @Test
+    void lateStopDoesNotSeekAfterObservationBudget() throws InterruptedException {
+        HostFixture f = new HostFixture();
         TransportModule module = new TransportModule(f.services);
         deferStop(f);
         HostOperation op =
-                f.submit(module, "transport.set", TransportMixFixture.json("{\"playing\":false,\"positionBeats\":0}"));
+                f.submit(module, "transport.set", HostFixture.json("{\"playing\":false,\"positionBeats\":0}"));
         f.next();
         Thread.sleep(800); // Expire the shared 750-ms observation budget; the fixture's hard deadline remains open.
         f.next();
         f.next();
         JsonObject result = op.result.join();
-        check(
+        assertTrue(
                 result.get("completion").getAsString().equals("unknown"),
                 "a late observed stop cannot turn the incomplete request into success");
-        check(
+        assertTrue(
                 result.getAsJsonObject("fields")
                         .getAsJsonObject("positionBeats")
                         .get("verification")
                         .getAsString()
                         .equals("not_dispatched"),
                 "an expired observation budget prevents the dependent seek");
-        check(
+        assertTrue(
                 f.transport.child("playPosition").data.equals(12.5) && f.transport.actions == 1,
                 "late stop leaves its final position without another mutation");
     }
 
-    private static void shortTimeoutYieldsBoundedNotObservedNotDeadlineExceeded() throws InterruptedException {
-        TransportMixFixture f = new TransportMixFixture();
+    @Test
+    void shortTimeoutYieldsBoundedNotObservedNotDeadlineExceeded() throws InterruptedException {
+        HostFixture f = new HostFixture();
         TransportModule module = new TransportModule(f.services);
-        f.transport.child("tempo").child("value").emitWrites = false;
+        f.transport.child("tempo").child("value").notifyWrites = false;
         long timeoutMs = 300;
         HostOperation op = f.submit(
                 module,
                 "transport.set",
-                TransportMixFixture.json("{\"tempoBpm\":130}"),
+                HostFixture.json("{\"tempoBpm\":130}"),
                 System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(timeoutMs));
         f.next();
-        check(!op.result.isDone(), "unobserved write keeps polling");
+        assertTrue(!op.result.isDone(), "unobserved write keeps polling");
         // The controller thread is late: poll lands after the observation end but before the hard deadline.
         // Sleep only guarantees a minimum, so aim just past the observation end to leave most of the margin for
         // overshoot.
         Thread.sleep(timeoutMs - HostServices.DEADLINE_MARGIN_NANOS / 1_000_000 + 5);
         f.next();
         JsonObject result = op.result.join();
-        check(
+        assertTrue(
                 result.get("status").getAsString().equals("dispatched")
                         && result.get("completion").getAsString().equals("unknown"),
                 "short timeout yields the bounded dispatched/not-observed result, not deadline_exceeded");
-        check(f.transport.child("tempo").child("value").writes == 1, "no retry write");
+        assertTrue(f.transport.child("tempo").child("value").writes == 1, "no retry write");
     }
 
-    private static void cancelledStopDoesNotSeekLater() {
-        TransportMixFixture f = new TransportMixFixture();
+    @Test
+    void cancelledStopDoesNotSeekLater() {
+        HostFixture f = new HostFixture();
         TransportModule module = new TransportModule(f.services);
         deferStop(f);
         HostOperation op =
-                f.submit(module, "transport.set", TransportMixFixture.json("{\"playing\":false,\"positionBeats\":0}"));
+                f.submit(module, "transport.set", HostFixture.json("{\"playing\":false,\"positionBeats\":0}"));
         f.next();
         op.result.cancel(false);
         f.next();
         f.next();
-        check(
+        assertTrue(
                 f.transport.child("playPosition").data.equals(12.5),
                 "late stop observation cannot trigger a cancelled seek");
-        check(f.transport.actions == 1, "cancellation prevents the remaining mutation");
+        assertTrue(f.transport.actions == 1, "cancellation prevents the remaining mutation");
     }
 
-    private static void safetyChangeWhileStoppingPreventsSeek() {
-        TransportMixFixture f = new TransportMixFixture();
+    @Test
+    void safetyChangeWhileStoppingPreventsSeek() {
+        HostFixture f = new HostFixture();
         TransportModule module = new TransportModule(f.services);
         deferStop(f);
         HostOperation op =
-                f.submit(module, "transport.set", TransportMixFixture.json("{\"playing\":false,\"positionBeats\":0}"));
+                f.submit(module, "transport.set", HostFixture.json("{\"playing\":false,\"positionBeats\":0}"));
         f.next();
         f.next();
         f.transport.child("isArrangerAutomationWriteEnabled").emit(true);
         f.next();
         JsonObject result = op.result.join();
-        check(
+        assertTrue(
                 result.get("completion").getAsString().equals("unknown")
                         && result.get("reason").getAsString().equals("unsafe_state"),
                 "a changed safety condition preserves the partial outcome");
-        check(
+        assertTrue(
                 result.getAsJsonObject("fields")
                         .getAsJsonObject("positionBeats")
                         .get("verification")
                         .getAsString()
                         .equals("not_dispatched"),
                 "seek is not sent after automation becomes active");
-        check(
+        assertTrue(
                 f.transport.child("playPosition").data.equals(12.5) && f.transport.actions == 1,
                 "stopped position is not changed by unsafe follow-up work");
     }
 
-    private static void midOperationGuardStopsRemainingFields() {
-        TransportMixFixture f = new TransportMixFixture();
+    @Test
+    void midOperationGuardStopsRemainingFields() {
+        HostFixture f = new HostFixture();
         TransportModule module = new TransportModule(f.services);
         f.transport.child("tempo").child("value").afterWrite =
                 () -> f.transport.child("isArrangerRecordEnabled").emit(true);
-        JsonObject result =
-                f.call(module, "transport.set", TransportMixFixture.json("{\"tempoBpm\":130,\"playing\":true}"));
-        check(
+        JsonObject result = f.call(module, "transport.set", HostFixture.json("{\"tempoBpm\":130,\"playing\":true}"));
+        assertTrue(
                 result.get("status").getAsString().equals("dispatched")
                         && result.get("completion").getAsString().equals("unknown"),
                 "partial write is not full success");
-        check(
+        assertTrue(
                 result.getAsJsonObject("fields")
                         .getAsJsonObject("playing")
                         .get("verification")
                         .getAsString()
                         .equals("not_dispatched"),
                 "second field explicitly not sent");
-        check(f.transport.actions == 0, "rechecked recording guard stops play");
-        TransportMixFixture closed = new TransportMixFixture();
+        assertTrue(f.transport.actions == 0, "rechecked recording guard stops play");
+        HostFixture closed = new HostFixture();
         TransportModule second = new TransportModule(closed.services);
         closed.transport.child("tempo").child("value").afterWrite = closed.services::close;
         JsonObject partial =
-                closed.call(second, "transport.set", TransportMixFixture.json("{\"tempoBpm\":130,\"metronome\":true}"));
-        check(partial.get("reason").getAsString().equals("unavailable"), "close during write reported honestly");
-        check(closed.transport.child("isMetronomeEnabled").writes == 0, "no late second-field write after closure");
+                closed.call(second, "transport.set", HostFixture.json("{\"tempoBpm\":130,\"metronome\":true}"));
+        assertTrue(partial.get("reason").getAsString().equals("unavailable"), "close during write reported honestly");
+        assertTrue(
+                closed.transport.child("isMetronomeEnabled").writes == 0, "no late second-field write after closure");
     }
 
-    private static void sharedSafetyRequiresObservationsButAllowsStop() {
-        TransportMixFixture f = new TransportMixFixture(false);
+    @Test
+    void sharedSafetyRequiresObservationsButAllowsStop() {
+        HostFixture f = new HostFixture(false);
         TransportModule module = new TransportModule(f.services);
         f.transport.child("isPlaying").emit(false);
         JsonObject read = f.call(module, "transport.get", new JsonObject());
-        check(
+        assertTrue(
                 read.get("arrangerRecordEnabled").isJsonNull(),
                 "unobserved safety state is null, never default-safe false");
-        HostOperation blocked = f.submit(module, "transport.set", TransportMixFixture.json("{\"playing\":true}"));
+        HostOperation blocked = f.submit(module, "transport.set", HostFixture.json("{\"playing\":true}"));
         f.next();
-        TransportMixFixture.error(blocked, "not_ready");
-        check(f.transport.actions == 0, "unknown shared safety states cannot start playback");
+        assertRpcError("not_ready", blocked);
+        assertTrue(f.transport.actions == 0, "unknown shared safety states cannot start playback");
         f.transport.child("isPlaying").emit(true);
-        JsonObject stop = f.call(module, "transport.set", TransportMixFixture.json("{\"playing\":false}"));
-        check(stop.get("matchesRequested").getAsBoolean(), "explicit stop allowed even before safety initialization");
+        JsonObject stop = f.call(module, "transport.set", HostFixture.json("{\"playing\":false}"));
+        assertTrue(
+                stop.get("matchesRequested").getAsBoolean(), "explicit stop allowed even before safety initialization");
         for (String key : List.of(
                 "isArrangerRecordEnabled", "isArrangerAutomationWriteEnabled", "isClipLauncherAutomationWriteEnabled"))
             f.transport.child(key).emit(false);
-        JsonObject start = f.call(module, "transport.set", TransportMixFixture.json("{\"playing\":true}"));
-        check(start.get("matchesRequested").getAsBoolean(), "shared observed safe flags allow explicit start");
+        JsonObject start = f.call(module, "transport.set", HostFixture.json("{\"playing\":true}"));
+        assertTrue(start.get("matchesRequested").getAsBoolean(), "shared observed safe flags allow explicit start");
     }
 
-    private static void timeSignatureIsValidatedWrittenAndReadBack() {
-        TransportMixFixture f = new TransportMixFixture();
+    @Test
+    void timeSignatureIsValidatedWrittenAndReadBack() {
+        HostFixture f = new HostFixture();
         TransportModule module = new TransportModule(f.services);
-        check(
+        assertTrue(
                 f.call(module, "transport.get", new JsonObject())
                         .get("timeSignature")
                         .getAsString()
@@ -359,26 +350,25 @@ public final class TransportModuleTest {
         for (String bad : List.of("7", "0/4", "33/4", "4/3", "4/64", "4/0", "a/b", "4/4/4", " 4/4", "04/4", "4 / 4")) {
             JsonObject p = new JsonObject();
             p.addProperty("timeSignature", bad);
-            TransportMixFixture.error(f.submit(module, "transport.set", p), "invalid_params");
-            check(f.tasks.isEmpty(), "invalid time signature not scheduled: " + bad);
+            assertRpcError("invalid_params", f.submit(module, "transport.set", p));
+            assertTrue(f.tasks.isEmpty(), "invalid time signature not scheduled: " + bad);
         }
-        TransportMixFixture.error(
-                f.submit(module, "transport.set", TransportMixFixture.json("{\"timeSignature\":4}")), "invalid_params");
-        JsonObject result = f.call(module, "transport.set", TransportMixFixture.json("{\"timeSignature\":\"7/8\"}"));
-        check(
+        assertRpcError("invalid_params", f.submit(module, "transport.set", HostFixture.json("{\"timeSignature\":4}")));
+        JsonObject result = f.call(module, "transport.set", HostFixture.json("{\"timeSignature\":\"7/8\"}"));
+        assertTrue(
                 result.get("matchesRequested").getAsBoolean()
                         && result.get("timeSignature").getAsString().equals("7/8"),
                 "write observed");
-        check(
+        assertTrue(
                 result.getAsJsonObject("fields")
                         .getAsJsonObject("timeSignature")
                         .get("verification")
                         .getAsString()
                         .equals("observer_after_write"),
                 "verified by observer after the write");
-        check(f.transport.child("timeSignature").writes == 1, "one write");
-        result = f.call(module, "transport.set", TransportMixFixture.json("{\"timeSignature\":\"7/8\"}"));
-        check(
+        assertTrue(f.transport.child("timeSignature").writes == 1, "one write");
+        result = f.call(module, "transport.set", HostFixture.json("{\"timeSignature\":\"7/8\"}"));
+        assertTrue(
                 result.getAsJsonObject("fields")
                                 .getAsJsonObject("timeSignature")
                                 .get("verification")
@@ -386,11 +376,11 @@ public final class TransportModuleTest {
                                 .equals("already_at_value")
                         && f.transport.child("timeSignature").writes == 1,
                 "same signature not rewritten");
-        f.transport.child("timeSignature").emitWrites = false;
+        f.transport.child("timeSignature").notifyWrites = false;
         HostOperation silent = f.submit(
                 module,
                 "transport.set",
-                TransportMixFixture.json("{\"timeSignature\":\"3/4\"}"),
+                HostFixture.json("{\"timeSignature\":\"3/4\"}"),
                 System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(300));
         try {
             for (int i = 0; i < 400 && !silent.result.isDone(); i++) {
@@ -401,29 +391,29 @@ public final class TransportModuleTest {
             throw new AssertionError(e);
         }
         result = silent.result.join();
-        check(
+        assertTrue(
                 !result.get("matchesRequested").getAsBoolean()
                         && result.get("completion").getAsString().equals("unknown"),
                 "unobserved change stays unknown");
         f.transport.child("isArrangerRecordEnabled").emit(true);
-        HostOperation blocked =
-                f.submit(module, "transport.set", TransportMixFixture.json("{\"timeSignature\":\"5/4\"}"));
+        HostOperation blocked = f.submit(module, "transport.set", HostFixture.json("{\"timeSignature\":\"5/4\"}"));
         f.next();
-        TransportMixFixture.error(blocked, "unsafe_state");
+        assertRpcError("unsafe_state", blocked);
     }
 
-    private static void guideSettingsAreReadWrittenAndVerified() {
-        TransportMixFixture f = new TransportMixFixture();
+    @Test
+    void guideSettingsAreReadWrittenAndVerified() {
+        HostFixture f = new HostFixture();
         TransportModule module = new TransportModule(f.services);
         JsonObject read = f.call(module, "transport.get", new JsonObject());
-        check(
+        assertTrue(
                 read.get("metronomeVolumeNormalized").getAsDouble() == .5
                         && read.get("preRoll").getAsString().equals("none")
                         && !read.get("punchInEnabled").getAsBoolean()
                         && read.get("defaultLaunchQuantization").getAsString().equals("1")
                         && read.get("recordQuantizationGrid").getAsString().equals("1/16"),
                 "new settings are read");
-        check(
+        assertTrue(
                 read.getAsJsonObject("options").getAsJsonArray("preRoll").size() == 4
                         && read.getAsJsonObject("options")
                                 .getAsJsonArray("recordQuantizationGrid")
@@ -438,50 +428,47 @@ public final class TransportModuleTest {
                 "{\"preRoll\":1}",
                 "{\"preRoll\":\"\"}",
                 "{\"defaultLaunchQuantization\":null}")) {
-            TransportMixFixture.error(
-                    f.submit(module, "transport.set", TransportMixFixture.json(bad)), "invalid_params");
-            check(f.tasks.isEmpty(), "invalid request not scheduled: " + bad);
+            assertRpcError("invalid_params", f.submit(module, "transport.set", HostFixture.json(bad)));
+            assertTrue(f.tasks.isEmpty(), "invalid request not scheduled: " + bad);
         }
-        HostOperation unlisted = f.submit(
-                module, "transport.set", TransportMixFixture.json("{\"metronome\":true,\"preRoll\":\"eight_bars\"}"));
+        HostOperation unlisted =
+                f.submit(module, "transport.set", HostFixture.json("{\"metronome\":true,\"preRoll\":\"eight_bars\"}"));
         f.next();
-        check(
-                TransportMixFixture.error(unlisted, "invalid_params").outcome.equals("not_applied"),
+        assertTrue(
+                assertRpcError("invalid_params", unlisted).outcome.equals("not_applied"),
                 "option the host does not list is refused");
-        check(
+        assertTrue(
                 f.transport.child("preRoll").writes == 0 && f.transport.child("isMetronomeEnabled").writes == 0,
                 "nothing written when one field is refused");
         JsonObject result = f.call(
                 module,
                 "transport.set",
-                TransportMixFixture.json(
+                HostFixture.json(
                         "{\"metronomeVolumeNormalized\":0.75,\"preRoll\":\"two_bars\",\"punchInEnabled\":true,\"punchOutEnabled\":true,"
                                 + "\"defaultLaunchQuantization\":\"1/2\",\"recordQuantizationGrid\":\"1/8\"}"));
-        check(
+        assertTrue(
                 result.get("matchesRequested").getAsBoolean()
                         && result.get("completion").getAsString().equals("observed"),
                 "every field verified by observer");
-        check(
+        assertTrue(
                 result.getAsJsonObject("fields")
                         .getAsJsonObject("preRoll")
                         .get("verification")
                         .getAsString()
                         .equals("observer_after_write"),
                 "per-field verification");
-        check(
+        assertTrue(
                 f.transport.child("metronomeVolume").writes == 1
                         && f.transport.child("isPunchInEnabled").writes == 1
                         && f.application.child("recordQuantizationGrid").writes == 1,
                 "each setter written once");
-        check(
+        assertTrue(
                 f.transport.child("preRoll").data.equals("two_bars")
                         && f.application.child("recordQuantizationGrid").data.equals("1/8"),
                 "values landed");
-        result = f.call(
-                module,
-                "transport.set",
-                TransportMixFixture.json("{\"preRoll\":\"two_bars\",\"punchInEnabled\":true}"));
-        check(
+        result =
+                f.call(module, "transport.set", HostFixture.json("{\"preRoll\":\"two_bars\",\"punchInEnabled\":true}"));
+        assertTrue(
                 result.getAsJsonObject("fields")
                                 .getAsJsonObject("preRoll")
                                 .get("verification")
@@ -490,11 +477,11 @@ public final class TransportModuleTest {
                         && f.transport.child("preRoll").writes == 1
                         && f.transport.child("isPunchInEnabled").writes == 1,
                 "matching values are not rewritten");
-        f.transport.child("preRoll").emitWrites = false;
+        f.transport.child("preRoll").notifyWrites = false;
         HostOperation silent = f.submit(
                 module,
                 "transport.set",
-                TransportMixFixture.json("{\"preRoll\":\"four_bars\"}"),
+                HostFixture.json("{\"preRoll\":\"four_bars\"}"),
                 System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(300));
         try {
             for (int i = 0; i < 400 && !silent.result.isDone(); i++) {
@@ -505,29 +492,29 @@ public final class TransportModuleTest {
             throw new AssertionError(e);
         }
         result = silent.result.join();
-        check(
+        assertTrue(
                 !result.get("matchesRequested").getAsBoolean()
                         && result.get("completion").getAsString().equals("unknown"),
                 "unobserved enum change stays unknown");
         f.transport.child("isArrangerRecordEnabled").emit(true);
-        HostOperation blocked =
-                f.submit(module, "transport.set", TransportMixFixture.json("{\"punchOutEnabled\":false}"));
+        HostOperation blocked = f.submit(module, "transport.set", HostFixture.json("{\"punchOutEnabled\":false}"));
         f.next();
-        check(
-                TransportMixFixture.error(blocked, "unsafe_state").outcome.equals("not_applied"),
+        assertTrue(
+                assertRpcError("unsafe_state", blocked).outcome.equals("not_applied"),
                 "recording blocks punch edits like the other settings");
     }
 
-    private static void observedValueWinsWhenGetDisagrees() {
+    @Test
+    void observedValueWinsWhenGetDisagrees() {
         // Bitwig 6.1.4: the observer reported a stored project value ('bar') while EnumValue.get() returned a listed
         // one.
-        TransportMixFixture f = new TransportMixFixture();
+        HostFixture f = new HostFixture();
         TransportModule module = new TransportModule(f.services);
-        TransportMixFixture.Node node = f.transport.child("defaultLaunchQuantization");
+        FakeHost node = f.transport.child("defaultLaunchQuantization");
         node.emit("bar");
-        node.custom = (name, args) -> name.equals("get") ? "1" : null;
+        node.on("get", args -> "1");
         JsonObject read = f.call(module, "transport.get", new JsonObject());
-        check(
+        assertTrue(
                 read.get("defaultLaunchQuantization").getAsString().equals("bar")
                         && read.getAsJsonArray("observedOutsideOptions")
                                 .get(0)
@@ -535,8 +522,8 @@ public final class TransportModuleTest {
                                 .equals("defaultLaunchQuantization"),
                 "flag follows the reported (observed) value, not get()");
         JsonObject result =
-                f.call(module, "transport.set", TransportMixFixture.json("{\"defaultLaunchQuantization\":\"bar\"}"));
-        check(
+                f.call(module, "transport.set", HostFixture.json("{\"defaultLaunchQuantization\":\"bar\"}"));
+        assertTrue(
                 result.getAsJsonObject("fields")
                                 .getAsJsonObject("defaultLaunchQuantization")
                                 .get("verification")
@@ -546,12 +533,13 @@ public final class TransportModuleTest {
                 "the reported value can be written back even when get() disagrees");
     }
 
-    private static void storedValueOutsideOptionsCanBeWrittenBack() {
-        TransportMixFixture f = new TransportMixFixture();
+    @Test
+    void storedValueOutsideOptionsCanBeWrittenBack() {
+        HostFixture f = new HostFixture();
         TransportModule module = new TransportModule(f.services);
         f.transport.child("defaultLaunchQuantization").emit("bar");
         JsonObject read = f.call(module, "transport.get", new JsonObject());
-        check(
+        assertTrue(
                 read.get("defaultLaunchQuantization").getAsString().equals("bar")
                         && read.getAsJsonArray("observedOutsideOptions").size() == 1
                         && read.getAsJsonArray("observedOutsideOptions")
@@ -560,8 +548,8 @@ public final class TransportModuleTest {
                                 .equals("defaultLaunchQuantization"),
                 "a stored value outside the host's option list is read and flagged");
         JsonObject result =
-                f.call(module, "transport.set", TransportMixFixture.json("{\"defaultLaunchQuantization\":\"bar\"}"));
-        check(
+                f.call(module, "transport.set", HostFixture.json("{\"defaultLaunchQuantization\":\"bar\"}"));
+        assertTrue(
                 result.getAsJsonObject("fields")
                                 .getAsJsonObject("defaultLaunchQuantization")
                                 .get("verification")
@@ -570,18 +558,13 @@ public final class TransportModuleTest {
                         && f.transport.child("defaultLaunchQuantization").writes == 0,
                 "writing the observed value back is already_at_value");
         HostOperation refused =
-                f.submit(module, "transport.set", TransportMixFixture.json("{\"defaultLaunchQuantization\":\"beat\"}"));
+                f.submit(module, "transport.set", HostFixture.json("{\"defaultLaunchQuantization\":\"beat\"}"));
         f.next();
-        TransportMixFixture.error(refused, "invalid_params");
-        result = f.call(module, "transport.set", TransportMixFixture.json("{\"defaultLaunchQuantization\":\"1\"}"));
-        check(
+        assertRpcError("invalid_params", refused);
+        result = f.call(module, "transport.set", HostFixture.json("{\"defaultLaunchQuantization\":\"1\"}"));
+        assertTrue(
                 result.get("matchesRequested").getAsBoolean()
                         && result.getAsJsonArray("observedOutsideOptions").size() == 0,
                 "a listed value still writes and clears the flag");
-    }
-
-    private static void check(boolean condition, String message) {
-        assertions++;
-        if (!condition) throw new AssertionError(message);
     }
 }

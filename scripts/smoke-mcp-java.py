@@ -28,6 +28,7 @@ build = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(build)
 
 TEST_ROOT = ROOT / "extension/src/test/java"
+FIXTURE_SOURCES = ("HostFixture.java", "FakeHost.java")
 FIXTURE = """
 package dev.bitwigagent;
 import com.google.gson.*;
@@ -36,7 +37,7 @@ import java.util.concurrent.CompletableFuture;
 public class McpTransportFixture {
   public static void main(String[] args) throws Exception {
     MethodSpecs specs = MethodSpecs.load();
-    HostBridge bridge = new HostBridgeTest.Fake().bridge(specs);
+    HostBridge bridge = HostFixture.withoutServices().bridge(specs, System::nanoTime);
     try (RpcServer server = new RpcServer(0, specs, (method, params, deadline) -> {
       bridge.validate(method, params);
       if (method.equals("parameters.set")) {
@@ -76,7 +77,7 @@ async def exercise(folder: Path, api: Path) -> None:  # noqa: PLR0915
     fixture.write_text(FIXTURE, encoding="utf-8")
     gson = build.gson_jar()
     build.compile_java(
-        [*build.verification_sources(), *sorted(TEST_ROOT.rglob("*.java")), fixture],
+        [*build.verification_sources(), *(TEST_ROOT / "dev/bitwigagent" / name for name in FIXTURE_SOURCES), fixture],
         folder,
         [gson, api],
         build.lint_flag(api),

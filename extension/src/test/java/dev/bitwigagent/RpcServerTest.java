@@ -1,5 +1,7 @@
 package dev.bitwigagent;
 
+import static org.junit.jupiter.api.Assertions.*;
+
 import com.google.gson.*;
 import dev.bitwigagent.core.MethodSpecs;
 import dev.bitwigagent.core.MethodSpecsTest;
@@ -9,16 +11,11 @@ import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.*;
+import org.junit.jupiter.api.Test;
 
 /** Runs against actual TCP sockets; requires the API jar, never a native host instance. */
 public final class RpcServerTest {
-    private static final MethodSpecs SPECS = TransportMixFixture.SPECS;
-    private static int checks;
-
-    private static void check(boolean condition, String message) {
-        checks++;
-        if (!condition) throw new AssertionError(message);
-    }
+    private static final MethodSpecs SPECS = HostFixture.SPECS;
 
     private static JsonObject ok() {
         JsonObject result = new JsonObject();
@@ -57,24 +54,14 @@ public final class RpcServerTest {
     }
 
     private static void error(JsonObject response, String code, String outcome) {
-        check(response.has("error"), "Expected error: " + response);
-        check(response.getAsJsonObject("error").get("code").getAsString().equals(code), "Error code: " + response);
-        check(response.getAsJsonObject("error").get("outcome").getAsString().equals(outcome), "Outcome: " + response);
+        assertTrue(response.has("error"), "Expected error: " + response);
+        assertTrue(response.getAsJsonObject("error").get("code").getAsString().equals(code), "Error code: " + response);
+        assertTrue(
+                response.getAsJsonObject("error").get("outcome").getAsString().equals(outcome), "Outcome: " + response);
     }
 
-    public static void main(String[] args) throws Exception {
-        validation();
-        gridIntegerTokenValidation();
-        gridConnectionNullContract();
-        nullableObservations();
-        deadlines();
-        queuedDeadline();
-        responseLimit();
-        overloadAndClose();
-        System.out.println("PASS: " + checks + " transport assertions over real IPv4 loopback; no host tests.");
-    }
-
-    private static void gridIntegerTokenValidation() throws Exception {
+    @Test
+    void gridIntegerTokenValidation() throws Exception {
         try (RpcServer server = new RpcServer(0, SPECS, (method, params, until) -> {
             if (method.equals("grid.modules.move") || method.equals("grid.modules.insert"))
                 GridModule.validateParams(method, params);
@@ -111,7 +98,8 @@ public final class RpcServerTest {
         }
     }
 
-    private static void gridConnectionNullContract() throws Exception {
+    @Test
+    void gridConnectionNullContract() throws Exception {
         GridSnapshotReaderTest.ConnectionFixture fixture = new GridSnapshotReaderTest.ConnectionFixture();
         try (RpcServer server = new RpcServer(0, SPECS, (method, params, until) -> {
             GridModule.validateParams(method, params);
@@ -125,9 +113,9 @@ public final class RpcServerTest {
                     + "\"expectedDeviceName\":\"Poly Grid\",\"targetModuleId\":\"00000000-0000-0001-0000-000000000001\","
                     + "\"targetPortKey\":\"in\",";
             JsonObject response = call(server, prefix + "\"expectedSource\":null,\"source\":null}}\n");
-            check(response.has("result"), "Expected result: " + response);
+            assertTrue(response.has("result"), "Expected result: " + response);
             JsonObject result = response.getAsJsonObject("result");
-            check(
+            assertTrue(
                     result.get("previousSource").isJsonNull()
                             && result.get("requestedSource").isJsonNull()
                             && result.get("actualSource").isJsonNull()
@@ -147,11 +135,12 @@ public final class RpcServerTest {
                     call(server, prefix + "\"expectedSource\":null,\"source\":{1:\"out\"}}}\n"),
                     "invalid_request",
                     "not_dispatched");
-            check(fixture.calls == 0, "malformed endpoints and valid no-op never invoke native setter");
+            assertTrue(fixture.calls == 0, "malformed endpoints and valid no-op never invoke native setter");
         }
     }
 
-    private static void nullableObservations() throws Exception {
+    @Test
+    void nullableObservations() throws Exception {
         try (RpcServer server = new RpcServer(0, SPECS, (method, params, until) -> {
             JsonObject item = new JsonObject();
             item.add("name", JsonNull.INSTANCE);
@@ -168,20 +157,21 @@ public final class RpcServerTest {
                     .getAsJsonArray("items")
                     .get(0)
                     .getAsJsonObject();
-            check(
+            assertTrue(
                     item.has("name")
                             && item.get("name").isJsonNull()
                             && item.has("normalizedValue")
                             && item.get("normalizedValue").isJsonNull(),
                     "Unavailable observations remain explicit nulls across the real wire boundary");
             JsonObject invalid = call(server, "{}\n");
-            check(
+            assertTrue(
                     invalid.has("id") && invalid.get("id").isJsonNull(),
                     "An uncorrelated rejection retains its explicit null id");
         }
     }
 
-    private static void validation() throws Exception {
+    @Test
+    void validation() throws Exception {
         AtomicInteger calls = new AtomicInteger();
         AtomicLong deadline = new AtomicLong();
         try (RpcServer server = new RpcServer(0, SPECS, (method, params, until) -> {
@@ -192,9 +182,14 @@ public final class RpcServerTest {
             server.start();
             long before = System.nanoTime();
             JsonObject response = call(server, request("汉字🎛", "{}", null));
-            check(response.get("id").getAsString().equals("汉字🎛"), "UTF-8 correlation");
-            check(response.getAsJsonObject("result").get("status").getAsString().equals("observed"), "Result envelope");
-            check(
+            assertTrue(response.get("id").getAsString().equals("汉字🎛"), "UTF-8 correlation");
+            assertTrue(
+                    response.getAsJsonObject("result")
+                            .get("status")
+                            .getAsString()
+                            .equals("observed"),
+                    "Result envelope");
+            assertTrue(
                     deadline.get() > before && deadline.get() < before + TimeUnit.SECONDS.toNanos(6),
                     "Monotonic deadline");
             int accepted = calls.get();
@@ -243,13 +238,13 @@ public final class RpcServerTest {
             byte[] badUtf8 = request("a", "{\"x\":\"?\"}", null).getBytes(StandardCharsets.UTF_8);
             for (int i = 0; i < badUtf8.length; i++) if (badUtf8[i] == '?') badUtf8[i] = (byte) 0xff;
             error(call(server, badUtf8), "invalid_request", "not_dispatched");
-            check(calls.get() == accepted, "Invalid input never invokes handler");
+            assertTrue(calls.get() == accepted, "Invalid input never invokes handler");
             for (String method : MethodSpecsTest.LONG_TIMEOUT)
-                check(
+                assertTrue(
                         call(server, request("a", "{}", "60000").replace("status", method))
                                 .has("result"),
                         method + " admits the 60 s ceiling");
-            check(
+            assertTrue(
                     call(server, request("a", "{}", null).replace("status", "project.saveAs"))
                                     .has("result")
                             && deadline.get() - System.nanoTime() > TimeUnit.SECONDS.toNanos(25),
@@ -265,16 +260,16 @@ public final class RpcServerTest {
                 socket.getOutputStream().write('{');
                 socket.getOutputStream().flush();
                 error(read(socket), "invalid_request", "not_dispatched");
-                check(System.nanoTime() - start < TimeUnit.SECONDS.toNanos(4), "Idle reader bounded");
+                assertTrue(System.nanoTime() - start < TimeUnit.SECONDS.toNanos(4), "Idle reader bounded");
             }
             String base = request("limit", "{\"padding\":\"\"}", null);
             String boundary = base.replace(
                     "\"padding\":\"\"",
                     "\"padding\":\"" + "x".repeat(RpcServer.MAX_REQUEST_BYTES - (base.length() - 1)) + "\"");
-            check(
+            assertTrue(
                     boundary.getBytes(StandardCharsets.UTF_8).length == RpcServer.MAX_REQUEST_BYTES + 1,
                     "Boundary fixture");
-            check(call(server, boundary).has("result"), "1 MiB request excluding newline accepted");
+            assertTrue(call(server, boundary).has("result"), "1 MiB request excluding newline accepted");
             error(call(server, boundary.replace("padding", "paddingX")), "invalid_request", "not_dispatched");
             try (Socket socket = connect(server)) {
                 byte[] bytes = request("fragmented", "{}", null).getBytes(StandardCharsets.UTF_8);
@@ -282,13 +277,14 @@ public final class RpcServerTest {
                     socket.getOutputStream().write(b);
                     socket.getOutputStream().flush();
                 }
-                check(read(socket).get("id").getAsString().equals("fragmented"), "Fragmented TCP request");
-                check(socket.getInputStream().read() == -1, "One response then connection closes");
+                assertTrue(read(socket).get("id").getAsString().equals("fragmented"), "Fragmented TCP request");
+                assertTrue(socket.getInputStream().read() == -1, "One response then connection closes");
             }
         }
     }
 
-    private static void deadlines() throws Exception {
+    @Test
+    void deadlines() throws Exception {
         AtomicInteger calls = new AtomicInteger();
         CompletableFuture<JsonObject> pending = new CompletableFuture<>();
         try (RpcServer server = new RpcServer(0, SPECS, (method, params, until) -> {
@@ -297,9 +293,9 @@ public final class RpcServerTest {
         })) {
             server.start();
             error(call(server, request("late", "{}", "100")), "deadline_exceeded", "unknown");
-            check(!pending.isCancelled(), "Transport does not claim to cancel host work");
+            assertTrue(!pending.isCancelled(), "Transport does not claim to cancel host work");
             pending.complete(ok());
-            check(calls.get() == 1, "No automatic retry");
+            assertTrue(calls.get() == 1, "No automatic retry");
         }
         try (RpcServer server = new RpcServer(0, SPECS, (method, params, until) -> {
             CompletableFuture<JsonObject> failure = new CompletableFuture<>();
@@ -311,7 +307,8 @@ public final class RpcServerTest {
         }
     }
 
-    private static void queuedDeadline() throws Exception {
+    @Test
+    void queuedDeadline() throws Exception {
         CountDownLatch entered = new CountDownLatch(4);
         AtomicInteger calls = new AtomicInteger();
         CompletableFuture<JsonObject> hold = new CompletableFuture<>();
@@ -328,7 +325,7 @@ public final class RpcServerTest {
                 socket.getOutputStream()
                         .write(request("occupy-" + i, "{}", "10000").getBytes(StandardCharsets.UTF_8));
             }
-            check(entered.await(2, TimeUnit.SECONDS), "Workers occupied before queued request");
+            assertTrue(entered.await(2, TimeUnit.SECONDS), "Workers occupied before queued request");
             try (Socket queued = connect(server)) {
                 queued.getOutputStream()
                         .write(request("expired-in-queue", "{}", "100").getBytes(StandardCharsets.UTF_8));
@@ -336,15 +333,16 @@ public final class RpcServerTest {
                 Thread.sleep(250); // Deliberately exceed the queued request's declared budget.
                 hold.complete(ok());
                 error(read(queued), "deadline_exceeded", "not_dispatched");
-                check(calls.get() == 4, "Expired queued request never invokes handler");
+                assertTrue(calls.get() == 4, "Expired queued request never invokes handler");
             }
-            for (Socket socket : occupying) check(read(socket).has("result"), "Occupying request completes");
+            for (Socket socket : occupying) assertTrue(read(socket).has("result"), "Occupying request completes");
         } finally {
             for (Socket socket : occupying) socket.close();
         }
     }
 
-    private static void responseLimit() throws Exception {
+    @Test
+    void responseLimit() throws Exception {
         try (RpcServer server = new RpcServer(0, SPECS, (method, params, until) -> {
             JsonObject result = ok();
             result.addProperty("large", "x".repeat(RpcServer.MAX_RESPONSE_BYTES));
@@ -355,7 +353,8 @@ public final class RpcServerTest {
         }
     }
 
-    private static void overloadAndClose() throws Exception {
+    @Test
+    void overloadAndClose() throws Exception {
         AtomicInteger calls = new AtomicInteger();
         CountDownLatch four = new CountDownLatch(4);
         RpcServer server = new RpcServer(0, SPECS, (method, params, until) -> {
@@ -377,22 +376,22 @@ public final class RpcServerTest {
                     /* A saturated server may close immediately. */
                 }
             }
-            check(four.await(2, TimeUnit.SECONDS), "Four workers dispatched");
-            check(calls.get() == 4, "Network dispatch concurrency bounded to four");
+            assertTrue(four.await(2, TimeUnit.SECONDS), "Four workers dispatched");
+            assertTrue(calls.get() == 4, "Network dispatch concurrency bounded to four");
             server.close();
             server.close();
             for (Socket socket : sockets) {
                 try {
-                    check(socket.getInputStream().read() == -1, "Close releases active/queued peers");
+                    assertTrue(socket.getInputStream().read() == -1, "Close releases active/queued peers");
                 } catch (SocketException ignored) {
-                    checks++;
+                    // a reset also proves the peer was released
                 }
             }
             try {
                 new Socket("127.0.0.1", port).close();
                 throw new AssertionError("Listener remained open");
             } catch (ConnectException expected) {
-                checks++;
+                // the listener is closed
             }
         } finally {
             server.close();

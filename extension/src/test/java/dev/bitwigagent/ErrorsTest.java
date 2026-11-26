@@ -1,11 +1,12 @@
 package dev.bitwigagent;
 
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
 import java.util.LinkedHashMap;
 import java.util.Map;
+import org.junit.jupiter.api.Test;
 
 public final class ErrorsTest {
-    private static int assertions;
-
     private static final Map<ErrorCode, String> WIRE = wire();
     private static final Map<Outcome, String> OUTCOMES = Map.of(
             Outcome.NOT_APPLIED, "not_applied",
@@ -118,33 +119,36 @@ public final class ErrorsTest {
         throw new AssertionError("No ErrorCode with wire name " + name);
     }
 
-    public static void main(String[] args) {
+    @Test
+    void errorCodeWireNames() {
         for (Map.Entry<ErrorCode, String> e : WIRE.entrySet())
-            check(e.getKey().wire().equals(e.getValue()), "wire name of " + e.getKey());
+            assertTrue(e.getKey().wire().equals(e.getValue()), "wire name of " + e.getKey());
+    }
+
+    @Test
+    void outcomeWireNames() {
         for (Map.Entry<Outcome, String> e : OUTCOMES.entrySet())
-            check(e.getKey().wire().equals(e.getValue()), "outcome wire name of " + e.getKey());
-        check(Outcome.values().length == OUTCOMES.size(), "no unlisted outcome");
+            assertTrue(e.getKey().wire().equals(e.getValue()), "outcome wire name of " + e.getKey());
+        assertTrue(Outcome.values().length == OUTCOMES.size(), "no unlisted outcome");
+    }
+
+    @Test
+    void factoriesBuildStructuredErrors() {
         RpcException notApplied = Errors.notApplied(ErrorCode.BUSY, "m");
-        check(notApplied.code.equals("busy") && notApplied.outcome.equals("not_applied"), "notApplied");
+        assertTrue(notApplied.code.equals("busy") && notApplied.outcome.equals("not_applied"), "notApplied");
         RpcException unknown = Errors.unknown(ErrorCode.STALE_CONTEXT, "m");
-        check(unknown.code.equals("stale_context") && unknown.outcome.equals("unknown"), "unknown");
+        assertTrue(unknown.code.equals("stale_context") && unknown.outcome.equals("unknown"), "unknown");
         RpcException invalid = Errors.invalid("bad");
-        check(
+        assertTrue(
                 invalid.code.equals("invalid_params")
                         && invalid.outcome.equals("not_applied")
                         && invalid.getMessage().equals("bad"),
                 "invalid");
         RpcException rewritten = Errors.withOutcome(Errors.notApplied(ErrorCode.BUSY, "m"), Outcome.UNKNOWN);
-        check(
+        assertTrue(
                 rewritten.is(ErrorCode.BUSY)
                         && rewritten.is(Outcome.UNKNOWN)
                         && rewritten.getMessage().equals("m"),
                 "withOutcome");
-        System.out.println("ErrorsTest: " + assertions + " assertions passed");
-    }
-
-    private static void check(boolean condition, String message) {
-        assertions++;
-        if (!condition) throw new AssertionError(message);
     }
 }

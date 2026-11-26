@@ -5,30 +5,17 @@ import static dev.bitwigagent.GridSnapshotReader.Kind.*;
 import static dev.bitwigagent.GridSnapshotReaderTest.ContextFixture;
 import static dev.bitwigagent.GridSnapshotReaderTest.Fixture;
 import static dev.bitwigagent.GridSnapshotReaderTest.Node;
+import static dev.bitwigagent.RpcAssert.*;
+import static org.junit.jupiter.api.Assertions.*;
 
 import com.google.gson.*;
 import java.util.*;
 import java.util.function.Supplier;
+import org.junit.jupiter.api.Test;
 
 /** Step-array and device-voicing semantics on fake models; not evidence of native behavior. */
 public final class GridStepsVoicingTest {
-    private static int assertions;
     private static final UUID TRACK_ID = new UUID(3, 1), MODULE = new UUID(1, 1);
-
-    public static void main(String[] args) {
-        stepReadsExposeThePrefixAndTheFullArray();
-        stepReadsPadShortNativeArraysAndNeedStepCount();
-        internalChildModelsAreNotUnsupported();
-        stepWritesPatchThePrefixAndKeepTheRest();
-        stepWritesAreGuardedCompareAndSet();
-        stepWriteFailuresAndBatch();
-        stepRequestBounds();
-        voicingReadsAndDerivedMode();
-        voicingWritesAreGuardedCompareAndSet();
-        voicingFailuresAndBounds();
-        moduleValidationAndCapabilities();
-        System.out.println("GridStepsVoicingTest: " + assertions + " assertions passed (semantic fake models only)");
-    }
 
     // ---- step arrays -----------------------------------------------------------------------------------------
 
@@ -94,36 +81,37 @@ public final class GridStepsVoicingTest {
         return f.reader.parameter(f.proxy, TRACK_ID, MODULE, id, context.reader, full, () -> {});
     }
 
-    private static void stepReadsExposeThePrefixAndTheFullArray() {
+    @Test
+    void stepReadsExposeThePrefixAndTheFullArray() {
         Fixture f = new Fixture();
         Node steps = stepsNode(f, ramp(256), 256);
         f.first.put(CHILDREN, List.of(countNode(f, 4), steps));
         ContextFixture context = stepContext(steps);
         JsonObject row = inspect(f, context, "DATA", false).getAsJsonObject("parameter");
-        check(
+        assertTrue(
                 row.get("supported").getAsBoolean()
                         && row.get("kind").getAsString().equals("steps")
                         && row.get("controlFamily").getAsString().equals("step_array")
                         && row.get("parameterId").getAsString().equals("DATA"),
                 "step array is a supported steps row with its own identity");
-        check(
+        assertTrue(
                 row.getAsJsonArray("values").size() == 4
                         && row.get("arrayLength").getAsInt() == 256
                         && row.get("stepCount").getAsInt() == 4
                         && !row.get("valuesComplete").getAsBoolean(),
                 "only the first STEPS entries are exposed, the array length stays visible");
-        check(
+        assertTrue(
                 row.getAsJsonArray("values").get(0).getAsDouble() == 0.1
                         && row.getAsJsonArray("values").get(1).getAsDouble() == 0.125,
                 "float entries use their shortest decimal form, not a widened double");
-        check(
+        assertTrue(
                 row.get("minimum").getAsDouble() == -128
                         && row.get("maximum").getAsDouble() == 128
                         && !row.has("options")
                         && !row.has("value"),
                 "model value domain is reported, no scalar value or options are invented");
         JsonObject full = inspect(f, context, "DATA", true).getAsJsonObject("parameter");
-        check(
+        assertTrue(
                 full.getAsJsonArray("values").size() == 256
                         && full.get("valuesComplete").getAsBoolean(),
                 "full exposes all 256 entries");
@@ -135,9 +123,9 @@ public final class GridStepsVoicingTest {
                 .getAsJsonArray("parameters")
                 .get(1)
                 .getAsJsonObject();
-        check(graph.getAsJsonArray("values").size() == 256, "grid.get full reaches the same row");
+        assertTrue(graph.getAsJsonArray("values").size() == 256, "grid.get full reaches the same row");
         JsonObject plain = f.reader.snapshot(f.proxy, TRACK_ID, 0, 64, true, false, null, () -> {});
-        check(
+        assertTrue(
                 plain.getAsJsonArray("modules")
                                 .get(0)
                                 .getAsJsonObject()
@@ -148,16 +136,17 @@ public final class GridStepsVoicingTest {
                                 .size()
                         == 4,
                 "default grid.get exposes the STEPS prefix");
-        check(!has(plain, "step_count_unavailable"), "a readable STEPS count leaves coverage untouched");
+        assertTrue(!has(plain, "step_count_unavailable"), "a readable STEPS count leaves coverage untouched");
     }
 
-    private static void stepReadsPadShortNativeArraysAndNeedStepCount() {
+    @Test
+    void stepReadsPadShortNativeArraysAndNeedStepCount() {
         Fixture f = new Fixture();
         Node steps = stepsNode(f, new float[] {0.5f, -0.25f}, 8);
         f.first.put(CHILDREN, List.of(steps));
         JsonObject result = inspect(f, stepContext(steps), "DATA", false);
         JsonObject row = result.getAsJsonObject("parameter");
-        check(
+        assertTrue(
                 row.getAsJsonArray("values").size() == 8
                         && row.getAsJsonArray("values").get(5).getAsDouble() == 0.0
                         && row.get("stepCount").isJsonNull()
@@ -167,18 +156,18 @@ public final class GridStepsVoicingTest {
         Node data = stepsNode(big, ramp(300), 300);
         big.first.put(CHILDREN, List.of(data));
         row = inspect(big, stepContext(data), "DATA", false).getAsJsonObject("parameter");
-        check(
+        assertTrue(
                 row.getAsJsonArray("values").size() == GridSnapshotReader.STEP_FALLBACK,
                 "without STEPS the exposure is the bounded fallback");
         JsonObject withFull = inspect(big, stepContext(data), "DATA", true);
-        check(
+        assertTrue(
                 withFull.getAsJsonObject("parameter").getAsJsonArray("values").size() == 256
                         && has(withFull, "step_array_longer_than_full_window"),
                 "arrays longer than 256 expose 256 and say so");
         Fixture bad = new Fixture();
         Node nan = stepsNode(bad, new float[] {Float.NaN}, 1);
         bad.first.put(CHILDREN, List.of(nan));
-        expectRead("grid_unavailable", () -> inspect(bad, stepContext(nan), "DATA", false));
+        assertNotApplied("grid_unavailable", () -> inspect(bad, stepContext(nan), "DATA", false));
     }
 
     private static final class BgP {}
@@ -187,12 +176,13 @@ public final class GridStepsVoicingTest {
 
     private static final class Mystery {}
 
-    private static void internalChildModelsAreNotUnsupported() {
+    @Test
+    void internalChildModelsAreNotUnsupported() {
         Fixture f = new Fixture();
         f.first.put(CHILDREN, List.of(new BgP(), new BgP(), new BgP()));
         JsonObject read = f.reader.snapshot(f.proxy, TRACK_ID, 0, 64, true, false, null, () -> {});
         JsonObject module = read.getAsJsonArray("modules").get(0).getAsJsonObject();
-        check(
+        assertTrue(
                 module.getAsJsonArray("parameters").size() == 0
                         && module.get("internalChildren").getAsInt() == 3
                         && !has(read, "unknown_child_model"),
@@ -204,7 +194,7 @@ public final class GridStepsVoicingTest {
                 .getAsJsonArray("parameters")
                 .get(0)
                 .getAsJsonObject();
-        check(
+        assertTrue(
                 !row.get("supported").getAsBoolean()
                         && row.get("reason").getAsString().equals("internal_child_model")
                         && row.get("internal").getAsBoolean()
@@ -213,7 +203,7 @@ public final class GridStepsVoicingTest {
         Fixture mixed = new Fixture();
         mixed.first.put(CHILDREN, List.of(new BgP(), new Kiy(), new Mystery()));
         JsonObject result = mixed.reader.snapshot(mixed.proxy, TRACK_ID, 0, 64, true, false, null, () -> {});
-        check(
+        assertTrue(
                 has(result, "unknown_child_model")
                         && !result.get("complete").getAsBoolean()
                         && result.getAsJsonArray("modules")
@@ -278,10 +268,8 @@ public final class GridStepsVoicingTest {
         }
 
         RpcException failure(GridParameterWriter.Request request) {
-            try {
-                set(request);
-                throw new AssertionError("Expected failed step write");
-            } catch (RpcException error) {
+            {
+                RpcException error = assertThrows(RpcException.class, () -> set(request));
                 return error;
             }
         }
@@ -307,17 +295,17 @@ public final class GridStepsVoicingTest {
     }
 
     private static GridParameterWriter.Request steps(String expected, String values, boolean full) {
-        return GridParameterWriter.Request.parse(
-                TransportMixFixture.json("{\"expectedKind\":\"steps\",\"expectedValues\":" + expected + ",\"values\":"
-                        + values + (full ? ",\"full\":true" : "") + "}"));
+        return GridParameterWriter.Request.parse(HostFixture.json("{\"expectedKind\":\"steps\",\"expectedValues\":"
+                + expected + ",\"values\":" + values + (full ? ",\"full\":true" : "") + "}"));
     }
 
-    private static void stepWritesPatchThePrefixAndKeepTheRest() {
+    @Test
+    void stepWritesPatchThePrefixAndKeepTheRest() {
         StepFixture f = new StepFixture(256, 4);
         float[] before = f.live().clone();
         JsonObject result = f.set(steps(f.json(0, 4), "[0.5,0.1,1.0]", false));
         float[] after = f.live();
-        check(
+        assertTrue(
                 f.calls == 1
                         && f.op.dispatched
                         && after.length == 256
@@ -328,9 +316,9 @@ public final class GridStepsVoicingTest {
                 "a shorter values list patches the prefix and leaves the rest of the exposed entries");
         boolean restSame = true;
         for (int i = 4; i < 256; i++) restSame &= after[i] == before[i];
-        check(restSame, "entries beyond the exposed prefix are unchanged");
+        assertTrue(restSame, "entries beyond the exposed prefix are unchanged");
         JsonObject row = result.getAsJsonObject("parameter");
-        check(
+        assertTrue(
                 row.getAsJsonArray("values").size() == 4
                         && row.getAsJsonArray("values").get(1).getAsDouble() == 0.1
                         && result.get("mutationDispatched").getAsBoolean()
@@ -343,12 +331,12 @@ public final class GridStepsVoicingTest {
                 "result reads the values back and never claims undo grouping or DSP acknowledgement");
         StepFixture full = new StepFixture(256, 4);
         full.set(steps(full.json(0, 256), "[" + "0.25,".repeat(255) + "-1]", true));
-        check(
+        assertTrue(
                 full.calls == 1 && full.live()[255] == -1f && full.live()[100] == 0.25f,
                 "full:true writes the whole 256 window");
         StepFixture noop = new StepFixture(256, 4);
         result = noop.set(steps(noop.json(0, 4), noop.json(0, 4), false));
-        check(
+        assertTrue(
                 noop.calls == 0
                         && !noop.op.dispatched
                         && !result.get("mutationDispatched").getAsBoolean()
@@ -356,21 +344,22 @@ public final class GridStepsVoicingTest {
                 "an identical write is a verified no-op without dispatch");
         StepFixture tiny = new StepFixture(2, 2);
         tiny.set(steps(tiny.json(0, 2), "[0.3,0.4]", false));
-        check(
+        assertTrue(
                 tiny.live().length == 2 && tiny.live()[1] == 0.4f,
                 "an array shorter than 4 entries is written at its own length");
         StepFixture padded = new StepFixture(8, 4);
         padded.steps.put(STEP_VALUES, new float[] {0.5f});
         padded.set(steps("[0.5,0.0,0.0,0.0]", "[0.6]", false));
-        check(
+        assertTrue(
                 padded.last.length == 8 && padded.last[0] == 0.6f && padded.last[7] == 0f,
                 "a zero-padded native array is written back at its declared length");
     }
 
-    private static void stepWritesAreGuardedCompareAndSet() {
+    @Test
+    void stepWritesAreGuardedCompareAndSet() {
         StepFixture f = new StepFixture(256, 4);
         RpcException error = f.failure(steps("[0.9,0.9,0.9,0.9]", "[0.5]", false));
-        check(
+        assertTrue(
                 error.code.equals("stale_context")
                         && error.outcome.equals("not_applied")
                         && f.calls == 0
@@ -378,18 +367,18 @@ public final class GridStepsVoicingTest {
                 "a stale expectation is rejected before dispatch, even for a no-op");
         StepFixture shortArray = new StepFixture(4, 4);
         error = shortArray.failure(steps("[0,0,0,0,0]", "[0.5]", false));
-        check(
+        assertTrue(
                 error.code.equals("stale_context") && shortArray.calls == 0,
                 "expectedValues longer than the native array is stale");
         StepFixture window = new StepFixture(256, 4);
         window.set(steps(window.json(0, 6), "[0.5,0.5,0.5,0.5,0.5,0.5]", false));
-        check(
+        assertTrue(
                 window.calls == 1 && window.live()[5] == 0.5f,
                 "the CAS window is expectedValues, not the live STEPS value");
         GridParameterWriter.Request scalar = GridParameterWriter.Request.parse(
-                TransportMixFixture.json("{\"expectedKind\":\"float\",\"expectedValue\":0.0,\"value\":0.5}"));
+                HostFixture.json("{\"expectedKind\":\"float\",\"expectedValue\":0.0,\"value\":0.5}"));
         error = f.failure(scalar);
-        check(error.code.equals("stale_context") && f.calls == 0, "a scalar request cannot target a step array");
+        assertTrue(error.code.equals("stale_context") && f.calls == 0, "a scalar request cannot target a step array");
         StepFixture scalarTarget = new StepFixture(256, 4);
         Node floating = scalarTarget
                 .model
@@ -398,52 +387,52 @@ public final class GridStepsVoicingTest {
                 .put(FLOAT_DEFINITION, new Node().put(FLOAT_MIN, 0.0).put(FLOAT_MAX, 1.0));
         scalarTarget.model.first.put(CHILDREN, List.of(scalarTarget.count, scalarTarget.steps, floating));
         scalarTarget.writer = null;
-        try {
-            new GridParameterWriter(
-                            scalarTarget.model.reader,
-                            scalarTarget.context.reader,
-                            new GridParameterWriter.Access() {
-                                @Override
-                                public void requireSupported(Object parameter, GridSnapshotReader.Kind kind) {}
+        {
+            RpcException caught = assertThrows(RpcException.class, () -> {
+                new GridParameterWriter(
+                                scalarTarget.model.reader,
+                                scalarTarget.context.reader,
+                                new GridParameterWriter.Access() {
+                                    @Override
+                                    public void requireSupported(Object parameter, GridSnapshotReader.Kind kind) {}
 
-                                @Override
-                                public void setRaw(Object parameter, double value) {
+                                    @Override
+                                    public void setRaw(Object parameter, double value) {
+                                        throw new AssertionError("dispatched");
+                                    }
+                                },
+                                null,
+                                null)
+                        .set(
+                                scalarTarget.model.proxy,
+                                TRACK_ID,
+                                MODULE,
+                                "LOCAL_ID",
+                                steps("[0.1]", "[0.1]", false),
+                                () -> {},
+                                () -> {
                                     throw new AssertionError("dispatched");
-                                }
-                            },
-                            null,
-                            null)
-                    .set(
-                            scalarTarget.model.proxy,
-                            TRACK_ID,
-                            MODULE,
-                            "LOCAL_ID",
-                            steps("[0.1]", "[0.1]", false),
-                            () -> {},
-                            () -> {
-                                throw new AssertionError("dispatched");
-                            });
-            throw new AssertionError("steps request accepted by a scalar");
-        } catch (RpcException caught) {
-            check(
+                                });
+            });
+            assertTrue(
                     caught.code.equals("stale_context") && caught.outcome.equals("not_applied"),
                     "a steps request cannot target a scalar parameter");
         }
         StepFixture skipped = new StepFixture(256, 4);
         skipped.context.override(skipped.steps, GridParameterContext.Field.CIU, true);
-        check(
+        assertTrue(
                 skipped.failure(steps(skipped.json(0, 4), "[0.5]", false)).code.equals("unsafe_state")
                         && skipped.calls == 0,
                 "the skip predicate gates step array writes");
         StepFixture undo = new StepFixture(256, 4);
         undo.context.override(undo.steps, GridParameterContext.Field.UNDO_ACTIVE, false);
         undo.context.values.put(GridParameterContext.Field.UNDO_ACTIVE, true);
-        check(
+        assertTrue(
                 undo.failure(steps(undo.json(0, 4), "[0.5]", false)).code.equals("unsafe_state") && undo.calls == 0,
                 "an active undo change gates step array writes");
         StepFixture settable = new StepFixture(256, 4);
         settable.context.values.put(GridParameterContext.Field.SETTABLE, false);
-        check(
+        assertTrue(
                 settable.failure(steps(settable.json(0, 4), "[0.5]", false))
                                 .code
                                 .equals("unsafe_state")
@@ -451,17 +440,18 @@ public final class GridStepsVoicingTest {
                 "a non-settable GUI property gates step array writes");
         StepFixture project = new StepFixture(256, 4);
         project.context.override(project.steps, NativeReadContext.Field.PROJECT, new Object());
-        check(
+        assertTrue(
                 project.failure(steps(project.json(0, 4), "[0.5]", false)).code.equals("stale_context")
                         && project.calls == 0,
                 "owning project mismatch gates step array writes");
     }
 
-    private static void stepWriteFailuresAndBatch() {
+    @Test
+    void stepWriteFailuresAndBatch() {
         StepFixture unread = new StepFixture(256, 4);
         unread.apply = false;
         RpcException error = unread.failure(steps(unread.json(0, 4), "[0.5]", false));
-        check(
+        assertTrue(
                 error.code.equals("grid_verification_failed") && error.outcome.equals("unknown") && unread.calls == 1,
                 "an unobserved requested array is not a successful dispatch");
         StepFixture side = new StepFixture(256, 4);
@@ -471,7 +461,7 @@ public final class GridStepsVoicingTest {
             side.steps.put(STEP_VALUES, data);
         };
         error = side.failure(steps(side.json(0, 4), "[0.5]", false));
-        check(
+        assertTrue(
                 error.code.equals("grid_verification_failed") && error.outcome.equals("unknown"),
                 "a native side effect outside the prefix fails the whole-array readback");
         StepFixture partial = new StepFixture(256, 4);
@@ -479,26 +469,26 @@ public final class GridStepsVoicingTest {
             throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "native array failure");
         };
         error = partial.failure(steps(partial.json(0, 4), "[0.5]", false));
-        check(
+        assertTrue(
                 partial.calls == 1 && partial.op.dispatched,
                 "a native exception after dispatch is not retried (the host operation reports unknown)");
         StepFixture absent = new StepFixture(256, 4);
         GridParameterWriter none =
                 new GridParameterWriter(absent.model.reader, absent.context.reader, null, null, null);
-        try {
-            none.set(
-                    absent.model.proxy,
-                    TRACK_ID,
-                    MODULE,
-                    "DATA",
-                    steps(absent.json(0, 4), "[0.5]", false),
-                    () -> {},
-                    () -> {
-                        throw new AssertionError("dispatched without a step binding");
-                    });
-            throw new AssertionError("step write without binding");
-        } catch (RpcException caught) {
-            check(
+        {
+            RpcException caught = assertThrows(RpcException.class, () -> {
+                none.set(
+                        absent.model.proxy,
+                        TRACK_ID,
+                        MODULE,
+                        "DATA",
+                        steps(absent.json(0, 4), "[0.5]", false),
+                        () -> {},
+                        () -> {
+                            throw new AssertionError("dispatched without a step binding");
+                        });
+            });
+            assertTrue(
                     caught.code.equals("grid_unavailable") && caught.outcome.equals("not_applied"),
                     "a missing step write binding fails closed");
         }
@@ -508,7 +498,7 @@ public final class GridStepsVoicingTest {
         JsonObject result = batch.writer.setAll(
                 batch.model.proxy, TRACK_ID, List.of(entry), () -> {}, () -> batch.op.dispatched = true);
         JsonObject item = result.getAsJsonArray("writes").get(0).getAsJsonObject();
-        check(
+        assertTrue(
                 batch.calls == 1
                         && item.get("status").getAsString().equals("applied")
                         && item.getAsJsonArray("values").size() == 4
@@ -517,17 +507,19 @@ public final class GridStepsVoicingTest {
                 "batch entries may write step arrays");
         StepFixture stale = new StepFixture(256, 4);
         GridParameterWriter.Entry bad = new GridParameterWriter.Entry(MODULE, "DATA", steps("[0.9]", "[0.5]", false));
-        try {
-            stale.writer.setAll(stale.model.proxy, TRACK_ID, List.of(bad), () -> {}, () -> stale.op.dispatched = true);
-            throw new AssertionError("stale batch accepted");
-        } catch (RpcException caught) {
-            check(
+        {
+            RpcException caught = assertThrows(
+                    RpcException.class,
+                    () -> stale.writer.setAll(
+                            stale.model.proxy, TRACK_ID, List.of(bad), () -> {}, () -> stale.op.dispatched = true));
+            assertTrue(
                     caught.outcome.equals("not_applied") && stale.calls == 0,
                     "a stale step entry fails the batch preflight");
         }
     }
 
-    private static void stepRequestBounds() {
+    @Test
+    void stepRequestBounds() {
         String max = "[" + "0.5,".repeat(255) + "0.5]";
         steps(max, max, true);
         steps("[0]", "[-128]", false);
@@ -535,23 +527,23 @@ public final class GridStepsVoicingTest {
         steps("[7.5e3,-9]", "[0]", false);
         for (String bad :
                 List.of("[]", "[" + "0.5,".repeat(256) + "0.5]", "[\"a\"]", "[true]", "[null]", "5", "{}", "[[0]]"))
-            expectInvalid(() -> steps("[0]", bad, false));
+            assertInvalidParams(() -> steps("[0]", bad, false));
         for (String bad : List.of("[]", "[" + "0.5,".repeat(256) + "0.5]", "[\"a\"]", "[null]", "5"))
-            expectInvalid(() -> steps(bad, "[0]", false));
-        expectInvalid(() -> steps("[0]", "[0,0]", false));
+            assertInvalidParams(() -> steps(bad, "[0]", false));
+        assertInvalidParams(() -> steps("[0]", "[0,0]", false));
         for (String bad : List.of("[128.0000001]", "[-128.0000001]", "[129]", "[1e999]"))
-            expectInvalid(() -> steps("[0]", bad, false));
+            assertInvalidParams(() -> steps("[0]", bad, false));
         for (String extra : List.of("\"value\":0.5", "\"expectedValue\":0.5", "\"display\":\"1 kHz\""))
-            expectInvalid(() -> GridParameterWriter.Request.parse(TransportMixFixture.json(
+            assertInvalidParams(() -> GridParameterWriter.Request.parse(HostFixture.json(
                     "{\"expectedKind\":\"steps\",\"expectedValues\":[0],\"values\":[0]," + extra + "}")));
-        expectInvalid(() -> GridParameterWriter.Request.parse(TransportMixFixture.json(
-                "{\"expectedKind\":\"steps\",\"expectedValues\":[0],\"values\":[0],\"full\":1}")));
-        expectInvalid(() -> GridParameterWriter.Request.parse(TransportMixFixture.json(
-                "{\"expectedKind\":\"float\",\"expectedValue\":0,\"value\":0,\"values\":[0]}")));
-        expectInvalid(() -> GridParameterWriter.Request.parse(TransportMixFixture.json(
-                "{\"expectedKind\":\"float\",\"expectedValue\":0,\"value\":0,\"full\":true}")));
-        expectInvalid(() -> GridParameterWriter.Request.parse(
-                TransportMixFixture.json("{\"expectedKind\":\"steps\",\"expectedValues\":[0]}")));
+        assertInvalidParams(() -> GridParameterWriter.Request.parse(
+                HostFixture.json("{\"expectedKind\":\"steps\",\"expectedValues\":[0],\"values\":[0],\"full\":1}")));
+        assertInvalidParams(() -> GridParameterWriter.Request.parse(
+                HostFixture.json("{\"expectedKind\":\"float\",\"expectedValue\":0,\"value\":0,\"values\":[0]}")));
+        assertInvalidParams(() -> GridParameterWriter.Request.parse(
+                HostFixture.json("{\"expectedKind\":\"float\",\"expectedValue\":0,\"value\":0,\"full\":true}")));
+        assertInvalidParams(() -> GridParameterWriter.Request.parse(
+                HostFixture.json("{\"expectedKind\":\"steps\",\"expectedValues\":[0]}")));
     }
 
     // ---- voicing ---------------------------------------------------------------------------------------------
@@ -594,10 +586,8 @@ public final class GridStepsVoicingTest {
         }
 
         RpcException failure(String json) {
-            try {
-                set(json);
-                throw new AssertionError("Expected failed voicing write");
-            } catch (RpcException error) {
+            {
+                RpcException error = assertThrows(RpcException.class, () -> set(json));
                 return error;
             }
         }
@@ -621,13 +611,14 @@ public final class GridStepsVoicingTest {
     }
 
     private static GridVoicingWriter.Request request(String json) {
-        return GridVoicingWriter.Request.parse(TransportMixFixture.json(json));
+        return GridVoicingWriter.Request.parse(HostFixture.json(json));
     }
 
-    private static void voicingReadsAndDerivedMode() {
+    @Test
+    void voicingReadsAndDerivedMode() {
         VoicingFixture f = new VoicingFixture();
         JsonObject result = f.get();
-        check(
+        assertTrue(
                 result.get("supported").getAsBoolean()
                         && result.getAsJsonObject("voicing").get("voices").getAsInt() == 1
                         && result.get("mode").getAsString().equals("true_mono")
@@ -640,29 +631,31 @@ public final class GridStepsVoicingTest {
                                 .getAsBoolean(),
                 "one voice plays the stored mono mode; voicing has no scalar license or touch state");
         f.state.addProperty("voices", 8);
-        check(f.get().get("mode").getAsString().equals("poly"), "several voices are poly");
+        assertTrue(f.get().get("mode").getAsString().equals("poly"), "several voices are poly");
         f.state.addProperty("voices", 1);
         f.state.addProperty("monoMode", "digi_mono");
-        check(f.get().get("mode").getAsString().equals("digi_mono"), "digi mono is the alternating-voices mono mode");
+        assertTrue(
+                f.get().get("mode").getAsString().equals("digi_mono"), "digi mono is the alternating-voices mono mode");
         f.present = false;
         result = f.get();
-        check(
+        assertTrue(
                 !result.get("supported").getAsBoolean()
                         && result.get("reason").getAsString().contains("no_voicing_model")
                         && !result.has("voicing"),
                 "Note Grid and FX Grid report voicing unsupported with a reason");
-        expectRead("grid_unavailable", () -> {
+        assertNotApplied("grid_unavailable", () -> {
             f.present = true;
             f.model.document = false;
             f.get();
         });
     }
 
-    private static void voicingWritesAreGuardedCompareAndSet() {
+    @Test
+    void voicingWritesAreGuardedCompareAndSet() {
         VoicingFixture f = new VoicingFixture();
         JsonObject result =
                 f.set("{\"expected\":{\"voices\":1,\"voiceStacking\":1},\"set\":{\"voiceStacking\":3,\"voices\":16}}");
-        check(
+        assertTrue(
                 f.calls.equals(List.of("voices", "voiceStacking"))
                         && f.op.dispatched
                         && result.getAsJsonObject("voicing").get("voices").getAsInt() == 16
@@ -678,7 +671,7 @@ public final class GridStepsVoicingTest {
                 "voicing fields are written in a fixed order and read back exactly");
         VoicingFixture noop = new VoicingFixture();
         result = noop.set("{\"expected\":{\"voices\":1},\"set\":{\"voices\":1}}");
-        check(
+        assertTrue(
                 noop.calls.isEmpty()
                         && !noop.op.dispatched
                         && !result.get("mutationDispatched").getAsBoolean()
@@ -689,18 +682,18 @@ public final class GridStepsVoicingTest {
                 "{\"expected\":{\"voices\":1,\"monoMode\":\"true_mono\",\"retriggerMode\":\"on_note_on\",\"notePriority\":\"last\","
                         + "\"legatoGlide\":false,\"stealSameKey\":true,\"allowOverlappingNotes\":false},\"set\":{\"monoMode\":\"digi_mono\","
                         + "\"retriggerMode\":\"always\",\"notePriority\":\"high\",\"legatoGlide\":true,\"stealSameKey\":false,\"allowOverlappingNotes\":true}}");
-        check(
+        assertTrue(
                 mixed.calls.size() == 6
                         && mixed.state.get("monoMode").getAsString().equals("digi_mono")
                         && mixed.state.get("allowOverlappingNotes").getAsBoolean(),
                 "enum and boolean voicing fields are writable");
         VoicingFixture extra = new VoicingFixture();
         extra.set("{\"expected\":{\"voices\":1,\"monoMode\":\"true_mono\"},\"set\":{\"voices\":2}}");
-        check(extra.calls.equals(List.of("voices")), "extra expected fields are preconditions only");
+        assertTrue(extra.calls.equals(List.of("voices")), "extra expected fields are preconditions only");
         VoicingFixture side = new VoicingFixture();
         side.afterSet = () -> side.state.addProperty("voiceStacking", 4);
         result = side.set("{\"expected\":{\"monoMode\":\"true_mono\"},\"set\":{\"monoMode\":\"digi_mono\"}}");
-        check(
+        assertTrue(
                 result.getAsJsonArray("changedUnrequested").size() == 1
                         && result.getAsJsonArray("changedUnrequested")
                                 .get(0)
@@ -709,10 +702,11 @@ public final class GridStepsVoicingTest {
                 "a native side effect on an unrequested field is reported");
     }
 
-    private static void voicingFailuresAndBounds() {
+    @Test
+    void voicingFailuresAndBounds() {
         VoicingFixture f = new VoicingFixture();
         RpcException error = f.failure("{\"expected\":{\"voices\":2},\"set\":{\"voices\":3}}");
-        check(
+        assertTrue(
                 error.code.equals("stale_context")
                         && error.outcome.equals("not_applied")
                         && f.calls.isEmpty()
@@ -721,7 +715,7 @@ public final class GridStepsVoicingTest {
         VoicingFixture unread = new VoicingFixture();
         unread.apply = false;
         error = unread.failure("{\"expected\":{\"voices\":1},\"set\":{\"voices\":4}}");
-        check(
+        assertTrue(
                 error.code.equals("grid_verification_failed")
                         && error.outcome.equals("unknown")
                         && unread.calls.size() == 1,
@@ -730,27 +724,28 @@ public final class GridStepsVoicingTest {
         thrown.afterSet = () -> {
             throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "native voicing failure");
         };
-        try {
-            thrown.set("{\"expected\":{\"voices\":1,\"voiceStacking\":1},\"set\":{\"voices\":4,\"voiceStacking\":2}}");
-            throw new AssertionError("native failure swallowed");
-        } catch (RpcException caught) {
-            check(thrown.calls.size() == 1 && thrown.op.dispatched, "no retry after a native failure");
+        {
+            RpcException caught = assertThrows(
+                    RpcException.class,
+                    () -> thrown.set(
+                            "{\"expected\":{\"voices\":1,\"voiceStacking\":1},\"set\":{\"voices\":4,\"voiceStacking\":2}}"));
+            assertTrue(thrown.calls.size() == 1 && thrown.op.dispatched, "no retry after a native failure");
         }
         VoicingFixture absent = new VoicingFixture();
         absent.present = false;
         error = absent.failure("{\"expected\":{\"voices\":1},\"set\":{\"voices\":4}}");
-        check(
+        assertTrue(
                 error.code.equals("unsupported_scope") && error.outcome.equals("not_applied"),
                 "a device without voicing rejects writes unsupported");
         VoicingFixture readOnly = new VoicingFixture(false);
         error = readOnly.failure("{\"expected\":{\"voices\":1},\"set\":{\"voices\":4}}");
-        check(
+        assertTrue(
                 error.code.equals("grid_unavailable") && readOnly.calls.isEmpty(),
                 "unbound write operations fail closed");
-        check(readOnly.get().get("supported").getAsBoolean(), "an unbound write operation leaves reads available");
+        assertTrue(readOnly.get().get("supported").getAsBoolean(), "an unbound write operation leaves reads available");
         VoicingFixture undo = new VoicingFixture();
         undo.context.values.put(GridParameterContext.Field.UNDO_ACTIVE, true);
-        check(
+        assertTrue(
                 undo.failure("{\"expected\":{\"voices\":1},\"set\":{\"voices\":4}}")
                                 .code
                                 .equals("unsafe_state")
@@ -758,7 +753,7 @@ public final class GridStepsVoicingTest {
                 "an active undo change gates voicing writes");
         VoicingFixture skipped = new VoicingFixture();
         skipped.context.override(skipped.voicing, GridParameterContext.Field.CIU, true);
-        check(
+        assertTrue(
                 skipped.failure("{\"expected\":{\"voices\":1},\"set\":{\"voices\":4}}")
                                 .code
                                 .equals("unsafe_state")
@@ -766,7 +761,7 @@ public final class GridStepsVoicingTest {
                 "the skip predicate gates voicing writes");
         VoicingFixture project = new VoicingFixture();
         project.context.override(project.voicing, NativeReadContext.Field.PROJECT, new Object());
-        check(
+        assertTrue(
                 project.failure("{\"expected\":{\"voices\":1},\"set\":{\"voices\":4}}")
                                 .code
                                 .equals("stale_context")
@@ -786,51 +781,50 @@ public final class GridStepsVoicingTest {
                 "{\"expected\":{\"legatoGlide\":false},\"set\":{\"legatoGlide\":0}}",
                 "{\"expected\":{\"bogus\":1},\"set\":{\"bogus\":2}}",
                 "{\"set\":{\"voices\":2}}",
-                "{\"expected\":{\"voices\":1}}")) expectInvalid(() -> request(bad));
+                "{\"expected\":{\"voices\":1}}")) assertInvalidParams(() -> request(bad));
         request("{\"expected\":{\"voices\":64,\"voiceStacking\":16},\"set\":{\"voices\":1,\"voiceStacking\":1}}");
     }
 
     // ---- RPC boundary ----------------------------------------------------------------------------------------
 
-    private static void moduleValidationAndCapabilities() {
+    @Test
+    void moduleValidationAndCapabilities() {
         String target = "\"trackId\":\"" + TRACK_ID + "\",\"deviceIndex\":0,\"expectedDeviceName\":\"Poly Grid\",";
         String module = "\"moduleId\":\"" + MODULE + "\",\"parameterId\":\"DATA\",";
         GridModule.validateParams(
                 "grid.parameters.set",
-                TransportMixFixture.json("{" + target + module
+                HostFixture.json("{" + target + module
                         + "\"expectedKind\":\"steps\",\"expectedValues\":[0,0],\"values\":[0.5],\"full\":true}"));
         GridModule.validateParams(
                 "grid.parameters.set",
-                TransportMixFixture.json("{" + target + "\"writes\":[{" + module
+                HostFixture.json("{" + target + "\"writes\":[{" + module
                         + "\"expectedKind\":\"steps\",\"expectedValues\":[0],\"values\":[0.5]},{"
                         + module.replace("DATA", "OTHER")
                         + "\"expectedKind\":\"float\",\"expectedValue\":0,\"value\":1}]}"));
         GridModule.validateParams(
                 "grid.parameters.get",
-                TransportMixFixture.json("{" + target + module.substring(0, module.length() - 1) + ",\"full\":true}"));
+                HostFixture.json("{" + target + module.substring(0, module.length() - 1) + ",\"full\":true}"));
         GridModule.validateParams(
-                "grid.get",
-                TransportMixFixture.json("{" + target.substring(0, target.length() - 1) + ",\"full\":true}"));
+                "grid.get", HostFixture.json("{" + target.substring(0, target.length() - 1) + ",\"full\":true}"));
         for (String bad : List.of(
                 "\"expectedKind\":\"steps\",\"expectedValue\":0,\"value\":0.5",
                 "\"expectedKind\":\"steps\",\"expectedValues\":[0]",
                 "\"expectedKind\":\"float\",\"expectedValue\":0,\"values\":[0.5]"))
-            expectInvalid(() -> GridModule.validateParams(
-                    "grid.parameters.set", TransportMixFixture.json("{" + target + module + bad.substring(0) + "}")));
-        expectInvalid(() -> GridModule.validateParams(
+            assertInvalidParams(() -> GridModule.validateParams(
+                    "grid.parameters.set", HostFixture.json("{" + target + module + bad.substring(0) + "}")));
+        assertInvalidParams(() -> GridModule.validateParams(
                 "grid.parameters.get",
-                TransportMixFixture.json(
-                        "{" + target + module.substring(0, module.length() - 1) + ",\"full\":\"yes\"}")));
+                HostFixture.json("{" + target + module.substring(0, module.length() - 1) + ",\"full\":\"yes\"}")));
         GridModule.validateParams(
-                "grid.voicing.get", TransportMixFixture.json("{" + target.substring(0, target.length() - 1) + "}"));
+                "grid.voicing.get", HostFixture.json("{" + target.substring(0, target.length() - 1) + "}"));
         GridModule.validateParams(
                 "grid.voicing.set",
-                TransportMixFixture.json("{" + target + "\"expected\":{\"voices\":1},\"set\":{\"voices\":4}}"));
-        expectInvalid(() -> GridModule.validateParams(
-                "grid.voicing.set", TransportMixFixture.json("{" + target + "\"expected\":{\"voices\":1}}")));
-        expectInvalid(() ->
-                GridModule.validateParams("grid.voicing.get", TransportMixFixture.json("{" + target + "\"extra\":1}")));
-        check(
+                HostFixture.json("{" + target + "\"expected\":{\"voices\":1},\"set\":{\"voices\":4}}"));
+        assertInvalidParams(() -> GridModule.validateParams(
+                "grid.voicing.set", HostFixture.json("{" + target + "\"expected\":{\"voices\":1}}")));
+        assertInvalidParams(
+                () -> GridModule.validateParams("grid.voicing.get", HostFixture.json("{" + target + "\"extra\":1}")));
+        assertTrue(
                 GridModule.METHODS.contains("grid.voicing.get") && GridModule.METHODS.contains("grid.voicing.set"),
                 "voicing methods are registered");
         JsonObject full = new JsonObject();
@@ -842,7 +836,7 @@ public final class GridStepsVoicingTest {
             full.add(key, entry);
         }
         JsonObject compact = GridModule.compactCapabilities(full);
-        check(
+        assertTrue(
                 !compact.getAsJsonObject("writers").get("stepArrays").getAsBoolean()
                         && !compact.getAsJsonObject("writers").get("voicing").getAsBoolean()
                         && compact.getAsJsonObject("unavailable").has("voicing"),
@@ -853,32 +847,5 @@ public final class GridStepsVoicingTest {
 
     private static boolean has(JsonObject result, String reason) {
         return result.getAsJsonArray("unsupported").contains(new JsonPrimitive(reason));
-    }
-
-    private static void expectInvalid(Runnable call) {
-        try {
-            call.run();
-            throw new AssertionError("Expected invalid_params");
-        } catch (RpcException error) {
-            check(
-                    error.code.equals("invalid_params") && error.outcome.equals("not_applied"),
-                    "expected invalid_params, got " + error.code);
-        }
-    }
-
-    private static void expectRead(String code, Runnable call) {
-        try {
-            call.run();
-            throw new AssertionError("Expected " + code);
-        } catch (RpcException error) {
-            check(
-                    error.code.equals(code) && error.outcome.equals("not_applied"),
-                    "expected read-only " + code + ", got " + error.code);
-        }
-    }
-
-    private static void check(boolean condition, String label) {
-        assertions++;
-        if (!condition) throw new AssertionError(label);
     }
 }

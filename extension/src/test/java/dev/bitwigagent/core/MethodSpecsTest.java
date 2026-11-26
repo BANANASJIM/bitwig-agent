@@ -1,5 +1,7 @@
 package dev.bitwigagent.core;
 
+import static org.junit.jupiter.api.Assertions.*;
+
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import java.io.InputStreamReader;
@@ -8,6 +10,7 @@ import java.io.StringReader;
 import java.nio.charset.StandardCharsets;
 import java.util.Set;
 import java.util.TreeSet;
+import org.junit.jupiter.api.Test;
 
 /** The bundle generated from the Python protocol must reproduce the method tables Java used to hard-code. */
 public final class MethodSpecsTest {
@@ -56,12 +59,6 @@ public final class MethodSpecsTest {
             "modulators.map",
             "modulators.unmap");
     private static final int DEFAULT_CEILING_MS = 10000, LONG_CEILING_MS = 60000;
-    private static int checks;
-
-    private static void check(boolean condition, String message) {
-        checks++;
-        if (!condition) throw new AssertionError(message);
-    }
 
     public static JsonObject bundle() {
         try (Reader in = new InputStreamReader(
@@ -90,13 +87,9 @@ public final class MethodSpecsTest {
     }
 
     private static void malformed(String text, String message) {
-        try {
-            MethodSpecs.parse(new StringReader(text));
-        } catch (IllegalStateException expected) {
-            check(expected.getMessage().contains("malformed"), message + ": " + expected.getMessage());
-            return;
-        }
-        throw new AssertionError(message + " was accepted");
+        IllegalStateException expected =
+                assertThrows(IllegalStateException.class, () -> MethodSpecs.parse(new StringReader(text)), message);
+        assertTrue(expected.getMessage().contains("malformed"), message + ": " + expected.getMessage());
     }
 
     private static Set<String> where(MethodSpecs specs, java.util.function.Predicate<MethodSpecs.Spec> predicate) {
@@ -105,48 +98,48 @@ public final class MethodSpecsTest {
         return names;
     }
 
-    public static void main(String[] args) {
+    @Test
+    void bundleReproducesTheFormerMethodTables() {
         MethodSpecs specs = MethodSpecs.load();
-        check(
+        assertTrue(
                 where(specs, s -> s.projectWrite).equals(new TreeSet<>(PROJECT_WRITES)),
                 "project writes match the former HostBridge.PROJECT_WRITES");
-        check(
+        assertTrue(
                 where(specs, s -> s.engineRequired).equals(new TreeSet<>(ENGINE_REQUIRED)),
                 "engine-required methods match the former launch checks");
-        check(
+        assertTrue(
                 where(specs, s -> s.maxTimeoutMs > DEFAULT_CEILING_MS).equals(new TreeSet<>(LONG_TIMEOUT)),
                 "long-timeout methods match the former LONG sets, SAVE_AS and topology edits");
         for (String name : specs.methods()) {
             MethodSpecs.Spec spec = specs.get(name);
-            check(
+            assertTrue(
                     spec.maxTimeoutMs == (LONG_TIMEOUT.contains(name) ? LONG_CEILING_MS : DEFAULT_CEILING_MS),
                     name + " keeps the former timeout ceiling");
-            check(spec.defaultTimeoutMs <= spec.maxTimeoutMs, name + " default stays within its ceiling");
+            assertTrue(spec.defaultTimeoutMs <= spec.maxTimeoutMs, name + " default stays within its ceiling");
         }
-        check(
+        assertTrue(
                 where(specs, s -> !s.readOnly).containsAll(NON_READ_ONLY_ROUTING_AND_MODULATOR),
                 "routing and modulator writes are not read-only");
-        check(
+        assertTrue(
                 specs.get("tracks.routing.get").readOnly
                         && specs.get("modulators.get").readOnly
                         && specs.get("status").readOnly,
                 "routing and modulator reads are read-only");
-        check(
+        assertTrue(
                 !specs.get("grid.topology.reconcile").projectWrite && !specs.get("grid.topology.reconcile").readOnly,
                 "reconcile is long-running and not read-only, but is not a project structure write");
-        check(
+        assertTrue(
                 specs.contains("project.saveAs")
                         && specs.get("project.saveAs").defaultTimeoutMs == 30000
                         && specs.get("status").defaultTimeoutMs == 5000,
                 "defaults come from the spec");
-        check(!specs.contains("grid.apply") && !specs.contains("audio.capture"), "client-side methods are not host");
-        try {
-            specs.get("unknown.method");
-            throw new AssertionError("unknown method resolved");
-        } catch (IllegalArgumentException expected) {
-            checks++;
-        }
+        assertTrue(
+                !specs.contains("grid.apply") && !specs.contains("audio.capture"), "client-side methods are not host");
+        assertThrows(IllegalArgumentException.class, () -> specs.get("unknown.method"));
+    }
 
+    @Test
+    void malformedBundlesAreRejected() {
         malformed("", "empty bundle");
         malformed("{", "truncated bundle");
         malformed("{}", "missing methods");
@@ -161,7 +154,8 @@ public final class MethodSpecsTest {
         JsonObject fraction = one("a", method(true, true, "", 5000, 10000));
         fraction.getAsJsonObject("methods").getAsJsonObject("a").addProperty("maxTimeoutMs", 10000.5);
         malformed(fraction.toString(), "fractional timeout");
-        check(parse(one("a", method(true, true, "\"engine\"", 5000, 10000))).get("a").engineRequired, "minimal bundle");
-        System.out.println("PASS: " + checks + " method-spec assertions.");
+        assertTrue(
+                parse(one("a", method(true, true, "\"engine\"", 5000, 10000))).get("a").engineRequired,
+                "minimal bundle");
     }
 }

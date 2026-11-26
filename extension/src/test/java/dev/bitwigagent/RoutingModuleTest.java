@@ -1,27 +1,19 @@
 package dev.bitwigagent;
 
+import static dev.bitwigagent.RpcAssert.*;
+import static org.junit.jupiter.api.Assertions.*;
+
 import com.google.gson.*;
 import java.util.*;
 import java.util.concurrent.CompletionException;
+import org.junit.jupiter.api.Test;
 
 /** Validation, safety, window and quarantine around a simulated native routing adapter; not native binding evidence. */
 public final class RoutingModuleTest {
-    static final String A = TransportMixFixture.A, B = TransportMixFixture.B, C = TransportMixFixture.C;
-    static int checks;
+    static final String A = HostFixture.A, B = HostFixture.B, C = HostFixture.C;
 
-    public static void main(String[] args) {
-        validation();
-        helpers();
-        trackNamesAnnotateEntriesWithoutChangingThem();
-        getIsReadOnlyAndAllowsPlayingTransport();
-        setNeedsStoppedTransportAndObservedTargets();
-        unknownWriteQuarantinesWritesButNotReads();
-        preDispatchRefusalDoesNotQuarantine();
-        sidechainUsesTheObservedRootDevice();
-        System.out.println("RoutingModuleTest: " + checks + " assertions (simulated adapter only)");
-    }
-
-    static void validation() {
+    @Test
+    void validation() {
         ok("tracks.routing.get", json("{\"trackId\":\"" + A + "\"}"));
         ok("tracks.routing.get", json("{\"trackId\":\"" + A + "\",\"includeChoices\":true}"));
         bad("tracks.routing.get", json("{\"trackId\":\"" + A + "\",\"includeChoices\":1}"));
@@ -120,93 +112,98 @@ public final class RoutingModuleTest {
         bad("devices.sidechain.get", json("{\"trackId\":\"" + A + "\",\"deviceIndex\":0}"));
     }
 
-    static void helpers() {
-        check(
+    @Test
+    void helpers() {
+        assertTrue(
                 RoutingModule.sourceKinds(RoutingModule.trackSourceGroups("AUDIO"))
                         .equals(List.of("none", "pre_fader", "post_fader")),
                 "audio track: pre/post fader");
-        check(
+        assertTrue(
                 RoutingModule.sourceKinds(RoutingModule.trackSourceGroups("INSTRUMENT"))
                         .equals(List.of("none", "track_notes", "all_ins", "computer_keyboard", "onscreen_keyboard")),
                 "instrument track: note sources");
-        check(
+        assertTrue(
                 RoutingModule.sourceKinds(RoutingModule.trackSourceGroups("HYBRID"))
                                 .size()
                         == 7,
                 "hybrid track: every v1 source");
-        check(
+        assertTrue(
                 RoutingModule.sourceKinds(List.of("HARDWARE_AUDIO_SOURCES")).equals(List.of("none")),
                 "hardware audio is deferred");
-        check(RoutingModule.trackSourceGroups("GROUP").isEmpty(), "unknown native kind admits nothing");
+        assertTrue(RoutingModule.trackSourceGroups("GROUP").isEmpty(), "unknown native kind admits nothing");
         JsonObject observed = json("{\"kind\":\"pre_fader\",\"trackId\":\"" + B + "\",\"name\":\"Pre\"}");
-        check(
+        assertTrue(
                 RoutingModule.sameEntry(
                         json("{\"kind\":\"pre_fader\",\"trackId\":\"" + B.toUpperCase(Locale.ROOT) + "\"}"), observed),
                 "CAS ignores UUID case and display name");
-        check(
+        assertTrue(
                 !RoutingModule.sameEntry(json("{\"kind\":\"post_fader\",\"trackId\":\"" + B + "\"}"), observed),
                 "CAS compares kind");
-        check(
+        assertTrue(
                 !RoutingModule.sameEntry(json("{\"kind\":\"pre_fader\",\"trackId\":\"" + C + "\"}"), observed),
                 "CAS compares trackId");
         JsonObject other = json("{\"kind\":\"other\",\"name\":\"Out 1\",\"nativeType\":\"x\"}");
-        check(
+        assertTrue(
                 RoutingModule.sameEntry(json("{\"kind\":\"other\",\"name\":\"Out 1\"}"), other),
                 "other compares exact name");
-        check(
+        assertTrue(
                 !RoutingModule.sameEntry(json("{\"kind\":\"other\",\"name\":\"Out 2\"}"), other),
                 "other with another name differs");
-        check(
+        assertTrue(
                 RoutingModule.sameEntry(json("{\"kind\":\"other\",\"name\":\"Out 1\",\"nativeType\":\"x\"}"), other),
                 "other copied verbatim matches");
-        check(
+        assertTrue(
                 !RoutingModule.sameEntry(json("{\"kind\":\"other\",\"name\":\"Out 1\",\"nativeType\":\"y\"}"), other),
                 "same name on another native type differs");
-        check(
+        assertTrue(
                 RoutingModule.sameEntry(json("{\"kind\":\"none\"}"), json("{\"kind\":\"none\",\"name\":null}")),
                 "none matches none");
     }
 
-    static void getIsReadOnlyAndAllowsPlayingTransport() {
+    @Test
+    void getIsReadOnlyAndAllowsPlayingTransport() {
         Fixture f = new Fixture();
         f.host.transport.child("isPlaying").emit(true);
         JsonObject result = f.call("tracks.routing.get", json("{\"trackId\":\"" + A + "\",\"includeChoices\":true}"));
-        check(
+        assertTrue(
                 result.get("status").getAsString().equals("observed") && f.adapter.reads == 1 && f.adapter.writes == 0,
                 "get reads without writing");
-        check(
+        assertTrue(
                 f.adapter.lastChoices && f.adapter.lastSelf.id.equals(A) && f.adapter.lastBank.size() == 2,
                 "get passes the whole observed bank and includeChoices");
-        check(
+        assertTrue(
                 f.adapter.lastBank.get(1).id.equals(B)
                         && f.adapter.lastBank.get(1).type.equals("Audio"),
                 "bank rows carry public UUID and type");
     }
 
-    static void setNeedsStoppedTransportAndObservedTargets() {
+    @Test
+    void setNeedsStoppedTransportAndObservedTargets() {
         Fixture playing = new Fixture();
         playing.host.transport.child("isPlaying").emit(true);
-        expect("unsafe_state", playing.start("tracks.routing.set", outputTo(B)));
-        check(playing.adapter.calls == 0, "playing transport blocks routing writes before native access");
+        assertRpcError("unsafe_state", playing.start("tracks.routing.set", outputTo(B)));
+        assertTrue(playing.adapter.calls == 0, "playing transport blocks routing writes before native access");
         Fixture outside = new Fixture();
-        expect("outside_window", outside.start("tracks.routing.set", outputTo(C)));
-        check(outside.adapter.calls == 0, "a destination outside the bank window is refused before native access");
+        assertRpcError("outside_window", outside.start("tracks.routing.set", outputTo(C)));
+        assertTrue(outside.adapter.calls == 0, "a destination outside the bank window is refused before native access");
         Fixture f = new Fixture();
         JsonObject result = f.call("tracks.routing.set", outputTo(B));
-        check(
+        assertTrue(
                 f.adapter.writes == 1 && result.get("status").getAsString().equals("applied"),
                 "stopped transport admits the write");
-        check(f.module.unresolved().isEmpty(), "an observed write clears the pending/quarantine state");
+        assertTrue(f.module.unresolved().isEmpty(), "an observed write clears the pending/quarantine state");
     }
 
-    static void unknownWriteQuarantinesWritesButNotReads() {
+    @Test
+    void unknownWriteQuarantinesWritesButNotReads() {
         Fixture f = new Fixture();
         f.adapter.unknown = true;
         JsonObject result = f.call("tracks.routing.set", outputTo(B));
-        check(result.get("completion").getAsString().equals("unknown"), "unknown readback is returned, not hidden");
-        check(!f.module.unresolved().isEmpty(), "unknown readback quarantines routing writes");
-        expect("unresolved_mutation", f.start("tracks.routing.set", outputTo(B)));
-        check(
+        assertTrue(
+                result.get("completion").getAsString().equals("unknown"), "unknown readback is returned, not hidden");
+        assertTrue(!f.module.unresolved().isEmpty(), "unknown readback quarantines routing writes");
+        assertRpcError("unresolved_mutation", f.start("tracks.routing.set", outputTo(B)));
+        assertTrue(
                 f.call("tracks.routing.get", json("{\"trackId\":\"" + A + "\"}"))
                         .get("status")
                         .getAsString()
@@ -216,49 +213,48 @@ public final class RoutingModuleTest {
         thrown.adapter.failAfterWrite = true;
         HostOperation failed = thrown.start("tracks.routing.set", outputTo(B));
         thrown.drain();
-        check(failed.dispatched, "failure happened after dispatch");
-        try {
-            failed.result.join();
-            throw new AssertionError("expected failure");
-        } catch (CompletionException e) {
-            check(((RpcException) e.getCause()).outcome.equals("unknown"), "post-dispatch failure is unknown");
+        assertTrue(failed.dispatched, "failure happened after dispatch");
+        {
+            CompletionException e = assertThrows(CompletionException.class, () -> failed.result.join());
+            assertTrue(((RpcException) e.getCause()).outcome.equals("unknown"), "post-dispatch failure is unknown");
         }
-        expect("unresolved_mutation", thrown.start("devices.sidechain.set", sidechain()));
+        assertRpcError("unresolved_mutation", thrown.start("devices.sidechain.set", sidechain()));
     }
 
-    static void preDispatchRefusalDoesNotQuarantine() {
+    @Test
+    void preDispatchRefusalDoesNotQuarantine() {
         Fixture f = new Fixture();
         f.adapter.refuse = "kind_mismatch";
         HostOperation op = f.start("tracks.routing.set", outputTo(B));
         f.drain();
-        expect("kind_mismatch", op);
-        check(
+        assertRpcError("kind_mismatch", op);
+        assertTrue(
                 !op.dispatched && f.module.unresolved().isEmpty(),
                 "pre-dispatch refusal is not_applied and does not quarantine");
-        try {
-            op.result.join();
-        } catch (CompletionException e) {
-            check(((RpcException) e.getCause()).outcome.equals("not_applied"), "refusal outcome not_applied");
+        {
+            RpcException e = rejection(op);
+            assertTrue(e.outcome.equals("not_applied"), "refusal outcome not_applied");
         }
     }
 
-    static void sidechainUsesTheObservedRootDevice() {
+    @Test
+    void sidechainUsesTheObservedRootDevice() {
         Fixture f = new Fixture();
         f.observeDevice("Compressor");
         JsonObject get = json("{\"trackId\":\"" + A + "\",\"deviceIndex\":0,\"expectedDeviceName\":\"Compressor\"}");
         f.call("devices.sidechain.get", get);
-        check(
+        assertTrue(
                 f.adapter.lastDevice != null && f.adapter.reads == 1,
                 "sidechain get passes the observed root device proxy");
         JsonObject wrong = json("{\"trackId\":\"" + A + "\",\"deviceIndex\":0,\"expectedDeviceName\":\"Gate\"}");
-        expect("stale_target", f.start("devices.sidechain.get", wrong));
+        assertRpcError("stale_target", f.start("devices.sidechain.get", wrong));
         JsonObject p = sidechain();
         p.addProperty("expectedDeviceName", "Compressor");
         f.call("devices.sidechain.set", p);
-        check(f.adapter.writes == 1, "sidechain set reaches the adapter with a stopped transport");
+        assertTrue(f.adapter.writes == 1, "sidechain set reaches the adapter with a stopped transport");
         Fixture missing = new Fixture();
-        expect("stale_target", missing.start("devices.sidechain.get", get));
-        check(missing.adapter.calls == 0, "an unobserved device is refused before native access");
+        assertRpcError("stale_target", missing.start("devices.sidechain.get", get));
+        assertTrue(missing.adapter.calls == 0, "an unobserved device is refused before native access");
     }
 
     static JsonObject outputTo(String id) {
@@ -286,24 +282,15 @@ public final class RoutingModuleTest {
     }
 
     static void ok(String m, JsonObject p) {
-        try {
-            RoutingModule.validateParams(m, p);
-            checks++;
-        } catch (RpcException e) {
-            throw new AssertionError("rejected valid " + p + ": " + e.getMessage());
-        }
+        assertDoesNotThrow(() -> RoutingModule.validateParams(m, p), "rejected valid " + p);
     }
 
     static void bad(String m, JsonObject p) {
-        try {
-            RoutingModule.validateParams(m, p);
-            throw new AssertionError("accepted invalid " + p);
-        } catch (RpcException e) {
-            check(e.code.equals("invalid_params"), "invalid params: " + p);
-        }
+        assertRpcError("invalid_params", () -> RoutingModule.validateParams(m, p));
     }
 
-    static void trackNamesAnnotateEntriesWithoutChangingThem() {
+    @Test
+    void trackNamesAnnotateEntriesWithoutChangingThem() {
         JsonObject result = JsonParser.parseString(
                         "{\"output\":{\"entry\":{\"kind\":\"track_audio_input\",\"trackId\":\"m\"},\"choices\":["
                                 + "{\"entry\":{\"kind\":\"post_fader\",\"trackId\":\"a\"},\"name\":\"Post-Fader\"},{\"entry\":{\"kind\":\"none\"},\"name\":null},"
@@ -313,18 +300,18 @@ public final class RoutingModuleTest {
         RoutingModule.annotateTrackNames(result, Map.of("m", "Master", "a", "Drums"));
         JsonObject output = result.getAsJsonObject("output");
         JsonArray choices = output.getAsJsonArray("choices");
-        check(output.get("trackName").getAsString().equals("Master"), "current entry gets its track name");
-        check(
+        assertTrue(output.get("trackName").getAsString().equals("Master"), "current entry gets its track name");
+        assertTrue(
                 choices.get(0).getAsJsonObject().get("trackName").getAsString().equals("Drums"),
                 "choice row gets the track name");
-        check(
+        assertTrue(
                 !choices.get(0).getAsJsonObject().getAsJsonObject("entry").has("trackName"),
                 "entry stays verbatim for expected*");
-        check(
+        assertTrue(
                 !choices.get(1).getAsJsonObject().has("trackName")
                         && !choices.get(2).getAsJsonObject().has("trackName"),
                 "no name for none or unknown tracks");
-        check(
+        assertTrue(
                 result.getAsJsonArray("components")
                         .get(0)
                         .getAsJsonObject()
@@ -334,29 +321,13 @@ public final class RoutingModuleTest {
                 "sidechain source named");
     }
 
-    static void check(boolean x, String text) {
-        checks++;
-        if (!x) throw new AssertionError(text);
-    }
-
-    static void expect(String code, HostOperation op) {
-        try {
-            op.result.join();
-            throw new AssertionError("expected " + code);
-        } catch (CompletionException e) {
-            check(
-                    e.getCause() instanceof RpcException && ((RpcException) e.getCause()).code.equals(code),
-                    "error " + code + ": " + e.getCause());
-        }
-    }
-
     static final class Fixture {
-        final TransportMixFixture host = new TransportMixFixture();
+        final HostFixture host = new HostFixture();
         final Adapter adapter = new Adapter();
-        final RoutingModule module = new RoutingModule(host.services, TransportMixFixture.SPECS, adapter);
+        final RoutingModule module = new RoutingModule(host.services, HostFixture.SPECS, adapter);
 
         void observeDevice(String name) {
-            TransportMixFixture.Node devices = host.tracks[0].child("createDeviceBank"), device = devices.item(0);
+            FakeHost devices = host.tracks[0].child("createDeviceBank"), device = devices.item(0);
             device.child("exists").emit(true);
             device.child("name").emit(name);
             device.child("position").emit(0);

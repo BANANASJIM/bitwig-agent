@@ -1,40 +1,31 @@
 package dev.bitwigagent;
 
+import static dev.bitwigagent.RpcAssert.*;
+import static org.junit.jupiter.api.Assertions.*;
+
 import com.bitwig.extension.callback.IntegerValueChangedCallback;
 import com.google.gson.*;
 import java.util.*;
+import org.junit.jupiter.api.Test;
 
 /** VU window aggregation against simulated meter callbacks; no claim about what Bitwig's meters mean in dB. */
 public final class MeterModuleTest {
-    private static int assertions;
     private static final Map<String, IntegerValueChangedCallback> callbacks = new HashMap<>();
 
-    public static void main(String[] args) throws InterruptedException {
-        invalidRequestsNeverSchedule();
-        windowAggregatesPeakAndRms();
-        shortTimeoutIsRefused();
-        unknownTrackAndMissingObserverFailClosed();
-        System.out.println("MeterModuleTest: " + assertions + " assertions passed (simulated host only)");
-    }
-
-    private static TransportMixFixture fixture(boolean failing) {
+    private static HostFixture fixture(boolean failing) {
         callbacks.clear();
-        TransportMixFixture f = new TransportMixFixture();
+        HostFixture f = new HostFixture();
         for (int t = 0; t < f.tracks.length; t++) {
             final int slot = t;
-            TransportMixFixture.Node track = f.tracks[t];
-            TransportMixFixture.Custom prior = track.custom;
-            track.custom = (name, args) -> {
-                if (name.equals("addVuMeterObserver")) {
-                    if (failing) throw new IllegalStateException("not in init");
-                    if ((Integer) args[0] != MeterModule.RANGE) throw new AssertionError("range");
-                    callbacks.put(
-                            slot + ":" + args[1] + ":" + (((Boolean) args[2]) ? "peak" : "rms"),
-                            (IntegerValueChangedCallback) args[3]);
-                    return null;
-                }
-                return prior.invoke(name, args);
-            };
+            FakeHost track = f.tracks[t];
+            track.on("addVuMeterObserver", args -> {
+                if (failing) throw new IllegalStateException("not in init");
+                if ((Integer) args[0] != MeterModule.RANGE) throw new AssertionError("range");
+                callbacks.put(
+                        slot + ":" + args[1] + ":" + (((Boolean) args[2]) ? "peak" : "rms"),
+                        (IntegerValueChangedCallback) args[3]);
+                return null;
+            });
         }
         return f;
     }
@@ -44,13 +35,14 @@ public final class MeterModuleTest {
     }
 
     private static JsonObject params(String json) {
-        return TransportMixFixture.json(json);
+        return HostFixture.json(json);
     }
 
-    private static void invalidRequestsNeverSchedule() {
-        TransportMixFixture f = fixture(false);
+    @Test
+    void invalidRequestsNeverSchedule() {
+        HostFixture f = fixture(false);
         MeterModule m = new MeterModule(f.services);
-        String a = TransportMixFixture.A;
+        String a = HostFixture.A;
         for (String text : List.of(
                 "{}",
                 "{\"windowMs\":100}",
@@ -62,21 +54,21 @@ public final class MeterModuleTest {
                 "{\"trackIds\":[\"" + a + "\",\"" + a + "\"],\"windowMs\":100}",
                 "{\"trackIds\":\"" + a + "\",\"windowMs\":100}",
                 "{\"trackIds\":[\"" + a + "\"],\"windowMs\":100,\"x\":1}")) {
-            TransportMixFixture.error(f.submit(m, "tracks.meters", params(text)), "invalid_params");
-            check(f.tasks.isEmpty(), "invalid meter request not scheduled: " + text);
+            assertRpcError("invalid_params", f.submit(m, "tracks.meters", params(text)));
+            assertTrue(f.tasks.isEmpty(), "invalid meter request not scheduled: " + text);
         }
     }
 
-    private static void windowAggregatesPeakAndRms() throws InterruptedException {
-        TransportMixFixture f = fixture(false);
+    @Test
+    void windowAggregatesPeakAndRms() throws InterruptedException {
+        HostFixture f = fixture(false);
         MeterModule m = new MeterModule(f.services);
         f.transport.child("isPlaying").emit(true);
         fire(0, 0, "peak", 40); // standing level before the window counts as the baseline
         HostOperation op = f.submit(
                 m,
                 "tracks.meters",
-                params("{\"trackIds\":[\"" + TransportMixFixture.A + "\",\"" + TransportMixFixture.B
-                        + "\"],\"windowMs\":60}"));
+                params("{\"trackIds\":[\"" + HostFixture.A + "\",\"" + HostFixture.B + "\"],\"windowMs\":60}"));
         f.next();
         fire(0, 0, "peak", 90);
         fire(0, 0, "peak", 20);
@@ -90,64 +82,61 @@ public final class MeterModuleTest {
         JsonObject r = op.result.join();
         JsonObject a = r.getAsJsonArray("tracks").get(0).getAsJsonObject(),
                 b = r.getAsJsonArray("tracks").get(1).getAsJsonObject();
-        check(
+        assertTrue(
                 a.getAsJsonObject("peakMax").get("left").getAsInt() == 90
                         && a.getAsJsonObject("peakMax").get("right").getAsInt() == 55,
                 "peak max per channel: " + a);
-        check(
+        assertTrue(
                 a.getAsJsonObject("rmsMax").get("left").getAsInt() == 30
                         && a.getAsJsonObject("rmsMax").get("right").getAsInt() == 10,
                 "rms max per channel");
-        check(
+        assertTrue(
                 a.getAsJsonObject("rmsMean").get("left").getAsDouble() > 0
                         && a.get("callbacks").getAsInt() == 5,
                 "rms mean sampled by polls; callbacks counted");
-        check(
+        assertTrue(
                 a.get("silent").getAsBoolean() == false
                         && b.get("silent").getAsBoolean()
                         && b.getAsJsonObject("peakMax").get("left").getAsInt() == 0,
                 "quiet track reads silent, other track not contaminated");
-        check(
+        assertTrue(
                 r.get("unit").getAsString().contains("no_db_mapping")
                         && r.get("range").getAsInt() == 128,
                 "steps, never dB");
-        check(
+        assertTrue(
                 r.get("playingAtStart").getAsBoolean() && r.get("windowMs").getAsInt() == 60,
                 "playing state and window reported");
-        check(a.get("targetUnchanged").getAsBoolean(), "identity confirmed at the end");
+        assertTrue(a.get("targetUnchanged").getAsBoolean(), "identity confirmed at the end");
     }
 
-    private static void shortTimeoutIsRefused() {
-        TransportMixFixture f = fixture(false);
+    @Test
+    void shortTimeoutIsRefused() {
+        HostFixture f = fixture(false);
         MeterModule m = new MeterModule(f.services);
         HostOperation op = f.submit(
                 m,
                 "tracks.meters",
-                params("{\"trackIds\":[\"" + TransportMixFixture.A + "\"],\"windowMs\":2000}"),
+                params("{\"trackIds\":[\"" + HostFixture.A + "\"],\"windowMs\":2000}"),
                 System.nanoTime() + 500_000_000L);
         f.next();
-        TransportMixFixture.error(op, "invalid_params");
+        assertRpcError("invalid_params", op);
     }
 
-    private static void unknownTrackAndMissingObserverFailClosed() {
-        TransportMixFixture f = fixture(false);
+    @Test
+    void unknownTrackAndMissingObserverFailClosed() {
+        HostFixture f = fixture(false);
         MeterModule m = new MeterModule(f.services);
         HostOperation op = f.submit(
                 m,
                 "tracks.meters",
                 params("{\"trackIds\":[\"00000000-0000-0000-0000-0000000000aa\"],\"windowMs\":100}"));
         f.next();
-        TransportMixFixture.error(op, "outside_window");
-        TransportMixFixture g = fixture(true);
+        assertRpcError("outside_window", op);
+        HostFixture g = fixture(true);
         MeterModule broken = new MeterModule(g.services);
         HostOperation unavailable = g.submit(
-                broken, "tracks.meters", params("{\"trackIds\":[\"" + TransportMixFixture.A + "\"],\"windowMs\":100}"));
+                broken, "tracks.meters", params("{\"trackIds\":[\"" + HostFixture.A + "\"],\"windowMs\":100}"));
         g.next();
-        TransportMixFixture.error(unavailable, "unsupported_scope");
-    }
-
-    private static void check(boolean condition, String message) {
-        assertions++;
-        if (!condition) throw new AssertionError(message);
+        assertRpcError("unsupported_scope", unavailable);
     }
 }

@@ -1,5 +1,8 @@
 package dev.bitwigagent;
 
+import static dev.bitwigagent.RpcAssert.*;
+import static org.junit.jupiter.api.Assertions.*;
+
 import com.google.gson.*;
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -7,29 +10,21 @@ import java.nio.ByteOrder;
 import java.nio.file.*;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.Test;
 
 /** Host-free export.audio/bounce.inPlace: planning, header checks and a simulated native job; not native acceptance. */
 public final class RenderModuleTest {
-    static final String A = TransportMixFixture.A, B = TransportMixFixture.B;
-    private static int assertions;
+    static final String A = HostFixture.A, B = HostFixture.B;
     private static final List<Path> temporary = new ArrayList<>();
 
-    public static void main(String[] args) throws Exception {
-        validationIsStrict();
-        planningNamesFilesAndRefusesExisting();
-        headersAreCheckedNotJustFiles();
-        exportIsObservedOnlyWithLatchAndValidFiles();
-        longExportStaysBusyAndIsPolled();
-        refusalsBeforeDispatchAreNotApplied();
-        completedExportWithoutFilesFails();
-        bounceIsVerifiedByArrangerReadback();
-        unverifiedBounceQuarantinesBounces();
-        lateBounceMustBeVerifiedBeforeAnother();
+    @AfterAll
+    static void deleteTemporaryTrees() throws Exception {
         for (Path tree : temporary) delete(tree);
-        System.out.println("RenderModuleTest: " + assertions + " assertions (simulated native jobs only)");
     }
 
-    private static void validationIsStrict() {
+    @Test
+    void validationIsStrict() {
         RenderModule.validateParams("export.audio", export("/tmp", "master"));
         RenderModule.validateParams("bounce.inPlace", bounce(A));
         RenderModule.validateParams("render.status", new JsonObject());
@@ -97,70 +92,72 @@ public final class RenderModuleTest {
         p = new JsonObject();
         p.addProperty("x", 1);
         invalid("render.status", p);
-        check(TransportMixFixture.SPECS.methods().containsAll(RenderModule.METHODS), "render methods registered");
+        assertTrue(HostFixture.SPECS.methods().containsAll(RenderModule.METHODS), "render methods registered");
     }
 
-    private static void planningNamesFilesAndRefusesExisting() throws IOException {
+    @Test
+    void planningNamesFilesAndRefusesExisting() throws IOException {
         Path dir = temp("bwa-render-plan");
         RenderPlan one = RenderPlan.export(dir, "Mix", 1, "wav", false);
-        check(
+        assertTrue(
                 one.files.equals(List.of(dir.resolve("Mix.wav")))
                         && one.basePaths()[0].equals(dir.resolve("Mix").toString()),
                 "one source: <baseName>.<format>, dispatched without the extension Bitwig appends");
         RenderPlan stems = RenderPlan.export(dir, "Stem", 3, "flac", false);
-        check(
+        assertTrue(
                 stems.files.get(0).equals(dir.resolve("Stem-01.flac"))
                         && stems.files.get(2).equals(dir.resolve("Stem-03.flac")),
                 "several: -01, -02, ...");
         Files.write(dir.resolve("Mix.wav"), new byte[] {1});
-        refused("target_exists", () -> RenderPlan.export(dir, "Mix", 1, "wav", false));
-        check(
+        assertNotApplied("target_exists", () -> RenderPlan.export(dir, "Mix", 1, "wav", false));
+        assertTrue(
                 RenderPlan.export(dir, "Mix", 1, "wav", true).before.get(0).exists,
                 "overwrite records the old file for change detection");
         Files.createDirectory(dir.resolve("Dir.wav"));
-        refused("invalid_target", () -> RenderPlan.export(dir, "Dir", 1, "wav", true));
-        refused("invalid_target", () -> RenderPlan.export(dir.resolve("missing"), "Mix", 1, "wav", false));
+        assertNotApplied("invalid_target", () -> RenderPlan.export(dir, "Dir", 1, "wav", true));
+        assertNotApplied("invalid_target", () -> RenderPlan.export(dir.resolve("missing"), "Mix", 1, "wav", false));
     }
 
-    private static void headersAreCheckedNotJustFiles() throws IOException {
+    @Test
+    void headersAreCheckedNotJustFiles() throws IOException {
         Path dir = temp("bwa-render-headers");
         ProjectSaveAsPlan.Stat none = ProjectSaveAsPlan.Stat.of(dir.resolve("none"));
         Path pcm = wav(dir.resolve("a.wav"), 1, 2, 48000, 24, 100);
         JsonObject row = RenderPlan.inspect(pcm, none, "wav", 24, 48000);
-        check(
+        assertTrue(
                 row.get("valid").getAsBoolean()
                         && row.get("frames").getAsLong() == 100
                         && row.get("channels").getAsInt() == 2
                         && row.get("encoding").getAsString().equals("pcm"),
                 "24-bit PCM WAV parsed from its chunks");
-        check(!RenderPlan.inspect(pcm, none, "wav", 16, 0).get("valid").getAsBoolean(), "bit depth must match");
-        check(
+        assertTrue(!RenderPlan.inspect(pcm, none, "wav", 16, 0).get("valid").getAsBoolean(), "bit depth must match");
+        assertTrue(
                 RenderPlan.inspect(pcm, none, "wav", 24, 44100)
                         .get("problem")
                         .getAsString()
                         .equals("sample_rate_mismatch"),
                 "sample rate must match when given");
-        check(
+        assertTrue(
                 RenderPlan.inspect(pcm, ProjectSaveAsPlan.Stat.of(pcm), "wav", 24, 0)
                         .get("problem")
                         .getAsString()
                         .equals("not_written_by_this_export"),
                 "an untouched pre-existing file is not this export's output");
         Path fl = wav(dir.resolve("f.wav"), 3, 2, 44100, 32, 10);
-        check(
+        assertTrue(
                 RenderPlan.inspect(fl, none, "wav", 32, 44100)
                         .get("encoding")
                         .getAsString()
                         .equals("float"),
                 "32-bit float WAV");
-        check(
+        assertTrue(
                 RenderPlan.inspect(wav(dir.resolve("e.wav"), 1, 2, 48000, 24, 0), none, "wav", 24, 0)
                         .get("problem")
                         .getAsString()
                         .equals("no_audio_frames"),
                 "empty data chunk fails");
         Path junk = Files.write(dir.resolve("j.wav"), new byte[64]);
-        check(
+        assertTrue(
                 RenderPlan.inspect(junk, none, "wav", 24, 0)
                         .get("problem")
                         .getAsString()
@@ -168,14 +165,15 @@ public final class RenderModuleTest {
                 "nonempty garbage fails");
         Path flac = flac(dir.resolve("a.flac"), 48000, 2, 24, 4800);
         row = RenderPlan.inspect(flac, none, "flac", 24, 48000);
-        check(
+        assertTrue(
                 row.get("valid").getAsBoolean()
                         && row.get("frames").getAsLong() == 4800
                         && row.get("durationSeconds").getAsDouble() == 0.1,
                 "FLAC STREAMINFO parsed");
     }
 
-    private static void exportIsObservedOnlyWithLatchAndValidFiles() throws IOException {
+    @Test
+    void exportIsObservedOnlyWithLatchAndValidFiles() throws IOException {
         Sim sim = new Sim();
         JsonObject p = export(sim.dir.toString(), "master", A);
         p.addProperty("bitDepth", 16);
@@ -185,10 +183,10 @@ public final class RenderModuleTest {
         HostOperation op = sim.start("export.audio", p, 5000);
         sim.drainUntil(op);
         JsonObject result = op.result.join();
-        check(
+        assertTrue(
                 sim.dispatches == 1 && sim.sources.get(0) == null && sim.sources.get(1) != null,
                 "one dispatch; master is the null source, the track its proxy");
-        check(
+        assertTrue(
                 sim.options.bitDepth == 16
                         && sim.options.sampleRate == 44100
                         && sim.options.tap.equals("pre_fader")
@@ -196,14 +194,14 @@ public final class RenderModuleTest {
                         && sim.options.start == 0
                         && sim.options.end == 16,
                 "options reach the native call unchanged");
-        check(sim.paths[0].equals(sim.dir.resolve("Mix-01").toString()), "extensionless base paths");
-        check(
+        assertTrue(sim.paths[0].equals(sim.dir.resolve("Mix-01").toString()), "extensionless base paths");
+        assertTrue(
                 result.get("status").getAsString().equals("observed")
                         && result.get("exported").getAsBoolean()
                         && result.getAsJsonArray("files").size() == 2
                         && result.get("mayOpenFileManager").getAsBoolean(),
                 "observed export with verified files");
-        check(
+        assertTrue(
                 result.getAsJsonArray("files")
                         .get(1)
                         .getAsJsonObject()
@@ -211,42 +209,43 @@ public final class RenderModuleTest {
                         .getAsString()
                         .equals(A),
                 "rows keep source order");
-        check(sim.module.unresolved().isEmpty(), "completed job is not unresolved");
+        assertTrue(sim.module.unresolved().isEmpty(), "completed job is not unresolved");
         JsonObject status = sim.call("render.status");
-        check(
+        assertTrue(
                 status.getAsJsonObject("job").get("state").getAsString().equals("completed")
                         && status.getAsJsonObject("job").get("verified").getAsBoolean(),
                 "render.status re-verifies a completed job");
         HostOperation again = sim.start("export.audio", export(sim.dir.toString(), "master", A), 5000);
         sim.drainUntil(again);
-        TransportMixFixture.error(again, "target_exists");
-        check(sim.dispatches == 1, "existing files refused before dispatch");
+        assertRpcError("target_exists", again);
+        assertTrue(sim.dispatches == 1, "existing files refused before dispatch");
 
         Sim playing = new Sim();
         playing.fixture.transport.child("isPlaying").emit(true);
         HostOperation refused = playing.start("export.audio", export(playing.dir.toString(), "master"), 5000);
         playing.drainUntil(refused);
-        TransportMixFixture.error(refused, "unsafe_state");
-        check(playing.dispatches == 0, "playing transport refuses before dispatch");
+        assertRpcError("unsafe_state", refused);
+        assertTrue(playing.dispatches == 0, "playing transport refuses before dispatch");
     }
 
-    private static void longExportStaysBusyAndIsPolled() throws IOException {
+    @Test
+    void longExportStaysBusyAndIsPolled() throws IOException {
         Sim sim = new Sim();
         sim.finish = false;
         HostOperation op = sim.start("export.audio", export(sim.dir.toString(), "master"), 200);
         sim.drainUntil(op);
         JsonObject result = op.result.join();
-        check(
+        assertTrue(
                 result.get("status").getAsString().equals("dispatched")
                         && result.get("outcome").getAsString().equals("unknown")
                         && result.get("nativeCompletion").getAsString().equals("pending")
                         && result.get("poll").getAsString().equals("render.status"),
                 "no latch within the deadline: dispatched/unknown with a poll method");
-        check(sim.module.unresolved().size() == 1, "a running job is unresolved");
+        assertTrue(sim.module.unresolved().size() == 1, "a running job is unresolved");
         HostOperation busy = sim.start("bounce.inPlace", bounce(A), 5000);
         sim.drainUntil(busy);
-        TransportMixFixture.error(busy, "busy");
-        check(
+        assertRpcError("busy", busy);
+        assertTrue(
                 sim.call("render.status")
                         .getAsJsonObject("job")
                         .get("state")
@@ -255,49 +254,48 @@ public final class RenderModuleTest {
                 "status reports running");
         sim.complete();
         JsonObject status = sim.call("render.status");
-        check(
+        assertTrue(
                 status.getAsJsonObject("job").get("state").getAsString().equals("completed")
                         && status.getAsJsonObject("job").get("verified").getAsBoolean()
                         && sim.module.unresolved().isEmpty(),
                 "after the latch the polled job verifies and nothing is unresolved");
-        check(sim.dispatches == 1, "never re-dispatched");
+        assertTrue(sim.dispatches == 1, "never re-dispatched");
     }
 
-    private static void refusalsBeforeDispatchAreNotApplied() throws IOException {
+    @Test
+    void refusalsBeforeDispatchAreNotApplied() throws IOException {
         Sim sim = new Sim();
         sim.refusal = "render_needs_confirmation";
         HostOperation op = sim.start("export.audio", export(sim.dir.toString(), "master"), 5000);
         sim.drainUntil(op);
-        check(
-                TransportMixFixture.error(op, "render_needs_confirmation")
-                        .outcome
-                        .equals("not_applied"),
+        assertTrue(
+                assertRpcError("render_needs_confirmation", op).outcome.equals("not_applied"),
                 "native preflight refusal is not_applied");
-        check(
+        assertTrue(
                 sim.call("render.status").get("job").isJsonNull()
                         && sim.module.unresolved().isEmpty(),
                 "a refused job leaves no status or unresolved entry");
         sim.refusal = null;
         HostOperation next = sim.start("export.audio", export(sim.dir.toString(), "master"), 5000);
         sim.drainUntil(next);
-        check(next.result.join().get("exported").getAsBoolean(), "the next export is not blocked");
+        assertTrue(next.result.join().get("exported").getAsBoolean(), "the next export is not blocked");
     }
 
-    private static void completedExportWithoutFilesFails() throws IOException {
+    @Test
+    void completedExportWithoutFilesFails() throws IOException {
         Sim sim = new Sim();
         sim.write = false;
         HostOperation op = sim.start("export.audio", export(sim.dir.toString(), "master"), 5000);
         sim.drainUntil(op);
-        check(
-                TransportMixFixture.error(op, "export_failed").outcome.equals("not_applied"),
+        assertTrue(
+                assertRpcError("export_failed", op).outcome.equals("not_applied"),
                 "latch without files: nothing was written");
         Sim garbage = new Sim();
         garbage.garbage = true;
         op = garbage.start("export.audio", export(garbage.dir.toString(), "master"), 5000);
         garbage.drainUntil(op);
-        check(
-                TransportMixFixture.error(op, "export_failed").outcome.equals("unknown"),
-                "written but invalid output is unknown");
+        assertTrue(
+                assertRpcError("export_failed", op).outcome.equals("unknown"), "written but invalid output is unknown");
         Sim deleted = new Sim();
         deleted.write = false;
         deleted.deleteOld = true;
@@ -306,12 +304,13 @@ public final class RenderModuleTest {
         p.addProperty("overwrite", true);
         op = deleted.start("export.audio", p, 5000);
         deleted.drainUntil(op);
-        check(
-                TransportMixFixture.error(op, "export_failed").outcome.equals("unknown"),
+        assertTrue(
+                assertRpcError("export_failed", op).outcome.equals("unknown"),
                 "an overwritten file that is now gone is unknown, not not_applied");
     }
 
-    private static void bounceIsVerifiedByArrangerReadback() throws IOException {
+    @Test
+    void bounceIsVerifiedByArrangerReadback() throws IOException {
         Sim sim = new Sim();
         JsonObject tail = clip(32, 4, "Tail", "instrument");
         sim.clips.put(A, lanes(clip(0, 8, "Verse", "instrument"), tail));
@@ -323,15 +322,15 @@ public final class RenderModuleTest {
         HostOperation op = sim.start("bounce.inPlace", bounce(A), 5000);
         sim.drainUntil(op);
         JsonObject result = op.result.join();
-        check(sim.dispatches == 1 && sim.tap.equals("pre_fader"), "one bounce dispatch with the requested tap");
+        assertTrue(sim.dispatches == 1 && sim.tap.equals("pre_fader"), "one bounce dispatch with the requested tap");
         JsonObject typed = result.getAsJsonArray("tracks").get(0).getAsJsonObject();
-        check(
+        assertTrue(
                 typed.get("trackTypeBefore").getAsString().equals("Instrument")
                         && typed.get("trackTypeAfter").getAsString().equals("Hybrid")
                         && typed.has("warning"),
                 "an instrument track turned Hybrid by the bounce is reported");
         JsonObject track = result.getAsJsonArray("tracks").get(0).getAsJsonObject();
-        check(
+        assertTrue(
                 result.get("bounced").getAsBoolean()
                         && result.get("nativeUndo").getAsBoolean()
                         && track.getAsJsonObject("clip")
@@ -342,7 +341,7 @@ public final class RenderModuleTest {
                 "bounced only with one new audio clip over the range");
         // A later edit on the lane must not turn the verified job into a quarantine.
         sim.clips.put(A, lanes(clip(64, 4, "Other", "instrument")));
-        check(
+        assertTrue(
                 !sim.call("render.status")
                                 .getAsJsonObject("job")
                                 .get("verified")
@@ -357,7 +356,7 @@ public final class RenderModuleTest {
                 clip(-8, 8, "Long", "instrument"), clip(0, 16, "Long", "audio"), clip(16, 16, "Long", "instrument"));
         op = partial.start("bounce.inPlace", bounce(A), 5000);
         partial.drainUntil(op);
-        check(
+        assertTrue(
                 op.result.join().get("bounced").getAsBoolean(),
                 "a clip cut at both range edges leaves new remnants outside the range: still verified");
 
@@ -366,7 +365,7 @@ public final class RenderModuleTest {
         again.afterBounce = before -> lanes(clip(0, 16, "Bounce", "audio"));
         op = again.start("bounce.inPlace", bounce(A), 5000);
         again.drainUntil(op);
-        check(
+        assertTrue(
                 op.result.join().get("bounced").getAsBoolean(),
                 "re-bouncing a bounced range is a new clip object, not 'unchanged'");
 
@@ -374,64 +373,65 @@ public final class RenderModuleTest {
         none.module.applyGraceNanos = 0;
         op = none.start("bounce.inPlace", bounce(A), 5000);
         none.drainUntil(op);
-        check(
-                TransportMixFixture.error(op, "bounce_failed").outcome.equals("not_applied")
+        assertTrue(
+                assertRpcError("bounce_failed", op).outcome.equals("not_applied")
                         && none.module.unresolved().isEmpty(),
                 "a finished job that changed nothing is not_applied");
     }
 
-    private static void unverifiedBounceQuarantinesBounces() throws IOException {
+    @Test
+    void unverifiedBounceQuarantinesBounces() throws IOException {
         Sim sim = new Sim();
         sim.afterBounce = before -> lanes(clip(0, 8, "Half", "audio"));
         HostOperation op = sim.start("bounce.inPlace", bounce(A), 5000);
         sim.drainUntil(op);
-        check(
-                TransportMixFixture.error(op, "bounce_verification_failed")
-                        .outcome
-                        .equals("unknown"),
+        assertTrue(
+                assertRpcError("bounce_verification_failed", op).outcome.equals("unknown"),
                 "a different lane is unknown");
-        check(sim.module.unresolved().size() == 1, "unknown bounce is listed for extension.restart");
+        assertTrue(sim.module.unresolved().size() == 1, "unknown bounce is listed for extension.restart");
         HostOperation again = sim.start("bounce.inPlace", bounce(A), 5000);
         sim.drainUntil(again);
-        TransportMixFixture.error(again, "unresolved_mutation");
+        assertRpcError("unresolved_mutation", again);
         HostOperation export = sim.start("export.audio", export(sim.dir.toString(), "master"), 5000);
         sim.drainUntil(export);
-        check(export.result.join().get("exported").getAsBoolean() && sim.dispatches == 2, "exports stay available");
+        assertTrue(
+                export.result.join().get("exported").getAsBoolean() && sim.dispatches == 2, "exports stay available");
     }
 
-    private static void lateBounceMustBeVerifiedBeforeAnother() throws IOException {
+    @Test
+    void lateBounceMustBeVerifiedBeforeAnother() throws IOException {
         Sim sim = new Sim();
         sim.finish = false;
         sim.afterBounce = before -> lanes(clip(0, 16, "Bounce", "audio"));
         HostOperation op = sim.start("bounce.inPlace", bounce(A), 200);
         sim.drainUntil(op);
-        check(
+        assertTrue(
                 op.result.join().get("status").getAsString().equals("dispatched"),
                 "bounce without latch by the deadline is dispatched");
         sim.completeBounce();
-        check(sim.module.unresolved().size() == 1, "a finished but unverified bounce stays listed");
+        assertTrue(sim.module.unresolved().size() == 1, "a finished but unverified bounce stays listed");
         HostOperation again = sim.start("bounce.inPlace", bounce(B), 5000);
         sim.drainUntil(again);
-        TransportMixFixture.error(again, "unresolved_mutation");
+        assertRpcError("unresolved_mutation", again);
         HostOperation export = sim.start("export.audio", export(sim.dir.toString(), "master"), 5000);
         sim.drainUntil(export);
-        TransportMixFixture.error(export, "unresolved_mutation");
+        assertRpcError("unresolved_mutation", export);
         JsonObject status = sim.call("render.status");
-        check(
+        assertTrue(
                 status.getAsJsonObject("job").get("verified").getAsBoolean()
                         && sim.module.unresolved().isEmpty(),
                 "render.status verifies and clears it");
         sim.finish = true;
         again = sim.start("bounce.inPlace", bounce(B), 5000);
         sim.drainUntil(again);
-        check(
+        assertTrue(
                 again.result.join().get("bounced").getAsBoolean() && sim.dispatches == 2,
                 "the next bounce runs after verification");
     }
 
     /** Simulated native side: a job that writes its files or replaces lanes, and completes when told. */
     private static final class Sim {
-        final TransportMixFixture fixture = new TransportMixFixture();
+        final HostFixture fixture = new HostFixture();
         final Deque<Runnable> document = new ArrayDeque<>();
         final Path dir;
         final RenderModule module;
@@ -633,25 +633,6 @@ public final class RenderModuleTest {
     }
 
     private static void invalid(String method, JsonObject params) {
-        try {
-            RenderModule.validateParams(method, params);
-            throw new AssertionError("accepted " + params);
-        } catch (RpcException error) {
-            check(error.code.equals("invalid_params"), "invalid: " + params);
-        }
-    }
-
-    private static void refused(String code, Runnable action) {
-        try {
-            action.run();
-            throw new AssertionError("expected " + code);
-        } catch (RpcException error) {
-            check(error.code.equals(code) && error.outcome.equals("not_applied"), code + ": " + error.getMessage());
-        }
-    }
-
-    private static void check(boolean value, String message) {
-        assertions++;
-        if (!value) throw new AssertionError(message);
+        assertRpcError("invalid_params", () -> RenderModule.validateParams(method, params));
     }
 }

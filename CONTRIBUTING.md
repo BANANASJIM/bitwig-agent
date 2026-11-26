@@ -25,7 +25,7 @@ Everything runs through pixi tasks; the default environment includes the optiona
 | `pixi run lint` | static gates below |
 | `pixi run fmt` | apply ruff fixes and reformat Python and Java |
 | `pixi run cpd-baseline` | rewrite `config/cpd-baseline.json` |
-| `pixi run test-java` | simulated-host Java tests |
+| `pixi run test-java` | simulated-host Java tests (JUnit 5, one JVM) |
 | `pixi run fixture` | real MCP/Java fixture |
 | `pixi run check` | lint, offline, Java and fixture layers (`scripts/check.py` defaults) |
 | `pixi run dist` | sdist and wheel in `dist/` |
