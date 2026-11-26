@@ -7,6 +7,14 @@ from typing import Annotated, Any, Self
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.config import JsonDict
 
+from bitwig_agent.protocol.limits import (
+    DEFAULT_TIMEOUT_MS,
+    DEVICE_WINDOW,
+    LONG_TIMEOUT_MS,
+    MAX_TIMEOUT_MS,
+    MIN_TIMEOUT_MS,
+)
+
 Nonempty = Annotated[str, Field(min_length=1, max_length=4096)]
 TrackId = Annotated[
     str, Field(pattern=r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
@@ -62,13 +70,12 @@ class StrictModel(BaseModel):
         return self
 
 
-MAX_TIMEOUT_MS = 10000
-# Topology edits verify against a full graph read per entry; large graphs need longer (host enforces the same split).
-TOPOLOGY_TIMEOUT_MS = 60000
+def long_timeout(default: int = DEFAULT_TIMEOUT_MS) -> Any:
+    return Field(default=default, ge=MIN_TIMEOUT_MS, le=LONG_TIMEOUT_MS)
 
 
 class StatusArgs(StrictModel):
-    timeoutMs: int = Field(default=5000, ge=100, le=MAX_TIMEOUT_MS)
+    timeoutMs: int = Field(default=DEFAULT_TIMEOUT_MS, ge=MIN_TIMEOUT_MS, le=MAX_TIMEOUT_MS)
 
 
 class DeviceArgs(StatusArgs):
@@ -76,7 +83,7 @@ class DeviceArgs(StatusArgs):
 
 
 class ParameterArgs(DeviceArgs):
-    deviceIndex: int = Field(ge=0, le=15)
+    deviceIndex: int = Field(ge=0, le=DEVICE_WINDOW - 1)
     expectedDeviceName: Nonempty
 
 

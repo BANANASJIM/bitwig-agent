@@ -10,16 +10,17 @@ from bitwig_agent.protocol.base import (
     MAX_STRING_UNITS,
     PROJECT_READY,
     TARGET,
-    TOPOLOGY_TIMEOUT_MS,
     UTF16_BYTES_PER_UNIT,
     ParameterArgs,
     StatusArgs,
     StrictModel,
     ToolSpec,
     TrackId,
+    long_timeout,
     omitted,
     tool,
 )
+from bitwig_agent.protocol.limits import LONG_TIMEOUT_MS
 
 
 class GridCapabilitiesArgs(StatusArgs):
@@ -55,11 +56,11 @@ class GridGetArgs(ParameterArgs):
 
 
 class GridTopologyReconcileArgs(ParameterArgs):
-    timeoutMs: int = Field(default=5000, ge=100, le=TOPOLOGY_TIMEOUT_MS)
+    timeoutMs: int = long_timeout()
 
 
 class GridWriteArgs(ParameterArgs):
-    timeoutMs: int = Field(default=5000, ge=100, le=TOPOLOGY_TIMEOUT_MS)
+    timeoutMs: int = long_timeout()
     graph: Literal["diff", "full"] = omitted(
         description="diff (default): what changed, computed from the before/after graphs. full: the whole bounded graph after the edit."
     )
@@ -465,7 +466,7 @@ class GridVoicingSetArgs(ParameterArgs):
 
 
 DIFF = 'Result is a diff, absent when empty: modulesAdded (full rows with ports, wire them at once), modulesRemoved, modulesMoved, modulesRenamed, connectionsChanged (any cable changed anywhere, including native repair), moduleCount; graphComplete=false with graphUnsupported if coverage was partial. graph="full" returns the whole bounded graph instead.'
-LONG = "timeoutMs up to 60000 (verification reads the whole graph). "
+LONG = f"timeoutMs up to {LONG_TIMEOUT_MS} (verification reads the whole graph). "
 SAFE = "Needs a stopped, nonrecording, nonautomation state, a complete bounded graph of at most 1024 modules, and the explicit device target (trackId from tracks.list; deviceIndex and exact expectedDeviceName from devices.list). "
 VALUE_SAFE = "Needs recording and automation write off (a playing transport is fine), a complete bounded graph of at most 1024 modules, and the explicit device target (trackId from tracks.list; deviceIndex and exact expectedDeviceName from devices.list). "
 UNK = "Never retry an unknown outcome: inspect with grid.get. A native setter/callback failure, or an insertion whose later graph check disagreed, quarantines topology edits to that one device only (other devices and project.save keep working): inspect with grid.get, then release it with grid.topology.reconcile on that device; no Bitwig restart (grid.capabilities topologyQuarantine.devices lists them)."

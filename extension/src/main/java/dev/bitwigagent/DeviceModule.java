@@ -61,7 +61,8 @@ final class DeviceModule implements HostModule {
     }
 
     private void initRemotes(Source source, int track, int device) {
-        source.page = source.device.createCursorRemoteControlsPage("BitwigAgent-" + track + "-" + device, 8, "");
+        source.page = source.device.createCursorRemoteControlsPage(
+                "BitwigAgent-" + track + "-" + device, GridRemotePageWriter.SLOTS, "");
         source.page.pageNames().addValueObserver((StringArrayValueChangedCallback) names -> {
             if (!remoteSourcePresent(source)) return;
             source.pageNamesObserved = true;
@@ -1241,7 +1242,7 @@ final class DeviceModule implements HostModule {
         final Device device;
         final int deviceIndex;
         CursorRemoteControlsPage page;
-        final RemoteControl[] controls = new RemoteControl[8];
+        final RemoteControl[] controls = new RemoteControl[GridRemotePageWriter.SLOTS];
         final boolean[] controlExistsObserved = new boolean[8],
                 controlNamesObserved = new boolean[8],
                 controlMappingObserved = new boolean[8],

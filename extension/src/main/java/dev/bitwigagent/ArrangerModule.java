@@ -11,7 +11,7 @@ import java.util.concurrent.atomic.AtomicLongArray;
 final class ArrangerModule implements HostModule {
     static final Set<String> METHODS = Set.of(
             "arranger.clips.list", "arranger.clips.create", "arranger.clips.copyFromLauncher", "arranger.clips.edit");
-    static final double MAX_BEATS = 4194304, MAX_LENGTH = 65536, GRID = 1.0 / 128;
+    static final double MAX_BEATS = 4194304, MAX_LENGTH = 65536, GRID = LauncherModule.BEAT_GRID;
     static final Map<String, Set<String>> EDIT_OPS = Map.of(
             "move",
             Set.of("startBeats"),
@@ -170,7 +170,7 @@ final class ArrangerModule implements HostModule {
             Params.fields(n, Set.of("beat", "pitch", "velocity", "durationBeats"), Set.of());
             double beat = Params.number(n, "beat", 0, MAX_BEATS);
             int pitch = Params.integer(n, "pitch", 0, 127), velocity = Params.integer(n, "velocity", 1, 127);
-            double duration = Params.number(n, "durationBeats", GRID, 4096);
+            double duration = Params.number(n, "durationBeats", GRID, LauncherModule.MAX_CLIP_BEATS);
             aligned(n.get("beat"), "beat");
             aligned(n.get("durationBeats"), "durationBeats");
             for (double[] o : out) {
@@ -189,10 +189,10 @@ final class ArrangerModule implements HostModule {
 
     private static void aligned(JsonElement value, String key) {
         if (new BigDecimal(value.getAsString())
-                        .divide(new BigDecimal("0.0078125"))
+                        .divide(BigDecimal.valueOf(GRID))
                         .stripTrailingZeros()
                         .scale()
-                > 0) throw Errors.invalid(key + " must be a multiple of 1/128 beat");
+                > 0) throw Errors.invalid(key + " must be a multiple of " + LauncherModule.BEAT_GRID_LABEL + " beat");
     }
 
     @Override

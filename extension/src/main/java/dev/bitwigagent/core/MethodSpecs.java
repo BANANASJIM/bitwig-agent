@@ -17,7 +17,6 @@ import java.util.TreeMap;
 /** Host method metadata read from the protocol bundle generated from the Python protocol at build time. */
 public final class MethodSpecs {
     public static final String RESOURCE = "/protocol.json";
-    private static final int MIN_TIMEOUT_MS = 100;
     private static final Set<String> REQUIREMENTS = Set.of("projectReady", "engine");
 
     public static final class Spec {
@@ -34,11 +33,37 @@ public final class MethodSpecs {
     }
 
     public static final class Limits {
-        public final int trackWindow, sceneWindow;
+        public final int trackWindow,
+                sceneWindow,
+                deviceWindow,
+                sendWindow,
+                remotePageSlots,
+                minTimeoutMs,
+                maxRequestBytes,
+                maxResponseBytes,
+                defaultPort,
+                maxClipBeats;
+        public final double beatGrid;
 
-        private Limits(int trackWindow, int sceneWindow) {
-            this.trackWindow = trackWindow;
-            this.sceneWindow = sceneWindow;
+        private Limits(JsonObject object) {
+            trackWindow = integer(object, "trackWindow");
+            sceneWindow = integer(object, "sceneWindow");
+            deviceWindow = integer(object, "deviceWindow");
+            sendWindow = integer(object, "sendWindow");
+            remotePageSlots = integer(object, "remotePageSlots");
+            minTimeoutMs = integer(object, "minTimeoutMs");
+            maxRequestBytes = integer(object, "maxRequestBytes");
+            maxResponseBytes = integer(object, "maxResponseBytes");
+            defaultPort = integer(object, "defaultPort");
+            maxClipBeats = integer(object, "maxClipBeats");
+            beatGrid = object.get("beatGrid").getAsDouble();
+            if (Math.min(Math.min(trackWindow, sceneWindow), Math.min(deviceWindow, sendWindow)) < 1
+                    || Math.min(remotePageSlots, minTimeoutMs) < 1
+                    || Math.min(maxRequestBytes, maxResponseBytes) < 1
+                    || defaultPort < 1
+                    || defaultPort > 65535
+                    || maxClipBeats < 1
+                    || !(beatGrid > 0)) throw new IllegalStateException("limits must be positive");
         }
     }
 
@@ -63,19 +88,20 @@ public final class MethodSpecs {
         try {
             Map<String, Spec> specs = new TreeMap<>();
             JsonObject root = JsonParser.parseReader(bundle).getAsJsonObject();
+            Limits limits = new Limits(root.getAsJsonObject("limits"));
             for (Map.Entry<String, JsonElement> entry :
                     root.getAsJsonObject("methods").entrySet()) {
                 JsonObject method = entry.getValue().getAsJsonObject();
-                if (flag(method, "host")) specs.put(entry.getKey(), spec(entry.getKey(), method));
+                if (flag(method, "host")) specs.put(entry.getKey(), spec(entry.getKey(), method, limits.minTimeoutMs));
             }
             if (specs.isEmpty()) throw new IllegalStateException("no host methods");
-            return new MethodSpecs(specs, limits(root.getAsJsonObject("limits")));
+            return new MethodSpecs(specs, limits);
         } catch (RuntimeException e) {
             throw new IllegalStateException("Protocol bundle " + RESOURCE + " is malformed: " + e.getMessage(), e);
         }
     }
 
-    private static Spec spec(String name, JsonObject method) {
+    private static Spec spec(String name, JsonObject method, int minTimeoutMs) {
         Set<String> requires = new HashSet<>();
         for (JsonElement item : method.getAsJsonArray("requires")) {
             String requirement = item.getAsString();
@@ -84,14 +110,8 @@ public final class MethodSpecs {
             requires.add(requirement);
         }
         int def = integer(method, "defaultTimeoutMs"), max = integer(method, "maxTimeoutMs");
-        if (def < MIN_TIMEOUT_MS || def > max) throw new IllegalStateException(name + " has an invalid timeout range");
+        if (def < minTimeoutMs || def > max) throw new IllegalStateException(name + " has an invalid timeout range");
         return new Spec(flag(method, "readOnly"), requires, def, max);
-    }
-
-    private static Limits limits(JsonObject object) {
-        int tracks = integer(object, "trackWindow"), scenes = integer(object, "sceneWindow");
-        if (tracks < 1 || scenes < 1) throw new IllegalStateException("limits must be positive");
-        return new Limits(tracks, scenes);
     }
 
     private static boolean flag(JsonObject object, String key) {

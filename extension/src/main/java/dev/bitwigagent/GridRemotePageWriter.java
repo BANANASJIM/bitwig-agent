@@ -11,7 +11,7 @@ import java.util.regex.Pattern;
  * pages are listed for name conflicts but never edited.
  */
 final class GridRemotePageWriter {
-    static final int SLOTS = 8, MAX_PAGE_NAME = 256, MAX_LABEL = 256;
+    static final int SLOTS = HostServices.LIMITS.remotePageSlots, MAX_PAGE_NAME = 256, MAX_LABEL = 256;
     private static final Pattern UUID_PATTERN =
             Pattern.compile("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}");
     private static final Set<GridSnapshotReader.Kind> SCALARS = EnumSet.of(
@@ -482,7 +482,7 @@ final class GridRemotePageWriter {
         }
     }
 
-    /** devices.remote.define: pageName, slots (1..8, slot k = entry k, null = empty) and mode create|replace. */
+    /** devices.remote.define: pageName, slots (1..SLOTS, slot k = entry k, null = empty) and mode create|replace. */
     static final class Request {
         final String pageName;
         final boolean replace;
@@ -513,7 +513,7 @@ final class GridRemotePageWriter {
                     || array.getAsJsonArray().size() > SLOTS)
                 throw Errors.notApplied(
                         ErrorCode.INVALID_PARAMS,
-                        "slots must be an array of 1..8 entries (slot k = entry k; null leaves it empty).");
+                        "slots must be an array of 1.." + SLOTS + " entries (slot k = entry k; null leaves it empty).");
             List<SlotSpec> slots = new ArrayList<>();
             Set<String> pairs = new HashSet<>();
             for (JsonElement element : array.getAsJsonArray()) {

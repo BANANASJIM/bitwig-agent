@@ -12,7 +12,7 @@ import java.util.function.LongSupplier;
 final class HostServices implements AutoCloseable {
     static final MethodSpecs.Limits LIMITS = MethodSpecs.load().limits();
     static final int TRACKS = LIMITS.trackWindow, SCENES = LIMITS.sceneWindow;
-    static final int DEVICES = 16, SENDS = 8, RESOLUTION = 16384;
+    static final int DEVICES = LIMITS.deviceWindow, SENDS = LIMITS.sendWindow, RESOLUTION = 16384;
     static final double TOLERANCE = 1.0 / (RESOLUTION - 1) + 1e-9;
     final ControllerHost host;
     final Application application;

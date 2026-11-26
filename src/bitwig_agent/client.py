@@ -13,15 +13,20 @@ from typing import Any
 
 from bitwig_agent.errors import BridgeError, bridge_error
 from bitwig_agent.protocol import CLIENT_SIDE, TOOLS, validate_call
+from bitwig_agent.protocol.limits import (
+    DEFAULT_PORT,
+    DEFAULT_TIMEOUT_MS,
+    MAX_REQUEST_BYTES,
+    MAX_RESPONSE_BYTES,
+    MIN_TIMEOUT_MS,
+    mebibytes,
+)
 
-MAX_REQUEST_BYTES = 1024 * 1024
-MAX_RESPONSE_BYTES = 16 * 1024 * 1024
-RESPONSE_TOO_LARGE = f"Response exceeds {MAX_RESPONSE_BYTES >> 20} MiB"
+RESPONSE_TOO_LARGE = f"Response exceeds {mebibytes(MAX_RESPONSE_BYTES)}"
 METHODS = frozenset(TOOLS) - CLIENT_SIDE
 
 
 MAX_PORT = 65535
-MIN_TIMEOUT_MS = 100
 
 
 def package_version() -> str:
@@ -72,20 +77,20 @@ def load_json(value: str) -> Any:
 
 
 def configured_port() -> int:
-    value = int(os.environ.get("BITWIG_AGENT_PORT", "61172"))
+    value = int(os.environ.get("BITWIG_AGENT_PORT", str(DEFAULT_PORT)))
     if not 1 <= value <= MAX_PORT:
         raise ValueError(f"BITWIG_AGENT_PORT must be in 1..{MAX_PORT}")
     return value
 
 
 class BridgeClient:
-    def __init__(self, port: int = 61172, *, response_grace_seconds: float = 1.0):
+    def __init__(self, port: int = DEFAULT_PORT, *, response_grace_seconds: float = 1.0):
         if type(port) is not int or not 1 <= port <= MAX_PORT:
             raise ValueError(f"port must be in 1..{MAX_PORT}")
         self.port = port
         self.response_grace_seconds = response_grace_seconds
 
-    async def call(self, method: str, params: dict[str, Any], timeout_ms: int = 5000) -> dict[str, Any]:  # noqa: C901, PLR0912, PLR0915
+    async def call(self, method: str, params: dict[str, Any], timeout_ms: int = DEFAULT_TIMEOUT_MS) -> dict[str, Any]:  # noqa: C901, PLR0912, PLR0915
         if method not in METHODS or not isinstance(params, dict):
             raise ValueError("A known method and object params are required")
         limit = TOOLS[method].max_timeout_ms
@@ -98,7 +103,7 @@ class BridgeClient:
         request = {"id": request_id, "method": method, "params": params, "timeoutMs": timeout_ms}
         payload = (json.dumps(request, allow_nan=False, separators=(",", ":")) + "\n").encode("utf-8")
         if len(payload) > MAX_REQUEST_BYTES:
-            raise ValueError(f"Request exceeds {MAX_REQUEST_BYTES >> 20} MiB")
+            raise ValueError(f"Request exceeds {mebibytes(MAX_REQUEST_BYTES)}")
 
         writer = None
         dispatched = False
@@ -147,7 +152,7 @@ class BridgeClient:
             code = "deadline_exceeded" if isinstance(exc, TimeoutError) else "transport_error"
             hint = ""
             if method == "grid.get" and (isinstance(exc, asyncio.LimitOverrunError) or RESPONSE_TOO_LARGE in str(exc)):
-                hint = f" The grid.get response exceeded the {MAX_RESPONSE_BYTES >> 20} MiB client cap: lower moduleLimit (64 works with includeParameters) or set includeParameters=false."
+                hint = f" The grid.get response exceeded the {mebibytes(MAX_RESPONSE_BYTES)} client cap: lower moduleLimit (64 works with includeParameters) or set includeParameters=false."
             raise bridge_error(
                 code,
                 f"{type(exc).__name__}: {exc}.{hint} Inspect host state before another write; request was not retried.",

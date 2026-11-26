@@ -18,13 +18,14 @@ from bitwig_agent.protocol.base import (
     omitted,
     tool,
 )
+from bitwig_agent.protocol.limits import DEVICE_WINDOW
 
 
 class AutomationTarget(StrictModel):
     kind: Literal["volume", "pan", "grid"] = Field(
         description="Track volume, track pan, or a float Grid module parameter on a top-level device of the same track."
     )
-    deviceIndex: Annotated[int, Field(ge=0, le=15)] = omitted()
+    deviceIndex: Annotated[int, Field(ge=0, le=DEVICE_WINDOW - 1)] = omitted()
     expectedDeviceName: Nonempty = omitted()
     moduleId: TrackId = omitted(description="Grid module instanceId from grid.get on that device.")
     parameterId: Annotated[str, Field(max_length=MAX_STRING_UNITS)] = omitted(
