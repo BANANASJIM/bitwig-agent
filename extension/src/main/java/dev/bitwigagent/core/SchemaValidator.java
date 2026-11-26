@@ -197,7 +197,7 @@ public final class SchemaValidator {
                 case "oneOf":
                     node.oneOf = children(value, definitions, where + ".oneOf");
                     for (Node branch : node.oneOf)
-                        if (branch.defaultValue != null)
+                        if (hasDefault(branch))
                             throw new IllegalStateException(where + ": default inside oneOf is not supported");
                     break;
                 case "$ref":
@@ -211,6 +211,17 @@ public final class SchemaValidator {
                         throw new IllegalStateException(where + ": unsupported schema keyword " + key);
             }
         }
+    }
+
+    /** Whether the node or anything nested in it declares a default; references are not followed. */
+    private static boolean hasDefault(Node node) {
+        if (node.defaultValue != null) return true;
+        List<Node> nested = new ArrayList<>(node.properties.values());
+        nested.addAll(node.anyOf);
+        nested.addAll(node.oneOf);
+        if (node.items != null) nested.add(node.items);
+        if (node.additional != null) nested.add(node.additional);
+        return nested.stream().anyMatch(SchemaValidator::hasDefault);
     }
 
     private static Node child(JsonElement schema, Map<String, Node> definitions, String where) {

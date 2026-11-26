@@ -400,6 +400,7 @@ WRONG_TYPES: tuple[tuple[str, Any], ...] = (
 ENUM_STRANGER = "zz-not-a-member"
 UNKNOWN_FIELD = "zzUnknown"
 INDEXES = frozenset("0123456789")
+UTF16_WORDING = r"utf-16|characters|too long|at most"
 # values may not outnumber expectedValues, so growing values past its maximum grows its partner past the same one.
 PARTNERS = {
     ("grid.parameters.set", "values"): "expectedValues",
@@ -461,13 +462,27 @@ def render(field):
     return "".join(f"[{part}]" if part in INDEXES else f".{part}" for part in field.split("."))
 
 
+BOUND_REJECTS = ("min-", "max+", "maxLength+", "maxLength+ utf16", "minLength-", "maxItems+", "minItems-")
+
+
+def is_bound_reject(label):
+    """Rejects that sweep a bound, so their base must be valid apart from the bound."""
+    tail = label.split(" ", 1)[1]
+    return tail in BOUND_REJECTS
+
+
 def names_field(label, field, error):
     """A rejection is only agreement when Java's message points at the mutated field."""
     message = error["message"]
-    if label.endswith(" missing") or "utf16" in label:  # the module checks own UTF-16 limits and name the bare field
-        return field.rsplit(".", 1)[-1] in message
+    leaf = field.rsplit(".", 1)[-1]
+    word = rf"\b{re.escape(leaf)}\b"
+    if label.endswith(" missing"):
+        return re.search(rf"missing required fields?[^;]*{word}", message) is not None
     named = [field, PARTNERS.get((label.split(":")[0], field), field)]
-    return any(f"params{render(name)}" in message for name in named)
+    if any(f"params{render(name)}" in message for name in named):
+        return True
+    # the module checks own UTF-16 limits and name the bare field with their own wording
+    return "utf16" in label and re.search(word, message) and re.search(UTF16_WORDING, message, re.I) is not None
 
 
 def edit(example, path, doc, owner=None):
@@ -601,14 +616,50 @@ def cases(method):
             yield from shape_cases(method, example, (path, node, required, owner), doc)
 
 
+class Ledger:
+    """What the vectors have shown so far: problems and, per vector family, whether any base was valid."""
+
+    def __init__(self):
+        self.problems = []
+        self.covered = {}  # accept vector -> some base was accepted by pydantic
+        self.proven = {}  # bound reject -> some valid base showed Java naming the field
+        self.twin = {}  # (method, field, utf16) -> the preceding accept vector was valid
+
+    def judge(self, method, vector, py, java, error):
+        label, _, field, expect = vector
+        twin_key = (method, field, "utf16" in label)
+        if py != java:
+            self.problems.append(
+                f"MISMATCH {label}: python={'accept' if py else 'reject'} java={'accept' if java else 'reject'} {error}"
+            )
+        elif expect in ("accept", "optional"):
+            self.covered[label] = self.covered.get(label, False) or py
+            self.twin[twin_key] = py
+        elif expect == "reject" and py:
+            self.problems.append(f"{label}: both sides accept a value the schema forbids")
+        elif is_bound_reject(label) and self.twin.get(twin_key) is False:
+            self.proven.setdefault(label, False)  # the base itself is invalid: this reject proves nothing
+        elif expect == "reject" and not names_field(label, field, error):
+            self.problems.append(f"VACUOUS {label}: Java rejected without naming params{render(field)}: {error}")
+        elif is_bound_reject(label) and twin_key in self.twin:
+            self.proven[label] = True
+
+    def vacuous(self):
+        return [
+            f"VACUOUS {label}: no example base is valid with this vector, so it never exercised the bound"
+            for label, ok in {**self.covered, **self.proven}.items()
+            if not ok
+        ]
+
+
 async def run(port):
     """Compare both validators on every vector; return the number checked."""
     checked = 0
-    problems = []
-    covered: dict[Any, bool] = {}  # (method, field, vector) -> some base was accepted by pydantic
+    ledger = Ledger()
     for method in sorted(set(TOOLS) - CLIENT_SIDE):
         seen = set()
-        for label, params, field, expect in cases(method):
+        for vector in cases(method):
+            label, params, field, expect = vector
             key = (label, json.dumps(params, sort_keys=True))
             if key in seen or SKIPS.get((method, field, expect)) or SKIPS.get((method, field, "all")):
                 continue
@@ -616,16 +667,7 @@ async def run(port):
             py = python_verdict(method, params)
             java, error = await java_verdict(port, method, params)
             checked += 1
-            if py != java:
-                problems.append(
-                    f"MISMATCH {label}: python={'accept' if py else 'reject'} java={'accept' if java else 'reject'} {error}"
-                )
-            elif expect in ("accept", "optional"):
-                covered[label] = covered.get(label, False) or py
-            elif expect == "reject" and py:
-                problems.append(f"{label}: both sides accept a value the schema forbids")
-            elif expect == "reject" and not names_field(label, field, error):
-                problems.append(f"VACUOUS {label}: Java rejected without naming params{render(field)}: {error}")
+            ledger.judge(method, vector, py, java, error)
     insert = TOOLS["grid.modules.insert"].examples[0]
     for name in ("<", "=", ">", "\u2260", "\u2264", "\u2265", "Slope \u2197", "---", "\u00b2"):
         for params in (
@@ -637,12 +679,8 @@ async def run(port):
             java, error = await java_verdict(port, "grid.modules.insert", params)
             checked += 1
             if not (py and java):
-                problems.append(f"typeName {name!r} must be accepted by both: python={py} java={java} {error}")
-    problems += [
-        f"VACUOUS {label}: no example base is valid with this vector, so it never exercised the bound"
-        for label, ok in covered.items()
-        if not ok
-    ]
+                ledger.problems.append(f"typeName {name!r} must be accepted by both: python={py} java={java} {error}")
+    problems = ledger.problems + ledger.vacuous()
     if problems:
         raise AssertionError(f"vector parity failed ({checked} vectors):\n" + "\n".join(problems))
     return checked

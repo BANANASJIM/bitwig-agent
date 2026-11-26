@@ -344,6 +344,9 @@ public final class SchemaValidatorTest {
                 "{\"$defs\":{\"A\":{\"$ref\":\"#/$defs/B\"},\"B\":{\"anyOf\":[{\"$ref\":\"#/$defs/A\"}]}}}",
                 "$ref cycle");
         refuses("{\"oneOf\":[{\"default\":1},{\"type\":\"null\"}]}", "default inside oneOf");
+        refuses(
+                "{\"oneOf\":[{\"properties\":{\"a\":{\"type\":\"integer\",\"default\":1}}},{\"required\":[\"b\"]}]}",
+                "default inside oneOf");
         refuses("{\"maxItems\":4294967296}", "32-bit");
         refuses("{\"pattern\":5}", "pattern must be a string");
         compile(
