@@ -119,7 +119,7 @@ final class ArrangerModule implements HostModule {
                 break;
             case "arranger.clips.copyFromLauncher":
                 Params.fields(p, Set.of("trackId", "slotIndex", "expectedClipName", "startBeats"), Set.of());
-                Params.integer(p, "slotIndex", 0, 15);
+                Params.integer(p, "slotIndex", 0, HostServices.SCENES - 1);
                 name(p, "expectedClipName", 1, 256);
                 Params.number(p, "startBeats", 0, MAX_BEATS);
                 break;

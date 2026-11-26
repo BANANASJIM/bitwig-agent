@@ -1354,11 +1354,11 @@ public final class DeviceModuleTest {
 
         Fake(boolean lateIdentity, boolean lateControlPresence, Set<String> unobserved) {
             FakeHost trackBank = new FakeHost("trackBank");
-            Track[] tracks = new Track[16];
+            Track[] tracks = new Track[HostServices.TRACKS];
             trackBank.put("scrollPosition", 0);
             trackBank.put("itemCount", 1);
             trackBank.on("getItemAt", args -> tracks[(Integer) args[0]]);
-            for (int t = 0; t < 16; t++) {
+            for (int t = 0; t < HostFixture.DETAILED_TRACKS; t++) {
                 final int trackIndex = t;
                 FakeHost track = new FakeHost("track" + t);
                 track.put("exists", t == 0 && !lateIdentity);
@@ -1466,6 +1466,8 @@ public final class DeviceModuleTest {
                 track.attach("startOfDeviceChainInsertionPoint", point("start", -1, trackIndex));
                 tracks[t] = track.proxy(Track.class);
             }
+            for (int t = HostFixture.DETAILED_TRACKS; t < tracks.length; t++)
+                tracks[t] = tracks[HostFixture.DETAILED_TRACKS - 1];
             FakeHost app = new FakeHost("app");
             app.put("projectName", "Fixture");
             app.put("hasActiveEngine", true);

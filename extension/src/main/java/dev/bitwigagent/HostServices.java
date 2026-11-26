@@ -5,11 +5,14 @@ import com.bitwig.extension.callback.IntegerValueChangedCallback;
 import com.bitwig.extension.callback.StringValueChangedCallback;
 import com.bitwig.extension.controller.api.*;
 import com.google.gson.*;
+import dev.bitwigagent.core.MethodSpecs;
 import java.util.function.LongSupplier;
 
 /** One set of fixed host proxies, initialized once and shared by domain modules. */
 final class HostServices implements AutoCloseable {
-    static final int TRACKS = 16, DEVICES = 16, SCENES = 16, SENDS = 8, RESOLUTION = 16384;
+    static final MethodSpecs.Limits LIMITS = MethodSpecs.load().limits();
+    static final int TRACKS = LIMITS.trackWindow, SCENES = LIMITS.sceneWindow;
+    static final int DEVICES = 16, SENDS = 8, RESOLUTION = 16384;
     static final double TOLERANCE = 1.0 / (RESOLUTION - 1) + 1e-9;
     final ControllerHost host;
     final Application application;
@@ -369,7 +372,8 @@ final class HostServices implements AutoCloseable {
         for (int i = 0; i < TRACKS; i++) {
             if (trackMatches(trackId, (Track) tracks.getItemAt(i))) return i;
         }
-        throw Errors.notApplied(ErrorCode.OUTSIDE_WINDOW, "Track UUID is absent from the current 16-track window.");
+        throw Errors.notApplied(
+                ErrorCode.OUTSIDE_WINDOW, "Track UUID is absent from the current " + TRACKS + "-track window.");
     }
 
     boolean trackMatches(String trackId, Track track) {

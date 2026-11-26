@@ -17,6 +17,7 @@ from bitwig_agent.protocol.base import (
     tool,
     validate_local_path,
 )
+from bitwig_agent.protocol.limits import TRACK_WINDOW
 
 FLOAT_BIT_DEPTH = 32
 RENDER_MAX_BEATS = MAX_BEAT
@@ -42,7 +43,7 @@ class RenderRangeArgs(StrictModel):
 
 
 class ExportAudioArgs(RenderRangeArgs):
-    sources: Annotated[list[TrackId | Literal["master"]], Field(min_length=1, max_length=16)] = Field(
+    sources: Annotated[list[TrackId | Literal["master"]], Field(min_length=1, max_length=TRACK_WINDOW)] = Field(
         description='"master" and/or trackIds from tracks.list (audio, instrument, effect or group tracks); one file each, in this order.'
     )
     directory: str = Field(max_length=4096, description="Existing absolute folder for the files. No ~ expansion.")
@@ -74,7 +75,7 @@ class ExportAudioArgs(RenderRangeArgs):
 
 
 class BounceInPlaceArgs(RenderRangeArgs):
-    trackIds: Annotated[list[TrackId], Field(min_length=1, max_length=16)] = Field(
+    trackIds: Annotated[list[TrackId], Field(min_length=1, max_length=TRACK_WINDOW)] = Field(
         description="Audio/instrument tracks (trackIds from tracks.list) whose main arranger lane gets the bounced audio."
     )
     tap: Literal["pre_fx", "pre_fader", "post_fader"]

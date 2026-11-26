@@ -9,7 +9,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Track input/output choosers and device sidechain sources through exact version-gated native bindings. Entries
- * address tracks of the observed 16-track bank only; hardware and device-output entries are read as kind "other"
+ * address tracks of the observed track bank only; hardware and device-output entries are read as kind "other"
  * and cannot be requested in this version.
  */
 final class RoutingModule implements HostModule {
@@ -279,14 +279,17 @@ final class RoutingModule implements HostModule {
         TrackRef self = null;
         for (TrackRef ref : bank) if (ref.id.equals(id)) self = ref;
         if (self == null)
-            throw Errors.notApplied(ErrorCode.OUTSIDE_WINDOW, "Track UUID is absent from the current 16-track window.");
+            throw Errors.notApplied(
+                    ErrorCode.OUTSIDE_WINDOW,
+                    "Track UUID is absent from the current " + HostServices.TRACKS + "-track window.");
         for (String key : List.of("output", "input", "source")) {
             if (!p.has(key) || !p.getAsJsonObject(key).has("trackId")) continue;
             String other = p.getAsJsonObject(key).get("trackId").getAsString();
             if (bank.stream().noneMatch(ref -> ref.id.equals(other)))
                 throw Errors.notApplied(
                         ErrorCode.OUTSIDE_WINDOW,
-                        key + ".trackId is absent from the current 16-track window; nothing was dispatched.");
+                        key + ".trackId is absent from the current " + HostServices.TRACKS
+                                + "-track window; nothing was dispatched.");
         }
         DeviceSources.RootReadTicket ticket = method.startsWith("devices.") ? s.sources.rootRead(parent(p)) : null;
         HostServices.SafetyObservation safety = write ? s.stoppedSafety(op) : null;

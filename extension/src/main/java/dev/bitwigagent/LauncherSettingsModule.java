@@ -92,7 +92,7 @@ final class LauncherSettingsModule implements HostModule {
         Params.fields(p, required, optional);
         if (!DeviceSources.canonicalUuid(Params.string(p, "trackId")))
             throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "trackId must be a canonical UUID");
-        Params.integer(p, "slotIndex", 0, 15);
+        Params.integer(p, "slotIndex", 0, HostServices.SCENES - 1);
         if (Params.string(p, "expectedClipName").length() > 256)
             throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "expectedClipName is too long");
         if (method.equals("launcher.set") && p.size() == 3)

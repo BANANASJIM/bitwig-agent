@@ -2085,7 +2085,7 @@ public final class LauncherModuleTest {
         final ArrayDeque<Runnable> tasks = new ArrayDeque<>();
         final Map<String, Note> notes = new HashMap<>();
         final SlotData[] slots = new SlotData[16];
-        final Track[] tracks = new Track[16];
+        final Track[] tracks = new Track[HostServices.TRACKS];
         final HostServices services;
         final LauncherModule module;
         NoteStepChangedCallback observer;
@@ -2127,7 +2127,7 @@ public final class LauncherModuleTest {
 
         Fake(boolean safetyObserved, boolean record, boolean arrangerAutomation, boolean launcherAutomation) {
             for (int i = 0; i < 16; i++) slots[i] = new SlotData();
-            for (int t = 0; t < 16; t++) {
+            for (int t = 0; t < HostFixture.DETAILED_TRACKS; t++) {
                 final int trackIndex = t;
                 FakeHost track = base.tracks[t];
                 track.live("exists", () -> trackIndex == 0);
@@ -2239,6 +2239,8 @@ public final class LauncherModuleTest {
                 track.attach("createDeviceBank", devices);
                 tracks[t] = track.proxy(Track.class);
             }
+            for (int t = HostFixture.DETAILED_TRACKS; t < tracks.length; t++)
+                tracks[t] = tracks[HostFixture.DETAILED_TRACKS - 1];
             FakeHost clip = FakeHost.of(Clip.class, "clip");
             clip.on("getTrack", a -> tracks[0]);
             clip.live("exists", () -> slots[selected].content);

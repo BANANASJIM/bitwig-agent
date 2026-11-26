@@ -21,6 +21,9 @@ final class HostFixture {
     final FakeHost application = host.child("createApplication");
     final FakeHost bank = host.child("createTrackBank");
     final FakeHost project = host.child("getProject");
+    /** Tracks past these share one empty, absent track so a window-size bank stays cheap to build. */
+    static final int DETAILED_TRACKS = 16;
+
     final FakeHost[] tracks = new FakeHost[HostServices.TRACKS];
     final HostServices services;
     boolean onHost;
@@ -48,6 +51,10 @@ final class HostFixture {
         application.child("projectName").data = "Fixture";
         application.child("hasActiveEngine").data = false;
         for (int i = 0; i < tracks.length; i++) {
+            if (i >= DETAILED_TRACKS) {
+                tracks[i] = bank.attach("item" + i, tracks[DETAILED_TRACKS - 1]);
+                continue;
+            }
             FakeHost track = tracks[i] = bank.item(i);
             final int slot = i;
             track.child("exists").data = i < 2;

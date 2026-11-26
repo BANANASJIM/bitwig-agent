@@ -17,6 +17,7 @@ from bitwig_agent.protocol.base import (
     omitted,
     tool,
 )
+from bitwig_agent.protocol.limits import TRACK_WINDOW
 
 ROUTING_TRACK_KINDS = frozenset({"track_audio_input", "track_note_input", "pre_fader", "post_fader", "track_notes"})
 OutputKind = Literal["none", "track_audio_input", "track_note_input"]
@@ -25,7 +26,7 @@ SourceKind = Literal[
 ]
 
 
-ROUTING_TRACK_ID = "A track of the current 16-track window (tracks.list); for a group, its trackId."
+ROUTING_TRACK_ID = f"A track of the current {TRACK_WINDOW}-track window (tracks.list); for a group, its trackId."
 
 
 class RoutingEntry(StrictModel):

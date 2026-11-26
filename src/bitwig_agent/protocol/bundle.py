@@ -2,11 +2,13 @@ import json
 from pathlib import Path
 from typing import Any
 
+from bitwig_agent.protocol.limits import bundle_limits
 from bitwig_agent.protocol.registry import TOOLS
 
 
 def export_bundle() -> dict[str, Any]:
     return {
+        "limits": bundle_limits(),
         "methods": {
             name: {
                 "host": spec.host,
@@ -19,7 +21,7 @@ def export_bundle() -> dict[str, Any]:
                 "inputSchema": spec.model.model_json_schema(),
             }
             for name, spec in TOOLS.items()
-        }
+        },
     }
 
 

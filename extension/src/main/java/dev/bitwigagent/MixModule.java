@@ -215,7 +215,9 @@ final class MixModule implements HostModule {
         if (!value.isJsonArray()
                 || value.getAsJsonArray().size() < 1
                 || value.getAsJsonArray().size() > HostServices.TRACKS)
-            throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "trackIds must be an array of 1..16 track UUIDs.");
+            throw Errors.notApplied(
+                    ErrorCode.INVALID_PARAMS,
+                    "trackIds must be an array of 1.." + HostServices.TRACKS + " track UUIDs.");
         List<String> ids = new ArrayList<>();
         Set<String> seen = new HashSet<>();
         for (JsonElement item : value.getAsJsonArray()) {
@@ -909,7 +911,8 @@ final class MixModule implements HostModule {
         if (before.total >= HostServices.TRACKS)
             throw Errors.notApplied(
                     ErrorCode.OUTSIDE_WINDOW,
-                    "The 16-track window is full: the new track could not be observed; no factory was dispatched.");
+                    "The " + HostServices.TRACKS
+                            + "-track window is full: the new track could not be observed; no factory was dispatched.");
         if (before.groups && !before.tree.complete)
             throw Errors.notApplied(
                     ErrorCode.UNSUPPORTED_SCOPE,
@@ -952,11 +955,13 @@ final class MixModule implements HostModule {
         if (!before.complete)
             throw Errors.notApplied(
                     ErrorCode.NOT_READY,
-                    "Grouping requires a complete observed UUID/type/position window of at most 16 tracks.");
+                    "Grouping requires a complete observed UUID/type/position window of at most " + HostServices.TRACKS
+                            + " tracks.");
         if (before.total >= HostServices.TRACKS)
             throw Errors.notApplied(
                     ErrorCode.OUTSIDE_WINDOW,
-                    "The 16-track window is full: the new group could not be observed; nothing was dispatched.");
+                    "The " + HostServices.TRACKS
+                            + "-track window is full: the new group could not be observed; nothing was dispatched.");
         if (!before.tree.complete)
             throw Errors.notApplied(
                     ErrorCode.UNSUPPORTED_SCOPE,
@@ -967,7 +972,8 @@ final class MixModule implements HostModule {
             TrackTree.Node node = before.tree.byId.get(id);
             if (node == null)
                 throw Errors.notApplied(
-                        ErrorCode.OUTSIDE_WINDOW, "Track UUID is absent from the current 16-track window: " + id);
+                        ErrorCode.OUTSIDE_WINDOW,
+                        "Track UUID is absent from the current " + HostServices.TRACKS + "-track window: " + id);
             if (node.master() || "Effect".equals(node.type))
                 throw Errors.notApplied(
                         ErrorCode.UNSUPPORTED_SCOPE,
@@ -1125,7 +1131,9 @@ final class MixModule implements HostModule {
         if (!before.complete || !before.ids.contains(target.id))
             throw Errors.notApplied(
                     ErrorCode.NOT_READY,
-                    "Deletion needs the whole project observed in the 16-track bank window (offset 0, at most 16 tracks including group children and effect tracks, every UUID/type/position read); this project exceeds it or is not fully observed yet. Nothing was dispatched.");
+                    "Deletion needs the whole project observed in the " + HostServices.TRACKS
+                            + "-track bank window (offset 0, at most " + HostServices.TRACKS
+                            + " tracks including group children and effect tracks, every UUID/type/position read); this project exceeds it or is not fully observed yet. Nothing was dispatched.");
         s.guardStoppedSafety(safety);
         guard(op, target);
         op.dispatched = true;

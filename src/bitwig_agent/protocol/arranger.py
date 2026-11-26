@@ -7,6 +7,7 @@ from pydantic import Field, model_validator
 
 from bitwig_agent.protocol.base import MAX_BEAT, PROJECT_READY, TRACK, DeviceArgs, StrictModel, ToolSpec, omitted, tool
 from bitwig_agent.protocol.launcher import CLIP, check_note_spans
+from bitwig_agent.protocol.limits import SCENE_WINDOW
 
 
 class ArrangerNote(StrictModel):
@@ -44,7 +45,7 @@ class ArrangerClipCreateArgs(DeviceArgs):
 
 
 class ArrangerCopyArgs(DeviceArgs):
-    slotIndex: int = Field(ge=0, le=15)
+    slotIndex: int = Field(ge=0, le=SCENE_WINDOW - 1)
     expectedClipName: str = Field(min_length=1, max_length=256)
     startBeats: float = Field(ge=0, le=MAX_BEAT)
 

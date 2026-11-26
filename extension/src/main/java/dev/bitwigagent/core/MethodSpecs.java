@@ -33,10 +33,21 @@ public final class MethodSpecs {
         }
     }
 
-    private final Map<String, Spec> hostMethods;
+    public static final class Limits {
+        public final int trackWindow, sceneWindow;
 
-    private MethodSpecs(Map<String, Spec> hostMethods) {
+        private Limits(int trackWindow, int sceneWindow) {
+            this.trackWindow = trackWindow;
+            this.sceneWindow = sceneWindow;
+        }
+    }
+
+    private final Map<String, Spec> hostMethods;
+    private final Limits limits;
+
+    private MethodSpecs(Map<String, Spec> hostMethods, Limits limits) {
         this.hostMethods = Collections.unmodifiableMap(hostMethods);
+        this.limits = limits;
     }
 
     public static MethodSpecs load() {
@@ -51,15 +62,14 @@ public final class MethodSpecs {
     public static MethodSpecs parse(Reader bundle) {
         try {
             Map<String, Spec> specs = new TreeMap<>();
-            for (Map.Entry<String, JsonElement> entry : JsonParser.parseReader(bundle)
-                    .getAsJsonObject()
-                    .getAsJsonObject("methods")
-                    .entrySet()) {
+            JsonObject root = JsonParser.parseReader(bundle).getAsJsonObject();
+            for (Map.Entry<String, JsonElement> entry :
+                    root.getAsJsonObject("methods").entrySet()) {
                 JsonObject method = entry.getValue().getAsJsonObject();
                 if (flag(method, "host")) specs.put(entry.getKey(), spec(entry.getKey(), method));
             }
             if (specs.isEmpty()) throw new IllegalStateException("no host methods");
-            return new MethodSpecs(specs);
+            return new MethodSpecs(specs, limits(root.getAsJsonObject("limits")));
         } catch (RuntimeException e) {
             throw new IllegalStateException("Protocol bundle " + RESOURCE + " is malformed: " + e.getMessage(), e);
         }
@@ -78,6 +88,12 @@ public final class MethodSpecs {
         return new Spec(flag(method, "readOnly"), requires, def, max);
     }
 
+    private static Limits limits(JsonObject object) {
+        int tracks = integer(object, "trackWindow"), scenes = integer(object, "sceneWindow");
+        if (tracks < 1 || scenes < 1) throw new IllegalStateException("limits must be positive");
+        return new Limits(tracks, scenes);
+    }
+
     private static boolean flag(JsonObject object, String key) {
         JsonElement value = object.get(key);
         if (value == null
@@ -92,6 +108,10 @@ public final class MethodSpecs {
                 || !value.isJsonPrimitive()
                 || !value.getAsJsonPrimitive().isNumber()) throw new IllegalStateException(key + " must be an integer");
         return value.getAsBigDecimal().intValueExact();
+    }
+
+    public Limits limits() {
+        return limits;
     }
 
     public Set<String> methods() {

@@ -216,12 +216,12 @@ final class LauncherModule implements HostModule {
                     throw Errors.invalid("semitones must be nonzero");
                 if (op.equals("quantize") && Params.number(p, "amount", 0, 1) == 0)
                     throw Errors.invalid("amount must be above 0");
-                if (op.equals("copyTo")) Params.integer(p, "targetSlotIndex", 0, 15);
+                if (op.equals("copyTo")) Params.integer(p, "targetSlotIndex", 0, HostServices.SCENES - 1);
                 break;
             }
             case "scenes.append":
                 Params.fields(p, Set.of(), Set.of("count"));
-                if (p.has("count")) Params.integer(p, "count", 1, 16);
+                if (p.has("count")) Params.integer(p, "count", 1, HostServices.SCENES);
                 return;
             case "notes.read":
             case "notes.edit": {
@@ -240,7 +240,7 @@ final class LauncherModule implements HostModule {
                 throw Errors.notApplied(ErrorCode.UNKNOWN_METHOD, "Unknown launcher method");
         }
         Params.string(p, "trackId");
-        if (p.has("slotIndex")) Params.integer(p, "slotIndex", 0, 15);
+        if (p.has("slotIndex")) Params.integer(p, "slotIndex", 0, HostServices.SCENES - 1);
     }
 
     /** Presentation only: "full" lists the whole window and every edit; the default reports a summary plus unverified edits. */
@@ -423,7 +423,7 @@ final class LauncherModule implements HostModule {
     }
 
     private void appendScenes(HostOperation op, JsonObject p) {
-        int count = p.has("count") ? Params.integer(p, "count", 1, 16) : 1;
+        int count = p.has("count") ? Params.integer(p, "count", 1, HostServices.SCENES) : 1;
         if (!s.tracksObserved)
             throw Errors.notApplied(ErrorCode.NOT_READY, "Track bank has not reported its size yet.");
         int before = sceneBank.itemCount().get();
@@ -489,12 +489,12 @@ final class LauncherModule implements HostModule {
             JsonObject out = base(id, -1);
             JsonArray entries = new JsonArray();
             int scenes = track.clipLauncherSlotBank().itemCount().get();
-            for (int j = 0; j < Math.min(16, scenes); j++) {
+            for (int j = 0; j < Math.min(HostServices.SCENES, scenes); j++) {
                 ready(slots[t][j]);
                 entries.add(slotJson(slots[t][j], j, id));
             }
             out.add("slots", entries);
-            out.add("window", HostServices.window(0, 16, scenes));
+            out.add("window", HostServices.window(0, HostServices.SCENES, scenes));
             op.result.complete(out);
             return;
         }
@@ -506,7 +506,7 @@ final class LauncherModule implements HostModule {
             awaitPlayback(op, id, track, null, -1, until(op));
             return;
         }
-        int j = Params.integer(p, "slotIndex", 0, 15);
+        int j = Params.integer(p, "slotIndex", 0, HostServices.SCENES - 1);
         int scenes = track.clipLauncherSlotBank().itemCount().get();
         if (j >= scenes)
             throw Errors.notApplied(
@@ -792,7 +792,7 @@ final class LauncherModule implements HostModule {
         int t = s.trackSlot(id);
         if (track.clipLauncherSlotBank().scrollPosition().get() != 0)
             throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Launcher bank is not at scene offset zero");
-        int j = Params.integer(p, "slotIndex", 0, 15);
+        int j = Params.integer(p, "slotIndex", 0, HostServices.SCENES - 1);
         int scenes = track.clipLauncherSlotBank().itemCount().get();
         if (j >= scenes)
             throw Errors.notApplied(
@@ -935,7 +935,16 @@ final class LauncherModule implements HostModule {
         String kind = Params.string(p, "op");
         if (kind.equals("delete")) deleteClip(op, id, track, slot, index);
         else if (kind.equals("copyTo"))
-            copyClip(op, id, track, t, slot, index, Params.integer(p, "targetSlotIndex", 0, 15), scenes, expected);
+            copyClip(
+                    op,
+                    id,
+                    track,
+                    t,
+                    slot,
+                    index,
+                    Params.integer(p, "targetSlotIndex", 0, HostServices.SCENES - 1),
+                    scenes,
+                    expected);
         else {
             bind(op, id, track, slot, index, p, "clips.edit", until(op));
         }

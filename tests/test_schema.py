@@ -7,6 +7,7 @@ from bitwig_agent.protocol import TOOLS, validate_call
 from bitwig_agent.protocol.base import TARGET, TRACK
 from bitwig_agent.protocol.devices import LAYER_PARENT, LAYER_TARGET
 from bitwig_agent.protocol.launcher import NOTE_WINDOW
+from bitwig_agent.protocol.limits import SCENE_WINDOW
 
 
 def note(**changes):
@@ -82,7 +83,7 @@ def test_file_insertion_preserves_path_and_omits_id():
 @pytest.mark.parametrize(
     "path", ["/absolute/path/audio.wav", "/tmp/Audio Sketch.bwclip", "/tmp/音楽.flac", "C:\\Audio Sketch\\音楽.flac"]
 )
-@pytest.mark.parametrize("slot", [0, 15])
+@pytest.mark.parametrize("slot", [0, SCENE_WINDOW - 1])
 def test_launcher_import_preserves_local_path_without_filesystem_checks(path, slot):
     args = {"trackId": TRACK, "slotIndex": slot, "path": path}
     params, timeout = validate_call("launcher.import", args)
@@ -138,7 +139,7 @@ def test_file_import_and_device_insertion_share_path_syntax(path):
         {"trackId": True},
         {"trackId": "Audio 2"},
         {"slotIndex": -1},
-        {"slotIndex": 16},
+        {"slotIndex": SCENE_WINDOW},
         {"slotIndex": 0.0},
         {"slotIndex": "0"},
         {"slotIndex": True},
@@ -1006,8 +1007,8 @@ def test_launcher_create_notes_fail_before_dispatch_when_invalid():
 
 def test_scenes_append_count_bounds():
     assert validate_call("scenes.append", {})[0] == {}
-    assert validate_call("scenes.append", {"count": 16})[0] == {"count": 16}
-    for count in (0, 17, 1.5, None):
+    assert validate_call("scenes.append", {"count": SCENE_WINDOW})[0] == {"count": SCENE_WINDOW}
+    for count in (0, SCENE_WINDOW + 1, 1.5, None):
         with pytest.raises(ValidationError):
             validate_call("scenes.append", {"count": count})
 
@@ -1777,7 +1778,7 @@ def test_scene_tools_use_index_and_exact_name_guard():
     assert validate_call("scenes.rename", {**target, "name": "Verse"})[0] == {**target, "name": "Verse"}
     assert TOOLS["scenes.list"].read_only
     for method, bad in (
-        ("scenes.delete", {"sceneIndex": 16, "expectedName": ""}),
+        ("scenes.delete", {"sceneIndex": SCENE_WINDOW, "expectedName": ""}),
         ("scenes.delete", {"sceneIndex": -1, "expectedName": ""}),
         ("scenes.delete", {"sceneIndex": 0}),
         ("scenes.delete", {"expectedName": ""}),
