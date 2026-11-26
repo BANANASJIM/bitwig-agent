@@ -2418,7 +2418,7 @@ public final class GridSnapshotReaderTest {
                     !assertRpcError("target_changed", op).unknown && f.calls == 0,
                     "captured source and module/port identities rechecked after native preparation");
         }
-        for (int change = 0; change < 5; change++) {
+        for (int change = 0; change < 6; change++) {
             ConnectionFixture f = new ConnectionFixture();
             HostOperation op = f.start(f.request(null, f.output()));
             if (change == 0) f.model.first.put(OUTPUTS, List.of(f.model.port(OUTPUT, f.model.first, "out")));
@@ -2426,8 +2426,9 @@ public final class GridSnapshotReaderTest {
             if (change == 2) f.context.values.put(GridTopologyContext.Field.UNDO, new Object());
             if (change == 3) f.model.proxy.put(TARGET, new Node(DEVICE));
             if (change == 4) f.cancelled = true;
+            if (change == 5) f.model.first.put(INPUTS, List.of());
             f.next();
-            assertUnknown(change == 4 ? "cancelled" : change == 3 ? "target_changed" : "target_changed", op);
+            assertUnknown(change == 4 ? "cancelled" : "target_changed", op);
             assertTrue(
                     f.calls == 1 && !f.quarantine.quarantined(),
                     "later source membership/context/target/cancellation failure never retries or masquerades as synchronous native failure");
