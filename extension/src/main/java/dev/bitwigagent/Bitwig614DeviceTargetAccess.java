@@ -2,38 +2,29 @@ package dev.bitwigagent;
 
 import static dev.bitwigagent.NativeDeviceTarget.Field.*;
 
-import java.lang.reflect.Method;
 import java.util.EnumMap;
-import java.util.UUID;
+import java.util.function.UnaryOperator;
 
 /** Exact public descriptors for native root-device ownership, independent of Grid. */
 final class Bitwig614DeviceTargetAccess implements NativeDeviceTarget.Access {
     private final Bitwig614Runtime.Access bindings;
     private final EnumMap<NativeDeviceTarget.Kind, Class<?>> kinds = new EnumMap<>(NativeDeviceTarget.Kind.class);
-    private final EnumMap<NativeDeviceTarget.Field, Method> readers = new EnumMap<>(NativeDeviceTarget.Field.class);
+    private final EnumMap<NativeDeviceTarget.Field, UnaryOperator<Object>> readers =
+            new EnumMap<>(NativeDeviceTarget.Field.class);
 
     Bitwig614DeviceTargetAccess(Bitwig614Runtime.Access bindings) throws ReflectiveOperationException {
         this.bindings = bindings;
+        Bitwig614TrackResolver resolver = new Bitwig614TrackResolver(bindings);
         String iface = "com.bitwig.flt.document.core.iface.";
         kinds.put(NativeDeviceTarget.Kind.DEVICE, bindings.type("com.bitwig.flt.document.core.master.device.xlG"));
         kinds.put(NativeDeviceTarget.Kind.TRACK, bindings.type(iface + "WSA"));
-        Class<?> aliased = bindings.type(iface + "kWY"), alias = bindings.type("iKU");
-        kinds.put(NativeDeviceTarget.Kind.ALIASED_TRACK, aliased);
-        kinds.put(NativeDeviceTarget.Kind.CHANNEL_ALIAS, alias);
-        readers.put(
-                TARGET,
-                bindings.exactMethod(
-                        bindings.type("com.bitwig.flt.control_surface.proxy.ControlSurfaceProxy"),
-                        "getDeepestTarget",
-                        Object.class,
-                        false));
-        readers.put(
-                OWNER_TRACK,
-                bindings.exactMethod(
-                        bindings.type("com.bitwig.ramona.core.AVL"), "IwV", Object.class, false, Class.class));
-        readers.put(TRACK_ALIAS, bindings.exactMethod(aliased, "TD2", alias, false));
-        readers.put(TRACK_UUID, bindings.exactMethod(bindings.type(iface + "RYd"), "kFU", UUID.class, false));
-        readers.put(ALIAS_UUID, bindings.exactMethod(alias, "kFU", UUID.class, false));
+        kinds.put(NativeDeviceTarget.Kind.ALIASED_TRACK, bindings.type(iface + "kWY"));
+        kinds.put(NativeDeviceTarget.Kind.CHANNEL_ALIAS, bindings.type("iKU"));
+        readers.put(TARGET, resolver::target);
+        readers.put(OWNER_TRACK, device -> resolver.owner(device, kinds.get(NativeDeviceTarget.Kind.TRACK)));
+        readers.put(TRACK_ALIAS, resolver::alias);
+        readers.put(TRACK_UUID, resolver::uuid);
+        readers.put(ALIAS_UUID, resolver::aliasUuid);
     }
 
     @Override
@@ -43,10 +34,7 @@ final class Bitwig614DeviceTargetAccess implements NativeDeviceTarget.Access {
 
     @Override
     public Object read(NativeDeviceTarget.Field field, Object object) {
-        Method method = readers.get(field);
-        return field == OWNER_TRACK
-                ? bindings.invoke(method, object, kinds.get(NativeDeviceTarget.Kind.TRACK))
-                : bindings.invoke(method, object);
+        return readers.get(field).apply(object);
     }
 
     @Override

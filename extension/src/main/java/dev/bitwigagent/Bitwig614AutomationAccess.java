@@ -16,8 +16,9 @@ import java.util.*;
 final class Bitwig614AutomationAccess implements AutomationModule.Access {
     private final Bitwig614Runtime.Access a;
     private final NativeReadContext context;
+    private final Bitwig614TrackResolver resolver;
     private final Class<?> player, parameterType, rangeType, pointType, projectType;
-    private final Method target, trackUuid, lanes, channel, volume, pan, reference, referenceRange, findLane, addLane;
+    private final Method lanes, channel, volume, pan, reference, referenceRange, findLane, addLane;
     private final Method laneTimeline,
             points,
             range,
@@ -29,13 +30,14 @@ final class Bitwig614AutomationAccess implements AutomationModule.Access {
             newPoint,
             insert,
             delete;
-    private final Method nearest, begin, end;
+    private final Method begin, end;
     private final Object hold, linear;
 
     Bitwig614AutomationAccess(Bitwig614Runtime.Access a) throws ReflectiveOperationException {
         this.a = a;
         context = new NativeReadContext(new Bitwig614ReadContextAccess(a));
-        String proxy = "com.bitwig.flt.control_surface.proxy.", master = "com.bitwig.flt.document.core.master.";
+        resolver = new Bitwig614TrackResolver(a);
+        String master = "com.bitwig.flt.document.core.master.";
         player = a.type("ynF");
         parameterType = a.type("bDH");
         rangeType = a.type("aL");
@@ -54,8 +56,6 @@ final class Bitwig614AutomationAccess implements AutomationModule.Access {
                 || !event.isAssignableFrom(pointType)
                 || !value.isAssignableFrom(pointType))
             throw new NoSuchMethodException("Inspected automation lane model ancestry differs.");
-        target = a.exactMethod(a.type(proxy + "ControlSurfaceProxy"), "getDeepestTarget", Object.class, false);
-        trackUuid = a.exactMethod(a.type("com.bitwig.flt.document.core.iface.RYd"), "kFU", UUID.class, false);
         lanes = a.exactMethod(player, "mvz", a.type("euS"), false);
         channel = a.exactMethod(player, "TbN", a.type("FNX"), false);
         volume = a.exactMethod(a.type("FNX"), "tSS", a.type("A"), false);
@@ -77,7 +77,6 @@ final class Bitwig614AutomationAccess implements AutomationModule.Access {
                 valueRange, "MRY", pointType, false, double.class, double.class, interpolationType, double.class);
         insert = a.exactMethod(timelineType, "cfM", void.class, false, event, int.class);
         delete = a.exactMethod(a.type("PSn"), "MRY", void.class, false, event);
-        nearest = a.exactMethod(a.type("com.bitwig.ramona.core.AVL"), "IwV", Object.class, false, Class.class);
         begin = a.exactMethod(projectType, "cfM", void.class, false, String.class, boolean.class);
         end = a.exactMethod(projectType, "cfM", void.class, false, boolean.class);
         Object h = null, l = null;
@@ -114,16 +113,10 @@ final class Bitwig614AutomationAccess implements AutomationModule.Access {
             this.proxy = proxy;
             this.trackId = trackId;
             this.spec = spec;
-            track = a.invoke(target, proxy);
-            if (track == null)
-                throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Track proxy has no attached native track.");
-            if (!player.isInstance(track))
-                throw Errors.notApplied(
-                        ErrorCode.UNSUPPORTED_SCOPE,
-                        "Automation points are supported on audio/instrument/hybrid tracks only (not group, effect or master tracks).");
-            a.requireModelThread(track);
-            if (!UUID.fromString(trackId).equals(a.invoke(trackUuid, track)))
-                throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Native track UUID differs from trackId.");
+            track = resolver.player(
+                    proxy,
+                    trackId,
+                    "Automation points are supported on audio/instrument/hybrid tracks only (not group, effect or master tracks).");
             laneSet = a.invoke(lanes, track);
             if (laneSet == null)
                 throw Errors.notApplied(ErrorCode.AUTOMATION_UNAVAILABLE, "Track has no automation lane set.");
@@ -135,14 +128,14 @@ final class Bitwig614AutomationAccess implements AutomationModule.Access {
             parameter = resolve();
             if (!parameterType.isInstance(parameter))
                 throw Errors.notApplied(ErrorCode.UNSUPPORTED_SCOPE, "Target is not an automatable native parameter.");
-            if (a.invoke(nearest, parameter, player) != track)
+            if (resolver.owner(parameter, player) != track)
                 throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Parameter does not belong to the target track.");
             ref = a.invoke(reference, null, parameter);
             if (ref == null)
                 throw Errors.notApplied(
                         ErrorCode.AUTOMATION_UNAVAILABLE,
                         "Native automation reference is unavailable for this parameter.");
-            project = a.invoke(nearest, track, projectType);
+            project = resolver.owner(track, projectType);
             models = new Object[] {parameter, laneSet, track};
             capture = context.capture(project, models, labels, check, false);
             attach(a.invoke(findLane, laneSet, ref));
@@ -169,7 +162,7 @@ final class Bitwig614AutomationAccess implements AutomationModule.Access {
             a.requireModelThread(track);
             context.guard(capture, models, labels, check);
             if (spec.grid()) gridAdapter(spec).guardAutomationParameter(grid);
-            if (a.invoke(target, proxy) != track
+            if (!resolver.same(proxy, track)
                     || a.invoke(lanes, track) != laneSet
                     || resolve() != parameter
                     || a.invoke(findLane, laneSet, ref) != lane
