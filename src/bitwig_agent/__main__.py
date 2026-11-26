@@ -1,6 +1,8 @@
-"""Run the stdio MCP server with python -m bitwig_agent."""
+"""`python -m bitwig_agent` is the same command as `bitwig-agent`."""
 
-from .frontends.mcp import main
+import sys
+
+from .frontends.cli import main
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

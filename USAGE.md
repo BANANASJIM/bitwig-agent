@@ -7,9 +7,9 @@ Install and connect using the [quickstart](README.md#quickstart). This guide des
 MCP clients should inspect their current server's tool list, then load only the input schema needed for the next call. Reuse schemas already read in the session unless the server/version/tool definitions change; live targets, context tokens and safety state still need fresh observations. CLI users can inspect the same Python catalog without contacting Bitwig:
 
 ```sh
-bitwig-agent-rpc list
-bitwig-agent-rpc describe parameters.set
-bitwig-agent-rpc describe grid.parameters.set
+bitwig-agent --help
+bitwig-agent parameters set --help
+bitwig-agent help grid.parameters.set
 ```
 
 Then call `status` (its `extension:{version,build}` identifies the loaded build; the client flags `extensionMismatch`) and `capabilities` against the running extension; use `grid.capabilities` before private Grid work. Invalid-argument errors name the closest valid field. Offline schema discovery does not prove host availability. Use schemas from the installed version and keep its extension matched; do not copy example UUIDs or infer argument names from a different Bitwig integration.
@@ -79,37 +79,72 @@ An unresolved write leaves a hold that refuses further writes in its domain; `st
 
 For New Project, a launcher-clip Bounce, export formats or options beyond `export.audio`, or an unexposed control, use explicit Computer Use only when separately authorized and after confirming the actual target/dialog, then observe completion. Missing API support is not permission for GUI control. GUI-completed work is not structured API support; do not repeat an uncertain API write through the GUI. Native work requires one designated writer and a disposable fixture, not a stale process/window snapshot.
 
+## The command line
+
+`bitwig-agent <resource> <verb> [--field=value]... [ARGS]` is the method name `resource.verb` split on its dots (`devices.sidechain.get` is `bitwig-agent devices sidechain get`). Field names are the protocol's own, so a result, an error and a flag spell a field the same way.
+
+| Input | Meaning |
+|---|---|
+| `--name=text` | A string field is literal; any other field is strict JSON (`--deviceIndex=0`, `--notes='[...]'`). `--name text` also works unless the value starts with `-`. |
+| `--dryRun` | A bare boolean flag is true; write `--mute=false` for false. |
+| `--spec=@file`, `--spec=-` | A non-string value may come from a file or stdin (one `-` per command). |
+| `ARGS` | One JSON object, inline, `@file` or `-`; it merges with the flags and a repeated field is an error. |
+
+`stdout` is the result object only (indented on a terminal, one line in a pipe); `stderr` is only an error, `{"code","reason","message","next"?}`. There is no colour, progress or prompt. Exit codes:
+
+| Exit | Meaning |
+|---|---|
+| 0 | A read succeeded, or `outcome` is `applied`, `already_matched` or `sent` |
+| 1 | An error other than `invalid_params` or `unknown_method`, or `outcome: not_applied` (nothing changed, or not every entry applied) |
+| 2 | Usage: `invalid_params` or `unknown_method`; fix the command |
+| 3 | `outcome: unknown`: stop, inspect the real state, then `ack`; never resend |
+| 130 | Interrupted (Ctrl-C) |
+| 141 | `batch` only: stdout was closed (reader gone); no further call was sent and the last result was not delivered, so a write's outcome is unknown |
+
+A result with a non-zero outcome still goes to stdout, so a pipeline keeps the entries and the `reason`. Use `set -o pipefail` in scripts.
+
+Reads that return one array of objects can be line-processed: `--format=jsonl|csv|tsv` prints only the records, one per line; the siblings of the array (`scope`, `total`, `window`) are not output, while the default JSON keeps everything. If the list is partial (`complete` or `window.complete` is false) one `{"warning":"partial","message":...}` line goes to stderr, naming the offset/limit fields to page with, and the exit code stays 0. `--fields=a,b.c` picks fields (dotted paths into nested objects; the key is the path you asked for), in JSON too. Nested fields are flattened to dotted columns, arrays and objects with several values are JSON in a cell, null is an empty cell, and TSV escapes tab, newline and backslash as `\t`, `\n`, `\\`. A result that is not a record list, or a write, is refused with an error instead of printing a partial table. `export.audio` and `grid.render` have a `format` field of their own, which wins over `--format`.
+
+`bitwig-agent batch [-|@file]` runs JSON Lines, one call per line, in order: `{"method":"tracks.set","params":{"trackId":"...","mute":true}}` (`params` optional). Every line is validated before the first call is sent. Each finished call prints one result line to stdout; it stops at the first error (stderr, message prefixed `line N:`) or the first outcome outside `applied`, `already_matched`, `sent` (that result is printed) and exits with that call's code. Nothing runs in parallel or is retried.
+
+Ctrl-C prints no traceback: one stderr line says whether a write was in flight (its outcome is then unknown, inspect before retrying) and the exit code is 130.
+
+```sh
+bitwig-agent tracks list --format=tsv --fields=trackId,name | cut -f1 | wc -l
+bitwig-agent grid export --trackId=$T --deviceIndex=0 --expectedDeviceName='Poly Grid' | jq .spec | bitwig-agent grid apply - --dryRun
+```
+
 ## Read module docs before using an unfamiliar Grid module
 
 `grid.describe` returns Bitwig's own documentation (description, keywords, per-port and per-parameter notes) for a module, read offline from your local Bitwig install; nothing is bundled. Read it before using a module you have not used (e.g. whether Select In is a mux, or what Chance emits).
 
 ```sh
-bitwig-agent-rpc grid.describe type="Select In"
-bitwig-agent-rpc grid.describe query="random trigger" [lang=de] [limit=10]
+bitwig-agent grid describe --type="Select In"
+bitwig-agent grid describe --query="random trigger" [--lang=de] [--limit=10]
 ```
 
-The install is found from `installationRoot=`, `$BITWIG_INSTALLATION_ROOT`, the install of `$BITWIG_API_JAR`, then `/opt/bitwig-studio`. See [PROTOCOL](PROTOCOL.md#griddescribe-module-documentation-client-side).
+The install is found from `--installationRoot`, `$BITWIG_INSTALLATION_ROOT`, the install of `$BITWIG_API_JAR`, then `/opt/bitwig-studio`. See [PROTOCOL](PROTOCOL.md#griddescribe-module-documentation-client-side).
 
 ## Apply a Grid patch from a spec
 
 `grid.apply` builds or updates one Grid device from a JSON spec (named modules, params, connections) and is safe to re-run: existing named modules are reused and only differences are written. Preview with `dryRun`, then apply:
 
 ```sh
-bitwig-agent-rpc grid.apply spec=@patch.json dryRun=true
-bitwig-agent-rpc grid.apply spec=@patch.json        # or --params @patch.json
+bitwig-agent grid apply @patch.json --dryRun
+bitwig-agent grid apply @patch.json
 ```
 
-Keep one spec per Grid device (sections as name prefixes inside it); two specs sharing a namespace with `prune` delete each other's modules. Use a `namespace` prefix (e.g. `"H: "`) plus `prune=true` to also remove stale modules and cables you own. It stops at the first error or unknown outcome and reports what was and was not done; fix the cause and re-apply. See [PROTOCOL](PROTOCOL.md#gridapply-declarative-patch-client-side).
+Keep one spec per Grid device (sections as name prefixes inside it); two specs sharing a namespace with `prune` delete each other's modules. Use a `namespace` prefix (e.g. `"H: "`) plus `--prune` to also remove stale modules and cables you own. It stops at the first error or unknown outcome and reports what was and was not done; fix the cause and re-apply. See [PROTOCOL](PROTOCOL.md#gridapply-declarative-patch-client-side).
 
 ## See a Grid layout
 
 `grid.render` draws one Grid device as SVG (or PNG when `rsvg-convert` or `magick` is installed) and returns a layout summary (overlaps, unconnected modules, sections from `"H: "` name prefixes, density), so you can check a patch without the Grid editor:
 
 ```sh
-bitwig-agent-rpc grid.render trackId=<uuid> deviceIndex=0 expectedDeviceName='Poly Grid' outPath=/tmp/grid.png format=png overwrite=true
+bitwig-agent grid render --trackId=<uuid> --deviceIndex=0 --expectedDeviceName='Poly Grid' --outPath=/tmp/grid.png --format=png --overwrite
 ```
 
-It only reads from Bitwig and writes `outPath`; it refuses to replace an existing file without `overwrite=true`. See [PROTOCOL](PROTOCOL.md#gridrender-layout-image-client-side).
+It only reads from Bitwig and writes `outPath`; it refuses to replace an existing file without `--overwrite`. See [PROTOCOL](PROTOCOL.md#gridrender-layout-image-client-side).
 
 ## Make Grid instruments without preset files
 
@@ -143,10 +178,10 @@ For explicit GUI follow-up, select the actual owned Launcher clip and verify its
 Hear nothing, still observe what Bitwig plays. `grid.probe` rewires cables, which needs a stopped transport, and `audio.capture` leaves it stopped. Grid value writes (parameters, voicing, remote pages, modulator parameters) work while playing.
 
 ```sh
-bitwig-agent-rpc audio.route mode=silent                       # Bitwig out1/out2 -> null sink "bwtest"
-bitwig-agent-rpc audio.capture seconds=8 outPath=/tmp/take.wav # stop, seek 0, record, play, stop
-bitwig-agent-rpc audio.analyze path=/tmp/take.wav mode=mono_pitch bpm=120 skipSeconds=2
-bitwig-agent-rpc audio.route mode=restore                      # always: re-link the speakers
+bitwig-agent audio route --mode=silent                          # Bitwig out1/out2 -> null sink "bwtest"
+bitwig-agent audio capture --seconds=8 --outPath=/tmp/take.wav   # stop, seek 0, record, play, stop
+bitwig-agent audio analyze --path=/tmp/take.wav --mode=mono_pitch --bpm=120 --skipSeconds=2
+bitwig-agent audio route --mode=restore                         # always: re-link the speakers
 ```
 
 `audio.capture` records only Bitwig's own out1/out2 through a dedicated PipeWire node (other applications never end up in the file); `soloTrack=<trackId>` really solos that track for the take and restores every solo afterwards (`stopOthers=true` also stops other launcher clips).
@@ -158,8 +193,8 @@ bitwig-agent-rpc audio.route mode=restore                      # always: re-link
 ## Host problems the API cannot show (`host.diagnostics`)
 
 ```sh
-bitwig-agent-rpc host.diagnostics                       # last 300 s of this instance's Bitwig log, classified
-bitwig-agent-rpc host.diagnostics sinceMarker=<marker>  # only what happened since the previous call's `marker`
+bitwig-agent host diagnostics                         # last 300 s of this instance's Bitwig log, classified
+bitwig-agent host diagnostics --sinceMarker=<marker>  # only what happened since the previous call's `marker`
 ```
 
 Client-side, read-only, reads `~/.BitwigStudio/log/BitwigStudio.log` (macOS `~/Library/Logs/Bitwig/`, Windows `%LOCALAPPDATA%\Bitwig Studio\log\`: documented, not verified; else `status:"unsupported"`; `BITWIG_LOG_PATH` overrides). Events are `grid_rejected` (a Grid device silently dropped from the audio network: it just goes silent), `engine` (`isEngineReady` flips), `extension`, `exception`, `dialog` (logged notifications only), `other`. After Grid topology writes, check `host.diagnostics` for `grid_rejected`. Modal dialogs (Dashboard, Save Project?, Recover Projects) are not in the log: use a screenshot. The log is shared by all instances: read `attribution.certain` and `uncertainty`.

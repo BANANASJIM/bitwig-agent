@@ -1,7 +1,6 @@
 """audio.* against synthetic WAVs and a fake PipeWire (no real subprocess, no Bitwig)."""
 
 import asyncio
-import json
 import math
 import re
 import struct
@@ -22,11 +21,13 @@ from fakes import (
     spawn_dead,
     write_wav,
 )
+from fakes import (
+    execute_cli as execute,
+)
 
 from bitwig_agent.audio import pipewire
 from bitwig_agent.core import composed
 from bitwig_agent.errors import BridgeError, HostChanged, bridge_error, unknown_result
-from bitwig_agent.frontends.cli import execute
 from bitwig_agent.protocol import CLIENT_SIDE, TOOLS, validate_call
 
 REAL_RUN = pipewire.run
@@ -459,14 +460,14 @@ def test_capture_validation():
 def test_cli_and_catalog_expose_tools():
 
     assert {"audio.route", "audio.capture", "audio.analyze"} <= CLIENT_SIDE <= set(TOOLS)
-    params, _ = parse_arguments("audio.capture", ["seconds=2", "outPath=/tmp/x.wav", "fromStart=false"], None, None)
+    params, _ = parse_arguments("audio.capture", ["--seconds=2", "--outPath=/tmp/x.wav", "--fromStart=false"])
     assert params == {"seconds": 2.0, "outPath": "/tmp/x.wav", "fromStart": False}
-    payload, code = asyncio.run(execute(["audio.analyze", "path=/nonexistent/x.wav", "mode=level"]))
-    assert code == 1
+    payload, code = asyncio.run(execute(["audio.analyze", "--path=/nonexistent/x.wav", "--mode=level"]))
+    assert code == 2
     assert payload["error"]["code"] == "invalid_params"
-    payload, code = asyncio.run(execute(["describe", "audio.route"]))
+    payload, code = asyncio.run(execute(["help", "audio.route"]))
     assert code == 0
-    assert json.dumps(payload)
+    assert payload["result"]["method"] == "audio.route"
 
 
 def test_flux_counts_overlapping_long_decay_notes(tmp_path):

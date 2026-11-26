@@ -7,7 +7,6 @@ Importing this module does not create a server or configure any global client.
 from __future__ import annotations
 
 import asyncio
-import json
 from typing import Any
 
 from mcp.server import Server, ServerRequestContext
@@ -26,11 +25,12 @@ from mcp.types import (
 
 from bitwig_agent.core import views
 from bitwig_agent.core.invoke import Envelope, Error, ask_help, invoke, refuse_timeout
+from bitwig_agent.core.serialize import dumps
 
 
 def text_result(payload: dict[str, Any], is_error: bool) -> CallToolResult:
     return CallToolResult(
-        content=[TextContent(type="text", text=json.dumps(payload, allow_nan=False, separators=(",", ":")))],
+        content=[TextContent(type="text", text=dumps(payload))],
         structured_content=payload,
         is_error=is_error,
     )
@@ -91,3 +91,7 @@ async def run() -> None:
 
 def main() -> None:
     asyncio.run(run())
+
+
+if __name__ == "__main__":
+    main()

@@ -13,7 +13,7 @@ pixi install --locked
 pixi run install
 ```
 
-`install` builds `build/BitwigAgent.bwextension` and copies it into your Bitwig Extensions directory. The extension build compiles against your installed host JAR, `/opt/bitwig-studio/bin/bitwig.jar` unless `BITWIG_API_JAR` names another. The build downloads and verifies pinned Gson on first use. The proprietary host JAR is not bundled. Installation does not enable the controller: follow [the enable/connect steps](README.md#2-enable-in-bitwig). The checkout's CLI and MCP server run from its editable pixi environment (`pixi run bitwig-agent-rpc list`). For a checkout-based MCP configuration, run `pixi run bitwig-agent-install --mcp-config`; keep the checkout's `.pixi` environment available to the client. Pixi cannot install PyPI-only applications globally, so there is no pixi equivalent of a tool install.
+`install` builds `build/BitwigAgent.bwextension` and copies it into your Bitwig Extensions directory. The extension build compiles against your installed host JAR, `/opt/bitwig-studio/bin/bitwig.jar` unless `BITWIG_API_JAR` names another. The build downloads and verifies pinned Gson on first use. The proprietary host JAR is not bundled. Installation does not enable the controller: follow [the enable/connect steps](README.md#2-enable-in-bitwig). The checkout's CLI and MCP server run from its editable pixi environment (`pixi run bitwig-agent --help`). For a checkout-based MCP configuration, run `pixi run bitwig-agent-install --mcp-config`; keep the checkout's `.pixi` environment available to the client. Pixi cannot install PyPI-only applications globally, so there is no pixi equivalent of a tool install.
 
 ## Development checks
 

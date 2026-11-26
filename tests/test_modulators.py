@@ -6,9 +6,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from fakes import execute_cli as execute
 
 from bitwig_agent import modulator_docs
-from bitwig_agent.frontends.cli import execute
 from bitwig_agent.protocol import CLIENT_SIDE, TOOLS, validate_call
 
 REAL_ROOT = Path("/opt/bitwig-studio")
@@ -99,7 +99,7 @@ def test_describe_collects_controls_and_documented_values(root):
 
 def test_client_side_routing_never_calls_the_host(root):
     assert {"modulators.catalog", "modulators.describe"} <= CLIENT_SIDE
-    payload, code = asyncio.run(execute(["modulators.describe", "type=Chaos"]))
+    payload, code = asyncio.run(execute(["modulators.describe", "--type=Chaos"]))
     assert code == 0
     assert payload["result"]["name"] == "Chaos"
 

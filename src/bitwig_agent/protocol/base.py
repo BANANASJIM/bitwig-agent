@@ -199,6 +199,7 @@ class ToolSpec:
     expose: bool = True
     annotations: Annotations | None = None
     summary: str = ""
+    records: str | None = None
 
     @property
     def project_write(self) -> bool:

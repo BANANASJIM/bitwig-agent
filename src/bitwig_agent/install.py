@@ -125,7 +125,7 @@ def main(argv: list[str] | None = None) -> None:
                     "mcpServers": {
                         "bitwig-agent": {
                             "command": sys.executable,
-                            "args": ["-m", "bitwig_agent"],
+                            "args": ["-m", "bitwig_agent.frontends.mcp"],
                             "env": {"BITWIG_AGENT_PORT": str(DEFAULT_PORT)},
                         }
                     }

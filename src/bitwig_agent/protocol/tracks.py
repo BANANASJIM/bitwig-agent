@@ -134,7 +134,7 @@ TRACKS_DELETE_DESCRIPTION = f"Delete one audio/instrument/hybrid/effect track (T
 
 
 SPECS: dict[str, ToolSpec] = {
-    "tracks.list": ToolSpec(StatusArgs, TRACKS_LIST_DESCRIPTION, True),
+    "tracks.list": ToolSpec(StatusArgs, TRACKS_LIST_DESCRIPTION, True, records="tracks"),
     "tracks.get": ToolSpec(DeviceArgs, TRACKS_GET_DESCRIPTION, True, examples=({"trackId": TRACK},)),
     "tracks.set": ToolSpec(
         TrackSetArgs,

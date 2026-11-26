@@ -8,7 +8,7 @@ from typing import Any
 
 from bitwig_agent.client import BridgeClient, configured_port, load_json
 from bitwig_agent.core import composed, views
-from bitwig_agent.errors import BridgeError, HostChanged, bridge_error
+from bitwig_agent.errors import BridgeError, HostChanged, bridge_error, unknown_result
 from bitwig_agent.protocol import invalid_params_message, unknown_method_message, validate_call
 from bitwig_agent.protocol.base import SUCCEEDED
 
@@ -73,11 +73,38 @@ def refuse_timeout(name: str) -> Error:
     return invalid_params_error(views.unknown_field_message(name, "timeoutMs"))
 
 
-async def invoke(name: str, args: Mapping[str, Any], client: BridgeClient | None = None) -> Envelope:
+def unknown_method(name: str) -> Error:
+    return Error(bridge_error("unknown_method", unknown_method_message(name)).error, usage=True)
+
+
+def stopped(method: str | None, reason: str, message: str) -> Envelope:
+    """A call cut short on the caller's side: unknown when it was a write, else a refusal that changed nothing."""
+    if method is None:
+        return Error(bridge_error(reason, message).error)
+    return Result(unknown_result(reason, message, method=method))
+
+
+def prepare(name: str, args: Mapping[str, Any]) -> tuple[dict[str, Any], int] | Error:
+    """The validated host arguments and timeout, or the error the call is refused with before dispatch."""
     if not views.exists(name):
-        return Error(bridge_error("unknown_method", unknown_method_message(name)).error, usage=True)
+        return unknown_method(name)
     try:
-        arguments, timeout_ms = validate_call(name, dict(args))
+        return validate_call(name, dict(args))
+    except (ValueError, TypeError, RecursionError) as exc:
+        return invalid_params(name, exc)
+
+
+def check(name: str, args: Mapping[str, Any]) -> Error | None:
+    prepared = prepare(name, args)
+    return prepared if isinstance(prepared, Error) else None
+
+
+async def invoke(name: str, args: Mapping[str, Any], client: BridgeClient | None = None) -> Envelope:
+    prepared = prepare(name, args)
+    if isinstance(prepared, Error):
+        return prepared
+    arguments, timeout_ms = prepared
+    try:
         bridge = client if client is not None else BridgeClient(configured_port())
         if name in composed.HANDLERS:
             return Result(await composed.run(name, bridge, arguments, timeout_ms))

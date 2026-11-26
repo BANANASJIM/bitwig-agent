@@ -206,6 +206,7 @@ SPECS: dict[str, ToolSpec] = {
         examples=(
             {"parent": {"trackId": TRACK, "deviceIndex": 0, "expectedDeviceName": "Polymer"}, "offset": 0, "limit": 64},
         ),
+        records="modulators",
     ),
     "modulators.parameters.get": ToolSpec(
         ModulatorParameterGetArgs,

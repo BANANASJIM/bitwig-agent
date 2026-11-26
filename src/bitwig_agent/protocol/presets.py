@@ -40,5 +40,6 @@ SPECS: dict[str, ToolSpec] = {
         True,
         examples=({"query": "warm pad", "device": "Polymer", "limit": 10},),
         host=False,
+        records="presets",
     ),
 }

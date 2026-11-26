@@ -25,7 +25,7 @@ ACTIONS_INVOKE_DESCRIPTION = "Invoke one exact ID from actions.list in the curre
 
 SPECS: dict[str, ToolSpec] = {
     "actions.list": ToolSpec(
-        ActionListArgs, ACTIONS_LIST_DESCRIPTION, True, examples=({"query": "scene", "limit": 20},)
+        ActionListArgs, ACTIONS_LIST_DESCRIPTION, True, examples=({"query": "scene", "limit": 20},), records="actions"
     ),
     "actions.invoke": ToolSpec(
         ActionArgs,

@@ -157,16 +157,17 @@ def test_validation_and_exposure(tmp_path):
     params, _ = parse_arguments(
         "grid.render",
         [
-            f"trackId={TRACK}",
-            "deviceIndex=0",
-            "expectedDeviceName=Poly Grid",
-            f"outPath={tmp_path / 'a.svg'}",
-            "overwrite=true",
+            f"--trackId={TRACK}",
+            "--deviceIndex=0",
+            "--expectedDeviceName=Poly Grid",
+            f"--outPath={tmp_path / 'a.svg'}",
+            "--overwrite",
+            "--format",
+            "png",
         ],
-        None,
-        None,
     )
     assert params["overwrite"] is True
+    assert params["format"] == "png"
     assert params["expectedDeviceName"] == "Poly Grid"
 
 
