@@ -573,7 +573,8 @@ final class ModulatorEditor {
                 result,
                 changed,
                 "exact_native_model_readback",
-                "native_undo_aware_controller_operation_not_verified_grouping");
+                "native_undo_aware_controller_operation_not_verified_grouping",
+                "observed_nonrecording_nonautomation_not_native_transport_atomicity");
         return result;
     }
 
@@ -828,6 +829,16 @@ final class ModulatorEditor {
     }
 
     private static void written(JsonObject result, boolean changed, String verification, String undoScope) {
+        written(
+                result,
+                changed,
+                verification,
+                undoScope,
+                "observed_stopped_nonrecording_nonautomation_not_native_transport_atomicity");
+    }
+
+    private static void written(
+            JsonObject result, boolean changed, String verification, String undoScope, String safetyScope) {
         result.addProperty("mutationDispatched", changed);
         result.addProperty("verification", changed ? verification : "already_matched");
         result.addProperty("nativeMutation", changed);
@@ -835,7 +846,7 @@ final class ModulatorEditor {
         result.addProperty("nativeUndoScope", changed ? undoScope : "no_native_operation");
         result.addProperty("undoGroupingVerified", false);
         result.addProperty("engineAcknowledgement", false);
-        result.addProperty("safetyScope", "observed_stopped_nonrecording_nonautomation_not_native_transport_atomicity");
+        result.addProperty("safetyScope", safetyScope);
     }
 
     private static void stale(String message) {

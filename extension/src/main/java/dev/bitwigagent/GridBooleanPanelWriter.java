@@ -87,7 +87,7 @@ final class GridBooleanPanelWriter {
         result.addProperty("engineAcknowledgement", false);
         result.addProperty(
                 "safetyScope",
-                "panel_common_context_and_linked_scalar_guards_observed_stopped_not_native_transport_atomicity");
+                "panel_common_context_and_linked_scalar_guards_observed_nonrecording_nonautomation_not_native_transport_atomicity");
         return result;
     }
 }

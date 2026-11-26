@@ -18,11 +18,11 @@ from typing import Any
 from bitwig_agent import audio
 from bitwig_agent.errors import BridgeError, bridge_error
 from bitwig_agent.grid.read import GridCall, device_target, host_call, module_names, read_graph
+from bitwig_agent.grid.safety import RECORDING_FLAGS
 from bitwig_agent.protocol.base import MAX_TIMEOUT_MS
 
 AUDIO_OUT = "Audio Out"
 MAX_EDITS = 32  # one grid.connections.set batch: all expectedSource checks first, then in order
-UNSAFE_FLAGS = ("arrangerRecordEnabled", "arrangerAutomationWriteEnabled", "clipLauncherAutomationWriteEnabled")
 PASS_THROUGH = ("bpm", "skipSeconds", "threshold", "method", "windowSeconds", "key")
 CAPTURE_FIELDS = (
     "durationSeconds",
@@ -163,13 +163,13 @@ def _checked_keep_path(args: dict[str, Any]) -> str | None:
 
 
 async def _ensure_transport_stopped(client: Any, timeout_ms: int) -> None:
-    """Grid writes need a stopped, non-recording transport; audio.capture stops it again afterwards, so this leaves it stopped too."""
+    """Rewiring cables is a structural write and needs a stopped transport; audio.capture stops it again afterwards, so this leaves it stopped too."""
     transport = await client.call("transport.get", {}, timeout_ms)
-    unsafe = [k for k in UNSAFE_FLAGS if transport.get(k) is not False]
+    unsafe = [k for k in RECORDING_FLAGS if transport.get(k) is not False]
     if unsafe:
         raise bridge_error(
             "unsafe_state",
-            f"Grid writes need recording and automation write observed off; not confirmed off: {', '.join(unsafe)}",
+            f"Rewiring cables needs recording and automation write observed off; not confirmed off: {', '.join(unsafe)}",
         )
     if transport.get("playing") is True:
         await client.call("transport.set", {"playing": False}, timeout_ms)

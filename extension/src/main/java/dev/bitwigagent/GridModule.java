@@ -466,7 +466,7 @@ final class GridModule implements HostModule {
         final String deletedPage = remoteDelete ? GridRemotePageWriter.Request.pageName(p) : null;
         final boolean fullSteps =
                 p.has("full") && !scalarWriting && p.get("full").getAsBoolean();
-        final HostServices.SafetyObservation safety = writing ? s.stoppedSafety(op) : null;
+        final Runnable safety = writing ? s.writeGuard(op, topology) : null;
         final DeviceSources.RootReadTicket target = method.equals("grid.get")
                         || inspection
                         || topology
@@ -495,7 +495,7 @@ final class GridModule implements HostModule {
                 Runnable check = () -> {
                     s.check(op);
                     if (target != null) target.check();
-                    if (writing) s.guardStoppedSafety(safety);
+                    if (writing) safety.run();
                 };
                 check.run();
                 if (topology) {
@@ -624,7 +624,7 @@ final class GridModule implements HostModule {
     private void deliver(
             HostOperation op,
             DeviceSources.RootReadTicket target,
-            HostServices.SafetyObservation safety,
+            Runnable safety,
             boolean writing,
             Runnable check,
             JsonObject value) {
@@ -640,7 +640,7 @@ final class GridModule implements HostModule {
                 op,
                 () -> {
                     guard(op, target);
-                    if (writing) s.guardStoppedSafety(safety);
+                    if (writing) safety.run();
                     JsonObject result = JsonParser.parseString(serialized).getAsJsonObject();
                     if (target != null) {
                         JsonObject identity = new JsonObject();

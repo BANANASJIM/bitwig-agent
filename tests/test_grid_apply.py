@@ -1247,6 +1247,34 @@ def test_dry_run_would_fail_reports_transport_and_stays_read_only():
     assert "wouldFail" not in apply_grid(host, spec, dryRun=True)
 
 
+def test_parameter_only_apply_is_allowed_while_playing_and_refused_while_recording():
+    host = FakeGrid()
+    apply_grid(host, SPEC)
+    spec = copy.deepcopy(SPEC)
+    spec["modules"][2]["params"]["ATTACK"] = 0.75
+    host.transport = {"playing": True}
+    assert "wouldFail" not in apply_grid(host, spec, dryRun=True)
+    host.calls.clear()
+    assert apply_grid(host, spec)["status"] == "applied"
+    assert host.writes() == ["grid.parameters.set"]
+    spec["modules"][2]["params"]["ATTACK"] = 0.25
+    host.transport = {"playing": True, "arrangerAutomationWriteEnabled": True}
+    refusal = apply_grid(host, spec, dryRun=True)["wouldFail"]
+    assert [f["code"] for f in refusal] == ["unsafe_state"]
+    assert "arrangerAutomationWriteEnabled" in refusal[0]["message"]
+    assert "playback" not in refusal[0]["message"]
+
+
+def test_structural_apply_names_playing_as_the_blocker():
+    host = FakeGrid()
+    host.transport = {"playing": True, "arrangerRecordEnabled": True}
+    spec = {"target": TARGET, "modules": [{"name": "a", "type": "Add", "x": 0, "y": 0}]}
+    message = apply_grid(host, spec, dryRun=True)["wouldFail"][0]["message"]
+    assert "playing" in message
+    assert "arrangerRecordEnabled" in message
+    assert "stop playback" in message
+
+
 def test_dry_run_would_fail_flags_host_converted_display_and_missing_target():
     spec = {
         "target": TARGET,

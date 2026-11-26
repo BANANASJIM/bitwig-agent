@@ -140,7 +140,7 @@ For explicit GUI follow-up, select the actual owned Launcher clip and verify its
 
 ## Verify output silently (Linux/PipeWire)
 
-Hear nothing, still observe what Bitwig plays. Grid writes need a stopped transport; `audio.capture` leaves it stopped.
+Hear nothing, still observe what Bitwig plays. `grid.probe` rewires cables, which needs a stopped transport, and `audio.capture` leaves it stopped. Grid value writes (parameters, voicing, remote pages, modulator parameters) work while playing.
 
 ```sh
 bitwig-agent-rpc audio.route mode=silent                       # Bitwig out1/out2 -> null sink "bwtest"
