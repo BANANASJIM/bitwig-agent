@@ -500,6 +500,33 @@ public final class RenderModuleTest {
     }
 
     @Test
+    void aBounceAckedWhileRunningMustStillBeVerifiedWhenItFinishes() throws IOException {
+        Sim sim = new Sim();
+        sim.finish = false;
+        sim.afterBounce = before -> lanes(clip(0, 16, "Bounce", "audio"));
+        HostOperation op = sim.start("bounce.inPlace", bounce(A), 200);
+        sim.drainUntil(op);
+        assertTrue(
+                assertUnknown("deadline", op).get("next").getAsString().contains("jobs.get render:1"),
+                "the deadline result names the job");
+        sim.fixture.services.holds.ack("render.job");
+        assertTrue(sim.holds().isEmpty(), "the running bounce was given up");
+        sim.completeBounce();
+        assertTrue(
+                sim.holds().size() == 1 && sim.holds().get(0).id.equals("render.finished"),
+                "its late finish raises the finished hold");
+        HostOperation again = sim.start("bounce.inPlace", bounce(B), 5000);
+        sim.drainUntil(again);
+        assertRpcError("busy", again);
+        assertTrue(sim.job("render:1").get("outcome").getAsString().equals("applied"), "jobs.get verifies it");
+        assertTrue(sim.holds().isEmpty(), "verification clears the hold");
+        sim.finish = true;
+        again = sim.start("bounce.inPlace", bounce(B), 5000);
+        sim.drainUntil(again);
+        assertOutcome("applied", again);
+    }
+
+    @Test
     void lateBounceMustBeVerifiedBeforeAnother() throws IOException {
         Sim sim = new Sim();
         sim.finish = false;

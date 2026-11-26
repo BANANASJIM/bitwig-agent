@@ -218,11 +218,14 @@ final class RenderModule implements HostModule, JobsModule.Source {
         return current != null && current.returned;
     }
 
-    /** After ack: further renders are admitted; the native job may still finish, jobs.get keeps reporting it. */
+    /**
+     * After ack: further renders are admitted; the native job may still finish, jobs.get keeps reporting it. A bounce
+     * that finishes later still has to be verified (the finished hold), so only a finished job counts as reported.
+     */
     private void abandon() {
         Job current = job;
         current.abandoned = true;
-        current.reported = true;
+        if (current.done()) current.reported = true;
     }
 
     private static boolean unverified(Job current) {
@@ -641,8 +644,8 @@ final class RenderModule implements HostModule, JobsModule.Source {
         JsonObject result = JobsModule.deadline(
                 current.id,
                 current.done()
-                        ? "Bitwig finished the job but it is not verified yet."
-                        : "The native job is still running; further renders are busy until it completes.");
+                        ? "Bitwig finished the job but it is not verified yet; verify it with jobs.get, or ack its hold after inspecting."
+                        : "The native job is still running; further renders are busy until it completes, or until you ack its job hold after inspecting.");
         result.addProperty("nativeCompletion", current.done() ? "completed" : "pending");
         common(result, current, bridge);
         if (current.plan != null) {

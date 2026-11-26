@@ -104,6 +104,23 @@ public final class ProjectModuleTest {
     }
 
     @Test
+    void aLateCallbackOfAnAckedSaveKeepsTheNextSaveHeld() throws IOException {
+        Sim silent = new Sim();
+        silent.silent = true;
+        HostOperation first = silent.start(silent.root.resolve("Song/Song.bwproject"), false, 150);
+        silent.drainUntil(first);
+        ProjectModule.Completion stale = silent.late;
+        silent.fixture.services.holds.ack("project.saveAs");
+        HostOperation second = silent.start(silent.root.resolve("Again/Again.bwproject"), false, 150);
+        silent.drainUntil(second);
+        assertEquals("saveAs:2", assertUnknown("deadline", second).get("job").getAsString());
+        stale.completed();
+        assertEquals(1, silent.holds().size(), "the first save's callback leaves the second save held");
+        silent.late.completed();
+        assertTrue(silent.holds().isEmpty(), "its own callback releases it");
+    }
+
+    @Test
     void executeFailureGivesTheJobSlotBack() throws IOException {
         Sim sim = new Sim();
         sim.executeFails = true;

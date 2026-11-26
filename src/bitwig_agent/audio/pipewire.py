@@ -318,7 +318,7 @@ async def solo_states(bridge: Any, solo: str, timeout_ms: int) -> dict[str, bool
 
 
 async def apply_solo(
-    bridge: Any, solo: str, previous: dict[str, bool], timeout_ms: int
+    bridge: Any, solo: str, previous: dict[str, bool], timeout_ms: int, writes: _Writes
 ) -> tuple[list[str], dict[str, Any]]:
     """Solo `solo` exclusively (the host has no exclusive-solo write): set it on the target and clear every other soloed track.
 
@@ -341,7 +341,7 @@ async def apply_solo(
                 if tid != solo:
                     block["unsoloed"].append(tid)
     except BaseException:
-        await restore_solo(bridge, previous, changed, timeout_ms)
+        writes.restore_failed = (await restore_solo(bridge, previous, changed, timeout_ms)).get("restoreFailed", [])
         raise
     return changed, block
 
@@ -409,9 +409,16 @@ async def capture(bridge: Any, args: dict[str, Any], timeout_ms: int) -> dict[st
     try:
         return await _record(bridge, args, timeout_ms, previous_solo, writes)
     except BridgeError as exc:
-        if writes.stopped or writes.transport:
-            raise changed_before(exc, stoppedTracks=writes.stopped, transportStopped=writes.transport) from exc
-        raise
+        if not (writes.stopped or writes.transport or writes.restore_failed):
+            raise
+        changed = changed_before(exc, stoppedTracks=writes.stopped, transportStopped=writes.transport)
+        if writes.restore_failed:
+            changed.result.update(
+                outcome="unknown",
+                restoreFailed=writes.restore_failed,
+                next="Inspect tracks.list and restore the listed solo states with tracks.set.",
+            )
+        raise changed from exc
 
 
 @dataclass
@@ -420,6 +427,7 @@ class _Writes:
 
     stopped: list[str] = field(default_factory=list)
     transport: bool = False
+    restore_failed: list[dict[str, Any]] = field(default_factory=list)
 
 
 async def _record(
@@ -434,7 +442,7 @@ async def _record(
     changed: list[str] = []
     solo_block: dict[str, Any] = {}
     if solo:
-        changed, solo_block = await apply_solo(bridge, solo, previous_solo, timeout_ms)
+        changed, solo_block = await apply_solo(bridge, solo, previous_solo, timeout_ms, writes)
     from_start = args.get("fromStart", True)
     transport_started = False
     unsettled: dict[str, Any] = {}
@@ -483,6 +491,7 @@ async def _record(
                 run(["pw-link", "-d", src, dst])
         if solo:
             solo_block.update(await restore_solo(bridge, previous_solo, changed, timeout_ms))
+            writes.restore_failed = solo_block.get("restoreFailed", [])
     stats = await asyncio.to_thread(analysis.analyze, {"path": path, "mode": "level", "windowSeconds": 60})
     if solo_block.get("restoreFailed") and not unsettled:
         unsettled = unknown_result(

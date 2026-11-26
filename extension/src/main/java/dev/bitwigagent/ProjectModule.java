@@ -233,7 +233,7 @@ final class ProjectModule implements HostModule, JobsModule.Source {
         public void completed() {
             if (done) return;
             done = true;
-            holds.release(PENDING);
+            releaseIfCurrent();
         }
 
         @Override
@@ -242,7 +242,12 @@ final class ProjectModule implements HostModule, JobsModule.Source {
             failure = message;
             this.refused = refused;
             done = true;
-            holds.release(PENDING);
+            releaseIfCurrent();
+        }
+
+        /** A late callback of an acked job must not release the hold of the save that replaced it. */
+        private void releaseIfCurrent() {
+            if (job == this) holds.release(PENDING);
         }
     }
 

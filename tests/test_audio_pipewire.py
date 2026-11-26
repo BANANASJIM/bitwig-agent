@@ -431,6 +431,20 @@ def test_a_refusal_after_stopping_tracks_is_a_result_naming_them(tmp_path, monke
     assert result["transportStopped"] is False
 
 
+def test_a_refusal_after_a_failed_solo_restore_is_an_unknown_result(tmp_path, monkeypatch, pw):
+    route("silent")
+    solo = "00000000-0000-0000-0000-000000000001"
+    bridge, _spawned, params, timeout = capture(tmp_path, monkeypatch, solo={solo: False, "b": True}, soloTrack=solo)
+    monkeypatch.setattr(pipewire, "spawn", spawn_dead)
+    bridge.fail_set = solo  # putting the target's solo back fails
+    with pytest.raises(HostChanged) as changed:
+        asyncio.run(composed.run("audio.capture", bridge, params, timeout))
+    result = changed.value.result
+    assert (result["outcome"], result["reason"]) == ("unknown", "job_failed")
+    assert result["restoreFailed"][0]["trackId"] == solo
+    assert "tracks.set" in result["next"]
+
+
 def test_capture_validation():
     for bad in (
         {"seconds": 0.1, "outPath": "/tmp/a.wav"},
