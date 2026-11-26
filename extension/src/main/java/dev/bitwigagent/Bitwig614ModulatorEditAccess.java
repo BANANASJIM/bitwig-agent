@@ -359,7 +359,8 @@ final class Bitwig614ModulatorEditAccess implements ModulatorEditor.Access {
 
     @Override
     public Object[] gridParameter(DeviceSources.Source source, UUID moduleId, String parameterId, Runnable check) {
-        GridSnapshotReader.ParameterBinding binding = grid.bindParameter(source, moduleId, parameterId, check);
+        GridSnapshotReader.ParameterBinding binding = grid.bindParameterIfPresent(source, moduleId, parameterId, check);
+        if (binding == null) return null;
         grid.guardParameter(binding);
         return new Object[] {binding.graph, binding.module, binding.parameter};
     }
@@ -371,7 +372,7 @@ final class Bitwig614ModulatorEditAccess implements ModulatorEditor.Access {
 
     @Override
     public String moduleName(Object module) {
-        String name = grid.effectiveModuleName(module);
+        String name = grid.moduleRefName(module, () -> {});
         return name == null ? "" : name;
     }
 

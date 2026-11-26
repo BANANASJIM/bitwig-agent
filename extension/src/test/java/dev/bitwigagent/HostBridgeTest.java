@@ -361,7 +361,8 @@ public final class HostBridgeTest {
         JsonObject brief = call(f, bridge, "status", new JsonObject());
         JsonObject full = call(f, bridge, "status", HostFixture.json("{\"detail\":\"full\"}"));
         for (String key : brief.keySet()) assertEquals(brief.get(key), full.get(key), key);
-        for (String key : List.of("grid", "methods", "domains", "windows", "units", "projectSaveAs", "render", "modulators")) {
+        for (String key :
+                List.of("grid", "methods", "domains", "windows", "units", "projectSaveAs", "render", "modulators")) {
             assertTrue(full.has(key) && !brief.has(key), key + " only with detail full");
         }
         assertRpcError(

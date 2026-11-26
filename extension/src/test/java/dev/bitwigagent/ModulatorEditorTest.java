@@ -361,8 +361,7 @@ public final class ModulatorEditorTest {
 
         @Override
         public Object[] gridParameter(DeviceSources.Source source, UUID moduleId, String parameterId, Runnable check) {
-            if (!MODULE.equals(moduleId) || !parameterId.equals("DECAY"))
-                throw Errors.notApplied(Reason.STALE_CONTEXT, "no such grid control");
+            if (!MODULE.equals(moduleId) || !parameterId.equals("DECAY")) return null;
             return new Object[] {graph, module, decay};
         }
 
@@ -775,7 +774,13 @@ public final class ModulatorEditorTest {
         assertEquals("unsupported_scope", code(e.upsert(e.lfo, e.decay, "\"amount\":0.2", d)));
         e.f.canModulate = true;
         JsonObject gone = Refs.parameter(Refs.gridModule(e.device, MODULE.toString(), "Env"), "NOPE", null);
-        assertEquals("stale_context", code(e.upsert(e.random, gone, "\"amount\":0.2", d)));
+        RpcException vanished = failure(e.upsert(e.random, gone, "\"amount\":0.2", d));
+        assertEquals("target_not_found", vanished.reason.wire());
+        assertEquals("grid.export", vanished.next, "the next read names where the module refs come from");
+        JsonObject renamed = Refs.modulator(e.device, e.random.get("id").getAsString(), "Old name");
+        RpcException stale = failure(e.upsert(renamed, e.decay, "\"amount\":0.2", d));
+        assertEquals("target_changed", stale.reason.wire(), "the source is the write target: its name is compared");
+        assertEquals(e.random, stale.current);
         JsonObject missing = Refs.modulator(e.device, new UUID(7, 9).toString(), "Gone");
         assertEquals("target_not_found", code(e.upsert(missing, e.decay, "\"amount\":0.2", d)));
         assertEquals(0, d[0], "none of the refusals dispatched");

@@ -79,11 +79,11 @@ final class ModulatorEditor implements ParameterResolver.ModuleOwners {
         double range(Object target);
 
         boolean canModulate(Object source, Object target);
-        /** {graph, module, parameter} for a Grid module control on this device. */
+        /** {graph, module, parameter} for a Grid module control on this device, or null when it has none now. */
         Object[] gridParameter(DeviceSources.Source source, UUID moduleId, String parameterId, Runnable check);
 
         String moduleId(Object module);
-        /** The module's effective name (its custom name, else the generated one), or empty when unreadable. */
+        /** The name of the module's gridModule ref, as grid.export gives it. */
         String moduleName(Object module);
         /** The native device helper this access captures with, so a parameter ref can be bound to its owner. */
         DeviceSources.Native natives();
@@ -133,8 +133,11 @@ final class ModulatorEditor implements ParameterResolver.ModuleOwners {
         final String parameterId;
         /** The control's name as the ref read it, or null when the ref carries none. */
         final String name;
+        /** The parameter ref as given, for the error that names what was not found. */
+        final JsonObject ref;
 
-        private TargetRef(UUID moduleId, UUID modulatorId, String parameterId, String name) {
+        private TargetRef(JsonObject ref, UUID moduleId, UUID modulatorId, String parameterId, String name) {
+            this.ref = ref;
             this.moduleId = moduleId;
             this.modulatorId = modulatorId;
             this.parameterId = parameterId;
@@ -148,12 +151,19 @@ final class ModulatorEditor implements ParameterResolver.ModuleOwners {
             UUID id = UUID.fromString(owner.get("id").getAsString());
             String name = parameter.has("name") ? parameter.get("name").getAsString() : null;
             return new TargetRef(
-                    module ? id : null, module ? null : id, parameter.get("id").getAsString(), name);
+                    parameter,
+                    module ? id : null,
+                    module ? null : id,
+                    parameter.get("id").getAsString(),
+                    name);
         }
     }
 
     static final class MapRequest {
         final UUID modulatorId;
+        /** The source modulator's name as its ref read it: the write target compares it. */
+        final String modulatorName;
+
         final String outputId;
         final TargetRef target;
         /** The mapping amount an expect asks to find now. */
@@ -165,6 +175,7 @@ final class ModulatorEditor implements ParameterResolver.ModuleOwners {
 
         private MapRequest(
                 UUID modulatorId,
+                String modulatorName,
                 String outputId,
                 TargetRef target,
                 boolean expected,
@@ -174,6 +185,7 @@ final class ModulatorEditor implements ParameterResolver.ModuleOwners {
                 Boolean enabled,
                 boolean unmap) {
             this.modulatorId = modulatorId;
+            this.modulatorName = modulatorName;
             this.outputId = outputId;
             this.target = target;
             this.expected = expected;
@@ -185,19 +197,22 @@ final class ModulatorEditor implements ParameterResolver.ModuleOwners {
         }
 
         static MapRequest parse(JsonObject p, boolean unmap) {
-            UUID modulatorId =
-                    UUID.fromString(p.getAsJsonObject("source").get("id").getAsString());
+            JsonObject source = p.getAsJsonObject("source");
+            UUID modulatorId = UUID.fromString(source.get("id").getAsString());
+            String modulatorName = source.get("name").getAsString();
             String output = p.has("outputId") ? text(p, "outputId") : null;
             TargetRef target = TargetRef.of(p.getAsJsonObject("target"));
             boolean expected = p.has("expect");
             Double expectedAmount =
                     expected ? p.getAsJsonObject("expect").get("amount").getAsDouble() : null;
             if (unmap)
-                return new MapRequest(modulatorId, output, target, expected, expectedAmount, null, null, null, true);
+                return new MapRequest(
+                        modulatorId, modulatorName, output, target, expected, expectedAmount, null, null, null, true);
             String transfer = p.has("transfer") ? p.get("transfer").getAsString() : null;
             Boolean enabled = p.has("enabled") ? p.get("enabled").getAsBoolean() : null;
             return new MapRequest(
                     modulatorId,
+                    modulatorName,
                     output,
                     target,
                     expected,
@@ -398,6 +413,8 @@ final class ModulatorEditor implements ParameterResolver.ModuleOwners {
         Resolved found;
         if (ref.moduleId != null) {
             Object[] bound = a.gridParameter(s.source, ref.moduleId, ref.parameterId, s.check);
+            if (bound == null)
+                throw Errors.targetNotFound(ref.ref, "The device's Grid has no such module or control now.");
             if (!a.isTarget(bound[2]))
                 throw Errors.notApplied(Reason.UNSUPPORTED_SCOPE, "This Grid control is not a modulation target.");
             found = new Resolved(bound[2], bound[0], bound[1]);
@@ -703,6 +720,9 @@ final class ModulatorEditor implements ParameterResolver.ModuleOwners {
             Consumer<Throwable> fail) {
         Scope s = new Scope(deviceSource, deviceRef, check);
         Object modulator = s.modulator(r.modulatorId);
+        String modulatorName = a.name(modulator);
+        if (!r.modulatorName.equals(modulatorName == null ? "" : modulatorName))
+            throw Errors.targetChanged("The modulator was renamed since it was read.", modulatorRef(s, modulator));
         Object source = source(modulator, r.outputId);
         String outputId = a.identifier(source);
         Resolved target = resolve(s, r.target);

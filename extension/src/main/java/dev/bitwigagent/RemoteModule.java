@@ -129,17 +129,22 @@ final class RemoteModule implements HostModule, ParameterResolver.RemotePages {
             op.result.complete(metadata(device, source));
             return;
         }
-        selectPage(op, device, p.get("page").getAsInt(), () -> op.result.complete(metadata(device, source)));
+        selectPage(op, device, p.get("page").getAsInt(), -1, () -> op.result.complete(metadata(device, source)));
     }
 
-    /** Switches this extension's own page (never the GUI's) and runs {@code then} once the host reports it selected. */
-    void selectPage(HostOperation op, DeviceSources.Source device, int page, Runnable then) {
+    /**
+     * Switches this extension's own page (never the GUI's) and runs {@code then} once the host reports it selected.
+     * {@code slot} is the control a write is about to use, whose value must have arrived too; -1 for a read.
+     */
+    void selectPage(HostOperation op, DeviceSources.Source device, int page, int slot, Runnable then) {
         Remote source = remoteSource(device);
         requireRemotePage(source);
         String[] names = source.page.pageNames().get();
-        if (page >= source.page.pageCount().get() || page >= names.length)
+        int count = Math.min(source.page.pageCount().get(), names.length);
+        if (page >= count)
             throw Errors.targetNotFound(
-                    Refs.remotePage(device.ref(), page, ""), "The device has no such Remote Controls page.");
+                    Refs.remotePage(device.ref(), page, ""),
+                    "The device has " + count + " Remote Controls page(s), so page " + page + " does not exist.");
         lease(op, source);
         if (source.pageIndexFresh && source.page.selectedPageIndex().get() == page) {
             then.run();
@@ -154,7 +159,7 @@ final class RemoteModule implements HostModule, ParameterResolver.RemotePages {
                 scheduler.observeUntil(op),
                 () -> {
                     unchanged.require(op);
-                    return source.pageSequence > sequence && settled(source, page);
+                    return source.pageSequence > sequence && settled(source, page, slot);
                 },
                 observed -> {
                     if (!observed)
@@ -175,16 +180,19 @@ final class RemoteModule implements HostModule, ParameterResolver.RemotePages {
         source.pageOwner = op;
     }
 
-    /** The host shows the page, its name, and every existing control with its rebind cleared and a value observed. */
-    private static boolean settled(Remote source, int page) {
+    /**
+     * The host shows the page and its name, and every existing control has its rebind cleared and its mapping observed.
+     * A value the host does not report again reads as unobserved (null); only the control about to be written needs one.
+     */
+    private static boolean settled(Remote source, int page, int slot) {
         String[] names = source.page.pageNames().get();
         if (source.page.selectedPageIndex().get() != page
                 || page >= names.length
                 || !names[page].equals(source.page.getName().get())) return false;
         for (int i = 0; i < source.controls.length; i++) {
             if (!source.controlExistsObserved[i] || !source.controls[i].exists().get()) continue;
-            if (source.controlRebindPending[i] || !source.controlMappingObserved[i] || !source.controlValuesObserved[i])
-                return false;
+            if (source.controlRebindPending[i] || !source.controlMappingObserved[i]) return false;
+            if (i == slot && !source.controlValuesObserved[i]) return false;
         }
         return true;
     }
@@ -255,7 +263,7 @@ final class RemoteModule implements HostModule, ParameterResolver.RemotePages {
     void setControl(
             HostOperation op, ParameterResolver.Remote target, JsonObject ref, ValueInput input, JsonElement expect) {
         double requested = input.normalized("value");
-        selectPage(op, target.device, target.page, () -> write(op, target, ref, requested, expect));
+        selectPage(op, target.device, target.page, target.slot, () -> write(op, target, ref, requested, expect));
     }
 
     private void write(

@@ -4,7 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from bitwig_agent.protocol import TOOLS, validate_call
-from bitwig_agent.protocol.base import TARGET, TRACK
+from bitwig_agent.protocol.base import TRACK
 from bitwig_agent.protocol.launcher import SLOT_REF
 
 UUID = "abcdef01-2345-6789-abcd-0123456789ab"

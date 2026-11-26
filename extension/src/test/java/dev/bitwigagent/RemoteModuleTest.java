@@ -183,8 +183,13 @@ public final class RemoteModuleTest {
                 again.getAsJsonObject("page"),
                 "no page means the extension's own");
         assertEquals(.35, value(again));
-        assertRpcError(
-                "target_not_found", f.run(f.remote, "devices.remote.get", params("target", f.twin(1), "page", 2)));
+        assertTrue(
+                assertRpcError(
+                                "target_not_found",
+                                f.run(f.remote, "devices.remote.get", params("target", f.twin(1), "page", 2)))
+                        .getMessage()
+                        .contains("2 Remote Controls page(s)"),
+                "a page past the page count says how many pages the device has");
         assertRpcError(
                 "invalid_params", f.submit(f.remote, "devices.remote.get", params("target", f.twin(1), "page", -1)));
     }

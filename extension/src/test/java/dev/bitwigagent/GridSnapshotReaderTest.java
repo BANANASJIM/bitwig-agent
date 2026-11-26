@@ -1087,7 +1087,7 @@ public final class GridSnapshotReaderTest {
         DeviceSources.Native.Capture device = new DeviceSources.Native(f).capture(f.source, () -> {});
         Object module = f.reader.owner(device, new UUID(1, 1), () -> {});
         assertSame(f.first, module);
-        assertEquals("Effective module", f.reader.ownerName(module));
+        assertEquals("_Catalog type_7_3", f.reader.ownerName(module), "the name grid.export gives the module ref");
         assertSame(floating, f.reader.parameter(module, "LOCAL_ID", () -> {}));
         assertEquals("Native control", f.reader.parameterName(floating));
         assertNull(f.reader.owner(device, new UUID(1, 9), () -> {}), "no such module");

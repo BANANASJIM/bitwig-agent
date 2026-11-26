@@ -15,7 +15,7 @@ from bitwig_agent.core import views
 from bitwig_agent.frontends import cli
 from bitwig_agent.frontends.cli import main
 from bitwig_agent.protocol import TOOLS, invalid_params_message, validate_call
-from bitwig_agent.protocol.base import REASONS, TARGET, TRACK
+from bitwig_agent.protocol.base import REASONS, TRACK
 from bitwig_agent.protocol.clips import NOTE_WINDOW
 from bitwig_agent.protocol.grid import DEVICE
 from bitwig_agent.protocol.grid import TARGET as GRID

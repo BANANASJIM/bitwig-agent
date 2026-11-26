@@ -1545,10 +1545,7 @@ public final class GridModuleTest {
         Fixture f = new Fixture();
         DeviceSources sources = f.host.services.sources;
         assertThrows(RpcException.class, () -> sources.root(badParent));
-        JsonObject root = Refs.device(
-                Refs.track(HostFixture.A, "Track 0"),
-                0,
-                target().get("expectedDeviceName").getAsString());
+        JsonObject root = Refs.device(Refs.track(HostFixture.A, "Track 0"), 0, "Poly Grid");
         FakeHost layers = f.device.child("createLayerBank");
         f.device.child("hasLayers").emit(true);
         layers.child("exists").emit(true);

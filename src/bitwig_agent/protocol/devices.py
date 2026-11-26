@@ -7,18 +7,13 @@ from pydantic import Field, model_validator
 
 from bitwig_agent.protocol.base import (
     PROJECT_READY,
-    TARGET,
     TRACK,
     Nonempty,
-    ParameterArgs,
     StatusArgs,
-    StrictModel,
     ToolSpec,
-    Uuid,
     omitted,
     validate_local_path,
 )
-from bitwig_agent.protocol.limits import REMOTE_PAGE_SLOTS
 from bitwig_agent.protocol.positions import DeviceDestination, DeviceParent, DevicePosition
 from bitwig_agent.protocol.refs import DeviceRef
 
@@ -88,8 +83,6 @@ class RemoteGetArgs(DeviceTargetArgs):
     )
 
 
-
-
 DEVICE_REF_EXAMPLE = {
     "kind": "device",
     "track": {"kind": "track", "id": TRACK, "name": "Lead"},
@@ -107,7 +100,7 @@ CHAIN_REF = {
 
 DEVICES_LIST_DESCRIPTION = "List the devices of a track (root chain, up to 16 observed) or of one chain (the first 2 of its devices), without changing selection. Each row has the device ref that every device method takes back, plus name and type; window says how many there are."
 DEVICES_GET_DESCRIPTION = "Read one device without selecting it: ref, name, type, enabled and whether it has Remote Controls. target is a device ref from devices.list (a root device or a device inside a chain)."
-CHAINS_LIST_DESCRIPTION = "List the chains of a device that has them (Instrument Layer, FX Layer, FX Selector; at most the first 2): each row has the chain ref, its name and its device count. A chain ref follows its layer's UUID, so it survives reordering and renaming. List a chain's devices with devices.list {parent: chain}. Pads, slots and nested chains are unsupported."
+CHAINS_LIST_DESCRIPTION = "List the chains of a device that has them (Instrument Layer, FX Layer, FX Selector; at most the first 2): each row has the chain ref, its name and its device count. A chain ref follows its layer's UUID, so it survives reordering and renaming but not a Bitwig restart: Bitwig assigns new layer UUIDs then, so re-read chains.list. Known limitation: after a chain mutation (insert, delete, move) the devices nested in chains report unavailable/not_ready until the extension reloads. List a chain's devices with devices.list {parent: chain}. Pads, slots and nested chains are unsupported."
 DEVICES_SET_DESCRIPTION = "Enable or bypass one device: target is a device ref, enabled true or false. Result outcome applied or already_matched with the device ref."
 DEVICES_SELECT_DESCRIPTION = (
     "Select this device in the host UI. Unlike reads, this intentionally changes selection. Result outcome sent."
@@ -116,7 +109,7 @@ DEVICES_CATALOG_DESCRIPTION = "List every installed Bitwig factory device file (
 DEVICES_INSERT_DESCRIPTION = "Insert a native device, plug-in or preset into a track's device chain or into one chain of a layer device. parent is a track ref or a chain ref; position is start, end (default), {before: deviceRef} or {after: deviceRef} of a device in that parent. kind=bitwig requires a canonical UUID id; vst2 a signed int32 decimal id; vst3 32 hex digits; clap printable ASCII; kind=file an absolute normalized path instead of id (a .bwdevice or a .bwpreset from presets.search). The result has the new device's ref (inserted) and the verification: the count grew by one, the devices before the point are unchanged and those after it shifted; a chain shows only its first two devices, then the count delta is the evidence and inserted is null. It does not prove the requested native UUID: inspect requestedIdentifierVerified. Insertion can load plug-ins or produce audio; observe before retrying."
 DEVICES_DELETE_DESCRIPTION = "Delete one device (Device.deleteObject): target is a device ref from devices.list. Needs no recording or automation write. Returns the deleted device, the chain before and after, and the verification (the count dropped by one and the devices after it shifted); an unknown outcome (not_observed, readback_mismatch) means read devices.list before another edit. One Undo step; never retry."
 DEVICES_MOVE_DESCRIPTION = "Move one device within its chain: target is a device ref, to {position: start|end|{before: deviceRef}|{after: deviceRef}}; parent stays the device's own track or chain (moving to another parent is not supported yet). A device already at that position is already_matched. Verified by the observed name/type arrangement of the whole chain; devices with identical name and type cannot prove a move (outcome unknown, readback_mismatch). Same safety and no-retry rules as devices.delete."
-DEVICES_REMOTE_GET_DESCRIPTION = "Read one root device's Remote Controls: the page list (remotePage refs) and the controls of one page, each with the parameter ref, name and bare value. page is the page index; omitted reads the extension's own current page, never the page selected in the GUI. Pass a control's ref to parameters.set; a control remapped to another name is stale."
+DEVICES_REMOTE_GET_DESCRIPTION = "Read one root device's Remote Controls: the page list (remotePage refs) and the controls of one page, each with the parameter ref, name and bare value. page is the page index; omitted reads the extension's own current page, not the GUI's; a page past the page count is target_not_found. Pass a control's ref to parameters.set; a control remapped to another name is stale."
 
 
 SPECS: dict[str, ToolSpec] = {
