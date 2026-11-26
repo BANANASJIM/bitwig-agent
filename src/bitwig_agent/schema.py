@@ -896,6 +896,7 @@ class SidechainSetArgs(ParameterArgs):
     expectedComponentId: Nonempty = omitted(description="That row's componentId; required with componentIndex (guards against shifted components).")
     componentId: Nonempty = omitted(description="componentId from devices.sidechain.get when it is unique on the device.")
     expectedModulatorId: TrackId = omitted(description="Required when the component's host is modulator: its modulatorId from the get.")
+    expectedModuleId: TrackId = omitted(description="Required when the component's host is grid_module: its moduleId from the get.")
     source: SourceEntry
     expectedSource: ExpectedSourceEntry = Field(description="The component's source from a fresh devices.sidechain.get (compare-and-set).")
 

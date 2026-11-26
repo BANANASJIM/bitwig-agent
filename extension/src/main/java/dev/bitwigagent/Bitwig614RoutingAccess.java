@@ -27,7 +27,7 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
     private final Class<?> componentType, audioSidechain, noteSidechain, pluginSidechain, audioIn, deviceType, modulatorType, moduleType;
     private final Method target, channel, alias, uuid, parent, owner, begin, end, output, input, audioInput, noteInput, pre, post, notes, trackKind;
     private final Method allIns, keyboard, onscreen, outCurrent, outSet, outClear, outAccepts, inCurrent, inSet, inClear, inAccepts;
-    private final Method busOwner, busName, descendants, selector, componentKinds, componentId, componentLabel, modulatorId;
+    private final Method busOwner, busName, descendants, selector, componentKinds, componentId, componentLabel, modulatorId, moduleId;
 
     Bitwig614RoutingAccess(Bitwig614Runtime.Access a) throws ReflectiveOperationException {
         this.a = a;
@@ -90,6 +90,7 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
         componentId = a.exactMethod(labelled, "aA_", String.class, false);
         componentLabel = a.exactMethod(labelled, "UNj", String.class, false);
         modulatorId = a.exactMethod(modulatorType, "kFU", UUID.class, false);
+        moduleId = a.exactMethod(moduleType, "kFU", UUID.class, false);
     }
 
     private static void ancestry(Class<?> type, Class<?> ancestor) throws NoSuchMethodException {
@@ -509,7 +510,7 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
     private final class Component {
         final Object model, chooser;
         final int index;
-        final String host, kind, id, label, modulator, unavailable;
+        final String host, kind, id, label, ownerId, unavailable;
         final List<String> groups;
         Component(Object model, Object device, int index) {
             this.model = model; this.index = index;
@@ -517,9 +518,9 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
             chooser = a.invoke(selector, model);
             if (chooser != null) a.requireModelThread(chooser);
             Object grid = a.invoke(owner, model, moduleType), mod = a.invoke(owner, model, modulatorType);
-            if (grid != null && a.invoke(owner, grid, deviceType) == device) { host = "grid_module"; modulator = null; }
-            else if (mod != null && a.invoke(owner, mod, deviceType) == device) { host = "modulator"; modulator = a.invoke(modulatorId, mod).toString(); }
-            else { host = "device"; modulator = null; }
+            if (grid != null && a.invoke(owner, grid, deviceType) == device) { host = "grid_module"; ownerId = a.invoke(moduleId, grid).toString(); }
+            else if (mod != null && a.invoke(owner, mod, deviceType) == device) { host = "modulator"; ownerId = a.invoke(modulatorId, mod).toString(); }
+            else { host = "device"; ownerId = null; }
             kind = pluginSidechain.isInstance(model) ? "plugin_audio" : audioSidechain.isInstance(model) ? "audio"
                     : noteSidechain.isInstance(model) ? "note" : audioIn.isInstance(model) ? "audio_in" : "other";
             id = (String) a.invoke(componentId, model);
@@ -530,11 +531,14 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
             groups = found;
             String reason = null;
             if (chooser == null || !sourceSelector.isInstance(chooser)) reason = "component_has_no_source_selector";
-            else if (host.equals("grid_module")) reason = "grid_sidechain_module_unproven";
             else if (kind.equals("audio_in") || kind.equals("other")) reason = "hardware_or_unknown_component_deferred";
             unavailable = reason;
         }
+
+        String ownerKey() { return OWNER_KEYS.get(host); }
     }
+
+    private static final Map<String, String> OWNER_KEYS = Map.of("modulator", "modulatorId", "grid_module", "moduleId");
 
     private List<Component> components(Object device) {
         List<Component> out = new ArrayList<>();
@@ -559,7 +563,7 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
         out.addProperty("label", c.label);
         out.addProperty("kind", c.kind);
         out.addProperty("host", c.host);
-        if (c.modulator != null) out.addProperty("modulatorId", c.modulator);
+        if (c.ownerId != null) out.addProperty(c.ownerKey(), c.ownerId);
         out.add("nativeSourceGroups", strings(c.groups));
         List<String> kinds = c.unavailable == null ? RoutingModule.sourceKinds(c.groups) : List.of();
         out.add("kinds", strings(kinds));
@@ -586,12 +590,27 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
         out.add("components", rows);
         out.addProperty("count", components.size());
         if (unresolved != null && unresolved.size() > 0) out.add("unresolvedTracks", unresolved);
-        out.addProperty("coverage", "routing_components_of_this_device_and_its_modulators; grid_modules_listed_read_only; nested_devices_excluded");
+        out.addProperty("coverage", "routing_components_of_this_device_its_modulators_and_grid_modules; nested_devices_excluded");
         out.addProperty("nativeVersion", Bitwig614Runtime.VERSION);
         out.addProperty("selectionSideEffect", "none");
         scope.guard(check);
         targets.guard(device, proxy, check);
         return out;
+    }
+
+    private static String expectedKey(String ownerKey) {
+        return "expected" + Character.toUpperCase(ownerKey.charAt(0)) + ownerKey.substring(1);
+    }
+
+    private void guardOwner(Component c, JsonObject p) {
+        for (String key : OWNER_KEYS.values()) {
+            String expected = expectedKey(key);
+            if (key.equals(c.ownerKey())) {
+                if (!(p.has(expected) && p.get(expected).getAsString().equalsIgnoreCase(c.ownerId)))
+                    throw failure("stale_target", "Component " + c.index + " belongs to " + c.host + " " + c.ownerId + "; pass it as " + expected + " (such components shift when their owners change). Nothing was dispatched.");
+            } else if (p.has(expected))
+                throw failure("stale_target", "Component " + c.index + " is on " + c.host + ", but " + expected + " was given; re-read devices.sidechain.get. Nothing was dispatched.");
+        }
     }
 
     @Override public JsonObject sidechainSet(Object proxy, String trackId, List<RoutingModule.TrackRef> bank, JsonObject p, Runnable check, Runnable beforeWrite) {
@@ -612,10 +631,7 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
             }
             if (c == null) throw failure("target_not_found", "No component has componentId " + id + "; re-read devices.sidechain.get.");
         }
-        if (c.modulator != null && !(p.has("expectedModulatorId") && p.get("expectedModulatorId").getAsString().equalsIgnoreCase(c.modulator)))
-            throw failure("stale_target", "Component " + c.index + " belongs to modulator " + c.modulator + "; pass that modulatorId as expectedModulatorId (modulator components shift when modulators change). Nothing was dispatched.");
-        if (c.modulator == null && p.has("expectedModulatorId"))
-            throw failure("stale_target", "Component " + c.index + " is not on a modulator but expectedModulatorId was given; re-read devices.sidechain.get. Nothing was dispatched.");
+        guardOwner(c, p);
         if (c.unavailable != null) throw failure("unsupported_scope", "Component " + c.index + " cannot be set in this version (" + c.unavailable + "); nothing was dispatched.");
         Map<String, Channel> channels = channels(bank, new JsonArray());
         Scope scope = new Scope(device.device, List.of(c.model, c.chooser), check);

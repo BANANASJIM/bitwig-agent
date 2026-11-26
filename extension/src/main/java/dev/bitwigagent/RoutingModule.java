@@ -88,13 +88,13 @@ final class RoutingModule implements HostModule {
                 break;
             case "devices.sidechain.set":
                 Params.fields(p, Set.of("trackId", "deviceIndex", "expectedDeviceName", "source", "expectedSource"),
-                        Set.of("componentIndex", "expectedComponentId", "componentId", "expectedModulatorId"));
+                        Set.of("componentIndex", "expectedComponentId", "componentId", "expectedModulatorId", "expectedModuleId"));
                 device(p);
                 if (p.has("componentIndex") == p.has("componentId")) throw invalid("Supply exactly one of componentIndex or componentId.");
                 if (p.has("componentIndex") != p.has("expectedComponentId")) throw invalid("componentIndex needs expectedComponentId (that row's componentId), and only it.");
                 if (p.has("componentIndex")) { Params.integer(p, "componentIndex", 0, MAX_COMPONENTS - 1); Params.string(p, "expectedComponentId"); }
                 else Params.string(p, "componentId");
-                if (p.has("expectedModulatorId")) uuid(p, "expectedModulatorId");
+                for (String owner : List.of("expectedModulatorId", "expectedModuleId")) if (p.has(owner)) uuid(p, owner);
                 entry(p, "source", SOURCE_KINDS, false);
                 entry(p, "expectedSource", SOURCE_KINDS, true);
                 break;

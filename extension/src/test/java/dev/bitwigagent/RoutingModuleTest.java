@@ -56,6 +56,8 @@ public final class RoutingModuleTest {
         JsonObject indexOnly = sidechain(); indexOnly.remove("expectedComponentId"); bad("devices.sidechain.set", indexOnly);
         JsonObject modulator = sidechain(); modulator.addProperty("expectedModulatorId", C); ok("devices.sidechain.set", modulator);
         modulator.addProperty("expectedModulatorId", "mod"); bad("devices.sidechain.set", modulator);
+        JsonObject module = sidechain(); module.addProperty("expectedModuleId", C); ok("devices.sidechain.set", module);
+        module.addProperty("expectedModuleId", "module"); bad("devices.sidechain.set", module);
         JsonObject index = sidechain(); index.addProperty("componentIndex", 256); bad("devices.sidechain.set", index);
         JsonObject device = sidechain(); device.addProperty("deviceIndex", 16); bad("devices.sidechain.set", device);
         JsonObject output = sidechain(); output.add("source", json("{\"kind\":\"track_audio_input\",\"trackId\":\"" + B + "\"}")); bad("devices.sidechain.set", output);
