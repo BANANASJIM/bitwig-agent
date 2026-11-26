@@ -104,6 +104,10 @@ For an agent, copy the complete [portable skill folder](https://github.com/BANAN
 
 [Full documentation index](https://github.com/BANANASJIM/bitwig-agent/blob/main/docs/README.md)
 
+## Contributing
+
+Issues and pull requests are welcome. Report bugs, missing workflows or Bitwig versions you need in [Issues](https://github.com/BANANASJIM/bitwig-agent/issues); see [Contributing](https://github.com/BANANASJIM/bitwig-agent/blob/main/CONTRIBUTING.md) for checks to run before opening a PR.
+
 ## License
 
 Project code is [MIT licensed](https://github.com/BANANASJIM/bitwig-agent/blob/main/LICENSE). Gson is Apache-2.0; see [third-party notices](https://github.com/BANANASJIM/bitwig-agent/blob/main/THIRD_PARTY_NOTICE.md). Bitwig Studio and its proprietary host JAR are separate dependencies and are not bundled.
