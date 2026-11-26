@@ -191,7 +191,7 @@ public final class LauncherModuleTest {
         f.applyStop = false;
         JsonObject p = createTarget();
         p.addProperty("lengthBeats", 16);
-        HostOperation op = f.startShort("launcher.create", p);
+        HostOperation op = f.start("launcher.create", p);
         f.drain(op);
         JsonObject out = op.result.join();
         assertTrue(
@@ -256,7 +256,7 @@ public final class LauncherModuleTest {
         assertTrue(f.writes == 0, "another selected slot cannot receive explicit writes");
         f = new Fake();
         f.slots[0].content = true;
-        HostOperation expired = new HostOperation(System.nanoTime() - 1);
+        HostOperation expired = new HostOperation(f.tasks.now() - 1);
         f.services.schedule(
                 expired,
                 () -> {
@@ -754,7 +754,7 @@ public final class LauncherModuleTest {
             assertRpcError("unsafe_state", "not_applied", unsafe.start("launcher.import", importTarget(file)));
             assertTrue(unsafe.imports == 0, "safety is rechecked at mutation boundary");
             Fake cancelled = new Fake();
-            HostOperation cancelledOp = new HostOperation(System.nanoTime() + TimeUnit.SECONDS.toNanos(2));
+            HostOperation cancelledOp = new HostOperation(cancelled.tasks.after(2000));
             cancelled.beforeInsertion = () -> cancelledOp.result.completeExceptionally(
                     new RpcException("cancelled", "Fixture cancellation", "not_applied"));
             cancelled.start(cancelledOp, "launcher.import", importTarget(file));
@@ -763,21 +763,16 @@ public final class LauncherModuleTest {
                     cancelled.imports == 0 && !cancelledOp.dispatched,
                     "cancellation during target resolution prevents dispatch");
             Fake expired = new Fake();
-            HostOperation expiredOp = new HostOperation(System.nanoTime() - 1);
+            HostOperation expiredOp = new HostOperation(expired.tasks.now() - 1);
             expired.start(expiredOp, "launcher.import", importTarget(file));
             assertRpcError("deadline_exceeded", "not_applied", expiredOp);
             assertTrue(expired.imports == 0, "expired operation cannot dispatch insertion");
             Fake late = new Fake();
-            HostOperation lateOp = new HostOperation(System.nanoTime() + TimeUnit.SECONDS.toNanos(2));
+            HostOperation lateOp = new HostOperation(late.tasks.after(2000));
             boolean[] resolved = {false};
             late.beforeInsertion = () -> {
                 resolved[0] = true;
-                try {
-                    TimeUnit.NANOSECONDS.sleep(Math.max(0, lateOp.deadline - System.nanoTime()) + 1);
-                } catch (InterruptedException error) {
-                    Thread.currentThread().interrupt();
-                    throw new AssertionError(error);
-                }
+                late.tasks.advance(lateOp.deadline + 1 - late.tasks.now());
             };
             late.start(lateOp, "launcher.import", importTarget(file));
             assertRpcError("deadline_exceeded", "not_applied", lateOp);
@@ -792,7 +787,7 @@ public final class LauncherModuleTest {
         Path file = Files.createTempFile("launcher-quarantine-", ".arbitrary");
         try {
             Fake f = new Fake();
-            HostOperation first = f.startShort("launcher.import", importTarget(file));
+            HostOperation first = f.start("launcher.import", importTarget(file));
             f.drain(first);
             assertRpcError("import_not_observed", "unknown", first);
             HostOperation second = f.start("launcher.import", importTarget(file));
@@ -879,8 +874,8 @@ public final class LauncherModuleTest {
                 for (int mode = 0; mode < 3; mode++) {
                     Fake f = new Fake();
                     f.deferCreate = true;
-                    HostOperation first = f.startShort(
-                            method, method.equals("launcher.import") ? importTarget(file) : createTarget());
+                    HostOperation first =
+                            f.start(method, method.equals("launcher.import") ? importTarget(file) : createTarget());
                     assertTrue(
                             first.dispatched && !first.result.isDone(),
                             "fixture dispatches native mutation before request termination");
@@ -892,7 +887,7 @@ public final class LauncherModuleTest {
                                 new RpcException("deadline_exceeded", "Fixture transport timeout", "unknown"));
                         assertRpcError("deadline_exceeded", "unknown", first);
                     } else {
-                        TimeUnit.NANOSECONDS.sleep(Math.max(0, first.deadline - System.nanoTime()) + 1);
+                        f.tasks.advance(first.deadline + 1 - f.tasks.now());
                         f.next();
                         assertRpcError("deadline_exceeded", "unknown", first);
                     }
@@ -959,7 +954,7 @@ public final class LauncherModuleTest {
             assertRpcError("slot_occupied", "not_applied", f.start("launcher.import", importTarget(file)));
             assertRpcError("slot_occupied", "not_applied", f.start("launcher.create", createTarget()));
             f.observeContent(0, false);
-            HostOperation cancelled = new HostOperation(System.nanoTime() + TimeUnit.SECONDS.toNanos(2));
+            HostOperation cancelled = new HostOperation(f.tasks.after(2000));
             f.beforeInsertion = () -> cancelled.result.completeExceptionally(
                     new RpcException("cancelled", "Fixture pre-dispatch cancellation", "not_applied"));
             f.start(cancelled, "launcher.import", importTarget(file));
@@ -987,7 +982,7 @@ public final class LauncherModuleTest {
                 f.failCreate = mode == 1;
                 f.applyName = mode != 2;
                 f.emitCreateContent = mode != 3;
-                HostOperation first = f.startShort("launcher.create", createTarget());
+                HostOperation first = f.start("launcher.create", createTarget());
                 f.drain(first);
                 if (mode == 1) assertRpcError("host_write_failed", "unknown", first);
                 else {
@@ -1085,7 +1080,7 @@ public final class LauncherModuleTest {
         Fake silent = new Fake();
         silent.scenes = 2;
         silent.applyScene = false;
-        HostOperation op = silent.startShort("scenes.append", new JsonObject());
+        HostOperation op = silent.start("scenes.append", new JsonObject());
         silent.drain(op);
         assertRpcError("scene_count_not_observed", op);
         assertTrue(op.dispatched && silent.sceneAppends == 1, "unobserved count is unknown after exactly one dispatch");
@@ -1459,7 +1454,7 @@ public final class LauncherModuleTest {
         g.deferCreate = true;
         JsonObject unobserved = createTarget();
         unobserved.add("notes", notes.deepCopy());
-        HostOperation op = g.startShort("launcher.create", unobserved);
+        HostOperation op = g.start("launcher.create", unobserved);
         g.drain(op);
         JsonObject result = op.result.join();
         assertTrue(
@@ -1469,7 +1464,7 @@ public final class LauncherModuleTest {
                 "unobserved create writes no notes and stays unresolved");
         Fake k = new Fake();
         k.failWriteAt = 1;
-        HostOperation broken = k.startShort("launcher.create", unobserved.deepCopy());
+        HostOperation broken = k.start("launcher.create", unobserved.deepCopy());
         k.drain(broken);
         JsonObject kept = broken.result.join();
         assertTrue(
@@ -1488,7 +1483,7 @@ public final class LauncherModuleTest {
                 "note stage failure is reported inside noteWrite");
         Fake h = new Fake();
         h.emitNotes = false;
-        HostOperation silent = h.startShort("launcher.create", unobserved.deepCopy());
+        HostOperation silent = h.start("launcher.create", unobserved.deepCopy());
         h.drain(silent);
         JsonObject partial = silent.result.join();
         assertTrue(
@@ -1548,7 +1543,7 @@ public final class LauncherModuleTest {
     }
 
     private static HostOperation fail(Fake f, JsonObject p, String code, String outcome) throws Exception {
-        HostOperation op = f.startShort("clips.edit", p);
+        HostOperation op = f.start("clips.edit", p);
         f.drain(op);
         assertRpcError(code, outcome, op);
         return op;
@@ -1641,7 +1636,7 @@ public final class LauncherModuleTest {
                 "matching name is not rewritten");
         f = riff();
         f.applyName = false;
-        HostOperation op = f.startShort("clips.edit", clipEdit("rename", "name", "Verse"));
+        HostOperation op = f.start("clips.edit", clipEdit("rename", "name", "Verse"));
         f.drain(op);
         r = op.result.join();
         assertTrue(
@@ -1668,14 +1663,14 @@ public final class LauncherModuleTest {
                 "same length is not rewritten");
         f = riff();
         f.applyLoop = false;
-        op = f.startShort("clips.edit", clipEdit("resize", "lengthBeats", 8));
+        op = f.start("clips.edit", clipEdit("resize", "lengthBeats", 8));
         f.drain(op);
         assertTrue(
                 op.result.join().get("verification").getAsString().equals("readback_mismatch"),
                 "unobserved loop length is not reported as done");
         f = riff();
         f.applyStop = false;
-        op = f.startShort("clips.edit", clipEdit("resize", "lengthBeats", 8));
+        op = f.start("clips.edit", clipEdit("resize", "lengthBeats", 8));
         f.drain(op);
         assertTrue(
                 op.result.join().get("status").getAsString().equals("dispatched"),
@@ -1697,7 +1692,7 @@ public final class LauncherModuleTest {
                 "matching color is not rewritten");
         f = riff();
         f.applyColor = false;
-        op = f.startShort("clips.edit", clipEdit("color", "rgb", "#ff8800"));
+        op = f.start("clips.edit", clipEdit("color", "rgb", "#ff8800"));
         f.drain(op);
         assertTrue(
                 op.result.join().get("verification").getAsString().equals("readback_mismatch"),
@@ -1810,11 +1805,11 @@ public final class LauncherModuleTest {
     }
 
     private static HostOperation startSettings(Fake f, LauncherSettingsModule settings, JsonObject p) {
-        HostOperation op = new HostOperation(System.nanoTime() + TimeUnit.SECONDS.toNanos(2));
+        HostOperation op = new HostOperation(f.tasks.after(2000));
         try {
             settings.validate("launcher.set", p);
             f.services.schedule(op, () -> settings.dispatch(op, "launcher.set", p), 0);
-            f.tasks.removeLast().run();
+            f.tasks.take().run();
         } catch (RuntimeException error) {
             op.fail(error);
         }
@@ -2082,7 +2077,7 @@ public final class LauncherModuleTest {
 
     private static final class Fake {
         final HostFixture base = HostFixture.withoutServices();
-        final ArrayDeque<Runnable> tasks = new ArrayDeque<>();
+        final ScheduledTasks tasks = base.tasks;
         final Map<String, Note> notes = new HashMap<>();
         final SlotData[] slots = new SlotData[16];
         final Track[] tracks = new Track[HostServices.TRACKS];
@@ -2101,7 +2096,7 @@ public final class LauncherModuleTest {
         Double pendingSize;
         Integer pendingStart;
         Double noteStorageStepSize;
-        long gridRefreshDelayMillis, clockMillis, gridReadyAt;
+        long gridRefreshDelayMillis, gridReadyAt;
         int imports, importedSlot = -1, bankOffset, sceneAppends;
         int deletes, copies, transposes, quantizes, duplicates, colorSets, loopSets;
         String copyName;
@@ -2329,7 +2324,7 @@ public final class LauncherModuleTest {
             clip.on("setStepSize", a -> {
                 if (deferGridChanges || gridRefreshDelayMillis > 0) {
                     pendingSize = (Double) a[0];
-                    gridReadyAt = clockMillis + gridRefreshDelayMillis;
+                    gridReadyAt = tasks.after(gridRefreshDelayMillis);
                 } else size = (Double) a[0];
                 return null;
             });
@@ -2393,14 +2388,15 @@ public final class LauncherModuleTest {
             host.on("scheduleTask", a -> {
                 Runnable action = (Runnable) a[0];
                 long delay = ((Number) a[1]).longValue();
-                tasks.add(() -> {
-                    clockMillis += delay;
-                    if (gridRefreshDelayMillis > 0 && clockMillis >= gridReadyAt) applyPendingGrid();
-                    action.run();
-                });
+                tasks.schedule(
+                        () -> {
+                            if (gridRefreshDelayMillis > 0 && tasks.now() >= gridReadyAt) applyPendingGrid();
+                            action.run();
+                        },
+                        delay);
                 return null;
             });
-            services = new HostServices(host.proxy(ControllerHost.class));
+            services = new HostServices(host.proxy(ControllerHost.class), tasks::now);
             module = new LauncherModule(services);
             initialised = true;
         }
@@ -2499,18 +2495,14 @@ public final class LauncherModuleTest {
         }
 
         HostOperation start(String method, JsonObject p) {
-            HostOperation op = new HostOperation(System.nanoTime() + TimeUnit.SECONDS.toNanos(2));
+            HostOperation op = new HostOperation(tasks.after(2000));
             return start(op, method, p);
         }
 
         HostOperation start(HostOperation op, String method, JsonObject p) {
             services.schedule(op, () -> module.dispatch(op, method, p), 0);
-            tasks.removeLast().run();
+            tasks.take().run();
             return op;
-        }
-
-        HostOperation startShort(String method, JsonObject p) {
-            return start(new HostOperation(System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(100)), method, p);
         }
 
         HostOperation startAndDrain(String method, JsonObject p) throws Exception {
@@ -2524,16 +2516,15 @@ public final class LauncherModuleTest {
         }
 
         void next() {
-            if (!tasks.isEmpty()) tasks.removeFirst().run();
+            if (!tasks.isEmpty()) tasks.take().run();
         }
 
-        void drain(HostOperation op) throws Exception {
+        void drain(HostOperation op) {
             int iterations = 0;
             while (!op.result.isDone()) {
                 if (tasks.isEmpty() || ++iterations > 3000)
                     throw new AssertionError("fixture operation did not settle");
                 next();
-                if (!op.result.isDone()) Thread.sleep(1);
             }
         }
     }

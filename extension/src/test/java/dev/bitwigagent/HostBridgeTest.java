@@ -32,7 +32,7 @@ public final class HostBridgeTest {
         int idEmissions = host.idEmissions;
         JsonObject second = target();
         second.addProperty("deviceIndex", 1);
-        CompletableFuture<JsonObject> pending = bridge.handle("parameters.list", second, deadline());
+        CompletableFuture<JsonObject> pending = bridge.handle("parameters.list", second, host.deadline());
         host.next();
         assertTrue(pending.isDone(), "same-ID device rebind must use source-bound observations without ID replay");
         JsonObject current = pending.join();
@@ -80,7 +80,7 @@ public final class HostBridgeTest {
                 "B write needs B's fresh callback");
         assertTrue(host.deviceWrites[0] == 0 && host.deviceWrites[1] == 1, "write dispatched exactly to bank device B");
         assertTrue(host.parameterValues[0] == .11, "writing B cannot change A");
-        CompletableFuture<JsonObject> stale = bridge.handle("parameters.set", write(first, .75), deadline());
+        CompletableFuture<JsonObject> stale = bridge.handle("parameters.set", write(first, .75), host.deadline());
         host.next();
         assertRpcError("stale_context", stale);
     }
@@ -94,7 +94,7 @@ public final class HostBridgeTest {
         host.deviceNodes[0].child("name").emit("Renamed");
         JsonObject renamed = target();
         renamed.addProperty("expectedDeviceName", "Renamed");
-        CompletableFuture<JsonObject> pending = bridge.handle("parameters.list", renamed, deadline());
+        CompletableFuture<JsonObject> pending = bridge.handle("parameters.list", renamed, host.deadline());
         host.next();
         assertTrue(pending.isDone(), "renaming a continuously observed source must not require ID replay");
         JsonObject current = pending.join();
@@ -109,7 +109,7 @@ public final class HostBridgeTest {
         assertTrue(host.idEmissions == emissions, "metadata rename must not depend on parameter callback replay");
         JsonObject staleWrite = write(previous, .8);
         staleWrite.addProperty("expectedDeviceName", "Renamed");
-        CompletableFuture<JsonObject> stale = bridge.handle("parameters.set", staleWrite, deadline());
+        CompletableFuture<JsonObject> stale = bridge.handle("parameters.set", staleWrite, host.deadline());
         host.next();
         assertRpcError("stale_context", stale);
         JsonObject freshWrite = write(current, .8);
@@ -128,7 +128,7 @@ public final class HostBridgeTest {
     void actionsStayOnHostThreadAndReportDispatchOnly() {
         Fake host = new Fake();
         HostBridge bridge = host.bridge();
-        CompletableFuture<JsonObject> pending = bridge.handle("actions.list", new JsonObject(), deadline());
+        CompletableFuture<JsonObject> pending = bridge.handle("actions.list", new JsonObject(), host.deadline());
         assertTrue(host.actionReads == 0 && !pending.isDone(), "catalog must await scheduled host callback");
         host.next();
         JsonArray actions = pending.join().getAsJsonArray("actions");
@@ -140,7 +140,7 @@ public final class HostBridgeTest {
                 action.getAsJsonObject("category").get("id").getAsString().equals("fixture.category"),
                 "category metadata retained");
         assertTrue(actions.get(1).getAsJsonObject().get("category").isJsonNull(), "absent category explicit");
-        pending = bridge.handle("actions.invoke", actionParams("fixture.action"), deadline());
+        pending = bridge.handle("actions.invoke", actionParams("fixture.action"), host.deadline());
         assertTrue(
                 host.actionLookups == 0 && host.actionInvocations == 0,
                 "network entry cannot query or invoke host action");
@@ -156,34 +156,32 @@ public final class HostBridgeTest {
         Fake host = new Fake();
         HostBridge bridge = host.bridge();
         for (JsonObject params : Arrays.asList(new JsonObject(), actionParams(""), actionParams("x".repeat(4097)))) {
-            assertRpcError("invalid_params", bridge.handle("actions.invoke", params, deadline()));
+            assertRpcError("invalid_params", bridge.handle("actions.invoke", params, host.deadline()));
         }
         JsonObject extra = actionParams("fixture.action");
         extra.addProperty("extra", true);
-        assertRpcError("invalid_params", bridge.handle("actions.invoke", extra, deadline()));
-        assertRpcError("invalid_params", bridge.handle("actions.list", extra, deadline()));
+        assertRpcError("invalid_params", bridge.handle("actions.invoke", extra, host.deadline()));
+        assertRpcError("invalid_params", bridge.handle("actions.list", extra, host.deadline()));
         assertTrue(host.tasks.isEmpty(), "invalid Action arguments cannot schedule host work");
-        CompletableFuture<JsonObject> pending = bridge.handle("actions.invoke", actionParams("missing"), deadline());
+        CompletableFuture<JsonObject> pending =
+                bridge.handle("actions.invoke", actionParams("missing"), host.deadline());
         host.next();
         assertRpcError("unknown_action", pending);
-        pending = bridge.handle("actions.invoke", actionParams("fixture.action"), System.nanoTime() - 1);
+        pending = bridge.handle("actions.invoke", actionParams("fixture.action"), host.tasks.now() - 1);
         host.next();
         assertRpcError("deadline_exceeded", pending);
         host.slowActionLookup = true;
         int beforeSlowLookup = host.actionLookups;
-        pending = bridge.handle(
-                "actions.invoke",
-                actionParams("fixture.action"),
-                System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(30));
+        pending = bridge.handle("actions.invoke", actionParams("fixture.action"), host.tasks.after(30));
         host.next();
         assertRpcError("deadline_exceeded", pending);
         assertTrue(host.actionLookups == beforeSlowLookup + 1, "deadline test expires during lookup, before invoke");
         host.slowActionLookup = false;
-        pending = bridge.handle("actions.invoke", actionParams("fixture.action"), deadline());
+        pending = bridge.handle("actions.invoke", actionParams("fixture.action"), host.deadline());
         pending.cancel(false);
         host.next();
         assertTrue(host.actionInvocations == 0, "unknown, expired, and abandoned Actions never invoke");
-        pending = bridge.handle("actions.invoke", actionParams("fixture.action"), deadline());
+        pending = bridge.handle("actions.invoke", actionParams("fixture.action"), host.deadline());
         bridge.close();
         host.next();
         assertRpcError("unavailable", pending);
@@ -266,7 +264,7 @@ public final class HostBridgeTest {
         HostBridge b2 = unobserved.bridge();
         unobserved.saveClears = false;
         CompletableFuture<JsonObject> pending =
-                b2.handle("project.save", new JsonObject(), System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(150));
+                b2.handle("project.save", new JsonObject(), unobserved.tasks.after(150));
         int spins = 0;
         while (!pending.isDone() && spins++ < 100000000) unobserved.next();
         JsonObject result = pending.join();
@@ -282,7 +280,7 @@ public final class HostBridgeTest {
         HostBridge b3 = stale.bridge();
         stale.modified.emit(true);
         stale.saveClears = false;
-        pending = b3.handle("project.save", new JsonObject(), System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(150));
+        pending = b3.handle("project.save", new JsonObject(), stale.tasks.after(150));
         stale.next();
         stale.modified.emit(false);
         spins = 0;
@@ -292,7 +290,7 @@ public final class HostBridgeTest {
         HostBridge b4 = bad.bridge();
         JsonObject extra = new JsonObject();
         extra.addProperty("x", 1);
-        assertRpcError("invalid_params", b4.handle("project.save", extra, deadline()));
+        assertRpcError("invalid_params", b4.handle("project.save", extra, bad.deadline()));
     }
 
     private static final long SETTLE = HostServices.PROJECT_SETTLE_NANOS;
@@ -321,7 +319,7 @@ public final class HostBridgeTest {
         assertTrue(
                 !call(f, bridge, "status", new JsonObject()).get("engineActive").getAsBoolean(),
                 "status reports an inactive engine");
-        CompletableFuture<JsonObject> refused = bridge.handle("launcher.launch", launch, deadline());
+        CompletableFuture<JsonObject> refused = bridge.handle("launcher.launch", launch, f.deadline());
         f.next();
         assertRpcError("engine_inactive", refused);
         {
@@ -350,8 +348,8 @@ public final class HostBridgeTest {
         HostBridge b2 = stuck.bridge();
         stuck.engine.data = false;
         stuck.activateWorks = false;
-        CompletableFuture<JsonObject> pending = b2.handle(
-                "project.activateEngine", new JsonObject(), System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(150));
+        CompletableFuture<JsonObject> pending =
+                b2.handle("project.activateEngine", new JsonObject(), stuck.tasks.after(150));
         int spins = 0;
         while (!pending.isDone() && spins++ < 100000000) stuck.next();
         JsonObject result = pending.join();
@@ -382,19 +380,19 @@ public final class HostBridgeTest {
                         .get("projectReady")
                         .getAsBoolean(),
                 "context.get carries projectReady");
-        CompletableFuture<JsonObject> refused = bridge.handle("tracks.create", create, deadline());
+        CompletableFuture<JsonObject> refused = bridge.handle("tracks.create", create, f.deadline());
         f.next();
         assertRpcError("project_not_ready", refused);
         {
             RpcException e = rejection(refused);
             assertTrue(e.outcome.equals("not_applied"), "refused write is not_applied");
         }
-        f.now += SETTLE - 1;
+        f.tasks.advance(SETTLE - 1);
         assertTrue(
                 !call(f, bridge, "status", new JsonObject()).get("projectReady").getAsBoolean(),
                 "still settling just before the window ends");
         f.projectName.emit("Fixture2");
-        f.now += 1;
+        f.tasks.advance(1);
         JsonObject settled = call(f, bridge, "status", new JsonObject());
         assertTrue(
                 settled.get("projectReady").getAsBoolean()
@@ -406,9 +404,9 @@ public final class HostBridgeTest {
                 !status.get("projectReady").getAsBoolean()
                         && status.get("projectChangedMsAgo").getAsLong() == 0,
                 "a project switch reopens the window");
-        refused = bridge.handle("grid.modules.insert", new JsonObject(), deadline());
+        refused = bridge.handle("grid.modules.insert", new JsonObject(), f.deadline());
         assertRpcError("invalid_params", refused);
-        f.now += SETTLE;
+        f.tasks.advance(SETTLE);
         assertTrue(
                 call(f, bridge, "status", new JsonObject()).get("projectReady").getAsBoolean(),
                 "ready again after the window");
@@ -433,7 +431,7 @@ public final class HostBridgeTest {
                     Objects.equals(refusal, projectWrite ? "project_not_ready" : engine ? "engine_inactive" : null),
                     method + " admission while the project settles and the engine is inactive: " + refusal);
         }
-        f.now += SETTLE;
+        f.tasks.advance(SETTLE);
         for (String method : MethodSpecsTest.ENGINE_REQUIRED) {
             RpcException refused =
                     assertThrows(RpcException.class, () -> bridge.preflight(method, new JsonObject()), method);
@@ -467,12 +465,14 @@ public final class HostBridgeTest {
         HostBridge bridge = host.bridge();
         for (Boolean state : new Boolean[] {null, true}) {
             if (state != null) host.modified.emit(state);
-            CompletableFuture<JsonObject> refused = bridge.handle("actions.invoke", actionParams("Quit"), deadline());
+            CompletableFuture<JsonObject> refused =
+                    bridge.handle("actions.invoke", actionParams("Quit"), host.deadline());
             host.next();
             assertRpcError("unsaved_changes", refused);
         }
         assertTrue(host.quitInvocations == 0, "refused lifecycle action never invokes");
-        CompletableFuture<JsonObject> closeRefused = bridge.handle("actions.invoke", actionParams("Close"), deadline());
+        CompletableFuture<JsonObject> closeRefused =
+                bridge.handle("actions.invoke", actionParams("Close"), host.deadline());
         host.next();
         assertRpcError("unsaved_changes", closeRefused);
         JsonObject consent = actionParams("Quit");
@@ -485,7 +485,8 @@ public final class HostBridgeTest {
                         && host.quitInvocations == 1,
                 "explicit discardUnsavedChanges dispatches");
         host.modified.emit(false);
-        CompletableFuture<JsonObject> quitSaved = bridge.handle("actions.invoke", actionParams("Quit"), deadline());
+        CompletableFuture<JsonObject> quitSaved =
+                bridge.handle("actions.invoke", actionParams("Quit"), host.deadline());
         host.next();
         assertRpcError("unsaved_changes", quitSaved);
         assertTrue(host.quitInvocations == 1, "Quit always needs consent: other open tabs are not observable");
@@ -498,7 +499,7 @@ public final class HostBridgeTest {
         assertTrue(host.actionInvocations > 0, "non-lifecycle actions are never guarded");
         JsonObject bad = actionParams("Quit");
         bad.addProperty("discardUnsavedChanges", "yes");
-        assertRpcError("invalid_params", bridge.handle("actions.invoke", bad, deadline()));
+        assertRpcError("invalid_params", bridge.handle("actions.invoke", bad, host.deadline()));
     }
 
     @Test
@@ -534,10 +535,10 @@ public final class HostBridgeTest {
                 "limit truncates and reports incomplete total");
         p = new JsonObject();
         p.addProperty("limit", 0);
-        assertRpcError("invalid_params", bridge.handle("actions.list", p, deadline()));
+        assertRpcError("invalid_params", bridge.handle("actions.list", p, host.deadline()));
         p = new JsonObject();
         p.addProperty("query", "");
-        assertRpcError("invalid_params", bridge.handle("actions.list", p, deadline()));
+        assertRpcError("invalid_params", bridge.handle("actions.list", p, host.deadline()));
     }
 
     private static JsonObject actionParams(String id) {
@@ -552,14 +553,14 @@ public final class HostBridgeTest {
         HostBridge bridge = host.bridge();
         JsonObject params = new JsonObject();
         params.addProperty("extra", true);
-        assertRpcError("invalid_params", bridge.handle("status", params, deadline()));
+        assertRpcError("invalid_params", bridge.handle("status", params, host.deadline()));
         assertTrue(host.tasks.isEmpty(), "invalid request must not schedule host work");
         params = target();
         params.addProperty("deviceIndex", 1.5);
-        assertRpcError("invalid_params", bridge.handle("parameters.list", params, deadline()));
+        assertRpcError("invalid_params", bridge.handle("parameters.list", params, host.deadline()));
         params = target();
         params.addProperty("deviceIndex", 16);
-        assertRpcError("invalid_params", bridge.handle("parameters.list", params, deadline()));
+        assertRpcError("invalid_params", bridge.handle("parameters.list", params, host.deadline()));
     }
 
     @Test
@@ -588,7 +589,7 @@ public final class HostBridgeTest {
         JsonObject devices = call(host, bridge, "devices.list", params);
         assertTrue(devices.getAsJsonArray("devices").size() == 2, "only existing devices listed");
         params.addProperty("trackId", "outside");
-        CompletableFuture<JsonObject> future = bridge.handle("devices.list", params, deadline());
+        CompletableFuture<JsonObject> future = bridge.handle("devices.list", params, host.deadline());
         host.next();
         assertRpcError("outside_window", future);
     }
@@ -625,7 +626,7 @@ public final class HostBridgeTest {
         assertTrue(HostFixture.SPECS.methods().contains("context.get"), "method is registered with the bridge");
         JsonObject bad = new JsonObject();
         bad.addProperty("x", 1);
-        assertRpcError("invalid_params", bridge.handle("context.get", bad, deadline()));
+        assertRpcError("invalid_params", bridge.handle("context.get", bad, host.deadline()));
     }
 
     @Test
@@ -645,16 +646,15 @@ public final class HostBridgeTest {
     }
 
     @Test
-    void staleValuesDoNotVerifyWrites() throws Exception {
+    void staleValuesDoNotVerifyWrites() {
         Fake host = new Fake();
         HostBridge bridge = host.bridge();
         JsonObject listing = call(host, bridge, "parameters.list", target());
         host.writeMode = "none";
-        CompletableFuture<JsonObject> result = bridge.handle("parameters.set", write(listing, .75), shortDeadline());
+        CompletableFuture<JsonObject> result = bridge.handle("parameters.set", write(listing, .75), host.deadline());
         host.next();
         assertTrue(!result.isDone(), "cached value is not fresh readback");
-        sleepPastObservationWindow();
-        host.next();
+        while (!result.isDone()) host.next();
         JsonObject response = result.join();
         assertTrue(response.get("status").getAsString().equals("dispatched"), "unobserved write remains dispatched");
         assertTrue(
@@ -663,15 +663,13 @@ public final class HostBridgeTest {
     }
 
     @Test
-    void mismatchedValuesAreReported() throws Exception {
+    void mismatchedValuesAreReported() {
         Fake host = new Fake();
         HostBridge bridge = host.bridge();
         JsonObject listing = call(host, bridge, "parameters.list", target());
         host.writeMode = "mismatch";
-        CompletableFuture<JsonObject> result = bridge.handle("parameters.set", write(listing, .75), shortDeadline());
-        host.next();
-        sleepPastObservationWindow();
-        host.next();
+        CompletableFuture<JsonObject> result = bridge.handle("parameters.set", write(listing, .75), host.deadline());
+        while (!result.isDone()) host.next();
         JsonObject response = result.join();
         assertTrue(response.get("status").getAsString().equals("dispatched"), "mismatch is not observed success");
         assertTrue(response.get("verification").getAsString().equals("readback_mismatch"), "mismatch explicit");
@@ -686,11 +684,11 @@ public final class HostBridgeTest {
         JsonObject listing = call(host, bridge, "parameters.list", target());
         JsonObject params = write(listing, .75);
         params.addProperty("contextToken", "stale");
-        CompletableFuture<JsonObject> result = bridge.handle("parameters.set", params, deadline());
+        CompletableFuture<JsonObject> result = bridge.handle("parameters.set", params, host.deadline());
         host.next();
         assertRpcError("stale_context", result);
         host.deviceNodes[0].child("name").emit("Changed");
-        result = bridge.handle("parameters.set", write(listing, .75), deadline());
+        result = bridge.handle("parameters.set", write(listing, .75), host.deadline());
         host.next();
         assertRpcError("stale_target", result);
         assertTrue(host.writes == 0, "stale target never dispatched");
@@ -702,15 +700,15 @@ public final class HostBridgeTest {
         HostBridge bridge = host.bridge();
         JsonObject listing = call(host, bridge, "parameters.list", target());
         CompletableFuture<JsonObject> result =
-                bridge.handle("parameters.set", write(listing, .75), System.nanoTime() - 1);
+                bridge.handle("parameters.set", write(listing, .75), host.tasks.now() - 1);
         host.next();
         assertRpcError("deadline_exceeded", result);
         assertTrue(host.writes == 0, "expired queued operation cannot mutate");
-        result = bridge.handle("parameters.set", write(listing, .75), deadline());
+        result = bridge.handle("parameters.set", write(listing, .75), host.deadline());
         result.completeExceptionally(new IllegalStateException("caller abandoned operation"));
         host.next();
         assertTrue(host.writes == 0, "late callback skips completed request");
-        result = bridge.handle("parameters.set", write(listing, .75), deadline());
+        result = bridge.handle("parameters.set", write(listing, .75), host.deadline());
         bridge.close();
         host.next();
         assertRpcError("unavailable", result);
@@ -725,10 +723,10 @@ public final class HostBridgeTest {
         JsonObject previous = call(host, bridge, "parameters.list", target());
         JsonObject second = target();
         second.addProperty("deviceIndex", 1);
-        CompletableFuture<JsonObject> pending = bridge.handle("parameters.list", second, deadline());
+        CompletableFuture<JsonObject> pending = bridge.handle("parameters.list", second, host.deadline());
         host.next();
         assertTrue(!pending.isDone(), "B cannot reuse A's IDs when B has never reported its own list");
-        CompletableFuture<JsonObject> busy = bridge.handle("parameters.set", write(previous, .75), deadline());
+        CompletableFuture<JsonObject> busy = bridge.handle("parameters.set", write(previous, .75), host.deadline());
         host.next();
         host.next();
         assertRpcError("busy", busy);
@@ -756,7 +754,7 @@ public final class HostBridgeTest {
                                 .get("contextToken")
                                 .getAsString()),
                 "rebind changes token");
-        CompletableFuture<JsonObject> stale = bridge.handle("parameters.set", write(previous, .75), deadline());
+        CompletableFuture<JsonObject> stale = bridge.handle("parameters.set", write(previous, .75), host.deadline());
         host.next();
         assertRpcError("stale_context", stale);
         assertTrue(host.writes == 0, "old context cannot write after rebind");
@@ -770,7 +768,7 @@ public final class HostBridgeTest {
         second.addProperty("deviceIndex", 1);
         JsonObject listing = call(host, bridge, "parameters.list", second);
         host.writeMode = "none";
-        CompletableFuture<JsonObject> pending = bridge.handle("parameters.set", write(listing, .75), deadline());
+        CompletableFuture<JsonObject> pending = bridge.handle("parameters.set", write(listing, .75), host.deadline());
         host.next();
         host.emitValue(0, .75);
         host.next();
@@ -802,14 +800,14 @@ public final class HostBridgeTest {
                         .get("readable")
                         .getAsBoolean(),
                 "new IDs cannot inherit another parameter's value");
-        CompletableFuture<JsonObject> stale = bridge.handle("parameters.set", write(listing, .75), deadline());
+        CompletableFuture<JsonObject> stale = bridge.handle("parameters.set", write(listing, .75), host.deadline());
         host.next();
         assertRpcError("stale_context", stale);
         host.deviceNodes[0].child("exists").emit(false);
         host.emitIds(0);
         host.emitValue(0, .9);
         host.deviceNodes[0].child("exists").emit(true);
-        CompletableFuture<JsonObject> pending = bridge.handle("parameters.list", target(), deadline());
+        CompletableFuture<JsonObject> pending = bridge.handle("parameters.list", target(), host.deadline());
         host.next();
         assertTrue(!pending.isDone(), "observable proxy replacement clears old parameter data");
         host.emitIds(0);
@@ -831,7 +829,7 @@ public final class HostBridgeTest {
                 "existence transition invalidates the old token");
         host.trackNodes[0].child("channelId").emit("replacement-track");
         host.trackNodes[0].child("channelId").emit(Fake.TRACK_ID);
-        stale = bridge.handle("parameters.set", write(current, .75), deadline());
+        stale = bridge.handle("parameters.set", write(current, .75), host.deadline());
         host.next();
         assertRpcError("stale_context", stale);
         assertTrue(host.writes == 0, "observable track replacement cannot reuse a token");
@@ -841,7 +839,7 @@ public final class HostBridgeTest {
     void statusDiagnosticsAreScheduledAndSourceScoped() {
         Fake host = new Fake();
         HostBridge bridge = host.bridge();
-        CompletableFuture<JsonObject> pending = bridge.handle("status", new JsonObject(), deadline());
+        CompletableFuture<JsonObject> pending = bridge.handle("status", new JsonObject(), host.deadline());
         assertTrue(!pending.isDone(), "status must await the scheduled host task");
         host.next();
         JsonObject diagnostics = pending.join().getAsJsonObject("parameterBindingDiagnostics");
@@ -870,7 +868,7 @@ public final class HostBridgeTest {
     void capabilitiesDescribeBoundedImplementedSurfaces() {
         Fake host = new Fake();
         HostBridge bridge = host.bridge();
-        CompletableFuture<JsonObject> pending = bridge.handle("capabilities", new JsonObject(), deadline());
+        CompletableFuture<JsonObject> pending = bridge.handle("capabilities", new JsonObject(), host.deadline());
         assertTrue(!pending.isDone(), "capabilities must read host windows on the scheduled host thread");
         host.next();
         JsonObject result = pending.join();
@@ -909,26 +907,26 @@ public final class HostBridgeTest {
         for (String method : List.of("capabilities", "transport.get", "devices.catalog", "modulators.capabilities")) {
             JsonObject extra = new JsonObject();
             extra.addProperty("unexpected", true);
-            assertRpcError("invalid_params", bridge.handle(method, extra, deadline()));
+            assertRpcError("invalid_params", bridge.handle(method, extra, host.deadline()));
         }
         JsonObject fraction = target();
         fraction.add("deviceIndex", new JsonPrimitive(new java.math.BigDecimal("1.0000000000000000001")));
-        assertRpcError("invalid_params", bridge.handle("parameters.list", fraction, deadline()));
+        assertRpcError("invalid_params", bridge.handle("parameters.list", fraction, host.deadline()));
         JsonObject nullName = target();
         nullName.add("expectedDeviceName", JsonNull.INSTANCE);
-        assertRpcError("invalid_params", bridge.handle("parameters.list", nullName, deadline()));
-        assertRpcError("invalid_params", bridge.handle("capabilities", null, deadline()));
-        assertRpcError("unknown_method", bridge.handle("not.a.method", new JsonObject(), deadline()));
+        assertRpcError("invalid_params", bridge.handle("parameters.list", nullName, host.deadline()));
+        assertRpcError("invalid_params", bridge.handle("capabilities", null, host.deadline()));
+        assertRpcError("unknown_method", bridge.handle("not.a.method", new JsonObject(), host.deadline()));
         JsonObject modulators = new JsonObject();
         modulators.add("parent", target());
         modulators.add("offset", JsonNull.INSTANCE);
-        assertRpcError("invalid_params", bridge.handle("modulators.list", modulators, deadline()));
+        assertRpcError("invalid_params", bridge.handle("modulators.list", modulators, host.deadline()));
         modulators.remove("offset");
         modulators.addProperty("modulatorId", "1-1-1-1-1");
         modulators.addProperty("parameterId", "");
-        assertRpcError("invalid_params", bridge.handle("modulators.parameters.get", modulators, deadline()));
-        assertRpcError("invalid_params", bridge.handle("modulators.parameters.set", modulators, deadline()));
-        assertRpcError("unknown_method", bridge.handle("modulators.parameters.reset", modulators, deadline()));
+        assertRpcError("invalid_params", bridge.handle("modulators.parameters.get", modulators, host.deadline()));
+        assertRpcError("invalid_params", bridge.handle("modulators.parameters.set", modulators, host.deadline()));
+        assertRpcError("unknown_method", bridge.handle("modulators.parameters.reset", modulators, host.deadline()));
         assertTrue(host.tasks.isEmpty(), "strict validation rejects every invalid domain request before scheduling");
     }
 
@@ -945,7 +943,7 @@ public final class HostBridgeTest {
         early.deviceNodes[1].child("position").emit(1);
         JsonObject root = target();
         root.addProperty("deviceIndex", 1);
-        CompletableFuture<JsonObject> listed = earlyBridge.handle("parameters.list", root, deadline());
+        CompletableFuture<JsonObject> listed = earlyBridge.handle("parameters.list", root, early.deadline());
         early.next();
         if (!listed.isDone()
                 || listed.isCompletedExceptionally()
@@ -963,7 +961,8 @@ public final class HostBridgeTest {
             parent.addProperty("deviceIndex", initialCount);
             JsonObject request = new JsonObject();
             request.add("parent", parent);
-            CompletableFuture<JsonObject> unavailable = bridge.handle("devices.layers.list", request, deadline());
+            CompletableFuture<JsonObject> unavailable =
+                    bridge.handle("devices.layers.list", request, pending.deadline());
             pending.next();
             if (!unavailable.isCompletedExceptionally())
                 failures.add("root count " + initialCount + " admitted an out-of-count parent");
@@ -994,7 +993,7 @@ public final class HostBridgeTest {
         HostBridge bridge = f.bridge();
         int rootEmissions = f.idEmissions, childEmissions = f.childIdEmissions;
         List<String> failures = new ArrayList<>();
-        CompletableFuture<JsonObject> initial = bridge.handle("devices.layers.list", layerDiscovery(), deadline());
+        CompletableFuture<JsonObject> initial = bridge.handle("devices.layers.list", layerDiscovery(), f.deadline());
         f.next();
         if (initial.isCompletedExceptionally()) assertRpcError("not_ready", initial);
         else failures.add("unassigned track position admitted nested discovery");
@@ -1020,7 +1019,7 @@ public final class HostBridgeTest {
         for (int l = 0; l < 2; l++)
             for (int c = 0; c < 2; c++) {
                 CompletableFuture<JsonObject> pending =
-                        bridge.handle("parameters.layer.list", layerTarget(discovery, l, c), deadline());
+                        bridge.handle("parameters.layer.list", layerTarget(discovery, l, c), f.deadline());
                 f.next();
                 assertTrue(
                         !pending.isDone(), "child observations rejected before track assignment are not resurrected");
@@ -1074,7 +1073,7 @@ public final class HostBridgeTest {
             for (int l = 0; l < 2; l++)
                 for (int c = 0; c < 2; c++) {
                     CompletableFuture<JsonObject> pending =
-                            bridge.handle("parameters.layer.list", layerTarget(discovery, l, c), deadline());
+                            bridge.handle("parameters.layer.list", layerTarget(discovery, l, c), f.deadline());
                     f.next();
                     assertTrue(!pending.isDone(), "metadata completion cannot resurrect rejected child observations");
                     double expected = .21 + l * .1 + c * .01;
@@ -1148,7 +1147,7 @@ public final class HostBridgeTest {
                 parameterValue(listing) == .25 && f.idEmissions == rootEmissions,
                 "root's actual initial direct callback is retained before agreeing metadata notifications, without replay");
         JsonObject address = layerTarget(f, bridge, 0, 0);
-        CompletableFuture<JsonObject> pending = bridge.handle("parameters.layer.list", address, deadline());
+        CompletableFuture<JsonObject> pending = bridge.handle("parameters.layer.list", address, f.deadline());
         f.next();
         assertTrue(
                 !pending.isDone() && f.childIdEmissions == childEmissions,
@@ -1180,15 +1179,16 @@ public final class HostBridgeTest {
                         .get("contextToken")
                         .equals(again.getAsJsonObject("target").get("contextToken")),
                 "returning to A issues a new active binding token");
-        CompletableFuture<JsonObject> stale = bridge.handle("parameters.layer.set", layerWrite(first, .8), deadline());
+        CompletableFuture<JsonObject> stale =
+                bridge.handle("parameters.layer.set", layerWrite(first, .8), f.deadline());
         f.next();
         assertRpcError("stale_context", stale);
-        stale = bridge.handle("parameters.set", write(flat, .8), deadline());
+        stale = bridge.handle("parameters.set", write(flat, .8), f.deadline());
         f.next();
         assertRpcError("stale_context", stale);
         JsonObject restored = call(f, bridge, "parameters.list", target());
         assertTrue(parameterValue(restored) == .25, "flat to layer to flat keeps the root source cache");
-        stale = bridge.handle("parameters.layer.set", layerWrite(again, .8), deadline());
+        stale = bridge.handle("parameters.layer.set", layerWrite(again, .8), f.deadline());
         f.next();
         assertRpcError("stale_context", stale);
         JsonObject stable = call(f, bridge, "parameters.list", target());
@@ -1210,7 +1210,7 @@ public final class HostBridgeTest {
                 "nested no-op is distinct from post-dispatch observation");
         f.writeMode = "none";
         CompletableFuture<JsonObject> write =
-                bridge.handle("parameters.layer.set", layerWrite(listing, .8), deadline());
+                bridge.handle("parameters.layer.set", layerWrite(listing, .8), f.deadline());
         f.next();
         assertTrue(!write.isDone(), "nested setter dispatch cannot acknowledge a write");
         double applied = Math.round(.8 * (HostServices.RESOLUTION - 1)) / (double) (HostServices.RESOLUTION - 1);
@@ -1218,7 +1218,7 @@ public final class HostBridgeTest {
         f.emitValue(0, applied);
         f.next();
         assertTrue(!write.isDone(), "same-ID root and sibling callbacks cannot verify the child write");
-        CompletableFuture<JsonObject> busy = bridge.handle("parameters.list", target(), deadline());
+        CompletableFuture<JsonObject> busy = bridge.handle("parameters.list", target(), f.deadline());
         f.next();
         f.next();
         assertRpcError("busy", busy);
@@ -1258,7 +1258,7 @@ public final class HostBridgeTest {
             JsonObject address = layerTarget(call(f, bridge, "devices.layers.list", discovery), 0, 0);
             JsonObject staleAddress = address.deepCopy();
             staleAddress.add("discoveryToken", oldAddress.get("discoveryToken"));
-            CompletableFuture<JsonObject> stale = bridge.handle("parameters.layer.list", staleAddress, deadline());
+            CompletableFuture<JsonObject> stale = bridge.handle("parameters.layer.list", staleAddress, f.deadline());
             f.next();
             assertRpcError("stale_context", stale);
             JsonObject fresh = call(f, bridge, "parameters.layer.list", address);
@@ -1267,7 +1267,7 @@ public final class HostBridgeTest {
                     renamed + " rename preserves continuous direct observations without replay");
             JsonObject staleWrite = layerWrite(fresh, .8);
             staleWrite.add("contextToken", oldListing.getAsJsonObject("target").get("contextToken"));
-            stale = bridge.handle("parameters.layer.set", staleWrite, deadline());
+            stale = bridge.handle("parameters.layer.set", staleWrite, f.deadline());
             f.next();
             assertRpcError("stale_context", stale);
             assertTrue(
@@ -1325,7 +1325,7 @@ public final class HostBridgeTest {
             value.emit(original);
             f.emitChildIds(0, 0, new String[] {"gain"});
             f.emitChildValue(0, 0, .92);
-            CompletableFuture<JsonObject> stale = bridge.handle("parameters.layer.list", address, deadline());
+            CompletableFuture<JsonObject> stale = bridge.handle("parameters.layer.list", address, f.deadline());
             f.next();
             assertRpcError("not_ready", stale);
             JsonObject discovery = call(f, bridge, "devices.layers.list", layerDiscovery());
@@ -1526,7 +1526,7 @@ public final class HostBridgeTest {
         Fake f = new Fake();
         f.deviceNodes[0].child("hasLayers").notifyInitial = false;
         HostBridge bridge = f.bridge();
-        CompletableFuture<JsonObject> pending = bridge.handle("devices.layers.list", layerDiscovery(), deadline());
+        CompletableFuture<JsonObject> pending = bridge.handle("devices.layers.list", layerDiscovery(), f.deadline());
         f.next();
         assertRpcError("not_ready", pending);
         f.deviceNodes[0].child("hasLayers").emit(true);
@@ -1551,7 +1551,7 @@ public final class HostBridgeTest {
                         && discovery.getAsJsonObject("window").get("total").getAsInt() == 3,
                 "larger actual layer counts do not pretend the bounded window is complete");
         f.deviceNodes[0].child("hasLayers").emit(false);
-        pending = bridge.handle("devices.layers.list", layerDiscovery(), deadline());
+        pending = bridge.handle("devices.layers.list", layerDiscovery(), f.deadline());
         f.next();
         assertRpcError("unsupported_scope", pending);
 
@@ -1572,7 +1572,7 @@ public final class HostBridgeTest {
         Fake unknown = new Fake();
         unknown.layerBank.child("scrollPosition").notifyInitial = false;
         HostBridge unknownBridge = unknown.bridge();
-        pending = unknownBridge.handle("devices.layers.list", layerDiscovery(), deadline());
+        pending = unknownBridge.handle("devices.layers.list", layerDiscovery(), unknown.deadline());
         unknown.next();
         assertRpcError("not_ready", pending);
         unknown.layerBank.child("scrollPosition").emit(0);
@@ -1599,7 +1599,7 @@ public final class HostBridgeTest {
                         .getAsJsonObject()
                         .has("discoveryToken"),
                 "duplicate visible UUIDs cannot issue usable child tokens");
-        pending = ambiguousBridge.handle("parameters.layer.list", address, deadline());
+        pending = ambiguousBridge.handle("parameters.layer.list", address, ambiguous.deadline());
         ambiguous.next();
         assertRpcError("stale_context", pending);
 
@@ -1633,31 +1633,31 @@ public final class HostBridgeTest {
                 List.of("parent", "layerId", "childDeviceIndex", "expectedChildDeviceName", "discoveryToken")) {
             JsonObject bad = valid.deepCopy();
             bad.add(field, JsonNull.INSTANCE);
-            assertRpcError("invalid_params", bridge.handle("parameters.layer.list", bad, deadline()));
+            assertRpcError("invalid_params", bridge.handle("parameters.layer.list", bad, f.deadline()));
         }
         for (String field : List.of("path", "padId", "slot", "layer")) {
             JsonObject bad = valid.deepCopy();
             bad.addProperty(field, 0);
-            assertRpcError("invalid_params", bridge.handle("parameters.layer.list", bad, deadline()));
+            assertRpcError("invalid_params", bridge.handle("parameters.layer.list", bad, f.deadline()));
         }
         JsonObject bad = valid.deepCopy();
         bad.addProperty("childDeviceIndex", 2);
-        assertRpcError("invalid_params", bridge.handle("parameters.layer.list", bad, deadline()));
+        assertRpcError("invalid_params", bridge.handle("parameters.layer.list", bad, f.deadline()));
         bad = valid.deepCopy();
         bad.addProperty("childDeviceIndex", .5);
-        assertRpcError("invalid_params", bridge.handle("parameters.layer.list", bad, deadline()));
+        assertRpcError("invalid_params", bridge.handle("parameters.layer.list", bad, f.deadline()));
         bad = valid.deepCopy();
         bad.addProperty("layerId", "1-2-3-4-5");
-        assertRpcError("invalid_params", bridge.handle("parameters.layer.list", bad, deadline()));
+        assertRpcError("invalid_params", bridge.handle("parameters.layer.list", bad, f.deadline()));
         bad = valid.deepCopy();
         bad.getAsJsonObject("parent").addProperty("layerId", layerId(0));
-        assertRpcError("invalid_params", bridge.handle("parameters.layer.list", bad, deadline()));
+        assertRpcError("invalid_params", bridge.handle("parameters.layer.list", bad, f.deadline()));
         bad = valid.deepCopy();
         bad.addProperty("contextToken", "bound");
         bad.addProperty("parameterId", "gain");
         bad.addProperty("value", Double.NaN);
-        assertRpcError("invalid_params", bridge.handle("parameters.layer.set", bad, deadline()));
-        assertRpcError("invalid_params", bridge.handle("parameters.list", valid, deadline()));
+        assertRpcError("invalid_params", bridge.handle("parameters.layer.set", bad, f.deadline()));
+        assertRpcError("invalid_params", bridge.handle("parameters.list", valid, f.deadline()));
         assertTrue(f.tasks.isEmpty(), "strict nested validation and narrow flat targeting precede host scheduling");
     }
 
@@ -1667,7 +1667,7 @@ public final class HostBridgeTest {
         f.initialChildIds[0][0] = false;
         HostBridge bridge = f.bridge();
         JsonObject address = layerTarget(f, bridge, 0, 0);
-        CompletableFuture<JsonObject> pending = bridge.handle("parameters.layer.list", address, deadline());
+        CompletableFuture<JsonObject> pending = bridge.handle("parameters.layer.list", address, f.deadline());
         f.next();
         assertTrue(!pending.isDone(), "discovery readiness does not invent a direct ID observation");
         f.emitChildIds(1, 0, new String[] {"gain"});
@@ -1688,7 +1688,7 @@ public final class HostBridgeTest {
                         .get("readable")
                         .getAsBoolean(),
                 "nonfinite direct values remain unreadable");
-        pending = bridge.handle("parameters.layer.set", layerWrite(listing, .8), deadline());
+        pending = bridge.handle("parameters.layer.set", layerWrite(listing, .8), f.deadline());
         f.next();
         assertRpcError("not_ready", pending);
         assertTrue(f.childWrites[0][0] == 0, "unreadable parameters never dispatch");
@@ -1701,7 +1701,7 @@ public final class HostBridgeTest {
         JsonObject listing = call(f, bridge, "parameters.layer.list", layerTarget(f, bridge, 0, 0));
         f.writeMode = "none";
         CompletableFuture<JsonObject> pending =
-                bridge.handle("parameters.layer.set", layerWrite(listing, .8), deadline());
+                bridge.handle("parameters.layer.set", layerWrite(listing, .8), f.deadline());
         f.next();
         assertTrue(!pending.isDone() && f.childWrites[0][0] == 1, "write is dispatched before structural change");
         f.layerNodes[0].child("exists").emit(false);
@@ -1779,35 +1779,33 @@ public final class HostBridgeTest {
         Fake guards = new Fake();
         bridge = guards.bridge();
         CompletableFuture<JsonObject> wrongCount =
-                bridge.handle("devices.layers.insert", layerInsert(0, 1, null), deadline());
+                bridge.handle("devices.layers.insert", layerInsert(0, 1, null), guards.deadline());
         guards.next();
         assertRpcError("stale_context", wrongCount);
         JsonObject unknown = layerInsert(0, 2, null);
         unknown.addProperty("layerId", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
-        CompletableFuture<JsonObject> missing = bridge.handle("devices.layers.insert", unknown, deadline());
+        CompletableFuture<JsonObject> missing = bridge.handle("devices.layers.insert", unknown, guards.deadline());
         guards.next();
         assertRpcError("stale_context", missing);
         JsonObject badParent = layerInsert(0, 2, null);
         badParent.getAsJsonObject("parent").addProperty("expectedDeviceName", "Nope");
-        CompletableFuture<JsonObject> stale = bridge.handle("devices.layers.insert", badParent, deadline());
+        CompletableFuture<JsonObject> stale = bridge.handle("devices.layers.insert", badParent, guards.deadline());
         guards.next();
         assertRpcError("stale_target", stale);
         assertTrue(guards.layerCalls.isEmpty(), "rejected layer inserts never reach the host");
         for (JsonObject bad : List.of(layerInsert(0, 2, "before"), layerInsert(0, -1, null))) {
-            CompletableFuture<JsonObject> rejected = bridge.handle("devices.layers.insert", bad, deadline());
+            CompletableFuture<JsonObject> rejected = bridge.handle("devices.layers.insert", bad, guards.deadline());
             assertRpcError("invalid_params", rejected);
         }
         JsonObject badId = layerInsert(0, 2, null);
         badId.addProperty("layerId", "not-a-uuid");
-        assertRpcError("invalid_params", bridge.handle("devices.layers.insert", badId, deadline()));
+        assertRpcError("invalid_params", bridge.handle("devices.layers.insert", badId, guards.deadline()));
 
         Fake silent = new Fake();
         bridge = silent.bridge();
         silent.layerMode = "none";
-        CompletableFuture<JsonObject> pending = bridge.handle(
-                "devices.layers.insert",
-                layerInsert(0, 2, null),
-                System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(20));
+        CompletableFuture<JsonObject> pending =
+                bridge.handle("devices.layers.insert", layerInsert(0, 2, null), silent.tasks.after(20));
         silent.next();
         JsonObject unobserved = pending.join();
         assertTrue(
@@ -1869,20 +1867,8 @@ public final class HostBridgeTest {
         return params;
     }
 
-    private static long deadline() {
-        return System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
-    }
-
-    private static long shortDeadline() {
-        return System.nanoTime() + HostServices.OBSERVE_WINDOW_NANOS + TimeUnit.MILLISECONDS.toNanos(500);
-    }
-
-    private static void sleepPastObservationWindow() throws InterruptedException {
-        Thread.sleep(TimeUnit.NANOSECONDS.toMillis(HostServices.OBSERVE_WINDOW_NANOS) + 50);
-    }
-
     private static JsonObject call(Fake fake, HostBridge bridge, String method, JsonObject params) {
-        CompletableFuture<JsonObject> result = bridge.handle(method, params, deadline());
+        CompletableFuture<JsonObject> result = bridge.handle(method, params, fake.deadline());
         fake.next();
         return result.join();
     }
@@ -1890,7 +1876,7 @@ public final class HostBridgeTest {
     private static final class Fake {
         static final String TRACK_ID = "9baa5190-b120-47f9-8e06-0fda476123ca";
         final HostFixture base = HostFixture.withoutServices();
-        final Deque<Runnable> tasks = base.tasks;
+        final ScheduledTasks tasks = base.tasks;
         final FakeHost trackBank = base.bank;
         final FakeHost[] trackNodes = new FakeHost[HostFixture.DETAILED_TRACKS], deviceNodes = new FakeHost[16];
         final Device[] deviceObjects = new Device[16];
@@ -1905,7 +1891,6 @@ public final class HostBridgeTest {
         FakeHost modified, engine, projectName;
         int activateInvocations;
         boolean activateWorks = true;
-        long now = 0;
         int saveInvocations, quitInvocations, lifecycleInvocations;
         boolean saveClears = true;
         final FakeHost[] layerNodes = new FakeHost[2], childBanks = new FakeHost[2];
@@ -2165,13 +2150,7 @@ public final class HostBridgeTest {
             app.on("getAction", args -> {
                 if (!base.onHost) throw new AssertionError("Action lookup outside host callback");
                 actionLookups++;
-                if (slowActionLookup) {
-                    try {
-                        Thread.sleep(50);
-                    } catch (InterruptedException error) {
-                        throw new AssertionError(error);
-                    }
-                }
+                if (slowActionLookup) tasks.advance(TimeUnit.MILLISECONDS.toNanos(50));
                 for (Action action : actions) if (action.getId().equals(args[0])) return action;
                 if ("Activate Engine For Project".equals(args[0])) {
                     FakeHost act = new FakeHost("act");
@@ -2203,8 +2182,8 @@ public final class HostBridgeTest {
             modified.notifyInitial = false;
             initializing = true;
             try {
-                HostBridge b = base.bridge(specs, () -> now);
-                now = 2 * HostServices.PROJECT_SETTLE_NANOS;
+                HostBridge b = base.bridge(specs);
+                tasks.advance(2 * HostServices.PROJECT_SETTLE_NANOS);
                 return b;
             } finally {
                 initializing = false;
@@ -2235,6 +2214,10 @@ public final class HostBridgeTest {
         void next() {
             if (tasks.isEmpty()) throw new AssertionError("No scheduled host callback");
             base.next();
+        }
+
+        long deadline() {
+            return tasks.after(2000);
         }
     }
 }

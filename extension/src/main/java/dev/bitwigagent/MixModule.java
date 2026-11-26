@@ -426,7 +426,7 @@ final class MixModule implements HostModule {
             done.accept(false);
             return;
         }
-        awaitEarlier(op, target, pending, done, System.nanoTime() + DisplaySolver.PROBE_TIMEOUT_NANOS);
+        awaitEarlier(op, target, pending, done, s.now() + DisplaySolver.PROBE_TIMEOUT_NANOS);
     }
 
     private void awaitEarlier(
@@ -447,7 +447,7 @@ final class MixModule implements HostModule {
             done.accept(true);
             return;
         }
-        if (!target.matches(s) || System.nanoTime() >= until) {
+        if (!target.matches(s) || s.now() >= until) {
             done.accept(false);
             return;
         }
@@ -535,7 +535,7 @@ final class MixModule implements HostModule {
             finish(op, target, changes, writes, created, createdKey, error.code);
             return;
         }
-        await(op, target, changes, writes, created, createdKey, HostServices.observeUntil(op));
+        await(op, target, changes, writes, created, createdKey, s.observeUntil(op));
     }
 
     /** Compare-and-set of one send, addressed by index or exact name; levels are verified by observed readback. */
@@ -706,7 +706,7 @@ final class MixModule implements HostModule {
                 finish(error.code);
                 return;
             }
-            await(HostServices.observeUntil(op));
+            await(s.observeUntil(op));
         }
 
         boolean write(String key, JsonElement value, boolean force) {
@@ -734,7 +734,7 @@ final class MixModule implements HostModule {
         void await(long until) {
             boolean all = true;
             for (String key : requested.keySet()) all &= verified(key);
-            if (all || System.nanoTime() >= until) {
+            if (all || s.now() >= until) {
                 finish(null);
                 return;
             }
@@ -835,7 +835,7 @@ final class MixModule implements HostModule {
         boolean all = true;
         for (int i = 0; i < FIELDS.length; i++)
             if (changes.has(FIELDS[i])) all &= verified(target.state, i, changes.get(FIELDS[i]), writes.get(FIELDS[i]));
-        if (all || System.nanoTime() >= until) {
+        if (all || s.now() >= until) {
             finish(op, target, changes, writes, created, createdKey, null);
             return;
         }
@@ -936,7 +936,7 @@ final class MixModule implements HostModule {
             default:
                 throw new IllegalArgumentException("type");
         }
-        awaitCreation(op, p, before, null, HostServices.observeUntil(op));
+        awaitCreation(op, p, before, null, s.observeUntil(op));
     }
 
     private void group(HostOperation op, JsonObject p) {
@@ -1019,8 +1019,7 @@ final class MixModule implements HostModule {
                     op.dispatched = true;
                     groupUnresolved = true;
                 });
-                long until = Math.min(
-                        op.deadline - HostServices.DEADLINE_MARGIN_NANOS, System.nanoTime() + GROUP_OBSERVE_NANOS);
+                long until = Math.min(op.deadline - HostServices.DEADLINE_MARGIN_NANOS, s.now() + GROUP_OBSERVE_NANOS);
                 s.schedule(op, () -> awaitGroup(op, p, before, ordered, parent, nativeInfo, null, until), 0);
             } catch (RuntimeException | Error error) {
                 op.fail(error);
@@ -1087,7 +1086,7 @@ final class MixModule implements HostModule {
             op.result.complete(result);
             return;
         }
-        if (System.nanoTime() >= until) {
+        if (s.now() >= until) {
             unknownGroup(op, p, "group_membership_not_observed");
             return;
         }
@@ -1143,7 +1142,7 @@ final class MixModule implements HostModule {
         deleted.addProperty("name", expectedName);
         deleted.addProperty("type", type.getAsString());
         deleted.add("index", index);
-        awaitDeletion(op, target.id, deleted, before, HostServices.observeUntil(op));
+        awaitDeletion(op, target.id, deleted, before, s.observeUntil(op));
     }
 
     private void awaitDeletion(HostOperation op, String id, JsonObject deleted, Creation before, long until) {
@@ -1154,7 +1153,7 @@ final class MixModule implements HostModule {
                 && !after.ids.contains(id)
                 && after.total == before.total - 1
                 && after.ids.equals(others);
-        if (gone || System.nanoTime() >= until) {
+        if (gone || s.now() >= until) {
             JsonObject result = scope();
             result.addProperty("status", gone ? "observed" : "dispatched");
             result.addProperty("completion", gone ? "observed" : "unknown");
@@ -1224,7 +1223,7 @@ final class MixModule implements HostModule {
                 previousCandidate = id;
             } else previousCandidate = null;
         } else previousCandidate = null;
-        if (System.nanoTime() >= until) {
+        if (s.now() >= until) {
             unknownCreation(op, p, "unique_added_track_not_observed");
             return;
         }

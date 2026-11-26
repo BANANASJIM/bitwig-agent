@@ -452,7 +452,7 @@ final class LauncherModule implements HostModule {
             out.addProperty("firstNewSlotIndex", before);
             out.addProperty("placement", "last_scene_per_api_documentation; position is not read back, count is");
             op.result.complete(out);
-        } else if (System.nanoTime() >= end) {
+        } else if (s.now() >= end) {
             throw Errors.unknown(
                     ErrorCode.SCENE_COUNT_NOT_OBSERVED,
                     "Scene creation was dispatched, but the scene count did not reach " + (before + count)
@@ -619,7 +619,7 @@ final class LauncherModule implements HostModule {
             out.add("slot", slotJson(slot, index));
             finishMutation();
             op.result.complete(out);
-        } else if (System.nanoTime() >= end) {
+        } else if (s.now() >= end) {
             throw Errors.unknown(
                     ErrorCode.IMPORT_NOT_OBSERVED,
                     "File insertion was dispatched, but a fresh slot content transition was not observed; create/import/note writes remain quarantined for this extension instance. Read-only inspection is allowed.");
@@ -631,7 +631,7 @@ final class LauncherModule implements HostModule {
         if (slot.contentVersion > cursorMutation.contentBefore
                 && slot.observedContent
                 && slot.api.hasContent().get()) bind(op, id, track, slot, index, p, "launcher.create", end);
-        else if (System.nanoTime() >= end) {
+        else if (s.now() >= end) {
             JsonObject out = base(id, index);
             out.addProperty("status", "dispatched");
             out.addProperty("verification", "content_not_observed");
@@ -666,7 +666,7 @@ final class LauncherModule implements HostModule {
             boolean settled) {
         guard(op, id, track);
         if (!bound(id, slot)) {
-            if (System.nanoTime() >= end)
+            if (s.now() >= end)
                 throw Errors.of(
                         ErrorCode.TARGET_NOT_OBSERVED,
                         "Cursor slot identity or clip content was not observed",
@@ -718,7 +718,7 @@ final class LauncherModule implements HostModule {
         boolean matches = slot.api.name().get().equals(Params.string(p, "name"))
                 && clip.getLoopLength().get() == Params.integer(p, "lengthBeats", 1, 4096)
                 && clip.getPlayStop().get() == Params.integer(p, "lengthBeats", 1, 4096);
-        if (!matches && System.nanoTime() < end) {
+        if (!matches && s.now() < end) {
             s.schedule(op, () -> awaitName(op, id, track, slot, index, p, end), 20);
             return;
         }
@@ -1071,7 +1071,7 @@ final class LauncherModule implements HostModule {
             Runnable timeout) {
         guard(op, id, track);
         if (done.getAsBoolean()) ok.run();
-        else if (System.nanoTime() >= end) timeout.run();
+        else if (s.now() >= end) timeout.run();
         else s.schedule(op, () -> awaitSlot(op, id, track, slot, end, done, ok, timeout), 20);
     }
 
@@ -1086,7 +1086,7 @@ final class LauncherModule implements HostModule {
             Runnable timeout) {
         cursorGuard(op, id, track, slot);
         if (done.getAsBoolean()) ok.run();
-        else if (System.nanoTime() >= end) timeout.run();
+        else if (s.now() >= end) timeout.run();
         else s.schedule(op, () -> awaitClip(op, id, track, slot, end, done, ok, timeout), 20);
     }
 
@@ -1452,7 +1452,7 @@ final class LauncherModule implements HostModule {
             e.verified = (fresh || e.alreadyMatched) && matches(e, clip.getStep(w.channel, e.x, e.pitch));
             all &= e.verified;
         }
-        if (!all && System.nanoTime() < end) {
+        if (!all && s.now() < end) {
             s.schedule(op, () -> awaitNotes(op, id, track, slot, index, w, changes, full, end), 20);
             return;
         }
@@ -1583,7 +1583,7 @@ final class LauncherModule implements HostModule {
         boolean queued = slot == null
                 ? track.isQueuedForStop().get()
                 : slot.api.isPlaybackQueued().get();
-        if (!observed && !queued && System.nanoTime() < end) {
+        if (!observed && !queued && s.now() < end) {
             s.schedule(op, () -> awaitPlayback(op, id, track, slot, index, end), 20);
             return;
         }
@@ -1691,8 +1691,8 @@ final class LauncherModule implements HostModule {
             throw Errors.notApplied(ErrorCode.CLIP_NOT_FOUND, "Explicit launcher slot is empty");
     }
 
-    private static long until(HostOperation op) {
-        return HostServices.observeUntil(op);
+    private long until(HostOperation op) {
+        return s.observeUntil(op);
     }
 
     private static JsonObject base(String id, int slot) {

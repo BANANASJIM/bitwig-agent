@@ -373,7 +373,7 @@ public final class DeviceModuleTest {
         Fake f = new Fake();
         JsonObject p = target(0);
         p.addProperty("enabled", false);
-        assertRpcError("deadline_exceeded", f.run("devices.set", p, System.nanoTime() - 1));
+        assertRpcError("deadline_exceeded", f.run("devices.set", p, f.tasks.now() - 1));
         assertTrue(f.devices[0].child("isEnabled").writes == 0, "expired request cannot bypass device");
         CompletableFuture<JsonObject> canceled = f.request("devices.set", p);
         canceled.cancel(false);
@@ -389,9 +389,8 @@ public final class DeviceModuleTest {
         assertTrue(f.devices[0].child("isEnabled").writes == 1, "target change cannot replay write");
         Fake shortWait = new Fake();
         shortWait.devices[0].child("isEnabled").notifyWrites = false;
-        JsonObject result = shortWait
-                .run("devices.set", p, System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(20))
-                .join();
+        JsonObject result =
+                shortWait.run("devices.set", p, shortWait.tasks.after(20)).join();
         assertTrue(
                 result.get("status").getAsString().equals("dispatched"),
                 "bounded observation timeout does not invent completion");
@@ -480,10 +479,7 @@ public final class DeviceModuleTest {
         }
         Fake f = new Fake();
         f.insertMode = "none";
-        JsonObject result = f.run(
-                        "devices.insert",
-                        insert("bitwig", NATIVE),
-                        System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(20))
+        JsonObject result = f.run("devices.insert", insert("bitwig", NATIVE), f.tasks.after(20))
                 .join();
         assertTrue(
                 result.get("verification").getAsString().equals("insertion_not_observed"),
@@ -570,8 +566,7 @@ public final class DeviceModuleTest {
         none.insertMode = "none";
         JsonObject p = insert("bitwig", NATIVE);
         p.addProperty("position", "start");
-        JsonObject missed = none.run("devices.insert", p, System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(20))
-                .join();
+        JsonObject missed = none.run("devices.insert", p, none.tasks.after(20)).join();
         assertTrue(
                 missed.get("verification").getAsString().equals("insertion_not_observed")
                         && missed.get("inserted").isJsonNull()
@@ -625,8 +620,7 @@ public final class DeviceModuleTest {
 
         Fake silent = chain("A", "B");
         silent.deleteMode = "none";
-        JsonObject r = silent.run(
-                        "devices.delete", named(0, "A"), System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(20))
+        JsonObject r = silent.run("devices.delete", named(0, "A"), silent.tasks.after(20))
                 .join();
         assertTrue(
                 r.get("status").getAsString().equals("dispatched")
@@ -689,8 +683,8 @@ public final class DeviceModuleTest {
         silent.moveMode = "none";
         JsonObject p = named(0, "A");
         p.addProperty("toIndex", 1);
-        JsonObject missed = silent.run("devices.move", p, System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(20))
-                .join();
+        JsonObject missed =
+                silent.run("devices.move", p, silent.tasks.after(20)).join();
         assertTrue(
                 missed.get("verification").getAsString().equals("move_not_observed") && silent.points.size() == 1,
                 "an unobserved move is reported and not retried");
@@ -1000,10 +994,7 @@ public final class DeviceModuleTest {
         f.flush();
         JsonObject current = f.call("devices.remote.get", target(1));
         f.controls[1][0].child("value").notifyWrites = false;
-        JsonObject result = f.run(
-                        "devices.remote.set",
-                        remoteWrite(current, 1, .6),
-                        System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(20))
+        JsonObject result = f.run("devices.remote.set", remoteWrite(current, 1, .6), f.tasks.after(20))
                 .join();
         assertTrue(
                 result.get("verification").getAsString().equals("postcondition_not_observed")
@@ -1059,10 +1050,7 @@ public final class DeviceModuleTest {
                 "page roundtrip restores unchanged values and returning controls without name/value callback replay");
         assertRpcError("stale_context", f.run("devices.remote.set", remoteWrite(original, 1, .6)));
         f.controls[1][0].child("value").notifyWrites = false;
-        JsonObject result = f.run(
-                        "devices.remote.set",
-                        remoteWrite(returned, 1, .6),
-                        System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(20))
+        JsonObject result = f.run("devices.remote.set", remoteWrite(returned, 1, .6), f.tasks.after(20))
                 .join();
         assertTrue(
                 result.get("verification").getAsString().equals("postcondition_not_observed")
@@ -1221,8 +1209,8 @@ public final class DeviceModuleTest {
         page.addProperty("pageIndex", 0);
         page.addProperty("expectedPageName", "Main");
         f.pages[1].child("selectedPageIndex").notifyWrites = false;
-        JsonObject result = f.run("devices.remote.page", page, System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(20))
-                .join();
+        JsonObject result =
+                f.run("devices.remote.page", page, f.tasks.after(20)).join();
         assertTrue(
                 result.get("verification").getAsString().equals("postcondition_not_observed")
                         && f.pages[1].child("selectedPageIndex").writes == 1,
@@ -1245,9 +1233,7 @@ public final class DeviceModuleTest {
         JsonObject unmapped = mapped.call("devices.remote.get", target(1));
         mapped.controls[1][0].child("value").notifyWrites = false;
         JsonObject unacknowledged = mapped.run(
-                        "devices.remote.set",
-                        remoteWrite(unmapped, 1, .6),
-                        System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(20))
+                        "devices.remote.set", remoteWrite(unmapped, 1, .6), mapped.tasks.after(20))
                 .join();
         assertTrue(
                 unacknowledged.get("verification").getAsString().equals("postcondition_not_observed")
@@ -1322,7 +1308,7 @@ public final class DeviceModuleTest {
     }
 
     private static final class Fake {
-        final Deque<Runnable> tasks = new ArrayDeque<>();
+        final ScheduledTasks tasks = new ScheduledTasks();
         final FakeHost[] devices = new FakeHost[16], pages = new FakeHost[16];
         final FakeHost[][] controls = new FakeHost[16][8];
         final FakeHost bank = new FakeHost("bank");
@@ -1483,14 +1469,14 @@ public final class DeviceModuleTest {
             host.attach("createTransport", transport);
             host.attach("createTrackBank", trackBank);
             host.on("scheduleTask", args -> {
-                tasks.add((Runnable) args[0]);
+                tasks.schedule((Runnable) args[0], ((Number) args[1]).longValue());
                 return null;
             });
             host.on("requestFlush", args -> {
                 flushRequests++;
                 return null;
             });
-            services = new HostServices(host.proxy(ControllerHost.class));
+            services = new HostServices(host.proxy(ControllerHost.class), tasks::now);
             module = new DeviceModule(services);
             initialized = true;
         }
@@ -1565,7 +1551,7 @@ public final class DeviceModuleTest {
         }
 
         CompletableFuture<JsonObject> request(String method, JsonObject p) {
-            return request(method, p, System.nanoTime() + TimeUnit.SECONDS.toNanos(2));
+            return request(method, p, tasks.after(2000));
         }
 
         CompletableFuture<JsonObject> request(String method, JsonObject p, long deadline) {
@@ -1596,7 +1582,7 @@ public final class DeviceModuleTest {
         }
 
         void next() {
-            Runnable task = tasks.remove();
+            Runnable task = tasks.take();
             running = true;
             try {
                 task.run();

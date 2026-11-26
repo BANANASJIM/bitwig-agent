@@ -269,15 +269,8 @@ public final class MarkerModuleTest {
         Bank bank = new Bank(f);
         f.addMarker = () -> {}; // the host accepts the call but never shows a marker
         MarkerModule m = module(f);
-        HostOperation op = f.submit(m, "markers.insert", json("{\"beat\":4}"), System.nanoTime() + 300_000_000L);
-        for (int i = 0; i < 500 && !op.result.isDone(); i++) {
-            f.next();
-            try {
-                Thread.sleep(2);
-            } catch (InterruptedException e) {
-                throw new AssertionError(e);
-            }
-        }
+        HostOperation op = f.submit(m, "markers.insert", json("{\"beat\":4}"), f.tasks.after(300));
+        while (!op.result.isDone()) f.next();
         JsonObject r = op.result.join();
         assertTrue(
                 r.get("completion").getAsString().equals("unknown")

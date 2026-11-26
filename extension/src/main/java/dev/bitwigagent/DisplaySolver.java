@@ -97,7 +97,7 @@ final class DisplaySolver {
     private void probe(double x) {
         port.guard();
         // The scheduler throws deadline_exceeded once the deadline passes, so stop while a restore still fits.
-        if (op.deadline - System.nanoTime() < 2 * PROBE_TIMEOUT_NANOS + HostServices.DEADLINE_MARGIN_NANOS) {
+        if (op.deadline - s.now() < 2 * PROBE_TIMEOUT_NANOS + HostServices.DEADLINE_MARGIN_NANOS) {
             fail("deadline");
             return;
         }
@@ -109,7 +109,7 @@ final class DisplaySolver {
             result.dispatched = true;
             port.write(x);
         }
-        awaitValue(x, before, same, System.nanoTime() + PROBE_TIMEOUT_NANOS, same ? 0 : -1);
+        awaitValue(x, before, same, s.now() + PROBE_TIMEOUT_NANOS, same ? 0 : -1);
     }
 
     /** settle < 0: waiting for the value callback; otherwise counts the polls that let the display text catch up. */
@@ -125,7 +125,7 @@ final class DisplaySolver {
             evaluate(x);
             return;
         }
-        if (settle < 0 && System.nanoTime() >= until) {
+        if (settle < 0 && s.now() >= until) {
             fail("probe_not_observed");
             return;
         }
@@ -185,7 +185,7 @@ final class DisplaySolver {
             }
             if (value) port.write(result.original);
             if (enabled) port.writeEnabled(result.originalEnabled);
-            awaitRestore(before, enabledBefore, value, enabled, System.nanoTime() + PROBE_TIMEOUT_NANOS);
+            awaitRestore(before, enabledBefore, value, enabled, s.now() + PROBE_TIMEOUT_NANOS);
         } catch (RpcException error) {
             done.accept(result);
         }
@@ -209,7 +209,7 @@ final class DisplaySolver {
             done.accept(result);
             return;
         }
-        if (System.nanoTime() >= until) {
+        if (s.now() >= until) {
             done.accept(result);
             return;
         }

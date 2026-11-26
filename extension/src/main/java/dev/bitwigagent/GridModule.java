@@ -510,7 +510,7 @@ final class GridModule implements HostModule {
                                 target.device,
                                 trackUuid,
                                 insertions,
-                                () -> op.deadline - System.nanoTime(),
+                                () -> op.deadline - s.now(),
                                 check,
                                 dispatch,
                                 complete,

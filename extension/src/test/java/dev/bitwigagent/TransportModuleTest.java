@@ -2,7 +2,6 @@ package dev.bitwigagent;
 
 import static dev.bitwigagent.RpcAssert.*;
 import static org.junit.jupiter.api.Assertions.*;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import com.google.gson.*;
 import java.util.List;
@@ -139,7 +138,7 @@ public final class TransportModuleTest {
         HostFixture f = new HostFixture();
         TransportModule module = new TransportModule(f.services);
         HostOperation expired =
-                f.submit(module, "transport.set", HostFixture.json("{\"playing\":true}"), System.nanoTime() - 1);
+                f.submit(module, "transport.set", HostFixture.json("{\"playing\":true}"), f.tasks.now() - 1);
         f.next();
         assertTrue(
                 assertRpcError("deadline_exceeded", expired).outcome.equals("not_applied"),
@@ -188,14 +187,14 @@ public final class TransportModuleTest {
     }
 
     @Test
-    void lateStopDoesNotSeekAfterObservationBudget() throws InterruptedException {
+    void lateStopDoesNotSeekAfterObservationBudget() {
         HostFixture f = new HostFixture();
         TransportModule module = new TransportModule(f.services);
         deferStop(f);
         HostOperation op =
                 f.submit(module, "transport.set", HostFixture.json("{\"playing\":false,\"positionBeats\":0}"));
         f.next();
-        Thread.sleep(800); // Expire the shared 750-ms observation budget; the fixture's hard deadline remains open.
+        f.tasks.advance(HostServices.OBSERVE_WINDOW_NANOS); // the fixture's hard deadline remains open
         f.next();
         f.next();
         JsonObject result = op.result.join();
@@ -214,38 +213,25 @@ public final class TransportModuleTest {
                 "late stop leaves its final position without another mutation");
     }
 
-    private static final int LATE_POLL_ATTEMPTS = 5;
-
     @Test
-    void shortTimeoutYieldsBoundedNotObservedNotDeadlineExceeded() throws InterruptedException {
-        // The late poll must land in the 50 ms margin before the hard deadline. A scheduler that cannot hit that
-        // window (cold JVM, loaded runner) never produced the scenario, so it is retried and, failing that, skipped.
-        for (int attempt = 0; attempt < LATE_POLL_ATTEMPTS; attempt++) {
-            if (latePollLandedInsideMargin()) return;
-        }
-        assumeTrue(false, "scheduler jitter exceeds the deadline margin");
-    }
-
-    private static boolean latePollLandedInsideMargin() throws InterruptedException {
+    void shortTimeoutYieldsBoundedNotObservedNotDeadlineExceeded() {
         HostFixture f = new HostFixture();
         TransportModule module = new TransportModule(f.services);
         f.transport.child("tempo").child("value").notifyWrites = false;
-        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(300);
+        long deadline = f.tasks.after(300);
         HostOperation op = f.submit(module, "transport.set", HostFixture.json("{\"tempoBpm\":130}"), deadline);
         f.next();
         assertTrue(!op.result.isDone(), "unobserved write keeps polling");
-        long pollAt =
+        long lateInsideMargin =
                 deadline - HostServices.DEADLINE_MARGIN_NANOS + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(5);
-        Thread.sleep(java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(Math.max(0, pollAt - System.nanoTime())));
+        f.tasks.advance(lateInsideMargin - f.tasks.now());
         f.next();
-        if (op.result.isCompletedExceptionally()) return false;
         JsonObject result = op.result.join();
         assertTrue(
                 result.get("status").getAsString().equals("dispatched")
                         && result.get("completion").getAsString().equals("unknown"),
-                "short timeout yields the bounded dispatched/not-observed result, not deadline_exceeded");
+                "a poll that runs late, inside the deadline margin, yields the bounded dispatched/not-observed result");
         assertTrue(f.transport.child("tempo").child("value").writes == 1, "no retry write");
-        return true;
     }
 
     @Test
@@ -386,19 +372,9 @@ public final class TransportModuleTest {
                         && f.transport.child("timeSignature").writes == 1,
                 "same signature not rewritten");
         f.transport.child("timeSignature").notifyWrites = false;
-        HostOperation silent = f.submit(
-                module,
-                "transport.set",
-                HostFixture.json("{\"timeSignature\":\"3/4\"}"),
-                System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(300));
-        try {
-            for (int i = 0; i < 400 && !silent.result.isDone(); i++) {
-                f.next();
-                Thread.sleep(2);
-            }
-        } catch (InterruptedException e) {
-            throw new AssertionError(e);
-        }
+        HostOperation silent =
+                f.submit(module, "transport.set", HostFixture.json("{\"timeSignature\":\"3/4\"}"), f.tasks.after(300));
+        while (!silent.result.isDone()) f.next();
         result = silent.result.join();
         assertTrue(
                 !result.get("matchesRequested").getAsBoolean()
@@ -487,19 +463,9 @@ public final class TransportModuleTest {
                         && f.transport.child("isPunchInEnabled").writes == 1,
                 "matching values are not rewritten");
         f.transport.child("preRoll").notifyWrites = false;
-        HostOperation silent = f.submit(
-                module,
-                "transport.set",
-                HostFixture.json("{\"preRoll\":\"four_bars\"}"),
-                System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(300));
-        try {
-            for (int i = 0; i < 400 && !silent.result.isDone(); i++) {
-                f.next();
-                Thread.sleep(2);
-            }
-        } catch (InterruptedException e) {
-            throw new AssertionError(e);
-        }
+        HostOperation silent =
+                f.submit(module, "transport.set", HostFixture.json("{\"preRoll\":\"four_bars\"}"), f.tasks.after(300));
+        while (!silent.result.isDone()) f.next();
         result = silent.result.join();
         assertTrue(
                 !result.get("matchesRequested").getAsBoolean()

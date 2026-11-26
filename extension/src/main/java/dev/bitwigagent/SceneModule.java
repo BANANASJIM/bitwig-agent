@@ -180,12 +180,12 @@ final class SceneModule implements HostModule {
         s.check(op);
         op.dispatched = true;
         scenes[index].name().set(name);
-        awaitRename(op, index, name, before, HostServices.observeUntil(op));
+        awaitRename(op, index, name, before, s.observeUntil(op));
     }
 
     private void awaitRename(HostOperation op, int index, String name, long before, long end) {
         boolean done = nameSequence[index] > before && name.equals(names[index]);
-        if (done || System.nanoTime() >= end) {
+        if (done || s.now() >= end) {
             JsonObject out = result(
                     done ? "observed" : "dispatched",
                     done ? "observed" : "unknown",
@@ -203,14 +203,14 @@ final class SceneModule implements HostModule {
         s.check(op);
         op.dispatched = true;
         scenes[index].launch();
-        awaitLaunch(op, index, clips, HostServices.observeUntil(op));
+        awaitLaunch(op, index, clips, s.observeUntil(op));
     }
 
     private void awaitLaunch(HostOperation op, int index, List<ClipLauncherSlot> clips, long end) {
         boolean done = !clips.isEmpty();
         for (ClipLauncherSlot slot : clips)
             done &= slot.isPlaying().get() || slot.isPlaybackQueued().get();
-        if (done || System.nanoTime() >= end) {
+        if (done || s.now() >= end) {
             // A scene without clips has nothing to observe: dispatched, never claimed as playing.
             JsonObject out = result(
                     done ? "observed" : "dispatched",
@@ -234,7 +234,7 @@ final class SceneModule implements HostModule {
         s.check(op);
         op.dispatched = true;
         scenes[index].duplicateObject();
-        awaitDuplicate(op, index, before, nameSequence.clone(), HostServices.observeUntil(op));
+        awaitDuplicate(op, index, before, nameSequence.clone(), s.observeUntil(op));
     }
 
     private void awaitDuplicate(HostOperation op, int index, List<String> before, long[] sequenceBefore, long end) {
@@ -249,7 +249,7 @@ final class SceneModule implements HostModule {
                 && is.subList(0, index + 1).equals(was.subList(0, index + 1))
                 && is.subList(index + 2, is.size()).equals(was.subList(index + 1, was.size()))
                 && occupied(index + 1).size() == occupied(index).size();
-        if (done || System.nanoTime() >= end) {
+        if (done || s.now() >= end) {
             JsonObject out = result(
                     done ? "observed" : "dispatched",
                     done ? "observed" : "unknown",
@@ -293,14 +293,14 @@ final class SceneModule implements HostModule {
         s.check(op);
         op.dispatched = true;
         scenes[index].deleteObject();
-        awaitDelete(op, index, before, clips.size(), HostServices.observeUntil(op));
+        awaitDelete(op, index, before, clips.size(), s.observeUntil(op));
     }
 
     private void awaitDelete(HostOperation op, int index, List<String> before, int clipCount, long end) {
         List<String> expected = unnamed(before);
         expected.remove(index);
         boolean done = count == before.size() - 1 && expected.equals(unnamed(snapshotNames()));
-        if (done || System.nanoTime() >= end) {
+        if (done || s.now() >= end) {
             JsonObject out = result(
                     done ? "observed" : "dispatched",
                     done ? "observed" : "unknown",

@@ -204,19 +204,8 @@ public final class MixModuleTest {
         f.tracks[1].child("crossFadeMode").notifyWrites = false;
         JsonObject silent = HostFixture.json("{\"crossFadeMode\":\"A\"}");
         silent.addProperty("trackId", HostFixture.B);
-        HostOperation op = f.submit(
-                module,
-                "tracks.set",
-                silent,
-                System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(300));
-        try {
-            for (int i = 0; i < 400 && !op.result.isDone(); i++) {
-                f.next();
-                Thread.sleep(2);
-            }
-        } catch (InterruptedException e) {
-            throw new AssertionError(e);
-        }
+        HostOperation op = f.submit(module, "tracks.set", silent, f.tasks.after(300));
+        while (!op.result.isDone()) f.next();
         assertTrue(
                 !op.result.join().get("matchesRequested").getAsBoolean(),
                 "an unobserved enum write is not reported as done");
@@ -238,16 +227,8 @@ public final class MixModuleTest {
         JsonObject far = HostFixture.json("{\"color\":\"#ff5a05\"}");
         far.addProperty("trackId", HostFixture.B);
         color.afterWrite = () -> color.emit(new float[] {1f, 0x57 / 255f, 4 / 255f});
-        HostOperation farOp = f.submit(
-                module, "tracks.set", far, System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(300));
-        try {
-            for (int i = 0; i < 400 && !farOp.result.isDone(); i++) {
-                f.next();
-                Thread.sleep(2);
-            }
-        } catch (InterruptedException e) {
-            throw new AssertionError(e);
-        }
+        HostOperation farOp = f.submit(module, "tracks.set", far, f.tasks.after(300));
+        while (!farOp.result.isDone()) f.next();
         assertTrue(!farOp.result.join().get("matchesRequested").getAsBoolean(), "a larger difference is a mismatch");
         f.tracks[1].child("monitorMode").emit("STORED");
         JsonObject read = f.call(module, "tracks.get", HostFixture.target(HostFixture.B));
@@ -353,7 +334,7 @@ public final class MixModuleTest {
         HostFixture f = new HostFixture();
         MixModule module = new MixModule(f.services);
         JsonObject p = HostFixture.target(HostFixture.A);
-        HostOperation expired = f.submit(module, "tracks.select", p, System.nanoTime() - 1);
+        HostOperation expired = f.submit(module, "tracks.select", p, f.tasks.now() - 1);
         f.next();
         assertTrue(
                 assertRpcError("deadline_exceeded", expired).outcome.equals("not_applied"),
@@ -434,7 +415,7 @@ public final class MixModuleTest {
         MixModule module = new MixModule(f.services);
         JsonObject p = HostFixture.target(HostFixture.A);
         p.addProperty("arm", true);
-        HostOperation expired = f.submit(module, "tracks.set", p, System.nanoTime() - 1);
+        HostOperation expired = f.submit(module, "tracks.set", p, f.tasks.now() - 1);
         f.next();
         assertTrue(
                 assertRpcError("deadline_exceeded", expired).outcome.equals("not_applied"),
@@ -1526,11 +1507,7 @@ public final class MixModuleTest {
         HostFixture f = new HostFixture();
         FakeGroup access = new FakeGroup();
         MixModule module = new MixModule(f.services, access);
-        HostOperation op = f.submit(
-                module,
-                "tracks.group",
-                groupRequest(HostFixture.A),
-                System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(400));
+        HostOperation op = f.submit(module, "tracks.group", groupRequest(HostFixture.A), f.tasks.after(400));
         while (!op.result.isDone() && !f.tasks.isEmpty()) f.next();
         JsonObject result = op.result.join();
         assertTrue(

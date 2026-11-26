@@ -114,7 +114,7 @@ final class MeterModule implements HostModule {
             slots[i] = s.trackSlot(ids[i]);
         }
         int windowMs = p.get("windowMs").getAsInt();
-        long end = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(windowMs);
+        long end = s.now() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(windowMs);
         if (op.deadline - end < HostServices.DEADLINE_MARGIN_NANOS)
             throw Errors.notApplied(
                     ErrorCode.INVALID_PARAMS, "timeoutMs is too short for windowMs; allow windowMs plus about 200 ms.");
@@ -133,7 +133,7 @@ final class MeterModule implements HostModule {
 
     private void poll(HostOperation op, Window w, long end, int windowMs, Boolean playingAtStart) {
         w.tick(rms);
-        if (System.nanoTime() < end) {
+        if (s.now() < end) {
             s.schedule(op, () -> poll(op, w, end, windowMs, playingAtStart), POLL_MS);
             return;
         }

@@ -272,7 +272,7 @@ final class DeviceModule implements HostModule {
         boolean observed = source.pageSequence > sequence
                 && source.page.selectedPageIndex().get() == index
                 && name.equals(source.page.getName().get());
-        if (observed || System.nanoTime() >= end) {
+        if (observed || s.now() >= end) {
             JsonObject result = remoteMetadata(target);
             result.addProperty("status", observed ? "observed" : "dispatched");
             result.addProperty("verification", observed ? "page_observer_after_write" : "postcondition_not_observed");
@@ -290,7 +290,7 @@ final class DeviceModule implements HostModule {
         boolean observed = source.controlValuesFresh[index]
                 && source.controlSequences[index] > sequence
                 && Math.abs(source.controls[index].value().get() - value) <= HostServices.TOLERANCE;
-        if (observed || System.nanoTime() >= end) {
+        if (observed || s.now() >= end) {
             JsonObject result = remoteMetadata(target);
             result.addProperty("status", observed ? "observed" : "dispatched");
             result.addProperty("verification", observed ? "observer_after_write" : "postcondition_not_observed");
@@ -647,7 +647,7 @@ final class DeviceModule implements HostModule {
             JsonObject result = metadata(target);
             result.addProperty("verification", "observer_after_write");
             op.result.complete(result);
-        } else if (System.nanoTime() >= end) {
+        } else if (s.now() >= end) {
             JsonObject result = metadata(target);
             result.addProperty("status", "dispatched");
             result.addProperty("verification", "postcondition_not_observed");
@@ -915,7 +915,7 @@ final class DeviceModule implements HostModule {
                 edit.prefixRevisions != null && !prefixMatches(edit.slot, edit.prefixRevisions)
                         ? DeviceChainEdit.Outcome.ambiguous()
                         : DeviceChainEdit.observe(edit.view, edit.plan);
-        if (outcome.pending && System.nanoTime() < end) {
+        if (outcome.pending && s.now() < end) {
             s.schedule(op, () -> observeEdit(op, edit, end), 25);
             return;
         }
@@ -1078,8 +1078,8 @@ final class DeviceModule implements HostModule {
         }
     }
 
-    private static long observationEnd(HostOperation op) {
-        return HostServices.observeUntil(op);
+    private long observationEnd(HostOperation op) {
+        return s.observeUntil(op);
     }
 
     private static void uncertain(HostOperation op, String reason) {

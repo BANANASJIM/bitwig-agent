@@ -94,9 +94,9 @@ final class RenderModule implements HostModule {
         Clips clips(Object trackProxy, String trackId, Runnable check);
     }
 
-    private static final class Job {
+    private final class Job {
         final String kind;
-        final long started = System.nanoTime();
+        final long started = s.now();
         final List<String> ids;
         final List<Object> proxies;
         final double start, end;
@@ -131,7 +131,7 @@ final class RenderModule implements HostModule {
         boolean done() {
             Handle h = handle;
             if (h != null && h.done()) {
-                if (doneAt == 0) doneAt = System.nanoTime();
+                if (doneAt == 0) doneAt = s.now();
                 settled = true;
             }
             return settled;
@@ -415,7 +415,7 @@ final class RenderModule implements HostModule {
 
     private void await(HostOperation op, Job current, Access bridge, long until) {
         if (!current.done()) {
-            if (System.nanoTime() < until) {
+            if (s.now() < until) {
                 s.schedule(op, () -> await(op, current, bridge, until), POLL_MS);
                 return;
             }
@@ -432,8 +432,8 @@ final class RenderModule implements HostModule {
                             boolean waiting = current.kind.equals(BOUNCE)
                                     && !evaluation.get("verified").getAsBoolean()
                                     && !evaluation.get("changed").getAsBoolean()
-                                    && System.nanoTime() - current.doneAt < applyGraceNanos;
-                            if (waiting && System.nanoTime() < until) {
+                                    && s.now() - current.doneAt < applyGraceNanos;
+                            if (waiting && s.now() < until) {
                                 s.schedule(op, () -> await(op, current, bridge, until), POLL_MS);
                                 return;
                             }
@@ -638,7 +638,7 @@ final class RenderModule implements HostModule {
                     current.export.sampleRate == 0 ? "current" : String.valueOf(current.export.sampleRate));
             result.addProperty("directory", current.plan.directory.toString());
         }
-        result.addProperty("elapsedMs", TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - current.started));
+        result.addProperty("elapsedMs", TimeUnit.NANOSECONDS.toMillis(s.now() - current.started));
         result.addProperty("nativeVersion", Bitwig614Runtime.VERSION);
         result.addProperty("nativeJarSha256", bridge.nativeJarSha256());
     }

@@ -347,15 +347,10 @@ public final class MixDisplayWriteTest {
         FakeHost vol = f.tracks[0].child("volume").child("value");
         Runnable show = vol.afterWrite;
         vol.afterWrite = () -> {
-            try {
-                Thread.sleep(100);
-            } catch (InterruptedException e) {
-                throw new AssertionError(e);
-            }
+            f.tasks.advance(java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(100));
             show.run();
         };
-        HostOperation op =
-                f.submit(m[0], "tracks.set", params("{\"volumeDb\":-6}"), System.nanoTime() + 1_300_000_000L);
+        HostOperation op = f.submit(m[0], "tracks.set", params("{\"volumeDb\":-6}"), f.tasks.after(1300));
         JsonObject result = run(f, op);
         assertTrue(
                 result.get("reason").getAsString().equals("deadline"),
@@ -442,7 +437,6 @@ public final class MixDisplayWriteTest {
         f.next();
         int writes = vol.writes;
         f.tracks[0].child("channelId").emit("00000000-0000-0000-0000-0000000000ff");
-        f.tasks.removeIf(t -> false);
         while (!op.result.isDone() && !f.tasks.isEmpty()) f.next();
         assertTrue(
                 op.result.isDone() && vol.writes <= writes + 1,

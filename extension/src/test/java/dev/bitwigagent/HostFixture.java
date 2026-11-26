@@ -5,9 +5,7 @@ import com.bitwig.extension.controller.api.*;
 import com.google.gson.*;
 import dev.bitwigagent.core.MethodSpecs;
 import java.util.*;
-import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
-import java.util.function.LongSupplier;
 
 /** A simulated host with a transport, a track bank and queued host tasks; no Bitwig process. */
 final class HostFixture {
@@ -15,7 +13,7 @@ final class HostFixture {
     static final String A = "00000000-0000-0000-0000-000000000001";
     static final String B = "00000000-0000-0000-0000-000000000002";
     static final String C = "00000000-0000-0000-0000-000000000003";
-    final Deque<Runnable> tasks = new ArrayDeque<>();
+    final ScheduledTasks tasks = new ScheduledTasks();
     final FakeHost host = new FakeHost("host");
     final FakeHost transport = host.child("createTransport");
     final FakeHost application = host.child("createApplication");
@@ -230,10 +228,10 @@ final class HostFixture {
             return null;
         });
         host.on("scheduleTask", args -> {
-            tasks.add((Runnable) args[0]);
+            tasks.schedule((Runnable) args[0], ((Number) args[1]).longValue());
             return null;
         });
-        services = createServices ? new HostServices(host.proxy(ControllerHost.class)) : null;
+        services = createServices ? new HostServices(host.proxy(ControllerHost.class), tasks::now) : null;
     }
 
     /** The host's own enum option list, as EnumValue.enumDefinition() reports it. */
@@ -303,13 +301,13 @@ final class HostFixture {
         device.on("addDirectParameterNormalizedValueObserver", args -> null);
     }
 
-    HostBridge bridge(MethodSpecs specs, LongSupplier clock) {
-        return new HostBridge(host.proxy(ControllerHost.class), specs, clock);
+    HostBridge bridge(MethodSpecs specs) {
+        return new HostBridge(host.proxy(ControllerHost.class), specs, tasks::now);
     }
 
     /** Validates and dispatches directly, as a module sees a request once the host has handed it over. */
     HostOperation start(HostModule module, String method, JsonObject params) {
-        HostOperation op = new HostOperation(System.nanoTime() + TimeUnit.SECONDS.toNanos(5));
+        HostOperation op = new HostOperation(tasks.after(5000));
         try {
             module.validate(method, params);
             module.dispatch(op, method, params);
@@ -320,7 +318,7 @@ final class HostFixture {
     }
 
     void drain() {
-        while (!tasks.isEmpty()) tasks.remove().run();
+        while (!tasks.isEmpty()) tasks.take().run();
     }
 
     HostOperation submit(HostModule module, String method, JsonObject params) {
@@ -345,7 +343,7 @@ final class HostFixture {
     }
 
     void next() {
-        Runnable next = tasks.removeFirst();
+        Runnable next = tasks.take();
         onHost = true;
         try {
             next.run();

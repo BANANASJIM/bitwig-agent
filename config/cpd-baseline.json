@@ -31,14 +31,6 @@
       ],
       "count": 1,
       "tokens": 109
-    },
-    {
-      "files": [
-        "extension/src/test/java/dev/bitwigagent/TransportModuleTest.java",
-        "extension/src/test/java/dev/bitwigagent/TransportModuleTest.java"
-      ],
-      "count": 1,
-      "tokens": 112
     }
   ],
   "python": [
