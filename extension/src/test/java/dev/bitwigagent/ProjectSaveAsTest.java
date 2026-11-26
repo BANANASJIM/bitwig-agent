@@ -53,9 +53,6 @@ public final class ProjectSaveAsTest {
         } catch (RpcException expected) {
             check(expected.code.equals("invalid_params"), "project.save still takes no parameters");
         }
-        check(
-                RpcServer.maxTimeoutMs("project.saveAs") == 60000 && RpcServer.maxTimeoutMs("project.save") == 10000,
-                "only saveAs gets the long timeout");
     }
 
     private static void planningMirrorsNativeFolderRules() throws IOException {

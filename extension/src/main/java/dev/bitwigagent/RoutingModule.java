@@ -3,6 +3,7 @@ package dev.bitwigagent;
 import com.bitwig.extension.callback.*;
 import com.bitwig.extension.controller.api.*;
 import com.google.gson.*;
+import dev.bitwigagent.core.MethodSpecs;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -14,7 +15,6 @@ import java.util.concurrent.atomic.AtomicLong;
 final class RoutingModule implements HostModule {
     static final Set<String> METHODS =
             Set.of("tracks.routing.get", "tracks.routing.set", "devices.sidechain.get", "devices.sidechain.set");
-    static final Set<String> WRITES = Set.of("tracks.routing.set", "devices.sidechain.set");
     /** Entry kinds a caller may request for a track output chooser. */
     static final Set<String> OUTPUT_KINDS = Set.of("none", "track_audio_input", "track_note_input");
     /** Entry kinds a caller may request for a track input chooser or a device sidechain source. */
@@ -79,16 +79,18 @@ final class RoutingModule implements HostModule {
     }
 
     private final HostServices s;
+    private final MethodSpecs specs;
     private final AtomicLong epoch = new AtomicLong();
     private Access access;
     private volatile boolean pending, quarantined;
 
-    RoutingModule(HostServices s) {
-        this(s, null);
+    RoutingModule(HostServices s, MethodSpecs specs) {
+        this(s, specs, null);
     }
 
-    RoutingModule(HostServices s, Access access) {
+    RoutingModule(HostServices s, MethodSpecs specs, Access access) {
         this.s = s;
+        this.specs = specs;
         this.access = access;
         for (int i = 0; i < HostServices.TRACKS; i++) {
             Track track = (Track) s.tracks.getItemAt(i);
@@ -265,7 +267,7 @@ final class RoutingModule implements HostModule {
     @Override
     public void dispatch(HostOperation op, String method, JsonObject p) {
         s.check(op);
-        boolean write = WRITES.contains(method);
+        boolean write = !specs.get(method).readOnly;
         if (pending) throw Errors.notApplied(ErrorCode.BUSY, "Another native routing operation is pending.");
         if (write && quarantined)
             throw Errors.notApplied(

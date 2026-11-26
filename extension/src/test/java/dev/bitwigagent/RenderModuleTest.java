@@ -97,12 +97,7 @@ public final class RenderModuleTest {
         p = new JsonObject();
         p.addProperty("x", 1);
         invalid("render.status", p);
-        check(
-                RpcServer.maxTimeoutMs("export.audio") == 60000
-                        && RpcServer.maxTimeoutMs("bounce.inPlace") == 60000
-                        && RpcServer.maxTimeoutMs("render.status") == 10000,
-                "renders get the long timeout, status does not");
-        check(HostBridge.supportedMethods().containsAll(RenderModule.METHODS), "render methods registered");
+        check(TransportMixFixture.SPECS.methods().containsAll(RenderModule.METHODS), "render methods registered");
     }
 
     private static void planningNamesFilesAndRefusesExisting() throws IOException {

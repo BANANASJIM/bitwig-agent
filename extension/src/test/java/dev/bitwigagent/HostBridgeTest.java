@@ -3,6 +3,8 @@ package dev.bitwigagent;
 import com.bitwig.extension.callback.*;
 import com.bitwig.extension.controller.api.*;
 import com.google.gson.*;
+import dev.bitwigagent.core.MethodSpecs;
+import dev.bitwigagent.core.MethodSpecsTest;
 import java.lang.reflect.*;
 import java.util.*;
 import java.util.concurrent.*;
@@ -32,6 +34,8 @@ public final class HostBridgeTest {
         projectSaveIsObservedOnceAndNeverRetried();
         engineActivationAndInactiveEngineGuards();
         writesWaitForSettledProject();
+        admissionFollowsMethodSpecs();
+        handlersMustMatchTheBundle();
         discardingActionsAreGuardedByUnsavedChanges();
         actionsListFiltersAndReportsTotals();
         capabilitiesDescribeBoundedImplementedSurfaces();
@@ -257,8 +261,8 @@ public final class HostBridgeTest {
                         && !context.get("projectModified").getAsBoolean(),
                 "context reports saved");
         check(
-                HostBridge.supportedMethods().contains("project.save")
-                        && HostBridge.supportedMethods().contains("project.saveAs"),
+                TransportMixFixture.SPECS.methods().contains("project.save")
+                        && TransportMixFixture.SPECS.methods().contains("project.saveAs"),
                 "project.save and project.saveAs registered");
         JsonObject saveAs = call(host, bridge, "capabilities", new JsonObject()).getAsJsonObject("projectSaveAs");
         check(
@@ -445,6 +449,52 @@ public final class HostBridgeTest {
                 "ready again after the window");
     }
 
+    private static void admissionFollowsMethodSpecs() {
+        Fake f = new Fake();
+        HostBridge bridge = f.bridge();
+        f.projectName.set("Fixture2");
+        f.engine.value = false;
+        for (String method : TransportMixFixture.SPECS.methods()) {
+            boolean projectWrite = MethodSpecsTest.PROJECT_WRITES.contains(method);
+            boolean engine = MethodSpecsTest.ENGINE_REQUIRED.contains(method);
+            String refusal = null;
+            try {
+                bridge.preflight(method, new JsonObject());
+            } catch (RpcException e) {
+                refusal = e.code;
+            }
+            check(
+                    Objects.equals(refusal, projectWrite ? "project_not_ready" : engine ? "engine_inactive" : null),
+                    method + " admission while the project settles and the engine is inactive: " + refusal);
+        }
+        f.now += SETTLE;
+        for (String method : MethodSpecsTest.ENGINE_REQUIRED)
+            try {
+                bridge.preflight(method, new JsonObject());
+                throw new AssertionError(method + " ran with an inactive engine");
+            } catch (RpcException e) {
+                check(e.code.equals("engine_inactive") && e.getMessage().contains(method), method + " names itself");
+            }
+        for (String method : MethodSpecsTest.PROJECT_WRITES) bridge.preflight(method, new JsonObject());
+        check(true, "settled project admits every project write");
+    }
+
+    private static void handlersMustMatchTheBundle() {
+        JsonObject extra = MethodSpecsTest.bundle();
+        extra.getAsJsonObject("methods").add("no.handler", MethodSpecsTest.method(true, true, "", 5000, 10000));
+        JsonObject missing = MethodSpecsTest.bundle();
+        missing.getAsJsonObject("methods").remove("status");
+        for (JsonObject bundle : List.of(extra, missing))
+            try {
+                new Fake().bridge(MethodSpecs.parse(new java.io.StringReader(bundle.toString())));
+                throw new AssertionError("a bundle that differs from the handlers loaded");
+            } catch (IllegalStateException e) {
+                check(
+                        e.getMessage().contains(bundle == extra ? "no.handler" : "status"),
+                        "the mismatch names the method: " + e.getMessage());
+            }
+    }
+
     private static void discardingActionsAreGuardedByUnsavedChanges() {
         Fake host = new Fake();
         HostBridge bridge = host.bridge();
@@ -595,7 +645,7 @@ public final class HostBridgeTest {
                                 .getAsString()
                                 .equals(Fake.TRACK_ID),
                 "tracks carry the observed UUID");
-        check(HostBridge.supportedMethods().contains("context.get"), "method is registered with the bridge");
+        check(TransportMixFixture.SPECS.methods().contains("context.get"), "method is registered with the bridge");
         JsonObject bad = new JsonObject();
         bad.addProperty("x", 1);
         expectError(bridge.handle("context.get", bad, deadline()), "invalid_params");
@@ -1842,7 +1892,7 @@ public final class HostBridgeTest {
         }
     }
 
-    private static final class Fake {
+    static final class Fake {
         static final String TRACK_ID = "9baa5190-b120-47f9-8e06-0fda476123ca";
         final Deque<Runnable> tasks = new ArrayDeque<>();
         final Node trackBank = new Node();
@@ -2078,6 +2128,10 @@ public final class HostBridgeTest {
         }
 
         HostBridge bridge() {
+            return bridge(TransportMixFixture.SPECS);
+        }
+
+        HostBridge bridge(MethodSpecs specs) {
             Node app = new Node();
             app.put("projectName", "Fixture");
             app.put("hasActiveEngine", true);
@@ -2168,7 +2222,7 @@ public final class HostBridgeTest {
             };
             initializing = true;
             try {
-                HostBridge b = new HostBridge(host.proxy(ControllerHost.class), () -> now);
+                HostBridge b = new HostBridge(host.proxy(ControllerHost.class), specs, () -> now);
                 now = 2 * HostServices.PROJECT_SETTLE_NANOS;
                 return b;
             } finally {

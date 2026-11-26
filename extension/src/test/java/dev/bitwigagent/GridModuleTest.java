@@ -1150,7 +1150,7 @@ public final class GridModuleTest {
         JsonObject valid = insertionTarget();
         valid.addProperty("x", Integer.MIN_VALUE);
         valid.addProperty("y", Integer.MAX_VALUE);
-        HostBridge.validate("grid.modules.insert", valid);
+        GridModule.validateParams("grid.modules.insert", valid);
         check(
                 f.host.tasks.isEmpty() && f.adapter.tasks.isEmpty() && f.adapter.insertion.loads == 0,
                 "strict insertion shape rejects before any queue/native load");
@@ -1470,7 +1470,7 @@ public final class GridModuleTest {
             for (String text : List.of("", " \t音楽=α\n", "x".repeat(1024), "𝄞".repeat(512))) {
                 JsonObject p = renameTarget("", "Lead");
                 p.addProperty(key, text);
-                HostBridge.validate("grid.modules.rename", p);
+                GridModule.validateParams("grid.modules.rename", p);
             }
         }
         for (String key : List.of("trackId", "moduleId"))

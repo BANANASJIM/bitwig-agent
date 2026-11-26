@@ -100,7 +100,9 @@ public final class ExtensionModuleTest {
                     op.result.isCompletedExceptionally() && f.tasks.isEmpty(),
                     "invalid params rejected before scheduling: " + bad);
         }
-        check(HostBridge.supportedMethods().contains("extension.restart"), "method is registered with the bridge");
+        check(
+                TransportMixFixture.SPECS.methods().contains("extension.restart"),
+                "method is registered with the bridge");
     }
 
     private static void buildIdentityDefaultsToUnknown() {
