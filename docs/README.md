@@ -7,7 +7,7 @@ These guides describe the public implementation and supported user workflows. Th
 | Goal | Guide |
 |---|---|
 | Install the released Python tools and matching extension | [Quickstart](../README.md#quickstart), then [installation details](../INSTALL.md) |
-| Choose persistent uv, ephemeral uvx or Arch/AUR installation | [uv alternatives](../INSTALL.md#persistent-uv-tools-and-ephemeral-uvx) · [Arch/AUR](../INSTALL.md#arch-linux-aur) |
+| Choose persistent pipx, one-off pipx run or Arch/AUR installation | [pipx alternatives](../INSTALL.md#persistent-pipx-installation-and-one-off-runs) · [Arch/AUR](../INSTALL.md#arch-linux-aur) |
 | Connect an MCP client without changing global settings automatically | [MCP connection](../README.md#3-connect-your-mcp-client) |
 | Operate tracks/devices/MIDI/Grid safely | [Usage and safety](../USAGE.md) |
 | Get production guidance, screenshot help, diagnosis and controlled A/B | [Portable agent skill](https://github.com/BANANASJIM/bitwig-agent/tree/main/skills/bitwig-agent) |

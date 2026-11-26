@@ -1,30 +1,30 @@
 # Installation details
 
-Start with the [three-step quickstart](README.md#quickstart). Choose an isolated [uv tool environment](https://docs.astral.sh/uv/guides/tools/) from [PyPI](https://pypi.org/project/bitwig-agent/), or the [Arch/AUR package](#arch-linux-aur). Both supply the same-version prebuilt controller extension without a Java compiler. Versions **`0.2.0` and later require Bitwig 6.1.4 and its exact loaded host JAR for private Grid/modulator access**; it replaces `0.1.2`'s 6.1.3 bindings rather than supporting both hosts. It also includes the stop/seek and track-selection fixes. Native evidence is bounded to Linux / API 25; platform-specific installer defaults do not establish macOS or Windows host support.
+Start with the [three-step quickstart](README.md#quickstart). Choose an isolated [pipx](https://pipx.pypa.io/) environment from [PyPI](https://pypi.org/project/bitwig-agent/), or the [Arch/AUR package](#arch-linux-aur). Both supply the same-version prebuilt controller extension without a Java compiler. Versions **`0.2.0` and later require Bitwig 6.1.4 and its exact loaded host JAR for private Grid/modulator access**; it replaces `0.1.2`'s 6.1.3 bindings rather than supporting both hosts. It also includes the stop/seek and track-selection fixes. Native evidence is bounded to Linux / API 25; platform-specific installer defaults do not establish macOS or Windows host support.
 
 Bitwig documents its platform extension directories and manual controller registration in its [official controller-extension installation guide](https://www.bitwig.com/support/technical_support/how-do-i-add-a-controller-extension-or-script-17/).
 
-## Persistent uv tools and ephemeral uvx
+## Persistent pipx installation and one-off runs
 
-`uv tool install` creates a persistent isolated environment and exposes the package's entrypoints on your tool `PATH`. Use it for normal MCP configuration and repeated CLI use:
+`pipx install` creates a persistent isolated environment and exposes the package's entrypoints on your `PATH`. Use it for normal MCP configuration and repeated CLI use (plain `pip install` into a virtual environment of your choice works the same way):
 
 ```sh
-uv tool install bitwig-agent
+pipx install bitwig-agent
 bitwig-agent-install
 bitwig-agent-install --mcp-config
 ```
 
 The first installer command changes your user extension directory; run it only when you intend to install/replace that extension. The second only prints MCP configuration. Neither starts Bitwig or enables the controller.
 
-`uvx` (`uv tool run`) instead runs a command in a cached, disposable tool environment without a persistent tool installation. It is useful for a one-off **offline** discovery command:
+`pipx run` instead runs a command in a cached, disposable environment without a persistent installation. It is useful for a one-off **offline** discovery command:
 
 ```sh
-uvx --from bitwig-agent==0.4.0 bitwig-agent-rpc list
+pipx run --spec bitwig-agent==0.4.0 bitwig-agent-rpc list
 ```
 
-Here `--from` identifies the distribution; `bitwig-agent-rpc` identifies the entrypoint. Do not assume a generated absolute interpreter path inside an ephemeral uv cache is durable MCP configuration. Prefer the persistent installation above, or deliberately configure your client to invoke `uvx --from bitwig-agent==0.4.0 bitwig-agent` itself, with uv on that client's `PATH`. That option may need downloads and makes cache availability part of startup.
+Here `--spec` identifies the distribution; `bitwig-agent-rpc` identifies the entrypoint. Do not assume a generated absolute interpreter path inside an ephemeral cache is durable MCP configuration; prefer the persistent installation above.
 
-For a reproducible installation, pin a reviewed version with `uv tool install bitwig-agent==0.4.0`. The Python tools come from [this PyPI project](https://pypi.org/project/bitwig-agent/); the matching controller extension is downloaded separately from GitHub by the installer.
+For a reproducible installation, pin a reviewed version with `pipx install bitwig-agent==0.4.0`. The Python tools come from [this PyPI project](https://pypi.org/project/bitwig-agent/); the matching controller extension is downloaded separately from GitHub by the installer.
 
 ## Arch Linux (AUR)
 
@@ -42,7 +42,7 @@ cd bitwig-agent
 makepkg -si
 ```
 
-This builds the Python component from release source and packages the matching prebuilt Java extension. Runtime dependencies come from pacman; there is no runtime uv/private-venv requirement. `makepkg` may request privilege for dependency/package installation through pacman; **never run makepkg itself as root**.
+This builds the Python component from release source and packages the matching prebuilt Java extension. Runtime dependencies come from pacman; there is no runtime pipx/private-venv requirement. `makepkg` may request privilege for dependency/package installation through pacman; **never run makepkg itself as root**.
 
 Maintainers can also build the mirrored recipe in the source repository's [`packaging/aur`](https://github.com/BANANASJIM/bitwig-agent/tree/main/packaging/aur) directory. The published AUR repository contains only the recipe, generated metadata and license.
 
@@ -55,7 +55,7 @@ bitwig-agent-install --extension /usr/share/bitwig-agent/BitwigAgent.bwextension
 bitwig-agent-install --mcp-config
 ```
 
-Do not run this user-extension installation with `sudo`. Repeat the explicit copy after upgrading the system package, then reload/restart the controller; the system asset and already-copied user extension are separate files. Avoid leaving a uv-installed command ahead of the Arch package on `PATH`; choose one Python installation and regenerate MCP configuration from it.
+Do not run this user-extension installation with `sudo`. Repeat the explicit copy after upgrading the system package, then reload/restart the controller; the system asset and already-copied user extension are separate files. Avoid leaving a pipx-installed command ahead of the Arch package on `PATH`; choose one Python installation and regenerate MCP configuration from it.
 
 Bitwig is an optional host dependency, not a forced host upgrade. Installing a newer `bitwig-studio` package does not update your copied extension or relax its private version/hash gate. Keep your licensed, compatible host under your control. See [package design and publication boundaries](docs/packaging.md).
 
@@ -74,7 +74,7 @@ If you prefer to download the assets manually, verify their hashes against `SHA2
 
 ```sh
 sha256sum --check SHA256SUMS
-uv tool install ./bitwig_agent-0.4.0-py3-none-any.whl
+pipx install ./bitwig_agent-0.4.0-py3-none-any.whl
 bitwig-agent-install --extension ./BitwigAgent.bwextension
 ```
 
@@ -99,25 +99,25 @@ A different existing extension is backed up to `DESTINATION_PARENT/.bitwig-agent
 For a PyPI installation, review the new release's compatibility before upgrading both components:
 
 ```sh
-uv tool upgrade bitwig-agent
+pipx upgrade bitwig-agent
 bitwig-agent-install
 ```
 
-`uv tool upgrade` respects an existing version pin; change that constraint with `uv tool install bitwig-agent==0.4.0` when selecting that release. To switch an older GitHub-wheel installation to PyPI, use `uv tool install --force bitwig-agent`, then run `bitwig-agent-install`. For intentional direct-wheel installations, use `uv tool install --force <new-wheel-URL>` instead.
+`pipx upgrade` respects an existing version pin; change that constraint with `pipx install --force bitwig-agent==0.4.0` when selecting that release. To switch an older GitHub-wheel installation to PyPI, use `pipx install --force bitwig-agent`, then run `bitwig-agent-install`. For intentional direct-wheel installations, use `pipx install --force <new-wheel-URL>` instead.
 
 Do not upgrade only the Python half. A restore similarly requires both matching versions; an extension backup alone is not a full rollback. Regenerate MCP configuration after replacing or moving the environment, then reload the controller.
 
 ## Troubleshooting
 
-### `uv` or a tool command is not found
+### `pipx` or a tool command is not found
 
-Follow the official [uv installation instructions](https://docs.astral.sh/uv/getting-started/installation/), then open a new shell. If uv is available but `bitwig-agent-install` or `bitwig-agent-rpc` is not:
+Follow the official [pipx installation instructions](https://pipx.pypa.io/stable/installation/), then open a new shell. If pipx is available but `bitwig-agent-install` or `bitwig-agent-rpc` is not:
 
 ```sh
-uv tool update-shell
+pipx ensurepath
 ```
 
-Restart the shell afterward. See [uv's tool PATH guidance](https://docs.astral.sh/uv/guides/tools/).
+Restart the shell afterward.
 
 ### Terminal works, GUI MCP client does not
 

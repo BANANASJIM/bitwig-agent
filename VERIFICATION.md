@@ -10,23 +10,22 @@ The playback-stop regression failed against the old implementation after the fak
 
 ## Reproducible host-free checks
 
-Run from the repository root. Prerequisites are Python 3.11+, `uv`, **JDK 25+**, and your own installed Bitwig 6.1.4 / API 25 JAR for current source. Its loader superclass requires JDK 25 to read; generated extension classes target Java 11. Neither the host JAR nor the JDK is redistributed. The build downloads and verifies pinned Gson on first use, so that first build requires network access.
+Run from the repository root. Prerequisites are [pixi](https://pixi.sh/latest/installation/); building the extension also needs your own installed Bitwig 6.1.4 / API 25 JAR. Pixi supplies Python and JDK 25 (the loader superclass requires JDK 25 to read; generated extension classes target Java 11). The host JAR is not redistributed. The build downloads and verifies pinned Gson on first use, so that first build requires network access.
 
 ```sh
-uv sync --locked
-export BITWIG_API_JAR=/opt/bitwig-studio/bin/bitwig.jar
-uv run --locked python scripts/build.py
-uv run --locked python scripts/check.py --report build/checks.json
+pixi install --locked
+pixi run build
+pixi run python scripts/check.py --report build/checks.json
 ```
 
-Set `BITWIG_API_JAR` to your installation if different. If the default Java tools are older, set `JAVA=/path/to/jdk25/bin/java` and `JAVAC=/path/to/jdk25/bin/javac`. Building creates `build/BitwigAgent.bwextension`; it does not install or activate it. The default check runs the offline Python, simulated-host Java and MCP/Java fixture layers. It never starts or manipulates Bitwig. Missing prerequisites for a requested layer are failures, not a skipped success.
+`pixi run build` compiles against `/opt/bitwig-studio/bin/bitwig.jar` unless `BITWIG_API_JAR` names another; the Java and fixture layers use the checksum-pinned public extension API unless it is set. `pixi run check` runs the same default layers without a report. Building creates `build/BitwigAgent.bwextension`; it does not install or activate it. The default check runs the offline Python, simulated-host Java and MCP/Java fixture layers. It never starts or manipulates Bitwig. Missing prerequisites for a requested layer are failures, not a skipped success.
 
 Run layers individually when diagnosing a failure:
 
 ```sh
-uv run --locked pytest -q
-uv run --locked python scripts/test-java.py
-uv run --locked python scripts/smoke-mcp-java.py
+pixi run test
+pixi run test-java
+pixi run fixture
 ```
 
 Or select layers with `scripts/check.py --layer offline`, `--layer java`, or `--layer fixture`; repeat `--layer` to combine them. Keep the generated report with the exact source snapshot and prerequisites used. These instructions require no historical test artifacts.
@@ -44,19 +43,16 @@ Or select layers with `scripts/check.py --layer offline`, `--layer java`, or `--
 Offline interface discovery is also available without the extension:
 
 ```sh
-uv run --locked bitwig-agent-rpc list
-uv run --locked bitwig-agent-rpc describe notes.edit
-uv run --locked bitwig-agent-rpc tracks.set --help
+pixi run bitwig-agent-rpc list
+pixi run bitwig-agent-rpc describe notes.edit
+pixi run bitwig-agent-rpc tracks.set --help
 ```
 
 These commands describe the implemented surface, not a successful native operation. `status` and other host-facing commands require the running extension.
 
 ### Optional music-analysis dependencies
 
-```sh
-uv sync --locked --group native-music
-uv run --locked pytest -q
-```
+The default pixi environment already includes them (numpy, scipy, soundfile), so `pixi run test` runs the PCM checks.
 
 NumPy, SciPy and SoundFile are optional numeric/file-decoding dependencies, not production adapter requirements. Install this group to exercise optional audio-analysis tests; inspect the test report rather than interpreting omitted dependency-dependent checks as coverage.
 
@@ -97,13 +93,13 @@ Use the [pinned skills-ref command](CONTRIBUTING.md#agent-skill-maintenance) to 
 Native testing is explicitly opt-in. Read the preflight configuration documentation without contacting Bitwig:
 
 ```sh
-uv run --locked python scripts/smoke-native.py --help
+pixi run python scripts/smoke-native.py --help
 ```
 
 The preflight requires Linux `/proc`, `xprop`, the Python development environment, an already running extension and a deliberately prepared disposable project. Its explicit JSON configuration identifies the fixture's absolute path, current process, actual display/window, endpoint, a new artifact directory and confirmed display isolation. Populate these from fresh local observation; never reuse another run's identities. After independently confirming them, invoke:
 
 ```sh
-uv run --locked python scripts/smoke-native.py \
+pixi run python scripts/smoke-native.py \
   --allow-native --config /absolute/path/native-preflight.json
 ```
 

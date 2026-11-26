@@ -44,7 +44,7 @@ def main() -> None:
     for test in tests:
         print(f"RUN {test}", flush=True)
         try:
-            subprocess.run([os.environ.get("JAVA", "java"), "-ea", "-cp", classpath, test], check=True, timeout=60)
+            subprocess.run(["java", "-ea", "-cp", classpath, test], check=True, timeout=60)
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
             failures.append(test)
             print(f"FAIL {test}: {error}", flush=True)
