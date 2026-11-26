@@ -21,11 +21,8 @@ public final class TrackLifecycleModuleTest {
         return p;
     }
 
-    /** The one mix module of a fixture: the lifecycle module names new tracks through it and tests read through it. */
-    private static final java.util.Map<HostFixture, MixModule> MIXES = new java.util.WeakHashMap<>();
-
     private static MixModule mix(HostFixture f) {
-        return MIXES.computeIfAbsent(f, fixture -> fixture.services.mix());
+        return f.services.sharedMix();
     }
 
     private static TrackLifecycleModule lifecycle(HostFixture f) {

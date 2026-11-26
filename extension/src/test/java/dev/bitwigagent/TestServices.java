@@ -120,6 +120,14 @@ final class TestServices {
         return new MeterModule(scheduler, window, trackRefs, transportSafety);
     }
 
+    private MixModule shared;
+
+    /** The one mix module of this fixture, for tests that read through the module the lifecycle module names tracks with. */
+    MixModule sharedMix() {
+        if (shared == null) shared = mix();
+        return shared;
+    }
+
     MixModule mix() {
         return new MixModule(host, scheduler, window, trackRefs, selection);
     }

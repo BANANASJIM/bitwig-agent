@@ -23,6 +23,7 @@ CORE_TESTS = (
     "dev/bitwigagent/core/SchemaValidatorTest.java",
 )
 TIMEOUT_SECONDS = 600
+JUNIT_HEAP = "-Xmx1g"
 
 
 def main() -> None:
@@ -55,6 +56,7 @@ def main() -> None:
     subprocess.run(
         [
             "java",
+            JUNIT_HEAP,
             *agent,
             "-ea",
             "-jar",
