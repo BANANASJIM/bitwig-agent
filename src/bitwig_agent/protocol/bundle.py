@@ -19,6 +19,7 @@ def export_bundle() -> dict[str, Any]:
                 "readOnly": spec.read_only,
                 "projectWrite": spec.project_write,
                 "requires": list(spec.requires),
+                "inspect": spec.inspect,
                 "defaultTimeoutMs": spec.default_timeout_ms,
                 "maxTimeoutMs": spec.max_timeout_ms,
                 "description": spec.description,

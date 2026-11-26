@@ -204,7 +204,7 @@ async def test_result_object_is_the_structured_content_without_wrapper(mcp_sessi
 
 
 async def test_error_object_is_the_structured_content_and_flags_is_error(mcp_session, host):
-    error = {"code": "stale", "reason": "stale_target", "message": "changed", "next": "tracks.list"}
+    error = {"code": "stale", "reason": "target_changed", "message": "changed", "next": "tracks.list"}
     host.reply = lambda request: {"id": request["id"], "error": error}
     response = await mcp_session.call_tool("tracks.list", {})
     assert response.is_error is True

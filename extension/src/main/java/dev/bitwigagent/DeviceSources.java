@@ -436,9 +436,7 @@ final class DeviceSources {
             check.run();
             UUID expected = trackUuid(source);
             Object device = a.read(Field.TARGET, source.device);
-            if (device == null)
-                throw Errors.notApplied(
-                        Reason.INVALID_TARGET, "The device has no native target; read the device again.");
+            if (device == null) throw Errors.targetNotFound(source.ref(), "The device has no native target.");
             if (!a.is(Kind.DEVICE, device))
                 throw Errors.notApplied(Reason.UNSUPPORTED_SCOPE, "The device is not a mapped root device.");
             a.requireModelThread(device);
@@ -452,16 +450,20 @@ final class DeviceSources {
             a.documentThread();
             check.run();
             if (!before.trackId.equals(trackUuid(before.source)))
-                throw Errors.notApplied(Reason.TARGET_CHANGED, "The device's track changed during the read.");
+                throw changed("Another track is observed for this device than the one read.");
             if (a.read(Field.TARGET, before.source.device) != before.device)
-                throw Errors.notApplied(Reason.TARGET_CHANGED, "The device changed during the read.");
+                throw changed("Another device is behind this ref than the one read.");
             a.requireModelThread(before.device);
             Object owner = owningTrack(before.device), identity = trackIdentity(owner);
             requireTrackUuid(owner, identity, before.trackId);
             if (owner != before.owner || identity != before.identity)
-                throw Errors.notApplied(
-                        Reason.TARGET_CHANGED, "The device's track or its channel alias changed during the read.");
+                throw changed("Another track owns this device than the one read.");
             check.run();
+        }
+
+        /** The one failure of an identity that moved under a request: the object behind the ref is not the one read. */
+        private static RpcException changed(String message) {
+            return Errors.targetChanged(message, null);
         }
 
         private static UUID trackUuid(Source source) {
@@ -494,9 +496,7 @@ final class DeviceSources {
             if (!(value instanceof UUID))
                 throw Errors.notApplied(
                         Reason.NATIVE_UNAVAILABLE, "The device's native track UUID is missing or unsupported.");
-            if (!expected.equals(value))
-                throw Errors.notApplied(
-                        Reason.TARGET_CHANGED, "The device belongs to another track than the one read.");
+            if (!expected.equals(value)) throw changed("Another track owns this device than the one read.");
         }
 
         static final class Capture {

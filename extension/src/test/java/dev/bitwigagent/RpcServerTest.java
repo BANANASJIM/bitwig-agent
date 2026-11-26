@@ -370,6 +370,44 @@ public final class RpcServerTest {
         }
     }
 
+    private static JsonObject unknownResult() {
+        JsonObject result = new JsonObject();
+        result.addProperty("outcome", "unknown");
+        result.addProperty("reason", "not_observed");
+        return result;
+    }
+
+    @Test
+    void anUnknownResultPointsAtTheReadOfItsMethodUnlessItNamesOne() throws Exception {
+        String inspect = SPECS.get("ack").inspect;
+        assertEquals("status", inspect, "the spec of a write names its read");
+        assertNull(SPECS.get("status").inspect, "a read has none");
+        JsonObject bare = unknownResult();
+        JsonObject own = unknownResult();
+        own.addProperty("next", "inspect it yourself");
+        JsonObject[] answer = {bare};
+        try (RpcServer server = new RpcServer(0, SPECS, (method, params, until) -> {
+            CompletableFuture<JsonObject> future = new CompletableFuture<>();
+            future.complete(answer[0]);
+            return future;
+        })) {
+            server.start();
+            String ack = request("w", "{}", null).replace("status", "ack");
+            assertEquals(
+                    inspect,
+                    call(server, ack).getAsJsonObject("result").get("next").getAsString());
+            answer[0] = own;
+            assertEquals(
+                    "inspect it yourself",
+                    call(server, ack).getAsJsonObject("result").get("next").getAsString(),
+                    "a module's own next wins");
+            answer[0] = unknownResult();
+            assertFalse(call(server, request("r", "{}", null))
+                    .getAsJsonObject("result")
+                    .has("next"));
+        }
+    }
+
     @Test
     void queuedDeadline() throws Exception {
         CountDownLatch entered = new CountDownLatch(4);

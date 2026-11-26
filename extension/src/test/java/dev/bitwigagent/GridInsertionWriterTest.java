@@ -1113,7 +1113,7 @@ public final class GridInsertionWriterTest {
         }
         Fixture detached = new Fixture();
         detached.model.proxy.put(TARGET, null);
-        assertRpcError("invalid_target", () -> ack(detached));
+        assertRpcError("target_not_found", () -> ack(detached));
     }
 
     private static JsonObject ack(Fixture f) {

@@ -26,6 +26,8 @@ public final class MethodSpecs {
         public final boolean readOnly, projectWrite, engineRequired;
         public final int defaultTimeoutMs, maxTimeoutMs;
         public final SchemaValidator params, timeout;
+        /** The read method an unknown result of this write points at; null for a read. */
+        public final String inspect;
 
         private Spec(
                 boolean readOnly,
@@ -33,7 +35,9 @@ public final class MethodSpecs {
                 int defaultTimeoutMs,
                 int maxTimeoutMs,
                 SchemaValidator params,
-                SchemaValidator timeout) {
+                SchemaValidator timeout,
+                String inspect) {
+            this.inspect = inspect;
             this.readOnly = readOnly;
             this.projectWrite = requires.contains("projectReady");
             this.engineRequired = requires.contains("engine");
@@ -191,8 +195,15 @@ public final class MethodSpecs {
         }
         int def = integer(method, "defaultTimeoutMs"), max = integer(method, "maxTimeoutMs");
         if (def < minTimeoutMs || def > max) throw new IllegalStateException(name + " has an invalid timeout range");
+        JsonElement inspect = method.get("inspect");
         return new Spec(
-                flag(method, "readOnly"), requires, def, max, paramsSchema(name, method), timeoutSchema(name, method));
+                flag(method, "readOnly"),
+                requires,
+                def,
+                max,
+                paramsSchema(name, method),
+                timeoutSchema(name, method),
+                inspect == null || inspect.isJsonNull() ? null : inspect.getAsString());
     }
 
     private static JsonObject properties(String name, JsonObject method) {

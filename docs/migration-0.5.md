@@ -18,7 +18,8 @@ An old MCP configuration now starts the CLI instead of the server and the client
 |---|---|
 | `status`, `completion`, `matchesRequested`, `batchStatus`, `not_dispatched` on results | one top-level `outcome`: `already_matched`, `applied`, `sent`, `not_applied`, `unknown` (the worst entry wins); entries are `{requested, observed?, outcome, reason?}` |
 | errors with many method-specific reasons, some after the write had started | an error always means nothing changed; ten codes and a closed reason list (`REASONS` in `src/bitwig_agent/protocol/base.py`); a failure after dispatch is `outcome: unknown` |
-| `stale_target`, `stale_context` | `target_not_found` (nothing there), `target_changed` (something else there; `current` holds the ref found), `unsafe_state` (transport, recording or automation-write state moved); `stale_target` and `stale_context` are retired: still in `REASONS`, to be removed in P2-Z part B once P2-C lands (until then only the root-device resolver emits them) |
+| `stale_target`, `stale_context` | `target_not_found` (nothing there), `target_changed` (something else there; `current` holds the ref found), `unsafe_state` (transport, recording or automation-write state moved); `stale_target` and `stale_context` are removed from the vocabulary |
+| an `unknown` result without a pointer to what to look at | `next` names the read method of the write that was called (`transport.set` → `transport.get`), unless the result names one itself |
 | `unresolved_mutation` and `extension.restart` to clear it | `pending` / `unresolved` with `next`; release with `ack <id>` after inspecting |
 | `grid_verification_failed`, `grid_bounds_exceeded` | `readback_mismatch`, `out_of_bounds` |
 | requests without a protocol field | every request carries `"protocol":"0.5"` |

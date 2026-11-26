@@ -157,7 +157,7 @@ public final class MethodSpecsTest {
         MethodSpecs.Vocabulary vocabulary = MethodSpecs.load().vocabulary();
         assertEquals(bundle().get("protocol").getAsString(), vocabulary.protocol);
         assertEquals("unknown", vocabulary.outcomes.get(vocabulary.outcomes.size() - 1), "worst outcome last");
-        assertEquals("stale", vocabulary.reasons.get("stale_target"));
+        assertEquals("stale", vocabulary.reasons.get("target_changed"));
         assertTrue(vocabulary.errorCodes.containsAll(vocabulary.reasons.values()));
     }
 

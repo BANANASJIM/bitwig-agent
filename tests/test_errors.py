@@ -3,6 +3,7 @@ import pytest
 from bitwig_agent.core import composed
 from bitwig_agent.core.invoke import Error, Result, invoke
 from bitwig_agent.errors import HostChanged, bridge_error, unknown_result
+from bitwig_agent.protocol import TOOLS, export_bundle
 from bitwig_agent.protocol.base import REASONS, SUCCEEDED, ErrorCode, Outcome, vocabulary
 
 pytestmark = pytest.mark.anyio
@@ -19,10 +20,10 @@ def test_success_is_three_outcomes():
 
 
 def test_an_error_carries_the_code_of_its_reason_and_never_an_outcome():
-    error = bridge_error("stale_target", "moved", next="Re-read tracks.list.", track="t").error
+    error = bridge_error("target_changed", "moved", next="Re-read tracks.list.", track="t").error
     assert error == {
         "code": "stale",
-        "reason": "stale_target",
+        "reason": "target_changed",
         "message": "moved",
         "next": "Re-read tracks.list.",
         "details": {"track": "t"},
@@ -59,3 +60,16 @@ async def test_failed_follows_the_outcome():
     assert not Result({"outcome": "sent"}).failed
     assert Result({"outcome": "not_applied"}).failed
     assert Error(bridge_error("busy", "x").error).failed
+
+
+def test_every_host_write_names_the_host_read_an_unknown_result_points_at():
+    methods = export_bundle()["methods"]
+    for name, spec in TOOLS.items():
+        if spec.host and not spec.read_only:
+            assert spec.inspect is not None
+            assert TOOLS[spec.inspect].host
+            assert TOOLS[spec.inspect].read_only
+            assert methods[name]["inspect"] == spec.inspect
+        else:
+            assert spec.inspect is None
+            assert methods[name]["inspect"] is None

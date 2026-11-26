@@ -63,7 +63,7 @@ _REASONS_BY_CODE: dict[ErrorCode, tuple[str, ...]] = {
         "no_notes",
         "unverifiable_clip",
     ),
-    ErrorCode.STALE: ("stale_context", "stale_target", "target_not_found", "target_changed", "unknown_hold"),
+    ErrorCode.STALE: ("target_not_found", "target_changed", "unknown_hold"),
     ErrorCode.CONFLICT: (
         "target_exists",
         "overlap",
@@ -219,6 +219,8 @@ class ToolSpec:
     annotations: Annotations | None = None
     summary: str = ""
     records: str | None = None
+    inspect: str | None = None
+    """The read method that shows the state this write acted on; the registry fills it for every host write."""
 
     @property
     def project_write(self) -> bool:

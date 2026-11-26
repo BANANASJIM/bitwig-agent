@@ -135,7 +135,7 @@ def test_native_uncertainty_latches_before_another_operation(envelope):
         guard.observe({"result": {"outcome": "applied"}})
 
 
-@pytest.mark.parametrize("reason", ["invalid_params", "stale_target"])
+@pytest.mark.parametrize("reason", ["invalid_params", "target_changed"])
 def test_errors_change_nothing_and_do_not_poison_native_run(reason):
     guard = native_smoke.NativeOutcomeGuard()
     guard.observe({"error": {"code": REASONS[reason].value, "reason": reason, "message": "m"}})
