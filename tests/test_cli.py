@@ -835,7 +835,7 @@ async def test_help_layers_are_plain_text_on_stdout_and_exit_zero(monkeypatch):
         assert "Exit codes:" in out.stdout
         assert "\x1b" not in out.stdout
     overview = (await cli.execute(["--help"])).stdout
-    assert len(overview.encode()) < 2500
+    assert len(overview.encode()) < 3000  # 2860 B measured with the loop text; a regression guard
     assert all(f"  {name} " in overview for name in {n.split(".")[0] for n in TOOLS})
     resource = (await cli.execute(["tracks", "--help"])).stdout
     assert "\n  list " in resource

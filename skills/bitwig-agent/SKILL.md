@@ -14,7 +14,7 @@ Turn the user's musical goal into a small, inspectable next step. The CLI knows 
 
 ## Entry
 
-1. Run `bitwig-agent --help`, then `bitwig-agent help loop`, and follow that loop.
+1. Run `bitwig-agent --help` and follow the loop it prints.
 2. Dots become spaces: method `tracks.sends.set` is the command `bitwig-agent tracks sends set`, and MCP tools use the dotted names.
 3. Details come from `bitwig-agent <resource> <verb> --help` and `bitwig-agent help <topic|method>` (topics: `loop`, `outcomes`, `recovery`, `refs`, `values`). Do not guess fields or copy them from memory.
 

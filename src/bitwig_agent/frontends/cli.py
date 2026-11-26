@@ -14,6 +14,7 @@ import os
 import re
 import shlex
 import sys
+import textwrap
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -180,7 +181,10 @@ def overview() -> str:
             "Usage:",
             "  bitwig-agent <resource> <verb> [--field=value]... [--] [ARGS]   (tracks.set is the same as tracks set)",
             "  bitwig-agent <resource> --help | <resource> <verb> --help | help <resource> <verb>",
-            f"  bitwig-agent help <topic>   topics: {', '.join(views.help()['topics'])}   (start with loop)",
+            f"  bitwig-agent help <topic>   topics: {', '.join(views.help()['topics'])}",
+            "",
+            "Loop:",
+            *textwrap.wrap(views.help("loop")["text"], 100, initial_indent="  ", subsequent_indent="  "),
             "",
             "Resources:",
             *(f"  {name:<{width}}  {count} {'method' if count == 1 else 'methods'}" for name, count in counts.items()),
