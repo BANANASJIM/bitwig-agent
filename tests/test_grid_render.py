@@ -1,7 +1,6 @@
 """grid.render against a fake host serving grid.get pages (real 131-module excerpt as fixture)."""
 
 import asyncio
-import copy
 import json
 import re
 import shutil
@@ -10,6 +9,7 @@ from pathlib import Path
 from typing import cast
 
 import pytest
+from fakes import LayoutGrid
 
 from bitwig_agent import grid_render
 from bitwig_agent.catalog import CLIENT_SIDE, validate_call
@@ -19,35 +19,6 @@ from bitwig_agent.client import BridgeError
 TRACK = "12345678-1234-1234-1234-123456789abc"
 TARGET = {"trackId": TRACK, "deviceIndex": 0, "expectedDeviceName": "Poly Grid"}
 FIXTURE = json.loads((Path(__file__).parent / "fixtures" / "grid_layout.json").read_text(encoding="utf-8"))
-
-
-class FakeGrid:
-    def __init__(self, modules, connections, cap=64):
-        self.modules = copy.deepcopy(modules)
-        self.connections = copy.deepcopy(connections)
-        self.cap = cap  # the real host returns fewer rows than asked
-        self.calls = []
-
-    async def call(self, method, params, timeout_ms=5000):
-        self.calls.append((method, copy.deepcopy(params)))
-        assert method == "grid.get"
-        rows = [
-            m
-            for m in self.modules
-            if m["instanceId"] in params.get("moduleIds", [m["instanceId"] for m in self.modules])
-        ]
-        page = rows[params["moduleOffset"] : params["moduleOffset"] + min(params["moduleLimit"], self.cap)]
-        page = [m if params["includeParameters"] else {k: v for k, v in m.items() if k != "parameters"} for m in page]
-        return {
-            "status": "observed",
-            "modules": page,
-            "connections": self.connections,
-            "window": {
-                "offset": params["moduleOffset"],
-                "total": len(rows),
-                "complete": params["moduleOffset"] + len(page) >= len(rows),
-            },
-        }
 
 
 def mod(name, typ, x, y, w=1, h=1, inputs=("IN",), outputs=("OUT",), custom=None, iid=None):  # noqa: PLR0913, PLR0917
@@ -76,7 +47,7 @@ def run(host, tmp_path, name="out.svg", **extra):
 
 
 def test_fixture_pages_completely_and_renders_wellformed_svg(tmp_path):
-    host = FakeGrid(FIXTURE["modules"], FIXTURE["connections"])
+    host = LayoutGrid(FIXTURE["modules"], FIXTURE["connections"])
     result = run(host, tmp_path)
     assert len(FIXTURE["modules"]) > 128
     assert result["moduleCount"] == len(FIXTURE["modules"])
@@ -105,7 +76,7 @@ def test_overlaps_unconnected_sections_and_density(tmp_path):
         mod("note", "Comment", 8, 0, 3, 1, inputs=(), outputs=()),
     ]
     mods[4]["parameters"] = [{"parameterId": "TEXT", "value": "hello <&> world"}]
-    host = FakeGrid(mods, [cable("H: a", "H: b"), cable("H: b", "M: c")])
+    host = LayoutGrid(mods, [cable("H: a", "H: b"), cable("H: b", "M: c")])
     result = run(host, tmp_path, namespace="H: ")
     assert result["overlapCount"] == 1
     names = {result["overlaps"][0][0]["name"], result["overlaps"][0][1]["name"]}
@@ -136,7 +107,7 @@ def test_categories_come_from_one_table():
 
 def test_show_connections_false_and_scale(tmp_path):
     mods = [mod("a", "Clock", 0, 0), mod("b", "AD", 3, 0)]
-    host = FakeGrid(mods, [cable("a", "b")])
+    host = LayoutGrid(mods, [cable("a", "b")])
     run(host, tmp_path, "on.svg")
     run(host, tmp_path, "off.svg", showConnections=False, scale=2)
     on, off = (ET.parse(tmp_path / n).getroot() for n in ("on.svg", "off.svg"))
@@ -146,7 +117,7 @@ def test_show_connections_false_and_scale(tmp_path):
 
 
 def test_refuses_overwrite_unless_asked(tmp_path):
-    host = FakeGrid([mod("a", "Clock", 0, 0)], [])
+    host = LayoutGrid([mod("a", "Clock", 0, 0)], [])
     run(host, tmp_path)
     host.calls.clear()
     with pytest.raises(BridgeError) as err:
@@ -157,7 +128,7 @@ def test_refuses_overwrite_unless_asked(tmp_path):
 
 
 def test_incomplete_paging_fails_instead_of_drawing_part(tmp_path):
-    host = FakeGrid([mod(f"m{i}", "Add", i * 2, 0) for i in range(5)], [])
+    host = LayoutGrid([mod(f"m{i}", "Add", i * 2, 0) for i in range(5)], [])
     original = host.call
 
     async def short(method, params, timeout_ms=5000):
@@ -201,7 +172,7 @@ def test_validation_and_exposure(tmp_path):
 
 
 def test_png_uses_converter_or_errors_clearly(tmp_path, monkeypatch):
-    host = FakeGrid([mod("a", "Clock", 0, 0)], [])
+    host = LayoutGrid([mod("a", "Clock", 0, 0)], [])
     monkeypatch.setattr(grid_render.shutil, "which", lambda name: None)
     with pytest.raises(BridgeError) as err:
         run(host, tmp_path, "a.png", format="png")

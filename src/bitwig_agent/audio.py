@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from bitwig_agent import audio_analysis
-from bitwig_agent.client import BridgeError
+from bitwig_agent.errors import BridgeError, bridge_error
 
 NODE = "Bitwig Studio"
 SINK = "bwtest"
@@ -31,18 +31,11 @@ RUN_TIMEOUT = 5.0
 RATE = 48000
 
 
-def fail(code: str, message: str, outcome: str = "not_dispatched", **details: Any) -> BridgeError:
-    error: dict[str, Any] = {"code": code, "message": message, "outcome": outcome}
-    if details:
-        error["details"] = details
-    return BridgeError(error)
-
-
 async def require_engine(bridge: Any, timeout_ms: int) -> None:
     """Fail fast when status observes the audio engine inactive: a capture would only record silence."""
     status = await bridge.call("status", {}, min(timeout_ms, 5000))
     if status.get("engineActive") is False:
-        raise fail(
+        raise bridge_error(
             "engine_inactive",
             "The audio engine is not active for this project (status.engineActive=false), so playback would be silent. "
             "Run project.activateEngine, confirm engineActive=true, then retry. Nothing was dispatched.",
@@ -55,9 +48,9 @@ def run(args: list[str], timeout: float = RUN_TIMEOUT) -> tuple[int, str, str]:
     try:
         done = subprocess.run(args, capture_output=True, text=True, timeout=timeout, check=False)
     except subprocess.TimeoutExpired as exc:
-        raise fail("audio_tool_timeout", f"{args[0]} did not finish within {timeout:g}s", "unknown") from exc
+        raise bridge_error("audio_tool_timeout", f"{args[0]} did not finish within {timeout:g}s", "unknown") from exc
     except OSError as exc:
-        raise fail("audio_tool_failed", f"Cannot run {args[0]}: {exc.strerror}") from exc
+        raise bridge_error("audio_tool_failed", f"Cannot run {args[0]}: {exc.strerror}") from exc
     return done.returncode, done.stdout, done.stderr
 
 
@@ -70,10 +63,10 @@ sleep = asyncio.sleep
 
 def check_platform() -> None:
     if not sys.platform.startswith("linux"):
-        raise fail("unsupported_platform", "audio.route and audio.capture need Linux with PipeWire")
+        raise bridge_error("unsupported_platform", "audio.route and audio.capture need Linux with PipeWire")
     missing = [t for t in TOOLS_NEEDED if shutil.which(t) is None]
     if missing:
-        raise fail("unsupported_platform", f"Missing PipeWire/PulseAudio tools: {', '.join(missing)}")
+        raise bridge_error("unsupported_platform", f"Missing PipeWire/PulseAudio tools: {', '.join(missing)}")
 
 
 def state_path() -> Path:
@@ -116,7 +109,7 @@ def parse_links(text: str) -> list[tuple[str, str]]:
 def current_links() -> list[tuple[str, str]]:
     code, out, err = run(["pw-link", "-l"])
     if code != 0:
-        raise fail("audio_tool_failed", f"pw-link -l failed: {err.strip() or code}")
+        raise bridge_error("audio_tool_failed", f"pw-link -l failed: {err.strip() or code}")
     return parse_links(out)
 
 
@@ -133,14 +126,14 @@ def ensure_sink() -> bool:
         ["pactl", "load-module", "module-null-sink", f"sink_name={SINK}", f"sink_properties=device.description={SINK}"]
     )
     if code != 0:
-        raise fail("audio_tool_failed", f"Cannot create the {SINK} null sink: {err.strip() or code}")
+        raise bridge_error("audio_tool_failed", f"Cannot create the {SINK} null sink: {err.strip() or code}")
     return True
 
 
 def link(args: list[str], what: str) -> None:
     code, _, err = run(["pw-link", *args])
     if code != 0 and "exists" not in err.lower():
-        raise fail("audio_tool_failed", f"pw-link {what} failed: {err.strip() or code}", "unknown")
+        raise bridge_error("audio_tool_failed", f"pw-link {what} failed: {err.strip() or code}", "unknown")
 
 
 def describe(links: list[tuple[str, str]]) -> dict[str, Any]:
@@ -159,7 +152,9 @@ def route(args: dict[str, Any]) -> dict[str, Any]:  # noqa: C901, PLR0912
         return {"mode": "status", **describe(links), "sinkExists": sink_exists(), "savedPrevious": saved}
     if mode == "silent":
         if not links and not saved:
-            raise fail("bitwig_not_found", f"No '{NODE}' output links in PipeWire; is Bitwig running and playing out?")
+            raise bridge_error(
+                "bitwig_not_found", f"No '{NODE}' output links in PipeWire; is Bitwig running and playing out?"
+            )
         created = ensure_sink()
         previous = {k: list(v) for k, v in saved.items()}
         for out, target in links:
@@ -221,7 +216,7 @@ async def isolate(bridge: Any, args: dict[str, Any], timeout_ms: int) -> dict[st
     if (
         solo and others
     ):  # the solo track itself may sound without a launcher clip (a Poly Grid, a held note): the real solo covers that
-        raise fail(
+        raise bridge_error(
             "not_isolated",
             f"soloTrack {solo} is not the only playing track (other tracks are playing: {[t['name'] for t in others]}); "
             "stop the others or pass stopOthers:true",
@@ -247,7 +242,7 @@ async def read_solo_states(bridge: Any, timeout_ms: int) -> dict[str, bool]:
         tid = row.get("trackId")
         got = await bridge.call("tracks.get", {"trackId": tid}, timeout_ms)
         if not isinstance(got.get("solo"), bool):
-            raise fail(
+            raise bridge_error(
                 "solo_unreadable",
                 f"Cannot read the solo state of track {row.get('name') or tid}; refusing to change solos it could not restore.",
                 "not_applied",
@@ -275,7 +270,7 @@ async def apply_solo(bridge: Any, solo: str, timeout_ms: int) -> tuple[dict[str,
     """
     previous = await read_solo_states(bridge, timeout_ms)
     if solo not in previous:
-        raise fail("unknown_track", f"soloTrack {solo} is not in the track bank (tracks.list)", "not_applied")
+        raise bridge_error("unknown_track", f"soloTrack {solo} is not in the track bank (tracks.list)", "not_applied")
     block: dict[str, Any] = {
         "soloed": solo,
         "previousSolo": sorted(t for t, v in previous.items() if v),
@@ -300,12 +295,12 @@ def bitwig_outputs() -> list[str]:
     """Bitwig's own output ports (out1, out2), from `pw-link -o`."""
     code, out, err = run(["pw-link", "-o"])
     if code != 0:
-        raise fail("audio_tool_failed", f"pw-link -o failed: {err.strip() or code}")
+        raise bridge_error("audio_tool_failed", f"pw-link -o failed: {err.strip() or code}")
     ports = [line.strip() for line in out.splitlines()]
     wanted = (f"{NODE}:out1", f"{NODE}:out2")
     found = [p for p in wanted if p in ports]
     if len(found) != len(wanted):
-        raise fail(
+        raise bridge_error(
             "bitwig_not_found",
             f"Expected '{NODE}:out1' and '{NODE}:out2' in pw-link -o; is Bitwig running with its audio engine on?",
         )
@@ -319,7 +314,7 @@ async def wait_for_inputs(node: str) -> list[str]:
         if code == 0 and set(wanted) <= {line.strip() for line in out.splitlines()}:
             return wanted
         await sleep(0.05)
-    raise fail("audio_tool_failed", f"The capture node {node} did not appear in PipeWire")
+    raise bridge_error("audio_tool_failed", f"The capture node {node} did not appear in PipeWire")
 
 
 async def capture(bridge: Any, args: dict[str, Any], timeout_ms: int) -> dict[str, Any]:  # noqa: C901, PLR0912, PLR0915
@@ -327,14 +322,14 @@ async def capture(bridge: Any, args: dict[str, Any], timeout_ms: int) -> dict[st
     seconds = args["seconds"]
     path = args["outPath"]
     if os.path.exists(path) and not args.get("overwrite", False):
-        raise fail("file_exists", f"{path} exists; pass overwrite:true to replace it")
+        raise bridge_error("file_exists", f"{path} exists; pass overwrite:true to replace it")
     if not os.path.isdir(os.path.dirname(path)):
-        raise fail("invalid_params", f"Directory does not exist: {os.path.dirname(path)}")
+        raise bridge_error("invalid_params", f"Directory does not exist: {os.path.dirname(path)}")
     allow_audible = args.get("allowAudible", False)
     if not allow_audible:
         state = describe(current_links())
         if not state["silent"]:
-            raise fail(
+            raise bridge_error(
                 "not_silent",
                 "Bitwig output is not routed to the silent sink; call audio.route mode=silent "
                 "first, or pass allowAudible:true to record without the silent route (the signal stays audible)",
@@ -372,7 +367,7 @@ async def capture(bridge: Any, args: dict[str, Any], timeout_ms: int) -> dict[st
         inputs = await wait_for_inputs(node)
         if proc.poll() is not None:
             err = (proc.stderr.read() or b"").decode(errors="replace").strip() if proc.stderr else ""
-            raise fail("audio_tool_failed", f"pw-record exited early: {err or proc.returncode}")
+            raise bridge_error("audio_tool_failed", f"pw-record exited early: {err or proc.returncode}")
         # only links this capture creates; the user's links are never changed
         for src, dst in zip(sources, inputs, strict=False):
             link([src, dst], "connect")
@@ -428,4 +423,4 @@ async def analyze(args: dict[str, Any]) -> dict[str, Any]:
     try:
         return await asyncio.to_thread(audio_analysis.analyze, args)
     except audio_analysis.WavError as exc:
-        raise fail("invalid_params", str(exc)) from exc
+        raise bridge_error("invalid_params", str(exc)) from exc

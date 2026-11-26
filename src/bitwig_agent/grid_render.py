@@ -15,7 +15,7 @@ import shutil
 import subprocess
 from typing import Any
 
-from bitwig_agent.client import BridgeError
+from bitwig_agent.errors import BridgeError, bridge_error
 
 PAGE, PARAM_IDS = 128, 32
 CELL = 46  # svg units per grid cell
@@ -156,13 +156,6 @@ def category(type_name: str) -> str:
 SECTION_PREFIX = re.compile(r"^([^\s:]{1,16}):\s")
 
 
-def _fail(message: str, code: str = "invalid_params", details: dict[str, Any] | None = None) -> BridgeError:
-    error: dict[str, Any] = {"code": code, "message": message, "outcome": "not_dispatched"}
-    if details:
-        error["details"] = details
-    return BridgeError(error)
-
-
 def _converter() -> list[str] | None:
     if shutil.which("rsvg-convert"):
         return ["rsvg-convert", "-f", "png"]
@@ -201,13 +194,7 @@ async def read_layout(
             cables[(c["targetModuleId"], c["targetPortKey"])] = c
         total = (page.get("window") or {}).get("total", len(rows))
         if not got and len(rows) < total:
-            raise BridgeError(
-                {
-                    "code": "graph_incomplete",
-                    "message": f"grid.get returned {len(rows)} of {total} modules",
-                    "outcome": "not_dispatched",
-                }
-            )
+            raise bridge_error("graph_incomplete", f"grid.get returned {len(rows)} of {total} modules")
     return rows, list(cables.values())
 
 
@@ -422,37 +409,37 @@ def draw(  # noqa: PLR0913
 def _write(path: str, data: bytes, overwrite: bool) -> None:
     parent = os.path.dirname(path)
     if not os.path.isdir(parent):
-        raise _fail(f"Parent directory does not exist: {parent}")
+        raise bridge_error("invalid_params", f"Parent directory does not exist: {parent}")
     try:
         with open(path, "wb" if overwrite else "xb") as handle:
             handle.write(data)
     except FileExistsError as exc:
-        raise _fail(f"{path} exists; pass overwrite=true to replace it", "file_exists") from exc
+        raise bridge_error("file_exists", f"{path} exists; pass overwrite=true to replace it") from exc
     except OSError as exc:
-        raise _fail(f"Cannot write {path}: {exc}", "write_failed") from exc
+        raise bridge_error("write_failed", f"Cannot write {path}: {exc}") from exc
 
 
 async def render(client: Any, args: dict[str, Any], timeout_ms: int = 5000) -> dict[str, Any]:
     path, fmt, overwrite = args["outPath"], args.get("format", "svg"), args.get("overwrite", False)
     if not overwrite and os.path.exists(path):
-        raise _fail(f"{path} exists; pass overwrite=true to replace it", "file_exists")
+        raise bridge_error("file_exists", f"{path} exists; pass overwrite=true to replace it")
     if not os.path.isdir(os.path.dirname(path)):
-        raise _fail(f"Parent directory does not exist: {os.path.dirname(path)}")
+        raise bridge_error("invalid_params", f"Parent directory does not exist: {os.path.dirname(path)}")
     convert = None
     if fmt == "png":
         convert = _converter()
         if convert is None:
-            raise _fail("format=png needs rsvg-convert or magick on PATH; use format=svg")
+            raise bridge_error("invalid_params", "format=png needs rsvg-convert or magick on PATH; use format=svg")
     target = {k: args[k] for k in ("trackId", "deviceIndex", "expectedDeviceName")}
     rows, cables = await read_layout(client, target, timeout_ms)
     if not rows:
-        raise _fail("The Grid device has no modules to render", "empty_grid")
+        raise bridge_error("empty_grid", "The Grid device has no modules to render")
     box = _box(rows)
     if max(box["width"], box["height"]) > MAX_SPAN:
-        raise _fail(
-            f"Layout spans {box['width']}x{box['height']} cells (limit {MAX_SPAN}); too sparse to draw",
+        raise bridge_error(
             "layout_too_large",
-            {"boundingBox": box},
+            f"Layout spans {box['width']}x{box['height']} cells (limit {MAX_SPAN}); too sparse to draw",
+            boundingBox=box,
         )
     ids = [r["instanceId"] for r in rows if r["typeName"] == "Comment"]
     texts = await read_comment_text(client, target, timeout_ms, ids) if ids else {}
@@ -469,7 +456,7 @@ async def render(client: Any, args: dict[str, Any], timeout_ms: int = 5000) -> d
     if convert is not None:
         done = await asyncio.to_thread(subprocess.run, convert, input=data, capture_output=True, timeout=120)
         if done.returncode != 0 or not done.stdout:
-            raise _fail(f"{convert[0]} failed: {done.stderr.decode('utf-8', 'replace')[:300]}", "convert_failed")
+            raise bridge_error("convert_failed", f"{convert[0]} failed: {done.stderr.decode('utf-8', 'replace')[:300]}")
         data = done.stdout
     _write(path, data, overwrite)
     return {

@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
-from test_grid_apply import SPEC, TARGET, FakeGrid, run
+from fakes import SPEC, TARGET, FakeGrid, apply_grid
 
 from bitwig_agent import grid_export
 from bitwig_agent.catalog import validate_call
@@ -37,7 +37,7 @@ def built():
     }
     spec = copy.deepcopy(SPEC)
     spec["modules"][3]["params"]["DATA"] = {"steps": [1, 0, 0.5, 0.25]}
-    run(host, spec)
+    apply_grid(host, spec)
     return host
 
 
@@ -54,12 +54,12 @@ def test_round_trip_is_unchanged_and_rebuilds_an_empty_device():
     assert acc["params"]["MODE"] == {"label": "Trigger"}
     assert acc["params"]["DATA"] == {"steps": [1, 0, 0.5, 0.25]}
     host.calls.clear()
-    again = run(host, spec)
+    again = apply_grid(host, spec)
     assert again["status"] == "unchanged"
     assert host.writes() == []
     fresh = FakeGrid()
     fresh.voicing = dict(host.voicing, voices=1)
-    assert run(fresh, spec)["status"] == "applied"
+    assert apply_grid(fresh, spec)["status"] == "applied"
     assert export(fresh)["spec"] == spec
 
 
@@ -88,7 +88,7 @@ def test_unnamed_modules_get_stable_names_that_apply_matches():
     assert out["unnamed"] == ["_Add_20_8"]
     assert any("generated name" in w for w in out["warnings"])
     host.calls.clear()
-    assert run(host, out["spec"])["status"] == "unchanged"
+    assert apply_grid(host, out["spec"])["status"] == "unchanged"
     assert host.writes() == []
     assert not any(m["customName"] == "_Add_20_8" for m in host.mods.values())
 
@@ -109,7 +109,7 @@ def test_namespace_export_references_outside_modules_as_external():
         "to": "X: sum.IN",
     } in out["connections"]
     host.calls.clear()
-    assert run(host, out)["status"] == "unchanged"
+    assert apply_grid(host, out)["status"] == "unchanged"
     assert host.writes() == []
     g = graph(host, namespace="H: ")
     assert g["external"] == ["X: sum"]
@@ -136,16 +136,16 @@ def test_external_modules_wire_without_redeclaring_and_are_never_touched():
         "connections": [{"from": "H: new.OUT", "to": "X: sum.IN2"}],
     }
     host.calls.clear()
-    result = run(host, spec, prune=True)
+    result = apply_grid(host, spec, prune=True)
     assert result["applied"]["connections"] == 1
     assert host.source("X: sum", "IN2") == ("H: new", "OUT")
     assert "grid.modules.move" not in [m for m, _ in host.calls]
     # the external's own namespace-like name is never pruned
     host.calls.clear()
-    assert run(host, {**spec, "namespace": "X: "}, prune=True, dryRun=True)["plan"]["deletes"] == []
+    assert apply_grid(host, {**spec, "namespace": "X: "}, prune=True, dryRun=True)["plan"]["deletes"] == []
     sx = {**spec, "external": ["X: sum", "X: sum"]}
     with pytest.raises(ValueError, match="unique"):
-        run(host, sx)
+        apply_grid(host, sx)
 
 
 def test_missing_external_and_double_declaration_fail_before_writing():
@@ -158,16 +158,16 @@ def test_missing_external_and_double_declaration_fail_before_writing():
         "connections": [{"from": "H: new.OUT", "to": "X: smu.IN"}],
     }
     with pytest.raises(BridgeError) as err:
-        run(host, spec)
+        apply_grid(host, spec)
     assert "external module 'X: smu' is not in the device" in err.value.error["message"]
     assert host.writes() == []
     both = {**spec, "external": ["H: mul"], "connections": []}
     both["modules"] = [{"name": "H: mul", "type": "Multiply", "x": 0, "y": 0}]
     with pytest.raises(BridgeError, match="declared in modules"):
-        run(host, both)
+        apply_grid(host, both)
     bad = {**spec, "external": [], "connections": [{"from": "H: new.OUT", "to": "X: smu.IN"}]}
     with pytest.raises(BridgeError, match="declared or external"):
-        run(host, bad)
+        apply_grid(host, bad)
 
 
 def outside_host():
@@ -188,12 +188,12 @@ def test_prune_keeps_inputs_of_modules_outside_the_namespace_and_names_both_ends
         "modules": [{"name": "X: sum", "type": "Add", "x": 20, "y": 12}],
         "connections": [],
     }
-    plan = run(host, spec, dryRun=True)
+    plan = apply_grid(host, spec, dryRun=True)
     assert plan["planned"]["disconnected"] == 0
     assert "X: sum.IN (from H: mul.OUT)" in plan["warnings"][0]
     assert "X: sum.IN2 (from H: add.OUT)" in plan["warnings"][0]
     assert "allowOutsideDisconnect" in plan["warnings"][0]
-    result = run(host, spec)
+    result = apply_grid(host, spec)
     assert host.writes() == []
     assert result["status"] == "unchanged"
     assert "X: sum.IN2" in result["warnings"][0]
@@ -212,11 +212,11 @@ def test_outside_disconnect_needs_opt_in_and_is_listed():
         "modules": [{"name": "X: sum", "type": "Add", "x": 20, "y": 12}],
         "connections": [{"from": "H: mul.OUT", "to": "X: sum.IN"}],
     }
-    plan = run(host, spec, dryRun=True)
+    plan = apply_grid(host, spec, dryRun=True)
     cut = [c for c in plan["plan"]["connections"] if c["from"] is None]
     assert cut == [{"from": None, "to": "X: sum.IN2", "previous": "H: add.OUT"}]
     assert "X: sum.IN2 (from H: add.OUT)" in plan["warnings"][0]
-    result = run(host, spec)
+    result = apply_grid(host, spec)
     assert result["applied"]["disconnected"] == 1
     assert (s, "IN2") not in host.conns
     assert (s, "IN") in host.conns
@@ -233,7 +233,7 @@ def test_external_inputs_are_never_pruned_even_with_opt_in():
         "modules": [{"name": "H: mul", "type": "Multiply", "x": 0, "y": 0}],
         "connections": [],
     }
-    result = run(host, spec)
+    result = apply_grid(host, spec)
     assert result["status"] == "unchanged"
     assert host.writes() == []
     assert (s, "IN2") in host.conns
@@ -250,16 +250,16 @@ def test_external_port_and_default_module_names_are_validated_before_writing():
         "connections": [{"from": "H: new.OUT", "to": "_Audio Out_30_0.IN_L"}],
     }
     with pytest.raises(BridgeError) as err:
-        run(host, bad_port)
+        apply_grid(host, bad_port)
     message = err.value.error["message"]
     assert "no input port 'IN_L'" in message
     assert "valid inputs: IN" in message
     assert host.writes() == []
     by_type = {**base, "external": ["Audio Out"], "connections": [{"from": "H: new.OUT", "to": "Audio Out.IN"}]}
     with pytest.raises(BridgeError) as err:
-        run(host, by_type)
+        apply_grid(host, by_type)
     assert "'_Audio Out_30_0'" in err.value.error["message"]
     assert "generated name" in err.value.error["message"]
     assert host.writes() == []
     ok = {**bad_port, "connections": [{"from": "H: new.OUT", "to": "_Audio Out_30_0.IN"}]}
-    assert run(host, ok)["applied"]["connections"] == 1
+    assert apply_grid(host, ok)["applied"]["connections"] == 1

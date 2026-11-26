@@ -22,7 +22,7 @@ from mcp.types import (
 )
 
 from bitwig_agent.catalog import CLIENT_SIDE, TOOLS, invalid_params_message, validate_call
-from bitwig_agent.client import BridgeClient, BridgeError, configured_port
+from bitwig_agent.client import BridgeClient, BridgeError, configured_port, package_version
 from bitwig_agent.client_side import run as run_client_side
 
 
@@ -76,7 +76,7 @@ def create_server(client: BridgeClient | None = None) -> Server:
 
     return Server(
         "Bitwig Agent",
-        version="0.4.0",
+        version=package_version(),
         instructions="Discover capabilities and tracks.list first. Our indices are zero-based. Use exact discovered targets and inspect bounded windows and verification. Timeouts are not cancellation; reconcile unknown outcomes before another write. No automatic retries. The agent may use Computer Use for API gaps; never blindly repeat an uncertain write through the GUI.",
         on_list_tools=list_tools,
         on_call_tool=call_tool,

@@ -12,6 +12,7 @@ from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 
 from bitwig_agent.catalog import CLIENT_SIDE, TOOLS, max_timeout_ms, validate_call
+from bitwig_agent.errors import BridgeError, bridge_error
 
 MAX_BYTES = 1024 * 1024
 METHODS = frozenset(TOOLS) - CLIENT_SIDE
@@ -39,14 +40,6 @@ def _flag_extension_mismatch(result: dict[str, Any]) -> None:
             "clientVersion": local,
             "warning": "Loaded extension differs from this client; reinstall/restart the controller before trusting writes.",
         }
-
-
-class BridgeError(Exception):
-    """Keep host error fields, including an unknown outcome, intact."""
-
-    def __init__(self, error: dict[str, Any]):
-        self.error = error
-        super().__init__(error["message"])
 
 
 def _reject_constant(value: str) -> None:
@@ -153,12 +146,10 @@ class BridgeClient:
             hint = ""
             if method == "grid.get" and (isinstance(exc, asyncio.LimitOverrunError) or "exceeds 1 MiB" in str(exc)):
                 hint = " The grid.get response exceeded the 1 MiB client cap: lower moduleLimit (64 works with includeParameters) or set includeParameters=false."
-            raise BridgeError(
-                {
-                    "code": code,
-                    "message": f"{type(exc).__name__}: {exc}.{hint} Inspect host state before another write; request was not retried.",
-                    "outcome": outcome,
-                }
+            raise bridge_error(
+                code,
+                f"{type(exc).__name__}: {exc}.{hint} Inspect host state before another write; request was not retried.",
+                outcome,
             ) from exc
         finally:
             if writer is not None:

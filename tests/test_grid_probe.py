@@ -6,8 +6,7 @@ import re
 from typing import Any
 
 import pytest
-from test_audio import NODES, SINK_LINKS, FakeProc, FakePW
-from test_grid_apply import TARGET, FakeGrid
+from fakes import NODES, SINK_LINKS, TARGET, FakeGrid, FakeProc, FakePW
 
 from bitwig_agent import audio, grid_probe
 from bitwig_agent.audio_analysis import FFT_SIZE, spectral_peaks
