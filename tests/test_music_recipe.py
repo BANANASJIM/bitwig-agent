@@ -32,7 +32,7 @@ def recipe():
         "error_unknown",
     ],
 )
-async def test_recipe_stops_after_session_changes_during_creation(tmp_path, monkeypatch, transition, recipe):
+async def test_recipe_stops_after_session_changes_during_creation(tmp_path, monkeypatch, transition, recipe):  # noqa: C901
     preset = tmp_path / "test.bwpreset"
     preset.write_bytes(b"Test-only file; no native host is contacted")
     args = argparse.Namespace(
@@ -121,7 +121,7 @@ async def test_recipe_stops_after_session_changes_during_creation(tmp_path, monk
         (False, False, True),
     ],
 )
-async def test_recipe_rejects_mixed_or_incomplete_inputs_before_connecting(
+async def test_recipe_rejects_mixed_or_incomplete_inputs_before_connecting(  # noqa: PLR0913, PLR0917
     tmp_path, monkeypatch, recipe, scratch, pluck, pad
 ):
     args = argparse.Namespace(

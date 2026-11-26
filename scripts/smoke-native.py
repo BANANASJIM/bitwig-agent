@@ -31,9 +31,9 @@ from mcp.client.stdio import stdio_client
 from mcp.types import TextContent
 
 from bitwig_agent.catalog import TOOLS
+from bitwig_agent.client import MAX_PORT
 
 TCP_ROW_FIELDS = 10
-MAX_PORT = 65535
 
 
 class NativeRunStopped(RuntimeError):
@@ -222,7 +222,7 @@ class NativeTarget:
         }
 
 
-async def probe(target, report):
+async def probe(target, report):  # noqa: PLR0915
     env = dict(os.environ, BITWIG_AGENT_PORT=str(target.config["port"]))
     server = StdioServerParameters(
         command=sys.executable, args=["-c", "from bitwig_agent.server import main; main()"], env=env
@@ -346,7 +346,7 @@ def main():
             raise RuntimeError("Supplied saved fixture bytes changed during read-only probe")
         report["status"] = "passed_read_only_preflight"
         return 0
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - any failure is recorded in the report
         report["status"] = "failed"
         report["error"] = describe_error(exc)
         print(report["error"], file=sys.stderr)

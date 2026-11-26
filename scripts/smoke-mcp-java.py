@@ -67,7 +67,7 @@ def require(condition, message):
         raise AssertionError(message)
 
 
-async def exercise(folder: Path, api: Path) -> None:
+async def exercise(folder: Path, api: Path) -> None:  # noqa: PLR0915
     fixture = folder / "McpTransportFixture.java"
     fixture.write_text(FIXTURE, encoding="utf-8")
     gson = build.gson_jar()

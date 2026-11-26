@@ -68,7 +68,7 @@ def help_payload() -> dict[str, Any]:
     }
 
 
-def parse_arguments(
+def parse_arguments(  # noqa: C901, PLR0912
     method: str, pairs: list[str], raw: str | None, timeout_ms: int | None
 ) -> tuple[dict[str, Any], int]:
     if method not in TOOLS:

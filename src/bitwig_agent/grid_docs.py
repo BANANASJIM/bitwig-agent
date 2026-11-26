@@ -276,7 +276,7 @@ def parameter_facts(type_name: str, param: dict[str, Any]) -> dict[str, Any]:
     return facts
 
 
-def describe_module(docs: Docs, name: str, info: dict[str, Any]) -> dict[str, Any]:
+def describe_module(docs: Docs, name: str, info: dict[str, Any]) -> dict[str, Any]:  # noqa: C901, PLR0912, PLR0915
     rid = docs.resource_id(name)
     prefixes = docs.prefixes_for(([rid] if rid else []) + list(PREFIX_ALIASES.get(name, ())))
     category = docs.id_category.get(rid) if rid else None
@@ -376,7 +376,7 @@ def resolve_type(modules: dict[str, Any], value: str) -> str:
     )
 
 
-def search(docs: Docs, modules: dict[str, Any], query: str, limit: int) -> list[dict[str, Any]]:
+def search(docs: Docs, modules: dict[str, Any], query: str, limit: int) -> list[dict[str, Any]]:  # noqa: C901, PLR0912
     terms = _tokens(query)
     if not terms:
         raise ValueError("query needs at least one word")

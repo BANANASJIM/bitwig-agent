@@ -11,15 +11,16 @@ import json
 from io import BytesIO
 from pathlib import Path
 
-STEREO_CHANNELS = 2
+from bitwig_agent.loudness import STEREO_CHANNELS
+
 MAX_INPUT_PEAK = 0.15
 
 
-def analyze(out: Path) -> dict:
+def analyze(out: Path) -> dict:  # noqa: C901, PLR0915
     """Evaluate declared audio thresholds without operating Bitwig or saving files."""
-    import numpy as np
-    import soundfile as sf  # type: ignore[import-untyped]
-    from scipy.signal import correlate  # type: ignore[import-untyped]
+    import numpy as np  # noqa: PLC0415
+    import soundfile as sf  # type: ignore[import-untyped]  # noqa: PLC0415
+    from scipy.signal import correlate  # type: ignore[import-untyped]  # noqa: PLC0415
 
     declaration_path = out / "music-predeclaration.json"
     declaration_bytes = declaration_path.read_bytes()

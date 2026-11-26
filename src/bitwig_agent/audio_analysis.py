@@ -40,7 +40,7 @@ class WavError(ValueError):
     pass
 
 
-def read_wav(path: str, all_channels: bool = False) -> tuple[int, int, Any]:
+def read_wav(path: str, all_channels: bool = False) -> tuple[int, int, Any]:  # noqa: C901, PLR0912, PLR0915
     """Return (sampleRate, channels, first-channel samples as floats in -1..1), or a list of every channel's samples
     with all_channels=True. Tolerates streamed headers."""
     try:
@@ -60,9 +60,8 @@ def read_wav(path: str, all_channels: bool = False) -> tuple[int, int, Any]:
         body = pos + 8
         if tag == b"fmt ":
             fmt = struct.unpack_from("<HHIIHH", data, body)
-            if (
-                fmt[0] == WAVE_FORMAT_EXTENSIBLE and size >= EXTENSIBLE_MIN_FMT_SIZE
-            ):  # the sub-format GUID starts with the real tag
+            # the sub-format GUID starts with the real tag
+            if fmt[0] == WAVE_FORMAT_EXTENSIBLE and size >= EXTENSIBLE_MIN_FMT_SIZE:
                 fmt = (struct.unpack_from("<H", data, body + 24)[0], *fmt[1:])
         elif tag == b"data":
             # parec/libsndfile may leave 0 or 0xFFFFFFFF in a header it could not finalize.
@@ -278,7 +277,7 @@ def find_onsets(
 NAMES = ("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
 
 
-def mono_pitch(
+def mono_pitch(  # noqa: PLR0913, PLR0917
     x: array[Any], rate: int, threshold: float, skip: float, bpm: float | None, method: str = "flux"
 ) -> dict[str, Any]:
     times, info = find_onsets(x, rate, threshold, skip, method)

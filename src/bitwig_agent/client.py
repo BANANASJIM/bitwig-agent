@@ -79,18 +79,18 @@ def load_json(value: str) -> Any:
 def configured_port() -> int:
     value = int(os.environ.get("BITWIG_AGENT_PORT", "61172"))
     if not 1 <= value <= MAX_PORT:
-        raise ValueError("BITWIG_AGENT_PORT must be in 1..65535")
+        raise ValueError(f"BITWIG_AGENT_PORT must be in 1..{MAX_PORT}")
     return value
 
 
 class BridgeClient:
     def __init__(self, port: int = 61172, *, response_grace_seconds: float = 1.0):
         if type(port) is not int or not 1 <= port <= MAX_PORT:
-            raise ValueError("port must be in 1..65535")
+            raise ValueError(f"port must be in 1..{MAX_PORT}")
         self.port = port
         self.response_grace_seconds = response_grace_seconds
 
-    async def call(self, method: str, params: dict[str, Any], timeout_ms: int = 5000) -> dict[str, Any]:
+    async def call(self, method: str, params: dict[str, Any], timeout_ms: int = 5000) -> dict[str, Any]:  # noqa: C901, PLR0912, PLR0915
         if method not in METHODS or not isinstance(params, dict):
             raise ValueError("A known method and object params are required")
         limit = max_timeout_ms(method)

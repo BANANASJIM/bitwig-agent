@@ -50,7 +50,7 @@ class FakeGrid:
         }
 
 
-def mod(name, typ, x, y, w=1, h=1, inputs=("IN",), outputs=("OUT",), custom=None, iid=None):
+def mod(name, typ, x, y, w=1, h=1, inputs=("IN",), outputs=("OUT",), custom=None, iid=None):  # noqa: PLR0913, PLR0917
     return {
         "instanceId": iid or name,
         "customName": name if custom is None else custom,

@@ -117,7 +117,7 @@ def _fill(value: Any, values: dict[str, Any], where: str, problems: list[str]) -
     return value
 
 
-def expand_blocks(args: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+def expand_blocks(args: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:  # noqa: C901, PLR0912
     """Replace blocks+instances by plain modules/connections (names prefixed, positions shifted); no nesting.
 
     Returns the expanded args and, per instance, {block, prefix, modules}. Runs before any other validation."""
@@ -276,7 +276,7 @@ def display_matches(wanted: str, live: str | None, unit: str | None = None) -> b
     return bool(a and b and _near_quantity(b, a[0]))
 
 
-def check_display(
+def check_display(  # noqa: PLR0913, PLR0917
     pid: str,
     text: str,
     unit: str | None,
@@ -461,7 +461,7 @@ def check_steps(pid: str, raw: Any) -> dict[str, Any]:
     return {"steps": list(values)}
 
 
-def check_value(pid: str, raw: Any, p: dict[str, Any]) -> dict[str, Any]:
+def check_value(pid: str, raw: Any, p: dict[str, Any]) -> dict[str, Any]:  # noqa: C901, PLR0912
     """Validate one spec value against a parameter description {kind, options?, minimum?, maximum?}; return the write fields."""
     kind = p.get("kind")
     if kind == "steps" or is_steps(raw):
@@ -703,7 +703,7 @@ class Apply:
             return None
         return name, port
 
-    def validate_spec(self) -> None:
+    def validate_spec(self) -> None:  # noqa: C901, PLR0912, PLR0915
         problems: list[str] = []
         self.by_spec = {m["name"]: m for m in self.modules}
         problems += [
@@ -783,7 +783,7 @@ class Apply:
             raise SpecError(problems)
 
     # ---- planning --------------------------------------------------------------------------------------------
-    def plan_params(self, name: str, row: dict[str, Any] | None) -> tuple[list[dict[str, Any]], int]:
+    def plan_params(self, name: str, row: dict[str, Any] | None) -> tuple[list[dict[str, Any]], int]:  # noqa: C901, PLR0912
         """Writes for one module against a live row (None: module not inserted yet, everything is a write)."""
         entry = self.resolved[name]
         writes, matched = [], 0
@@ -883,7 +883,7 @@ class Apply:
             **({"full": True} if count is None or n > count else {}),
         }
 
-    def plan_connections(self, rows: dict[str, dict[str, Any]], conns: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def plan_connections(self, rows: dict[str, dict[str, Any]], conns: list[dict[str, Any]]) -> list[dict[str, Any]]:  # noqa: C901, PLR0912
         """Edits (as host entries + readable fields) for rows keyed by module name; modules absent from rows are new."""
         incoming = {
             (c["targetModuleId"], c["targetPortKey"]): (c["sourceModuleId"], c["sourcePortKey"])
@@ -1074,7 +1074,7 @@ class Apply:
             problems.append("the host reports module names as unavailable; refusing to write")
         return problems
 
-    async def run(self) -> dict[str, Any]:
+    async def run(self) -> dict[str, Any]:  # noqa: C901, PLR0912, PLR0915
         await self.load_types()
         self.validate_spec()
         if self.voicing_want:
@@ -1222,7 +1222,7 @@ class Apply:
             await self.execute(deletes, inserts, current, pending)
         except Stop as stop:
             return self.report_stop(stop, pending)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - keep the report of work already dispatched
             raw = {"error": {"code": "internal_error", "message": f"{type(exc).__name__}: {exc}", "outcome": "unknown"}}
             return self.report_stop(Stop("internal", raw, "unknown"), pending)
         return self.report("applied" if any(self.applied.values()) else "unchanged")
@@ -1437,7 +1437,7 @@ class Apply:
         self.warnings.append(f"{name}: {rule['message'].format(unit=label)}")
         return True
 
-    def raw_scale_warnings(
+    def raw_scale_warnings(  # noqa: PLR0913, PLR0917
         self,
         name: str,
         type_name: str,
@@ -1488,7 +1488,7 @@ class Apply:
     async def transport_blocks(self) -> list[dict[str, str]]:
         try:
             state = await self.client.call("transport.get", {}, self.timeout_ms)
-        except Exception:
+        except Exception:  # noqa: BLE001 - preflight is advisory
             return []
         busy = [k for k in ("playing", "recording") if isinstance(state, dict) and state.get(k) is True]
         return (
@@ -1568,7 +1568,7 @@ class Apply:
         pos[mid] = (actual["x"], actual["y"]) if actual else at
         self.steps.append({"op": "move", "name": name, "to": list(pos[mid])})
 
-    async def execute(self, deletes: Any, inserts: Any, current: Any, pending: Any) -> None:
+    async def execute(self, deletes: Any, inserts: Any, current: Any, pending: Any) -> None:  # noqa: C901, PLR0912, PLR0915
         self.phase = "voicing"
         if self.voicing_set:
             result = await self.call(
@@ -1845,7 +1845,7 @@ async def with_marker(client: Any, result: dict[str, Any], wrote: bool, timeout_
 
     try:
         marker = (await diagnostics(client, {"maxEvents": 1, "sinceSeconds": 1}, timeout_ms)).get("marker")
-    except Exception:
+    except Exception:  # noqa: BLE001 - diagnostics are best effort
         marker = None
     return result | ({"diagnosticsMarker": marker} if marker else {})
 

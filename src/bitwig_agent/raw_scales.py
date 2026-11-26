@@ -339,7 +339,7 @@ def parse(scale: Scale, text: str | None) -> tuple[float, float, float] | None:
     return fn(n), lo, hi
 
 
-def convert(
+def convert(  # noqa: PLR0913, PLR0917
     type_name: str | None, pid: str, text: str, lo: Any, hi: Any, context: dict[str, Any] | None = None
 ) -> float:
     """The raw value for a display text; raises ValueError with a hint when not writable."""

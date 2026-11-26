@@ -1,279 +1,183 @@
 {
   "java": [
     {
-      "tokens": 100,
-      "files": [
-        "extension/src/test/java/dev/bitwigagent/DeviceModuleTest.java",
-        "extension/src/test/java/dev/bitwigagent/HostBridgeTest.java"
-      ],
-      "count": 1
-    },
-    {
-      "tokens": 106,
-      "files": [
-        "extension/src/main/java/dev/bitwigagent/Bitwig614GridParameterContext.java",
-        "extension/src/main/java/dev/bitwigagent/Bitwig614GridTopologyContext.java"
-      ],
-      "count": 1
-    },
-    {
-      "tokens": 109,
-      "files": [
-        "extension/src/test/java/dev/bitwigagent/ArrangerModuleTest.java",
-        "extension/src/test/java/dev/bitwigagent/RoutingModuleTest.java"
-      ],
-      "count": 1
-    },
-    {
-      "tokens": 109,
-      "files": [
-        "extension/src/test/java/dev/bitwigagent/AutomationModuleTest.java",
-        "extension/src/test/java/dev/bitwigagent/RoutingModuleTest.java"
-      ],
-      "count": 1
-    },
-    {
-      "tokens": 109,
-      "files": [
-        "extension/src/test/java/dev/bitwigagent/LauncherSettingsModuleTest.java",
-        "extension/src/test/java/dev/bitwigagent/RoutingModuleTest.java"
-      ],
-      "count": 1
-    },
-    {
-      "tokens": 109,
-      "files": [
-        "extension/src/test/java/dev/bitwigagent/MixModuleTest.java",
-        "extension/src/test/java/dev/bitwigagent/MixModuleTest.java"
-      ],
-      "count": 1
-    },
-    {
-      "tokens": 111,
       "files": [
         "extension/src/main/java/dev/bitwigagent/AutomationModule.java",
         "extension/src/main/java/dev/bitwigagent/RenderModule.java"
       ],
-      "count": 1
+      "count": 1,
+      "tokens": 111
     },
     {
-      "tokens": 112,
-      "files": [
-        "extension/src/test/java/dev/bitwigagent/TransportModuleTest.java",
-        "extension/src/test/java/dev/bitwigagent/TransportModuleTest.java"
-      ],
-      "count": 1
-    },
-    {
-      "tokens": 124,
-      "files": [
-        "extension/src/test/java/dev/bitwigagent/ArrangerModuleTest.java",
-        "extension/src/test/java/dev/bitwigagent/LauncherSettingsModuleTest.java"
-      ],
-      "count": 1
-    },
-    {
-      "tokens": 124,
-      "files": [
-        "extension/src/test/java/dev/bitwigagent/AutomationModuleTest.java",
-        "extension/src/test/java/dev/bitwigagent/LauncherSettingsModuleTest.java"
-      ],
-      "count": 1
-    },
-    {
-      "tokens": 137,
-      "files": [
-        "extension/src/test/java/dev/bitwigagent/ArrangerModuleTest.java",
-        "extension/src/test/java/dev/bitwigagent/LauncherSettingsModuleTest.java"
-      ],
-      "count": 1
-    },
-    {
-      "tokens": 139,
-      "files": [
-        "extension/src/test/java/dev/bitwigagent/AutomationModuleTest.java",
-        "extension/src/test/java/dev/bitwigagent/LauncherSettingsModuleTest.java"
-      ],
-      "count": 1
-    },
-    {
-      "tokens": 160,
-      "files": [
-        "extension/src/test/java/dev/bitwigagent/ArrangerModuleTest.java",
-        "extension/src/test/java/dev/bitwigagent/AutomationModuleTest.java"
-      ],
-      "count": 1
-    },
-    {
-      "tokens": 164,
       "files": [
         "extension/src/main/java/dev/bitwigagent/Bitwig614ArrangerAccess.java",
         "extension/src/main/java/dev/bitwigagent/Bitwig614LauncherSettingsAccess.java"
       ],
-      "count": 1
+      "count": 1,
+      "tokens": 164
     },
     {
-      "tokens": 232,
+      "files": [
+        "extension/src/main/java/dev/bitwigagent/Bitwig614GridParameterContext.java",
+        "extension/src/main/java/dev/bitwigagent/Bitwig614GridTopologyContext.java"
+      ],
+      "count": 1,
+      "tokens": 106
+    },
+    {
       "files": [
         "extension/src/test/java/dev/bitwigagent/ArrangerModuleTest.java",
         "extension/src/test/java/dev/bitwigagent/AutomationModuleTest.java"
       ],
-      "count": 1
+      "count": 3,
+      "tokens": 386
     },
     {
-      "tokens": 325,
       "files": [
         "extension/src/test/java/dev/bitwigagent/ArrangerModuleTest.java",
         "extension/src/test/java/dev/bitwigagent/LauncherSettingsModuleTest.java"
       ],
-      "count": 1
+      "count": 3,
+      "tokens": 325
     },
     {
-      "tokens": 325,
+      "files": [
+        "extension/src/test/java/dev/bitwigagent/ArrangerModuleTest.java",
+        "extension/src/test/java/dev/bitwigagent/RoutingModuleTest.java"
+      ],
+      "count": 1,
+      "tokens": 109
+    },
+    {
       "files": [
         "extension/src/test/java/dev/bitwigagent/AutomationModuleTest.java",
         "extension/src/test/java/dev/bitwigagent/LauncherSettingsModuleTest.java"
       ],
-      "count": 1
+      "count": 3,
+      "tokens": 325
     },
     {
-      "tokens": 386,
       "files": [
-        "extension/src/test/java/dev/bitwigagent/ArrangerModuleTest.java",
-        "extension/src/test/java/dev/bitwigagent/AutomationModuleTest.java"
+        "extension/src/test/java/dev/bitwigagent/AutomationModuleTest.java",
+        "extension/src/test/java/dev/bitwigagent/RoutingModuleTest.java"
       ],
-      "count": 1
+      "count": 1,
+      "tokens": 109
+    },
+    {
+      "files": [
+        "extension/src/test/java/dev/bitwigagent/DeviceModuleTest.java",
+        "extension/src/test/java/dev/bitwigagent/HostBridgeTest.java"
+      ],
+      "count": 1,
+      "tokens": 100
+    },
+    {
+      "files": [
+        "extension/src/test/java/dev/bitwigagent/LauncherSettingsModuleTest.java",
+        "extension/src/test/java/dev/bitwigagent/RoutingModuleTest.java"
+      ],
+      "count": 1,
+      "tokens": 109
+    },
+    {
+      "files": [
+        "extension/src/test/java/dev/bitwigagent/MixModuleTest.java",
+        "extension/src/test/java/dev/bitwigagent/MixModuleTest.java"
+      ],
+      "count": 1,
+      "tokens": 109
+    },
+    {
+      "files": [
+        "extension/src/test/java/dev/bitwigagent/TransportModuleTest.java",
+        "extension/src/test/java/dev/bitwigagent/TransportModuleTest.java"
+      ],
+      "count": 1,
+      "tokens": 112
     }
   ],
   "python": [
     {
-      "tokens": 50,
-      "files": [
-        "tests/test_cli.py",
-        "tests/test_mcp.py"
-      ],
-      "count": 1
-    },
-    {
-      "tokens": 50,
-      "files": [
-        "tests/test_mcp.py",
-        "tests/test_mcp.py"
-      ],
-      "count": 1
-    },
-    {
-      "tokens": 51,
-      "files": [
-        "tests/test_grid_apply.py",
-        "tests/test_grid_apply.py"
-      ],
-      "count": 1
-    },
-    {
-      "tokens": 51,
-      "files": [
-        "tests/test_grid_apply.py",
-        "tests/test_raw_scales.py"
-      ],
-      "count": 1
-    },
-    {
-      "tokens": 52,
-      "files": [
-        "tests/test_mcp.py",
-        "tests/test_mcp.py"
-      ],
-      "count": 1
-    },
-    {
-      "tokens": 54,
-      "files": [
-        "tests/test_cli.py",
-        "tests/test_cli.py"
-      ],
-      "count": 1
-    },
-    {
-      "tokens": 54,
-      "files": [
-        "tests/test_cli.py",
-        "tests/test_cli.py",
-        "tests/test_cli.py"
-      ],
-      "count": 1
-    },
-    {
-      "tokens": 54,
-      "files": [
-        "tests/test_cli.py",
-        "tests/test_mcp.py"
-      ],
-      "count": 1
-    },
-    {
-      "tokens": 55,
-      "files": [
-        "tests/test_audio.py",
-        "tests/test_audio.py"
-      ],
-      "count": 1
-    },
-    {
-      "tokens": 60,
       "files": [
         "src/bitwig_agent/audio.py",
         "src/bitwig_agent/grid_probe.py"
       ],
-      "count": 1
+      "count": 1,
+      "tokens": 60
     },
     {
-      "tokens": 60,
-      "files": [
-        "tests/test_audio.py",
-        "tests/test_audio.py"
-      ],
-      "count": 1
-    },
-    {
-      "tokens": 60,
-      "files": [
-        "tests/test_cli.py",
-        "tests/test_cli.py"
-      ],
-      "count": 1
-    },
-    {
-      "tokens": 62,
       "files": [
         "src/bitwig_agent/grid_docs.py",
         "src/bitwig_agent/modulator_docs.py"
       ],
-      "count": 1
+      "count": 2,
+      "tokens": 83
     },
     {
-      "tokens": 83,
-      "files": [
-        "src/bitwig_agent/grid_docs.py",
-        "src/bitwig_agent/modulator_docs.py"
-      ],
-      "count": 1
-    },
-    {
-      "tokens": 84,
-      "files": [
-        "tests/test_cli.py",
-        "tests/test_mcp.py"
-      ],
-      "count": 1
-    },
-    {
-      "tokens": 96,
       "files": [
         "src/bitwig_agent/grid_export.py",
         "src/bitwig_agent/grid_render.py"
       ],
-      "count": 1
+      "count": 1,
+      "tokens": 96
+    },
+    {
+      "files": [
+        "tests/test_audio.py",
+        "tests/test_audio.py"
+      ],
+      "count": 2,
+      "tokens": 60
+    },
+    {
+      "files": [
+        "tests/test_cli.py",
+        "tests/test_cli.py"
+      ],
+      "count": 2,
+      "tokens": 60
+    },
+    {
+      "files": [
+        "tests/test_cli.py",
+        "tests/test_cli.py",
+        "tests/test_cli.py"
+      ],
+      "count": 1,
+      "tokens": 54
+    },
+    {
+      "files": [
+        "tests/test_cli.py",
+        "tests/test_mcp.py"
+      ],
+      "count": 3,
+      "tokens": 84
+    },
+    {
+      "files": [
+        "tests/test_grid_apply.py",
+        "tests/test_grid_apply.py"
+      ],
+      "count": 1,
+      "tokens": 51
+    },
+    {
+      "files": [
+        "tests/test_grid_apply.py",
+        "tests/test_raw_scales.py"
+      ],
+      "count": 1,
+      "tokens": 51
+    },
+    {
+      "files": [
+        "tests/test_mcp.py",
+        "tests/test_mcp.py"
+      ],
+      "count": 2,
+      "tokens": 52
     }
   ]
 }

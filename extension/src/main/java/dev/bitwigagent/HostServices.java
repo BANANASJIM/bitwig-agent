@@ -101,7 +101,6 @@ final class HostServices implements AutoCloseable {
         sources = new DeviceSources(this);
     }
 
-    /** Controller-thread composition: domains share the gate, never their native bindings. */
     @SuppressWarnings("deprecation")
     private void observeClipLauncherAutomationWrite(Transport transport) {
         transport.isClipLauncherAutomationWriteEnabled().addValueObserver((BooleanValueChangedCallback) value -> {
@@ -110,6 +109,7 @@ final class HostServices implements AutoCloseable {
         });
     }
 
+    /** Controller-thread composition: domains share the gate, never their native bindings. */
     Bitwig614Runtime nativeRuntime(HostOperation operation) {
         check(operation);
         if (nativeRuntime == null)

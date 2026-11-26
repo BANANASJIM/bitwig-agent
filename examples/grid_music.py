@@ -42,7 +42,7 @@ def pad_phrase() -> list[dict]:
     ]
 
 
-def checked_graph(graph: dict, target: dict, observed_target: dict | None = None) -> dict[str, dict]:
+def checked_graph(graph: dict, target: dict, observed_target: dict | None = None) -> dict[str, dict]:  # noqa: C901
     """Require one fully covered owned module window, not a lossless export."""
     identity = graph["target"] if observed_target is None else observed_target
     if any(identity.get(key) != value for key, value in target.items()):
@@ -133,7 +133,7 @@ def checked_patch(graph: dict, target: dict, expected: dict) -> None:
             raise RuntimeError("Owned Grid control differs from the authored patch")
 
 
-async def build_grid(call, target: dict, types: dict[str, str], label: str) -> dict:
+async def build_grid(call, target: dict, types: dict[str, str], label: str) -> dict:  # noqa: C901, PLR0912, PLR0915
     """Build only inside this recipe's newly inserted, owned factory device."""
     graph = await call("grid.get", {**target, "includeParameters": False})
     modules = checked_graph(graph, target)
@@ -329,7 +329,7 @@ def report_summary(report: dict, artifacts: Path) -> dict:
     return result
 
 
-async def create(args: argparse.Namespace) -> int:
+async def create(args: argparse.Namespace) -> int:  # noqa: C901, PLR0912, PLR0915
     scratch = getattr(args, "from_scratch", False)
     presets = [("Pluck", args.pluck_preset, pluck_phrase()), ("Triangle Pad", args.pad_preset, pad_phrase())]
     if scratch and any(path is not None for _, path, _ in presets):

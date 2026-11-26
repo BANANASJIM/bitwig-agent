@@ -150,7 +150,7 @@ def describe(links: list[tuple[str, str]]) -> dict[str, Any]:
     }
 
 
-def route(args: dict[str, Any]) -> dict[str, Any]:
+def route(args: dict[str, Any]) -> dict[str, Any]:  # noqa: C901, PLR0912
     check_platform()
     mode = args["mode"]
     links = current_links()
@@ -322,7 +322,7 @@ async def wait_for_inputs(node: str) -> list[str]:
     raise fail("audio_tool_failed", f"The capture node {node} did not appear in PipeWire")
 
 
-async def capture(bridge: Any, args: dict[str, Any], timeout_ms: int) -> dict[str, Any]:
+async def capture(bridge: Any, args: dict[str, Any], timeout_ms: int) -> dict[str, Any]:  # noqa: C901, PLR0912, PLR0915
     check_platform()
     seconds = args["seconds"]
     path = args["outPath"]
@@ -373,9 +373,8 @@ async def capture(bridge: Any, args: dict[str, Any], timeout_ms: int) -> dict[st
         if proc.poll() is not None:
             err = (proc.stderr.read() or b"").decode(errors="replace").strip() if proc.stderr else ""
             raise fail("audio_tool_failed", f"pw-record exited early: {err or proc.returncode}")
-        for src, dst in zip(
-            sources, inputs, strict=False
-        ):  # only links this capture creates; the user's links are never changed
+        # only links this capture creates; the user's links are never changed
+        for src, dst in zip(sources, inputs, strict=False):
             link([src, dst], "connect")
             created.append((src, dst))
         if from_start:

@@ -74,7 +74,7 @@ def _label(key: tuple[str, str], source: Source, names: dict[str, str]) -> dict[
     }
 
 
-async def _restore(
+async def _restore(  # noqa: PLR0913, PLR0917
     client: Any,
     target: dict[str, Any],
     original: dict[tuple[str, str], Source],
@@ -115,7 +115,7 @@ async def _restore(
         }
 
 
-async def probe(client: Any, args: dict[str, Any], timeout_ms: int) -> dict[str, Any]:
+async def probe(client: Any, args: dict[str, Any], timeout_ms: int) -> dict[str, Any]:  # noqa: C901, PLR0912, PLR0915
     audio.check_platform()
     target = {k: args[k] for k in ("trackId", "deviceIndex", "expectedDeviceName")}
     allow_audible = args.get("allowAudible", False)

@@ -20,9 +20,10 @@ UnitValue = Annotated[float, Field(ge=0, le=1)]
 
 
 UTF16_BYTES_PER_UNIT = 2
-MAX_RAW_STRING_UNITS = 1024
+MAX_STRING_UNITS = 1024
 MAX_PROJECT_NAME_UNITS = 128
 MIDI_PITCH_COUNT = 128
+MAX_BEAT = 4194304
 MAX_TIME_SIGNATURE_NUMERATOR = 32
 MIN_PROJECT_PATH_PARTS = 3
 FLOAT_BIT_DEPTH = 32
@@ -140,8 +141,8 @@ class ModulatorParameterGetArgs(StatusArgs):
         description="Current modulator UUID from modulators.list, not its typeId, name or index; reacquire after reopening or identity changes."
     )
     parameterId: str = Field(
-        max_length=1024,
-        description="Exact addressable parameterId from modulators.list, not a display name; empty is valid when unique, at most 1024 UTF-16 code units.",
+        max_length=MAX_STRING_UNITS,
+        description=f"Exact addressable parameterId from modulators.list, not a display name; empty is valid when unique, at most {MAX_STRING_UNITS} UTF-16 code units.",
     )
 
 
@@ -192,7 +193,8 @@ class ModulatorParameterSetArgs(StatusArgs):
     parent: DeviceParent
     modulatorId: TrackId = Field(description=MODULATOR_ID)
     parameterId: str = Field(
-        max_length=1024, description="Exact parameterId of a modulators.get parameters row (not an outputId)."
+        max_length=MAX_STRING_UNITS,
+        description="Exact parameterId of a modulators.get parameters row (not an outputId).",
     )
     expectedKind: Literal["float", "integer", "enum", "boolean"] = Field(description="kind from that row.")
     expectedValue: bool | int | float = Field(
@@ -226,13 +228,14 @@ class ModulatorParameterSetArgs(StatusArgs):
 class GridControlTarget(StrictModel):
     moduleId: TrackId = Field(description="Grid module instanceId from grid.get on this same device.")
     parameterId: str = Field(
-        max_length=1024, description="Exact parameterId of that module's control (e.g. DECAY), from grid.get."
+        max_length=MAX_STRING_UNITS,
+        description="Exact parameterId of that module's control (e.g. DECAY), from grid.get.",
     )
 
 
 class ModulatorControlTarget(StrictModel):
     modulatorId: TrackId = Field(description="Another modulator on this same device (modulators.get).")
-    parameterId: str = Field(max_length=1024, description="Exact parameterId of that modulator's control.")
+    parameterId: str = Field(max_length=MAX_STRING_UNITS, description="Exact parameterId of that modulator's control.")
 
 
 MAP_TARGET = "The control to modulate: {moduleId, parameterId} for a Grid module control, or {modulatorId, parameterId} for another modulator's control, both on this device."
@@ -242,7 +245,7 @@ class ModulatorMappingArgs(StatusArgs):
     parent: DeviceParent
     modulatorId: TrackId = Field(description="Source modulator. " + MODULATOR_ID)
     outputId: str = omitted(
-        max_length=1024,
+        max_length=MAX_STRING_UNITS,
         description="Source output id from modulators.get outputs; may be omitted when the modulator has exactly one output.",
     )
     target: GridControlTarget | ModulatorControlTarget = Field(description=MAP_TARGET)
@@ -404,8 +407,8 @@ class GridModuleEditArgs(GridWriteArgs):
 class GridConnectionSource(StrictModel):
     moduleId: TrackId = Field(description="Current source module instanceId from grid.get, not a type UUID.")
     portKey: str = Field(
-        max_length=1024,
-        description="Exact output port key from grid.get; empty is valid, at most 1024 UTF-16 code units.",
+        max_length=MAX_STRING_UNITS,
+        description=f"Exact output port key from grid.get; empty is valid, at most {MAX_STRING_UNITS} UTF-16 code units.",
     )
 
 
@@ -417,8 +420,8 @@ class GridConnectionEdit(StrictModel):
         description="Current destination module instanceId from grid.get; reacquire after reopening the project."
     )
     targetPortKey: str = Field(
-        max_length=1024,
-        description="Exact input port key from grid.get; empty is valid, at most 1024 UTF-16 code units.",
+        max_length=MAX_STRING_UNITS,
+        description=f"Exact input port key from grid.get; empty is valid, at most {MAX_STRING_UNITS} UTF-16 code units.",
     )
     expectedSource: GridConnectionSource | None = Field(
         description="Required exact prior source from fresh grid.get, or explicit null for an unconnected input. Checked before even an already-matching no-op; never defaults to null."
@@ -441,8 +444,8 @@ class GridConnectionSetArgs(GridWriteArgs):
         description="Single form: current destination module instanceId from grid.get; reacquire after reopening the project."
     )
     targetPortKey: str = omitted(
-        max_length=1024,
-        description="Single form: exact input port key from grid.get; empty is valid, at most 1024 UTF-16 code units.",
+        max_length=MAX_STRING_UNITS,
+        description=f"Single form: exact input port key from grid.get; empty is valid, at most {MAX_STRING_UNITS} UTF-16 code units.",
     )
     expectedSource: GridConnectionSource | None = omitted(
         description="Single form: required exact prior source from fresh grid.get, or explicit null for an unconnected input. Checked before even an already-matching no-op; never defaults to null."
@@ -470,12 +473,12 @@ class GridConnectionSetArgs(GridWriteArgs):
 
 class GridModuleRenameArgs(GridModuleEditArgs):
     expectedCustomName: str = Field(
-        max_length=1024,
-        description="Exact raw customName from a fresh grid.get, not effective name or typeName. Required even for no-op; empty is valid. At most 1024 UTF-16 code units; no trimming or coercion.",
+        max_length=MAX_STRING_UNITS,
+        description=f"Exact raw customName from a fresh grid.get, not effective name or typeName. Required even for no-op; empty is valid. At most {MAX_STRING_UNITS} UTF-16 code units; no trimming or coercion.",
     )
     customName: str = Field(
-        max_length=1024,
-        description="Requested raw custom name; empty resets the override through native semantics. Unicode and whitespace are preserved, at most 1024 UTF-16 code units.",
+        max_length=MAX_STRING_UNITS,
+        description=f"Requested raw custom name; empty resets the override through native semantics. Unicode and whitespace are preserved, at most {MAX_STRING_UNITS} UTF-16 code units.",
     )
 
 
@@ -504,8 +507,8 @@ class GridModuleMoveArgs(GridModuleEditArgs):
 
 class GridParameterGetArgs(GridModuleArgs):
     parameterId: str = Field(
-        max_length=1024,
-        description="Exact native parameter ID from grid.get, not a name; empty is valid, at most 1024 UTF-16 code units.",
+        max_length=MAX_STRING_UNITS,
+        description=f"Exact native parameter ID from grid.get, not a name; empty is valid, at most {MAX_STRING_UNITS} UTF-16 code units.",
     )
     full: bool = omitted(
         description="A step-array parameter (kind steps) returns all 256 entries instead of the first STEPS ones."
@@ -519,7 +522,7 @@ DISPLAY_DESCRIPTION = (
 )
 
 
-StringValue = Annotated[str, Field(max_length=1024)]
+StringValue = Annotated[str, Field(max_length=MAX_STRING_UNITS)]
 STEP_MIN, STEP_MAX, STEP_ENTRIES = -128.0, 128.0, 256
 
 
@@ -539,8 +542,8 @@ class GridRawWrite(StrictModel):
         description="Current module instanceId from grid.get; reacquire after reopening the project."
     )
     parameterId: str = Field(
-        max_length=1024,
-        description="Exact native parameter ID from grid.get, not a name; empty is valid, at most 1024 UTF-16 code units.",
+        max_length=MAX_STRING_UNITS,
+        description=f"Exact native parameter ID from grid.get, not a name; empty is valid, at most {MAX_STRING_UNITS} UTF-16 code units.",
     )
     model_config = ConfigDict(
         json_schema_extra=cast(
@@ -558,7 +561,7 @@ class GridRawWrite(StrictModel):
                         (["boolean"], {"type": "boolean"}),
                         (["integer", "enum"], {"type": "integer", "minimum": -(2**31), "maximum": 2**31 - 1}),
                         (["float"], {"type": "number"}),
-                        (["string"], {"type": "string", "maxLength": 1024}),
+                        (["string"], {"type": "string", "maxLength": MAX_STRING_UNITS}),
                     )
                 ]
                 + [{"properties": {"expectedKind": {"enum": ["steps"]}}}],
@@ -580,7 +583,7 @@ class GridRawWrite(StrictModel):
     ] = omitted(description=STEPS_VALUES_DESCRIPTION)
     full: bool = omitted(description=FULL_DESCRIPTION)
     value: bool | int | float | StringValue = omitted(
-        description="Requested native raw value: boolean JSON bool; integer/enum signed int32 JSON integer token; float finite JSON number; string (string panels, e.g. Comment text) any text of at most 1024 UTF-16 units, preserved verbatim, empty allowed. Enum uses an actual listed option value, never an ordinal. Native range/representability are checked before dispatch. Exactly one of value or display."
+        description=f"Requested native raw value: boolean JSON bool; integer/enum signed int32 JSON integer token; float finite JSON number; string (string panels, e.g. Comment text) any text of at most {MAX_STRING_UNITS} UTF-16 units, preserved verbatim, empty allowed. Enum uses an actual listed option value, never an ordinal. Native range/representability are checked before dispatch. Exactly one of value or display."
     )
     display: str = omitted(min_length=1, max_length=64, description=DISPLAY_DESCRIPTION)
 
@@ -592,8 +595,8 @@ class GridRawWrite(StrictModel):
         if type(value) not in (bool, int, float, str):
             raise ValueError("raw value must be a JSON boolean, number or string, never null")
         if type(value) is str:
-            if len(value.encode("utf-16-le", errors="surrogatepass")) > MAX_RAW_STRING_UNITS * UTF16_BYTES_PER_UNIT:
-                raise ValueError("string value must be at most 1024 UTF-16 code units")
+            if len(value.encode("utf-16-le", errors="surrogatepass")) > MAX_STRING_UNITS * UTF16_BYTES_PER_UNIT:
+                raise ValueError(f"string value must be at most {MAX_STRING_UNITS} UTF-16 code units")
         elif type(value) is not bool:
             try:
                 finite = math.isfinite(value)
@@ -604,7 +607,7 @@ class GridRawWrite(StrictModel):
         return value
 
     @model_validator(mode="after")
-    def validate_raw_kind(self) -> Self:
+    def validate_raw_kind(self) -> Self:  # noqa: C901, PLR0912
         given = self.model_fields_set
         if self.expectedKind == "steps":
             if {"expectedValue", "value", "display"} & given or not {"expectedValues", "values"} <= given:
@@ -659,7 +662,7 @@ class GridParameterSetArgs(ParameterArgs):
 
     moduleId: TrackId = omitted(description="Single form: current module instanceId from grid.get.")
     parameterId: str = omitted(
-        max_length=1024, description="Single form: exact parameterId from grid.get; empty is valid."
+        max_length=MAX_STRING_UNITS, description="Single form: exact parameterId from grid.get; empty is valid."
     )
     expectedKind: Literal["float", "integer", "enum", "boolean", "string", "steps"] = omitted(
         description="Single form: kind from a recent grid.get row."
@@ -861,7 +864,7 @@ class SceneRenameArgs(SceneTargetArgs):
 
 class ClipNote(StrictModel):
     op: Literal["set"] = omitted()
-    beat: float = Field(ge=0, le=4194304)
+    beat: float = Field(ge=0, le=MAX_BEAT)
     pitch: int = Field(ge=0, le=127)
     velocity: int = Field(ge=1, le=127)
     durationBeats: float = Field(ge=1 / 128, le=4096)
@@ -919,7 +922,7 @@ class ClipSettingsSetArgs(ClipSettingsArgs):
     nextActionEnabled: bool = omitted()
     nextActionLinkToLoop: bool = omitted()
     nextActionLoopCount: Annotated[int, Field(ge=1, le=64)] = omitted()
-    nextActionDelayBeats: Annotated[float, Field(ge=0, le=4194304)] = omitted()
+    nextActionDelayBeats: Annotated[float, Field(ge=0, le=MAX_BEAT)] = omitted()
     launchQuantization: Nonempty = omitted(
         description="Clip launch quantization: one of the host's own options, listed in the result's options.launchQuantization. Selects the clip."
     )
@@ -978,7 +981,7 @@ class ClipEditArgs(ClipSettingsArgs):
 
 class ArrangerNote(StrictModel):
     beat: float = Field(
-        ge=0, le=4194304, description="Onset in beats from the clip start (not the arrangement), on a 1/128-beat grid."
+        ge=0, le=MAX_BEAT, description="Onset in beats from the clip start (not the arrangement), on a 1/128-beat grid."
     )
     pitch: int = Field(ge=0, le=127)
     velocity: int = Field(ge=1, le=127)
@@ -990,7 +993,7 @@ class ArrangerClipListArgs(DeviceArgs):
 
 
 class ArrangerClipCreateArgs(DeviceArgs):
-    startBeats: float = Field(ge=0, le=4194304, description="Arrangement position in beats.")
+    startBeats: float = Field(ge=0, le=MAX_BEAT, description="Arrangement position in beats.")
     lengthBeats: float = Field(ge=1 / 128, le=65536)
     name: str = Field(min_length=1, max_length=128)
     notes: Annotated[list[ArrangerNote], Field(min_length=1, max_length=256)] = omitted()
@@ -1013,7 +1016,7 @@ class ArrangerClipCreateArgs(DeviceArgs):
 class ArrangerCopyArgs(DeviceArgs):
     slotIndex: int = Field(ge=0, le=15)
     expectedClipName: str = Field(min_length=1, max_length=256)
-    startBeats: float = Field(ge=0, le=4194304)
+    startBeats: float = Field(ge=0, le=MAX_BEAT)
 
 
 ARRANGER_EDIT_OPS = {"move": {"startBeats"}, "resize": {"lengthBeats"}, "rename": {"name"}, "delete": set()}
@@ -1026,11 +1029,11 @@ class ArrangerClipEditArgs(DeviceArgs):
         description="Index from a fresh arranger.clips.list (event order: creation order on 6.1.4, not start order).",
     )
     expectedStartBeats: float = Field(
-        ge=0, le=4194304, description="Exact startBeats from arranger.clips.list (guard, compared within 1e-6)."
+        ge=0, le=MAX_BEAT, description="Exact startBeats from arranger.clips.list (guard, compared within 1e-6)."
     )
     expectedName: str = Field(max_length=256, description="Exact current name from arranger.clips.list; may be empty.")
     op: Literal["move", "resize", "rename", "delete"]
-    startBeats: Annotated[float, Field(ge=0, le=4194304)] = omitted()
+    startBeats: Annotated[float, Field(ge=0, le=MAX_BEAT)] = omitted()
     lengthBeats: Annotated[float, Field(ge=1 / 128, le=65536)] = omitted()
     name: Annotated[str, Field(min_length=1, max_length=128)] = omitted()
 
@@ -1049,7 +1052,7 @@ class AutomationTarget(StrictModel):
     deviceIndex: Annotated[int, Field(ge=0, le=15)] = omitted()
     expectedDeviceName: Nonempty = omitted()
     moduleId: TrackId = omitted(description="Grid module instanceId from grid.get on that device.")
-    parameterId: Annotated[str, Field(max_length=1024)] = omitted(
+    parameterId: Annotated[str, Field(max_length=MAX_STRING_UNITS)] = omitted(
         description="Exact parameterId of that module's float control, from grid.get."
     )
 
@@ -1065,8 +1068,8 @@ class AutomationTarget(StrictModel):
 
 
 class AutomationRange(StrictModel):
-    startBeat: float = Field(ge=0, le=4194304)
-    endBeat: float = Field(ge=0, le=4194304)
+    startBeat: float = Field(ge=0, le=MAX_BEAT)
+    endBeat: float = Field(ge=0, le=MAX_BEAT)
 
     @model_validator(mode="after")
     def validate_order(self) -> Self:
@@ -1076,7 +1079,7 @@ class AutomationRange(StrictModel):
 
 
 class AutomationPoint(StrictModel):
-    beat: float = Field(ge=0, le=4194304, description="Arrangement position in beats (quarter notes).")
+    beat: float = Field(ge=0, le=MAX_BEAT, description="Arrangement position in beats (quarter notes).")
     value: UnitValue = Field(description="Normalized 0..1 parameter value.")
     interpolation: Literal["linear", "hold"]
 
@@ -1254,7 +1257,7 @@ class NoteWindowArgs(ClipArgs):
     startStep: Annotated[int, Field(ge=0, le=1048576)] = omitted()
     steps: Annotated[int, Field(ge=1, le=128)] = omitted()
     pitchStart: Annotated[int, Field(ge=0, le=127)] = omitted()
-    pitchCount: Annotated[int, Field(ge=1, le=128)] = omitted()
+    pitchCount: Annotated[int, Field(ge=1, le=MIDI_PITCH_COUNT)] = omitted()
 
     @property
     def explicit_window(self) -> bool:
@@ -1268,13 +1271,13 @@ class NoteWindowArgs(ClipArgs):
                 "stepSizeBeats, startStep, steps, pitchStart and pitchCount must be supplied together or all omitted"
             )
         if supplied and self.pitchStart + self.pitchCount > MIDI_PITCH_COUNT:
-            raise ValueError("pitchStart + pitchCount must not exceed 128")
+            raise ValueError(f"pitchStart + pitchCount must not exceed {MIDI_PITCH_COUNT}")
         return self
 
 
 class NoteEdit(StrictModel):
     op: Literal["set", "clear"]
-    beat: float = Field(ge=0, le=4194304)
+    beat: float = Field(ge=0, le=MAX_BEAT)
     pitch: int = Field(ge=0, le=127)
     velocity: Annotated[int, Field(ge=1, le=127)] = omitted()
     durationBeats: Annotated[float, Field(ge=1 / 128, le=4096)] = omitted()
@@ -1337,7 +1340,7 @@ class TransportSetArgs(StatusArgs):
     loopStartBeats: Annotated[float, Field(ge=0)] = omitted()
     loopDurationBeats: Annotated[float, Field(gt=0)] = omitted()
     timeSignature: str = omitted(
-        description="numerator/denominator, e.g. 7/8: numerator 1..32, denominator 1, 2, 4, 8, 16 or 32."
+        description=f"numerator/denominator, e.g. 7/8: numerator 1..{MAX_TIME_SIGNATURE_NUMERATOR}, denominator 1, 2, 4, 8, 16 or 32."
     )
     metronomeVolumeNormalized: UnitValue = omitted(description="Metronome volume 0..1 (not dB); read back as observed.")
     punchInEnabled: bool = omitted(description="Arranger punch-in on/off.")
@@ -1360,7 +1363,7 @@ class TransportSetArgs(StatusArgs):
             or int(value.split("/", maxsplit=1)[0]) > MAX_TIME_SIGNATURE_NUMERATOR
         ):
             raise ValueError(
-                "timeSignature must be numerator/denominator: numerator 1..32, denominator 1, 2, 4, 8, 16 or 32"
+                f"timeSignature must be numerator/denominator: numerator 1..{MAX_TIME_SIGNATURE_NUMERATOR}, denominator 1, 2, 4, 8, 16 or 32"
             )
         return value
 
@@ -1501,14 +1504,14 @@ class ProjectSaveAsArgs(StrictModel):
             or name.lower() == "template"
         ):
             raise ValueError(
-                "project name must be 1..128 characters without leading/trailing whitespace or a leading dot, and not 'template'"
+                f"project name must be 1..{MAX_PROJECT_NAME_UNITS} characters without leading/trailing whitespace or a leading dot, and not 'template'"
             )
         if "auto-backups" in path.parts:
             raise ValueError("Bitwig refuses to save inside an auto-backups folder")
         return self
 
 
-RENDER_MAX_BEATS = 4194304
+RENDER_MAX_BEATS = MAX_BEAT
 RENDER_MAX_LENGTH = 65536
 
 
@@ -1618,11 +1621,12 @@ class RemoteSlotSpec(StrictModel):
     moduleId: TrackId = omitted(description="Current module instanceId from grid.get.")
     moduleName: str = omitted(
         min_length=1,
-        max_length=1024,
+        max_length=MAX_STRING_UNITS,
         description="Exact effective module name from grid.get; must be unique in the device.",
     )
     parameterId: str = Field(
-        max_length=1024, description="Exact parameterId from grid.get (e.g. VALUE of a Value module); empty is valid."
+        max_length=MAX_STRING_UNITS,
+        description="Exact parameterId from grid.get (e.g. VALUE of a Value module); empty is valid.",
     )
     label: str = omitted(
         max_length=256,
@@ -1684,13 +1688,13 @@ class GridApplySteps(StrictModel):
 
 
 class GridApplyLabel(StrictModel):
-    label: str = Field(min_length=1, max_length=1024, description="Enum option label, e.g. '16th'.")
+    label: str = Field(min_length=1, max_length=MAX_STRING_UNITS, description="Enum option label, e.g. '16th'.")
 
 
 class GridApplyModule(StrictModel):
     name: str = Field(
         min_length=1,
-        max_length=1024,
+        max_length=MAX_STRING_UNITS,
         description="Identity: the module's customName, unique and non-empty within the device.",
     )
     type: str = omitted(
@@ -1702,7 +1706,7 @@ class GridApplyModule(StrictModel):
     x: int = Field(ge=-(2**31), le=2**31 - 1)
     y: int = Field(ge=-(2**31), le=2**31 - 1)
     params: dict[str, bool | int | float | str | GridApplyDisplay | GridApplyLabel | GridApplySteps] = omitted(
-        description="parameterId -> raw value, {display:'1.2 kHz'}, {label:'16th'}, {steps:[1,0,0.5]} (step arrays: first entries written, rest unchanged) or a string (string panels, e.g. Comment TEXT; at most 1024 UTF-16 units, multi-line ok)."
+        description=f"parameterId -> raw value, {{display:'1.2 kHz'}}, {{label:'16th'}}, {{steps:[1,0,0.5]}} (step arrays: first entries written, rest unchanged) or a string (string panels, e.g. Comment TEXT; at most {MAX_STRING_UNITS} UTF-16 units, multi-line ok)."
     )
     replace: bool = omitted(
         description="If a module with this name exists with another type, delete it and insert this type under the same name (default: refuse)."
@@ -1733,7 +1737,7 @@ class GridApplyBlock(StrictModel):
         list[GridApplyModule],
         Field(
             min_length=1,
-            max_length=1024,
+            max_length=MAX_STRING_UNITS,
             description="Modules with local names and positions relative to the instance (no nesting).",
         ),
     ]
@@ -1743,9 +1747,9 @@ class GridApplyBlock(StrictModel):
 
 
 class GridApplyInstance(StrictModel):
-    block: str = Field(min_length=1, max_length=1024, description="Key of a block in blocks.")
+    block: str = Field(min_length=1, max_length=MAX_STRING_UNITS, description="Key of a block in blocks.")
     prefix: str = omitted(
-        max_length=1024,
+        max_length=MAX_STRING_UNITS,
         description="Prepended to every local module name (e.g. 'D1: '); instances need distinct prefixes.",
     )
     dx: int = omitted(ge=-(2**31), le=2**31 - 1, description="Offset added to every module x (default 0).")
@@ -1760,7 +1764,9 @@ class GridRenderArgs(ParameterArgs):
     format: Literal["svg", "png"] = omitted(description="svg (default) or png (needs rsvg-convert or magick on PATH).")
     overwrite: bool = omitted(description="Replace an existing file at outPath.")
     namespace: str = omitted(
-        min_length=1, max_length=1024, description="customName prefix to highlight; other modules are dimmed."
+        min_length=1,
+        max_length=MAX_STRING_UNITS,
+        description="customName prefix to highlight; other modules are dimmed.",
     )
     showConnections: bool = omitted(description="Draw cables (default true).")
     scale: float = omitted(ge=0.25, le=4, description="Image scale factor (default 1).")
@@ -1774,7 +1780,7 @@ class GridRenderArgs(ParameterArgs):
 class GridExportArgs(ParameterArgs):
     namespace: str = omitted(
         min_length=1,
-        max_length=1024,
+        max_length=MAX_STRING_UNITS,
         description="Export only modules whose customName starts with this; cables to/from other modules become `external` names.",
     )
     includeParams: Literal["changed", "all", "none"] = omitted(
@@ -1795,7 +1801,7 @@ class GridExportArgs(ParameterArgs):
 class GridGraphArgs(ParameterArgs):
     namespace: str = omitted(
         min_length=1,
-        max_length=1024,
+        max_length=MAX_STRING_UNITS,
         description="Only modules whose customName starts with this (plus cables touching them).",
     )
     includeParams: Literal["changed", "all", "none"] = omitted(
@@ -1805,7 +1811,7 @@ class GridGraphArgs(ParameterArgs):
 
 class GridProbeArgs(ParameterArgs):
     timeoutMs: int = Field(default=5000, ge=100, le=TOPOLOGY_TIMEOUT_MS)
-    port: Annotated[str, Field(min_length=3, max_length=1024)] = Field(
+    port: Annotated[str, Field(min_length=3, max_length=MAX_STRING_UNITS)] = Field(
         description="'<module name>.<OUT port key>' of a module in this device, e.g. 'H: lead.OUT'; the name is the customName (or generated name) from grid.graph."
     )
     seconds: float = Field(ge=0.2, le=20, description="Recording length.")
@@ -1848,7 +1854,7 @@ class GridApplyArgs(StatusArgs):
     modules: Annotated[
         list[GridApplyModule],
         Field(
-            max_length=1024,
+            max_length=MAX_STRING_UNITS,
             description="Declared modules; [] only with prune=true and a namespace (empties the namespace), or with instances.",
         ),
     ] = omitted()
@@ -1862,7 +1868,9 @@ class GridApplyArgs(StatusArgs):
         description="Cables between declared modules; one source per target input."
     )
     namespace: str = omitted(
-        min_length=1, max_length=1024, description="customName prefix (e.g. 'H: ') that prune may delete from."
+        min_length=1,
+        max_length=MAX_STRING_UNITS,
+        description="customName prefix (e.g. 'H: ') that prune may delete from.",
     )
     prune: bool = omitted(
         description="Also disconnect unlisted inputs of declared modules inside the namespace and delete namespace modules absent from the spec. Inputs of declared modules outside the namespace are kept (warning names both ends) unless allowOutsideDisconnect."
@@ -1873,7 +1881,9 @@ class GridApplyArgs(StatusArgs):
     allowOutsideDisconnect: bool = omitted(
         description="With prune and a namespace: also disconnect unlisted inputs of declared modules outside the namespace (listed by name in warnings and the dryRun plan)."
     )
-    external: Annotated[list[Annotated[str, Field(min_length=1, max_length=1024)]], Field(max_length=1024)] = omitted(
+    external: Annotated[
+        list[Annotated[str, Field(min_length=1, max_length=MAX_STRING_UNITS)]], Field(max_length=1024)
+    ] = omitted(
         description="Names of live modules this spec only wires to or from (e.g. 'X: sum'); they must exist, are used in connections like declared modules, and their type, position and params are never touched; never pruned."
     )
     dryRun: bool = omitted(description="Return the plan without writing anything.")

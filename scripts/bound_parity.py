@@ -18,6 +18,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from bitwig_agent.catalog import CLIENT_SIDE, TOOLS
+from bitwig_agent.schema import MAX_BEAT, MIDI_PITCH_COUNT
 
 UUID_PATTERN = r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 UUID = re.compile(UUID_PATTERN)
@@ -75,8 +76,6 @@ SKIPS: dict[tuple[str, str, str], str] = {
 
 
 MAX_BMP_CODEPOINT = 0xFFFF
-MIDI_PITCH_COUNT = 128
-MAX_BEAT = 4194304
 ASTRAL_UTF16_UNITS = 2
 
 
@@ -233,7 +232,7 @@ def vary(item, i):
     return item
 
 
-def generate(schema, defs):
+def generate(schema, defs):  # noqa: PLR0911
     """A minimal valid value for a schema node (cross-field rules are not modelled)."""
     schema = variants(schema, defs)[0]
     if "enum" in schema:

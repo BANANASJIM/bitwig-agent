@@ -155,7 +155,7 @@ class FakePW:
         self.sink = sink
         self.calls = []
 
-    def run(self, args, timeout=5.0):
+    def run(self, args, timeout=5.0):  # noqa: PLR0911
         self.calls.append(args)
         if args[:2] == ["pw-link", "-l"]:
             text = "alsa_output.pci:playback_FL\n  |<- Bitwig Studio:out1\nalsa_output.pci:playback_FR\n  |<- Bitwig Studio:out2\n"

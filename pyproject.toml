@@ -44,9 +44,9 @@ bitwig-agent-install = "bitwig_agent.install:main"
 
 [dependency-groups]
 dev = [
-    "mypy>=2.4.1",
+    "mypy==2.4.1",
     "pytest>=8.3,<9",
-    "ruff>=0.17.6",
+    "ruff==0.17.6",
 ]
 native-music = ["numpy>=2,<3", "scipy>=1.15,<2", "soundfile>=0.13,<1"]
 
@@ -60,7 +60,7 @@ target-version = "py311"
 extend-exclude = ["build"]
 
 [tool.ruff.lint]
-select = ["E", "W", "F", "I", "B", "UP", "SIM", "C4", "RUF", "PL", "C90", "PERF", "PT"]
+select = ["E", "W", "F", "I", "B", "UP", "SIM", "C4", "RUF", "PL", "C90", "PERF", "PT", "BLE"]
 ignore = ["E501"]
 
 [tool.ruff.lint.mccabe]
@@ -68,27 +68,6 @@ max-complexity = 12
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["PLR2004"]
-
-# refactor debt: remove an entry when the function it covers is split
-"examples/grid_music.py" = ["C901", "PLR0912", "PLR0915"]
-"scripts/bound_parity.py" = ["PLR0911"]
-"scripts/evidence_audio.py" = ["C901", "PLC0415", "PLR0915"]
-"scripts/smoke-mcp-java.py" = ["PLR0915"]
-"scripts/smoke-native.py" = ["PLR0915"]
-"src/bitwig_agent/audio.py" = ["C901", "PLR0912", "PLR0915"]
-"src/bitwig_agent/audio_analysis.py" = ["C901", "PLR0912", "PLR0913", "PLR0915", "PLR0917"]
-"src/bitwig_agent/cli.py" = ["C901", "PLR0912"]
-"src/bitwig_agent/client.py" = ["C901", "PLR0912", "PLR0915"]
-"src/bitwig_agent/diagnostics.py" = ["C901", "PLR0911", "PLR0912", "PLR0915"]
-"src/bitwig_agent/grid_apply.py" = ["C901", "PLR0912", "PLR0913", "PLR0915", "PLR0917"]
-"src/bitwig_agent/grid_docs.py" = ["C901", "PLR0912", "PLR0915"]
-"src/bitwig_agent/grid_probe.py" = ["C901", "PLR0912", "PLR0913", "PLR0915", "PLR0917"]
-"src/bitwig_agent/grid_render.py" = ["PLR0913"]
-"src/bitwig_agent/raw_scales.py" = ["PLR0913", "PLR0917"]
-"src/bitwig_agent/schema.py" = ["C901", "PLR0912"]
-"tests/test_audio.py" = ["PLR0911"]
-"tests/test_grid_render.py" = ["PLR0913", "PLR0917"]
-"tests/test_music_recipe.py" = ["C901", "PLR0913", "PLR0917"]
 
 [tool.mypy]
 python_version = "3.11"

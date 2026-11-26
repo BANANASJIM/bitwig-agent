@@ -328,7 +328,7 @@ def _port_y(row: dict[str, Any], ports: list[dict[str, Any]], key: str) -> float
     return y
 
 
-def draw(
+def draw(  # noqa: PLR0913
     rows: list[dict[str, Any]],
     cables: list[dict[str, Any]],
     texts: dict[str, str],

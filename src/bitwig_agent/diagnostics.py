@@ -120,7 +120,7 @@ def decode_marker(marker: str) -> dict[str, Any] | None:
     return None
 
 
-def classify(ts: datetime, component: str, level: str, msg: str) -> dict[str, Any] | None:
+def classify(ts: datetime, component: str, level: str, msg: str) -> dict[str, Any] | None:  # noqa: PLR0911
     msg = msg.strip()
     if any(b in msg for b in BENIGN):
         return None
@@ -168,7 +168,7 @@ def scan(text: str, cutoff: datetime | None) -> list[dict[str, Any]]:
     return events
 
 
-async def diagnostics(client: Any, args: dict[str, Any], timeout_ms: int) -> dict[str, Any]:
+async def diagnostics(client: Any, args: dict[str, Any], timeout_ms: int) -> dict[str, Any]:  # noqa: C901, PLR0912, PLR0915
     now = datetime.now()
     path = next((p for p in candidates() if p.is_file()), None)
     if path is None:
@@ -184,7 +184,7 @@ async def diagnostics(client: Any, args: dict[str, Any], timeout_ms: int) -> dic
     try:
         status = await client.call("status", {}, timeout_ms)
         instance = status.get("instance") if isinstance(status, dict) else None
-    except Exception as exc:  # attribution degrades; the log is still useful
+    except Exception as exc:  # noqa: BLE001 - attribution degrades; the log is still useful
         instance_error = f"status unavailable ({type(exc).__name__})"
     started = process_start(instance.get("pid") if isinstance(instance, dict) else None)
 
