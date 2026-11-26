@@ -33,9 +33,10 @@ REFS = (
     "ref as read>, id: <the parameter key in its exported spec>}. A ref carries the fields that find the object "
     "(locate) and the ones the host re-checks against what it finds there (compared). A ref nests its ancestors "
     "(a device holds its track or chain, a parameter its owner) and each ancestor is compared on identity: "
-    "positional objects (scene, slot, clip, device, remotePage, send, marker) by index and name, tracks, chains, "
-    "modulators and Grid modules by id. Their names are compared only when that object is itself the target, so "
-    "renaming a track does not invalidate the refs of its devices. Errors: stale with target_not_found when nothing "
+    "a scene, device, remotePage, send or marker by its position and name (a marker also by beat), a clip by where "
+    "it sits (slot, or lane and startBeats) and its name, a slot by its track and scene, tracks, chains, modulators "
+    "and Grid modules by id. The name of a track, chain, modulator, Grid module or parameter is compared only when "
+    "that object is itself the target, so renaming a track does not invalidate the refs of its devices. Errors: stale with target_not_found when nothing "
     "is at the location (next names the read to repeat); stale with target_changed when another object now sits "
     "there, with current = the ref found there (decide whether your intent still holds; nothing is retried); "
     "unavailable with not_ready while the host has not observed it yet. Keep refs within one working session and "
@@ -50,7 +51,7 @@ REFS = (
 VALUES = (
     "Write the bare value a read returned as value: a host parameter (volume, pan, send, device or Remote Control "
     "parameter) is normalized 0..1, so pan 0.5 is centre and pan 0 is hard left; Bitwig displays centre as "
-    '"0.00 %". Where the read carries display you may write {display: "-6 dB"} instead (pan: "C" or "25% L"); a '
+    '"0.00 %". Where the read carries display you may write {display: "-6 dB"} instead (pan: "C", "25% L" and "-25 %" all parse); a '
     'text display ("LP 24") is unsupported_unit, so write the value you read. Where the read carries options, write '
     'one option value; {label: "Bipolar"} only for enums whose label differs from their value. Beats, tempo, '
     "booleans, names and colours are bare scalars. expect is optional: pass it, with the bare current values you "

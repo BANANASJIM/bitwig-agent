@@ -10,7 +10,7 @@ The public [installation guide](https://github.com/BANANASJIM/bitwig-agent/blob/
 - `bitwig-agent-install` installs the matching extension and can replace user files, so it needs installation permission. With `--mcp-config` it only prints client configuration; review and merge it yourself.
 - A replaced `.bwextension` is loaded only by restarting Bitwig, not by the Settings toggle. Save every open tab or get consent before restarting.
 - Starting `bitwig-agent-mcp` by hand starts a stdio server waiting for a client, not a host test.
-- The Arch package puts the extension and this skill under `/usr/share/bitwig-agent/`; each user then installs the extension themselves, without sudo, and restarts Bitwig.
+- The Arch package puts the extension and this skill under `/usr/share/bitwig-agent/`; each user then installs the extension themselves, without sudo, with `bitwig-agent-install --extension /usr/share/bitwig-agent/BitwigAgent.bwextension`, and restarts Bitwig; check `status.extension.build` afterwards.
 - Keep the unauthenticated endpoint on loopback; never forward the port. Do not upgrade the proprietary host or bypass a version gate to work around missing tools.
 
 ## Isolated native runs

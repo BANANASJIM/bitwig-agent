@@ -1,6 +1,6 @@
 # Mixing, routing, silent checks and export
 
-Fields and limits: `<path> --help`. Level and pan values: `bitwig-agent help values`.
+Fields, limits and units come from `<path> --help`; level and pan values from `bitwig-agent help values`.
 
 ## Route and balance before adding processing
 
@@ -8,9 +8,9 @@ Trace the real path: notes, instrument, device chain, track output or group, mas
 
 - Start conservative, especially with layered oscillators, chords and long releases. Balance parts in context before compression or limiting, and leave headroom. Turning the master down does not fix upstream clipping or feedback.
 - Before blaming the composition check mute, solo, disabled devices, output destinations, crossfader assignment and monitoring.
-- Levels: `tracks set` takes `volume` and `pan` as the read's bare 0..1 value or `{display}` (`"-6 dB"`, pan `"C"`); `tracks sends set` takes `value` the same way. A level write turns a disabled send on and reports it. Pan 0.5 is centre.
+- Levels: `tracks set` and `tracks sends set` take the value a read returned or a `{display}` (`bitwig-agent help values`; pan 0.5 is centre). Gain-match an A/B by measured loudness, not by fader positions.
 - Bus processing: `tracks group` groups adjacent tracks of one parent, then put shared processing on the group track. Audio clips on a group lane override the group's summed output while they play, and group meta-clips act on their children, so treat group selection as a wider target.
-- Resample, bus and sidechain routes: read before writing. `tracks routing get --includeChoices` lists the track's output and input entries and which ones Bitwig's own cycle check accepts; `tracks routing set` then takes the new `output` or `input`. For ducking, `devices sidechain get` lists a device's sidechain choosers and `devices sidechain set` points one at a track tap. Hardware ports and the Grid Audio Sidechain module are not settable. Afterwards confirm with `meters get` or a capture that signal actually arrives.
+- Resample, bus and sidechain routes: read before writing. `tracks routing get --includeChoices` and `devices sidechain get` list the valid choices (and, for sidechain choosers, whether each is `writable`); then `tracks routing set` or `devices sidechain set`. Afterwards confirm with `meters get` or a capture that signal actually arrives.
 - `expect` on routing and sidechain writes protects a route the user may have just changed by hand.
 
 Meters and peak readings are observations, not loudness, tonal balance or hearing safety. Gain-match A/B with a measured loudness, not fader positions.
@@ -19,16 +19,16 @@ Meters and peak readings are observations, not loudness, tonal balance or hearin
 
 1. `bitwig-agent audio route --mode=silent` moves Bitwig's outputs to a null sink.
 2. Build or edit. Module and cable edits need a stopped transport; plain value writes do not.
-3. `bitwig-agent audio capture` records only Bitwig's own outputs to an absolute `outPath` (`soloTrack` solos one track and restores the solos).
-4. `bitwig-agent audio analyze` the file: `level` for silence and clipping, `onsets` for timing, `mono_pitch` with `bpm` for notes and intervals, `loudness` for LUFS and true peak, `bands` for spectrum, `probe` to scope a logic or CV signal sent to Audio Out.
+3. `bitwig-agent audio capture` records only Bitwig's own outputs; `soloTrack` isolates one track.
+4. `bitwig-agent audio analyze` the file; `audio analyze --help` lists the modes (silence and clipping, onsets, pitch, loudness, spectrum, a scope for logic or CV signals). Pick the mode that answers your question.
 5. `bitwig-agent audio route --mode=restore` when finished, or Bitwig stays muted for the user.
 
 Skip warm-up with `skipSeconds`. Pitch analysis is for monophonic, fundamental-dominant material only; an empty `silent` result usually means the route or signal path, not the analysis. Analysis is measurement: it cannot say a sound is good, so report "No audio audition performed" unless someone listened.
 
 ## Bounce and export
 
-- **Bounce** (`tracks bounce`) prints a range of audio or instrument tracks in place and replaces what was there. Choose the tap deliberately (`pre_fx`, `pre_fader`, `post_fader`). An instrument track becomes Hybrid. Keep editable originals for creative comparisons; it is not a substitute for saving.
-- **Export** (`export audio`) renders Arranger material, not a selected launcher performance: the master and/or tracks over a beat range, one file per source. It needs a stopped transport and an existing directory, and refuses to overwrite unless told. Include release tails in the range, and say whether stems carry the processing the recipient expects.
+- **Bounce** (`tracks bounce`) prints a range in place and replaces what was there, and an instrument track becomes Hybrid. Choose the tap deliberately and keep editable originals for creative comparisons. It is not a substitute for saving.
+- **Export** (`export audio`) renders Arranger material, not a selected launcher performance. Include release tails in the range and say whether stems carry the processing the recipient expects. Its `--help` lists the refusals (playing transport, existing files, missing directory).
 - A long job returns `unknown` with a `job`: follow it with `jobs get` instead of retrying. Check the file's real extent against the intended range; a loop length alone does not set render length.
 - For numbers, `audio analyze --mode=loudness` on the exported file (BS.1770 LUFS, true-peak estimate, LRA). That is a file measurement, not Bitwig's meter.
 
