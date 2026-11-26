@@ -226,7 +226,7 @@ def tools() -> list[ToolView]:
 
 
 def instructions() -> str:
-    return f"{TOPICS['loop']} Call help for more: {', '.join(TOPICS)}, or any tool name."
+    return f"{TOPICS['loop']} Call help for more: {', '.join(TOPICS)}, or any tool name. A Poly Grid bass that works: help recipes."
 
 
 def help(topic: str | None = None) -> dict[str, Any]:

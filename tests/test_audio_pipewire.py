@@ -475,7 +475,7 @@ def test_cli_and_catalog_expose_tools():
     payload, code = asyncio.run(execute(["audio.analyze", "--path=/nonexistent/x.wav", "--mode=level"]))
     assert code == 2
     assert payload["error"]["code"] == "invalid_params"
-    payload, code = asyncio.run(execute(["help", "audio.route"]))
+    payload, code = asyncio.run(execute(["help", "audio.route", "--schema"]))
     assert code == 0
     assert payload["result"]["method"] == "audio.route"
 

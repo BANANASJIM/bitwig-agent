@@ -235,6 +235,10 @@ public final class RoutingModuleTest {
         assertTrue(
                 f.adapter.lastDevice != null && f.adapter.reads == 1,
                 "sidechain get passes the observed root device proxy");
+        String hint = f.call("devices.sidechain.get", get).get("hint").getAsString();
+        assertTrue(
+                hint.contains("Compressor+") && hint.contains("Dynamics"),
+                "an empty component list names stock devices");
         JsonObject wrong = json("{\"target\":" + Refs.device(HostFixture.track(A), 0, "Gate") + "}");
         RpcException changed = assertRpcError("target_changed", f.start("devices.sidechain.get", wrong));
         assertEquals(Refs.device(HostFixture.track(A), 0, "Compressor"), changed.current);
@@ -244,7 +248,7 @@ public final class RoutingModuleTest {
         assertEquals(p.getAsJsonObject("target"), result.getAsJsonObject("ref"), "the written component's ref");
         f.host.tracks[0].child("name").emit("Lead");
         f.call("devices.sidechain.get", get);
-        assertEquals(2, f.adapter.reads, "a device ref survives its track's rename");
+        assertEquals(3, f.adapter.reads, "a device ref survives its track's rename");
         Fixture missing = new Fixture();
         assertRpcError("target_not_found", missing.start("devices.sidechain.get", get));
         assertTrue(missing.adapter.calls == 0, "an unobserved device is refused before native access");
@@ -413,7 +417,9 @@ public final class RoutingModuleTest {
             reads++;
             check.run();
             lastDevice = device;
-            return new JsonObject();
+            JsonObject out = new JsonObject();
+            out.add("components", new JsonArray());
+            return out;
         }
 
         public JsonObject sidechainSet(

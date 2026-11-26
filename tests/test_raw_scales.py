@@ -132,7 +132,7 @@ def test_lfo_rate_follows_timebase():
             apply_grid(FakeGrid(), spec(timebase, "2 Hz"))
 
 
-def test_midi_pitch_cutoff_keeps_the_host_display_path():
+def test_midi_pitch_cutoff_display_is_converted_client_side():
     host = FakeGrid()
     apply_grid(
         host,
@@ -142,8 +142,8 @@ def test_midi_pitch_cutoff_keeps_the_host_display_path():
         },
     )
     writes = [w for m, c in host.calls if m == "grid.parameters.set" for w in c["writes"]]
-    assert writes
-    assert writes[0].get("display") == "800 Hz"
+    assert writes[0]["value"] == pytest.approx(69 + 12 * math.log2(800 / 440))
+    assert "display" not in writes[0]
 
 
 def test_describe_exposes_schema_facts_scales_footprint_and_category():

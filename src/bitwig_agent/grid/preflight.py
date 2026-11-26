@@ -1,4 +1,4 @@
-"""What a real grid.apply would be refused for, knowable before writing anything (dryRun's `wouldFail`)."""
+"""What a real grid.apply would certainly be refused for, knowable before writing anything (dryRun's `wouldFail`)."""
 
 from __future__ import annotations
 
@@ -28,12 +28,10 @@ async def _transport_blocks(channel: Channel, structural: bool) -> list[Refusal]
     ]
 
 
-def _unverified_displays(spec: Spec, plan: Plan) -> list[Refusal]:
+def unverified_displays(spec: Spec, plan: Plan) -> list[str]:
+    """Display writes the host converts itself: it may refuse them, which is a warning, not a certain failure."""
     return [
-        {
-            "reason": "unsupported_unit",
-            "message": f"{name}.{w['parameterId']}: the host converts the display {w['to']['display']!r} itself and may refuse it (unsupported_unit); write the raw value to be certain",
-        }
+        f"{name}.{w['parameterId']}: the host converts the display {w['to']['display']!r} itself and may refuse it (unsupported_unit); write the raw value to be certain"
         for name in spec.names
         for w in plan.params[name][0]
         if isinstance(w.get("to"), dict) and "display" in w["to"] and "rawValue" not in w
@@ -43,4 +41,4 @@ def _unverified_displays(spec: Spec, plan: Plan) -> list[Refusal]:
 async def preflight(channel: Channel, spec: Spec, plan: Plan, wiring: WiringPlan) -> list[Refusal]:
     structural = bool(plan.inserts or plan.deletes or plan.to_name_first or plan.pre_moves or wiring.edits)
     writes = structural or bool(plan.voicing.changes or any(plan.params[n][0] for n in spec.names))
-    return [*(await _transport_blocks(channel, structural) if writes else []), *_unverified_displays(spec, plan)]
+    return await _transport_blocks(channel, structural) if writes else []

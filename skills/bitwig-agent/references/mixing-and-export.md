@@ -10,7 +10,7 @@ Trace the real path: notes, instrument, device chain, track output or group, mas
 - Before blaming the composition check mute, solo, disabled devices, output destinations, crossfader assignment and monitoring.
 - Levels: `tracks set` and `tracks sends set` take the value a read returned or a `{display}` (`bitwig-agent help values`; pan 0.5 is centre). Gain-match an A/B by measured loudness, not by fader positions.
 - Bus processing: `tracks group` groups adjacent tracks of one parent, then put shared processing on the group track. Audio clips on a group lane override the group's summed output while they play, and group meta-clips act on their children, so treat group selection as a wider target.
-- Resample, bus and sidechain routes: read before writing. `tracks routing get --includeChoices` and `devices sidechain get` list the valid choices (and, for sidechain choosers, whether each is `writable`); then `tracks routing set` or `devices sidechain set`. Afterwards confirm with `meters get` or a capture that signal actually arrives.
+- Resample, bus and sidechain routes: read before writing. Only some stock devices have an audio sidechain input (Compressor+, Dynamics, Gate, Transient Control; the plain Compressor has none): insert one of those first. `tracks routing get --includeChoices` and `devices sidechain get` list the valid choices (and, for sidechain choosers, whether each is `writable`); then `tracks routing set` or `devices sidechain set`. Afterwards confirm with `meters get` or a capture that signal actually arrives.
 - `expect` on routing and sidechain writes protects a route the user may have just changed by hand.
 
 Meters and peak readings are observations, not loudness, tonal balance or hearing safety. Gain-match A/B with a measured loudness, not fader positions.
@@ -28,7 +28,7 @@ Skip warm-up with `skipSeconds`. Pitch analysis is for monophonic, fundamental-d
 ## Bounce and export
 
 - **Bounce** (`tracks bounce`) prints a range in place and replaces what was there, and an instrument track becomes Hybrid. Choose the tap deliberately and keep editable originals for creative comparisons. It is not a substitute for saving.
-- **Export** (`export audio`) renders Arranger material, not a selected launcher performance. Include release tails in the range and say whether stems carry the processing the recipient expects. Its `--help` lists the refusals (playing transport, existing files, missing directory).
+- **Export** (`export audio`) renders the Arranger timeline, not a launcher performance: `clips copy --to='{"track":...,"startBeats":N}'` puts a launcher clip on the arranger first. A track still playing a launcher clip needs `actions invoke --actionId=switch_playback_to_arranger_for_all_tracks`. Include release tails in the range and say whether stems carry the processing the recipient expects. Its `--help` lists the refusals (playing transport, existing files, missing directory).
 - A long job returns `unknown` with a `job`: follow it with `jobs get` instead of retrying. Check the file's real extent against the intended range; a loop length alone does not set render length.
 - For numbers, `audio analyze --mode=loudness` on the exported file (BS.1770 LUFS, true-peak estimate, LRA). That is a file measurement, not Bitwig's meter.
 

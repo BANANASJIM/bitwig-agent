@@ -16,7 +16,7 @@ from bitwig_agent.grid.channel import Channel, Stop
 from bitwig_agent.grid.execute import Executor
 from bitwig_agent.grid.partial import resolve_partials
 from bitwig_agent.grid.plan import Plan, build_plan, params_to_read, plan_module_params, plan_voicing, unreadable_names
-from bitwig_agent.grid.preflight import preflight
+from bitwig_agent.grid.preflight import preflight, unverified_displays
 from bitwig_agent.grid.problems import SpecError, invalid_spec
 from bitwig_agent.grid.read import Graph, device_target, read_catalog, read_graph, read_params
 from bitwig_agent.grid.report import Ledger
@@ -94,6 +94,8 @@ class Session:
             spec, {**plan.existing_by_name, **plan.external_rows}, plan.graph.cables, plan.gone_ids, plan.graph.rows
         )
         ledger.absorb(wiring)
+        for note in unverified_displays(spec, plan):
+            ledger.warn(note)
         return ledger.dry_report(plan, wiring, await preflight(self.channel, spec, plan, wiring))
 
     async def _write(self, plan: Plan) -> dict[str, Any]:

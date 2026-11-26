@@ -99,7 +99,6 @@ SCALES = {
             {"hz": _ident, "khz": lambda n: n * 1000},
             lambda f: 69 + 12 * math.log2(f / 440) if f > 0 else math.nan,
             lambda r: 440 * 2 ** ((r - 69) / 12),
-            client=False,
             example='{"display": "800 Hz"}',
         ),
     )
@@ -208,7 +207,7 @@ _add(
         "midi_pitch_hz",
         "verified",
         ((60.0, "262 Hz"), (96.0, "2.09 kHz"), (102.8, "3.10 kHz")),
-        "the host's own Hz display write already handles this",
+        "raw is a MIDI note number; display writes are converted client-side",
     ),
 )
 _add(

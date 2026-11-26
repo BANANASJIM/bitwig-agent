@@ -314,6 +314,7 @@ public final class RoutingModule implements HostModule {
                                 if (write && Results.outcomeOf(result).succeeded()) holds.release(QUARANTINE);
                                 holds.release(PENDING);
                                 annotateTrackNames(result, trackNames());
+                                if (method.equals("devices.sidechain.get")) hintWhenEmpty(result);
                                 if (!sidechain) result.add("ref", trackRefs.ref(slot));
                                 else if (write)
                                     result.add(
@@ -355,6 +356,17 @@ public final class RoutingModule implements HostModule {
 
     /** Native names of track buses are blank or generic ("Pre-Fader"): next to every {kind, trackId} entry put the track's public
      *  name as a sibling (entry -> trackName, source -> sourceTrackName, ...). Entries themselves stay verbatim, copyable into expected*. */
+    static final String NO_SIDECHAIN_HINT =
+            "This device has no sidechain input. Stock devices with an audio sidechain input: Compressor+, Dynamics, Gate, Transient Control (the plain Compressor has none). Insert one of them, then read this again.";
+
+    /** A device that reports no component gets the names of the stock devices that have an audio sidechain. */
+    static void hintWhenEmpty(JsonObject result) {
+        JsonElement components = result.get("components");
+        if (components != null
+                && components.isJsonArray()
+                && components.getAsJsonArray().size() == 0) result.addProperty("hint", NO_SIDECHAIN_HINT);
+    }
+
     static void annotateTrackNames(JsonElement element, Map<String, String> names) {
         if (element == null) return;
         if (element.isJsonArray()) {
