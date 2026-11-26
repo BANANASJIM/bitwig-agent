@@ -252,20 +252,6 @@ final class DeviceSources {
         }
     }
 
-    /** Grid/Device targets address the zero-scrolled bank; an absent device is target_not_found, not a stale identity. */
-    void requireZeroWindow(JsonObject p) {
-        int t = window.trackSlot(p.get("trackId").getAsString());
-        if (window.devices(t).scrollPosition().get() != 0)
-            throw Errors.notApplied(Reason.STALE_CONTEXT, "Device bank is not at the zero-based window.");
-        Source source = roots[t][p.get("deviceIndex").getAsInt()];
-        if (source.metadataReady()
-                && (!Boolean.TRUE.equals(source.exists)
-                        || source.position != p.get("deviceIndex").getAsInt()))
-            throw Errors.notApplied(Reason.TARGET_NOT_FOUND, "Device is absent at the explicit index.");
-        if (source.metadataReady() && source.name.isEmpty())
-            throw Errors.notApplied(Reason.NOT_READY, "Device name has not been observed.");
-    }
-
     /** The device a ref names: stale when it is gone or another device is there now, not_ready while unobserved. */
     Source device(JsonObject ref, boolean target) {
         Source source = locate(ref);
@@ -307,32 +293,6 @@ final class DeviceSources {
         return source;
     }
 
-    Source root(JsonObject p) {
-        Source source = rootAt(
-                tracks[window.trackSlot(p.get("trackId").getAsString())],
-                p.get("deviceIndex").getAsInt());
-        TrackState track = source.track;
-        if (!source.present() || !track.id.equals(p.get("trackId").getAsString()))
-            throw Errors.notApplied(Reason.STALE_TARGET, "Parent address/name no longer matches observed context.");
-        if (!source.name.equals(p.get("expectedDeviceName").getAsString()))
-            throw Errors.notApplied(
-                    Reason.STALE_TARGET,
-                    "Parent address/name no longer matches observed context: the device at index "
-                            + p.get("deviceIndex").getAsInt() + " is named \"" + source.name
-                            + "\", not expectedDeviceName.");
-        return source;
-    }
-
-    /** Capture/final guard are controller-only; native callbacks see only the atomic ticket. */
-    RootReadTicket rootRead(JsonObject parent) {
-        Source source = root(parent);
-        if (source.position >= source.track.count)
-            throw Errors.notApplied(Reason.TARGET_NOT_FOUND, "Parent is outside the observed device count.");
-        RootReadTicket ticket = new RootReadTicket(source, trackOffset, window.total());
-        guardRootRead(ticket);
-        return ticket;
-    }
-
     /** The read ticket of a resolved root device. */
     RootReadTicket rootRead(Source source) {
         if (source.position >= source.track.count)
@@ -345,14 +305,8 @@ final class DeviceSources {
     /** A ticket for every observed root device of {@code trackId}, for callers that find a device by identity. */
     List<RootReadTicket> rootReads(String trackId) {
         List<RootReadTicket> out = new ArrayList<>();
-        for (Source source : roots[window.trackSlot(trackId)]) {
-            if (source == null || !source.metadataReady() || !source.present()) continue;
-            JsonObject p = new JsonObject();
-            p.addProperty("trackId", trackId);
-            p.addProperty("deviceIndex", source.position);
-            p.addProperty("expectedDeviceName", source.name);
-            out.add(rootRead(p));
-        }
+        for (Source source : roots[window.trackSlot(trackId)])
+            if (source != null && source.metadataReady() && source.present()) out.add(rootRead(source));
         return out;
     }
 

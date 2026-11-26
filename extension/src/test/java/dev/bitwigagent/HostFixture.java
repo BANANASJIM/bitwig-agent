@@ -430,12 +430,6 @@ final class HostFixture {
         return JsonParser.parseString(text).getAsJsonObject();
     }
 
-    static JsonObject target(String id) {
-        JsonObject p = new JsonObject();
-        p.addProperty("trackId", id);
-        return p;
-    }
-
     /** The ref of a fixture track A, B or C, named as the fixture names its slot. */
     static JsonObject track(String id) {
         return Refs.track(id, "Track " + (id.equals(A) ? 0 : id.equals(B) ? 1 : 2));
