@@ -189,7 +189,7 @@ final class ParameterModule implements HostModule {
         request.dispatched = true;
         source.identity.device.setDirectParameterValueNormalized(
                 id, Math.round(requestedValue * (RESOLUTION - 1)), RESOLUTION);
-        long observeUntil = HostServices.observeUntil(request);
+        long observeUntil = s.observeUntil(request);
         awaitValue(request, target, token, id, requestedValue, applied, before, observeUntil);
     }
 
@@ -211,7 +211,7 @@ final class ParameterModule implements HostModule {
         if (fresh && Math.abs(parameter.value - applied) <= TOLERANCE) {
             request.result.complete(
                     writeResult(target, id, requested, applied, parameter.value, "observer_after_write"));
-        } else if (System.nanoTime() >= observeUntil) {
+        } else if (s.now() >= observeUntil) {
             request.result.complete(writeResult(
                     target,
                     id,

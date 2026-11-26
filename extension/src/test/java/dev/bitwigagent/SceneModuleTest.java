@@ -6,7 +6,6 @@ import static org.junit.jupiter.api.Assertions.*;
 import com.bitwig.extension.controller.api.*;
 import com.google.gson.*;
 import java.util.*;
-import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 
 /** Simulated scene bank: callbacks and queued host tasks only; says nothing about native scene behavior. */
@@ -87,16 +86,8 @@ public final class SceneModuleTest {
         }
 
         HostOperation startShort(String method, String json) {
-            HostOperation op = f.submit(
-                    module, method, HostFixture.json(json), System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(300));
-            try {
-                for (int i = 0; i < 400 && !op.result.isDone(); i++) {
-                    f.next();
-                    Thread.sleep(2);
-                }
-            } catch (InterruptedException e) {
-                throw new AssertionError(e);
-            }
+            HostOperation op = f.submit(module, method, HostFixture.json(json), f.tasks.after(300));
+            while (!op.result.isDone()) f.next();
             return op;
         }
     }

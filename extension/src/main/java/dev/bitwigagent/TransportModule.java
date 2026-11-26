@@ -144,7 +144,7 @@ final class TransportModule implements HostModule {
         if (!Double.isFinite(start + duration))
             throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "Loop end must be finite.");
         Map<String, Long> writes = new LinkedHashMap<>();
-        long until = HostServices.observeUntil(op);
+        long until = s.observeUntil(op);
         boolean stopping = p.has("playing") && !p.get("playing").getAsBoolean();
         try {
             if (stopping) write(op, p, "playing", writes);
@@ -159,7 +159,7 @@ final class TransportModule implements HostModule {
 
     private void awaitStop(HostOperation op, JsonObject p, Map<String, Long> writes, long until) {
         // Stop is asynchronous: dispatch order alone cannot protect a following seek.
-        if (System.nanoTime() >= until) {
+        if (s.now() >= until) {
             finish(op, p, writes, null);
         } else if (verified("playing", p.get("playing"), writes.get("playing"))) {
             writeRemaining(op, p, writes, until);
@@ -246,7 +246,7 @@ final class TransportModule implements HostModule {
     private void await(HostOperation op, JsonObject p, Map<String, Long> writes, long until) {
         boolean done = true;
         for (String key : p.keySet()) done &= verified(key, p.get(key), writes.get(key));
-        if (done || System.nanoTime() >= until) {
+        if (done || s.now() >= until) {
             finish(op, p, writes, null);
             return;
         }

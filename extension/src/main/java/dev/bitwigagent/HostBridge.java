@@ -17,7 +17,7 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
         this(host, specs, System::nanoTime);
     }
 
-    /** Test seam: injectable clock for the project settle window. */
+    /** {@code clock} is the monotonic nanosecond clock that request deadlines are measured on. */
     HostBridge(ControllerHost host, MethodSpecs specs, java.util.function.LongSupplier clock) {
         this.specs = specs;
         services = new HostServices(host, clock);

@@ -9,7 +9,6 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.file.*;
 import java.util.*;
-import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 
@@ -535,7 +534,7 @@ public final class RenderModuleTest {
         }
 
         HostOperation start(String method, JsonObject p, long timeoutMs) {
-            return fixture.submit(module, method, p, System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs));
+            return fixture.submit(module, method, p, fixture.tasks.after(timeoutMs));
         }
 
         JsonObject call(String method) {

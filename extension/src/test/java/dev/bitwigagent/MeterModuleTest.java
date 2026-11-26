@@ -75,10 +75,7 @@ public final class MeterModuleTest {
         fire(0, 1, "peak", 55);
         fire(0, 0, "rms", 30);
         fire(0, 1, "rms", 10);
-        for (int i = 0; i < 500 && !op.result.isDone(); i++) {
-            Thread.sleep(5);
-            f.next();
-        }
+        while (!op.result.isDone()) f.next();
         JsonObject r = op.result.join();
         JsonObject a = r.getAsJsonArray("tracks").get(0).getAsJsonObject(),
                 b = r.getAsJsonArray("tracks").get(1).getAsJsonObject();
@@ -117,7 +114,7 @@ public final class MeterModuleTest {
                 m,
                 "tracks.meters",
                 params("{\"trackIds\":[\"" + HostFixture.A + "\"],\"windowMs\":2000}"),
-                System.nanoTime() + 500_000_000L);
+                f.tasks.after(500));
         f.next();
         assertRpcError("invalid_params", op);
     }

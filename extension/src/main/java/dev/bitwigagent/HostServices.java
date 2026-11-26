@@ -30,8 +30,8 @@ final class HostServices implements AutoCloseable {
     private Boolean playing, arrangerRecordEnabled, arrangerAutomationWriteEnabled, clipLauncherAutomationWriteEnabled;
     /** A name change (extension start, project switch/recovery, Save As) opens a settle window in which writes may land in a transient project. */
     static final long PROJECT_SETTLE_NANOS = java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(3000);
-    /** Test seam for the settle window. */
-    volatile LongSupplier clock;
+    /** The controller's monotonic clock in nanoseconds; request deadlines are on the same clock. */
+    private final LongSupplier clock;
 
     private volatile boolean projectNameObserved;
     private volatile String observedProjectName;
@@ -39,10 +39,6 @@ final class HostServices implements AutoCloseable {
     private volatile Boolean projectModified;
     private volatile long projectModifiedSequence;
     private volatile SafetyObservation safety = new SafetyObservation(0, null, null, null, null);
-
-    HostServices(ControllerHost host) {
-        this(host, System::nanoTime);
-    }
 
     HostServices(ControllerHost host, LongSupplier clock) {
         this.clock = clock;
@@ -57,7 +53,7 @@ final class HostServices implements AutoCloseable {
         application.projectName().markInterested();
         application.projectName().addValueObserver((StringValueChangedCallback) value -> {
             String name = String.valueOf(value);
-            if (!projectNameObserved || !name.equals(observedProjectName)) projectChangedAt = clock.getAsLong();
+            if (!projectNameObserved || !name.equals(observedProjectName)) projectChangedAt = now();
             observedProjectName = name;
             projectNameObserved = true;
         });
@@ -142,8 +138,12 @@ final class HostServices implements AutoCloseable {
 
     static final long DEADLINE_MARGIN_NANOS = java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(50);
 
-    static long observeUntil(HostOperation operation) {
-        return Math.min(operation.deadline - DEADLINE_MARGIN_NANOS, System.nanoTime() + OBSERVE_WINDOW_NANOS);
+    long observeUntil(HostOperation operation) {
+        return Math.min(operation.deadline - DEADLINE_MARGIN_NANOS, now() + OBSERVE_WINDOW_NANOS);
+    }
+
+    long now() {
+        return clock.getAsLong();
     }
 
     /** Selection lease: launcher cursor operations bind the global editor selection for their whole life. */
@@ -176,7 +176,7 @@ final class HostServices implements AutoCloseable {
                     ErrorCode.CANCELLED,
                     "Operation is no longer awaiting a result.",
                     operation.dispatched ? Outcome.UNKNOWN : Outcome.NOT_APPLIED);
-        if (System.nanoTime() >= operation.deadline)
+        if (now() >= operation.deadline)
             throw Errors.of(
                     ErrorCode.DEADLINE_EXCEEDED,
                     "Deadline expired; inspect state before another write.",
@@ -189,11 +189,11 @@ final class HostServices implements AutoCloseable {
         JsonObject out = new JsonObject();
         Boolean ready;
         String reason;
-        long sinceMs = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(clock.getAsLong() - projectChangedAt);
+        long sinceMs = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(now() - projectChangedAt);
         if (!projectNameObserved) {
             ready = null;
             reason = "project_name_unobserved";
-        } else if (clock.getAsLong() - projectChangedAt < PROJECT_SETTLE_NANOS) {
+        } else if (now() - projectChangedAt < PROJECT_SETTLE_NANOS) {
             ready = false;
             reason = "project_changed_settling";
         } else if (!tracksObserved) {

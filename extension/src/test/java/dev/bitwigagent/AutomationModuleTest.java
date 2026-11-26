@@ -251,7 +251,7 @@ public final class AutomationModuleTest {
 
     static final class Fixture {
         final HostFixture host = new HostFixture();
-        final Deque<Runnable> queue = host.tasks;
+        final ScheduledTasks queue = host.tasks;
         final AutomationModule module;
         final boolean playing;
         boolean failAfterWrite, failBeforeWrite;

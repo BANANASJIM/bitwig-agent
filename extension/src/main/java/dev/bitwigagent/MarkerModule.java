@@ -181,7 +181,7 @@ final class MarkerModule implements HostModule {
         CueMarker marker = items[target.slot];
         if (method.equals("markers.rename")) marker.name().set(newName);
         else marker.deleteObject();
-        awaitMulti(op, method, expected, before, target.beat, newName, HostServices.observeUntil(op));
+        awaitMulti(op, method, expected, before, target.beat, newName, s.observeUntil(op));
     }
 
     private Marker locate(Snapshot snap, JsonObject p) {
@@ -213,7 +213,7 @@ final class MarkerModule implements HostModule {
         op.dispatched = true;
         unresolved = true;
         s.transport.addCueMarkerAtPlaybackPosition();
-        awaitInserted(op, p, before, HostServices.observeUntil(op));
+        awaitInserted(op, p, before, s.observeUntil(op));
     }
 
     /** The new marker is whatever single entry the multiset gained; it is then named and moved in one controller callback. */
@@ -239,10 +239,10 @@ final class MarkerModule implements HostModule {
             if (!sameBeat) marker.position().set(beat);
             Map<String, Integer> expected = before.multiset();
             expected.merge(new Marker(0, name, beat).key(), 1, Integer::sum);
-            awaitMulti(op, "markers.insert", expected, before, beat, name, HostServices.observeUntil(op));
+            awaitMulti(op, "markers.insert", expected, before, beat, name, s.observeUntil(op));
             return;
         }
-        if (System.nanoTime() >= until || now.total > before.total + 1 || gained.size() > 1) {
+        if (s.now() >= until || now.total > before.total + 1 || gained.size() > 1) {
             JsonObject result = describe(now);
             result.addProperty("status", "dispatched");
             result.addProperty("completion", "unknown");
@@ -268,7 +268,7 @@ final class MarkerModule implements HostModule {
             finish(op, method, expected, now, beat, name, "observer_after_write", true);
             return;
         }
-        if (System.nanoTime() >= until) {
+        if (s.now() >= until) {
             finish(op, method, expected, now, beat, name, "not_observed", false);
             return;
         }

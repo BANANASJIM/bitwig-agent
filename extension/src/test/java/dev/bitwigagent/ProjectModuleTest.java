@@ -7,7 +7,6 @@ import com.google.gson.JsonObject;
 import java.io.IOException;
 import java.nio.file.*;
 import java.util.*;
-import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 
@@ -297,8 +296,7 @@ public final class ProjectModuleTest {
         HostOperation start(Path path, boolean overwrite, long timeoutMs) {
             JsonObject p = params(path.toString());
             if (overwrite) p.addProperty("overwrite", true);
-            return fixture.submit(
-                    module, "project.saveAs", p, System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs));
+            return fixture.submit(module, "project.saveAs", p, fixture.tasks.after(timeoutMs));
         }
 
         void drain() {

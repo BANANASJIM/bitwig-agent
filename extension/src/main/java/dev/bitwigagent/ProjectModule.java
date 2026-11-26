@@ -144,7 +144,7 @@ final class ProjectModule implements HostModule {
             JsonObject done = observed();
             done.addProperty("engineActive", true);
             op.result.complete(done);
-        } else if (System.nanoTime() >= until) {
+        } else if (s.now() >= until) {
             JsonObject result = new JsonObject();
             result.addProperty("status", "dispatched");
             result.addProperty("engineActive", false);
@@ -164,7 +164,7 @@ final class ProjectModule implements HostModule {
             done.addProperty("saved", true);
             done.addProperty("projectModified", false);
             op.result.complete(done);
-        } else if (System.nanoTime() >= until) {
+        } else if (s.now() >= until) {
             JsonObject result = new JsonObject();
             result.addProperty("status", "dispatched");
             result.addProperty("saved", false);
@@ -280,7 +280,7 @@ final class ProjectModule implements HostModule {
 
     private void awaitSaveAs(
             HostOperation op, ProjectSaveAsPlan plan, Outcome outcome, SaveAsAccess bridge, long until) {
-        boolean late = System.nanoTime() >= until;
+        boolean late = s.now() >= until;
         // One snapshot per poll: failure is written before done, so it is stable once done is seen.
         boolean done = outcome.done;
         String failure = done ? outcome.failure : null;
