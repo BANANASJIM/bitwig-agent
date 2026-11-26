@@ -87,7 +87,7 @@ final class GridRemotePageWriter {
         values.guardTarget(target);
         for (Slot slot : wanted) if (slot != null) values.guardParameter(slot.binding);
         if (existing != existing(host, request.pageName))
-            throw Errors.notApplied(Reason.STALE_CONTEXT, "The named Remote Controls page changed before dispatch.");
+            throw Errors.notApplied(Reason.TARGET_CHANGED, "The named Remote Controls page changed before dispatch.");
         contexts.requireRemoteWritable(device, host.host, host.pages, context, check);
         check.run();
 
@@ -167,8 +167,7 @@ final class GridRemotePageWriter {
         } catch (RpcException error) {
             if (!dispatched) throw error;
             throw Errors.unknown(
-                    error.is(Reason.STALE_CONTEXT) ? Reason.READBACK_MISMATCH : error.reason,
-                    error.getMessage() + " Inspect devices.remote.get before another write.");
+                    error.reason, error.getMessage() + " Inspect devices.remote.get before another write.");
         }
         check.run();
         JsonObject result = Results.outcome(dispatched ? Outcome.APPLIED : Outcome.ALREADY_MATCHED);
@@ -202,7 +201,7 @@ final class GridRemotePageWriter {
                 contexts.requireRemoteWritable(target.target, host.host, host.pages, null, check);
         values.guardTarget(target);
         if (deletable(host, ref) != page)
-            throw Errors.notApplied(Reason.STALE_CONTEXT, "The named Remote Controls page changed before dispatch.");
+            throw Errors.notApplied(Reason.TARGET_CHANGED, "The named Remote Controls page changed before dispatch.");
         contexts.requireRemoteWritable(target.target, host.host, host.pages, context, check);
         check.run();
         dispatch.run();
@@ -307,7 +306,7 @@ final class GridRemotePageWriter {
         }
         if (edited > 1)
             throw Errors.notApplied(
-                    Reason.STALE_CONTEXT,
+                    Reason.AMBIGUOUS_NAME,
                     edited + " preset Remote Controls pages are named " + quote(name)
                             + "; rename or delete the extras first.");
         return result;
@@ -355,12 +354,13 @@ final class GridRemotePageWriter {
     private void verify(Host host, Object page, Request request, Slot[] wanted) {
         if (nativeAccess.pageList(page) != host.pages
                 || !nativeAccess.pages(host.pages).contains(page))
-            throw Errors.notApplied(Reason.STALE_CONTEXT, "The defined page is no longer in the preset-page list.");
+            throw Errors.notApplied(Reason.READBACK_MISMATCH, "The defined page is no longer in the preset-page list.");
         if (!request.pageName.equals(displayName(host, page, "preset")))
             throw Errors.notApplied(
-                    Reason.STALE_CONTEXT, "Native page name readback differs from the requested pageName.");
+                    Reason.READBACK_MISMATCH, "Native page name readback differs from the requested pageName.");
         if (!nativeAccess.visiblePages(host.host).contains(page))
-            throw Errors.notApplied(Reason.STALE_CONTEXT, "The defined page is not in the device's visible page list.");
+            throw Errors.notApplied(
+                    Reason.READBACK_MISMATCH, "The defined page is not in the device's visible page list.");
         for (int index = 0; index < SLOTS; index++) {
             Object slot = nativeAccess.slot(page, index);
             Slot want = wanted[index];
@@ -370,7 +370,7 @@ final class GridRemotePageWriter {
                             || nativeAccess.slotTarget(slot) != want.binding.parameter
                             || !want.spec.labelMatches(nativeAccess.slotLabel(slot)))
                 throw Errors.notApplied(
-                        Reason.STALE_CONTEXT, "Native slot " + index + " readback differs from the request.");
+                        Reason.READBACK_MISMATCH, "Native slot " + index + " readback differs from the request.");
         }
     }
 

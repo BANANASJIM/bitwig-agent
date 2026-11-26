@@ -60,7 +60,7 @@ final class Bitwig614TrackResolver {
     /** {@code model} as the attached native track of an allowed kind whose public identity is trackId. */
     Object require(Object model, String trackId, Kind... allowed) {
         Kind kind = kind(model);
-        if (kind == null) throw stale(trackId);
+        if (kind == null) throw stale(trackId, null);
         a.requireModelThread(model);
         requireKind(trackId, kind, allowed);
         requireIdentity(trackId, identity(model));
@@ -78,13 +78,14 @@ final class Bitwig614TrackResolver {
     }
 
     static void requireIdentity(String trackId, UUID identity) {
-        if (!UUID.fromString(trackId).equals(identity)) throw stale(trackId);
+        if (!UUID.fromString(trackId).equals(identity)) throw stale(trackId, identity);
     }
 
-    static RpcException stale(String trackId) {
+    /** The proxy points at another track (or at none) than the one the id names. */
+    static RpcException stale(String trackId, UUID identity) {
+        String message = "Track " + trackId + " no longer resolves to its native track; re-read tracks.list.";
         return Errors.notApplied(
-                Reason.STALE_CONTEXT,
-                "Track " + trackId + " no longer resolves to its native track; re-read tracks.list.");
+                identity == null ? Reason.TARGET_NOT_FOUND : Reason.TARGET_CHANGED, message, "tracks.list");
     }
 
     /** The kind of a native track, or null when {@code model} is not one. */

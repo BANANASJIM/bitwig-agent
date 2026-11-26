@@ -99,6 +99,7 @@ For an agent, copy the complete [portable skill folder](https://github.com/BANAN
 | Installation, upgrades or connection help | [Installation](https://github.com/BANANASJIM/bitwig-agent/blob/main/INSTALL.md) |
 | Operations, targeting and Grid recipes | [Usage](https://github.com/BANANASJIM/bitwig-agent/blob/main/USAGE.md) · [Protocol](https://github.com/BANANASJIM/bitwig-agent/blob/main/PROTOCOL.md) |
 | How the Python and Java bridge works | [Architecture](https://github.com/BANANASJIM/bitwig-agent/blob/main/docs/architecture.md) |
+| Upgrading from 0.4 (renamed methods, fields, entry points) | [Migration to 0.5](https://github.com/BANANASJIM/bitwig-agent/blob/main/docs/migration-0.5.md) |
 | Production guidance, screenshots and A/B workflow | [Agent skill](https://github.com/BANANASJIM/bitwig-agent/tree/main/skills/bitwig-agent) |
 | Tests and evidence boundaries | [Verification](https://github.com/BANANASJIM/bitwig-agent/blob/main/VERIFICATION.md) |
 | Development and releases | [Contributing](https://github.com/BANANASJIM/bitwig-agent/blob/main/CONTRIBUTING.md) · [Packaging](https://github.com/BANANASJIM/bitwig-agent/blob/main/docs/packaging.md) |

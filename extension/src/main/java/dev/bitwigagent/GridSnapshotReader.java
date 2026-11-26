@@ -294,7 +294,7 @@ final class GridSnapshotReader implements ParameterResolver.ModuleOwners {
             }
             a.requireModelThread(module);
             if (a.read(Field.MODULE_GRAPH, module) != graph)
-                throw Errors.notApplied(Reason.STALE_CONTEXT, "Grid module belongs to a different graph.");
+                throw Errors.notApplied(Reason.TARGET_CHANGED, "Grid module belongs to a different graph.");
             String id = uuid(a.read(Field.INSTANCE_ID, module));
             if (!seenIds.add(id))
                 throw Errors.notApplied(
@@ -464,7 +464,7 @@ final class GridSnapshotReader implements ParameterResolver.ModuleOwners {
                 || findParameter(binding.module, binding.parameterId, binding.state) != binding.parameter
                 || parameterKind(binding.parameter) != binding.kind)
             throw Errors.notApplied(
-                    Reason.STALE_CONTEXT, "Selected native module or parameter changed during the operation.");
+                    Reason.TARGET_CHANGED, "Selected native module or parameter changed during the operation.");
         a.requireModelThread(binding.parameter);
         binding.state.guard.run();
     }
@@ -482,7 +482,7 @@ final class GridSnapshotReader implements ParameterResolver.ModuleOwners {
         guardParameter(panel);
         guardParameter(coupled);
         if (findBipolarParameter(panel) != coupled.parameter)
-            throw Errors.notApplied(Reason.STALE_CONTEXT, "Boolean panel's unique native bipolar reference changed.");
+            throw Errors.notApplied(Reason.TARGET_CHANGED, "Boolean panel's unique native bipolar reference changed.");
     }
 
     private Object findBipolarParameter(ParameterBinding panel) {
@@ -496,7 +496,7 @@ final class GridSnapshotReader implements ParameterResolver.ModuleOwners {
             if (a.read(Field.BIPOLAR_PANEL, child) != panel.parameter) continue;
             if (a.read(Field.OWNER_MODULE, child) != panel.module || parameterKind(child) != Kind.FLOAT)
                 throw Errors.notApplied(
-                        Reason.STALE_CONTEXT, "Linked bipolar parameter belongs to another module or family.");
+                        Reason.TARGET_CHANGED, "Linked bipolar parameter belongs to another module or family.");
             if (found != null)
                 throw Errors.notApplied(
                         Reason.NATIVE_UNAVAILABLE,
@@ -525,7 +525,7 @@ final class GridSnapshotReader implements ParameterResolver.ModuleOwners {
             throw Errors.notApplied(
                     Reason.UNSUPPORTED_SCOPE, "Only float, integer, enum and boolean controls are supported here.");
         if (a.read(Field.OWNER_MODULE, child) != null)
-            throw Errors.notApplied(Reason.STALE_CONTEXT, "Control belongs to a Grid module, not a modulator.");
+            throw Errors.notApplied(Reason.TARGET_CHANGED, "Control belongs to a Grid module, not a modulator.");
         State state = new State(check);
         JsonObject result = parameter(child, null, false, state);
         unsupported.addAll(state.unsupported);
@@ -595,8 +595,9 @@ final class GridSnapshotReader implements ParameterResolver.ModuleOwners {
         Object found = lookupModule(graph, id, state);
         if (found == null)
             throw Errors.notApplied(
-                    Reason.STALE_CONTEXT,
-                    "Requested module UUID is no longer in the target graph; reacquire grid.export.");
+                    Reason.TARGET_NOT_FOUND,
+                    "Requested module UUID is no longer in the target graph; reacquire grid.export.",
+                    "grid.export");
         return found;
     }
 
@@ -608,9 +609,9 @@ final class GridSnapshotReader implements ParameterResolver.ModuleOwners {
             if (!a.is(Kind.MODULE, module)) continue;
             a.requireModelThread(module);
             if (!id.toString().equals(uuid(a.read(Field.INSTANCE_ID, module)))) continue;
-            if (found != null) throw Errors.notApplied(Reason.STALE_CONTEXT, "Requested module UUID is ambiguous.");
+            if (found != null) throw Errors.notApplied(Reason.TARGET_CHANGED, "Requested module UUID is ambiguous.");
             if (a.read(Field.MODULE_GRAPH, module) != graph)
-                throw Errors.notApplied(Reason.STALE_CONTEXT, "Requested module moved outside the target graph.");
+                throw Errors.notApplied(Reason.TARGET_CHANGED, "Requested module moved outside the target graph.");
             found = module;
         }
         return found;
@@ -620,7 +621,9 @@ final class GridSnapshotReader implements ParameterResolver.ModuleOwners {
         Object found = lookupParameter(module, id, state);
         if (found == null)
             throw Errors.notApplied(
-                    Reason.STALE_CONTEXT, "Requested exact parameter ID is no longer in the selected module.");
+                    Reason.TARGET_NOT_FOUND,
+                    "Requested exact parameter ID is no longer in the selected module.",
+                    "grid.export");
         return found;
     }
 
@@ -635,9 +638,10 @@ final class GridSnapshotReader implements ParameterResolver.ModuleOwners {
                     && !a.is(Kind.STEP_ARRAY, child)) continue;
             a.requireModelThread(child);
             if (!id.equals(text(a.read(Field.PARAMETER_ID, child)))) continue;
-            if (found != null) throw Errors.notApplied(Reason.STALE_CONTEXT, "Requested parameter ID is ambiguous.");
+            if (found != null) throw Errors.notApplied(Reason.TARGET_CHANGED, "Requested parameter ID is ambiguous.");
             if (a.read(Field.OWNER_MODULE, child) != module)
-                throw Errors.notApplied(Reason.STALE_CONTEXT, "Requested parameter moved outside the selected module.");
+                throw Errors.notApplied(
+                        Reason.TARGET_CHANGED, "Requested parameter moved outside the selected module.");
             found = child;
         }
         return found;
@@ -683,7 +687,7 @@ final class GridSnapshotReader implements ParameterResolver.ModuleOwners {
                         "Topology editing requires every graph child to be a mapped module.");
             a.requireModelThread(module);
             if (a.read(Field.MODULE_GRAPH, module) != graph)
-                throw Errors.notApplied(Reason.STALE_CONTEXT, "Native module belongs to a different graph.");
+                throw Errors.notApplied(Reason.TARGET_CHANGED, "Native module belongs to a different graph.");
             Object id = a.read(Field.INSTANCE_ID, module);
             if (!(id instanceof UUID) || !ids.add((UUID) id))
                 throw Errors.notApplied(
@@ -729,7 +733,7 @@ final class GridSnapshotReader implements ParameterResolver.ModuleOwners {
     void guardTarget(NativeTarget binding) {
         targets.guard(binding.ownership, () -> {});
         if (a.read(Field.GRAPH, binding.target) != binding.graph)
-            throw Errors.notApplied(Reason.STALE_CONTEXT, "The device's Grid graph changed during the read.");
+            throw Errors.notApplied(Reason.TARGET_CHANGED, "The device's Grid graph changed during the read.");
         a.requireModelThread(binding.graph);
     }
 
@@ -768,7 +772,7 @@ final class GridSnapshotReader implements ParameterResolver.ModuleOwners {
             }
             a.requireModelThread(port);
             if (a.read(Field.OWNER_MODULE, port) != module)
-                throw Errors.notApplied(Reason.STALE_CONTEXT, "Port owner differs from its enumerated module.");
+                throw Errors.notApplied(Reason.TARGET_CHANGED, "Port owner differs from its enumerated module.");
             String key = text(a.read(input ? Field.INPUT_KEY : Field.OUTPUT_KEY, port));
             if (!keys.add(key))
                 throw Errors.notApplied(
@@ -834,7 +838,7 @@ final class GridSnapshotReader implements ParameterResolver.ModuleOwners {
         }
         a.requireModelThread(child);
         if (a.read(Field.OWNER_MODULE, child) != module)
-            throw Errors.notApplied(Reason.STALE_CONTEXT, "Parameter belongs to a different module.");
+            throw Errors.notApplied(Reason.TARGET_CHANGED, "Parameter belongs to a different module.");
         if (kind == Kind.STEP_ARRAY) return stepArray(child, module, diagnostics, state);
         boolean panel = kind == Kind.PANEL_BOOLEAN || kind == Kind.PANEL_STRING;
         String panelFamily = kind == Kind.PANEL_STRING ? "string_panel" : "boolean_panel";

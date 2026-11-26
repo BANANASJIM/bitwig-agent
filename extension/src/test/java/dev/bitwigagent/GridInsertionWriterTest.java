@@ -506,7 +506,7 @@ public final class GridInsertionWriterTest {
                                     .equals(GridTopologyQuarantine.NATIVE),
                     "ack releases a native-failure hold only for the named device after re-reading it");
         }
-        for (String rejection : List.of("deadline", "stale_context")) {
+        for (String rejection : List.of("deadline", "target_changed")) {
             Fixture f = new Fixture();
             HostOperation op = f.start();
             f.requestError = rejection;
@@ -1346,7 +1346,7 @@ public final class GridInsertionWriterTest {
         @Override
         public void requireDetached(Object module) {
             if (deleted || parented || owned || ((Node) module).values.get(MODULE_GRAPH) != null)
-                throw Errors.notApplied(Reason.STALE_CONTEXT, "not detached live singleton");
+                throw Errors.notApplied(Reason.TARGET_CHANGED, "not detached live singleton");
         }
 
         @Override

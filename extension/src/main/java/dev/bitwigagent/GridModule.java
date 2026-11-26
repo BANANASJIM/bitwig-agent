@@ -449,18 +449,12 @@ final class GridModule implements HostModule {
                 0);
     }
 
-    /** The root device a ref names: stale when another device is there now. Grid devices inside a chain are not read. */
+    /** The root device a ref names (target_not_found or target_changed otherwise); a Grid device inside a chain is not read. */
     private DeviceSources.RootReadTicket target(JsonObject p) {
         JsonObject ref = deviceOf(p);
         if (ref.has("chain"))
             throw Errors.notApplied(Reason.UNSUPPORTED_SCOPE, "Grid devices inside a chain are not addressed.");
-        DeviceSources.Source device = sources.device(ref, true);
-        JsonObject root = new JsonObject();
-        root.addProperty("trackId", ref.getAsJsonObject("track").get("id").getAsString());
-        root.addProperty("deviceIndex", ref.get("index").getAsInt());
-        root.addProperty("expectedDeviceName", device.name);
-        sources.requireZeroWindow(root);
-        return sources.rootRead(root);
+        return sources.rootRead(sources.device(ref, true));
     }
 
     /** The device ref a request addresses: its target, or the device of the Remote Controls page it deletes. */

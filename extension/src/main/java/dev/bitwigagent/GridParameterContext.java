@@ -142,7 +142,7 @@ final class GridParameterContext {
             if (!initialized)
                 throw Errors.notApplied(Reason.UNSAFE_STATE, "Native document context is not initialized.");
             if (root != project)
-                throw Errors.notApplied(Reason.STALE_CONTEXT, "Attached context root is not the owning project.");
+                throw Errors.notApplied(Reason.TARGET_CHANGED, "Attached context root is not the owning project.");
             if (!hasDefault || current == null || defaultDt == null)
                 throw Errors.notApplied(
                         Reason.NATIVE_UNAVAILABLE, "Native current/default transaction context is unavailable.");
@@ -263,7 +263,7 @@ final class GridParameterContext {
             if (!common.initialized)
                 throw Errors.notApplied(Reason.UNSAFE_STATE, "Native document context is not initialized.");
             if (common.root != project)
-                throw Errors.notApplied(Reason.STALE_CONTEXT, "Attached context root is not the owning project.");
+                throw Errors.notApplied(Reason.TARGET_CHANGED, "Attached context root is not the owning project.");
             if (!common.hasDefault || common.current == null || common.defaultDt == null)
                 throw Errors.notApplied(
                         Reason.NATIVE_UNAVAILABLE, "Native current/default transaction context is unavailable.");
@@ -321,7 +321,7 @@ final class GridParameterContext {
         for (int i = 0; i < before.identities.length; i++)
             if (before.identities[i] != after.identities[i])
                 throw Errors.notApplied(
-                        Reason.STALE_CONTEXT, "Native parameter inspection context identity changed during capture.");
+                        Reason.TARGET_CHANGED, "Native parameter inspection context identity changed during capture.");
     }
 
     private boolean bool(Field field, Object object) {

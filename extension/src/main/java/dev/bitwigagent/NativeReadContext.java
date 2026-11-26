@@ -43,23 +43,23 @@ final class NativeReadContext {
             Object model = i < models.length ? models[i] : project;
             boolean deleted = bool(Field.DELETED, model);
             if (serialize) lifecycle.addProperty(lifecycleLabels[i], deleted);
-            if (deleted) throw Errors.notApplied(Reason.STALE_CONTEXT, "Native inspection target was deleted.");
+            if (deleted) throw Errors.notApplied(Reason.TARGET_CHANGED, "Native inspection target was deleted.");
             if (attached(model) != context)
                 throw Errors.notApplied(
-                        Reason.STALE_CONTEXT, "Native target no longer shares its owning project's attached context.");
+                        Reason.TARGET_CHANGED, "Native target no longer shares its owning project's attached context.");
             if (i < models.length && a.read(Field.PROJECT, model) != project)
-                throw Errors.notApplied(Reason.STALE_CONTEXT, "Native target belongs to a different owning project.");
+                throw Errors.notApplied(Reason.TARGET_CHANGED, "Native target belongs to a different owning project.");
         }
         Object root = required(a.read(Field.ROOT, context), "Attached context root");
         boolean initialized = bool(Field.INITIALIZED, context), disposed = bool(Field.DISPOSED, context);
-        if (disposed) throw Errors.notApplied(Reason.STALE_CONTEXT, "Native target context was disposed.");
+        if (disposed) throw Errors.notApplied(Reason.TARGET_CHANGED, "Native target context was disposed.");
         boolean contextThread = bool(Field.CONTEXT_THREAD, context);
         if (!contextThread)
             throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Attached context thread predicate failed.");
         Object current = a.read(Field.CURRENT_DT, context);
         Object currentContext = current == null ? null : a.read(Field.DT_CONTEXT, current);
         if (current != null && currentContext != context)
-            throw Errors.notApplied(Reason.STALE_CONTEXT, "Current native Dt belongs to a different context.");
+            throw Errors.notApplied(Reason.TARGET_CHANGED, "Current native Dt belongs to a different context.");
         boolean hasDefault = a.defaultContext(context);
         Object defaultDt = hasDefault ? a.read(Field.DEFAULT_DT, context) : null;
         Object defaultDtContext = defaultDt == null ? null : a.read(Field.DT_CONTEXT, defaultDt);
@@ -105,13 +105,14 @@ final class NativeReadContext {
                 || before.currentContext != after.currentContext
                 || before.defaultDt != after.defaultDt
                 || before.defaultDtContext != after.defaultDtContext)
-            throw Errors.notApplied(Reason.STALE_CONTEXT, "Native inspection context identity changed during capture.");
+            throw Errors.notApplied(
+                    Reason.TARGET_CHANGED, "Native inspection context identity changed during capture.");
     }
 
     private Object attached(Object model) {
         Object context = a.read(Field.CONTEXT, model);
         if (context == null)
-            throw Errors.notApplied(Reason.STALE_CONTEXT, "Native target is detached from its document context.");
+            throw Errors.notApplied(Reason.TARGET_CHANGED, "Native target is detached from its document context.");
         return context;
     }
 

@@ -10,6 +10,7 @@ from bitwig_agent.grid.plan import Plan
 from bitwig_agent.grid.read import label_of
 from bitwig_agent.grid.spec import Spec
 from bitwig_agent.grid.wiring import WiringPlan
+from bitwig_agent.protocol import TOOLS
 
 PHASES = ("voicing", "delete", "premove", "insert", "rename", "move", "params", "connections")
 APPLIED_COUNTS = ("inserted", "renamed", "moved", "paramsWritten", "connections", "disconnected", "deleted")
@@ -74,7 +75,10 @@ class Ledger:
         out = self.report(stop.outcome)
         if stop.reason:
             out["reason"] = stop.reason
-        out["failure"] = {"phase": self.phase, "method": stop.method, "response": stop.raw}
+        called = TOOLS.get(stop.method)
+        # the building blocks are not agent-callable: name the step, not the method that ran it
+        step = self.phase if called is not None and not called.expose else stop.method
+        out["failure"] = {"phase": self.phase, "method": step, "response": stop.raw}
         started = PHASES.index(self.phase) + 1 if self.phase in PHASES else 0
         out["notReached"] = {
             "phasesNotStarted": list(PHASES[started:]),

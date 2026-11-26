@@ -41,7 +41,7 @@ final class GridTopologyContext {
         for (Object member : members) requireModel(member, project, context, check);
         Object root = required(a.read(NativeReadContext.Field.ROOT, context), "Attached context root");
         if (root != project || bool(NativeReadContext.Field.DISPOSED, context))
-            throw Errors.notApplied(Reason.STALE_CONTEXT, "Native topology context root changed or was disposed.");
+            throw Errors.notApplied(Reason.TARGET_CHANGED, "Native topology context root changed or was disposed.");
         if (!bool(NativeReadContext.Field.INITIALIZED, context)
                 || !bool(NativeReadContext.Field.CONTEXT_THREAD, context))
             throw Errors.notApplied(
@@ -69,7 +69,7 @@ final class GridTopologyContext {
             for (int i = 0; i < captured.identities.length; i++)
                 if (captured.identities[i] != before.identities[i])
                     throw Errors.notApplied(
-                            Reason.STALE_CONTEXT, "Native topology context identity changed during the operation.");
+                            Reason.TARGET_CHANGED, "Native topology context identity changed during the operation.");
         }
         check.run();
         return captured;
@@ -79,11 +79,11 @@ final class GridTopologyContext {
         check.run();
         if (bool(NativeReadContext.Field.DELETED, model) || a.read(NativeReadContext.Field.CONTEXT, model) != context)
             throw Errors.notApplied(
-                    Reason.STALE_CONTEXT,
+                    Reason.TARGET_CHANGED,
                     "Native topology target or member is deleted, detached or in a different context.");
         if (model != project && a.read(NativeReadContext.Field.PROJECT, model) != project)
             throw Errors.notApplied(
-                    Reason.STALE_CONTEXT, "Native topology target or member belongs to a different project.");
+                    Reason.TARGET_CHANGED, "Native topology target or member belongs to a different project.");
     }
 
     private boolean bool(Field field, Object object) {

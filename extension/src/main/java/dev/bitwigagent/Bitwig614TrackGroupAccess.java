@@ -67,7 +67,7 @@ final class Bitwig614TrackGroupAccess implements TrackLifecycleModule.GroupAcces
             context.guard(capture, models, labels, check);
             if (!resolve(proxies, ids).equals(tracks) || parent(tracks) != common)
                 throw Errors.notApplied(
-                        Reason.STALE_CONTEXT, "Native track targets or their parent group changed before grouping.");
+                        Reason.TARGET_CHANGED, "Native track targets or their parent group changed before grouping.");
         };
         guard.run();
         beforeWrite.run();
@@ -111,7 +111,7 @@ final class Bitwig614TrackGroupAccess implements TrackLifecycleModule.GroupAcces
             Object track = resolver.resolve(
                     proxies.get(i), ids.get(i), Bitwig614TrackResolver.Kind.CHANNEL, Bitwig614TrackResolver.Kind.GROUP);
             if (tracks.contains(track))
-                throw Errors.notApplied(Reason.STALE_CONTEXT, "Two track refs resolve to the same native track.");
+                throw Errors.notApplied(Reason.TARGET_CHANGED, "Two track refs resolve to the same native track.");
             tracks.add(track);
         }
         return tracks;

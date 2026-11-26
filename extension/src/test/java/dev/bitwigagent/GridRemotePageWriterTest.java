@@ -370,7 +370,7 @@ public final class GridRemotePageWriterTest {
         twice.userPage("Macros");
         error = twice.defineFailure(TWO);
         assertTrue(
-                error.reason.wire().equals("stale_context") && twice.calls.isEmpty(),
+                error.reason.wire().equals("ambiguous_name") && twice.calls.isEmpty(),
                 "several same-named preset pages are ambiguous");
     }
 
@@ -448,8 +448,8 @@ public final class GridRemotePageWriterTest {
                 f.defineFailure("{\"pageName\":\"P\",\"slots\":[{\"moduleName\":\"Nope\",\"parameterId\":\"VALUE\"}]}")
                         .reason
                         .wire()
-                        .equals("stale_context"),
-                "an unknown module name is stale");
+                        .equals("target_not_found"),
+                "an unknown module name is not found");
         RpcException error;
         RemoteFixture g = new RemoteFixture();
         assertTrue(
@@ -457,8 +457,8 @@ public final class GridRemotePageWriterTest {
                                 + "\",\"parameterId\":\"MISSING\"}]}")
                         .reason
                         .wire()
-                        .equals("stale_context"),
-                "a missing parameter is stale");
+                        .equals("target_not_found"),
+                "a missing parameter is not found");
         error = g.defineFailure(
                 "{\"pageName\":\"P\",\"slots\":[{\"moduleId\":\"" + SECOND + "\",\"parameterId\":\"BIPOLAR\"}]}");
         assertTrue(
@@ -500,7 +500,7 @@ public final class GridRemotePageWriterTest {
         RemoteFixture project = new RemoteFixture();
         project.context.override(project.editedPages, NativeReadContext.Field.PROJECT, new Object());
         assertTrue(
-                project.defineFailure(TWO).reason.wire().equals("stale_context") && project.calls.isEmpty(),
+                project.defineFailure(TWO).reason.wire().equals("target_changed") && project.calls.isEmpty(),
                 "a page list of another project is refused");
         RemoteFixture lock = new RemoteFixture();
         lock.context.values.put(GridParameterContext.Field.LOCK_OWNER, new Object());
@@ -512,7 +512,7 @@ public final class GridRemotePageWriterTest {
         assertRpcError("unsafe_state", () -> uninitialized.define(TWO));
         RemoteFixture rooted = new RemoteFixture();
         rooted.context.values.put(NativeReadContext.Field.ROOT, new Object());
-        assertRpcError("stale_context", () -> rooted.define(TWO));
+        assertRpcError("target_changed", () -> rooted.define(TWO));
         RemoteFixture thread = new RemoteFixture();
         thread.editedPages.threadAllowed = false;
         assertTrue(
@@ -570,7 +570,7 @@ public final class GridRemotePageWriterTest {
         RemoteFixture replaced = new RemoteFixture();
         replaced.userPage("Macros");
         replaced.replacedDuringContextRead("Macros");
-        assertRpcError("stale_context", () -> replaced.define(TWO));
+        assertRpcError("target_changed", () -> replaced.define(TWO));
         RemoteFixture deleted = new RemoteFixture();
         deleted.userPage("Macros");
         deleted.replacedDuringContextRead("Macros");
@@ -580,6 +580,14 @@ public final class GridRemotePageWriterTest {
         moved.userPage("Macros");
         moved.afterCall = () -> moved.model.proxy.put(TARGET, new Node(DEVICE));
         assertTrue(moved.deleteFailure("Macros").unknown, "a target change after the native delete is unknown");
+        RemoteFixture changed = new RemoteFixture();
+        changed.afterCall = () -> {
+            if (changed.calls.size() == 4) changed.model.proxy.put(TARGET, new Node(DEVICE));
+        };
+        RpcException swapped = changed.defineFailure(TWO);
+        assertTrue(
+                swapped.unknown && swapped.reason.wire().equals("target_changed"),
+                "a device change after the define dispatched keeps its own reason");
         RemoteFixture dropped = new RemoteFixture();
         dropped.afterCall = () -> {
             if (dropped.calls.size() == 4) dropped.pages.clear();

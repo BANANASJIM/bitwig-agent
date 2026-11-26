@@ -196,7 +196,7 @@ final class Bitwig614GridInsertionAccess implements GridInsertionWriter.Access {
                 || bindings.invoke(parent, module) != null
                 || bindings.invoke(owner, module) != null)
             throw Errors.notApplied(
-                    Reason.STALE_CONTEXT, "Loaded module is deleted, parented or owned; refusing placement.");
+                    Reason.TARGET_CHANGED, "Loaded module is deleted, parented or owned; refusing placement.");
     }
 
     @Override

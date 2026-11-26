@@ -340,8 +340,9 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
         Channel to = find(channels, request.get("trackId").getAsString());
         if (to == null)
             throw Errors.notApplied(
-                    Reason.STALE_CONTEXT,
-                    "Destination track did not resolve to a native channel; refresh tracks.routing.get.");
+                    Reason.TARGET_NOT_FOUND,
+                    "Destination track did not resolve to a native channel; refresh tracks.routing.get.",
+                    "tracks.routing.get");
         Object bus = a.invoke(kind.equals("track_audio_input") ? audioInput : noteInput, to.channel);
         if (bus == null)
             throw Errors.notApplied(Reason.UNSUPPORTED_SCOPE, "Destination track has no native " + kind + ".");
@@ -369,7 +370,9 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
                 Channel from = find(channels, request.get("trackId").getAsString());
                 if (from == null)
                     throw Errors.notApplied(
-                            Reason.STALE_CONTEXT, "Source track did not resolve to a native channel; refresh the get.");
+                            Reason.TARGET_NOT_FOUND,
+                            "Source track did not resolve to a native channel; refresh the get.",
+                            "tracks.routing.get");
                 bus = a.invoke(kind.equals("pre_fader") ? pre : kind.equals("post_fader") ? post : notes, from.channel);
             }
         }
@@ -524,7 +527,7 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
         JsonObject out = snapshot(view, ports, channels, includeChoices, unresolved);
         scope.guard(check);
         if (!self.same())
-            throw Errors.notApplied(Reason.STALE_CONTEXT, "Native track changed during the routing read.");
+            throw Errors.notApplied(Reason.TARGET_CHANGED, "Native track changed during the routing read.");
         return out;
     }
 
@@ -640,7 +643,7 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
                     || a.invoke(output, self.channel) != view.outputChooser
                     || (view.inputChooser != null && a.invoke(input, self.channel) != view.inputChooser))
                 throw Errors.notApplied(
-                        Reason.STALE_CONTEXT,
+                        Reason.TARGET_CHANGED,
                         "Native track or its routing selectors changed around the routing write.");
         };
         scope.guard(check);
@@ -894,7 +897,7 @@ final class Bitwig614RoutingAccess implements RoutingModule.Access {
         final Component chosen = c;
         Runnable same = () -> {
             if (a.invoke(selector, chosen.model) != chosen.chooser)
-                throw Errors.notApplied(Reason.STALE_CONTEXT, "Component source selector changed during the write.");
+                throw Errors.notApplied(Reason.TARGET_CHANGED, "Component source selector changed during the write.");
             targets.guard(device, check);
         };
         scope.guard(check);

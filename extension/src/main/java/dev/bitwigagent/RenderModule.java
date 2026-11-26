@@ -385,7 +385,7 @@ final class RenderModule implements HostModule, JobsModule.Source {
             for (int i = 0; i < ids.size(); i++)
                 if (slots[i] >= 0 && epochs.get(slots[i]) != seen[i])
                     throw Errors.notApplied(
-                            Reason.STALE_CONTEXT,
+                            Reason.TARGET_CHANGED,
                             "Track bank changed while the render was queued (" + ids.get(i) + ").");
         };
         job = next;

@@ -68,7 +68,7 @@ final class GridModuleNameWriter {
         Names ready = names(selected);
         request.requireExpected(ready.custom);
         if (!previous.effective.equals(ready.effective))
-            throw Errors.notApplied(Reason.STALE_CONTEXT, "Native effective module name changed before dispatch.");
+            throw Errors.notApplied(Reason.TARGET_CHANGED, "Native effective module name changed before dispatch.");
         check.run();
         quarantine.requireAvailable(device);
         if (changed) {
@@ -89,7 +89,7 @@ final class GridModuleNameWriter {
                 requireActual(finalNames, request);
                 if (!actual.effective.equals(finalNames.effective))
                     throw Errors.notApplied(
-                            Reason.STALE_CONTEXT,
+                            Reason.TARGET_CHANGED,
                             "Native effective module name changed during later graph observation.");
                 check.run();
                 JsonObject result = Results.outcome(changed ? Outcome.APPLIED : Outcome.ALREADY_MATCHED);
@@ -199,18 +199,19 @@ final class GridModuleNameWriter {
             Object module = byId.get(id);
             if (module == null)
                 throw Errors.notApplied(
-                        Reason.STALE_CONTEXT,
-                        "Requested current module UUID is absent; reacquire grid.export after edits or reopen.");
+                        Reason.TARGET_NOT_FOUND,
+                        "Requested current module UUID is absent; reacquire grid.export after edits or reopen.",
+                        "grid.export");
             return module;
         }
 
         void requireSame(Members current) {
             if (byId.size() != current.byId.size())
-                throw Errors.notApplied(Reason.STALE_CONTEXT, "Native Grid membership changed during module naming.");
+                throw Errors.notApplied(Reason.TARGET_CHANGED, "Native Grid membership changed during module naming.");
             for (Map.Entry<UUID, Object> entry : byId.entrySet())
                 if (current.byId.get(entry.getKey()) != entry.getValue())
                     throw Errors.notApplied(
-                            Reason.STALE_CONTEXT,
+                            Reason.TARGET_CHANGED,
                             "Native module identity or current UUID changed during module naming.");
         }
     }
@@ -246,7 +247,7 @@ final class GridModuleNameWriter {
         void requireExpected(String actual) {
             if (!expectedCustomName.equals(actual))
                 throw Errors.notApplied(
-                        Reason.STALE_CONTEXT,
+                        Reason.TARGET_CHANGED,
                         "Raw native customName differs from expectedCustomName; effective and type names are not CAS values.");
         }
     }

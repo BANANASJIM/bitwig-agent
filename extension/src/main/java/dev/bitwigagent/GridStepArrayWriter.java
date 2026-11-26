@@ -59,7 +59,7 @@ final class GridStepArrayWriter {
         float[] after = nativeWriter.current(binding.parameter);
         if (!same(after, next))
             throw Errors.of(
-                    changed ? Reason.READBACK_MISMATCH : Reason.STALE_CONTEXT,
+                    changed ? Reason.READBACK_MISMATCH : Reason.TARGET_CHANGED,
                     "Native step array readback differs from the requested values; inspect state before another write.",
                     changed);
         check.run();
@@ -89,17 +89,17 @@ final class GridStepArrayWriter {
     private static void validate(JsonObject current, float[] live, GridParameterWriter.Request request) {
         if (!"steps".equals(request.kind) || !"steps".equals(current.get("kind").getAsString()))
             throw Errors.notApplied(
-                    Reason.STALE_CONTEXT,
+                    Reason.TARGET_CHANGED,
                     "Parameter kind differs from the expected precondition; reacquire grid.export.");
         JsonArray expected = request.expectedValues;
         if (expected.size() > live.length)
             throw Errors.notApplied(
-                    Reason.STALE_CONTEXT,
+                    Reason.TARGET_CHANGED,
                     "expectedValues is longer than the native array (" + live.length + "); reacquire grid.export.");
         for (int i = 0; i < expected.size(); i++)
             if ((float) expected.get(i).getAsDouble() != live[i])
                 throw Errors.notApplied(
-                        Reason.STALE_CONTEXT,
+                        Reason.TARGET_CHANGED,
                         "Step values differ from the expected precondition; reacquire grid.export.");
     }
 

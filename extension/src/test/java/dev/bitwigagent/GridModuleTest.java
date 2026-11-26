@@ -591,7 +591,7 @@ public final class GridModuleTest {
                 if (boundary < 2) f.adapter.next();
                 else f.host.next();
                 assertTrue(
-                        failed("stale_context", op, boundary == 0)
+                        failed("unsafe_state", op, boundary == 0)
                                 && f.adapter.topology.calls == (boundary == 0 ? 0 : 1),
                         "safety epoch change across native queue, later observation or controller delivery never retries");
             }
@@ -795,7 +795,7 @@ public final class GridModuleTest {
                 if (boundary < 2) f.adapter.next();
                 else f.host.next();
                 assertTrue(
-                        failed(safety ? "stale_context" : "target_changed", op, boundary == 0)
+                        failed(safety ? "unsafe_state" : "target_changed", op, boundary == 0)
                                 && f.adapter.connections.calls == (boundary == 0 ? 0 : 1),
                         "cable safety/target ABA guards all three queue boundaries");
             }
@@ -1179,15 +1179,6 @@ public final class GridModuleTest {
         return true;
     }
 
-    /** A safety epoch change is stale_context; a device or track ABA is target_changed, or stale_context where the write had already left. */
-    private static boolean failedOneOf(HostOperation op, boolean beforeDispatch, String first, String second) {
-        String reason = beforeDispatch
-                ? rejection(op).reason.wire()
-                : op.result.join().get("reason").getAsString();
-        assertTrue(reason.equals(first) || reason.equals(second), reason);
-        return true;
-    }
-
     private static JsonObject capabilitiesWith(GridTopologyQuarantine guard) {
         JsonObject full = new JsonObject();
         full.addProperty("topologyQuarantined", guard.quarantined());
@@ -1291,7 +1282,7 @@ public final class GridModuleTest {
                     "native settlement is not skipped by controller schedule/future/extension close");
             if (change < 2)
                 assertTrue(
-                        assertUnknown(change == 0 ? "stale_context" : "target_changed", op) != null,
+                        assertUnknown(change == 0 ? "unsafe_state" : "target_changed", op) != null,
                         "loader dispatch preserves uncertainty after public ABA");
         }
         Fixture late = new Fixture();
@@ -1404,7 +1395,7 @@ public final class GridModuleTest {
         f.host.next();
         f.adapter.next();
         assertTrue(
-                !assertRpcError("stale_context", stale).unknown && f.adapter.naming.calls == 2,
+                !assertRpcError("target_changed", stale).unknown && f.adapter.naming.calls == 2,
                 "effective name cannot authorize even an otherwise matching raw no-op");
         HostOperation noop = f.host.submit(f.module, "grid.modules.set", renameTarget("", ""));
         f.host.next();
@@ -1439,7 +1430,7 @@ public final class GridModuleTest {
         controller.host.transport.child("isPlaying").emit(false);
         controller.host.next();
         assertTrue(
-                !assertRpcError("stale_context", queued).unknown && controller.adapter.tasks.isEmpty(),
+                !assertRpcError("unsafe_state", queued).unknown && controller.adapter.tasks.isEmpty(),
                 "rename safety ticket rejects transitions before initial controller dispatch");
         Fixture unobserved = new Fixture(true, false);
         HostOperation unready = unobserved.host.submit(unobserved.module, "grid.modules.set", renameTarget("", "Lead"));
@@ -1467,11 +1458,7 @@ public final class GridModuleTest {
                 if (boundary < 2) f.adapter.next();
                 else f.host.next();
                 assertTrue(
-                        failedOneOf(
-                                        op,
-                                        boundary == 0,
-                                        transition == 0 ? "stale_context" : "target_changed",
-                                        "stale_context")
+                        failed(transition == 0 ? "unsafe_state" : "target_changed", op, boundary == 0)
                                 && f.adapter.naming.calls == (boundary == 0 ? 0 : 1),
                         "name safety/target ABA at dispatch, document observation or controller delivery never retries");
             }
@@ -1484,8 +1471,13 @@ public final class GridModuleTest {
         immediate.host.next();
         immediate.adapter.next();
         if (!immediate.adapter.tasks.isEmpty()) immediate.adapter.next();
+        JsonObject settled = assertUnknown("unsafe_state", changed);
+        assertFalse(
+                settled.get("message").getAsString().contains("nothing was written"),
+                "a post-dispatch result never claims nothing was written");
+        assertFalse(settled.has("next"), "a post-dispatch safety result does not point at a pre-dispatch hint");
         assertTrue(
-                assertUnknown("stale_context", changed) != null && immediate.adapter.naming.calls == 1,
+                settled != null && immediate.adapter.naming.calls == 1,
                 "a safety transition during the native setter cannot be reported not-applied");
         Fixture noop = new Fixture();
         HostOperation op = noop.host.submit(noop.module, "grid.modules.set", renameTarget("", ""));

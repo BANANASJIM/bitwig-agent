@@ -41,7 +41,7 @@ def _invalid_stop(exc: SpecError) -> Stop:
 
 
 def _stale_stop(message: str) -> Stop:
-    return Stop("grid.export", {"error": bridge_error("stale_context", message).error})
+    return Stop("grid.export", {"error": bridge_error("target_not_found", message, "grid.export").error})
 
 
 class Executor:

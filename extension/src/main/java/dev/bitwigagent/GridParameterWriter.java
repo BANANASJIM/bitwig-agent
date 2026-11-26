@@ -94,7 +94,7 @@ final class GridParameterWriter {
         JsonObject current = values.parameterValue(binding);
         if (!request.matches(current.get("value"), request.value))
             throw Errors.of(
-                    changed ? Reason.READBACK_MISMATCH : Reason.STALE_CONTEXT,
+                    changed ? Reason.READBACK_MISMATCH : Reason.TARGET_CHANGED,
                     "Native raw model readback differs from the requested value; inspect state before another write.",
                     changed);
         values.guardParameter(binding);
@@ -400,7 +400,7 @@ final class GridParameterWriter {
         void validateCurrent(JsonObject current) {
             if (!kind.equals(current.get("kind").getAsString()) || !matches(current.get("value"), expected))
                 throw Errors.notApplied(
-                        Reason.STALE_CONTEXT,
+                        Reason.TARGET_CHANGED,
                         "Parameter kind or exact raw value differs from the expected precondition; reacquire grid.export.");
             if (display != null) setValue(new JsonPrimitive(GridDisplayUnits.toRaw(current, display)));
             if (kind.equals("float") || kind.equals("integer")) {
