@@ -870,7 +870,10 @@ public final class ClipEditTest {
         JsonObject near = f.call("clips.set", params("target", f.clip(3), "nextAction", "stop"));
         assertEquals("applied", near.get("outcome").getAsString());
         assertEquals(0, f.bankOffset);
-        assertEquals(f.clip(3), near.get("ref").getAsJsonObject(), "the ref is the near clip's, not a clip of the old window");
+        assertEquals(
+                f.clip(3),
+                near.get("ref").getAsJsonObject(),
+                "the ref is the near clip's, not a clip of the old window");
         assertTrue(f.slots[3].nextAction.has("nextAction") && f.slots[33].nextAction.has("nextAction"));
     }
 
@@ -878,7 +881,8 @@ public final class ClipEditTest {
     void aFailureBetweenTransformEntriesReleasesTheSelection() {
         LauncherFake f = twoWindows();
         f.onSelect = () -> f.scrollStuck = true;
-        HostOperation op = f.startAndDrain("clips.transform", params("targets", clips(f, 3, 33), "op", "doubleContent"));
+        HostOperation op =
+                f.startAndDrain("clips.transform", params("targets", clips(f, 3, 33), "op", "doubleContent"));
         assertUnknown("not_ready", op);
         f.scrollStuck = false;
         f.onSelect = () -> {};
@@ -893,7 +897,15 @@ public final class ClipEditTest {
         f.lane.names.add("Verse");
         RpcException arranger = assertRpcError(
                 "unsupported_scope",
-                f.start("clips.set", params("target", arrangerRef(f, 8, "Verse"), "name", "x", "expect", obj("{\"nextAction\":\"stop\"}"))));
+                f.start(
+                        "clips.set",
+                        params(
+                                "target",
+                                arrangerRef(f, 8, "Verse"),
+                                "name",
+                                "x",
+                                "expect",
+                                obj("{\"nextAction\":\"stop\"}"))));
         assertTrue(arranger.getMessage().contains("expect.nextAction"));
         assertRpcError(
                 "unsupported_scope",

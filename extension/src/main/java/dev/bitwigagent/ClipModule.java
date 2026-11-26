@@ -138,7 +138,8 @@ final class ClipModule implements HostModule {
             if (p.has("expect") && p.getAsJsonObject("expect").has(key))
                 throw Errors.notApplied(
                         Reason.UNSUPPORTED_SCOPE,
-                        "expect." + key + " cannot be compared on " + (arranger ? "an arranger" : "a launcher") + " clip");
+                        "expect." + key + " cannot be compared on " + (arranger ? "an arranger" : "a launcher")
+                                + " clip");
         }
         if (p.keySet().stream()
                 .allMatch(key -> Set.of("target", "expect", "timeoutMs").contains(key)))
