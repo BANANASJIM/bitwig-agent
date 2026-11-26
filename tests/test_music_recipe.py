@@ -195,6 +195,8 @@ async def test_recipe_does_not_report_authored_when_clip_readback_is_wrong(
             nonlocal inserted
             if method in static:
                 return static[method]
+            if method == "tracks.list":
+                return {"status": "observed", "tracks": [], "window": {"complete": True, "capacity": 16}}
             if method == "tracks.insert":
                 creations.append(track_id)
                 return {"status": "observed", "ref": {"kind": "track", "id": track_id, "name": "Toolkit"}}

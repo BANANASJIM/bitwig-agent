@@ -50,8 +50,15 @@ final class TestServices {
     }
 
     AutomationModule automation(AutomationModule.Access access) {
+        RemoteModule remotes = remote();
         return new AutomationModule(
-                scheduler, window, parameterResolver(parameters(), device()), transportSafety, natives, holds, access);
+                scheduler,
+                window,
+                parameterResolver(parameters(remotes), remotes),
+                transportSafety,
+                natives,
+                holds,
+                access);
     }
 
     DeviceModule device() {
