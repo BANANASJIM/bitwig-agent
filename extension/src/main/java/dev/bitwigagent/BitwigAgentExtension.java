@@ -31,7 +31,7 @@ public final class BitwigAgentExtension extends ControllerExtension {
     }
 
     static int configuredPort(String value) {
-        if (value == null) return 61172;
+        if (value == null) return MethodSpecs.load().limits().defaultPort;
         if (!value.matches("[0-9]{1,5}"))
             throw new IllegalArgumentException("BITWIG_AGENT_PORT must be an ASCII decimal port in 1..65535");
         int port = Integer.parseInt(value);

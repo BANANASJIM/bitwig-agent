@@ -6,18 +6,18 @@ from pydantic import Field, model_validator
 
 from bitwig_agent.protocol.base import (
     MAX_BEAT,
-    TOPOLOGY_TIMEOUT_MS,
     TRACK,
     StatusArgs,
     StrictModel,
     ToolSpec,
     TrackId,
     has_control_character,
+    long_timeout,
     omitted,
     tool,
     validate_local_path,
 )
-from bitwig_agent.protocol.limits import TRACK_WINDOW
+from bitwig_agent.protocol.limits import LONG_DEFAULT_TIMEOUT_MS, LONG_TIMEOUT_MS, TRACK_WINDOW
 
 FLOAT_BIT_DEPTH = 32
 RENDER_MAX_BEATS = MAX_BEAT
@@ -25,7 +25,7 @@ RENDER_MAX_LENGTH = 65536
 
 
 class RenderRangeArgs(StrictModel):
-    timeoutMs: int = Field(default=30000, ge=100, le=TOPOLOGY_TIMEOUT_MS)
+    timeoutMs: int = long_timeout(LONG_DEFAULT_TIMEOUT_MS)
     startBeats: float = Field(
         ge=0, le=RENDER_MAX_BEATS, description="Range start in quarter-note beats from the project start."
     )
@@ -87,8 +87,20 @@ class BounceInPlaceArgs(RenderRangeArgs):
         return self
 
 
-EXPORT_AUDIO_DESCRIPTION = "Render a beat range of the master and/or tracks to audio files without the Export Audio dialog, through the job the dialog starts (6.1.4-gated). One file per source in directory: <baseName>.<format>, or <baseName>-01, -02, ... in sources order for several. Refused before dispatch (not_applied): an existing file unless overwrite (target_exists), a missing directory, playing transport/recording/automation write, a render already running (busy), Bitwig's own refusals (render_refused: engine not connected, no project directory, recording), missing files/plugins (render_needs_confirmation: Bitwig would ask in a dialog). exported=true only after the job's completion latch and every file read back: new or changed, nonempty, a valid WAV/FLAC header with the requested bit depth and sample rate, at least one frame. Completed but not verified: export_failed (not_applied if nothing was written, else unknown). On success Bitwig may open the folder in the file manager (mayOpenFileManager). timeoutMs default 30000, up to 60000; a longer render returns dispatched with poll:render.status and keeps further renders busy until it completes. Never retry unknown."
-BOUNCE_IN_PLACE_DESCRIPTION = "Bounce a beat range of audio/instrument tracks in place (6.1.4-gated; Bitwig's Bounce in Place shows no dialog): each track's main arranger lane gets one audio clip over [startBeats, endBeats) replacing what was there, in one undoable action; the audio lives in the project's managed audio folder. Same refusals as export.audio before dispatch (group tracks: unsupported_scope). bounced=true only after the job's completion latch and arranger readback of every track: exactly one new audio clip at the range and nothing else overlapping it (the new clips are in tracks[].clip). An instrument track becomes Hybrid (tracks[].trackTypeBefore/trackTypeAfter, warning); Undo reverts that, deleting the clip does not. Completed with no lane changed: bounce_failed (not_applied); any other readback difference: bounce_verification_failed (unknown, quarantines further bounces until extension.restart). timeoutMs default 30000, up to 60000; longer jobs return dispatched with poll:render.status. Never retry unknown; undo with the Undo action."
+EXPORT_AUDIO_DESCRIPTION = (
+    "Render a beat range of the master and/or tracks to audio files without the Export Audio dialog, through the job the dialog starts (6.1.4-gated). One file per source in directory: <baseName>.<format>, or <baseName>-01, -02, ... in sources order for several. Refused before dispatch (not_applied): an existing file unless overwrite (target_exists), a missing directory, playing transport/recording/automation write, a render already running (busy), Bitwig's own refusals (render_refused: engine not connected, no project directory, recording), missing files/plugins (render_needs_confirmation: Bitwig would ask in a dialog). exported=true only after the job's completion latch and every file read back: new or changed, nonempty, a valid WAV/FLAC header with the requested bit depth and sample rate, at least one frame. Completed but not verified: export_failed (not_applied if nothing was written, else unknown). On success Bitwig may open the folder in the file manager (mayOpenFileManager). timeoutMs default "
+    + str(LONG_DEFAULT_TIMEOUT_MS)
+    + ", up to "
+    + str(LONG_TIMEOUT_MS)
+    + "; a longer render returns dispatched with poll:render.status and keeps further renders busy until it completes. Never retry unknown."
+)
+BOUNCE_IN_PLACE_DESCRIPTION = (
+    "Bounce a beat range of audio/instrument tracks in place (6.1.4-gated; Bitwig's Bounce in Place shows no dialog): each track's main arranger lane gets one audio clip over [startBeats, endBeats) replacing what was there, in one undoable action; the audio lives in the project's managed audio folder. Same refusals as export.audio before dispatch (group tracks: unsupported_scope). bounced=true only after the job's completion latch and arranger readback of every track: exactly one new audio clip at the range and nothing else overlapping it (the new clips are in tracks[].clip). An instrument track becomes Hybrid (tracks[].trackTypeBefore/trackTypeAfter, warning); Undo reverts that, deleting the clip does not. Completed with no lane changed: bounce_failed (not_applied); any other readback difference: bounce_verification_failed (unknown, quarantines further bounces until extension.restart). timeoutMs default "
+    + str(LONG_DEFAULT_TIMEOUT_MS)
+    + ", up to "
+    + str(LONG_TIMEOUT_MS)
+    + "; longer jobs return dispatched with poll:render.status. Never retry unknown; undo with the Undo action."
+)
 RENDER_STATUS_DESCRIPTION = "State of the last export.audio/bounce.inPlace job: job=null, or {method, state running|completed|unknown, ...}; a completed job is re-verified now (files, or arranger readback) and reported with verified/changed. Read-only."
 
 

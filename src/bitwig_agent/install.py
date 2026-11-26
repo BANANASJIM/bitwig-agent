@@ -14,6 +14,8 @@ from pathlib import Path
 from urllib.error import URLError
 from urllib.request import urlopen
 
+from bitwig_agent.protocol.limits import DEFAULT_PORT
+
 _EXTENSION = "BitwigAgent.bwextension"
 _RELEASES = "https://github.com/BANANASJIM/bitwig-agent/releases/download"
 _MAX_EXTENSION_BYTES = 32 * 1024 * 1024
@@ -124,7 +126,7 @@ def main(argv: list[str] | None = None) -> None:
                         "bitwig-agent": {
                             "command": sys.executable,
                             "args": ["-m", "bitwig_agent"],
-                            "env": {"BITWIG_AGENT_PORT": "61172"},
+                            "env": {"BITWIG_AGENT_PORT": str(DEFAULT_PORT)},
                         }
                     }
                 },

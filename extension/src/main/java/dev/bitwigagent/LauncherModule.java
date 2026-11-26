@@ -54,6 +54,9 @@ final class LauncherModule implements HostModule {
     private static final Set<String> EDIT_OPTIONAL = withDetail(WINDOW_OPTIONAL);
     private static final Set<String> GRID_FIELDS =
             Set.of("stepSizeBeats", "startStep", "steps", "pitchStart", "pitchCount");
+    static final double BEAT_GRID = HostServices.LIMITS.beatGrid;
+    static final int MAX_CLIP_BEATS = HostServices.LIMITS.maxClipBeats;
+    static final String BEAT_GRID_LABEL = "1/" + Math.round(1 / BEAT_GRID);
     private static final BigDecimal[] DERIVED_GRIDS = {
         new BigDecimal("4"),
         new BigDecimal("2"),
@@ -64,7 +67,7 @@ final class LauncherModule implements HostModule {
         new BigDecimal("0.0625"),
         new BigDecimal("0.03125"),
         new BigDecimal("0.015625"),
-        new BigDecimal("0.0078125")
+        BigDecimal.valueOf(BEAT_GRID)
     };
     // Bitwig 6.1.3 debounces step-size grid regeneration by 100ms before queuing controller delivery.
     // This margin avoids consuming that known old cache; it is not a configuration acknowledgement.
@@ -182,7 +185,7 @@ final class LauncherModule implements HostModule {
             case "launcher.create": {
                 Params.fields(
                         p, Set.of("trackId", "slotIndex", "lengthBeats", "name"), Set.of("notes", "channel", "detail"));
-                int length = Params.integer(p, "lengthBeats", 1, 4096);
+                int length = Params.integer(p, "lengthBeats", 1, MAX_CLIP_BEATS);
                 if (Params.string(p, "name").length() > 128)
                     throw Errors.invalid("name must contain 1..128 characters");
                 if (p.has("notes")) {
@@ -209,7 +212,7 @@ final class LauncherModule implements HostModule {
                     throw Errors.invalid("expectedClipName must contain 1..256 characters");
                 if (op.equals("rename") && Params.string(p, "name").length() > 128)
                     throw Errors.invalid("name must contain 1..128 characters");
-                if (op.equals("resize")) Params.number(p, "lengthBeats", 1.0 / 128, 4096);
+                if (op.equals("resize")) Params.number(p, "lengthBeats", BEAT_GRID, MAX_CLIP_BEATS);
                 if (op.equals("color") && !RGB.matcher(Params.string(p, "rgb")).matches())
                     throw Errors.invalid("rgb must be #RRGGBB");
                 if (op.equals("transpose") && Params.integer(p, "semitones", -48, 48) == 0)
@@ -279,7 +282,7 @@ final class LauncherModule implements HostModule {
             if (!cells.add(x * 128 + pitch))
                 throw Errors.invalid("multiple edits address the same channel/step/pitch cell");
             int velocity = set ? Params.integer(e, "velocity", 1, 127) : 0;
-            double duration = set ? Params.number(e, "durationBeats", 1.0 / 128, 4096) : 0;
+            double duration = set ? Params.number(e, "durationBeats", BEAT_GRID, MAX_CLIP_BEATS) : 0;
             int durationSteps = set ? aligned(e.get("durationBeats"), new JsonPrimitive(w.exact), "durationBeats") : 0;
             if (set && (durationSteps < 1 || x + durationSteps > w.steps))
                 throw Errors.invalid("set duration must fit entirely inside the explicit window");
@@ -335,7 +338,7 @@ final class LauncherModule implements HostModule {
             boolean set = Params.string(e, "op").equals("set");
             Params.number(e, "beat", 0, 4194304);
             int pitch = Params.integer(e, "pitch", 0, 127);
-            if (set) Params.number(e, "durationBeats", 1.0 / 128, 4096);
+            if (set) Params.number(e, "durationBeats", BEAT_GRID, MAX_CLIP_BEATS);
             low = Math.min(low, pitch);
             high = Math.max(high, pitch);
             spans.add(new BigDecimal[] {
@@ -367,8 +370,8 @@ final class LauncherModule implements HostModule {
             }
         }
         if (coarsest == null)
-            throw Errors.invalid(
-                    "beat and durationBeats must be multiples of 1/128 beat to derive a window; no rounding is performed");
+            throw Errors.invalid("beat and durationBeats must be multiples of " + BEAT_GRID_LABEL
+                    + " beat to derive a window; no rounding is performed");
         if (grid == null)
             throw Errors.invalid(
                     "edits do not fit 128 steps on any grid that aligns them (coarsest is "
@@ -532,7 +535,7 @@ final class LauncherModule implements HostModule {
             guard(op, id, track);
             beginMutation(id, track, slot, j, method);
             op.dispatched = true;
-            slot.api.createEmptyClip(Params.integer(p, "lengthBeats", 1, 4096));
+            slot.api.createEmptyClip(Params.integer(p, "lengthBeats", 1, MAX_CLIP_BEATS));
             awaitCreated(op, id, track, slot, j, p, until(op));
         } else if (method.equals("launcher.import")) {
             importFile(op, id, track, slot, j, p);
@@ -696,7 +699,7 @@ final class LauncherModule implements HostModule {
             cursorGuard(op, id, track, slot);
             clip.setName(Params.string(p, "name"));
             // Native createEmptyClip can leave playback stop at its four-beat default.
-            clip.getPlayStop().set(Params.integer(p, "lengthBeats", 1, 4096));
+            clip.getPlayStop().set(Params.integer(p, "lengthBeats", 1, MAX_CLIP_BEATS));
             s.schedule(op, () -> awaitName(op, id, track, slot, index, p, end), 20);
         } else if (method.equals("notes.read")) {
             cursorGuard(op, id, track, slot);
@@ -716,8 +719,8 @@ final class LauncherModule implements HostModule {
     private void awaitName(HostOperation op, String id, Track track, Slot slot, int index, JsonObject p, long end) {
         cursorGuard(op, id, track, slot);
         boolean matches = slot.api.name().get().equals(Params.string(p, "name"))
-                && clip.getLoopLength().get() == Params.integer(p, "lengthBeats", 1, 4096)
-                && clip.getPlayStop().get() == Params.integer(p, "lengthBeats", 1, 4096);
+                && clip.getLoopLength().get() == Params.integer(p, "lengthBeats", 1, MAX_CLIP_BEATS)
+                && clip.getPlayStop().get() == Params.integer(p, "lengthBeats", 1, MAX_CLIP_BEATS);
         if (!matches && s.now() < end) {
             s.schedule(op, () -> awaitName(op, id, track, slot, index, p, end), 20);
             return;
@@ -1122,7 +1125,7 @@ final class LauncherModule implements HostModule {
                     () -> clip.color().set(want[0], want[1], want[2]),
                     "clip_color");
         } else if (kind.equals("resize"))
-            resize(op, id, track, slot, index, Params.number(p, "lengthBeats", 1.0 / 128, 4096), end);
+            resize(op, id, track, slot, index, Params.number(p, "lengthBeats", BEAT_GRID, MAX_CLIP_BEATS), end);
         else gridEdit(op, id, track, slot, index, p, kind, end);
     }
 
@@ -1737,7 +1740,7 @@ final class LauncherModule implements HostModule {
 
         Window(JsonObject p) {
             channel = p.has("channel") ? Params.integer(p, "channel", 0, 15) : 0;
-            size = Params.number(p, "stepSizeBeats", 1.0 / 128, 4);
+            size = Params.number(p, "stepSizeBeats", BEAT_GRID, 4);
             exact = p.get("stepSizeBeats").getAsBigDecimal();
             derived = p.has("windowDerived");
             start = Params.integer(p, "startStep", 0, 1048576);

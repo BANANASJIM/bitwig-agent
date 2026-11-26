@@ -8,7 +8,6 @@ from bitwig_agent.protocol.audio import wav_path
 from bitwig_agent.protocol.base import (
     MAX_STRING_UNITS,
     TARGET,
-    TOPOLOGY_TIMEOUT_MS,
     TRACK,
     Nonempty,
     ParameterArgs,
@@ -16,18 +15,20 @@ from bitwig_agent.protocol.base import (
     StrictModel,
     ToolSpec,
     TrackId,
+    long_timeout,
     omitted,
     tool,
     validate_local_path,
 )
 from bitwig_agent.protocol.grid import SAFE, TYPE_ID_DESCRIPTION, UNK, GridVoicingFields
+from bitwig_agent.protocol.limits import DEVICE_WINDOW
 
 MAX_APPLY_CONNECTIONS = 4096  # a full 1024-module Grid typically needs more cables than modules
 
 
 class GridApplyTarget(StrictModel):
     trackId: TrackId
-    deviceIndex: int = Field(ge=0, le=15)
+    deviceIndex: int = Field(ge=0, le=DEVICE_WINDOW - 1)
     expectedDeviceName: Nonempty
 
 
@@ -166,7 +167,7 @@ class GridGraphArgs(ParameterArgs):
 
 
 class GridProbeArgs(ParameterArgs):
-    timeoutMs: int = Field(default=5000, ge=100, le=TOPOLOGY_TIMEOUT_MS)
+    timeoutMs: int = long_timeout()
     port: Annotated[str, Field(min_length=3, max_length=MAX_STRING_UNITS)] = Field(
         description="'<module name>.<OUT port key>' of a module in this device, e.g. 'H: lead.OUT'; the name is the customName (or generated name) from grid.graph."
     )

@@ -19,7 +19,7 @@ from bitwig_agent.protocol.base import (
     tool,
     validate_local_path,
 )
-from bitwig_agent.protocol.limits import SCENE_WINDOW
+from bitwig_agent.protocol.limits import BEAT_GRID, BEAT_GRID_LABEL, MAX_CLIP_BEATS, SCENE_WINDOW
 
 MIDI_PITCH_COUNT = 128
 
@@ -49,7 +49,7 @@ class ClipNote(StrictModel):
     beat: float = Field(ge=0, le=MAX_BEAT)
     pitch: int = Field(ge=0, le=127)
     velocity: int = Field(ge=1, le=127)
-    durationBeats: float = Field(ge=1 / 128, le=4096)
+    durationBeats: float = Field(ge=BEAT_GRID, le=MAX_CLIP_BEATS)
 
 
 def check_note_spans(notes: list[Any]) -> None:
@@ -59,7 +59,7 @@ def check_note_spans(notes: list[Any]) -> None:
     for note in notes:
         beat = Decimal(str(note.beat))
         if beat / Decimal("0.0078125") % 1:
-            raise ValueError("beat must be a multiple of 1/128 beat")
+            raise ValueError("beat must be a multiple of " + BEAT_GRID_LABEL + " beat")
         if (beat, note.pitch) in seen:
             raise ValueError("duplicate edit cell")
         seen.add((beat, note.pitch))
@@ -67,14 +67,14 @@ def check_note_spans(notes: list[Any]) -> None:
             continue
         end = beat + Decimal(str(note.durationBeats))
         if Decimal(str(note.durationBeats)) / Decimal("0.0078125") % 1:
-            raise ValueError("durationBeats must be a multiple of 1/128 beat")
+            raise ValueError("durationBeats must be a multiple of " + BEAT_GRID_LABEL + " beat")
         if any(beat < old_end and start < end for start, old_end in spans.setdefault(note.pitch, [])):
             raise ValueError("same-pitch set durations overlap")
         spans[note.pitch].append((beat, end))
 
 
 class ClipCreateArgs(ClipArgs):
-    lengthBeats: int = Field(ge=1, le=4096)
+    lengthBeats: int = Field(ge=1, le=MAX_CLIP_BEATS)
     name: str = Field(min_length=1, max_length=128)
     notes: Annotated[list[ClipNote], Field(min_length=1, max_length=256)] = omitted()
     channel: Annotated[int, Field(ge=0, le=15)] = omitted()
@@ -145,7 +145,7 @@ CLIP_EDIT_OPS = {
 class ClipEditArgs(ClipSettingsArgs):
     op: Literal["rename", "resize", "color", "transpose", "quantize", "duplicateContent", "delete", "copyTo"]
     name: Annotated[str, Field(min_length=1, max_length=128)] = omitted()
-    lengthBeats: Annotated[float, Field(ge=1 / 128, le=4096)] = omitted()
+    lengthBeats: Annotated[float, Field(ge=BEAT_GRID, le=MAX_CLIP_BEATS)] = omitted()
     rgb: Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$")] = omitted()
     semitones: Annotated[int, Field(ge=-48, le=48)] = omitted()
     amount: Annotated[float, Field(gt=0, le=1)] = omitted()
@@ -175,7 +175,7 @@ GRID_FIELDS = {"stepSizeBeats", "startStep", "steps", "pitchStart", "pitchCount"
 
 class NoteWindowArgs(ClipArgs):
     channel: Annotated[int, Field(ge=0, le=15)] = omitted()
-    stepSizeBeats: Annotated[float, Field(ge=1 / 128, le=4)] = omitted()
+    stepSizeBeats: Annotated[float, Field(ge=BEAT_GRID, le=4)] = omitted()
     startStep: Annotated[int, Field(ge=0, le=1048576)] = omitted()
     steps: Annotated[int, Field(ge=1, le=128)] = omitted()
     pitchStart: Annotated[int, Field(ge=0, le=127)] = omitted()
@@ -202,7 +202,7 @@ class NoteEdit(StrictModel):
     beat: float = Field(ge=0, le=MAX_BEAT)
     pitch: int = Field(ge=0, le=127)
     velocity: Annotated[int, Field(ge=1, le=127)] = omitted()
-    durationBeats: Annotated[float, Field(ge=1 / 128, le=4096)] = omitted()
+    durationBeats: Annotated[float, Field(ge=BEAT_GRID, le=MAX_CLIP_BEATS)] = omitted()
 
     @model_validator(mode="after")
     def validate_operation(self) -> Self:
@@ -276,11 +276,21 @@ SCENES_LAUNCH_DESCRIPTION = "Launch one scene (every clip in its row). Playback 
 SCENES_DUPLICATE_DESCRIPTION = f"Duplicate one scene with its clips; the copy goes directly after the source (Bitwig's Duplicate). Total scenes stay <= {SCENE_WINDOW} (scene_limit). Verified by the scene count and the neighbouring names (earlier names unchanged, later ones shifted by one); otherwise unknown: inspect scenes.list, never blindly repeat. Needs a settled project and no pending/unresolved launcher mutation."
 SCENES_DELETE_DESCRIPTION = "Delete one scene AND the clips in its row (Bitwig's Delete; clipsDeleted in the result says how many). Needs a stopped transport, recording/automation off, none of the scene's clips playing, queued or recording, and at least two scenes. sceneIndex + exact expectedName; later scenes shift up. Verified by the count and the remaining names; otherwise unknown: inspect scenes.list, never blindly repeat (indices have shifted)."
 LAUNCHER_IMPORT_DESCRIPTION = f"Import a local audio or clip file into an EMPTY explicit launcher slot by track UUID and zero-based slotIndex (0..{SCENE_WINDOW - 1}, must be below the scene count). Occupied slots reject; no overwrite option. path must be absolute and normalized, without URI, shell/path expansion or control characters. The host checks file existence/readability; .mid/.midi files must parse and contain a positive-velocity note-on or another channel event (use launcher.create for silence). The client checks path syntax only. Result reports only observed slot content transition, not file identity or decoded audio verification. Never blindly retry an unknown outcome."
-CLIPS_EDIT_DESCRIPTION = "Whole-clip edit of ONE existing launcher clip per call: trackId, slotIndex, expectedClipName (exact current name from launcher.list/context.get; mismatch is stale_target/not_applied before anything is dispatched) and op. Ops: rename{name}; resize{lengthBeats 1/128..4096: loop length and play stop}; color{rgb #RRGGBB; Bitwig may snap it to its palette, reported as dispatched/readback_mismatch}; transpose{semitones -48..48, nonzero; no observed channel-0 loop note may leave MIDI 0..127; notes on other channels or outside the loop are moved but not checked}; quantize{amount >0..1: morphs note starts between original (0) and the host's own quantize grid (1), a Bitwig setting not settable here}; duplicateContent (doubles the loop); delete (stopped transport, recording/automation-write off, clip idle); copyTo{targetSlotIndex: an existing, observed-empty slot on the same track, else slot_occupied/slot_out_of_range; nameChanged is reported if the host renames the copy}. Except delete and copyTo, it selects the clip in the host UI (moves the cursor clip, see context.get). Each result says what was read back: rename name, resize loop+play stop, color, delete slot empty, copyTo target content+name, transpose channel-0 onset cells shifted with velocity/duration kept, quantize onset count/pitches/loop length unchanged with at least one cell moved (sub-cell positions are not observable), duplicateContent loop doubled and first half unchanged. transpose and quantize read the whole loop in one 1/32-1/16 window, so need a loop <=32 beats with channel-0 notes (else unverifiable_clip/no_notes, nothing changed); duplicateContent has neither check. Other channels are not compared. rename/resize/color are idempotent: an unread value gives status=dispatched/readback_mismatch. quantize amount 1 with no visible cell movement is status=dispatched/no_cell_change (idempotent, no quarantine). delete, copyTo, transpose, quantize below amount 1 and duplicateContent are never retried: an unobserved outcome is unknown and quarantines that slot until extension.restart. Example: op=transpose semitones=-2."
+CLIPS_EDIT_DESCRIPTION = (
+    "Whole-clip edit of ONE existing launcher clip per call: trackId, slotIndex, expectedClipName (exact current name from launcher.list/context.get; mismatch is stale_target/not_applied before anything is dispatched) and op. Ops: rename{name}; resize{lengthBeats "
+    + BEAT_GRID_LABEL
+    + ".."
+    + str(MAX_CLIP_BEATS)
+    + ": loop length and play stop}; color{rgb #RRGGBB; Bitwig may snap it to its palette, reported as dispatched/readback_mismatch}; transpose{semitones -48..48, nonzero; no observed channel-0 loop note may leave MIDI 0..127; notes on other channels or outside the loop are moved but not checked}; quantize{amount >0..1: morphs note starts between original (0) and the host's own quantize grid (1), a Bitwig setting not settable here}; duplicateContent (doubles the loop); delete (stopped transport, recording/automation-write off, clip idle); copyTo{targetSlotIndex: an existing, observed-empty slot on the same track, else slot_occupied/slot_out_of_range; nameChanged is reported if the host renames the copy}. Except delete and copyTo, it selects the clip in the host UI (moves the cursor clip, see context.get). Each result says what was read back: rename name, resize loop+play stop, color, delete slot empty, copyTo target content+name, transpose channel-0 onset cells shifted with velocity/duration kept, quantize onset count/pitches/loop length unchanged with at least one cell moved (sub-cell positions are not observable), duplicateContent loop doubled and first half unchanged. transpose and quantize read the whole loop in one 1/32-1/16 window, so need a loop <=32 beats with channel-0 notes (else unverifiable_clip/no_notes, nothing changed); duplicateContent has neither check. Other channels are not compared. rename/resize/color are idempotent: an unread value gives status=dispatched/readback_mismatch. quantize amount 1 with no visible cell movement is status=dispatched/no_cell_change (idempotent, no quarantine). delete, copyTo, transpose, quantize below amount 1 and duplicateContent are never retried: an unobserved outcome is unknown and quarantines that slot until extension.restart. Example: op=transpose semitones=-2."
+)
 LAUNCHER_LAUNCH_DESCRIPTION = "Launch an existing clip by explicit track UUID and zero-based slot. Can start playback and produce audio. Recording and both automation-write flags must be observed false; modes are never silently disabled. Dispatch does not prove musical/audio completion. Queued playback returns completion=not_observed; observe launcher.list before dependent edits. Missing queue/playback observation returns completion=unknown: stop the writer, never blindly retry."
 LAUNCHER_STOP_DESCRIPTION = "Stop launcher playback on one track UUID; does not delete clips or stop the entire transport. A queued stop returns completion=not_observed; observe launcher.list before dependent edits. Missing queue/stop observation returns completion=unknown: stop the writer, never blindly retry."
 NOTES_READ_DESCRIPTION = "Read a clip/channel/grid/pitch window. Selects the target clip in the host UI (moves the editor cursor; see context.get). channel is zero-based MIDI 0..15; beat 0 is clip start. stepSizeBeats=0.25,startStep=0,steps=16 covers four beats. Omit all five grid fields (channel defaults to 0) to read the whole clip loop over all pitches at 1/32 (loop <=16 beats) or 1/16 note, 128 steps max; if the loop is longer, windowCoversLoop=false and continuation gives the next explicit window. Rows are {beat, pitch, velocity 1..127, durationBeats}: the unit notes.edit takes; channel is the window's. At most 2048 onsets returned: inspect completeWindow, notesInWindow, notesReturned, continuingAtWindowStart (notes sustaining into the window start) and subdivide steps or pitchCount when incomplete. Grid data is only scheduled-settled (gridReadiness), not a host-data barrier; late callbacks lack window identity. One onset per grid cell: sub-step and multiple onsets per cell are not exposed; the read never covers the whole clip (use the loop window)."
-NOTES_EDIT_DESCRIPTION = 'Edit up to 256 onset cells. Selects the target clip in the host UI (moves the editor cursor; see context.get). The window (stepSizeBeats,startStep,steps,pitchStart,pitchCount; all five or none) may be omitted: the finest power-of-two grid (down to 1/128 beat) that aligns every beat/duration within 128 steps, and the pitch range, are derived (window echoed with derived=true); >128 steps is rejected, so split by time or use a coarser grid. channel defaults to 0. Each set requires op=set, absolute beat, MIDI pitch, integer velocity 1..127 and durationBeats; clear requires only op=clear,beat,pitch. Beat/duration must align exactly to stepSizeBeats without rounding; entire note must fit requested window and observed clip loop. No duplicate cells, overlapping same-pitch sets or clear-all; sustains are protected and already-matching cells are not rewritten. Example edits=[{"op":"set","beat":0,"pitch":60,"velocity":90,"durationBeats":1}]. Result is compact: status/verification cover every edit; summary {requested, dispatched, alreadyMatched, verified, unverified}; unverifiedEdits lists only unverified edits with the observed cell. detail=full also returns the window\'s note listing (as notes.read) and every edit. Verification is per-cell readback after scheduled grid settling (gridReadiness), not a host-data barrier. Verify unverified edits with notes.read. No automatic retry.'
+NOTES_EDIT_DESCRIPTION = (
+    "Edit up to 256 onset cells. Selects the target clip in the host UI (moves the editor cursor; see context.get). The window (stepSizeBeats,startStep,steps,pitchStart,pitchCount; all five or none) may be omitted: the finest power-of-two grid (down to "
+    + BEAT_GRID_LABEL
+    + ' beat) that aligns every beat/duration within 128 steps, and the pitch range, are derived (window echoed with derived=true); >128 steps is rejected, so split by time or use a coarser grid. channel defaults to 0. Each set requires op=set, absolute beat, MIDI pitch, integer velocity 1..127 and durationBeats; clear requires only op=clear,beat,pitch. Beat/duration must align exactly to stepSizeBeats without rounding; entire note must fit requested window and observed clip loop. No duplicate cells, overlapping same-pitch sets or clear-all; sustains are protected and already-matching cells are not rewritten. Example edits=[{"op":"set","beat":0,"pitch":60,"velocity":90,"durationBeats":1}]. Result is compact: status/verification cover every edit; summary {requested, dispatched, alreadyMatched, verified, unverified}; unverifiedEdits lists only unverified edits with the observed cell. detail=full also returns the window\'s note listing (as notes.read) and every edit. Verification is per-cell readback after scheduled grid settling (gridReadiness), not a host-data barrier. Verify unverified edits with notes.read. No automatic retry.'
+)
 
 
 SPECS: dict[str, ToolSpec] = {

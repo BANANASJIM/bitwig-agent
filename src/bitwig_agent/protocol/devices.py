@@ -22,13 +22,14 @@ from bitwig_agent.protocol.base import (
     tool,
     validate_local_path,
 )
+from bitwig_agent.protocol.limits import DEVICE_WINDOW, REMOTE_PAGE_SLOTS
 
 ANCHOR_FIELDS = frozenset({"deviceIndex", "expectedDeviceName"})
 
 
 class DeviceParent(StrictModel):
     trackId: TrackId
-    deviceIndex: int = Field(ge=0, le=15)
+    deviceIndex: int = Field(ge=0, le=DEVICE_WINDOW - 1)
     expectedDeviceName: Nonempty
 
 
@@ -63,14 +64,14 @@ def validate_insertion(model: Any) -> None:
 
 
 class DeviceInsertArgs(DeviceArgs):
-    expectedDeviceCount: int = Field(ge=0, le=15)
+    expectedDeviceCount: int = Field(ge=0, le=DEVICE_WINDOW - 1)
     kind: Literal["bitwig", "vst2", "vst3", "clap", "file"]
     id: Nonempty = omitted()
     path: Nonempty = omitted()
     position: Literal["start", "end", "before", "after"] = omitted(
         description="Where in the chain; default end. before/after need deviceIndex and expectedDeviceName of the anchor device."
     )
-    deviceIndex: int = omitted(ge=0, le=15, description="Anchor device for position before/after.")
+    deviceIndex: int = omitted(ge=0, le=DEVICE_WINDOW - 1, description="Anchor device for position before/after.")
     expectedDeviceName: Nonempty = omitted(description="Exact name of the anchor device.")
 
     @model_validator(mode="after")
@@ -86,7 +87,7 @@ class DeviceInsertArgs(DeviceArgs):
 
 
 class DeviceMoveArgs(ParameterArgs):
-    toIndex: int = Field(ge=0, le=15)
+    toIndex: int = Field(ge=0, le=DEVICE_WINDOW - 1)
 
     @model_validator(mode="after")
     def validate_move(self) -> Self:
@@ -154,8 +155,8 @@ class RemoteDefineArgs(ParameterArgs):
         max_length=256,
         description="Page name shown in the device's Remote Controls page list; kept verbatim.",
     )
-    slots: Annotated[list[RemoteSlotSpec | None], Field(min_length=1, max_length=8)] = Field(
-        description="Slot k is entry k (0..7); null or absent trailing entries leave that slot empty (replace clears it)."
+    slots: Annotated[list[RemoteSlotSpec | None], Field(min_length=1, max_length=REMOTE_PAGE_SLOTS)] = Field(
+        description=f"Slot k is entry k (0..{REMOTE_PAGE_SLOTS - 1}); null or absent trailing entries leave that slot empty (replace clears it)."
     )
     mode: Literal["create", "replace"] = omitted(
         description="create (default) refuses an existing page of that name; replace redefines the one preset page of that name, or creates it."
@@ -202,7 +203,11 @@ DEVICES_LAYERS_INSERT_DESCRIPTION = "Insert a device into one layer of a contain
 DEVICES_REMOTE_GET_DESCRIPTION = "Read a source-device-bound remote-control page and fresh contextToken without changing the GUI page. Discover exact page/control names and zero-based indices. Token tracks observed metadata, not unobservable same-name remaps."
 DEVICES_REMOTE_PAGE_DESCRIPTION = "Change this extension's independent remote page, not the GUI-selected page. Use current contextToken and target pageIndex/expectedPageName from devices.remote.get; get a fresh token after switching."
 DEVICES_REMOTE_SET_DESCRIPTION = "Set one normalized remote control with exact page/control names and fresh contextToken from devices.remote.get. Indices are zero-based; inspect fresh same-source value verification. Unobservable same-name mapping changes are not guaranteed detectable."
-DEVICES_REMOTE_DEFINE_DESCRIPTION = "Define one named user Remote Controls page on a Grid device (e.g. a Macros page whose knobs drive Value modules), shown in the device's Remote Controls page list. slots: up to 8 entries, slot k = entry k, each {moduleId|moduleName, parameterId, label?} naming a scalar Grid parameter (from grid.get), or null for an empty slot. mode create (default) refuses an existing page of that name (page_exists); replace redefines the one device page of that name (maps changed slots, clears slots left empty, keeps matching ones) or creates it. Pages go in the device's preset-page list, the one the UI's Add New Page uses (stored with the device and its preset; device pages cannot hold Grid module parameters); a same-named device, module or plugin page is page_exists. Each native step (create page, name, map/clear slot) is its own undo step, ungrouped; results read back the page name and every slot's native parameter and label, and give pageIndex for devices.remote.page. Needs recording and automation write off (a playing transport is fine) and a licensed device. Inspect an unknown outcome with devices.remote.get; never retry it. Requires the inspected Bitwig 6.1.4 JAR (grid.capabilities remotePages)."
+DEVICES_REMOTE_DEFINE_DESCRIPTION = (
+    "Define one named user Remote Controls page on a Grid device (e.g. a Macros page whose knobs drive Value modules), shown in the device's Remote Controls page list. slots: up to "
+    + str(REMOTE_PAGE_SLOTS)
+    + " entries, slot k = entry k, each {moduleId|moduleName, parameterId, label?} naming a scalar Grid parameter (from grid.get), or null for an empty slot. mode create (default) refuses an existing page of that name (page_exists); replace redefines the one device page of that name (maps changed slots, clears slots left empty, keeps matching ones) or creates it. Pages go in the device's preset-page list, the one the UI's Add New Page uses (stored with the device and its preset; device pages cannot hold Grid module parameters); a same-named device, module or plugin page is page_exists. Each native step (create page, name, map/clear slot) is its own undo step, ungrouped; results read back the page name and every slot's native parameter and label, and give pageIndex for devices.remote.page. Needs recording and automation write off (a playing transport is fine) and a licensed device. Inspect an unknown outcome with devices.remote.get; never retry it. Requires the inspected Bitwig 6.1.4 JAR (grid.capabilities remotePages)."
+)
 DEVICES_REMOTE_DELETE_PAGE_DESCRIPTION = "Delete one named preset Remote Controls page (one devices.remote.define made, or one added by hand with Add New Page). Device, module and plugin pages are refused (unsupported_scope); a missing or ambiguous name is stale_context. One native undo step; the result verifies the page is gone and lists the remaining page names. Same safety and 6.1.4 gate as devices.remote.define."
 
 

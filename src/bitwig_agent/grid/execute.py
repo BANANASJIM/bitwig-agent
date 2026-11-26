@@ -14,7 +14,7 @@ from bitwig_agent.grid.read import label_of, read_graph, read_params
 from bitwig_agent.grid.report import Ledger
 from bitwig_agent.grid.spec import Spec
 from bitwig_agent.grid.wiring import check_live_ports, plan_connections
-from bitwig_agent.protocol.base import TOPOLOGY_TIMEOUT_MS
+from bitwig_agent.protocol.limits import LONG_TIMEOUT_MS
 
 INSERT_BATCH, PARAM_BATCH, CONNECTION_BATCH = 16, 64, 32
 # Adaptive insert batches: size each call to take at most this share of the topology timeout at the measured
@@ -28,7 +28,7 @@ def next_insert_batch(size: int, elapsed_s: float, result: dict[str, Any]) -> in
     """Next insert batch size from the measured per-entry time; a host stop at its deadline margin also shrinks it."""
     ran = max(1, sum(1 for e in result.get("modules", []) if e.get("status") != "not_dispatched"))
     per_entry = max(elapsed_s / ran, result.get("slowestEntryMs", 0) / 1000)
-    fit = INSERT_BATCH if per_entry <= 0 else int(TOPOLOGY_TIMEOUT_MS / 1000 * INSERT_BATCH_BUDGET / per_entry)
+    fit = INSERT_BATCH if per_entry <= 0 else int(LONG_TIMEOUT_MS / 1000 * INSERT_BATCH_BUDGET / per_entry)
     if result.get("stopReason") == "deadline_margin":
         fit = min(fit, size // 2 or 1)
     return max(1, min(INSERT_BATCH, fit))

@@ -6,10 +6,11 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from bitwig_agent.client import MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, BridgeClient, configured_port, package_version
+from bitwig_agent.client import BridgeClient, configured_port, package_version
 from bitwig_agent.core import composed
 from bitwig_agent.errors import BridgeError
 from bitwig_agent.protocol import CLIENT_SIDE, TOOLS, validate_call
+from bitwig_agent.protocol.limits import MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES
 from bitwig_agent.protocol.parameters import SetArgs
 
 pytestmark = pytest.mark.anyio

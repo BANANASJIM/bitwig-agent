@@ -7,16 +7,18 @@ from pydantic import Field, model_validator
 
 from bitwig_agent.protocol.base import MAX_BEAT, PROJECT_READY, TRACK, DeviceArgs, StrictModel, ToolSpec, omitted, tool
 from bitwig_agent.protocol.launcher import CLIP, check_note_spans
-from bitwig_agent.protocol.limits import SCENE_WINDOW
+from bitwig_agent.protocol.limits import BEAT_GRID, BEAT_GRID_LABEL, MAX_CLIP_BEATS, SCENE_WINDOW
 
 
 class ArrangerNote(StrictModel):
     beat: float = Field(
-        ge=0, le=MAX_BEAT, description="Onset in beats from the clip start (not the arrangement), on a 1/128-beat grid."
+        ge=0,
+        le=MAX_BEAT,
+        description="Onset in beats from the clip start (not the arrangement), on a " + BEAT_GRID_LABEL + "-beat grid.",
     )
     pitch: int = Field(ge=0, le=127)
     velocity: int = Field(ge=1, le=127)
-    durationBeats: float = Field(ge=1 / 128, le=4096)
+    durationBeats: float = Field(ge=BEAT_GRID, le=MAX_CLIP_BEATS)
 
 
 class ArrangerClipListArgs(DeviceArgs):
@@ -25,7 +27,7 @@ class ArrangerClipListArgs(DeviceArgs):
 
 class ArrangerClipCreateArgs(DeviceArgs):
     startBeats: float = Field(ge=0, le=MAX_BEAT, description="Arrangement position in beats.")
-    lengthBeats: float = Field(ge=1 / 128, le=65536)
+    lengthBeats: float = Field(ge=BEAT_GRID, le=65536)
     name: str = Field(min_length=1, max_length=128)
     notes: Annotated[list[ArrangerNote], Field(min_length=1, max_length=256)] = omitted()
     channel: Annotated[int, Field(ge=0, le=15)] = omitted()
@@ -65,7 +67,7 @@ class ArrangerClipEditArgs(DeviceArgs):
     expectedName: str = Field(max_length=256, description="Exact current name from arranger.clips.list; may be empty.")
     op: Literal["move", "resize", "rename", "delete"]
     startBeats: Annotated[float, Field(ge=0, le=MAX_BEAT)] = omitted()
-    lengthBeats: Annotated[float, Field(ge=1 / 128, le=65536)] = omitted()
+    lengthBeats: Annotated[float, Field(ge=BEAT_GRID, le=65536)] = omitted()
     name: Annotated[str, Field(min_length=1, max_length=128)] = omitted()
 
     @model_validator(mode="after")
@@ -77,7 +79,11 @@ class ArrangerClipEditArgs(DeviceArgs):
 
 
 ARRANGER_CLIPS_LIST_DESCRIPTION = "Read the arranger clips on one audio/instrument track's main clip lane, in the lane's event order (creation order on 6.1.4, not start order; a moved clip keeps its clipIndex): clipIndex, startBeats, lengthBeats, endBeats, name, kind (instrument|audio|other), loopEnabled, loopStartBeats, loopLengthBeats, playStartBeats, playStopBeats. Beats are quarter notes from the arrangement start. Automation clips and take/comp lanes are not listed. Native read (inspected Bitwig 6.1.4 JAR); no selection."
-ARRANGER_CLIPS_CREATE_DESCRIPTION = "Create one MIDI clip on an instrument track's arranger timeline at startBeats with lengthBeats, a name and optional notes (beats relative to the clip start, 1/128 grid, same rules as launcher.create). Refused (arranger_overlap, not_applied) if any existing clip overlaps the range; never overwrites. Needs stopped transport with recording/automation-write off. One native undoable edit; result reads back the clip and every note. Unknown outcomes quarantine arranger writes until extension.restart; inspect with arranger.clips.list."
+ARRANGER_CLIPS_CREATE_DESCRIPTION = (
+    "Create one MIDI clip on an instrument track's arranger timeline at startBeats with lengthBeats, a name and optional notes (beats relative to the clip start, "
+    + BEAT_GRID_LABEL
+    + " grid, same rules as launcher.create). Refused (arranger_overlap, not_applied) if any existing clip overlaps the range; never overwrites. Needs stopped transport with recording/automation-write off. One native undoable edit; result reads back the clip and every note. Unknown outcomes quarantine arranger writes until extension.restart; inspect with arranger.clips.list."
+)
 ARRANGER_CLIPS_COPY_FROM_LAUNCHER_DESCRIPTION = "Copy an occupied launcher clip of the same track onto its arranger timeline at startBeats (the guide's drag of a launcher clip into the arranger): Bitwig's own copy-launcher-clips-to-arranger operation in copy mode (unique, not alias). The copy's length is the clip's arrangement length; any overlap with existing clips is refused. Needs expectedClipName from launcher.list, stopped transport, recording/automation-write off. Result lists the new clip."
 ARRANGER_CLIPS_EDIT_DESCRIPTION = "Edit one arranger clip found by clipIndex from a fresh arranger.clips.list, guarded by expectedStartBeats and expectedName (mismatch: stale_target, nothing changed). Ops: move{startBeats} keeps the length; resize{lengthBeats} keeps the start; rename{name}; delete. move/resize into another clip are refused (arranger_overlap). Each op is one native undoable edit verified by native readback; already-matching values are not rewritten. Needs stopped transport with recording/automation-write off; unknown outcomes quarantine arranger writes until extension.restart."
 
