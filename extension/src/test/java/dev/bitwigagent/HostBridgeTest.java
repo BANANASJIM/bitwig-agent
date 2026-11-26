@@ -419,8 +419,8 @@ public final class HostBridgeTest {
         f.projectName.emit("Fixture2");
         f.engine.data = false;
         for (String method : HostFixture.SPECS.methods()) {
-            boolean projectWrite = MethodSpecsTest.PROJECT_WRITES.contains(method);
-            boolean engine = MethodSpecsTest.ENGINE_REQUIRED.contains(method);
+            boolean projectWrite = HostFixture.SPECS.get(method).projectWrite;
+            boolean engine = HostFixture.SPECS.get(method).engineRequired;
             String refusal = null;
             try {
                 bridge.preflight(method, new JsonObject());
@@ -432,7 +432,8 @@ public final class HostBridgeTest {
                     method + " admission while the project settles and the engine is inactive: " + refusal);
         }
         f.tasks.advance(SETTLE);
-        for (String method : MethodSpecsTest.ENGINE_REQUIRED) {
+        for (String method : HostFixture.SPECS.methods()) {
+            if (!HostFixture.SPECS.get(method).engineRequired) continue;
             RpcException refused =
                     assertThrows(RpcException.class, () -> bridge.preflight(method, new JsonObject()), method);
             assertTrue(
@@ -440,7 +441,8 @@ public final class HostBridgeTest {
                             && refused.getMessage().contains(method),
                     method + " names itself");
         }
-        for (String method : MethodSpecsTest.PROJECT_WRITES) bridge.preflight(method, new JsonObject());
+        for (String method : HostFixture.SPECS.methods())
+            if (!HostFixture.SPECS.get(method).engineRequired) bridge.preflight(method, new JsonObject());
     }
 
     @Test
