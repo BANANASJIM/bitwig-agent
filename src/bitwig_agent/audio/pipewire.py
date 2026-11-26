@@ -143,32 +143,27 @@ def describe(links: list[tuple[str, str]]) -> dict[str, Any]:
     }
 
 
-def route(args: dict[str, Any]) -> dict[str, Any]:  # noqa: C901, PLR0912
-    check_platform()
-    mode = args["mode"]
-    links = current_links()
-    saved = load_state()
-    if mode == "status":
-        return {"mode": "status", **describe(links), "sinkExists": sink_exists(), "savedPrevious": saved}
-    if mode == "silent":
-        if not links and not saved:
-            raise bridge_error(
-                "bitwig_not_found", f"No '{NODE}' output links in PipeWire; is Bitwig running and playing out?"
-            )
-        created = ensure_sink()
-        previous = {k: list(v) for k, v in saved.items()}
-        for out, target in links:
-            if not target.startswith(f"{SINK}:") and target not in previous.setdefault(out, []):
-                previous[out].append(target)
-        save_state(previous)  # persist before touching any link so restore can always undo
-        for out, target in links:
-            if not target.startswith(f"{SINK}:"):
-                link(["-d", out, target], "disconnect")
-        for out, sink_port in OUT_PORTS.items():
-            if out in previous and (out, sink_port) not in links:
-                link([out, sink_port], "connect")
-        return {"mode": "silent", "sinkCreated": created, **describe(current_links()), "savedPrevious": previous}
-    # restore
+def _route_silent(links: list[tuple[str, str]], saved: dict[str, list[str]]) -> dict[str, Any]:
+    if not links and not saved:
+        raise bridge_error(
+            "bitwig_not_found", f"No '{NODE}' output links in PipeWire; is Bitwig running and playing out?"
+        )
+    created = ensure_sink()
+    previous = {k: list(v) for k, v in saved.items()}
+    for out, target in links:
+        if not target.startswith(f"{SINK}:") and target not in previous.setdefault(out, []):
+            previous[out].append(target)
+    save_state(previous)  # persist before touching any link so restore can always undo
+    for out, target in links:
+        if not target.startswith(f"{SINK}:"):
+            link(["-d", out, target], "disconnect")
+    for out, sink_port in OUT_PORTS.items():
+        if out in previous and (out, sink_port) not in links:
+            link([out, sink_port], "connect")
+    return {"mode": "silent", "sinkCreated": created, **describe(current_links()), "savedPrevious": previous}
+
+
+def _route_restore(links: list[tuple[str, str]], saved: dict[str, list[str]]) -> dict[str, Any]:
     if not saved:
         return {"mode": "restore", "restored": [], "note": "nothing saved; links unchanged", **describe(links)}
     restored = []
@@ -181,6 +176,18 @@ def route(args: dict[str, Any]) -> dict[str, Any]:  # noqa: C901, PLR0912
             link(["-d", out, target], "disconnect")
     save_state({})
     return {"mode": "restore", "restored": restored, **describe(current_links())}
+
+
+def route(args: dict[str, Any]) -> dict[str, Any]:
+    check_platform()
+    mode = args["mode"]
+    links = current_links()
+    saved = load_state()
+    if mode == "status":
+        return {"mode": "status", **describe(links), "sinkExists": sink_exists(), "savedPrevious": saved}
+    if mode == "silent":
+        return _route_silent(links, saved)
+    return _route_restore(links, saved)
 
 
 async def playing_tracks(bridge: Any, timeout_ms: int) -> list[dict[str, str]] | None:
@@ -317,15 +324,11 @@ async def wait_for_inputs(node: str) -> list[str]:
     raise bridge_error("audio_tool_failed", f"The capture node {node} did not appear in PipeWire")
 
 
-async def capture(bridge: Any, args: dict[str, Any], timeout_ms: int) -> dict[str, Any]:  # noqa: C901, PLR0912, PLR0915
-    check_platform()
-    seconds = args["seconds"]
-    path = args["outPath"]
-    if os.path.exists(path) and not args.get("overwrite", False):
+def check_capture_target(path: str, overwrite: bool, allow_audible: bool) -> None:
+    if os.path.exists(path) and not overwrite:
         raise bridge_error("file_exists", f"{path} exists; pass overwrite:true to replace it")
     if not os.path.isdir(os.path.dirname(path)):
         raise bridge_error("invalid_params", f"Directory does not exist: {os.path.dirname(path)}")
-    allow_audible = args.get("allowAudible", False)
     if not allow_audible:
         state = describe(current_links())
         if not state["silent"]:
@@ -335,6 +338,25 @@ async def capture(bridge: Any, args: dict[str, Any], timeout_ms: int) -> dict[st
                 "first, or pass allowAudible:true to record without the silent route (the signal stays audible)",
                 **state,
             )
+
+
+async def stop_recorder(proc: Any) -> None:
+    if proc is None or proc.poll() is not None:
+        return
+    proc.send_signal(signal.SIGINT)  # lets pw-record finalize the WAV header
+    try:
+        await asyncio.to_thread(proc.wait, 3)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+
+
+async def capture(bridge: Any, args: dict[str, Any], timeout_ms: int) -> dict[str, Any]:
+    check_platform()
+    seconds = args["seconds"]
+    path = args["outPath"]
+    allow_audible = args.get("allowAudible", False)
+    check_capture_target(path, args.get("overwrite", False), allow_audible)
     sources = bitwig_outputs()
     await require_engine(bridge, timeout_ms)
     isolation = await isolate(bridge, args, timeout_ms)
@@ -384,13 +406,7 @@ async def capture(bridge: Any, args: dict[str, Any], timeout_ms: int) -> dict[st
         if transport_started:
             with contextlib.suppress(BridgeError):  # the main flow's error is more useful; state is reported below
                 await bridge.call("transport.set", {"playing": False}, timeout_ms)
-        if proc is not None and proc.poll() is None:
-            proc.send_signal(signal.SIGINT)  # lets pw-record finalize the WAV header
-            try:
-                await asyncio.to_thread(proc.wait, 3)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait()
+        await stop_recorder(proc)
         for src, dst in created:
             with contextlib.suppress(BridgeError):
                 run(["pw-link", "-d", src, dst])

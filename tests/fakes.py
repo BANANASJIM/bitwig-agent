@@ -9,6 +9,8 @@ import wave
 from pathlib import Path
 from typing import Any, ClassVar
 
+import pytest
+
 from bitwig_agent.errors import BridgeError
 from bitwig_agent.frontends import cli
 from bitwig_agent.grid import bundled, values
@@ -702,3 +704,47 @@ def parse_arguments(
     method: str, pairs: list[str], raw: str | None, timeout_ms: int | None
 ) -> tuple[dict[str, Any], int]:
     return validate_call(method, cli.parse_arguments(method, pairs, raw, timeout_ms))
+
+
+LAYER_UNKNOWN_ERROR = {
+    "code": "deadline_exceeded",
+    "message": "Inspect child before another write",
+    "outcome": "unknown",
+    "details": {"dispatched": True},
+}
+
+
+def string_panel_result(modulator_id, value):
+    return {
+        "completion": "observed",
+        "modulatorId": modulator_id,
+        "parameterId": "",
+        "kind": "string",
+        "controlFamily": "string_panel",
+        "value": value,
+        "labels": None,
+        "shortLabel": None,
+        "display": None,
+        "nativeMutation": False,
+    }
+
+
+def assert_rejected_before_tcp(error, host):
+    assert error["code"] == "invalid_params"
+    assert error["outcome"] == "not_dispatched"
+    assert host.connections == 0
+
+
+def assert_display_rejected(module, param, text):
+    host = FakeGrid()
+    spec = {
+        "target": TARGET,
+        "modules": [{"name": "X", "type": module, "x": 0, "y": 0, "params": {param: {"display": text}}}],
+    }
+    with pytest.raises(BridgeError) as err:
+        apply_grid(host, spec)
+    assert err.value.error["code"] == "invalid_spec"
+    assert host.writes() == []
+
+
+INVALID_NAMES: list[Any] = [None, True, 1, [], {}, "𝄞" * 513, "x" * 1023 + "𝄞"]

@@ -150,7 +150,7 @@ def check_display(
         )
     if raw_scales.is_client(type_name, pid, context):  # recorded scale: converted here, no live pair needed
         try:
-            return raw_scales.convert(type_name, pid, text, basis.lo, basis.hi, context)
+            return raw_scales.convert(type_name, pid, text, (basis.lo, basis.hi), context)
         except ValueError as exc:
             raise SpecError([f"{pid}: {exc}"]) from exc
     return _verified_raw(pid, text, basis, type_name)

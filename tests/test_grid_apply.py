@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Any
 
 import pytest
-from fakes import SPEC, TARGET, FakeGrid, apply_grid, parse_arguments
+from fakes import SPEC, TARGET, FakeGrid, apply_grid, assert_display_rejected, parse_arguments
 from pydantic import ValidationError
 
 from bitwig_agent.errors import BridgeError
@@ -797,17 +797,7 @@ def test_seconds_dry_run_shows_the_converted_raw_value():
     ],
 )
 def test_unverified_seconds_display_is_rejected_offline(module, param, text):
-    host = FakeGrid()
-    with pytest.raises(BridgeError) as err:
-        apply_grid(
-            host,
-            {
-                "target": TARGET,
-                "modules": [{"name": "X", "type": module, "x": 0, "y": 0, "params": {param: {"display": text}}}],
-            },
-        )
-    assert err.value.error["code"] == "invalid_spec"
-    assert host.writes() == []
+    assert_display_rejected(module, param, text)
 
 
 def test_seconds_table_matches_bundled_schema_and_nothing_else_fits():
@@ -1130,15 +1120,10 @@ def test_voicing_on_non_poly_grid_is_refused_before_any_write():
 
 
 def test_voicing_schema_surface():
-    with pytest.raises(ValidationError, match=re.escape("1 validation error for GridApplyArgs")):
-        validate_call(
-            "grid.apply", {"target": TARGET, "modules": [{"name": "A", "type": "Add", "x": 0, "y": 0}], "voicing": {}}
-        )
-    with pytest.raises(ValidationError, match=re.escape("1 validation error for GridApplyArgs")):
-        validate_call(
-            "grid.apply",
-            {"target": TARGET, "modules": [{"name": "A", "type": "Add", "x": 0, "y": 0}], "voicing": {"voices": 65}},
-        )
+    modules = [{"name": "A", "type": "Add", "x": 0, "y": 0}]
+    for voicing in ({}, {"voices": 65}):
+        with pytest.raises(ValidationError, match=re.escape("1 validation error for GridApplyArgs")):
+            validate_call("grid.apply", {"target": TARGET, "modules": modules, "voicing": voicing})
 
 
 # --- preflight warnings, wouldFail and actionable errors ------------------------------------------------------
@@ -1377,7 +1362,7 @@ def test_tiny_raw_detune_warns_but_display_and_larger_raw_do_not():
     assert not messages(one("Sine", {"DETUNE": 1.1}, dryRun=True), "DETUNE")
     assert not messages(one("Sine", {"DETUNE": 0}, dryRun=True), "DETUNE")
     assert not messages(one("Sine", {"DETUNE": {"display": "0.5 Hz"}}, dryRun=True), "DETUNE")
-    assert raw_scales.convert("Sine", "DETUNE", "1.331 Hz", -3, 3) == pytest.approx(1.1)
+    assert raw_scales.convert("Sine", "DETUNE", "1.331 Hz", (-3, 3)) == pytest.approx(1.1)
 
 
 def test_unnamed_module_declared_by_generated_name_keeps_identity_across_a_move():

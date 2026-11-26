@@ -13,7 +13,7 @@ import os
 import re
 import shutil
 import subprocess
-from typing import Any
+from typing import Any, NamedTuple
 
 from bitwig_agent.errors import bridge_error
 from bitwig_agent.grid.read import GridCall, device_target, host_call, read_graph, read_params
@@ -272,15 +272,14 @@ def _port_y(row: dict[str, Any], ports: list[dict[str, Any]], key: str) -> float
     return y
 
 
-def draw(  # noqa: PLR0913
-    rows: list[dict[str, Any]],
-    cables: list[dict[str, Any]],
-    texts: dict[str, str],
-    *,
-    namespace: str | None,
-    show_connections: bool,
-    scale: float,
-) -> str:
+class View(NamedTuple):
+    namespace: str | None
+    show_connections: bool
+    scale: float
+
+
+def draw(rows: list[dict[str, Any]], cables: list[dict[str, Any]], texts: dict[str, str], view: View) -> str:
+    namespace, show_connections, scale = view
     box = _box(rows)
     pad = 1
     x0, y0 = box["x"] - pad, box["y"] - pad
@@ -401,14 +400,7 @@ async def render(client: Any, args: dict[str, Any], timeout_ms: int = 5000) -> d
     ids = [r["instanceId"] for r in rows if r["typeName"] == "Comment"]
     texts = await _comment_texts(call, ids)
     namespace = args.get("namespace")
-    svg = draw(
-        rows,
-        cables,
-        texts,
-        namespace=namespace,
-        show_connections=args.get("showConnections", True),
-        scale=args.get("scale", 1.0),
-    )
+    svg = draw(rows, cables, texts, View(namespace, args.get("showConnections", True), args.get("scale", 1.0)))
     data = svg.encode("utf-8")
     if convert is not None:
         done = await asyncio.to_thread(subprocess.run, convert, input=data, capture_output=True, timeout=120)

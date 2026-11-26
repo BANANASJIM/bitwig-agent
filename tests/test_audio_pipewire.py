@@ -274,12 +274,21 @@ def test_capture_reports_other_playing_tracks(tmp_path, monkeypatch, pw):
     assert asyncio.run(composed.run("audio.capture", bridge, params, timeout))["otherTracksPlaying"] == []
 
 
+def capture_solo_with_pad(tmp_path, monkeypatch, solo, **extra):
+    return capture(
+        tmp_path,
+        monkeypatch,
+        playing=[(solo, "Kick"), ("b", "Pad")],
+        solo={solo: False, "b": False},
+        soloTrack=solo,
+        **extra,
+    )
+
+
 def test_capture_solo_track_refuses_while_others_play(tmp_path, monkeypatch, pw):
     route("silent")
     solo = "00000000-0000-0000-0000-000000000001"
-    bridge, spawned, params, timeout = capture(
-        tmp_path, monkeypatch, playing=[(solo, "Kick"), ("b", "Pad")], solo={solo: False, "b": False}, soloTrack=solo
-    )
+    bridge, spawned, params, timeout = capture_solo_with_pad(tmp_path, monkeypatch, solo)
     with pytest.raises(BridgeError) as e:
         asyncio.run(composed.run("audio.capture", bridge, params, timeout))
     assert e.value.error["code"] == "not_isolated"
@@ -360,14 +369,7 @@ def test_capture_solo_refuses_unreadable_or_unknown_tracks(tmp_path, monkeypatch
 def test_capture_stop_others_stops_then_records(tmp_path, monkeypatch, pw):
     route("silent")
     solo = "00000000-0000-0000-0000-000000000001"
-    bridge, spawned, params, timeout = capture(
-        tmp_path,
-        monkeypatch,
-        playing=[(solo, "Kick"), ("b", "Pad")],
-        solo={solo: False, "b": False},
-        soloTrack=solo,
-        stopOthers=True,
-    )
+    bridge, spawned, params, timeout = capture_solo_with_pad(tmp_path, monkeypatch, solo, stopOthers=True)
     result = asyncio.run(composed.run("audio.capture", bridge, params, timeout))
     assert ("launcher.stop", {"trackId": "b"}) in bridge.calls
     assert (

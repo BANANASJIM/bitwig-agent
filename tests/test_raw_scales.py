@@ -3,7 +3,7 @@
 import math
 
 import pytest
-from fakes import TARGET, FakeGrid, apply_grid
+from fakes import TARGET, FakeGrid, apply_grid, assert_display_rejected
 
 from bitwig_agent.errors import BridgeError
 from bitwig_agent.grid import bundled, raw_scales
@@ -111,17 +111,7 @@ def test_display_writes_convert_to_raw_and_are_idempotent(module, pid, text, raw
     ],
 )
 def test_unwritable_display_is_rejected(module, pid, text):
-    host = FakeGrid()
-    with pytest.raises(BridgeError) as err:
-        apply_grid(
-            host,
-            {
-                "target": TARGET,
-                "modules": [{"name": "X", "type": module, "x": 0, "y": 0, "params": {pid: {"display": text}}}],
-            },
-        )
-    assert err.value.error["code"] == "invalid_spec"
-    assert host.writes() == []
+    assert_display_rejected(module, pid, text)
 
 
 def test_lfo_rate_follows_timebase():
@@ -195,5 +185,5 @@ def test_filter_cutoff_mod_is_linear_and_oscillator_pitch_mod_is_cube_root():
     assert fits(raw_scales.SCALES["cbrt_st120"], 0.5, "15.00 st")
     for t in ("SVF", "Low-pass LD", "Low-pass MG", "Sallen-Key", "XP", "Rasp", "Ripple", "Comb", "Fizz"):
         assert raw_scales.RAW_SCALES[(t, "CUTOFF_MOD")].scale == "linear_st120", t
-    assert raw_scales.convert("Comb", "CUTOFF_MOD", "60 st", -1.0, 1.0) == 0.5
+    assert raw_scales.convert("Comb", "CUTOFF_MOD", "60 st", (-1.0, 1.0)) == 0.5
     assert raw_scales.effective(cutoff, 0.5) == "60 st"

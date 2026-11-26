@@ -120,7 +120,7 @@ def decode_marker(marker: str) -> dict[str, Any] | None:
     return None
 
 
-def classify(ts: datetime, component: str, level: str, msg: str) -> dict[str, Any] | None:  # noqa: PLR0911
+def classify(ts: datetime, component: str, level: str, msg: str) -> dict[str, Any] | None:
     msg = msg.strip()
     if any(b in msg for b in BENIGN):
         return None
@@ -136,11 +136,16 @@ def classify(ts: datetime, component: str, level: str, msg: str) -> dict[str, An
         return {**event, "category": "engine", "engineReady": m.group(1) == "true"}
     if component == "notifications":
         return {**event, "category": "dialog"}
+    category = problem_category(component, level, msg)
+    return {**event, "category": category} if category else None
+
+
+def problem_category(component: str, level: str, msg: str) -> str | None:
     if level not in PROBLEM_LEVELS and not EXCEPTION.search(msg):
         return None
     if EXTENSION.search(component) or (EXTENSION.search(msg) and level in ("error", "severe", "fatal")):
-        return {**event, "category": "extension"}
-    return {**event, "category": "exception" if EXCEPTION.search(msg) else "other"}
+        return "extension"
+    return "exception" if EXCEPTION.search(msg) else "other"
 
 
 def scan(text: str, cutoff: datetime | None) -> list[dict[str, Any]]:
@@ -168,7 +173,76 @@ def scan(text: str, cutoff: datetime | None) -> list[dict[str, Any]]:
     return events
 
 
-async def diagnostics(client: Any, args: dict[str, Any], timeout_ms: int) -> dict[str, Any]:  # noqa: C901, PLR0912, PLR0915
+async def read_instance(client: Any, timeout_ms: int) -> tuple[Any, str | None]:
+    try:
+        status = await client.call("status", {}, timeout_ms)
+    except Exception as exc:  # noqa: BLE001 - attribution degrades; the log is still useful
+        return None, f"status unavailable ({type(exc).__name__})"
+    return (status.get("instance") if isinstance(status, dict) else None), None
+
+
+def choose_section(
+    sections: list[tuple[int, str, datetime]], started: datetime | None, instance_error: str | None
+) -> tuple[tuple[int, str, datetime] | None, str, list[str]]:
+    reasons: list[str] = []
+    chosen: tuple[int, str, datetime] | None = None
+    method = "latest_section"
+    if started:
+        near = [h for h in sections if abs(h[2] - started) <= START_TOLERANCE]
+        if near:
+            chosen, method = min(near, key=lambda h: abs(h[2] - started)), "pid_start_time"
+        else:
+            reasons.append("no log start header within 120 s of the instance's process start")
+    else:
+        reasons.append(instance_error or "instance start time unavailable (non-Linux or no pid)")
+    if chosen is None and sections:
+        chosen = sections[-1]
+    if chosen is None:
+        reasons.append("no 'Starting application' header found; the whole readable tail was used")
+    return chosen, method, reasons
+
+
+def resolve_window(
+    args: dict[str, Any],
+    path: Path,
+    chosen: tuple[int, str, datetime] | None,
+    bounds: tuple[int, int],
+    now: datetime,
+) -> tuple[int, datetime | None, dict[str, Any], list[str]]:
+    sec_start, sec_end = bounds
+    read_from, cutoff, warnings = sec_start, None, []
+    seconds = args.get("sinceSeconds", 300)
+    window: dict[str, Any] = {"sinceSeconds": seconds}
+    if args.get("sinceMarker") is not None:
+        m = decode_marker(args["sinceMarker"])
+        valid = False
+        if m and chosen and m["h"] == chosen[0] and sec_start <= m["o"] <= sec_end:
+            with path.open("rb") as f:
+                f.seek(m["h"])
+                valid = f.read(len(m["l"].encode())).decode("utf-8", "replace") == m["l"]
+        if m and valid:
+            read_from, window = m["o"], {"sinceMarker": True}
+        else:
+            warnings.append("sinceMarker is stale or from another instance/log; used the sinceSeconds window instead")
+    if "sinceMarker" not in window:
+        cutoff = now - timedelta(seconds=seconds)
+        window["from"] = cutoff.isoformat(timespec="seconds")
+    return read_from, cutoff, window, warnings
+
+
+def summarize(events: list[dict[str, Any]]) -> dict[str, Any]:
+    counts = {c: sum(e["count"] for e in events if e["category"] == c) for c in CATEGORIES}
+    summary: dict[str, Any] = {"counts": counts, "totalEvents": sum(counts.values())}
+    ready = [e["engineReady"] for e in events if e["category"] == "engine"]
+    if ready:
+        summary["engineReady"] = ready[-1]
+    rejected = sorted({e["gridComponent"] for e in events if e["category"] == "grid_rejected"})
+    if rejected:
+        summary["gridRejectedComponents"] = rejected[:50]
+    return summary
+
+
+async def diagnostics(client: Any, args: dict[str, Any], timeout_ms: int) -> dict[str, Any]:
     now = datetime.now()
     path = next((p for p in candidates() if p.is_file()), None)
     if path is None:
@@ -180,12 +254,7 @@ async def diagnostics(client: Any, args: dict[str, Any], timeout_ms: int) -> dic
             "dialogs": DIALOG_NOTE,
         }
 
-    instance, instance_error = None, None
-    try:
-        status = await client.call("status", {}, timeout_ms)
-        instance = status.get("instance") if isinstance(status, dict) else None
-    except Exception as exc:  # noqa: BLE001 - attribution degrades; the log is still useful
-        instance_error = f"status unavailable ({type(exc).__name__})"
+    instance, instance_error = await read_instance(client, timeout_ms)
     started = process_start(instance.get("pid") if isinstance(instance, dict) else None)
 
     size = path.stat().st_size
@@ -204,21 +273,7 @@ async def diagnostics(client: Any, args: dict[str, Any], timeout_ms: int) -> dic
     ]
     sections = [(offset, text, when) for offset, text, when in headers if when]
 
-    reasons: list[str] = []
-    chosen: tuple[int, str, datetime] | None = None
-    method = "latest_section"
-    if started:
-        near = [h for h in sections if abs(h[2] - started) <= START_TOLERANCE]
-        if near:
-            chosen, method = min(near, key=lambda h: abs(h[2] - started)), "pid_start_time"
-        else:
-            reasons.append("no log start header within 120 s of the instance's process start")
-    else:
-        reasons.append(instance_error or "instance start time unavailable (non-Linux or no pid)")
-    if chosen is None and sections:
-        chosen = sections[-1]
-    if chosen is None:
-        reasons.append("no 'Starting application' header found; the whole readable tail was used")
+    chosen, method, reasons = choose_section(sections, started, instance_error)
     idx = sections.index(chosen) if chosen else -1
     later = sections[idx + 1 :] if chosen else []
     if later:
@@ -233,33 +288,10 @@ async def diagnostics(client: Any, args: dict[str, Any], timeout_ms: int) -> dic
 
     sec_start = chosen[0] if chosen else base
     sec_end = later[0][0] if later else end
-    read_from, cutoff, warnings = sec_start, None, []
-    seconds = args.get("sinceSeconds", 300)
-    window: dict[str, Any] = {"sinceSeconds": seconds}
-    if args.get("sinceMarker") is not None:
-        m = decode_marker(args["sinceMarker"])
-        valid = False
-        if m and chosen and m["h"] == chosen[0] and sec_start <= m["o"] <= sec_end:
-            with path.open("rb") as f:
-                f.seek(m["h"])
-                valid = f.read(len(m["l"].encode())).decode("utf-8", "replace") == m["l"]
-        if m and valid:
-            read_from, window = m["o"], {"sinceMarker": True}
-        else:
-            warnings.append("sinceMarker is stale or from another instance/log; used the sinceSeconds window instead")
-    if "sinceMarker" not in window:
-        cutoff = now - timedelta(seconds=seconds)
-        window["from"] = cutoff.isoformat(timespec="seconds")
+    read_from, cutoff, window, warnings = resolve_window(args, path, chosen, (sec_start, sec_end), now)
 
     events = scan(data[read_from - base : sec_end - base].decode("utf-8", "replace"), cutoff)
-    counts = {c: sum(e["count"] for e in events if e["category"] == c) for c in CATEGORIES}
-    summary: dict[str, Any] = {"counts": counts, "totalEvents": sum(counts.values())}
-    ready = [e["engineReady"] for e in events if e["category"] == "engine"]
-    if ready:
-        summary["engineReady"] = ready[-1]
-    rejected = sorted({e["gridComponent"] for e in events if e["category"] == "grid_rejected"})
-    if rejected:
-        summary["gridRejectedComponents"] = rejected[:50]
+    summary = summarize(events)
     max_events = args.get("maxEvents", 50)
 
     result: dict[str, Any] = {

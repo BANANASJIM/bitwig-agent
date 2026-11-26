@@ -14,7 +14,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from bitwig_agent.grid.docs import DocsUnavailable, _tokens, cached_docs, load_localized
+from bitwig_agent.grid.docs import DocsUnavailable, _tokens, cached_docs, group_by_prefix, load_localized
 
 GENERAL = "modulator_general"
 # Display name -> extra Modulators-resources prefixes, only where the prefix is not `<id>` or `<id>-modulator`.
@@ -63,11 +63,7 @@ class ModulatorDocs:
                 current = header.group(1)
             elif line.startswith("modulator.") and ".desc=" in line and current:
                 self.category[line[len("modulator.") : line.index(".desc=")]] = current
-        self.prefixes: dict[str, dict[str, str]] = {}
-        for key, value in self.entries.items():
-            prefix, _, rest = key.partition(".")
-            if rest:
-                self.prefixes.setdefault(prefix, {})[rest] = value
+        self.prefixes = group_by_prefix(self.entries)
         library = directory.parent.parent / "Library" / "modulators"
         names = sorted(p.stem for p in library.glob("*.bwmodulator")) if library.is_dir() else []
         ids = [
