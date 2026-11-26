@@ -236,6 +236,7 @@ final class ArrangerModule implements HostModule {
         if (write) projectState.requireReady();
         Track track = window.at(index);
         String id = track.channelId().get();
+        if (write) op.inspect = dev.bitwigagent.core.Refs.read("clip:arranger");
         SafetyObservation safety = write ? transportSafety.stopped(op) : null;
         if (access == null)
             access = Bitwig614ArrangerAccess.bind(natives.get(op).access());
@@ -270,7 +271,7 @@ final class ArrangerModule implements HostModule {
                                             Reason.TARGET_CHANGED, "Track target changed after native access.");
                                 if (write) holds.release(QUARANTINE);
                                 holds.release(PENDING);
-                                done.accept(result);
+                                done.accept(Errors.withInspect(result, op.inspect));
                             },
                             0);
                 } catch (RuntimeException | Error error) {

@@ -28,7 +28,12 @@ public final class Refs {
 
     /** The read method that returns refs of this ref's variant: where to look again when it is not found. */
     public static String read(JsonObject ref) {
-        return Roles.READS.get(tag(ref));
+        return read(tag(ref));
+    }
+
+    /** The read method for a variant tag (see {@link #tag}). */
+    public static String read(String tag) {
+        return Roles.READS.get(tag);
     }
 
     /**

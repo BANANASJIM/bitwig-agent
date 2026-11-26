@@ -95,7 +95,7 @@ INSPECT: dict[str, str] = {
     "clips.import": "launcher.list",
     "clips.delete": "launcher.list",
     "clips.copy": "launcher.list",
-    "clips.move": "launcher.list",
+    "clips.move": "arranger.list",
     "clips.set": "clips.get",
     "clips.launch": "clips.get",
     "clips.transpose": "clips.get",

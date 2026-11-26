@@ -792,9 +792,26 @@ public final class RemoteModuleTest {
                     f.run(f.parameters(), "parameters.set", write(ref(current, 0), .6), f.host.tasks.after(20));
             f.finishOrError(op);
             if (model.equals("refused")) assertRpcError("not_ready", op);
-            else assertUnknown("not_observed", op);
+            else
+                assertEquals(
+                        "devices.remote.get",
+                        assertUnknown("not_observed", op).get("next").getAsString());
             assertEquals(model.equals("refused") ? 0 : 1, f.controls[1][0].child("value").writes, model);
         }
+    }
+
+    @Test
+    void aChangeOfTheRemoteStateDuringTheNativeReadIsTargetChangedNeverAlreadyMatched() {
+        DeviceFixture f = notFresh(null);
+        f.remote.nativeValues = (op, device, page, pageName, pageCount, slot, done, failed) -> {
+            f.controls[1][0].child("name").emit("Remapped");
+            done.accept(.6);
+        };
+        JsonObject current = get(f, 1);
+        HostOperation op = f.run(f.parameters(), "parameters.set", write(ref(current, 0), .6), f.host.tasks.after(20));
+        f.finishOrError(op);
+        assertRpcError("target_changed", op);
+        assertEquals(0, f.controls[1][0].child("value").writes);
     }
 
     @Test

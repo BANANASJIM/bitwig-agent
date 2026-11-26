@@ -15,7 +15,7 @@ final class HostOperation {
     volatile String job;
 
     /** The read an unknown result points at when it names none: the request's method spec says which. */
-    final String inspect;
+    volatile String inspect;
 
     HostOperation(long deadline) {
         this(deadline, null);

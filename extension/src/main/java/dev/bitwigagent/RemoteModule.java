@@ -286,6 +286,7 @@ final class RemoteModule implements HostModule, ParameterResolver.RemotePages {
     void setControl(
             HostOperation op, ParameterResolver.Remote target, JsonObject ref, ValueInput input, JsonElement expect) {
         double requested = input.normalized("value");
+        op.inspect = Refs.read(ref);
         selectPage(op, target.device, target.page, target.slot, () -> write(op, target, ref, requested, expect));
     }
 
@@ -369,7 +370,7 @@ final class RemoteModule implements HostModule, ParameterResolver.RemotePages {
                     snapshot.require(op);
                     boolean fresh = source.controlValuesFresh[slot] && source.controlSequences[slot] > sequence;
                     double seen = control.value().get();
-                    op.result.complete(
+                    op.result.complete(Errors.withInspect(
                             observed
                                     ? result(ref, asked, seen, Outcome.APPLIED, null)
                                     : result(
@@ -377,7 +378,8 @@ final class RemoteModule implements HostModule, ParameterResolver.RemotePages {
                                             asked,
                                             fresh ? seen : null,
                                             Outcome.UNKNOWN,
-                                            fresh ? Reason.READBACK_MISMATCH : Reason.NOT_OBSERVED));
+                                            fresh ? Reason.READBACK_MISMATCH : Reason.NOT_OBSERVED),
+                            op.inspect));
                 });
     }
 

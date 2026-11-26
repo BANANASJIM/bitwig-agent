@@ -126,7 +126,7 @@ The outcome is `already_matched` when the value was already within one host step
 
 Argument names are strict: there are no aliases. An unknown field gets a hint (closest accepted name, plus a small guessed-name map such as `offset`/`limit` -> `moduleOffset`/`moduleLimit`, `tempo` -> `tempoBpm`, `instanceId` -> `moduleId`/`targetModuleId`); fix the name and retry, nothing was dispatched.
 
-`target_not_found` means nothing is at the addressed ref; `target_changed` means another object is there now (the error carries `current`) or the target changed while a call was queued or running; `unsafe_state` covers a transport, recording or automation-write change during the call. `stale_context` and `stale_target` were removed in 0.5. Each of these is an error before dispatch: rediscover, then retry. A deadline or target change after dispatch is an unknown result. No automatic retry or GUI fallback is implemented.
+`target_not_found` means nothing is at the addressed ref; `target_changed` means another object is there now (the error carries `current` when the host can name what is there now; a native identity mismatch carries none) or the target changed while a call was queued or running; `unsafe_state` covers a transport, recording or automation-write change during the call. `stale_context` and `stale_target` were removed in 0.5. Each of these is an error before dispatch: rediscover, then retry. A deadline or target change after dispatch is an unknown result. No automatic retry or GUI fallback is implemented.
 
 ### Chains and the devices inside them
 

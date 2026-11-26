@@ -1,6 +1,7 @@
 package dev.bitwigagent;
 
 import com.google.gson.*;
+import dev.bitwigagent.core.Refs;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Consumer;
@@ -175,6 +176,7 @@ final class ModulatorEditModule implements HostModule {
             ValueInput input,
             JsonObject expect) {
         scheduler.check(op);
+        op.inspect = Refs.read(ref);
         ModulatorEditor edits = editor(op);
         final Runnable safety = transportSafety.writeGuard(op, false);
         final DeviceSources.RootReadTicket ticket = sources.rootRead(target.device);
@@ -228,7 +230,7 @@ final class ModulatorEditModule implements HostModule {
                     sources.guardRootRead(target);
                     safety.run();
                     JsonObject result = JsonParser.parseString(serialized).getAsJsonObject();
-                    op.result.complete(result);
+                    op.result.complete(Errors.withInspect(result, op.inspect));
                 },
                 0);
     }

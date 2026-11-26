@@ -1,7 +1,7 @@
 import pytest
 
 from bitwig_agent.core import composed
-from bitwig_agent.core.invoke import Error, Result, invoke
+from bitwig_agent.core.invoke import Error, Result, invoke, stopped
 from bitwig_agent.errors import HostChanged, bridge_error, unknown_result
 from bitwig_agent.protocol import TOOLS, export_bundle
 from bitwig_agent.protocol.base import REASONS, SUCCEEDED, ErrorCode, Outcome, vocabulary
@@ -89,3 +89,9 @@ def test_a_write_without_a_host_read_to_inspect_is_refused_when_the_registry_is_
         with_inspect(specs, {**INSPECT, write: write})
     with pytest.raises(ValueError, match="not a host read"):
         with_inspect(specs, {**INSPECT, write: "grid.apply"})
+
+
+def test_a_write_cut_short_on_the_caller_side_points_at_the_methods_read():
+    result = stopped("transport.set", "cancelled", "interrupted")
+    assert isinstance(result, Result)
+    assert result.result["next"] == "transport.get"

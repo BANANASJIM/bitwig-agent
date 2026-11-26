@@ -9,7 +9,13 @@ from typing import Any
 from bitwig_agent.client import BridgeClient, configured_port, load_json
 from bitwig_agent.core import composed, views
 from bitwig_agent.errors import BridgeError, HostChanged, bridge_error, unknown_result
-from bitwig_agent.protocol import invalid_params_message, invalid_params_reason, unknown_method_message, validate_call
+from bitwig_agent.protocol import (
+    TOOLS,
+    invalid_params_message,
+    invalid_params_reason,
+    unknown_method_message,
+    validate_call,
+)
 from bitwig_agent.protocol.base import SUCCEEDED
 
 
@@ -82,7 +88,9 @@ def stopped(method: str | None, reason: str, message: str) -> Envelope:
     """A call cut short on the caller's side: unknown when it was a write, else a refusal that changed nothing."""
     if method is None:
         return Error(bridge_error(reason, message).error)
-    return Result(unknown_result(reason, message, method=method))
+    return Result(
+        unknown_result(reason, message, next=TOOLS[method].inspect if method in TOOLS else None, method=method)
+    )
 
 
 def prepare(name: str, args: Mapping[str, Any]) -> tuple[dict[str, Any], int] | Error:
