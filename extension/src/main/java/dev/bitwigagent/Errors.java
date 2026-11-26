@@ -24,7 +24,6 @@ public final class Errors {
         return notApplied(ErrorCode.INVALID_PARAMS, message);
     }
 
-    /** Same code and message with the outcome rewritten; for codes only known at runtime. */
     public static RpcException withOutcome(RpcException error, Outcome outcome) {
         return new RpcException(error.code, error.getMessage(), outcome.wire());
     }

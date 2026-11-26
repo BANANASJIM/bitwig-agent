@@ -77,9 +77,7 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
     }
 
     void validate(String method, JsonObject params) {
-        HostModule module = modules.get(method);
-        if (module == null) throw Errors.notApplied(ErrorCode.UNKNOWN_METHOD, "Unsupported method: " + method);
-        module.validate(method, params);
+        modules.get(method).validate(method, params);
     }
 
     @Override
