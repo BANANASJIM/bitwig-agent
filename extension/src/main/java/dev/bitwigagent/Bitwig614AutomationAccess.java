@@ -17,7 +17,7 @@ final class Bitwig614AutomationAccess implements AutomationModule.Access {
     private final Bitwig614Runtime.Access a;
     private final NativeReadContext context;
     private final Bitwig614TrackResolver resolver;
-    private final Class<?> player, parameterType, rangeType, pointType, projectType;
+    private final Class<?> parameterType, rangeType, pointType, projectType;
     private final Method lanes, channel, volume, pan, reference, referenceRange, findLane, addLane;
     private final Method laneTimeline,
             points,
@@ -38,7 +38,7 @@ final class Bitwig614AutomationAccess implements AutomationModule.Access {
         context = new NativeReadContext(new Bitwig614ReadContextAccess(a));
         resolver = new Bitwig614TrackResolver(a);
         String master = "com.bitwig.flt.document.core.master.";
-        player = a.type("ynF");
+        Class<?> player = resolver.channelType();
         parameterType = a.type("bDH");
         rangeType = a.type("aL");
         pointType = a.type("hMP");
@@ -113,10 +113,7 @@ final class Bitwig614AutomationAccess implements AutomationModule.Access {
             this.proxy = proxy;
             this.trackId = trackId;
             this.spec = spec;
-            track = resolver.player(
-                    proxy,
-                    trackId,
-                    "Automation points are supported on audio/instrument/hybrid tracks only (not group, effect or master tracks).");
+            track = resolver.resolve(proxy, trackId, Bitwig614TrackResolver.Kind.CHANNEL);
             laneSet = a.invoke(lanes, track);
             if (laneSet == null)
                 throw Errors.notApplied(ErrorCode.AUTOMATION_UNAVAILABLE, "Track has no automation lane set.");
@@ -128,7 +125,7 @@ final class Bitwig614AutomationAccess implements AutomationModule.Access {
             parameter = resolve();
             if (!parameterType.isInstance(parameter))
                 throw Errors.notApplied(ErrorCode.UNSUPPORTED_SCOPE, "Target is not an automatable native parameter.");
-            if (resolver.owner(parameter, player) != track)
+            if (resolver.owner(parameter, resolver.channelType()) != track)
                 throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Parameter does not belong to the target track.");
             ref = a.invoke(reference, null, parameter);
             if (ref == null)

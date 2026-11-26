@@ -72,11 +72,8 @@ final class Bitwig614TrackGroupAccess implements MixModule.GroupAccess {
     private List<Object> resolve(List<Object> proxies, List<String> ids) {
         List<Object> tracks = new ArrayList<>(proxies.size());
         for (int i = 0; i < proxies.size(); i++) {
-            Object track = resolver.track(proxies.get(i), ids.get(i));
-            if (!UUID.fromString(ids.get(i)).equals(resolver.identity(track)))
-                throw Errors.notApplied(
-                        ErrorCode.STALE_CONTEXT,
-                        "Native track UUID differs from the requested trackId " + ids.get(i) + ".");
+            Object track = resolver.resolve(
+                    proxies.get(i), ids.get(i), Bitwig614TrackResolver.Kind.CHANNEL, Bitwig614TrackResolver.Kind.GROUP);
             if (tracks.contains(track))
                 throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Two trackIds resolve to the same native track.");
             tracks.add(track);

@@ -10,7 +10,7 @@ final class Bitwig614LauncherSettingsAccess implements LauncherSettingsModule.Ac
     private final NativeReadContext context;
     private final Bitwig614TrackResolver resolver;
     private final Class<?> event, slotType, projectType;
-    private final Method target, clip, slot, owner, name, time, playStart, playStop, loop, loopEnabled;
+    private final Method target, clip, slot, name, time, playStart, playStop, loop, loopEnabled;
     private final Method position, duration, doubleGet, boolGet, actionString;
     private final Map<String, Method> getters = new LinkedHashMap<>(), setters = new LinkedHashMap<>();
     private final Map<String, Object> actions = new LinkedHashMap<>();
@@ -27,7 +27,6 @@ final class Bitwig614LauncherSettingsAccess implements LauncherSettingsModule.Ac
         clip = a.exactMethod(
                 a.type("com.bitwig.flt.control_surface.proxy.ClipLauncherSlotProxy"), "getClip", a.type("Ob"), false);
         slot = a.exactMethod(a.type("Ob"), "kFU", slotType, false);
-        owner = a.exactMethod(a.type("PAJ"), "Z1C", a.type("com.bitwig.flt.document.core.iface.WSA"), false);
         name = a.exactMethod(a.type("Ob"), "dJ_", String.class, false);
         Class<?> timing = a.type("mdC"),
                 number = a.type("com.bitwig.ramona.core.iYN"),
@@ -78,9 +77,7 @@ final class Bitwig614LauncherSettingsAccess implements LauncherSettingsModule.Ac
         if (!slotType.isInstance(nativeSlot) || !event.isInstance(value) || a.invoke(slot, value) != nativeSlot)
             throw Errors.notApplied(
                     ErrorCode.STALE_CONTEXT, "Launcher proxy does not resolve to one attached native clip slot.");
-        Object track = a.invoke(owner, nativeSlot);
-        if (track == null || !UUID.fromString(trackId).equals(resolver.uuid(track)))
-            throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Native owning track UUID differs.");
+        Object track = resolver.require(resolver.slotTrack(nativeSlot), trackId, Bitwig614TrackResolver.Kind.CHANNEL);
         if (!expectedName.equals(a.invoke(name, value)))
             throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Native clip name differs from expectedClipName.");
         Object owningProject = resolver.owner(value, projectType);
@@ -103,7 +100,7 @@ final class Bitwig614LauncherSettingsAccess implements LauncherSettingsModule.Ac
             if (a.invoke(target, proxy) != nativeSlot
                     || a.invoke(clip, proxy) != value
                     || a.invoke(slot, value) != nativeSlot
-                    || !UUID.fromString(trackId).equals(resolver.uuid(a.invoke(owner, nativeSlot))))
+                    || resolver.slotTrack(nativeSlot) != track)
                 throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Launcher target changed during native operation.");
         };
         guard.run();
