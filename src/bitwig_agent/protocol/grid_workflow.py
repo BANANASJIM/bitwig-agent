@@ -1,17 +1,15 @@
 from __future__ import annotations
 
+from collections.abc import Container
 from typing import Annotated, Literal, Self
 
 from pydantic import Field, field_validator, model_validator
 
-from bitwig_agent.protocol.annotations import EDIT, SET
+from bitwig_agent.protocol.annotations import EDIT, READ, SET
 from bitwig_agent.protocol.audio import wav_path
 from bitwig_agent.protocol.base import (
     MAX_STRING_UNITS,
-    TARGET,
-    TRACK,
     Nonempty,
-    ParameterArgs,
     StatusArgs,
     StrictModel,
     ToolSpec,
@@ -20,16 +18,18 @@ from bitwig_agent.protocol.base import (
     omitted,
     validate_local_path,
 )
-from bitwig_agent.protocol.grid import SAFE, TYPE_ID_DESCRIPTION, UNK, GridVoicingFields
-from bitwig_agent.protocol.limits import DEVICE_WINDOW
+from bitwig_agent.protocol.grid import (
+    DEVICE,
+    SAFE,
+    TARGET,
+    TYPE_ID_DESCRIPTION,
+    UNK,
+    GridDeviceArgs,
+    GridVoicingFields,
+)
+from bitwig_agent.protocol.refs import DeviceRef
 
 MAX_APPLY_CONNECTIONS = 4096  # a full 1024-module Grid typically needs more cables than modules
-
-
-class GridApplyTarget(StrictModel):
-    trackId: Uuid
-    deviceIndex: int = Field(ge=0, le=DEVICE_WINDOW - 1)
-    expectedDeviceName: Nonempty
 
 
 class GridApplyDisplay(StrictModel):
@@ -48,6 +48,11 @@ class GridApplyLabel(StrictModel):
     label: str = Field(min_length=1, max_length=MAX_STRING_UNITS, description="Enum option label, e.g. '16th'.")
 
 
+def is_partial(fields: Container[str]) -> bool:
+    """A module entry without type or typeId only sets params on the live module of that name."""
+    return "type" not in fields and "typeId" not in fields
+
+
 class GridApplyModule(StrictModel):
     name: str = Field(
         min_length=1,
@@ -60,8 +65,8 @@ class GridApplyModule(StrictModel):
         description="Catalog module name (e.g. 'Multiply'); exactly one of type or typeId.",
     )
     typeId: Uuid = omitted(description=TYPE_ID_DESCRIPTION)
-    x: int = Field(ge=-(2**31), le=2**31 - 1)
-    y: int = Field(ge=-(2**31), le=2**31 - 1)
+    x: int = omitted(ge=-(2**31), le=2**31 - 1, description="Required with type or typeId; a partial entry has none.")
+    y: int = omitted(ge=-(2**31), le=2**31 - 1, description="Required with type or typeId; a partial entry has none.")
     params: dict[str, bool | int | float | str | GridApplyDisplay | GridApplyLabel | GridApplySteps] = omitted(
         description=f"parameterId -> raw value, {{display:'1.2 kHz'}}, {{label:'16th'}}, {{steps:[1,0,0.5]}} (step arrays: first entries written, rest unchanged) or a string (string panels, e.g. Comment TEXT; at most {MAX_STRING_UNITS} UTF-16 units, multi-line ok)."
     )
@@ -69,10 +74,24 @@ class GridApplyModule(StrictModel):
         description="If a module with this name exists with another type, delete it and insert this type under the same name (default: refuse)."
     )
 
+    @property
+    def partial(self) -> bool:
+        return is_partial(self.model_fields_set)
+
     @model_validator(mode="after")
-    def validate_one_type(self) -> Self:
-        if len({"type", "typeId"} & self.model_fields_set) != 1:
+    def validate_form(self) -> Self:
+        given = self.model_fields_set
+        if self.partial:
+            if given & {"x", "y", "replace"}:
+                raise ValueError(
+                    "a module entry without type or typeId is partial and takes name and params only (no x, y or replace)"
+                )
+            if "params" not in given:
+                raise ValueError("a partial entry needs params")
+        elif len({"type", "typeId"} & given) != 1:
             raise ValueError("supply exactly one of type or typeId")
+        elif not {"x", "y"} <= given:
+            raise ValueError("x and y are required with type or typeId")
         return self
 
 
@@ -102,6 +121,12 @@ class GridApplyBlock(StrictModel):
         description="Cables between the block's own modules, by local names."
     )
 
+    @model_validator(mode="after")
+    def validate_whole_modules(self) -> Self:
+        if any(m.partial for m in self.modules):
+            raise ValueError("block modules need type or typeId, x and y; partial entries are not part of a block")
+        return self
+
 
 class GridApplyInstance(StrictModel):
     block: str = Field(min_length=1, max_length=MAX_STRING_UNITS, description="Key of a block in blocks.")
@@ -114,11 +139,13 @@ class GridApplyInstance(StrictModel):
     args: dict[str, bool | int | float | str | list[float]] = omitted(description="Values for the block's params.")
 
 
-class GridRenderArgs(ParameterArgs):
+class GridRenderArgs(GridDeviceArgs):
     outPath: Nonempty = Field(
         description="Absolute normalized path of the image to write; refused if it exists unless overwrite=true."
     )
-    format: Literal["svg", "png"] = omitted(description="svg (default) or png (needs rsvg-convert or magick on PATH).")
+    fileType: Literal["svg", "png"] = omitted(
+        description="svg (default) or png (needs rsvg-convert or magick on PATH)."
+    )
     overwrite: bool = omitted(description="Replace an existing file at outPath.")
     namespace: str = omitted(
         min_length=1,
@@ -134,7 +161,7 @@ class GridRenderArgs(ParameterArgs):
         return self
 
 
-class GridExportArgs(ParameterArgs):
+class GridExportArgs(GridDeviceArgs):
     namespace: str = omitted(
         min_length=1,
         max_length=MAX_STRING_UNITS,
@@ -143,33 +170,12 @@ class GridExportArgs(ParameterArgs):
     includeParams: Literal["changed", "all", "none"] = omitted(
         description="changed (default): params differing from the bundled 6.1.4 defaults; all; none."
     )
-    outPath: Nonempty = omitted(
-        description="Absolute path to write the spec JSON to (then the result omits the spec); refused if it exists unless overwrite=true."
-    )
-    overwrite: bool = omitted(description="Replace an existing file at outPath.")
-
-    @model_validator(mode="after")
-    def validate_path(self) -> Self:
-        if self.outPath is not None:
-            validate_local_path(self.outPath)
-        return self
 
 
-class GridGraphArgs(ParameterArgs):
-    namespace: str = omitted(
-        min_length=1,
-        max_length=MAX_STRING_UNITS,
-        description="Only modules whose customName starts with this (plus cables touching them).",
-    )
-    includeParams: Literal["changed", "all", "none"] = omitted(
-        description="none (default), changed (differing from bundled 6.1.4 defaults) or all."
-    )
-
-
-class GridProbeArgs(ParameterArgs):
+class GridProbeArgs(GridDeviceArgs):
     timeoutMs: int = long_timeout()
     port: Annotated[str, Field(min_length=3, max_length=MAX_STRING_UNITS)] = Field(
-        description="'<module name>.<OUT port key>' of a module in this device, e.g. 'H: lead.OUT'; the name is the customName (or generated name) from grid.graph."
+        description="'<module name>.<OUT port key>' of a module in this device, e.g. 'H: lead.OUT'; the name is the customName (or generated name) from grid.export."
     )
     seconds: float = Field(ge=0.2, le=20, description="Recording length.")
     mode: Literal["probe", "mono_pitch", "onsets", "level", "bands"] = Field(
@@ -207,7 +213,7 @@ class GridProbeArgs(ParameterArgs):
 
 
 class GridApplyArgs(StatusArgs):
-    target: GridApplyTarget
+    target: DeviceRef = Field(description="The Grid device: a device ref from devices.list.")
     modules: Annotated[
         list[GridApplyModule],
         Field(
@@ -253,6 +259,10 @@ class GridApplyArgs(StatusArgs):
 
     @model_validator(mode="after")
     def validate_spec(self) -> Self:
+        if any(m.partial for m in self.modules or []) and (self.prune or self.pruneAll or self.replace):
+            raise ValueError(
+                "partial entries (name and params only) cannot be combined with prune, pruneAll or replace"
+            )
         if "voicing" in self.model_fields_set and not self.voicing.model_fields_set:
             raise ValueError("voicing must name at least one field")
         if self.pruneAll and (self.namespace or self.allowOutsideDisconnect):
@@ -308,16 +318,15 @@ class GridDescribeArgs(StatusArgs):
         return self
 
 
-GRID_DESCRIBE_DESCRIPTION = "Bitwig's own built-in documentation for Grid modules, read offline from the local Bitwig install (client-side; no host call, nothing bundled). Read it before using an unfamiliar module: description, keywords, category, per-port and per-parameter notes (best-effort match to grid.catalog ports/parameters) and rawEntries (every resource entry for the module id). type=<display name or typeId> returns one module; query=<keywords> returns ranked matches (limit 1..50, default 10). lang en|de|es|fr|ja|ko|zh. installationRoot overrides $BITWIG_INSTALLATION_ROOT, the install of $BITWIG_API_JAR, then /opt/bitwig-studio. Also merges the bundled schema: footprint {width,height}, per-parameter kind/unit/minimum/maximum/default/options and rawScale (how raw maps to the display; status verified|measured|unverified). Query matches carry category and match category names (query=filter lists the Filter modules). Covers the bundled 6.1.4 module set; unmapped modules say so."
+GRID_DESCRIBE_DESCRIPTION = "Bitwig's own built-in documentation for Grid modules, read offline from the local Bitwig install (client-side; no host call, nothing bundled). Read it before using an unfamiliar module: description, keywords, category, per-port and per-parameter notes (best-effort match to the module catalog ports/parameters) and rawEntries (every resource entry for the module id). type=<display name or typeId> returns one module; query=<keywords> returns ranked matches (limit 1..50, default 10). lang en|de|es|fr|ja|ko|zh. installationRoot overrides $BITWIG_INSTALLATION_ROOT, the install of $BITWIG_API_JAR, then /opt/bitwig-studio. Also merges the bundled schema: footprint {width,height}, per-parameter kind/unit/minimum/maximum/default/options and rawScale (how raw maps to the display; status verified|measured|unverified). Query matches carry category and match category names (query=filter lists the Filter modules). Covers the bundled 6.1.4 module set; unmapped modules say so."
 GRID_APPLY_DESCRIPTION = (
-    "Declarative, re-appliable patch for ONE Grid device, composed client-side from the grid.* methods (not a host method). Spec: target, modules=[{name, type|typeId, x, y, params?}], connections=[{from:'module name.OUT', to:'module name.IN'}] (split on the last '.'), optional namespace, prune, dryRun. Identity is the unique non-empty customName: existing modules are reused (type must match), missing ones inserted by typeId (batches of 16), renamed, then moved to x/y after all inserts. params: raw value, {display:'1.2 kHz'} or {label:'16th'} (enum); equal values are skipped. Wrong cables are set (one source per input); unlisted inputs are left alone. prune=true disconnects them and deletes modules whose customName starts with namespace but are absent from the spec; unnamed and out-of-namespace modules are never deleted. Prune never cuts inputs of declared modules outside the namespace unless allowOutsideDisconnect=true (warnings name both ends). external=['X: sum',...] lists live modules the cables may reference without declaring them (must exist; never moved, retyped or pruned); grid.export produces a spec of an existing patch, unnamed modules match by their generated name '_<type>_<x>_<y>'. modules:[] with prune+namespace empties the namespace. pruneAll=true (no namespace) manages the whole device instead: deletes every undeclared module (unnamed too; external excepted), replaces retyped names and disconnects undeclared inputs, deletes first, all listed in the dryRun plan and warnings; use dryRun first. String params (Comment TEXT) are written too. replace=true (spec or per module) swaps an existing same-name module of another type instead of refusing (cables on it not declared in the spec are dropped; see dryRun plan.droppedConnections). Use a delimited namespace like 'H: ' (prefix match). Reusable blocks: blocks={name:{params?:{p:default}, modules, connections?}} + instances=[{block, prefix?, dx?, dy?, args?}] expand before validation (names prefix+local, positions +dx/dy, whole-value '${p}' in params filled from args/defaults, numbers stay numbers; no nesting; cables to/from instances use expanded names; result maps instances to module names). {display:'3 ms'}/'0.5 s' also works for the listed time parameters (AD/ADSR/AR/Pluck envelopes, Logic Delay, Gate Length, Lag, ...; converted to raw client-side), others need raw. Also converted client-side per grid.describe parameters[].rawScale: '-12 st' (Transpose, oscillator PITCH/PITCH_MOD), '-6 dB'/'50 %' (Amplify, Mixer LEVEL), Hz (Clock; LFO/S&H LFO RATE with TIMEBASE Hertz/Kilohertz set in the same module), % (Chance, SVF RESONANCE, Mod Delay FEEDBACK), ms (All-pass Delay); works for zero defaults and range-checks. Result notes carry measured behaviour for the types used. The whole spec is validated first (types, ports, parameter ids, did-you-mean) and a failure writes nothing; offline against the bundled Bitwig 6.1.4 schema, else live grid.catalog/grid.get. Stops at the first error or non-success outcome, never retries; returns outcome (worst of what it did; already_matched when nothing needed writing), applied, alreadyMatched, steps, moduleIds, plus reason, failure and notReached when stopped (an unknown outcome is inspected with grid.get, a held topology change released with ack <id>). dryRun carries no outcome. Params may be step arrays {steps:[...]} (Steps/Pitches/Gates/Probabilities/Accents; Pitches in Grid pitch units: 0 = MIDI 60, 1 semitone = 1/120, 1 octave = 0.1) and top-level voicing:{voices,voiceStacking,monoMode,...} converges a Poly Grid's voicing (only differing fields written). Warnings flag known traps (ignored phase cable with DEVICE_PHASE on, filter KEYTRACK in a Poly Grid, unconnected or dead-end modules, PITCH_MOD 0); a real build returns diagnosticsMarker: pass it as diagnostics.get sinceMarker to see rejections after the build (grid_rejected bursts DURING the build are expected). dryRun returns the plan only (read-only, dryRun:true) plus wouldFail: what a real apply would be refused for ({reason, message}: transport playing/recording, host-converted display writes, unreachable target). After a failure fix the cause and re-apply. "
+    "Declarative, re-appliable patch for ONE Grid device, composed client-side from the grid.* methods (not a host method). Spec: target (a device ref from devices.list), modules=[{name, type|typeId, x, y, params?}], connections=[{from:'module name.OUT', to:'module name.IN'}] (split on the last '.'), optional namespace, prune, dryRun. Identity is the unique non-empty customName: existing modules are reused (type must match), missing ones inserted by typeId (batches of 16), renamed, then moved to x/y after all inserts. params: raw value, {display:'1.2 kHz'} or {label:'16th'} (enum); equal values are skipped. Wrong cables are set (one source per input); unlisted inputs are left alone. prune=true disconnects them and deletes modules whose customName starts with namespace but are absent from the spec; unnamed and out-of-namespace modules are never deleted. Prune never cuts inputs of declared modules outside the namespace unless allowOutsideDisconnect=true (warnings name both ends). external=['X: sum',...] lists live modules the cables may reference without declaring them (must exist; never moved, retyped or pruned); grid.export produces a spec of an existing patch (the same refs replay after an extension restart), unnamed modules match by their generated name '_<type>_<x>_<y>'. modules:[] with prune+namespace empties the namespace. pruneAll=true (no namespace) manages the whole device instead: deletes every undeclared module (unnamed too; external excepted), replaces retyped names and disconnects undeclared inputs, deletes first, all listed in the dryRun plan and warnings; use dryRun first. String params (Comment TEXT) are written too. replace=true (spec or per module) swaps an existing same-name module of another type instead of refusing (cables on it not declared in the spec are dropped; see dryRun plan.droppedConnections). Use a delimited namespace like 'H: ' (prefix match). Reusable blocks: blocks={name:{params?:{p:default}, modules, connections?}} + instances=[{block, prefix?, dx?, dy?, args?}] expand before validation (names prefix+local, positions +dx/dy, whole-value '${p}' in params filled from args/defaults, numbers stay numbers; no nesting; cables to/from instances use expanded names; result maps instances to module names). {display:'3 ms'}/'0.5 s' also works for the listed time parameters (AD/ADSR/AR/Pluck envelopes, Logic Delay, Gate Length, Lag, ...; converted to raw client-side), others need raw. Also converted client-side per grid.describe parameters[].rawScale: '-12 st' (Transpose, oscillator PITCH/PITCH_MOD), '-6 dB'/'50 %' (Amplify, Mixer LEVEL), Hz (Clock; LFO/S&H LFO RATE with TIMEBASE Hertz/Kilohertz set in the same module), % (Chance, SVF RESONANCE, Mod Delay FEEDBACK), ms (All-pass Delay); works for zero defaults and range-checks. Result notes carry measured behaviour for the types used. The whole spec is validated first (types, ports, parameter ids, did-you-mean) and a failure writes nothing; offline against the bundled Bitwig 6.1.4 schema, else against the live module catalog. Stops at the first error or non-success outcome, never retries; returns outcome (worst of what it did; already_matched when nothing needed writing), applied, alreadyMatched, steps, moduleIds, params ({'module name.PARAMETER': the display the host read back after the write}, so a display write such as '800 Hz' is checked in the same call), plus reason, failure and notReached when stopped (an unknown outcome is inspected with grid.export, a held topology change released with ack <id>). dryRun carries no outcome. Partial mode: a module entry without type or typeId is {name, params} only and sets those params on the live module of that name (the same value forms; x, y and replace are refused, and so are prune, pruneAll and replace anywhere in the spec); it never inserts, moves or retypes: use it for one change such as {name:'F: lp', params:{CUTOFF:{display:'800 Hz'}}}. Params may be step arrays {steps:[...]} (Steps/Pitches/Gates/Probabilities/Accents; Pitches in Grid pitch units: 0 = MIDI 60, 1 semitone = 1/120, 1 octave = 0.1) and top-level voicing:{voices,voiceStacking,monoMode,...} converges a Poly Grid's voicing (only differing fields written). Warnings flag known traps (ignored phase cable with DEVICE_PHASE on, filter KEYTRACK in a Poly Grid, unconnected or dead-end modules, PITCH_MOD 0); a real build returns diagnosticsMarker: pass it as host.diagnostics sinceMarker to see rejections after the build (grid_rejected bursts DURING the build are expected). dryRun returns the plan only (read-only, dryRun:true) plus wouldFail: what a real apply would be refused for ({reason, message}: transport playing/recording, host-converted display writes, unreachable target). After a failure fix the cause and re-apply. "
     + SAFE
     + UNK
 )
-GRID_PROBE_DESCRIPTION = "Listen to one Grid output port (client-side, Linux/PipeWire; composed from grid.get, audio.capture and audio.analyze, with temporary cable edits). Snapshots the cables into every Audio Out of the device, rewires the probe port '<module name>.<OUT port>' to one existing Audio Out (others are disconnected), records seconds (0.2..20) from the start of the arrangement, restores every cable by compare-and-set and returns audio.analyze of mode probe|mono_pitch|onsets|level|bands (bands = band balance + spectral peaks with note names: use it for steady/noisy sources mono_pitch cannot pitch). outPath (+overwrite) keeps the recorded WAV, otherwise it is deleted. Needs audio.route silent unless allowAudible, recording and automation write off (a playing transport is stopped; it stays stopped). A restore that cannot finish returns outcome unknown (reason job_failed) listing the inputs still changed; never retried. Returns outcome applied with port, mode, audioOut, cablesChanged, capture and analysis. Read the Grid first (grid.graph) for names."
-GRID_EXPORT_DESCRIPTION = "Read ONE Grid device (all pages) and return a grid.apply spec of it, composed client-side from grid.get/grid.voicing.get (not a host method; read-only toward Bitwig, writes only outPath). Use it to work on an existing patch: edit the spec, apply it back. Modules by customName (unnamed ones get a stable generated name '_<type>_<x>_<y>', listed in `unnamed`; grid.apply matches unnamed modules by it), type, x, y, params (raw values, enum as {label}, string and step arrays included), cables as 'name.PORT' pairs, voicing on Poly Grid. includeParams: changed (default; differs from the bundled 6.1.4 defaults) | all | none. namespace exports only that prefix; cables to/from other modules turn into `external` names (grid.apply references them without declaring them). Applying the export to the same device is already_matched. outPath writes the spec JSON instead of returning it (outcome applied)."
-GRID_GRAPH_DESCRIPTION = "Read ONE Grid device as names, no UUID joins (client-side over grid.get, read-only): modules [{name, type, x, y, size, params?}] and connections [{from:'name.OUT', to:'name.IN'}]; unnamed modules carry a generated name and unnamed:true. Optional namespace prefix filter (cables to outside modules listed in `external`), includeParams none (default) | changed | all. Pages internally; fails with graph_incomplete rather than return part of a device."
-GRID_RENDER_DESCRIPTION = "Draw ONE Grid device's layout to an image file, composed client-side from grid.get (not a host method; read-only toward Bitwig, writes only outPath). Use it to see what you built when the Grid editor is not visible. Target as grid.get plus outPath (absolute; refused if it exists unless overwrite=true), format svg (default) or png (rsvg-convert, else magick, else error), optional namespace (customName prefix to highlight, others dimmed), showConnections (default true), scale 0.25..4. Modules are coloured by category, Label modules are section headers, Comment modules show their text, cables run from output to input side. Returns outcome applied, outPath, bytes, imageSize and a layout summary: moduleCount, connectionCount, boundingBox (cells), categories, overlaps (pairs of modules sharing cells, capped at 50, with overlapCount), unconnected modules (capped), sections inferred from 'P: ' name prefixes with bounding boxes, density (occupied cells / bbox cells). Reads all pages; fails with not_ready rather than draw part of a device."
+GRID_PROBE_DESCRIPTION = "Listen to one Grid output port (client-side, Linux/PipeWire; composed from the Grid reads, audio.capture and audio.analyze, with temporary cable edits). Snapshots the cables into every Audio Out of the device, rewires the probe port '<module name>.<OUT port>' to one existing Audio Out (others are disconnected), records seconds (0.2..20) from the start of the arrangement, restores every cable by compare-and-set and returns audio.analyze of mode probe|mono_pitch|onsets|level|bands (bands = band balance + spectral peaks with note names: use it for steady/noisy sources mono_pitch cannot pitch). outPath (+overwrite) keeps the recorded WAV, otherwise it is deleted. Needs audio.route silent unless allowAudible, recording and automation write off (a playing transport is stopped; it stays stopped). A restore that cannot finish returns outcome unknown (reason job_failed) listing the inputs still changed; never retried. Returns outcome applied with port, mode, audioOut, cablesChanged, capture and analysis. Read the Grid first (grid.export) for names."
+GRID_EXPORT_DESCRIPTION = "Read ONE Grid device (all pages) as a grid.apply spec plus what a spec cannot carry (client-side, read-only; it writes no file: pipe the result or keep structuredContent). Use it to work on an existing patch: edit the spec, apply it back; the spec holds only names, so a saved export replays after an extension restart. Result: spec (modules by customName, type, x, y, params with raw values, enum as {label}, string and step arrays included; cables as 'name.PORT' pairs; voicing on Poly Grid), refs ({module name: gridModule ref}, for parameter refs in automation, modulation and devices.remote.define), sizes ({module name: [width, height]}, measured by the host in Grid cells), unnamed (modules without a unique customName carry the generated name '_<type>_<x>_<y>', which grid.apply matches) and warnings. includeParams: changed (default; differs from the bundled 6.1.4 defaults) | all | none. namespace exports only that prefix; cables to/from other modules turn into `external` names. Applying the export to the same device is already_matched. Pages internally; fails with not_ready rather than return part of a device."
+GRID_RENDER_DESCRIPTION = "Draw ONE Grid device's layout to an image file, composed client-side from the Grid reads (not a host method; read-only toward Bitwig, writes only outPath). Use it to see what you built when the Grid editor is not visible. target (device ref) plus outPath (absolute; refused if it exists unless overwrite=true), fileType svg (default) or png (rsvg-convert, else magick, else error), optional namespace (customName prefix to highlight, others dimmed), showConnections (default true), scale 0.25..4. Modules are coloured by category, Label modules are section headers, Comment modules show their text, cables run from output to input side. Returns outcome applied, outPath, bytes, imageSize and a layout summary: moduleCount, connectionCount, boundingBox (cells), categories, overlaps (pairs of modules sharing cells, capped at 50, with overlapCount), unconnected modules (capped), sections inferred from 'P: ' name prefixes with bounding boxes, density (occupied cells / bbox cells). Reads all pages; fails with not_ready rather than draw part of a device."
 
 
 SPECS: dict[str, ToolSpec] = {
@@ -337,12 +346,12 @@ SPECS: dict[str, ToolSpec] = {
         False,
         examples=(
             {
-                "target": TARGET,
+                "target": DEVICE,
                 "modules": [{"name": "H: out", "type": "Audio Out", "x": 0, "y": 0}],
                 "dryRun": True,
             },
         ),
-        summary="Make ONE Grid device match a declarative spec: modules [{name, type, x, y, params?}] and connections [{from:'name.OUT', to:'name.IN'}]. Modules are identified by unique customName, so re-applying is safe. Run dryRun first. Start from grid.export to change an existing patch. Refused while the transport plays or records.",
+        summary="Make ONE Grid device match a spec: modules [{name, type, x, y, params?}] (unique customName; re-applying is safe) and connections [{from:'name.OUT', to:'name.IN'}]. A module with only name and params changes that live module's params. Run dryRun first; grid.export gives a spec to edit. Not while the transport plays.",
         host=False,
         annotations=SET,
     ),
@@ -360,16 +369,13 @@ SPECS: dict[str, ToolSpec] = {
         True,
         examples=({**TARGET, "includeParams": "changed"},),
         host=False,
-        annotations=SET,
-    ),
-    "grid.graph": ToolSpec(
-        GridGraphArgs, GRID_GRAPH_DESCRIPTION, True, examples=(TARGET,), host=False, records="modules"
+        annotations=READ,
     ),
     "grid.render": ToolSpec(
         GridRenderArgs,
         GRID_RENDER_DESCRIPTION,
         True,
-        examples=({"trackId": TRACK, "deviceIndex": 0, "expectedDeviceName": "Poly Grid", "outPath": "/tmp/grid.svg"},),
+        examples=({**TARGET, "outPath": "/tmp/grid.svg"},),
         host=False,
         annotations=SET,
     ),

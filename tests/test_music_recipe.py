@@ -1,4 +1,5 @@
 import argparse
+import copy
 import importlib.util
 import json
 from pathlib import Path
@@ -252,7 +253,7 @@ async def test_recipe_does_not_report_authored_when_clip_readback_is_wrong(
 
 @pytest.fixture
 def owned_patch():
-    target = {"trackId": "11111111-1111-1111-1111-111111111111", "deviceIndex": 0, "expectedDeviceName": "Poly Grid"}
+    target = RECIPE_TARGET
     connection = {
         "sourceModuleId": "oscillator",
         "sourcePortKey": "OUT",
@@ -260,7 +261,7 @@ def owned_patch():
         "targetPortKey": "IN",
     }
     graph = {
-        "target": {**target, "nativeOwningTrack": "corroborated_before_and_after_capture"},
+        "target": copy.deepcopy(target["target"]),
         "window": {"offset": 0, "total": 2, "complete": True},
         "coverage": {"structure": "mapped_modules_and_ports"},
         "modules": [
@@ -294,7 +295,6 @@ def owned_patch():
     [
         "wrong_track",
         "wrong_device",
-        "uncorroborated_owner",
         "partial_modules",
         "replaced_module",
         "wrong_control",
@@ -305,11 +305,9 @@ def owned_patch():
 def test_owned_patch_rejects_wrong_or_incomplete_native_readback(recipe, owned_patch, problem):
     target, graph, expected = owned_patch
     if problem == "wrong_track":
-        graph["target"]["trackId"] = "another-track"
+        graph["target"]["track"]["id"] = "another-track"
     elif problem == "wrong_device":
-        graph["target"]["deviceIndex"] = 1
-    elif problem == "uncorroborated_owner":
-        graph["target"]["nativeOwningTrack"] = None
+        graph["target"]["index"] = 1
     elif problem == "partial_modules":
         graph["window"]["complete"] = False
     elif problem == "replaced_module":

@@ -217,7 +217,7 @@ final class GridVoicingWriter {
                     throw Errors.notApplied(
                             Reason.STALE_CONTEXT,
                             "Voicing " + entry.getKey()
-                                    + " differs from the expected precondition; reacquire grid.voicing.get.");
+                                    + " differs from the expected precondition; reacquire grid.export.");
         }
     }
 }

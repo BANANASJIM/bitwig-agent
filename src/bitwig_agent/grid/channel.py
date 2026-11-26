@@ -51,7 +51,7 @@ class Channel:
             self.wrote = True
             self.topo_written |= method.startswith(TOPOLOGY_PREFIX)
         try:
-            host_params = {**self.target, **params} if "trackId" in spec.model.model_fields else params
+            host_params = {**self.target, **params} if "target" in spec.model.model_fields else params
             result: dict[str, Any] = await self.client.call(method, host_params, timeout)
         except BridgeError as exc:
             raise Stop(method, {"error": exc.error}) from exc
@@ -63,4 +63,4 @@ class Channel:
         try:
             return await reader(call, *args, **kwargs)
         except BridgeError as exc:
-            raise Stop("grid.get", {"error": exc.error}) from exc
+            raise Stop("grid.export", {"error": exc.error}) from exc

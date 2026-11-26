@@ -228,7 +228,7 @@ final class GridModuleWriter {
             if (selected.x != expectedX || selected.y != expectedY)
                 throw Errors.notApplied(
                         Reason.STALE_CONTEXT,
-                        "Exact native module position differs from expectedX/expectedY; reacquire grid.get before editing.");
+                        "Exact native module position differs from expectedX/expectedY; reacquire grid.export before editing.");
             checked((long) x - selected.x);
             checked((long) y - selected.y);
             for (Row row : layout.rows)
@@ -289,7 +289,7 @@ final class GridModuleWriter {
             if (row == null)
                 throw Errors.notApplied(
                         Reason.STALE_CONTEXT,
-                        "Requested current module UUID is absent; reacquire grid.get. Deletion is not missing-is-success.");
+                        "Requested current module UUID is absent; reacquire grid.export. Deletion is not missing-is-success.");
             return row;
         }
 

@@ -458,7 +458,7 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
         JsonObject remotePages = capability(
                 gateError == null ? remotePageError : gateError,
                 "one_named_user_preset_page_per_call_8_slots_scalar_grid_parameters_device_module_plugin_pages_read_only");
-        remotePages.addProperty("methods", "devices.remote.define,devices.remote.deletePage");
+        remotePages.addProperty("methods", "devices.remote.define,devices.remote.delete");
         remotePages.addProperty(
                 "operation",
                 "riz.OzW_create+faW.cfM(String)_name+vNq.cfM(int,String,SYo)_map+vNq.MRY(int)_clear+riz.cfM(FyM)_delete");
@@ -547,7 +547,7 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
             device.addProperty(
                     "id", GridTopologyQuarantine.holdId(device.get("device").getAsString()));
             device.addProperty(
-                    "next", "grid.get this device, then ack its id: ack re-verifies the graph and releases it");
+                    "next", "grid.export this device, then ack its id: ack re-verifies the graph and releases it");
             devices.add(device);
         }
         boolean pending = guard.pending();
@@ -607,16 +607,6 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
         return snapshots.snapshot(source, offset, limit, parameters, diagnostics, moduleIds, fullSteps, check);
     }
 
-    @Override
-    public JsonObject parameter(
-            DeviceSources.Source source, UUID moduleId, String parameterId, boolean fullSteps, Runnable check) {
-        require(gateError, "gate");
-        require(identityError, "native owning-track identity");
-        require(structureError, "structure");
-        require(parameterError, "typed parameters");
-        require(inspectionError, "parameter inspection context");
-        return snapshots.parameter(source, moduleId, parameterId, parameterContexts, fullSteps, check);
-    }
     /** A float Grid module parameter's native object (an Opy, so a bDH) for its automation lane; document thread only. */
     GridSnapshotReader.ParameterBinding automationParameter(
             DeviceSources.Source source, UUID moduleId, String parameterId, Runnable check) {
@@ -669,10 +659,10 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
 
     @Override
     public JsonObject deleteRemotePage(
-            DeviceSources.Source source, String pageName, Runnable check, Runnable dispatch) {
+            DeviceSources.Source source, JsonObject page, Runnable check, Runnable dispatch) {
         require(gateError, "gate");
         require(remotePageError, "Remote Controls pages");
-        return remotePageWriter.deletePage(source, pageName, check, dispatch);
+        return remotePageWriter.deletePage(source, page, check, dispatch);
     }
 
     @Override
@@ -904,6 +894,6 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
             throw Errors.notApplied(
                     Reason.NATIVE_UNAVAILABLE,
                     "Grid " + domain + " unavailable: " + error
-                            + " Inspect grid.capabilities; use the exact supported host binary and adapter.");
+                            + " Inspect status with detail full; use the exact supported host binary and adapter.");
     }
 }

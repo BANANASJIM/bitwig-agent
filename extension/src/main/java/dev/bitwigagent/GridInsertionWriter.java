@@ -453,7 +453,7 @@ final class GridInsertionWriter {
         }
         if (!found)
             throw Errors.notApplied(
-                    Reason.INVALID_PARAMS, "typeId is not a known MODULE catalog entry; use grid.catalog.");
+                    Reason.INVALID_PARAMS, "typeId is not a known MODULE catalog entry; use grid.describe.");
     }
 
     private final class Lifetime implements GridInsertionBridge.Callback {
@@ -799,7 +799,7 @@ final class GridInsertionWriter {
                     Reason.READBACK_MISMATCH,
                     "The graph is not consistent (" + inconsistent.reason.wire() + ": " + inconsistent.getMessage()
                             + "); the hold stays.",
-                    "Inspect with grid.get; ack again once the graph is consistent.");
+                    "Inspect with grid.export; ack again once the graph is consistent.");
         }
         check.run();
         if (!quarantine.ack(device, detail))
@@ -807,7 +807,7 @@ final class GridInsertionWriter {
         JsonObject result = Results.outcome(Outcome.APPLIED);
         if (recorded != null) result.add("recorded", recorded);
         result.add("found", found);
-        result.addProperty("next", "Topology writes on this device are admitted again; read with grid.get first.");
+        result.addProperty("next", "Topology writes on this device are admitted again; read with grid.export first.");
         return result;
     }
 

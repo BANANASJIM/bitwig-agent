@@ -94,6 +94,21 @@ public final class GridSnapshotReaderTest {
                         .isEmpty(),
                 "legitimate empty effective name is preserved");
         assertTrue(result.get("complete").getAsBoolean(), "empty native names alone do not imply missing metadata");
+        f.first.put(CUSTOM_NAME, "Twin");
+        f.second.put(CUSTOM_NAME, "Twin");
+        JsonArray twins = f.read(0, 64, true).getAsJsonArray("modules");
+        for (JsonElement twin : twins) {
+            String name =
+                    twin.getAsJsonObject().getAsJsonObject("ref").get("name").getAsString();
+            assertTrue(
+                    name.startsWith("_") && !name.equals("Twin"),
+                    "modules that share a customName get generated ref names");
+        }
+        f.second.put(CUSTOM_NAME, "Solo");
+        JsonObject solo = f.read(0, 64, true).getAsJsonArray("modules").get(1).getAsJsonObject();
+        assertTrue(
+                solo.getAsJsonObject("ref").get("name").getAsString().equals("Solo"),
+                "a unique customName is the ref name");
     }
 
     @Test
@@ -813,216 +828,10 @@ public final class GridSnapshotReaderTest {
                 "unknown enum value is not relabeled ordinal");
     }
 
-    @Test
-    void singleParameterUsesExactIdentityAndExistingTypedSemantics() {
-        Fixture f = new Fixture();
-        Node floating = f.parameter(FLOAT, f.first)
-                .put(PARAMETER_ID, "")
-                .put(FLOAT_VALUE, -1.25)
-                .put(FLOAT_DEFINITION, new Node().put(FLOAT_MIN, -2.0).put(FLOAT_MAX, 4.0));
-        Node bool = f.parameter(BOOLEAN, f.first).put(PARAMETER_ID, "BOOL").put(BOOLEAN_VALUE, false);
-        Node integer = f.parameter(INTEGER, f.first)
-                .put(PARAMETER_ID, "INT")
-                .put(INTEGER_VALUE, -7)
-                .put(INTEGER_DEFINITION, new Node().put(INTEGER_MIN, -10).put(INTEGER_MAX, 12));
-        Node indexed = f.parameter(ENUM, f.first)
-                .put(PARAMETER_ID, "ENUM")
-                .put(ENUM_VALUE, 42)
-                .put(ENUM_DEFINITION, new Node().put(OPTIONS, List.of(option(10, "Ten"), option(42, "Answer"))));
-        List<Node> children = List.of(floating, bool, integer, indexed);
-        f.first.put(CHILDREN, children);
-        ContextFixture context = new ContextFixture();
-        JsonArray graphValues = f.read(0, 64, true)
-                .getAsJsonArray("modules")
-                .get(0)
-                .getAsJsonObject()
-                .getAsJsonArray("parameters");
-        List<JsonElement> expectedValues = List.of(
-                new JsonPrimitive(-1.25), new JsonPrimitive(false), new JsonPrimitive(-7), new JsonPrimitive(42));
-        for (int i = 0; i < children.size(); i++) {
-            JsonObject result =
-                    inspect(f, context, (String) children.get(i).values.get(PARAMETER_ID));
-            assertTrue(
-                    result.getAsJsonObject("parameter").equals(graphValues.get(i)),
-                    "single parameter preserves typed raw/display/options and partial metadata");
-            assertTrue(
-                    result.getAsJsonObject("parameter").get("value").equals(expectedValues.get(i)),
-                    "exact family returns stored value, not normalized value or enum ordinal");
-        }
-        // The other module is unreadable; a single-parameter read must never serialize its values.
-        f.second.put(CHILDREN, List.of(f.parameter(FLOAT, f.second).put(FLOAT_VALUE, Double.NaN)));
-        assertTrue(
-                inspect(f, context, "ENUM")
-                                .getAsJsonObject("parameter")
-                                .get("value")
-                                .getAsInt()
-                        == 42,
-                "inspection resolves one exact parameter, not an entire graph serialization");
-        assertRpcError("stale_context", () -> inspect(f, context, "enum"));
-        assertRpcError("stale_context", () -> inspect(f, context, "Native control"));
-        assertRpcError("stale_context", () -> inspect(f, context, "parameter/ENUM"));
-    }
-
-    @Test
-    void parameterInspectionRejectsAmbiguityAndStaleMembership() {
-        Fixture f = inspectionFixture();
-        ContextFixture context = new ContextFixture();
-        f.second.put(INSTANCE_ID, f.first.values.get(INSTANCE_ID));
-        assertRpcError("stale_context", () -> inspect(f, context, "LOCAL_ID"));
-        f.second.put(INSTANCE_ID, new UUID(1, 2));
-        Node child = (Node) ((List<?>) f.first.values.get(CHILDREN)).get(0);
-        f.first.put(CHILDREN, List.of(child, f.parameter(BOOLEAN, f.first).put(BOOLEAN_VALUE, false)));
-        assertRpcError("stale_context", () -> inspect(f, context, "LOCAL_ID"));
-        f.first.put(CHILDREN, List.of(child));
-        child.put(OWNER_MODULE, f.second);
-        assertRpcError("stale_context", () -> inspect(f, context, "LOCAL_ID"));
-        child.put(OWNER_MODULE, f.first);
-        f.first.put(MODULE_GRAPH, new Node());
-        assertRpcError("stale_context", () -> inspect(f, context, "LOCAL_ID"));
-        f.first.put(MODULE_GRAPH, f.graph);
-        child.kinds.remove(BOOLEAN);
-        assertRpcError("native_unavailable", () -> inspect(f, context, "LOCAL_ID"));
-        child.kinds.add(BOOLEAN);
-        f.first.put(CHILDREN, Collections.nCopies(257, child));
-        assertRpcError("out_of_bounds", () -> inspect(f, context, "LOCAL_ID"));
-        for (int change = 0; change < 5; change++) {
-            Fixture moved = inspectionFixture();
-            ContextFixture c = new ContextFixture();
-            final int mode = change;
-            moved.afterValue = () -> {
-                if (mode == 0) moved.first.put(CHILDREN, List.of());
-                if (mode == 1)
-                    moved.first.put(
-                            CHILDREN,
-                            List.of(moved.parameter(BOOLEAN, moved.first).put(BOOLEAN_VALUE, true)));
-                if (mode == 2) moved.graph.put(MODULES, List.of(moved.module(0, moved.graph)));
-                if (mode == 3) moved.first.put(INSTANCE_ID, new UUID(7, 8));
-                if (mode == 4) moved.device.put(OWNER_TRACK, new Node(TRACK).put(TRACK_UUID, new UUID(8, 9)));
-            };
-            assertRpcError("stale_context", () -> inspect(moved, c, "LOCAL_ID"));
-        }
-        Fixture cancelled = inspectionFixture();
-        int[] calls = {0};
-        assertRpcError(
-                "cancelled",
-                () -> cancelled.reader.parameter(cancelled.source, new UUID(1, 1), "LOCAL_ID", context.reader, () -> {
-                    if (++calls[0] == 5) throw Errors.notApplied(Reason.CANCELLED, "cancelled");
-                }));
-        assertTrue(cancelled.closed > 0, "cancelled exact lookup closes native streams");
-    }
-
-    @Test
-    void parameterContextObservationsDoNotInventPermission() {
-        Fixture f = inspectionFixture();
-        ContextFixture c = new ContextFixture();
-        c.values.put(GridParameterContext.Field.LICENSED, false);
-        c.values.put(GridParameterContext.Field.SETTABLE, false);
-        c.values.put(GridParameterContext.Field.CIU, true);
-        c.values.put(GridParameterContext.Field.TOUCHED, true);
-        c.values.put(GridParameterContext.Field.UNDO_EXECUTING, true);
-        c.values.put(GridParameterContext.Field.UNDO_ACTIVE, true);
-        c.values.put(GridParameterContext.Field.UNDO_ICL, true);
-        Object foreignDt = new Object();
-        c.values.put(GridParameterContext.Field.LOCK_OWNER, foreignDt);
-        JsonObject result = inspect(f, c, "LOCAL_ID").getAsJsonObject("editContext");
-        assertTrue(
-                !result.get("effectivelyLicensed").getAsBoolean()
-                        && !result.getAsJsonObject("guiProperty")
-                                .get("isSettable")
-                                .getAsBoolean(),
-                "license and actual property descriptor are independent observed false states, not a read rejection");
-        assertTrue(
-                result.get("nativeCIu").getAsBoolean()
-                        && result.get("parameterTouched").getAsBoolean(),
-                "opaque skip and active touch remain distinct observations");
-        assertTrue(
-                result.getAsJsonObject("ancestorUndoManager")
-                                .get("executingUndoRedo")
-                                .getAsBoolean()
-                        && result.getAsJsonObject("ancestorUndoManager")
-                                .get("activeChange")
-                                .getAsBoolean(),
-                "active undo states remain observable without mutation");
-        assertTrue(
-                !result.getAsJsonObject("deviceLock").get("ownerIsCurrentDt").getAsBoolean(),
-                "foreign lock owner is not reported as current Dt");
-        c.values.put(GridParameterContext.Field.UNDO, null);
-        c.values.put(GridParameterContext.Field.LOCK_OWNER, null);
-        c.values.put(NativeReadContext.Field.CURRENT_DT, null);
-        c.defaultSupported = false;
-        result = inspect(f, c, "LOCAL_ID").getAsJsonObject("editContext");
-        assertTrue(
-                !result.getAsJsonObject("ancestorUndoManager").get("present").getAsBoolean()
-                        && result.getAsJsonObject("ancestorUndoManager")
-                                .get("activeChange")
-                                .isJsonNull(),
-                "missing undo manager is not an idle manager");
-        assertTrue(
-                result.getAsJsonObject("deviceLock").get("ownerIsCurrentDt").isJsonNull()
-                        && result.getAsJsonObject("attachedContext")
-                                .get("currentDtIsDefault")
-                                .isJsonNull(),
-                "missing owner/default context is unknown rather than compatible");
-    }
-
-    @Test
-    void parameterContextChangesAndUnavailableBindingsFailClosed() {
-        for (Enum<?> field : List.of(
-                NativeReadContext.Field.ROOT,
-                NativeReadContext.Field.CURRENT_DT,
-                NativeReadContext.Field.DEFAULT_DT,
-                GridParameterContext.Field.UNDO,
-                GridParameterContext.Field.LOCK,
-                GridParameterContext.Field.LOCK_OWNER)) {
-            Fixture f = inspectionFixture();
-            ContextFixture c = new ContextFixture();
-            f.afterValue = () -> c.values.put(field, new Object());
-            assertRpcError("stale_context", () -> inspect(f, c, "LOCAL_ID"));
-        }
-        Fixture rebound = inspectionFixture();
-        ContextFixture reboundContext = new ContextFixture();
-        rebound.afterValue = () -> {
-            Object replacement = new Object();
-            reboundContext.values.put(NativeReadContext.Field.CONTEXT, replacement);
-            reboundContext.values.put(NativeReadContext.Field.DT_CONTEXT, replacement);
-        };
-        assertRpcError("stale_context", () -> inspect(rebound, reboundContext, "LOCAL_ID"));
-        Fixture f = inspectionFixture();
-        ContextFixture c = new ContextFixture();
-        c.values.put(NativeReadContext.Field.CONTEXT, null);
-        assertRpcError("stale_context", () -> inspect(f, c, "LOCAL_ID"));
-        c.values.put(NativeReadContext.Field.CONTEXT, new Object());
-        assertRpcError("stale_context", () -> inspect(f, c, "LOCAL_ID"));
-        ContextFixture deleted = new ContextFixture();
-        deleted.values.put(NativeReadContext.Field.DELETED, true);
-        assertRpcError("stale_context", () -> inspect(f, deleted, "LOCAL_ID"));
-        ContextFixture disposed = new ContextFixture();
-        disposed.values.put(NativeReadContext.Field.DISPOSED, true);
-        assertRpcError("stale_context", () -> inspect(f, disposed, "LOCAL_ID"));
-        ContextFixture unavailable = new ContextFixture();
-        unavailable.values.put(GridParameterContext.Field.SETTABLE, null);
-        assertRpcError("native_unavailable", () -> inspect(f, unavailable, "LOCAL_ID"));
-        ContextFixture missingWrapper = new ContextFixture();
-        missingWrapper.values.put(GridParameterContext.Field.GUI_BOOLEAN, null);
-        assertRpcError("native_unavailable", () -> inspect(f, missingWrapper, "LOCAL_ID"));
-        ContextFixture foreignProject = new ContextFixture();
-        foreignProject.values.put(GridParameterContext.Field.PARAMETER_PROJECT, new Object());
-        assertRpcError("stale_context", () -> inspect(f, foreignProject, "LOCAL_ID"));
-        assertRpcError(
-                "native_unavailable", () -> f.reader.parameter(f.source, new UUID(1, 1), "LOCAL_ID", null, () -> {}));
-        assertTrue(
-                f.read(0, 64, true).getAsJsonArray("modules").size() == 2,
-                "unavailable inspection context does not disable ordinary graph reads");
-    }
-
     private static Fixture inspectionFixture() {
         Fixture f = new Fixture();
         f.first.put(CHILDREN, List.of(f.parameter(BOOLEAN, f.first).put(BOOLEAN_VALUE, true)));
         return f;
-    }
-
-    private static JsonObject inspect(Fixture f, ContextFixture context, String id) {
-        return f.reader.parameter(f.source, new UUID(1, 1), id, context.reader, () -> {});
     }
 
     private static GridParameterWriter.Request request(String kind, String expected, String value) {
@@ -1090,6 +899,22 @@ public final class GridSnapshotReaderTest {
                         && !quiet.has("device")
                         && !quiet.has("graph"),
                 "default read omits obfuscated native class/path and constant coverage prose");
+        JsonObject ref = row.getAsJsonObject("ref");
+        assertTrue(
+                ref.get("kind").getAsString().equals("gridModule")
+                        && ref.get("id")
+                                .getAsString()
+                                .equals(row.get("instanceId").getAsString())
+                        && ref.getAsJsonObject("device").equals(f.source.ref())
+                        && ref.get("name")
+                                .getAsString()
+                                .equals(
+                                        row.get("customName").getAsString().isEmpty()
+                                                ? "_" + row.get("typeName").getAsString() + "_"
+                                                        + row.get("x").getAsInt() + "_"
+                                                        + row.get("y").getAsInt()
+                                                : row.get("customName").getAsString()),
+                "every row carries its gridModule ref: the device ref, the instance id and the name grid.export uses");
         assertTrue(
                 row.get("instanceId").getAsString().equals(new UUID(1, 1).toString())
                         && row.has("localKey")
@@ -1288,7 +1113,6 @@ public final class GridSnapshotReaderTest {
         assertRpcError("native_unavailable", () -> f.reader.bindBipolarParameter(scalar));
         assertRpcError("stale_context", () -> f.reader.detachedParameter(floating, () -> {}, new ArrayList<>()));
         f.first.put(INSTANCE_ID, "not a uuid");
-        assertRpcError("native_unavailable", () -> f.reader.moduleIdNamed(target, "Effective module", () -> {}));
         f.parameters = false;
         assertRpcError(
                 "native_unavailable", () -> f.reader.bindParameter(f.source, new UUID(1, 1), "LOCAL_ID", () -> {}));
@@ -1477,80 +1301,6 @@ public final class GridSnapshotReaderTest {
     }
 
     @Test
-    void rawParameterLiveGuardChanges() {
-        for (Enum<?> field : List.of(
-                GridParameterContext.Field.LICENSED,
-                GridParameterContext.Field.SETTABLE,
-                NativeReadContext.Field.INITIALIZED)) {
-            WriterFixture f = new WriterFixture();
-            f.context.values.put(field, false);
-            assertRpcError("unsafe_state", () -> f.set(request("boolean", "true", "true")));
-            assertTrue(f.calls == 0, "false native prerequisite blocks even a no-op");
-            f.context.values.put(field, null);
-            assertRpcError("native_unavailable", () -> f.set(request("boolean", "true", "false")));
-        }
-        for (GridParameterContext.Field field : List.of(
-                GridParameterContext.Field.CIU,
-                GridParameterContext.Field.TOUCHED,
-                GridParameterContext.Field.UNDO_EXECUTING,
-                GridParameterContext.Field.UNDO_ACTIVE,
-                GridParameterContext.Field.UNDO_ICL)) {
-            WriterFixture f = new WriterFixture();
-            int[] reads = {0};
-            f.model.afterValue = () -> {
-                if (++reads[0] == 2) f.context.values.put(field, true);
-            };
-            assertRpcError("unsafe_state", () -> f.set(request("boolean", "true", "false")));
-            assertTrue(
-                    f.calls == 0 && !f.op.dispatched(),
-                    "live predicate transition before invocation prevents dispatch");
-        }
-        for (Enum<?> field : List.of(
-                GridParameterContext.Field.UNDO,
-                GridParameterContext.Field.LOCK,
-                GridParameterContext.Field.LOCK_OWNER,
-                NativeReadContext.Field.CURRENT_DT,
-                NativeReadContext.Field.DEFAULT_DT)) {
-            WriterFixture f = new WriterFixture();
-            f.context.values.put(field, null);
-            assertRpcError("native_unavailable", () -> f.set(request("boolean", "true", "false")));
-            assertTrue(f.calls == 0, "missing native context object is unavailable, never false permission");
-        }
-        WriterFixture owner = new WriterFixture();
-        owner.context.values.put(GridParameterContext.Field.LOCK_OWNER, new Object());
-        assertRpcError("unsafe_state", () -> owner.set(request("boolean", "true", "false")));
-        WriterFixture root = new WriterFixture();
-        root.context.values.put(NativeReadContext.Field.ROOT, new Object());
-        assertRpcError("stale_context", () -> root.set(request("boolean", "true", "false")));
-        WriterFixture moved = new WriterFixture();
-        moved.model.afterValue = () -> moved.model.first.put(CHILDREN, List.of());
-        assertRpcError("stale_context", () -> moved.set(request("boolean", "true", "false")));
-        WriterFixture changedValue = new WriterFixture();
-        changedValue.model.afterValue = () -> changedValue.child.put(BOOLEAN_VALUE, false);
-        assertRpcError("stale_context", () -> changedValue.set(request("boolean", "true", "false")));
-        WriterFixture rangeChanged = new WriterFixture();
-        rangeChanged.scalar(FLOAT, 0.5, -1.0, 1.0);
-        Node definition = (Node) rangeChanged.child.values.get(FLOAT_DEFINITION);
-        int[] reads = {0};
-        rangeChanged.model.afterValue = () -> {
-            if (++reads[0] == 2) definition.put(FLOAT_MIN, 0.0);
-        };
-        assertRpcError("invalid_params", () -> rangeChanged.set(request("float", "0.5", "-0.5")));
-        assertTrue(
-                rangeChanged.calls == 0 && !rangeChanged.op.dispatched(),
-                "in-place live range contraction rejects a formerly valid negative value before dispatch");
-        WriterFixture unknown = new WriterFixture();
-        unknown.supported = false;
-        assertRpcError("native_unavailable", () -> unknown.set(request("boolean", "true", "false")));
-        assertTrue(
-                inspect(unknown.model, unknown.context, "LOCAL_ID")
-                        .getAsJsonObject("parameter")
-                        .get("value")
-                        .getAsBoolean(),
-                "missing write eligibility leaves independent typed inspection usable");
-    }
-
-    @Test
     void rawParameterMutationFailuresRemainUnknown() {
         WriterFixture partial = new WriterFixture();
         partial.afterMutation = () -> {
@@ -1615,6 +1365,18 @@ public final class GridSnapshotReaderTest {
         return context;
     }
 
+    private static JsonObject row(Fixture f, String id) {
+        JsonArray parameters = f.read(0, 64, true)
+                .getAsJsonArray("modules")
+                .get(0)
+                .getAsJsonObject()
+                .getAsJsonArray("parameters");
+        for (JsonElement parameter : parameters)
+            if (parameter.getAsJsonObject().get("parameterId").getAsString().equals(id))
+                return parameter.getAsJsonObject();
+        throw new AssertionError("no " + id + " row");
+    }
+
     @Test
     void stringPanelReadsPreserveTextAndFamilyBoundaries() {
         Fixture f = new Fixture();
@@ -1626,13 +1388,10 @@ public final class GridSnapshotReaderTest {
                 .put(PARAMETER_ID, "MODE_ID")
                 .put(BOOLEAN_VALUE, false);
         f.first.put(CHILDREN, List.of(scalar, panel, booleanPanel));
-        ContextFixture context = stringContext(panel);
-        context.values.put(GridParameterContext.Field.SETTABLE, false);
-        context.values.put(NativeReadContext.Field.INITIALIZED, false);
-        for (String text : List.of("", " \t\n ", "Café e\u0301 \uD834\uDD1E \u0000 end")) {
+        for (String text : List.of("", " \t\n ", "Caf\u00e9 e\u0301 \uD834\uDD1E \u0000 end")) {
             panel.put(STRING_VALUE, text);
-            JsonObject result = inspect(f, context, "TEXT_ID");
-            JsonObject value = result.getAsJsonObject("parameter");
+            JsonObject result = f.read(0, 64, true);
+            JsonObject value = row(f, "TEXT_ID");
             assertTrue(
                     value.get("supported").getAsBoolean()
                             && value.get("kind").getAsString().equals("string")
@@ -1640,8 +1399,7 @@ public final class GridSnapshotReaderTest {
                     "non-scalar panel is a readable string family");
             assertTrue(
                     value.get("value").getAsString().equals(text)
-                            && value.get("parameterId").getAsString().equals("TEXT_ID")
-                            && value.get("path").getAsString().equals("panel/text"),
+                            && value.get("parameterId").getAsString().equals("TEXT_ID"),
                     "string contents and identity survive without trimming or normalization");
             assertTrue(
                     value.get("name").isJsonNull()
@@ -1656,38 +1414,11 @@ public final class GridSnapshotReaderTest {
                             && !value.has("options")
                             && !value.has("numericUnit"),
                     "string controls do not invent scalar ranges, options or units");
-            JsonObject edit = result.getAsJsonObject("editContext");
             assertTrue(
-                    !edit.getAsJsonObject("guiProperty").get("isSettable").getAsBoolean()
-                            && !edit.getAsJsonObject("attachedContext")
-                                    .get("initialized")
-                                    .getAsBoolean(),
-                    "non-writable context and property flags remain read observations, not permission prerequisites");
-            assertTrue(
-                    !edit.get("scalarLicenseTouchApplicable").getAsBoolean()
-                            && edit.get("effectivelyLicensed").isJsonNull()
-                            && edit.get("parameterTouched").isJsonNull(),
-                    "scalar licensing and touch do not apply to string panels");
-            assertTrue(
-                    !result.has("coupledParameter") && !result.has("coupledEditContext"),
-                    "string inspection needs no boolean-panel consumer and fabricates no dependent coverage");
-            JsonArray graph = f.read(0, 64, true)
-                    .getAsJsonArray("modules")
-                    .get(0)
-                    .getAsJsonObject()
-                    .getAsJsonArray("parameters");
-            assertTrue(
-                    graph.size() == 3
-                            && graph.get(1).equals(value)
-                            && graph.get(0).getAsJsonObject().get("value").getAsBoolean()
-                            && !graph.get(2).getAsJsonObject().get("value").getAsBoolean(),
+                    row(f, "SWITCH_ID").get("value").getAsBoolean()
+                            && !row(f, "MODE_ID").get("value").getAsBoolean(),
                     "mixed scalar/boolean-panel/string graph retains each independent typed value");
         }
-        context.values.put(GridParameterContext.Field.GUI_PANEL_STRING, null);
-        assertRpcError("native_unavailable", () -> inspect(f, context, "TEXT_ID"));
-        assertTrue(
-                f.read(0, 64, true).getAsJsonArray("modules").size() == 2,
-                "missing string property inspection does not disable graph reads");
     }
 
     @Test
@@ -1697,74 +1428,19 @@ public final class GridSnapshotReaderTest {
         Node panel = stringPanel(f, "TEXT_ID", supplementary.repeat(512));
         Node scalar = f.parameter(BOOLEAN, f.first).put(BOOLEAN_VALUE, true);
         f.first.put(CHILDREN, List.of(panel, scalar));
-        ContextFixture context = stringContext(panel);
         assertTrue(
-                inspect(f, context, "TEXT_ID")
-                        .getAsJsonObject("parameter")
-                        .get("value")
-                        .getAsString()
-                        .equals(supplementary.repeat(512)),
+                row(f, "TEXT_ID").get("value").getAsString().equals(supplementary.repeat(512)),
                 "exactly 1024 UTF-16 units remain readable, including supplementary characters");
         panel.put(STRING_VALUE, supplementary.repeat(512) + "x");
-        assertRpcError("out_of_bounds", () -> inspect(f, context, "TEXT_ID"));
         assertRpcError("out_of_bounds", () -> f.read(0, 64, true));
         panel.forbidden.add(STRING_VALUE);
         assertTrue(
                 f.read(0, 64, false).getAsJsonArray("modules").size() == 2,
                 "structure-only snapshots never read oversized string values");
-        assertTrue(
-                inspect(f, context, "LOCAL_ID")
-                        .getAsJsonObject("parameter")
-                        .get("value")
-                        .getAsBoolean(),
-                "selected scalar inspection never reads an unrelated oversized string");
         panel.forbidden.remove(STRING_VALUE);
         for (Object invalid : Arrays.asList(null, Boolean.TRUE, 42)) {
             panel.put(STRING_VALUE, invalid);
-            assertRpcError("native_unavailable", () -> inspect(f, context, "TEXT_ID"));
             assertRpcError("native_unavailable", () -> f.read(0, 64, true));
-        }
-    }
-
-    @Test
-    void stringPanelIdentityAndLateGuards() {
-        Fixture f = new Fixture();
-        Node panel = stringPanel(f, "", "empty identifier");
-        f.first.put(CHILDREN, List.of(panel));
-        ContextFixture context = stringContext(panel);
-        assertTrue(
-                inspect(f, context, "")
-                        .getAsJsonObject("parameter")
-                        .get("value")
-                        .getAsString()
-                        .equals("empty identifier"),
-                "unique empty native string identifier remains addressable");
-        Node collision = f.parameter(BOOLEAN, f.first).put(PARAMETER_ID, "").put(BOOLEAN_VALUE, false);
-        f.first.put(CHILDREN, List.of(panel, collision));
-        assertRpcError("stale_context", () -> inspect(f, context, ""));
-        collision.kinds.clear();
-        collision.kinds.add(PANEL_BOOLEAN);
-        assertRpcError("stale_context", () -> inspect(f, context, ""));
-        f.first.put(CHILDREN, List.of(panel));
-        panel.put(OWNER_MODULE, f.second);
-        assertRpcError("stale_context", () -> inspect(f, context, ""));
-        panel.put(OWNER_MODULE, f.first);
-        panel.threadAllowed = false;
-        assertRpcError("native_unavailable", () -> inspect(f, context, ""));
-        for (int change = 0; change < 5; change++) {
-            Fixture moved = new Fixture();
-            Node text = stringPanel(moved, "TEXT_ID", "before");
-            moved.first.put(CHILDREN, List.of(text));
-            ContextFixture c = stringContext(text);
-            final int mode = change;
-            moved.afterValue = () -> {
-                if (mode == 0) moved.first.put(CHILDREN, List.of());
-                if (mode == 1) moved.proxy.put(TARGET, new Node(DEVICE));
-                if (mode == 2) moved.device.put(OWNER_TRACK, new Node(TRACK).put(TRACK_UUID, TRACK_ID));
-                if (mode == 3) c.values.put(NativeReadContext.Field.CONTEXT, new Object());
-                if (mode == 4) text.put(OWNER_MODULE, moved.second);
-            };
-            assertRpcError("stale_context", () -> inspect(moved, c, "TEXT_ID"));
         }
     }
 
@@ -2018,44 +1694,6 @@ public final class GridSnapshotReaderTest {
                 () -> GridParameterWriter.Request.parse(HostFixture.json(
                         "{\"expectedKind\":\"string\",\"expectedValue\":\"a\",\"display\":\"1 kHz\"}")));
         assertRpcError("invalid_params", () -> request("float", "0.0", "\"text\""));
-    }
-
-    @Test
-    void booleanPanelInspectionKeepsScalarApplicabilityDistinct() {
-        PanelFixture f = new PanelFixture();
-        JsonObject result =
-                f.model.reader.parameter(f.model.source, new UUID(1, 1), "PANEL_ID", f.context.reader, () -> {});
-        JsonObject panel = result.getAsJsonObject("parameter"), context = result.getAsJsonObject("editContext");
-        assertTrue(
-                panel.get("kind").getAsString().equals("boolean")
-                        && panel.get("parameterId").getAsString().equals("PANEL_ID"),
-                "non-Tty panel has its own identifier and public boolean value kind");
-        assertTrue(
-                panel.get("name").isJsonNull()
-                        && panel.get("display").isJsonNull()
-                        && !result.get("complete").getAsBoolean(),
-                "unmapped panel labels/display remain explicit rather than scalar-method calls or invented text");
-        assertTrue(
-                context.get("effectivelyLicensed").isJsonNull()
-                        && context.get("parameterTouched").isJsonNull()
-                        && !context.get("scalarLicenseTouchApplicable").getAsBoolean(),
-                "panel never fabricates scalar permission or touch observations");
-        assertTrue(
-                result.getAsJsonObject("coupledParameter")
-                                .get("parameterId")
-                                .getAsString()
-                                .equals("VALUE_ID")
-                        && result.getAsJsonObject("coupledEditContext")
-                                .get("effectivelyLicensed")
-                                .getAsBoolean(),
-                "inspection identifies actual same-module reference and separate scalar authorization observations");
-        Node collision = f.model
-                .parameter(BOOLEAN, f.model.first)
-                .put(PARAMETER_ID, "PANEL_ID")
-                .put(BOOLEAN_VALUE, false);
-        f.model.first.put(CHILDREN, List.of(f.panel, f.coupled, collision));
-        assertRpcError("stale_context", () -> f.set(request("boolean", "true", "false")));
-        assertTrue(f.calls == 0, "panel/scalar identifier collision cannot choose the first matching child");
     }
 
     @Test

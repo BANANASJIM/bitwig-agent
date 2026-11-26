@@ -11,7 +11,7 @@ Use the installed MCP tool schemas or `bitwig-agent help METHOD` for exact argum
 | One-hop layer parameter | Use `devices.layers.list`, the exact child address/discovery token and `parameters.layer.list` context; do not treat child indices as root indices |
 | Remote Control | Use the currently observed page/name/parameter and its own context token; do not reuse a direct-parameter token |
 | MIDI | A clip ref from `context.get` (`cursorClip`, occupied `launcherSlots`) or `launcher.list` (slot refs need an existing scene); channel and window default sensibly. Inspect coverage and selection/auto-arm side effects before calling |
-| Grid | Use current graph instance/port/control IDs, target ownership and the typed raw `kind`/`value` of a recent `grid.get` row as `expectedKind`/`expectedValue`; stale expectations are refused as an error |
+| Grid | Read with `grid.export`; its device ref is the `target` and its module refs name parameters; stale refs are refused as an error |
 | Modulator | Use explicit root parent and current modulator/output/control IDs from `modulators.get`; edits need `expectedCount`/`expectedAmount`/`expectedValue` from a fresh read |
 | Host Action | Discover the actual host Action ID and confirm its current UI context; `sent` does not establish enablement or effect |
 

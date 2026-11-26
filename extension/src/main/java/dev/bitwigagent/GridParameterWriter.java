@@ -401,7 +401,7 @@ final class GridParameterWriter {
             if (!kind.equals(current.get("kind").getAsString()) || !matches(current.get("value"), expected))
                 throw Errors.notApplied(
                         Reason.STALE_CONTEXT,
-                        "Parameter kind or exact raw value differs from the expected precondition; reacquire grid.parameters.get.");
+                        "Parameter kind or exact raw value differs from the expected precondition; reacquire grid.export.");
             if (display != null) setValue(new JsonPrimitive(GridDisplayUnits.toRaw(current, display)));
             if (kind.equals("float") || kind.equals("integer")) {
                 double min = current.get("minimum").getAsDouble(),

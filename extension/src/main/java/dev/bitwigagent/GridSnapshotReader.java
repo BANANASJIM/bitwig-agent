@@ -1,6 +1,7 @@
 package dev.bitwigagent;
 
 import com.google.gson.*;
+import dev.bitwigagent.core.Refs;
 import java.util.*;
 import java.util.stream.Stream;
 
@@ -213,6 +214,36 @@ final class GridSnapshotReader implements ParameterResolver.ModuleOwners {
         return snapshot(source, offset, limit, parameters, diagnostics, moduleIds, false, check);
     }
 
+    /** The gridModule ref of a module row: the name grid.export gives it, generated when it has none or shares its customName. */
+    static JsonObject moduleRef(JsonObject deviceRef, JsonObject row, Set<String> shared) {
+        String name = text(row, "customName");
+        if (name.isEmpty() || shared.contains(name)) {
+            String type = text(row, "typeName");
+            name = "_" + (type.isEmpty() ? text(row, "typeId") : type) + "_"
+                    + row.get("x").getAsInt() + "_" + row.get("y").getAsInt();
+        }
+        return Refs.gridModule(deviceRef, row.get("instanceId").getAsString(), name);
+    }
+
+    private static String text(JsonObject row, String key) {
+        JsonElement value = row.get(key);
+        return value == null || !value.isJsonPrimitive() ? "" : value.getAsString();
+    }
+
+    /** The customNames more than one module of the graph carries. */
+    private Set<String> sharedCustomNames(List<Object> modules, State state) {
+        Set<String> seen = new HashSet<>(), shared = new HashSet<>();
+        if (!a.metadataAvailable(Metadata.MODULE_NAMES)) return shared;
+        for (Object module : modules) {
+            state.check();
+            if (!a.is(Kind.MODULE, module)) continue;
+            Object name = a.read(Field.CUSTOM_NAME, module);
+            if (name instanceof String && !((String) name).isEmpty() && !seen.add((String) name))
+                shared.add((String) name);
+        }
+        return shared;
+    }
+
     /** fullSteps exposes up to 256 step-array entries instead of the first STEPS ones. */
     JsonObject snapshot(
             DeviceSources.Source source,
@@ -226,12 +257,13 @@ final class GridSnapshotReader implements ParameterResolver.ModuleOwners {
         a.documentThread();
         check.run();
         NativeTarget binding = target(source);
+        JsonObject deviceRef = source.ref();
         Object graph = binding.graph;
         State state = new State(check);
         state.full = fullSteps;
         List<Object> all = collect(Field.MODULES, graph, MAX_MODULES, state);
         IdentityHashMap<Object, String> ids = new IdentityHashMap<>();
-        Set<String> seenIds = new HashSet<>();
+        Set<String> seenIds = new HashSet<>(), sharedNames = sharedCustomNames(all, state);
         for (Object module : all) {
             state.check();
             if (!a.is(Kind.MODULE, module)) {
@@ -289,6 +321,7 @@ final class GridSnapshotReader implements ParameterResolver.ModuleOwners {
             } else item.addProperty("typeId", uuid(typeId));
             Object entry = metadataValue(Field.TYPE_ENTRY, typeId, Metadata.TYPE_NAMES, state, "module_type_name");
             metadataText(item, "typeName", Field.TYPE_NAME, entry, Metadata.TYPE_NAMES, state, "module_type_name");
+            item.add("ref", moduleRef(deviceRef, item, sharedNames));
             Set<Object> enumeratedPorts = Collections.newSetFromMap(new IdentityHashMap<>());
             item.add("inputs", ports(module, graph, ids, true, connections, enumeratedPorts, diagnostics, state));
             item.add("outputs", ports(module, graph, ids, false, connections, enumeratedPorts, diagnostics, state));
@@ -356,61 +389,6 @@ final class GridSnapshotReader implements ParameterResolver.ModuleOwners {
             result.addProperty(
                     "identityCaveat",
                     "instanceId is a current native UUID, not typeId or localKey; observed UUIDs changed across project reopen and must be reacquired. localKey and paths may change after edits. Native owning-track channel UUID is corroborated before and after capture, including the SCA alias mapping. Device index and name remain public observations that can lag native rebinding; same-track same-name replacement is not distinguished. No persistent device identity, native device-position corroboration, native ABA detection, native revision or cross-request atomicity.");
-        result.addProperty("nativeMutation", false);
-        result.addProperty("nativeUndo", false);
-        return result;
-    }
-
-    JsonObject parameter(
-            DeviceSources.Source source,
-            UUID moduleId,
-            String parameterId,
-            GridParameterContext contexts,
-            Runnable check) {
-        return parameter(source, moduleId, parameterId, contexts, false, check);
-    }
-
-    JsonObject parameter(
-            DeviceSources.Source source,
-            UUID moduleId,
-            String parameterId,
-            GridParameterContext contexts,
-            boolean fullSteps,
-            Runnable check) {
-        if (contexts == null)
-            throw Errors.notApplied(
-                    Reason.NATIVE_UNAVAILABLE, "Required parameter inspection bindings are unavailable.");
-        ParameterBinding binding = bindParameter(source, moduleId, parameterId, fullSteps, check);
-        GridParameterContext.Capture context =
-                contexts.capture(binding.device, binding.graph, binding.module, binding.parameter, binding.kind, check);
-        ParameterBinding coupled = binding.kind == Kind.PANEL_BOOLEAN ? bindBipolarParameter(binding) : null;
-        GridParameterContext.Capture coupledContext = coupled == null
-                ? null
-                : contexts.capture(
-                        coupled.device, coupled.graph, coupled.module, coupled.parameter, coupled.kind, check);
-        JsonObject value = parameterValue(binding);
-        JsonObject coupledValue = coupled == null ? null : parameterValue(coupled);
-        guardParameter(binding);
-        contexts.guard(context, binding.device, binding.graph, binding.module, binding.parameter, binding.kind, check);
-        guardParameter(binding);
-        if (coupled != null) {
-            guardBipolarParameter(binding, coupled);
-            contexts.guard(
-                    coupledContext,
-                    coupled.device,
-                    coupled.graph,
-                    coupled.module,
-                    coupled.parameter,
-                    coupled.kind,
-                    check);
-            guardBipolarParameter(binding, coupled);
-        }
-        JsonObject result = parameterResult(binding, value);
-        result.add("editContext", context.json);
-        if (coupled != null) {
-            result.add("coupledParameter", coupledValue);
-            result.add("coupledEditContext", coupledContext.json);
-        }
         result.addProperty("nativeMutation", false);
         result.addProperty("nativeUndo", false);
         return result;
@@ -576,7 +554,7 @@ final class GridSnapshotReader implements ParameterResolver.ModuleOwners {
         if (found == null)
             throw Errors.notApplied(
                     Reason.STALE_CONTEXT,
-                    "Requested module UUID is no longer in the target graph; reacquire grid.get.");
+                    "Requested module UUID is no longer in the target graph; reacquire grid.export.");
         return found;
     }
 
@@ -670,31 +648,6 @@ final class GridSnapshotReader implements ParameterResolver.ModuleOwners {
                         Reason.NATIVE_UNAVAILABLE, "Topology editing requires unique native module UUIDs.");
         }
         return modules;
-    }
-
-    /** Current instance UUID of the one module whose native effective name is exactly name. */
-    UUID moduleIdNamed(NativeTarget target, String name, Runnable check) {
-        if (!a.metadataAvailable(Metadata.MODULE_NAMES))
-            throw Errors.notApplied(
-                    Reason.NATIVE_UNAVAILABLE, "Native module name readers are required to select a module by name.");
-        State state = new State(check);
-        UUID found = null;
-        for (Object module : collect(Field.MODULES, target.graph, MAX_MODULES, state)) {
-            state.check();
-            if (!a.is(Kind.MODULE, module)) continue;
-            a.requireModelThread(module);
-            if (!name.equals(a.read(Field.MODULE_NAME, module))) continue;
-            Object id = a.read(Field.INSTANCE_ID, module);
-            if (!(id instanceof UUID))
-                throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Native module UUID is unavailable.");
-            if (found != null)
-                throw Errors.notApplied(
-                        Reason.STALE_CONTEXT, "Several modules are named \"" + name + "\"; use moduleId.");
-            found = (UUID) id;
-        }
-        if (found == null)
-            throw Errors.notApplied(Reason.STALE_CONTEXT, "No module is named \"" + name + "\"; check grid.get names.");
-        return found;
     }
 
     /** Native effective name when candidate is a mapped Grid module, else null. */

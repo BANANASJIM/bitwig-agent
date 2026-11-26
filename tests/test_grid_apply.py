@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Any
 
 import pytest
-from fakes import SPEC, TARGET, FakeGrid, apply_grid, assert_display_rejected, parse_arguments
+from fakes import DEVICE, SPEC, TRACK, FakeGrid, apply_grid, assert_display_rejected, parse_arguments
 from pydantic import ValidationError
 
 from bitwig_agent.errors import BridgeError, bridge_error, unknown_result
@@ -54,7 +54,7 @@ def test_fresh_build_then_idempotent_reapply_writes_nothing():
 
 
 def test_insert_batches_of_sixteen():
-    spec = {"target": TARGET, "modules": [{"name": f"M{i}", "type": "Add", "x": i * 3, "y": 0} for i in range(20)]}
+    spec = {"target": DEVICE, "modules": [{"name": f"M{i}", "type": "Add", "x": i * 3, "y": 0} for i in range(20)]}
     host = FakeGrid()
     assert apply_grid(host, spec)["applied"]["inserted"] == 20
     assert [len(c["modules"]) for m, c in host.calls if m == "grid.modules.insert"] == [16, 4]
@@ -67,7 +67,7 @@ def test_topology_writes_get_the_long_timeout():
     by_method: dict[str, set[int]] = {}
     for method, timeout in host.timeouts:
         by_method.setdefault(method, set()).add(timeout)
-    for method in ("grid.modules.insert", "grid.modules.rename", "grid.modules.move", "grid.connections.set"):
+    for method in ("grid.modules.insert", "grid.modules.set", "grid.modules.move", "grid.connections.set"):
         assert by_method[method] == {60000}, method
     assert by_method["grid.parameters.set"] == {10000}
     assert by_method["grid.get"] == {5000}
@@ -77,7 +77,7 @@ def test_insert_batches_shrink_when_entries_are_slow(monkeypatch):
     host = FakeGrid()
     monkeypatch.setattr(execute, "monotonic", lambda: host.now)
     host.insert_seconds = 2.0  # 16 entries x 2 s = 32 s > 25% of the 60 s timeout
-    spec = {"target": TARGET, "modules": [{"name": f"M{i}", "type": "Add", "x": i * 3, "y": 0} for i in range(30)]}
+    spec = {"target": DEVICE, "modules": [{"name": f"M{i}", "type": "Add", "x": i * 3, "y": 0} for i in range(30)]}
     assert apply_grid(host, spec)["applied"]["inserted"] == 30
     assert [len(c["modules"]) for m, c in host.calls if m == "grid.modules.insert"] == [16, 7, 7]
 
@@ -86,7 +86,7 @@ def test_insert_batches_start_halved_on_a_large_graph():
     host = FakeGrid()
     for i in range(execute.LARGE_GRAPH_MODULES):
         host.add("Add", f"other {i}", x=i * 3, y=40)
-    spec = {"target": TARGET, "modules": [{"name": f"M{i}", "type": "Add", "x": i * 3, "y": 0} for i in range(20)]}
+    spec = {"target": DEVICE, "modules": [{"name": f"M{i}", "type": "Add", "x": i * 3, "y": 0} for i in range(20)]}
     assert apply_grid(host, spec)["applied"]["inserted"] == 20
     assert [len(c["modules"]) for m, c in host.calls if m == "grid.modules.insert"] == [8, 12]
 
@@ -240,13 +240,13 @@ def test_stop_on_partial_and_on_host_error():
     assert result["applied"]["paramsWritten"] == 5
 
     host = FakeGrid()
-    host.fail["grid.modules.rename"] = bridge_error("stale_context", "no")
+    host.fail["grid.modules.set"] = bridge_error("stale_context", "no")
     result = apply_grid(host, SPEC)
     assert result["outcome"] == "not_applied"  # inserts already landed
     assert result["reason"] == "stale_context"
     assert result["failure"]["response"]["error"]["code"] == "stale"
     assert result["notReached"]["phasesNotStarted"] == ["move", "params", "connections"]
-    assert [m for m, _ in host.calls].count("grid.modules.rename") == 1
+    assert [m for m, _ in host.calls].count("grid.modules.set") == 1
 
     host = FakeGrid()
     host.fail["grid.modules.insert"] = unknown_result("deadline", "m")
@@ -346,7 +346,7 @@ def test_display_comparison_uses_live_precision():
 
 def test_partial_insert_batch_still_names_what_landed_and_reapply_converges():
     spec = {
-        "target": TARGET,
+        "target": DEVICE,
         "namespace": "G: ",
         "modules": [{"name": f"G: m{i}", "type": "Add", "x": i * 3, "y": 0} for i in range(20)],
     }
@@ -382,13 +382,13 @@ def test_unsettled_insert_reports_unnamed_modules():
     result = apply_grid(
         host,
         {
-            "target": TARGET,
+            "target": DEVICE,
             "modules": [{"name": "A", "type": "Add", "x": 0, "y": 0}, {"name": "B", "type": "Add", "x": 3, "y": 0}],
         },
     )
     assert result["outcome"] == "unknown"
     assert list(result["unnamedModules"].values()) == ["A"]
-    assert "grid.modules.rename" not in [m for m, _ in host.calls]
+    assert "grid.modules.set" not in [m for m, _ in host.calls]
 
 
 @pytest.mark.parametrize(
@@ -405,7 +405,7 @@ def test_unwritable_display_is_rejected_offline(params):
     host = FakeGrid()
     with pytest.raises(BridgeError) as err:
         apply_grid(
-            host, {"target": TARGET, "modules": [{"name": "E", "type": "ADSR", "x": 0, "y": 0, "params": params}]}
+            host, {"target": DEVICE, "modules": [{"name": "E", "type": "ADSR", "x": 0, "y": 0, "params": params}]}
         )
     assert err.value.error["reason"] == "invalid_params"
     assert host.writes() == []
@@ -414,7 +414,7 @@ def test_unwritable_display_is_rejected_offline(params):
 def test_zero_default_display_is_rejected_offline_but_raw_value_works():
     host = FakeGrid()
     bad: dict[str, Any] = {
-        "target": TARGET,
+        "target": DEVICE,
         "modules": [{"name": "B", "type": "Bias", "x": 0, "y": 0, "params": {"VALUE": {"display": "50 %"}}}],
     }
     with pytest.raises(BridgeError) as err:
@@ -446,7 +446,7 @@ def test_overlapping_spec_layout_is_rejected_offline():
         apply_grid(
             host,
             {
-                "target": TARGET,
+                "target": DEVICE,
                 "modules": [
                     {"name": "A", "type": "ADSR", "x": 0, "y": 0},
                     {"name": "B", "type": "Add", "x": 1, "y": 1},
@@ -457,7 +457,7 @@ def test_overlapping_spec_layout_is_rejected_offline():
     assert host.writes() == []
     host.add("Add", "other", 0, 0)
     with pytest.raises(BridgeError) as err:
-        apply_grid(host, {"target": TARGET, "modules": [{"name": "A", "type": "Add", "x": 0, "y": 0}]})
+        apply_grid(host, {"target": DEVICE, "modules": [{"name": "A", "type": "Add", "x": 0, "y": 0}]})
     assert "other" in err.value.error["message"]
     assert host.writes() == []
 
@@ -465,7 +465,7 @@ def test_overlapping_spec_layout_is_rejected_offline():
 def test_swap_is_ordered_through_a_free_anchor_and_terminates():
     host = FakeGrid()
     spec: dict[str, Any] = {
-        "target": TARGET,
+        "target": DEVICE,
         "modules": [
             {"name": "A", "type": "Add", "x": 0, "y": 0},
             {"name": "B", "type": "Add", "x": 3, "y": 0},
@@ -474,7 +474,7 @@ def test_swap_is_ordered_through_a_free_anchor_and_terminates():
     }
     apply_grid(host, spec)
     swapped = {
-        "target": TARGET,
+        "target": DEVICE,
         "modules": [{**spec["modules"][0], "x": 3}, {**spec["modules"][1], "x": 0}, spec["modules"][2]],
     }
     result = apply_grid(host, swapped)  # the fake host rejects any move onto an occupied anchor
@@ -482,7 +482,7 @@ def test_swap_is_ordered_through_a_free_anchor_and_terminates():
     assert result["applied"]["moved"] == 3
     assert (host.named("A")["x"], host.named("B")["x"], host.named("C")["x"]) == (3, 0, 6)
     chain = {
-        "target": TARGET,
+        "target": DEVICE,
         "modules": [{**spec["modules"][2], "x": 9}, {**spec["modules"][1], "x": 6}, {**spec["modules"][0], "x": 3}],
     }
     assert apply_grid(host, chain)["applied"]["moved"] == 2  # A already sits at 3; C and B vacate first, no parking
@@ -527,7 +527,7 @@ def test_park_spot_is_always_free_and_converges():
     host.add("Phasor", "A", 0, 0)  # 3x1
     host.add("Add", "B", 4, 0)
     spec = {
-        "target": TARGET,
+        "target": DEVICE,
         "modules": [
             {"name": "P", "type": "Add", "x": 2, "y": 0},
             {"name": "A", "type": "Phasor", "x": 4, "y": 0},
@@ -552,18 +552,18 @@ def test_order_moves_is_bounded_on_impossible_layouts():
 
 
 def test_host_capabilities_bound_the_spec_and_block_quarantined_topology():
-    spec = {"target": TARGET, "modules": [{"name": f"M{i}", "type": "Add", "x": i * 3, "y": 0} for i in range(4)]}
+    spec = {"target": DEVICE, "modules": [{"name": f"M{i}", "type": "Add", "x": i * 3, "y": 0} for i in range(4)]}
     host = FakeGrid()
     host.caps_extra = {"moduleInsert": {"available": True, "maximumModules": 3}, "moduleMove": {"maximumModules": 5}}
     with pytest.raises(BridgeError) as err:
         apply_grid(host, spec)
     assert "host limit is 3" in err.value.error["message"]
     assert host.writes() == []
-    quarantined = {"origin": "native_failure", "trackId": TARGET["trackId"], "device": TARGET["trackId"] + "/1"}
+    quarantined = {"origin": "native_failure", "trackId": TRACK, "device": TRACK + "/1"}
     host.caps_extra = {"topologyQuarantine": {"state": "quarantined", "devices": [quarantined]}}
     with pytest.raises(BridgeError) as err:
         apply_grid(host, spec)
-    assert "ack <id>" in err.value.error["message"]
+    assert "ack grid:<device>" in err.value.error["message"]
     assert host.writes() == []
     assert apply_grid(host, spec, dryRun=True)["dryRun"] is True
     other = {**quarantined, "trackId": "22222222-2222-2222-2222-222222222222"}
@@ -580,7 +580,7 @@ def test_host_capabilities_bound_the_spec_and_block_quarantined_topology():
 
 
 def test_deadline_cut_batches_continue_with_the_remaining_modules():
-    spec = {"target": TARGET, "modules": [{"name": f"D{i}", "type": "Add", "x": i * 3, "y": 0} for i in range(20)]}
+    spec = {"target": DEVICE, "modules": [{"name": f"D{i}", "type": "Add", "x": i * 3, "y": 0} for i in range(20)]}
     host = FakeGrid()
     host.insert_caps = [5, 3]
     result = apply_grid(host, spec)
@@ -612,7 +612,7 @@ def test_string_panel_params_are_written_with_cas_and_idempotent():
     host = FakeGrid()
     text = "line 1\nline 2 \u00e9\U0001f600"
     spec: dict[str, Any] = {
-        "target": TARGET,
+        "target": DEVICE,
         "modules": [{"name": "C", "type": "Comment", "x": 0, "y": 0, "params": {"TEXT": text}}],
     }
     assert apply_grid(host, spec)["applied"]["paramsWritten"] == 1
@@ -633,12 +633,12 @@ def test_string_param_validation():
     mod = {"name": "C", "type": "Comment", "x": 0, "y": 0}
     for bad in (5, "x" * 1025, "\U0001f600" * 513):
         with pytest.raises(BridgeError) as err:
-            apply_grid(host, {"target": TARGET, "modules": [{**mod, "params": {"TEXT": bad}}]})
+            apply_grid(host, {"target": DEVICE, "modules": [{**mod, "params": {"TEXT": bad}}]})
         assert err.value.error["reason"] == "invalid_params"
-    apply_grid(host, {"target": TARGET, "modules": [{**mod, "params": {"TEXT": "\U0001f600" * 512}}]}, dryRun=True)
+    apply_grid(host, {"target": DEVICE, "modules": [{**mod, "params": {"TEXT": "\U0001f600" * 512}}]}, dryRun=True)
     with pytest.raises(BridgeError):
         apply_grid(
-            host, {"target": TARGET, "modules": [{"name": "A", "type": "Add", "x": 0, "y": 0, "params": {"X": "s"}}]}
+            host, {"target": DEVICE, "modules": [{"name": "A", "type": "Add", "x": 0, "y": 0, "params": {"X": "s"}}]}
         )
     assert host.writes() == []
 
@@ -646,14 +646,14 @@ def test_string_param_validation():
 def test_empty_modules_prunes_namespace_only():
     host = populated_namespace_host()
     before = {m["customName"] for m in host.mods.values()}
-    result = apply_grid(host, {"target": TARGET, "namespace": "H: ", "prune": True, "modules": []})
+    result = apply_grid(host, {"target": DEVICE, "namespace": "H: ", "prune": True, "modules": []})
     assert result["outcome"] == "applied"
     assert result["applied"]["deleted"] == 6
     left = {m["customName"] for m in host.mods.values()}
     assert left == {"X: keep", ""}
     assert before - left == {n for n in before if n.startswith("H: ")}
     assert (
-        apply_grid(host, {"target": TARGET, "namespace": "H: ", "prune": True, "modules": []})["outcome"]
+        apply_grid(host, {"target": DEVICE, "namespace": "H: ", "prune": True, "modules": []})["outcome"]
         == "already_matched"
     )
 
@@ -662,7 +662,7 @@ def test_empty_modules_prunes_namespace_only():
 def test_empty_modules_needs_prune_and_namespace(extra):
     host = FakeGrid()
     with pytest.raises(ValueError, match="modules may be empty"):
-        apply_grid(host, {"target": TARGET, "modules": [], **extra})
+        apply_grid(host, {"target": DEVICE, "modules": [], **extra})
     assert host.writes() == []
 
 
@@ -675,7 +675,7 @@ def replace_host():
 
 
 REPLACE_SPEC: dict[str, Any] = {
-    "target": TARGET,
+    "target": DEVICE,
     "modules": [
         {"name": "R: a", "type": "Multiply", "x": 0, "y": 0},
         {"name": "R: src", "type": "Add", "x": 6, "y": 0},
@@ -727,7 +727,7 @@ def test_replace_per_module_only_affects_that_module():
 
 def test_notes_and_pitch_mod_warning():
     spec = {
-        "target": TARGET,
+        "target": DEVICE,
         "modules": [
             {"name": "o", "type": "Sine", "x": 0, "y": 0},
             {"name": "o2", "type": "Sine", "x": 6, "y": 0, "params": {"PITCH_MOD": 0.5}},
@@ -759,7 +759,7 @@ def test_notes_file_is_value_free_and_covers_catalog_types():
 # --- seconds display writes ----------------------------------------------------------------------------------
 def seconds_spec(params_env, params_gate=None):
     return {
-        "target": TARGET,
+        "target": DEVICE,
         "modules": [
             {"name": "E", "type": "ADSR", "x": 0, "y": 0, "params": params_env},
             {"name": "G", "type": "Gate Length", "x": 0, "y": 8, "params": params_gate or {}},
@@ -869,7 +869,7 @@ BLOCKS: dict[str, Any] = {
     }
 }
 BLOCK_SPEC: dict[str, Any] = {
-    "target": TARGET,
+    "target": DEVICE,
     "blocks": BLOCKS,
     "namespace": "V: ",
     "modules": [{"name": "V: sum", "type": "Add", "x": 20, "y": 0}],
@@ -975,9 +975,9 @@ def test_blocks_are_checked_after_expansion():
 
 def test_blocks_schema_surface():
     with pytest.raises(ValueError, match=re.escape("1 validation error for GridApplyArgs")):
-        validate_call("grid.apply", {"target": TARGET, "instances": [{"block": "x"}]})  # instances without blocks
+        validate_call("grid.apply", {"target": DEVICE, "instances": [{"block": "x"}]})  # instances without blocks
     with pytest.raises(ValueError, match=re.escape("1 validation error for GridApplyArgs")):
-        validate_call("grid.apply", {"target": TARGET})  # nothing to apply
+        validate_call("grid.apply", {"target": DEVICE})  # nothing to apply
     with pytest.raises(ValueError, match=re.escape("1 validation error for GridApplyArgs")):  # blocks do not nest
         validate_call(
             "grid.apply",
@@ -986,7 +986,7 @@ def test_blocks_schema_surface():
                 "blocks": {"b": {"modules": [{"name": "a", "type": "Add", "x": 0, "y": 0}], "instances": []}},
             },
         )
-    args, _ = validate_call("grid.apply", {"target": TARGET, "namespace": "V: ", "prune": True})
+    args, _ = validate_call("grid.apply", {"target": DEVICE, "namespace": "V: ", "prune": True})
     assert "modules" not in args
 
 
@@ -1005,7 +1005,7 @@ POLY = {
 
 def steps_spec(steps, count=8, type_name="Pitches"):
     return {
-        "target": TARGET,
+        "target": DEVICE,
         "modules": [
             {"name": "S", "type": type_name, "x": 0, "y": 0, "params": {"STEPS": count, "DATA": {"steps": steps}}}
         ],
@@ -1064,7 +1064,7 @@ def test_steps_longer_than_live_array_rejects_before_writing_on_existing_module(
 def test_steps_block_placeholder_is_a_whole_list():
     host = FakeGrid()
     spec = {
-        "target": TARGET,
+        "target": DEVICE,
         "blocks": {
             "seq": {
                 "params": {"row": [0.0]},
@@ -1089,7 +1089,7 @@ def test_voicing_is_written_when_different_and_idempotent():
     host = FakeGrid()
     host.voicing = dict(POLY)
     spec = {
-        "target": TARGET,
+        "target": DEVICE,
         "modules": [{"name": "A", "type": "Add", "x": 0, "y": 0}],
         "voicing": {"voices": 8, "voiceStacking": 1, "monoMode": "true_mono"},
     }
@@ -1112,7 +1112,7 @@ def test_voicing_is_written_when_different_and_idempotent():
 def test_voicing_only_spec_and_stale_voicing_is_not_retried():
     host = FakeGrid()
     host.voicing = dict(POLY)
-    spec = {"target": TARGET, "modules": [], "prune": True, "namespace": "H: ", "voicing": {"monoMode": "digi_mono"}}
+    spec = {"target": DEVICE, "modules": [], "prune": True, "namespace": "H: ", "voicing": {"monoMode": "digi_mono"}}
     assert apply_grid(host, spec)["applied"]["voicingFields"] == 1
     assert host.voicing["monoMode"] == "digi_mono"
 
@@ -1130,7 +1130,7 @@ def test_voicing_schema_surface():
     modules = [{"name": "A", "type": "Add", "x": 0, "y": 0}]
     for voicing in ({}, {"voices": 65}):
         with pytest.raises(ValidationError, match=re.escape("1 validation error for GridApplyArgs")):
-            validate_call("grid.apply", {"target": TARGET, "modules": modules, "voicing": voicing})
+            validate_call("grid.apply", {"target": DEVICE, "modules": modules, "voicing": voicing})
 
 
 # --- preflight warnings, wouldFail and actionable errors ------------------------------------------------------
@@ -1145,7 +1145,7 @@ def test_device_phase_cable_warning_only_while_device_phase_is_on():
         {"name": "st2", "type": "Gates", "x": 16, "y": 0, "params": {"DEVICE_PHASE": False}},
     ]
     conns = [{"from": "ph.OUT", "to": "st.PHASE_IN"}, {"from": "ph.OUT", "to": "st2.PHASE_IN"}]
-    result = apply_grid(FakeGrid(), {"target": TARGET, "modules": mods, "connections": conns}, dryRun=True)
+    result = apply_grid(FakeGrid(), {"target": DEVICE, "modules": mods, "connections": conns}, dryRun=True)
     assert [w.split(":")[0] for w in messages(result, "DEVICE_PHASE")] == ["st"]
     assert any(n.startswith("Steps: DEVICE_PHASE defaults to On") for n in result["notes"])
 
@@ -1156,7 +1156,7 @@ def test_keytrack_warning_needs_a_poly_grid_and_nonzero_keytrack():
         {"name": "g", "type": "SVF", "x": 8, "y": 0, "params": {"KEYTRACK": 0}},
     ]
     conns = [{"from": "f.OUT", "to": "g.IN"}]
-    spec = {"target": TARGET, "modules": mods, "connections": conns}
+    spec = {"target": DEVICE, "modules": mods, "connections": conns}
     note_grid = apply_grid(FakeGrid(), spec, dryRun=True)
     assert not messages(note_grid, "KEYTRACK")
     host = FakeGrid()
@@ -1174,7 +1174,7 @@ def test_dangling_modules_are_flagged_but_note_in_is_not():
     ]
     result = apply_grid(
         FakeGrid(),
-        {"target": TARGET, "modules": mods, "connections": [{"from": "m.OUT", "to": "o.PITCH_IN"}]},
+        {"target": DEVICE, "modules": mods, "connections": [{"from": "m.OUT", "to": "o.PITCH_IN"}]},
         dryRun=True,
     )
     assert messages(result, "lonely: has no connections")
@@ -1184,7 +1184,7 @@ def test_dangling_modules_are_flagged_but_note_in_is_not():
 
 def one(module_type, params, extra=None, spec=None, **kw):
     mods = [{"name": "X", "type": module_type, "x": 0, "y": 0, "params": params}] + (extra or [])
-    return apply_grid(FakeGrid(), {"target": TARGET, "modules": mods, **(spec or {})}, **kw)
+    return apply_grid(FakeGrid(), {"target": DEVICE, "modules": mods, **(spec or {})}, **kw)
 
 
 @pytest.mark.parametrize("dry", [True, False])
@@ -1230,7 +1230,7 @@ def test_oscillator_with_gate_in_but_retrigger_off_warns():
 def test_dry_run_would_fail_reports_transport_and_stays_read_only():
     host = FakeGrid()
     host.transport = {"playing": True}
-    spec = {"target": TARGET, "modules": [{"name": "a", "type": "Add", "x": 0, "y": 0}]}
+    spec = {"target": DEVICE, "modules": [{"name": "a", "type": "Add", "x": 0, "y": 0}]}
     result = apply_grid(host, spec, dryRun=True)
     assert [f["reason"] for f in result["wouldFail"]] == ["unsafe_state"]
     assert host.writes() == []
@@ -1259,7 +1259,7 @@ def test_parameter_only_apply_is_allowed_while_playing_and_refused_while_recordi
 def test_structural_apply_names_playing_as_the_blocker():
     host = FakeGrid()
     host.transport = {"playing": True, "arrangerRecordEnabled": True}
-    spec = {"target": TARGET, "modules": [{"name": "a", "type": "Add", "x": 0, "y": 0}]}
+    spec = {"target": DEVICE, "modules": [{"name": "a", "type": "Add", "x": 0, "y": 0}]}
     message = apply_grid(host, spec, dryRun=True)["wouldFail"][0]["message"]
     assert "playing" in message
     assert "arrangerRecordEnabled" in message
@@ -1268,7 +1268,7 @@ def test_structural_apply_names_playing_as_the_blocker():
 
 def test_dry_run_would_fail_flags_host_converted_display_and_missing_target():
     spec = {
-        "target": TARGET,
+        "target": DEVICE,
         "modules": [{"name": "f", "type": "SVF", "x": 0, "y": 0, "params": {"CUTOFF": {"display": "800 Hz"}}}],
     }
     result = apply_grid(FakeGrid(), spec, dryRun=True)
@@ -1290,13 +1290,13 @@ def error_text(host, spec):
 
 
 def test_unknown_parameter_and_port_errors_list_valid_ids():
-    low = {"target": TARGET, "modules": [{"name": "f", "type": "Amplify", "x": 0, "y": 0, "params": {"GAIN": 0.5}}]}
+    low = {"target": DEVICE, "modules": [{"name": "f", "type": "Amplify", "x": 0, "y": 0, "params": {"GAIN": 0.5}}]}
     text = error_text(FakeGrid(), low)
     assert "unknown parameter 'GAIN'" in text
     assert "Valid: BIPOLAR, STEREOIZE, VALUE" in text
     mods = [{"name": "osc", "type": "Sine", "x": 0, "y": 0}, {"name": "t", "type": "Triggers", "x": 8, "y": 0}]
     text = error_text(
-        FakeGrid(), {"target": TARGET, "modules": mods, "connections": [{"from": "osc.out", "to": "t.PHASE_IN"}]}
+        FakeGrid(), {"target": DEVICE, "modules": mods, "connections": [{"from": "osc.out", "to": "t.PHASE_IN"}]}
     )
     assert "Did you mean: 'OUT'" in text
     assert "Valid: OUT" in text
@@ -1311,7 +1311,7 @@ def test_overlap_error_names_the_blocker():
     text = error_text(
         host,
         {
-            "target": TARGET,
+            "target": DEVICE,
             "modules": [{"name": "a", "type": "Sine", "x": 0, "y": 0}, {"name": "b", "type": "Sine", "x": 10, "y": 0}],
         },
     )
@@ -1325,7 +1325,7 @@ def test_real_apply_returns_a_diagnostics_marker(tmp_path, monkeypatch):
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S.000")
     log.write_text(f"[{now} float-main-app info] Starting application version 6.1.4 revision abc\n")
     monkeypatch.setenv("BITWIG_LOG_PATH", str(log))
-    result = apply_grid(FakeGrid(), {"target": TARGET, "modules": [{"name": "a", "type": "Add", "x": 0, "y": 0}]})
+    result = apply_grid(FakeGrid(), {"target": DEVICE, "modules": [{"name": "a", "type": "Add", "x": 0, "y": 0}]})
     assert isinstance(result.get("diagnosticsMarker"), str)
 
 
@@ -1375,7 +1375,7 @@ def test_tiny_raw_detune_warns_but_display_and_larger_raw_do_not():
 def test_unnamed_module_declared_by_generated_name_keeps_identity_across_a_move():
     host = FakeGrid()
     iid = host.add("Add", "", 20, 16)
-    spec = {"target": TARGET, "modules": [{"name": "_Add_20_16", "type": "Add", "x": 24, "y": 16}]}
+    spec = {"target": DEVICE, "modules": [{"name": "_Add_20_16", "type": "Add", "x": 24, "y": 16}]}
     first = apply_grid(host, spec, pruneAll=True)
     assert first["outcome"] == "applied"
     assert first["applied"]["renamed"] == 1
@@ -1432,3 +1432,85 @@ def test_module_lost_after_insertion_stops_as_stale(monkeypatch):
     monkeypatch.setattr(host, "call", losing)
     result = apply_grid(host, SPEC)
     assert (result["outcome"], result["reason"]) == ("not_applied", "stale_context")
+
+
+def test_partial_entry_sets_params_on_the_live_module_and_touches_nothing_else():
+    host = FakeGrid()
+    apply_grid(host, SPEC)
+    before = {(m["customName"], m["x"], m["y"], m["typeName"]) for m in host.mods.values()}
+    host.calls.clear()
+    result = apply_grid(
+        host, {"target": DEVICE, "modules": [{"name": "H: env", "params": {"ATTACK": {"display": "200 ms"}}}]}
+    )
+    assert result["outcome"] == "applied"
+    assert result["applied"]["paramsWritten"] == 1
+    assert {(m["customName"], m["x"], m["y"], m["typeName"]) for m in host.mods.values()} == before
+    assert host.writes() == ["grid.parameters.set"]
+    write = next(p for m, p in host.calls if m == "grid.parameters.set")["writes"][0]
+    assert write["moduleId"] == host.named("H: env")["instanceId"]
+    assert write["parameterId"] == "ATTACK"
+
+
+def test_partial_entry_that_already_holds_is_already_matched_and_writes_nothing():
+    host = FakeGrid()
+    apply_grid(host, SPEC)
+    host.calls.clear()
+    result = apply_grid(host, {"target": DEVICE, "modules": [{"name": "H: env", "params": {"ATTACK": 0.5}}]})
+    assert result["outcome"] == "already_matched"
+    assert host.writes() == []
+
+
+def test_partial_entry_names_a_module_the_device_has():
+    host = FakeGrid()
+    apply_grid(host, SPEC)
+    host.calls.clear()
+    with pytest.raises(BridgeError) as err:
+        apply_grid(host, {"target": DEVICE, "modules": [{"name": "H: lpp", "params": {"CUTOFF": 84}}]})
+    assert err.value.error["reason"] == "invalid_params"
+    assert "partial entry 'H: lpp' is not in the device" in err.value.error["message"]
+    assert "H: lp" in err.value.error["message"]
+    assert host.writes() == []
+
+
+def test_partial_entry_checks_params_against_the_live_type_before_writing():
+    host = FakeGrid()
+    apply_grid(host, SPEC)
+    host.calls.clear()
+    with pytest.raises(BridgeError) as err:
+        apply_grid(host, {"target": DEVICE, "modules": [{"name": "H: lp", "params": {"NOPE": 1}}]})
+    assert err.value.error["reason"] == "invalid_params"
+    assert host.writes() == []
+
+
+def test_partial_entries_mix_with_whole_ones_and_dry_run_plans_without_writing():
+    host = FakeGrid()
+    apply_grid(host, SPEC)
+    host.calls.clear()
+    modules = [
+        {"name": "H: env", "params": {"ATTACK": {"display": "200 ms"}}},
+        {"name": "H: extra", "type": "Add", "x": 20, "y": 0},
+    ]
+    result = apply_grid(host, {"target": DEVICE, "modules": modules}, dryRun=True)
+    assert result["dryRun"] is True
+    assert host.writes() == []
+
+
+def test_apply_echoes_the_read_back_display_of_each_written_param():
+    host = FakeGrid()
+    apply_grid(host, SPEC)
+    result = apply_grid(
+        host, {"target": DEVICE, "modules": [{"name": "H: env", "params": {"ATTACK": {"display": "200 ms"}}}]}
+    )
+    assert list(result["params"]) == ["H: env.ATTACK"]
+    assert result["params"]["H: env.ATTACK"] == host.named("H: env")["params"]["ATTACK"]["display"]
+
+
+def test_partial_dry_run_reports_an_unreachable_device_like_whole_entries():
+    host = FakeGrid()
+    host.fail["grid.get"] = bridge_error("target_not_found", "no such device")
+    spec = {"target": DEVICE, "modules": [{"name": "H: lp", "params": {"CUTOFF": 84}}], "dryRun": True}
+    result = apply_grid(host, spec)
+    assert result["dryRun"] is True
+    assert result["wouldFail"][0]["reason"] == "target_not_found"
+    with pytest.raises(BridgeError):
+        apply_grid(host, {**spec, "dryRun": False})

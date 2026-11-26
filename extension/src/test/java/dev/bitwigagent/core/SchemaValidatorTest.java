@@ -276,9 +276,33 @@ public final class SchemaValidatorTest {
                 .getMessage();
     }
 
-    private static final String DEVICE =
-            "\"trackId\":\"12345678-1234-1234-1234-123456789abc\",\"deviceIndex\":0,\"expectedDeviceName\":\"Poly Grid\"";
+    private static final String DEVICE = "\"target\":{\"kind\":\"device\",\"track\":{\"kind\":\"track\","
+            + "\"id\":\"12345678-1234-1234-1234-123456789abc\",\"name\":\"Grid\"},\"index\":0,\"name\":\"Poly Grid\"}";
     private static final String MODULE = "\"moduleId\":\"12345678-1234-1234-1234-123456789abd\",\"parameterId\":\"p\"";
+
+    @Test
+    void singleParameterWritesAreCheckedPerKindBySchema() {
+        String ok = "{" + DEVICE + "," + MODULE + ",\"expectedKind\":\"%s\",\"expectedValue\":%s,\"value\":%s}";
+        for (String[] valid : new String[][] {
+            {"boolean", "true", "false"},
+            {"integer", "-3", "7"},
+            {"enum", "1", "2"},
+            {"float", "0.25", "0.5"},
+            {"string", "\"a\"", "\"b\""}
+        }) MethodSpecs.load().get("grid.parameters.set").params.apply(object(String.format(ok, (Object[]) valid)));
+        for (String[] invalid : new String[][] {
+            {"boolean", "true", "1"},
+            {"integer", "0", "1.5"},
+            {"integer", "0", "2147483648"},
+            {"float", "0", "\"1\""},
+            {"string", "\"a\"", "1"},
+            {"steps", "0", "1"}
+        }) reject("grid.parameters.set", String.format(ok, (Object[]) invalid));
+        String steps =
+                "{" + DEVICE + "," + MODULE + ",\"expectedKind\":\"steps\",\"expectedValues\":[0,0],\"values\":[1]}";
+        MethodSpecs.load().get("grid.parameters.set").params.apply(object(steps));
+        reject("grid.parameters.set", steps.replace("\"values\":[1]", "\"value\":1"));
+    }
 
     @Test
     void gridParameterBatchWritesExplainKindMismatches() {
@@ -293,16 +317,14 @@ public final class SchemaValidatorTest {
     @Test
     void exactlyOneOfRootFormsSayWhichFieldsEachNeeds() {
         String neither = reject("grid.parameters.set", "{" + DEVICE + "}");
-        assertTrue(neither.contains("expectedKind, moduleId, parameterId") && neither.contains("writes"), neither);
+        assertTrue(neither.contains("moduleId, parameterId, expectedKind") && neither.contains("writes"), neither);
         String both = reject(
                 "grid.parameters.set",
                 "{" + DEVICE + "," + MODULE + ",\"expectedKind\":\"boolean\",\"value\":true,\"expectedValue\":true,"
                         + "\"writes\":[{" + MODULE
                         + ",\"expectedKind\":\"boolean\",\"expectedValue\":true,\"value\":true}]}");
         assertTrue(
-                both.contains(
-                        "more than one allowed form (requires expectedKind, moduleId, parameterId and requires writes)"),
-                both);
+                both.contains("matches none of the allowed forms") && both.contains("has unknown field writes"), both);
         String connections = reject("grid.connections.set", "{" + DEVICE + "}");
         assertTrue(
                 connections.contains("expectedSource, source, targetModuleId, targetPortKey")

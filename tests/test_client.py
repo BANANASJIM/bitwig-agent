@@ -11,6 +11,7 @@ from bitwig_agent.core import composed
 from bitwig_agent.errors import BridgeError
 from bitwig_agent.protocol import CLIENT_SIDE, TOOLS, validate_call
 from bitwig_agent.protocol.base import PROTOCOL
+from bitwig_agent.protocol.grid import TARGET as GRID
 from bitwig_agent.protocol.limits import MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES
 from bitwig_agent.protocol.parameters import SetArgs
 
@@ -110,13 +111,11 @@ async def test_invalid_timeout_rejected_before_connection(host, timeout):
 
 
 async def test_topology_edits_allow_a_60_second_timeout(host):
-    target = {"trackId": "12345678-1234-1234-1234-123456789abc", "deviceIndex": 0, "expectedDeviceName": "Poly Grid"}
+    target = GRID
     with pytest.raises(ValueError, match=r"100\.\.60000"):
         await BridgeClient(host.port).call("grid.modules.insert", {**target, "typeName": "Add", "x": 0, "y": 0}, 60001)
     with pytest.raises(ValueError, match=r"100\.\.10000"):
-        await BridgeClient(host.port).call(
-            "grid.parameters.get", {**target, "moduleId": target["trackId"], "parameterId": "P"}, 60000
-        )
+        await BridgeClient(host.port).call("grid.get", target, 60000)
     assert host.connections == 0
 
 
@@ -230,7 +229,7 @@ async def test_recovery_methods_take_one_id(host):
 
 async def test_oversized_grid_get_response_says_to_lower_module_limit(host):
     host.reply = lambda request: b"x" * (MAX_RESPONSE_BYTES + 1) + b"\n"
-    params = {"trackId": SET["trackId"], "deviceIndex": 0, "expectedDeviceName": "Grid", "moduleLimit": 256}
+    params = {**GRID, "moduleLimit": 256}
     with pytest.raises(BridgeError) as caught:
         await BridgeClient(host.port).call("grid.get", params)
     assert "lower moduleLimit" in caught.value.error["message"]

@@ -23,12 +23,16 @@ pytestmark = pytest.mark.anyio
 NO_CONTEXT: Any = None  # the handlers ignore the request context
 ROOT = Path(__file__).resolve().parents[1]
 HIDDEN = {
+    "grid.catalog",
+    "grid.get",
+    "grid.parameters.set",
+    "grid.voicing.get",
+    "grid.voicing.set",
     "grid.modules.insert",
-    "grid.modules.rename",
+    "grid.modules.set",
     "grid.modules.move",
     "grid.modules.delete",
     "grid.connections.set",
-    "grid.voicing.set",
 }
 EXPOSED = [name for name, spec in TOOLS.items() if spec.expose]
 
@@ -53,10 +57,12 @@ def test_explicit_annotations_are_only_for_custom_verbs_or_overrides_that_differ
 
 
 def test_tools_that_write_files_or_retrigger_are_not_read_only_or_idempotent():
-    for name in ("grid.export", "grid.render"):
-        annotations = resolve(name, TOOLS[name].annotations)
-        assert annotations.read_only is False
-        assert annotations.destructive is True
+    annotations = resolve("grid.render", TOOLS["grid.render"].annotations)
+    assert annotations.read_only is False
+    assert annotations.destructive is True
+    annotations = resolve("grid.export", TOOLS["grid.export"].annotations)
+    assert annotations.read_only is True
+    assert annotations.destructive is False
     for name in ("clips.launch", "scenes.launch"):
         annotations = resolve(name, TOOLS[name].annotations)
         assert annotations.idempotent is False
@@ -80,7 +86,6 @@ def test_advertised_description_fits_the_limit_and_keeps_its_example(name):
 def test_core_write_tools_carry_hand_written_summaries_with_their_call_critical_facts():
     expected = {
         "notes.edit": ("velocity", "durationBeats", "stepSizeBeats"),
-        "grid.parameters.set": ("option value", "grid.get"),
         "clips.set": ("first failure", "stopped"),
         "notes.read": ("2048", "completeWindow"),
         "devices.insert": ("requestedIdentifierVerified",),
@@ -266,7 +271,7 @@ async def test_grid_apply_still_reaches_the_hidden_blocks_through_the_client():
     assert not isinstance(envelope, Error)
     assert envelope.result["outcome"] == "applied"
     reached = {method for method, _ in host.calls}
-    assert {"grid.modules.insert", "grid.modules.rename", "grid.connections.set"} <= reached
+    assert {"grid.modules.insert", "grid.modules.set", "grid.connections.set"} <= reached
 
 
 @pytest.mark.parametrize("name", ["no.such.tool", "grid.modules.insert"])

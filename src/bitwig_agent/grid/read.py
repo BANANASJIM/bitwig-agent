@@ -1,4 +1,4 @@
-"""The one reader of a Grid device: every grid.get/grid.catalog page, validated, plus the names modules go by."""
+"""The one reader of a Grid device: every Grid read and catalog page, validated, plus the names modules go by."""
 
 from __future__ import annotations
 
@@ -17,12 +17,9 @@ class Graph(NamedTuple):
     cables: list[dict[str, Any]]
 
 
-DEVICE_KEYS = ("trackId", "deviceIndex", "expectedDeviceName")
-
-
 def device_target(args: dict[str, Any]) -> dict[str, Any]:
-    """The arguments that address one Grid device."""
-    return {k: args[k] for k in DEVICE_KEYS}
+    """The argument that addresses one Grid device: its device ref."""
+    return {"target": args["target"]}
 
 
 def host_call(client: Any, target: dict[str, Any], timeout_ms: int) -> GridCall:
@@ -40,7 +37,7 @@ async def _page(call: GridCall, request: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(page, dict) or not isinstance(page.get("modules"), list):
         raise bridge_error(
             "internal",
-            "grid.get returned an unusable result",
+            "the Grid read returned an unusable result",
             **(page if isinstance(page, dict) else {}),
         )
     return page
@@ -58,7 +55,7 @@ async def read_graph(call: GridCall, *, params: bool = False) -> Graph:
             cables[(c["targetModuleId"], c["targetPortKey"])] = c
         total = (page.get("window") or {}).get("total", len(rows))
         if not page["modules"] and len(rows) < total:
-            raise bridge_error("not_ready", f"grid.get returned {len(rows)} of {total} modules")
+            raise bridge_error("not_ready", f"the Grid read returned {len(rows)} of {total} modules")
     return Graph(rows, list(cables.values()))
 
 
@@ -80,7 +77,7 @@ async def read_params(
         if require and page.get("missingModuleIds"):
             raise bridge_error(
                 "target_not_found",
-                "grid.get did not return every requested module",
+                "the Grid read did not return every requested module",
                 missingModuleIds=page["missingModuleIds"],
             )
         rows.update({r["instanceId"]: r for r in page["modules"]})
@@ -99,8 +96,8 @@ async def read_catalog(call: GridCall) -> list[dict[str, Any]]:
 
 
 def generated_name(row: dict[str, Any]) -> str:
-    """Stable stand-in name of an unnamed live module (grid.export writes it, grid.apply matches unnamed modules by it)."""
-    return f"_{row.get('typeName') or row.get('typeId')}_{row['x']}_{row['y']}"
+    """Stable stand-in name of an unnamed live module, as the host names its ref (grid.export writes it, grid.apply matches it)."""
+    return str(row["ref"]["name"])
 
 
 def label_of(row: dict[str, Any]) -> str:
@@ -108,14 +105,8 @@ def label_of(row: dict[str, Any]) -> str:
 
 
 def module_names(rows: list[dict[str, Any]]) -> tuple[dict[str, str], list[str], list[str]]:
-    """instanceId -> name (customName, else generated), the generated names, and customNames that are not unique."""
+    """instanceId -> the name the host gives its ref (customName, else generated), the generated names, and customNames that are not unique."""
     counts = Counter(r["customName"] for r in rows if r.get("customName"))
-    names, generated = {}, []
-    for r in rows:
-        n = r.get("customName")
-        if n and counts[n] == 1:
-            names[r["instanceId"]] = n
-        else:
-            names[r["instanceId"]] = generated_name(r)
-            generated.append(names[r["instanceId"]])
+    names = {r["instanceId"]: str(r["ref"]["name"]) for r in rows}
+    generated = [names[r["instanceId"]] for r in rows if not r.get("customName") or counts[r["customName"]] > 1]
     return names, generated, sorted(n for n, c in counts.items() if c > 1)

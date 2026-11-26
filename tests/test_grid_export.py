@@ -1,26 +1,21 @@
-"""grid.export / grid.graph and the external / outside-namespace prune rules of grid.apply, against the fake Grid host."""
+"""grid.export and the external / outside-namespace prune rules of grid.apply, against the fake Grid host."""
 
 import asyncio
 import copy
 import json
-from pathlib import Path
 
 import pytest
-from fakes import SPEC, TARGET, FakeGrid, apply_grid
+from fakes import DEVICE, SPEC, TARGET, FakeGrid, apply_grid
+from pydantic import ValidationError
 
 from bitwig_agent.errors import BridgeError, bridge_error
 from bitwig_agent.grid import export as grid_export
-from bitwig_agent.protocol import validate_call
+from bitwig_agent.protocol import TOOLS, validate_call
 
 
 def export(host, **extra):
     args, timeout = validate_call("grid.export", {**TARGET, **extra})
     return asyncio.run(grid_export.export(host, args, timeout))
-
-
-def graph(host, **extra):
-    args, timeout = validate_call("grid.graph", {**TARGET, **extra})
-    return asyncio.run(grid_export.graph(host, args, timeout))
 
 
 def built():
@@ -63,7 +58,7 @@ def test_round_trip_is_unchanged_and_rebuilds_an_empty_device():
     assert export(fresh)["spec"] == spec
 
 
-def test_include_params_modes_and_out_path(tmp_path):
+def test_include_params_modes():
     host = built()
     none = export(host, includeParams="none")["spec"]
     assert all("params" not in m for m in none["modules"])
@@ -71,15 +66,6 @@ def test_include_params_modes_and_out_path(tmp_path):
     everything = {m["name"]: m.get("params", {}) for m in export(host, includeParams="all")["spec"]["modules"]}
     assert "ATTACK" not in changed["H: mul"]
     assert len(everything["H: env"]) > len(changed["H: env"])
-    path = str(tmp_path / "spec.json")
-    out = export(host, outPath=path)
-    assert out["outcome"] == "applied"
-    assert "spec" not in out
-    assert json.loads(Path(path).read_text())["modules"]
-    with pytest.raises(BridgeError) as err:
-        export(host, outPath=path)
-    assert err.value.error["reason"] == "target_exists"
-    export(host, outPath=path, overwrite=True)
 
 
 def test_unnamed_modules_get_stable_names_that_apply_matches():
@@ -112,25 +98,39 @@ def test_namespace_export_references_outside_modules_as_external():
     host.calls.clear()
     assert apply_grid(host, out)["outcome"] == "already_matched"
     assert host.writes() == []
-    g = graph(host, namespace="H: ")
-    assert g["external"] == ["X: sum"]
-    assert g["modules"][0]["size"]
 
 
-def test_graph_by_names():
+def test_export_reports_refs_and_measured_sizes_beside_the_spec():
     host = built()
-    g = graph(host)
-    assert g["moduleCount"] == 5
-    assert {"from": "H: mul.OUT", "to": "H: add.IN"} in g["connections"]
-    assert all("params" not in m for m in g["modules"])
-    assert "params" in next(m for m in graph(host, includeParams="changed")["modules"] if m["name"] == "H: env")
+    out = export(host)
+    names = {m["name"] for m in out["spec"]["modules"]}
+    assert set(out["refs"]) == names == set(out["sizes"])
+    mul = host.named("H: mul")
+    assert out["refs"]["H: mul"] == {"kind": "gridModule", "device": DEVICE, "id": mul["instanceId"], "name": "H: mul"}
+    assert out["sizes"]["H: mul"] == [mul["info"]["width"], mul["info"]["height"]]
+    assert "sizes" not in out["spec"]
+    assert {"from": "H: mul.OUT", "to": "H: add.IN"} in out["spec"]["connections"]
+
+
+def test_export_takes_no_file_and_never_writes():
+    with pytest.raises(ValidationError):
+        validate_call("grid.export", {**TARGET, "outPath": "/tmp/spec.json"})
+    assert TOOLS["grid.export"].read_only
+
+
+def test_a_saved_export_replays_in_a_new_session_without_writing():
+    host = built()
+    saved = json.dumps(export(host)["spec"])
+    host.calls.clear()
+    assert apply_grid(host, json.loads(saved))["outcome"] == "already_matched"
+    assert host.writes() == []
 
 
 def test_external_modules_wire_without_redeclaring_and_are_never_touched():
     host = built()
     host.add("Add", "X: sum", 20, 12)
     spec = {
-        "target": TARGET,
+        "target": DEVICE,
         "namespace": "H: ",
         "external": ["X: sum"],
         "modules": [{"name": "H: new", "type": "Multiply", "x": 0, "y": 8}],
@@ -153,7 +153,7 @@ def test_missing_external_and_double_declaration_fail_before_writing():
     host = built()
     host.calls.clear()
     spec = {
-        "target": TARGET,
+        "target": DEVICE,
         "external": ["X: smu"],
         "modules": [{"name": "H: new", "type": "Multiply", "x": 0, "y": 8}],
         "connections": [{"from": "H: new.OUT", "to": "X: smu.IN"}],
@@ -183,7 +183,7 @@ def outside_host():
 def test_prune_keeps_inputs_of_modules_outside_the_namespace_and_names_both_ends():
     host, s = outside_host()
     spec = {
-        "target": TARGET,
+        "target": DEVICE,
         "namespace": "Z: ",
         "prune": True,
         "modules": [{"name": "X: sum", "type": "Add", "x": 20, "y": 12}],
@@ -205,7 +205,7 @@ def test_prune_keeps_inputs_of_modules_outside_the_namespace_and_names_both_ends
 def test_outside_disconnect_needs_opt_in_and_is_listed():
     host, s = outside_host()
     spec = {
-        "target": TARGET,
+        "target": DEVICE,
         "namespace": "Z: ",
         "prune": True,
         "allowOutsideDisconnect": True,
@@ -226,7 +226,7 @@ def test_outside_disconnect_needs_opt_in_and_is_listed():
 def test_external_inputs_are_never_pruned_even_with_opt_in():
     host, s = outside_host()
     spec = {
-        "target": TARGET,
+        "target": DEVICE,
         "namespace": "X: ",
         "prune": True,
         "allowOutsideDisconnect": True,
@@ -244,7 +244,7 @@ def test_external_port_and_default_module_names_are_validated_before_writing():
     host = built()
     host.add("Audio Out", "", 30, 0)
     host.calls.clear()
-    base = {"target": TARGET, "modules": [{"name": "H: new", "type": "Multiply", "x": 0, "y": 8}]}
+    base = {"target": DEVICE, "modules": [{"name": "H: new", "type": "Multiply", "x": 0, "y": 8}]}
     bad_port = {
         **base,
         "external": ["_Audio Out_30_0"],
@@ -264,12 +264,6 @@ def test_external_port_and_default_module_names_are_validated_before_writing():
     assert host.writes() == []
     ok = {**bad_port, "connections": [{"from": "H: new.OUT", "to": "_Audio Out_30_0.IN"}]}
     assert apply_grid(host, ok)["applied"]["connections"] == 1
-
-
-def test_unwritable_out_path_is_a_job_failure(tmp_path):
-    with pytest.raises(BridgeError) as err:
-        export(built(), outPath=str(tmp_path), overwrite=True)
-    assert err.value.error["reason"] == "job_failed"
 
 
 def test_voicing_read_error_becomes_a_warning():

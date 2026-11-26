@@ -36,6 +36,7 @@ class Ledger:
             self.applied["voicingFields"] = 0
         self.steps: list[dict[str, Any]] = []
         self.ids: dict[str, str] = {}
+        self.displays: dict[str, str] = {}
         self.warnings: list[str] = []
         self.awaiting_rename: dict[str, str] = {}
         self.unreached: dict[str, int] = {}
@@ -65,6 +66,7 @@ class Ledger:
             "alreadyMatched": self.matched,
             "steps": self.steps,
             "moduleIds": self.ids,
+            **({"params": self.displays} if self.displays else {}),
         }
         return self._payload(base, notes_field(self.spec))
 
@@ -82,7 +84,7 @@ class Ledger:
         if self.awaiting_rename:
             out["unnamedModules"] = dict(self.awaiting_rename)
         out["next"] = (
-            "Outcome unknown: inspect with grid.get before any further write; this device may now hold an unresolved topology change (status holds): release it with ack <id> after inspection."
+            "Outcome unknown: inspect with grid.export before any further write; this device may now hold an unresolved topology change (status holds): release it with ack <id> after inspection."
             if stop.outcome == "unknown"
             else "Fix the cause and re-apply the same spec; applied work is reused."
             + (

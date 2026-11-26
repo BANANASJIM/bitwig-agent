@@ -19,7 +19,7 @@ OUTCOMES = (
 
 RECOVERY = (
     "After outcome unknown the write may have happened, so never repeat it. Read the state it touched "
-    "(for a Grid device, grid.export or grid.get; for a clip, notes.read; for a job, jobs.get). status.holds "
+    "(for a Grid device, grid.export; for a clip, notes.read; for a job, jobs.get). status.holds "
     "lists every unresolved hold and the next of a refusal names the one in the way. Once you have looked, "
     "ack the hold by its id: ack changes nothing, it only lets writes in that domain proceed. A long job "
     "(export.audio, tracks.bounce, project.saveAs) that outlives its request returns unknown with "

@@ -83,7 +83,7 @@ final class GridConnectionWriter {
         if (values.read(INPUT_SOURCE, input.model) != input.source)
             throw Errors.notApplied(
                     Reason.STALE_CONTEXT,
-                    "Native input source changed immediately before dispatch; reacquire grid.get.");
+                    "Native input source changed immediately before dispatch; reacquire grid.export.");
         check.run();
         quarantine.requireAvailable(device);
         if (changed) {
@@ -397,7 +397,7 @@ final class GridConnectionWriter {
                 throw Errors.notApplied(
                         Reason.STALE_CONTEXT,
                         "Requested exact native " + (input ? "input" : "output")
-                                + " is absent; reacquire grid.get. Matching owner/key without stream membership is insufficient.");
+                                + " is absent; reacquire grid.export. Matching owner/key without stream membership is insufficient.");
             return port;
         }
 
@@ -475,7 +475,7 @@ final class GridConnectionWriter {
             if (!Objects.equals(expectedSource, actual))
                 throw Errors.notApplied(
                         Reason.STALE_CONTEXT,
-                        "Exact native input source differs from expectedSource; reacquire grid.get before editing.");
+                        "Exact native input source differs from expectedSource; reacquire grid.export before editing.");
         }
 
         private static Endpoint endpoint(JsonObject p, String name) {

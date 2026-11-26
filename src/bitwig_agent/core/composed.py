@@ -11,7 +11,6 @@ from bitwig_agent.diagnostics import diagnostics
 from bitwig_agent.grid import docs as grid_docs
 from bitwig_agent.grid.apply import apply as grid_apply
 from bitwig_agent.grid.export import export as grid_export
-from bitwig_agent.grid.export import graph as grid_graph
 from bitwig_agent.grid.probe import probe as grid_probe
 from bitwig_agent.grid.render import render as grid_render
 
@@ -45,7 +44,6 @@ HANDLERS = {
     "modulators.describe": modulators_describe,
     "grid.apply": grid_apply,
     "grid.export": grid_export,
-    "grid.graph": grid_graph,
     "grid.probe": grid_probe,
     "grid.describe": grid_describe,
     "grid.render": grid_render,

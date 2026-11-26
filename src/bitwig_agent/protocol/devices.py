@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 import re
-from typing import Annotated, Any, Literal, Self
+from typing import Any, Literal, Self
 
 from pydantic import Field, model_validator
 
-from bitwig_agent.protocol.annotations import SET
 from bitwig_agent.protocol.base import (
-    MAX_STRING_UNITS,
     PROJECT_READY,
     TARGET,
     TRACK,
@@ -22,7 +20,7 @@ from bitwig_agent.protocol.base import (
     omitted,
     validate_local_path,
 )
-from bitwig_agent.protocol.limits import DEVICE_WINDOW, REMOTE_PAGE_SLOTS
+from bitwig_agent.protocol.limits import DEVICE_WINDOW
 
 ANCHOR_FIELDS = frozenset({"deviceIndex", "expectedDeviceName"})
 
@@ -124,60 +122,6 @@ class RemoteSetArgs(ParameterArgs):
     normalizedValue: UnitValue
 
 
-class RemoteSlotSpec(StrictModel):
-    """One Remote Control slot: a scalar Grid parameter by module (exactly one of moduleId or moduleName) and parameterId."""
-
-    moduleId: Uuid = omitted(description="Current module instanceId from grid.get.")
-    moduleName: str = omitted(
-        min_length=1,
-        max_length=MAX_STRING_UNITS,
-        description="Exact effective module name from grid.get; must be unique in the device.",
-    )
-    parameterId: str = Field(
-        max_length=MAX_STRING_UNITS,
-        description="Exact parameterId from grid.get (e.g. VALUE of a Value module); empty is valid.",
-    )
-    label: str = omitted(
-        max_length=256,
-        description="Knob label shown instead of the parameter's own name; empty or absent keeps Bitwig's default.",
-    )
-
-    @model_validator(mode="after")
-    def validate_module(self) -> Self:
-        if len({"moduleId", "moduleName"} & self.model_fields_set) != 1:
-            raise ValueError("supply exactly one of moduleId or moduleName")
-        return self
-
-
-class RemoteDefineArgs(ParameterArgs):
-    pageName: str = Field(
-        min_length=1,
-        max_length=256,
-        description="Page name shown in the device's Remote Controls page list; kept verbatim.",
-    )
-    slots: Annotated[list[RemoteSlotSpec | None], Field(min_length=1, max_length=REMOTE_PAGE_SLOTS)] = Field(
-        description=f"Slot k is entry k (0..{REMOTE_PAGE_SLOTS - 1}); null or absent trailing entries leave that slot empty (replace clears it)."
-    )
-    mode: Literal["create", "replace"] = omitted(
-        description="create (default) refuses an existing page of that name; replace redefines the one preset page of that name, or creates it."
-    )
-
-    @model_validator(mode="after")
-    def validate_distinct(self) -> Self:
-        pairs = [((s.moduleId or "").lower(), s.moduleName or "", s.parameterId) for s in self.slots if s is not None]
-        if len(pairs) != len(set(pairs)):
-            raise ValueError("slots must not repeat a module/parameter pair")
-        return self
-
-
-class RemoteDeletePageArgs(ParameterArgs):
-    pageName: str = Field(
-        min_length=1,
-        max_length=256,
-        description="Exact name of one preset Remote Controls page (made by devices.remote.define or Add New Page); device, module and plugin pages are refused.",
-    )
-
-
 LAYER_PARENT = {"trackId": TRACK, "deviceIndex": 0, "expectedDeviceName": "Instrument Layer"}
 LAYER_TARGET = {
     "parent": LAYER_PARENT,
@@ -203,12 +147,6 @@ DEVICES_LAYERS_INSERT_DESCRIPTION = "Insert a device into one layer of a contain
 DEVICES_REMOTE_GET_DESCRIPTION = "Read a source-device-bound remote-control page and fresh contextToken without changing the GUI page. Discover exact page/control names and zero-based indices. Token tracks observed metadata, not unobservable same-name remaps."
 DEVICES_REMOTE_PAGE_DESCRIPTION = "Change this extension's independent remote page, not the GUI-selected page. Use current contextToken and target pageIndex/expectedPageName from devices.remote.get; get a fresh token after switching."
 DEVICES_REMOTE_SET_DESCRIPTION = "Set one normalized remote control with exact page/control names and fresh contextToken from devices.remote.get. Indices are zero-based; inspect fresh same-source value verification. Unobservable same-name mapping changes are not guaranteed detectable."
-DEVICES_REMOTE_DEFINE_DESCRIPTION = (
-    "Define one named user Remote Controls page on a Grid device (e.g. a Macros page whose knobs drive Value modules), shown in the device's Remote Controls page list. slots: up to "
-    + str(REMOTE_PAGE_SLOTS)
-    + " entries, slot k = entry k, each {moduleId|moduleName, parameterId, label?} naming a scalar Grid parameter (from grid.get), or null for an empty slot. mode create (default) refuses an existing page of that name (page_exists); replace redefines the one device page of that name (maps changed slots, clears slots left empty, keeps matching ones) or creates it. Pages go in the device's preset-page list, the one the UI's Add New Page uses (stored with the device and its preset; device pages cannot hold Grid module parameters); a same-named device, module or plugin page is page_exists. Each native step (create page, name, map/clear slot) is its own undo step, ungrouped; results read back the page name and every slot's native parameter and label, and give pageIndex for devices.remote.page. Needs recording and automation write off (a playing transport is fine) and a licensed device. Inspect an unknown outcome with devices.remote.get; never retry it. Requires the inspected Bitwig 6.1.4 JAR (grid.capabilities remotePages)."
-)
-DEVICES_REMOTE_DELETE_PAGE_DESCRIPTION = "Delete one named preset Remote Controls page (one devices.remote.define made, or one added by hand with Add New Page). Device, module and plugin pages are refused (unsupported_scope); a missing or ambiguous name is stale_context. One native undo step; the result verifies the page is gone and lists the remaining page names. Same safety and 6.1.4 gate as devices.remote.define."
 
 
 SPECS: dict[str, ToolSpec] = {
@@ -287,35 +225,5 @@ SPECS: dict[str, ToolSpec] = {
                 "normalizedValue": 0.5,
             },
         ),
-    ),
-    "devices.remote.define": ToolSpec(
-        RemoteDefineArgs,
-        DEVICES_REMOTE_DEFINE_DESCRIPTION,
-        False,
-        examples=(
-            {
-                **TARGET,
-                "pageName": "Macros",
-                "slots": [
-                    {"moduleId": "abcdef01-2345-6789-abcd-0123456789ab", "parameterId": "VALUE", "label": "darkness"},
-                    None,
-                    {"moduleName": "Mx: grit", "parameterId": "VALUE"},
-                ],
-            },
-            {
-                **TARGET,
-                "pageName": "Macros",
-                "mode": "replace",
-                "slots": [{"moduleName": "Mx: darkness", "parameterId": "VALUE"}],
-            },
-        ),
-        annotations=SET,
-        summary="Define a named Remote Controls page on a Grid device: up to 8 slots {moduleId|moduleName, parameterId, label?} or null. mode create refuses an existing name, replace redefines it. Needs recording and automation write off.",
-    ),
-    "devices.remote.deletePage": ToolSpec(
-        RemoteDeletePageArgs,
-        DEVICES_REMOTE_DELETE_PAGE_DESCRIPTION,
-        False,
-        examples=({**TARGET, "pageName": "Macros"},),
     ),
 }

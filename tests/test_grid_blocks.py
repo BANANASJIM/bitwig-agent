@@ -2,15 +2,12 @@ import pytest
 from fakes import INVALID_NAMES, assert_rejected_before_tcp
 
 from bitwig_agent.core import views
+from bitwig_agent.protocol import TOOLS
+from bitwig_agent.protocol.grid import TARGET
 
 pytestmark = pytest.mark.anyio
 
 TRACK = "12345678-1234-1234-1234-123456789abc"
-TARGET = {"trackId": TRACK, "deviceIndex": 2, "expectedDeviceName": "Polymer"}
-SET = {**TARGET, "contextToken": "context-1", "parameterId": "cutoff", "value": 0.75}
-
-
-"""Grid building blocks the surface hides: driven below the MCP adapter, through the core."""
 
 
 @pytest.mark.parametrize("field", ["expectedX", "expectedY", "x", "y"])
@@ -28,7 +25,7 @@ def test_hidden_blocks_keep_their_required_nullable_schema_contract(all_methods)
     assert tool.annotations.read_only is False
     schema = tool.input_schema
     assert schema["additionalProperties"] is False
-    assert set(schema["required"]) == {"trackId", "deviceIndex", "expectedDeviceName"}
+    assert set(schema["required"]) == {"target"}
     assert schema["oneOf"] == [
         {"required": ["expectedSource", "source", "targetModuleId", "targetPortKey"]},
         {"required": ["connections"]},
@@ -48,7 +45,7 @@ def test_hidden_blocks_keep_their_required_nullable_schema_contract(all_methods)
     assert insertion.annotations.read_only is False
     schema = insertion.input_schema
     assert schema["additionalProperties"] is False
-    assert set(schema["required"]) == {"trackId", "deviceIndex", "expectedDeviceName"}
+    assert set(schema["required"]) == {"target"}
     assert {tuple(sorted(branch["required"])) for branch in schema["oneOf"]} == {("x", "y"), ("modules",)}
     assert {"typeId", "typeName", "modules"} <= set(schema["properties"])
     assert schema["properties"]["modules"]["minItems"] == 1
@@ -59,14 +56,12 @@ def test_hidden_blocks_keep_their_required_nullable_schema_contract(all_methods)
         assert coordinate["minimum"] == -(2**31)
         assert coordinate["maximum"] == 2**31 - 1
         assert "default" not in coordinate
-    rename = tools["grid.modules.rename"]
+    rename = tools["grid.modules.set"]
     assert rename.annotations.read_only is False
     schema = rename.input_schema
     assert schema["additionalProperties"] is False
     assert set(schema["required"]) == {
-        "trackId",
-        "deviceIndex",
-        "expectedDeviceName",
+        "target",
         "moduleId",
         "expectedCustomName",
         "customName",
@@ -155,7 +150,7 @@ async def test_connection_mcp_never_infers_missing_cas_null(core, host, field):
 @pytest.mark.parametrize("value", INVALID_NAMES)
 async def test_grid_rename_mcp_rejects_non_string_and_utf16_overflow_before_tcp(core, host, field, value):
     response = await core.call_tool(
-        "grid.modules.rename",
+        "grid.modules.set",
         {
             **TARGET,
             "moduleId": TRACK,
@@ -172,7 +167,7 @@ async def test_grid_rename_mcp_rejects_non_string_and_utf16_overflow_before_tcp(
 async def test_grid_rename_mcp_missing_name_is_not_defaulted_to_reset(core, host, field):
     params = {**TARGET, "moduleId": TRACK, "expectedCustomName": "", "customName": ""}
     del params[field]
-    response = await core.call_tool("grid.modules.rename", params)
+    response = await core.call_tool("grid.modules.set", params)
     assert response.is_error
     assert_rejected_before_tcp(response.structured_content, host)
 
@@ -186,7 +181,7 @@ async def test_grid_rename_mcp_preserves_unknown_raw_reset_outcome_without_retry
         "details": {"mutationDispatched": True, "rollbackVerified": False},
     }
     host.reply = lambda request: {"id": request["id"], "result": unknown}
-    response = await core.call_tool("grid.modules.rename", params)
+    response = await core.call_tool("grid.modules.set", params)
     assert response.is_error
     assert response.structured_content == unknown
     assert host.requests[0]["params"] == params
@@ -204,3 +199,37 @@ async def test_absent_and_explicit_null_connection_fields_stay_distinct(core, ho
     response = await core.call_tool("grid.connections.set", params)
     assert not response.is_error
     assert host.requests[-1]["params"] == params
+
+
+GRID_WRITE = {"moduleId": TRACK, "parameterId": "", "expectedKind": "boolean", "expectedValue": False, "value": True}
+
+
+async def test_grid_host_unknown_error_survives_the_core_without_retry(core, host):
+    unknown = {
+        "outcome": "unknown",
+        "reason": "deadline",
+        "message": "Observe before another write",
+        "details": {"dispatched": True},
+    }
+    host.reply = lambda request: {"id": request["id"], "result": unknown}
+    response = await core.call_tool("grid.parameters.set", {**TARGET, **GRID_WRITE})
+    assert response.is_error is True
+    assert response.structured_content == unknown
+    assert host.requests[0]["timeoutMs"] == TOOLS["grid.parameters.set"].default_timeout_ms
+    assert host.connections == 1
+    assert len(host.requests) == 1
+    assert host.requests[0]["params"]["expectedValue"] is False
+    assert host.requests[0]["params"]["value"] is True
+
+
+async def test_grid_parameter_utf16_limit_is_checked_beyond_json_schema(core, host):
+    response = await core.call_tool("grid.parameters.set", {**TARGET, **GRID_WRITE, "parameterId": "𝄞" * 513})
+    assert response.is_error
+    assert_rejected_before_tcp(response.structured_content, host)
+
+
+async def test_grid_integer_float_token_is_rejected_despite_json_schema_integer_semantics(core, host):
+    write = {**GRID_WRITE, "expectedKind": "integer", "expectedValue": 0, "value": 1.0}
+    response = await core.call_tool("grid.parameters.set", {**TARGET, **write})
+    assert response.is_error
+    assert_rejected_before_tcp(response.structured_content, host)

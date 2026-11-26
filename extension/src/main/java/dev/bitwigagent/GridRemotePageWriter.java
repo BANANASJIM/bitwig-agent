@@ -1,19 +1,17 @@
 package dev.bitwigagent;
 
 import com.google.gson.*;
+import dev.bitwigagent.core.Refs;
 import java.util.*;
-import java.util.regex.Pattern;
 
 /**
  * One user Remote Controls page in a Grid device's preset-page list (the list the UI's "Add New Page" uses; device
- * pages refuse Grid module parameters): define (create or replace) its name and eight slots, or delete it. Each native
+ * pages refuse Grid module parameters): define (create, or change the page of that name) its eight slots, or delete it. Each native
  * step is its own undo-aware model change; there is no outer group, retry or rollback. Device, module and plugin
  * pages are listed for name conflicts but never edited.
  */
 final class GridRemotePageWriter {
-    static final int SLOTS = HostLimits.LIMITS.remotePageSlots, MAX_PAGE_NAME = 256, MAX_LABEL = 256;
-    private static final Pattern UUID_PATTERN =
-            Pattern.compile("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}");
+    static final int SLOTS = HostLimits.LIMITS.remotePageSlots;
     private static final Set<GridSnapshotReader.Kind> SCALARS = EnumSet.of(
             GridSnapshotReader.Kind.FLOAT,
             GridSnapshotReader.Kind.BOOLEAN,
@@ -77,7 +75,7 @@ final class GridRemotePageWriter {
         Object device = target.target;
         Host host = host(device);
         Slot[] wanted = resolve(source, target, device, request, check);
-        Object existing = existing(host, request.pageName, request.replace);
+        Object existing = existing(host, request.pageName);
         if (existing != null)
             for (Slot slot : wanted)
                 if (slot != null && !nativeAccess.eligible(existing, slot.binding.parameter))
@@ -88,7 +86,7 @@ final class GridRemotePageWriter {
                 contexts.requireRemoteWritable(device, host.host, host.pages, null, check);
         values.guardTarget(target);
         for (Slot slot : wanted) if (slot != null) values.guardParameter(slot.binding);
-        if (existing != existing(host, request.pageName, request.replace))
+        if (existing != existing(host, request.pageName))
             throw Errors.notApplied(Reason.STALE_CONTEXT, "The named Remote Controls page changed before dispatch.");
         contexts.requireRemoteWritable(device, host.host, host.pages, context, check);
         check.run();
@@ -118,7 +116,7 @@ final class GridRemotePageWriter {
                         throw Errors.unknown(
                                 Reason.UNSUPPORTED_SCOPE,
                                 "The new page refuses " + slot.describe()
-                                        + "; it was created empty and named. Remove it with devices.remote.deletePage.");
+                                        + "; it was created empty and named. Remove it with devices.remote.delete.");
             }
             for (int index = 0; index < SLOTS; index++) {
                 Slot slot = wanted[index];
@@ -134,7 +132,7 @@ final class GridRemotePageWriter {
                     operations.add(operation("clear", index));
                 } else {
                     boolean sameTarget = current != null && nativeAccess.slotTarget(current) == slot.binding.parameter;
-                    if (sameTarget && slot.label.equals(nativeAccess.slotLabel(current))) continue;
+                    if (sameTarget && slot.spec.labelMatches(nativeAccess.slotLabel(current))) continue;
                     if (!dispatched) {
                         dispatch.run();
                         dispatched = true;
@@ -146,7 +144,8 @@ final class GridRemotePageWriter {
                         operations.add(operation("clear", index));
                         check.run();
                     }
-                    nativeAccess.mapSlot(page, index, slot.label, slot.binding.parameter);
+                    nativeAccess.mapSlot(
+                            page, index, slot.spec.label == null ? "" : slot.spec.label, slot.binding.parameter);
                     operations.add(operation("map", index));
                 }
             }
@@ -174,23 +173,35 @@ final class GridRemotePageWriter {
         check.run();
         JsonObject result = Results.outcome(dispatched ? Outcome.APPLIED : Outcome.ALREADY_MATCHED);
         result.add("page", pageJson(host, page));
+        int shown = nativeAccess.visiblePages(host.host).indexOf(page);
+        if (shown >= 0) result.add("ref", Refs.remotePage(source.ref(), shown, request.pageName));
         result.addProperty("created", created);
         JsonArray slots = new JsonArray();
-        for (Slot slot : wanted) slots.add(slot == null ? JsonNull.INSTANCE : slot.json());
+        for (int index = 0; index < SLOTS; index++)
+            slots.add(
+                    wanted[index] == null
+                            ? JsonNull.INSTANCE
+                            : wanted[index].json(nativeAccess.slotLabel(nativeAccess.slot(page, index))));
         result.add("slots", slots);
         result.add("operations", operations);
         result.add("pages", visibleNames(host));
         return finish(result, dispatched, "exact_native_remote_page_readback");
     }
 
-    JsonObject deletePage(DeviceSources.Source source, String pageName, Runnable check, Runnable dispatch) {
+    JsonObject deletePage(DeviceSources.Source source, JsonObject ref, Runnable check, Runnable dispatch) {
+        String pageName = ref.get("name").getAsString();
         GridSnapshotReader.NativeTarget target = values.bindTarget(source, check);
         Host host = host(target.target);
-        Object page = deletable(host, pageName);
+        Object page = deletable(host, ref);
+        int shown = nativeAccess.visiblePages(host.host).indexOf(page);
+        if (shown != ref.get("index").getAsInt())
+            throw Errors.targetChanged(
+                    "The page is at another index than the one read.",
+                    shown < 0 ? null : Refs.remotePage(source.ref(), shown, pageName));
         GridParameterContext.Capture context =
                 contexts.requireRemoteWritable(target.target, host.host, host.pages, null, check);
         values.guardTarget(target);
-        if (deletable(host, pageName) != page)
+        if (deletable(host, ref) != page)
             throw Errors.notApplied(Reason.STALE_CONTEXT, "The named Remote Controls page changed before dispatch.");
         contexts.requireRemoteWritable(target.target, host.host, host.pages, context, check);
         check.run();
@@ -252,24 +263,20 @@ final class GridRemotePageWriter {
 
     /**
      * The one preset page named name, or null when none exists. A same-named page of another kind (device, module,
-     * plugin) or a create over an existing preset page is a conflict; several preset pages of that name are ambiguous.
+     * plugin) is a conflict; several preset pages of that name are ambiguous.
      */
-    private Object existing(Host host, String name, boolean replace) {
+    private Object existing(Host host, String name) {
         Named named = named(host, name);
         if (named.otherKind != null)
             throw Errors.notApplied(
                     Reason.TARGET_EXISTS,
                     "A " + named.otherKind + " Remote Controls page is already named " + quote(name)
-                            + "; only preset pages are edited here. Choose another pageName.");
-        if (named.page != null && !replace)
-            throw Errors.notApplied(
-                    Reason.TARGET_EXISTS,
-                    "A Remote Controls page is already named " + quote(name)
-                            + "; pass mode \"replace\" to redefine it.");
+                            + "; only preset pages are edited here. Choose another name.");
         return named.page;
     }
 
-    private Object deletable(Host host, String name) {
+    private Object deletable(Host host, JsonObject ref) {
+        String name = ref.get("name").getAsString();
         Named named = named(host, name);
         if (named.page == null && named.otherKind != null)
             throw Errors.notApplied(
@@ -277,9 +284,7 @@ final class GridRemotePageWriter {
                     "The page named " + quote(name) + " is a " + named.otherKind
                             + " page; only preset pages can be deleted here.");
         if (named.page == null)
-            throw Errors.notApplied(
-                    Reason.STALE_CONTEXT,
-                    "No preset Remote Controls page is named " + quote(name) + "; reacquire devices.remote.get.");
+            throw Errors.targetNotFound(ref, "No preset Remote Controls page is named " + quote(name) + ".");
         return named.page;
     }
 
@@ -351,7 +356,7 @@ final class GridRemotePageWriter {
         if (nativeAccess.pageList(page) != host.pages
                 || !nativeAccess.pages(host.pages).contains(page))
             throw Errors.notApplied(Reason.STALE_CONTEXT, "The defined page is no longer in the preset-page list.");
-        if (!request.pageName.equals(nativeAccess.pageName(page)))
+        if (!request.pageName.equals(displayName(host, page, "preset")))
             throw Errors.notApplied(
                     Reason.STALE_CONTEXT, "Native page name readback differs from the requested pageName.");
         if (!nativeAccess.visiblePages(host.host).contains(page))
@@ -363,7 +368,7 @@ final class GridRemotePageWriter {
                     ? slot != null
                     : slot == null
                             || nativeAccess.slotTarget(slot) != want.binding.parameter
-                            || !want.label.equals(nativeAccess.slotLabel(slot)))
+                            || !want.spec.labelMatches(nativeAccess.slotLabel(slot)))
                 throw Errors.notApplied(
                         Reason.STALE_CONTEXT, "Native slot " + index + " readback differs from the request.");
         }
@@ -382,11 +387,12 @@ final class GridRemotePageWriter {
         for (int index = 0; index < request.slots.size(); index++) {
             SlotSpec spec = request.slots.get(index);
             if (spec == null) continue;
-            UUID moduleId =
-                    spec.moduleId != null ? spec.moduleId : values.moduleIdNamed(target, spec.moduleName, check);
+            if (!Refs.matches(spec.device, source.ref(), false))
+                throw Errors.notApplied(
+                        Reason.UNSUPPORTED_SCOPE, "slot " + index + " names a parameter of another device.");
             GridSnapshotReader.ParameterBinding binding =
-                    values.bindParameter(source, moduleId, spec.parameterId, check);
-            Slot slot = new Slot(index, spec, moduleId, binding);
+                    values.bindParameter(source, spec.moduleId, spec.parameterId, check);
+            Slot slot = new Slot(index, spec, binding);
             if (!SCALARS.contains(binding.kind))
                 throw Errors.notApplied(
                         Reason.UNSUPPORTED_SCOPE,
@@ -407,30 +413,24 @@ final class GridRemotePageWriter {
 
     private static final class Slot {
         final int index;
-        final UUID moduleId;
-        final String moduleName, parameterId, label;
+        final SlotSpec spec;
         final GridSnapshotReader.ParameterBinding binding;
 
-        Slot(int index, SlotSpec spec, UUID moduleId, GridSnapshotReader.ParameterBinding binding) {
+        Slot(int index, SlotSpec spec, GridSnapshotReader.ParameterBinding binding) {
             this.index = index;
-            this.moduleId = moduleId;
-            this.moduleName = spec.moduleName;
-            this.parameterId = spec.parameterId;
-            this.label = spec.label;
+            this.spec = spec;
             this.binding = binding;
         }
 
         String describe() {
-            return "slot " + index + " (" + (moduleName != null ? quote(moduleName) : moduleId) + "/"
-                    + quote(parameterId) + ")";
+            return "slot " + index + " (" + spec.moduleId + "/" + quote(spec.parameterId) + ")";
         }
 
-        JsonObject json() {
+        /** The slot as read back: its parameter and the label it now has, empty meaning Bitwig's default. */
+        JsonObject json(String label) {
             JsonObject result = new JsonObject();
-            result.addProperty("moduleId", moduleId.toString());
-            if (moduleName != null) result.addProperty("moduleName", moduleName);
-            result.addProperty("parameterId", parameterId);
-            result.addProperty("label", label);
+            result.add("parameter", spec.ref);
+            if (label != null && !label.isEmpty()) result.addProperty("label", label);
             return result;
         }
     }
@@ -461,104 +461,63 @@ final class GridRemotePageWriter {
 
     // ---- requests --------------------------------------------------------------------------------------------
 
+    /** One slot: the gridModule-owned parameter ref, and the module and parameter it names. */
     static final class SlotSpec {
+        final JsonObject ref, device;
         final UUID moduleId;
-        final String moduleName, parameterId, label;
+        final String parameterId, label;
 
-        SlotSpec(UUID moduleId, String moduleName, String parameterId, String label) {
-            this.moduleId = moduleId;
-            this.moduleName = moduleName;
-            this.parameterId = parameterId;
+        /** {@code label} is null when the request leaves it out: Bitwig's default, and an existing label is kept. */
+        SlotSpec(JsonObject ref, String label) {
+            this.ref = ref;
             this.label = label;
+            JsonObject owner = ref.getAsJsonObject("owner");
+            this.device = owner.getAsJsonObject("device");
+            this.moduleId = UUID.fromString(owner.get("id").getAsString());
+            this.parameterId = ref.get("id").getAsString();
+        }
+
+        boolean labelMatches(String actual) {
+            return label == null || label.equals(actual);
         }
     }
 
-    /** devices.remote.define: pageName, slots (1..SLOTS, slot k = entry k, null = empty) and mode create|replace. */
+    /** devices.remote.define: the page name and its slots (1..SLOTS, slot k = entry k, null = empty). */
     static final class Request {
         final String pageName;
-        final boolean replace;
         final List<SlotSpec> slots;
 
-        private Request(String pageName, boolean replace, List<SlotSpec> slots) {
+        private Request(String pageName, List<SlotSpec> slots) {
             this.pageName = pageName;
-            this.replace = replace;
             this.slots = slots;
         }
 
         static Request parse(JsonObject p) {
-            String name = pageName(p);
-            boolean replace = false;
-            if (p.has("mode")) {
-                JsonElement mode = p.get("mode");
-                if (!mode.isJsonPrimitive()
-                        || !mode.getAsJsonPrimitive().isString()
-                        || !(mode.getAsString().equals("create")
-                                || mode.getAsString().equals("replace")))
-                    throw Errors.notApplied(Reason.INVALID_PARAMS, "mode must be \"create\" or \"replace\".");
-                replace = mode.getAsString().equals("replace");
-            }
-            JsonElement array = p.get("slots");
-            if (array == null
-                    || !array.isJsonArray()
-                    || array.getAsJsonArray().size() < 1
-                    || array.getAsJsonArray().size() > SLOTS)
-                throw Errors.notApplied(
-                        Reason.INVALID_PARAMS,
-                        "slots must be an array of 1.." + SLOTS + " entries (slot k = entry k; null leaves it empty).");
             List<SlotSpec> slots = new ArrayList<>();
             Set<String> pairs = new HashSet<>();
-            for (JsonElement element : array.getAsJsonArray()) {
+            for (JsonElement element : p.getAsJsonArray("slots")) {
                 if (element.isJsonNull()) {
                     slots.add(null);
                     continue;
                 }
-                if (!element.isJsonObject())
-                    throw Errors.notApplied(Reason.INVALID_PARAMS, "Each slot must be an object or null.");
-                JsonObject slot = element.getAsJsonObject();
-                for (String key : slot.keySet()) {
-                    if (!Set.of("moduleId", "moduleName", "parameterId", "label")
-                            .contains(key))
-                        throw Errors.notApplied(Reason.INVALID_PARAMS, "Unknown slot field: " + key);
-                    if (slot.get(key).isJsonNull())
-                        throw Errors.notApplied(Reason.INVALID_PARAMS, "slot " + key + " must not be null.");
-                }
-                if (slot.has("moduleId") == slot.has("moduleName"))
+                JsonObject entry = element.getAsJsonObject(), ref = entry.getAsJsonObject("parameter");
+                if (!"gridModule".equals(Refs.kind(ref.getAsJsonObject("owner"))))
                     throw Errors.notApplied(
-                            Reason.INVALID_PARAMS, "Each slot needs exactly one of moduleId or moduleName.");
-                UUID moduleId = null;
-                String moduleName = null;
-                if (slot.has("moduleId")) {
-                    String id = text(slot, "moduleId", 0, 36);
-                    if (!UUID_PATTERN.matcher(id).matches())
-                        throw Errors.notApplied(Reason.INVALID_PARAMS, "slot moduleId must be a canonical UUID.");
-                    moduleId = UUID.fromString(id);
-                } else moduleName = text(slot, "moduleName", 1, GridSnapshotReader.MAX_TEXT);
-                if (!slot.has("parameterId"))
-                    throw Errors.notApplied(Reason.INVALID_PARAMS, "Each slot needs parameterId.");
-                String parameterId = text(slot, "parameterId", 0, GridSnapshotReader.MAX_TEXT);
-                String label = slot.has("label") ? text(slot, "label", 0, MAX_LABEL) : "";
-                String pair = (moduleId != null ? "id:" + moduleId : "name:" + moduleName) + "\n" + parameterId;
-                if (!pairs.add(pair))
+                            Reason.UNSUPPORTED_SCOPE, "A page slot takes a parameter owned by a Grid module.");
+                SlotSpec slot = new SlotSpec(
+                        ref, entry.has("label") ? entry.get("label").getAsString() : null);
+                if (!pairs.add(slot.moduleId + "\n" + slot.parameterId))
                     throw Errors.notApplied(Reason.INVALID_PARAMS, "slots must not repeat a module/parameter pair.");
-                slots.add(new SlotSpec(moduleId, moduleName, parameterId, label));
+                slots.add(slot);
             }
-            return new Request(name, replace, slots);
+            return new Request(p.get("name").getAsString(), slots);
         }
 
-        static String pageName(JsonObject p) {
-            return text(p, "pageName", 1, MAX_PAGE_NAME);
-        }
-
-        private static String text(JsonObject p, String key, int min, int max) {
-            JsonElement value = p.get(key);
-            if (value == null
-                    || !value.isJsonPrimitive()
-                    || !value.getAsJsonPrimitive().isString()
-                    || value.getAsString().length() < min
-                    || value.getAsString().length() > max)
-                throw Errors.notApplied(
-                        Reason.INVALID_PARAMS, key + " must be a string of " + min + ".." + max + " UTF-16 units.");
-            return value.getAsString();
+        /** devices.remote.delete: the remotePage ref of the page to delete. */
+        static JsonObject page(JsonObject p) {
+            JsonObject ref = p.getAsJsonObject("target");
+            if (!"remotePage".equals(Refs.kind(ref))) throw Errors.invalid("target must be a remotePage ref.");
+            return ref;
         }
     }
 }

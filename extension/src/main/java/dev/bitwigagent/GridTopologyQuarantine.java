@@ -255,7 +255,7 @@ final class GridTopologyQuarantine {
     }
 
     private static String next(String device) {
-        return "Inspect with grid.get, then ack " + holdId(device) + ".";
+        return "Inspect with grid.export, then ack " + holdId(device) + ".";
     }
 
     String reserve(String device) {

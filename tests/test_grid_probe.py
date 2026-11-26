@@ -217,7 +217,7 @@ def test_failed_restore_reports_exactly_what_is_left(rig):
     err = e.value.result
     assert (err["outcome"], err["reason"]) == ("unknown", "job_failed")
     assert err["restoreError"]["reason"] == "deadline"
-    assert err["left"] == "unknown: reading or writing the graph failed; inspect with grid.graph"
+    assert err["left"] == "unknown: reading or writing the graph failed; inspect with grid.export"
     assert {d["input"]: d["source"] for d in err["originally"]} == {
         "P: out1.IN": "P: mix.OUT",
         "P: out2.IN": "P: alt.OUT",
