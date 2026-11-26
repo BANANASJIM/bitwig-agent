@@ -18,7 +18,7 @@ import bound_parity
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-from bitwig_agent.catalog import CLIENT_SIDE, TOOLS
+from bitwig_agent.protocol import CLIENT_SIDE, TOOLS
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("extension_build", ROOT / "scripts/build.py")

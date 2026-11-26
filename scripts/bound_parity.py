@@ -17,8 +17,9 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from bitwig_agent.catalog import CLIENT_SIDE, TOOLS
-from bitwig_agent.schema import MAX_BEAT, MIDI_PITCH_COUNT
+from bitwig_agent.protocol import CLIENT_SIDE, TOOLS
+from bitwig_agent.protocol.base import MAX_BEAT
+from bitwig_agent.protocol.launcher import MIDI_PITCH_COUNT
 
 UUID_PATTERN = r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 UUID = re.compile(UUID_PATTERN)

@@ -12,9 +12,9 @@ from fakes import SPEC, TARGET, FakeGrid, apply_grid
 from pydantic import ValidationError
 
 from bitwig_agent import grid_apply, raw_scales
-from bitwig_agent.catalog import validate_call
 from bitwig_agent.cli import parse_arguments
 from bitwig_agent.errors import BridgeError
+from bitwig_agent.protocol import validate_call
 
 
 def test_fresh_build_then_idempotent_reapply_writes_nothing():

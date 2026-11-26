@@ -1,6 +1,7 @@
 import pytest
 
-from bitwig_agent.catalog import CLIENT_SIDE, NOTE_WINDOW, TOOLS
+from bitwig_agent.protocol import CLIENT_SIDE, TOOLS
+from bitwig_agent.protocol.launcher import NOTE_WINDOW
 
 pytestmark = pytest.mark.anyio
 

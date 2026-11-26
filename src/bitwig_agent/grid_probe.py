@@ -17,7 +17,7 @@ from typing import Any
 from bitwig_agent import audio
 from bitwig_agent.errors import BridgeError, bridge_error
 from bitwig_agent.grid_export import module_names, read_all
-from bitwig_agent.schema import MAX_TIMEOUT_MS
+from bitwig_agent.protocol.base import MAX_TIMEOUT_MS
 
 AUDIO_OUT = "Audio Out"
 MAX_EDITS = 32  # one grid.connections.set batch: all expectedSource checks first, then in order

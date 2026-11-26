@@ -3,7 +3,8 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from bitwig_agent.catalog import EMPTY_HASH, validate_call
+from bitwig_agent.protocol import validate_call
+from bitwig_agent.protocol.automation import EMPTY_HASH
 
 TRACK = "11111111-1111-1111-1111-111111111111"
 MODULE = "22222222-2222-2222-2222-222222222222"
