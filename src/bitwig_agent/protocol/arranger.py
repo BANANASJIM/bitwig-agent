@@ -103,12 +103,14 @@ SPECS: dict[str, ToolSpec] = {
             "notes": [{"beat": 0, "pitch": 48, "velocity": 80, "durationBeats": 16}],
             "channel": 1,
         },
+        project_write=True,
     ),
     "arranger.clips.copyFromLauncher": tool(
         ArrangerCopyArgs,
         ARRANGER_CLIPS_COPY_FROM_LAUNCHER_DESCRIPTION,
         False,
         {**CLIP, "expectedClipName": "Sketch", "startBeats": 0},
+        project_write=True,
     ),
     "arranger.clips.edit": tool(
         ArrangerClipEditArgs,
@@ -139,5 +141,6 @@ SPECS: dict[str, ToolSpec] = {
             "name": "Chorus",
         },
         {"trackId": TRACK, "clipIndex": 0, "expectedStartBeats": 16, "expectedName": "Verse", "op": "delete"},
+        project_write=True,
     ),
 }

@@ -38,6 +38,7 @@ def main() -> None:
     gson = build.gson_jar()
     sources = [*build.verification_sources(), *sorted(TEST_ROOT.rglob("*.java"))]
     build.compile_java(sources, classes, [gson, api], build.lint_flag(api))
+    build.write_protocol_bundle(classes)
     classpath = os.pathsep.join(map(str, [classes, gson, api]))
     print(f"Java simulated-host/transport layer: {len(tests)} test mains", flush=True)
     failures = []

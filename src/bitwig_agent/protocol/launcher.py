@@ -314,23 +314,36 @@ SPECS: dict[str, ToolSpec] = {
             "name": "Sketch",
             "notes": [{"beat": 0, "pitch": 60, "velocity": 90, "durationBeats": 1}],
         },
+        project_write=True,
     ),
-    "scenes.append": tool(ScenesAppendArgs, SCENES_APPEND_DESCRIPTION, False, {}, {"count": 2}),
+    "scenes.append": tool(ScenesAppendArgs, SCENES_APPEND_DESCRIPTION, False, {}, {"count": 2}, project_write=True),
     "scenes.list": tool(StatusArgs, SCENES_LIST_DESCRIPTION, True),
     "scenes.rename": tool(
         SceneRenameArgs, SCENES_RENAME_DESCRIPTION, False, {"sceneIndex": 0, "expectedName": "", "name": "Intro"}
     ),
     "scenes.launch": tool(
-        SceneTargetArgs, SCENES_LAUNCH_DESCRIPTION, False, {"sceneIndex": 0, "expectedName": "Intro"}
+        SceneTargetArgs, SCENES_LAUNCH_DESCRIPTION, False, {"sceneIndex": 0, "expectedName": "Intro"}, needs_engine=True
     ),
     "scenes.duplicate": tool(
-        SceneTargetArgs, SCENES_DUPLICATE_DESCRIPTION, False, {"sceneIndex": 0, "expectedName": "Intro"}
+        SceneTargetArgs,
+        SCENES_DUPLICATE_DESCRIPTION,
+        False,
+        {"sceneIndex": 0, "expectedName": "Intro"},
+        project_write=True,
     ),
     "scenes.delete": tool(
-        SceneTargetArgs, SCENES_DELETE_DESCRIPTION, False, {"sceneIndex": 0, "expectedName": "Intro"}
+        SceneTargetArgs,
+        SCENES_DELETE_DESCRIPTION,
+        False,
+        {"sceneIndex": 0, "expectedName": "Intro"},
+        project_write=True,
     ),
     "launcher.import": tool(
-        ClipImportArgs, LAUNCHER_IMPORT_DESCRIPTION, False, {**CLIP, "path": "/absolute/path/audio.wav"}
+        ClipImportArgs,
+        LAUNCHER_IMPORT_DESCRIPTION,
+        False,
+        {**CLIP, "path": "/absolute/path/audio.wav"},
+        project_write=True,
     ),
     "clips.edit": tool(
         ClipEditArgs,
@@ -345,7 +358,7 @@ SPECS: dict[str, ToolSpec] = {
         {**CLIP, "expectedClipName": "Sketch", "op": "delete"},
         {**CLIP, "expectedClipName": "Sketch", "op": "copyTo", "targetSlotIndex": 1},
     ),
-    "launcher.launch": tool(ClipArgs, LAUNCHER_LAUNCH_DESCRIPTION, False, CLIP),
+    "launcher.launch": tool(ClipArgs, LAUNCHER_LAUNCH_DESCRIPTION, False, CLIP, needs_engine=True),
     "launcher.stop": tool(DeviceArgs, LAUNCHER_STOP_DESCRIPTION, False, {"trackId": TRACK}),
     "notes.read": tool(NoteWindowArgs, NOTES_READ_DESCRIPTION, False, NOTE_WINDOW, CLIP),
     "notes.edit": tool(

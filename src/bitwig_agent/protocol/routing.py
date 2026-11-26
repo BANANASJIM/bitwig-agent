@@ -188,6 +188,7 @@ SPECS: dict[str, ToolSpec] = {
                 "nativeType": "from-tracks.routing.get",
             },
         },
+        project_write=True,
     ),
     "devices.sidechain.get": tool(
         SidechainGetArgs, DEVICES_SIDECHAIN_GET_DESCRIPTION, True, {**TARGET, "expectedDeviceName": "Compressor"}
@@ -224,5 +225,6 @@ SPECS: dict[str, ToolSpec] = {
                 "nativeType": "from-devices.sidechain.get",
             },
         },
+        project_write=True,
     ),
 }

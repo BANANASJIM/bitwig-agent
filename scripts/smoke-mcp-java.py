@@ -72,6 +72,7 @@ async def exercise(folder: Path, api: Path) -> None:  # noqa: PLR0915
     fixture.write_text(FIXTURE, encoding="utf-8")
     gson = build.gson_jar()
     build.compile_java([*build.verification_sources(), fixture], folder, [gson, api], build.lint_flag(api))
+    build.write_protocol_bundle(folder)
     process = await asyncio.create_subprocess_exec(
         "java",
         "-cp",

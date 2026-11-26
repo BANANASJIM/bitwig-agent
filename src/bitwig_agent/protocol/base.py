@@ -93,6 +93,26 @@ class ToolSpec:
     description: str
     read_only: bool
     examples: tuple[dict[str, Any], ...]
+    project_write: bool = False
+    needs_engine: bool = False
+    host: bool = True
+
+    @property
+    def requires(self) -> tuple[str, ...]:
+        return tuple(
+            name for name, needed in (("projectReady", self.project_write), ("engine", self.needs_engine)) if needed
+        )
+
+    @property
+    def default_timeout_ms(self) -> int:
+        return int(self.model.model_fields["timeoutMs"].default)
+
+    @property
+    def max_timeout_ms(self) -> int:
+        for constraint in self.model.model_fields["timeoutMs"].metadata:
+            if getattr(constraint, "le", None) is not None:
+                return int(constraint.le)
+        return MAX_TIMEOUT_MS
 
     def describe(self) -> dict[str, Any]:
         return {
@@ -103,5 +123,13 @@ class ToolSpec:
         }
 
 
-def tool(model: type[BaseModel], description: str, read_only: bool, *examples: dict[str, Any]) -> ToolSpec:
-    return ToolSpec(model, description, read_only, examples or ({},))
+def tool(
+    model: type[BaseModel],
+    description: str,
+    read_only: bool,
+    *examples: dict[str, Any],
+    project_write: bool = False,
+    needs_engine: bool = False,
+    host: bool = True,
+) -> ToolSpec:
+    return ToolSpec(model, description, read_only, examples or ({},), project_write, needs_engine, host)

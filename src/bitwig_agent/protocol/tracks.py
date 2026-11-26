@@ -152,14 +152,20 @@ SPECS: dict[str, ToolSpec] = {
         TRACKS_CREATE_DESCRIPTION,
         False,
         {"type": "instrument", "position": -1, "name": "Agent Sketch"},
+        project_write=True,
     ),
     "tracks.group": tool(
         TrackGroupArgs,
         TRACKS_GROUP_DESCRIPTION,
         False,
         {"trackIds": [TRACK, "12345678-1234-1234-1234-123456789abd"], "name": "Drums"},
+        project_write=True,
     ),
     "tracks.delete": tool(
-        TrackDeleteArgs, TRACKS_DELETE_DESCRIPTION, False, {"trackId": TRACK, "expectedName": "Track name"}
+        TrackDeleteArgs,
+        TRACKS_DELETE_DESCRIPTION,
+        False,
+        {"trackId": TRACK, "expectedName": "Track name"},
+        project_write=True,
     ),
 }

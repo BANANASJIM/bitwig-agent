@@ -225,9 +225,12 @@ SPECS: dict[str, ToolSpec] = {
             "deviceIndex": 1,
             "expectedDeviceName": "EQ-5",
         },
+        project_write=True,
     ),
-    "devices.delete": tool(ParameterArgs, DEVICES_DELETE_DESCRIPTION, False, TARGET),
-    "devices.move": tool(DeviceMoveArgs, DEVICES_MOVE_DESCRIPTION, False, {**TARGET, "deviceIndex": 3, "toIndex": 1}),
+    "devices.delete": tool(ParameterArgs, DEVICES_DELETE_DESCRIPTION, False, TARGET, project_write=True),
+    "devices.move": tool(
+        DeviceMoveArgs, DEVICES_MOVE_DESCRIPTION, False, {**TARGET, "deviceIndex": 3, "toIndex": 1}, project_write=True
+    ),
     "devices.layers.insert": tool(
         LayerInsertArgs,
         DEVICES_LAYERS_INSERT_DESCRIPTION,
@@ -240,6 +243,7 @@ SPECS: dict[str, ToolSpec] = {
             "id": "org.example.effect",
             "position": "end",
         },
+        project_write=True,
     ),
     "devices.remote.get": tool(ParameterArgs, DEVICES_REMOTE_GET_DESCRIPTION, True, TARGET),
     "devices.remote.page": tool(

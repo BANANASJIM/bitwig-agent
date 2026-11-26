@@ -620,6 +620,7 @@ SPECS: dict[str, ToolSpec] = {
                 }
             ],
         },
+        project_write=True,
     ),
     "grid.topology.reconcile": tool(GridTopologyReconcileArgs, GRID_TOPOLOGY_RECONCILE_DESCRIPTION, False, TARGET),
     "grid.voicing.get": tool(GridVoicingGetArgs, GRID_VOICING_GET_DESCRIPTION, True, TARGET),
@@ -629,6 +630,7 @@ SPECS: dict[str, ToolSpec] = {
         False,
         {**TARGET, "expected": {"voices": 1, "voiceStacking": 1}, "set": {"voices": 8, "voiceStacking": 2}},
         {**TARGET, "expected": {"voices": 1, "monoMode": "true_mono"}, "set": {"monoMode": "digi_mono"}},
+        project_write=True,
     ),
     "grid.modules.insert": tool(
         GridModuleInsertArgs,
@@ -642,6 +644,7 @@ SPECS: dict[str, ToolSpec] = {
                 {"typeName": "Low-pass", "x": 8, "y": 2},
             ],
         },
+        project_write=True,
     ),
     "grid.modules.rename": tool(
         GridModuleRenameArgs,
@@ -659,18 +662,21 @@ SPECS: dict[str, ToolSpec] = {
             "expectedCustomName": "Lead = \u03b1",
             "customName": "",
         },
+        project_write=True,
     ),
     "grid.modules.move": tool(
         GridModuleMoveArgs,
         GRID_MODULES_MOVE_DESCRIPTION,
         False,
         {**TARGET, "moduleId": "abcdef01-2345-6789-abcd-0123456789ab", "expectedX": 0, "expectedY": 0, "x": 4, "y": 2},
+        project_write=True,
     ),
     "grid.modules.delete": tool(
         GridModuleEditArgs,
         GRID_MODULES_DELETE_DESCRIPTION,
         False,
         {**TARGET, "moduleId": "abcdef01-2345-6789-abcd-0123456789ab"},
+        project_write=True,
     ),
     "grid.connections.set": tool(
         GridConnectionSetArgs,
@@ -710,5 +716,6 @@ SPECS: dict[str, ToolSpec] = {
                 },
             ],
         },
+        project_write=True,
     ),
 }

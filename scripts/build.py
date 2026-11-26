@@ -5,6 +5,7 @@ import hashlib
 import os
 import shutil
 import subprocess
+import sys
 import tomllib
 import zipfile
 from pathlib import Path
@@ -92,6 +93,13 @@ def compile_java(sources, target, classpath, lint="-Xlint:all"):
     )
 
 
+def write_protocol_bundle(directory):
+    """Generated from the Python protocol into a classes directory; never committed."""
+    subprocess.run(
+        [sys.executable, "-m", "bitwig_agent.protocol", "export", "--out", str(directory / "protocol.json")], check=True
+    )
+
+
 def build():
     api = Path(os.environ.get("BITWIG_API_JAR", "/opt/bitwig-studio/bin/bitwig.jar"))
     if not api.is_file():
@@ -101,6 +109,7 @@ def build():
     if classes.exists():
         shutil.rmtree(classes)
     compile_java(sorted(SOURCES.rglob("*.java")), classes, [api, dependency])
+    write_protocol_bundle(classes)
     resources = ROOT / "extension/src/main/resources"
     service = resources / "META-INF/services/com.bitwig.extension.ExtensionDefinition"
     if not service.is_file():
