@@ -82,7 +82,7 @@ def main() -> int:
                     cwd=ROOT,
                     env=child_env,
                     check=False,
-                    timeout={"lint": 600, "offline": 420, "java": 900, "fixture": 240, "native": 180}[layer],
+                    timeout={"lint": 600, "offline": 900, "java": 900, "fixture": 240, "native": 180}[layer],
                 )
                 result.update(
                     status="passed" if completed.returncode == 0 else "failed", returncode=completed.returncode

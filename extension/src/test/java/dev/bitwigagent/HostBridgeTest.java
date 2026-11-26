@@ -624,7 +624,7 @@ public final class HostBridgeTest {
         CompletableFuture<JsonObject> result = bridge.handle("parameters.set", write(listing, .75), shortDeadline());
         host.next();
         check(!result.isDone(), "cached value is not fresh readback");
-        Thread.sleep(90);
+        sleepPastObservationWindow();
         host.next();
         JsonObject response = result.join();
         check(response.get("status").getAsString().equals("dispatched"), "unobserved write remains dispatched");
@@ -639,7 +639,7 @@ public final class HostBridgeTest {
         host.writeMode = "mismatch";
         CompletableFuture<JsonObject> result = bridge.handle("parameters.set", write(listing, .75), shortDeadline());
         host.next();
-        Thread.sleep(90);
+        sleepPastObservationWindow();
         host.next();
         JsonObject response = result.join();
         check(response.get("status").getAsString().equals("dispatched"), "mismatch is not observed success");
@@ -1816,7 +1816,11 @@ public final class HostBridgeTest {
     }
 
     private static long shortDeadline() {
-        return System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(120);
+        return System.nanoTime() + HostServices.OBSERVE_WINDOW_NANOS + TimeUnit.MILLISECONDS.toNanos(500);
+    }
+
+    private static void sleepPastObservationWindow() throws InterruptedException {
+        Thread.sleep(TimeUnit.NANOSECONDS.toMillis(HostServices.OBSERVE_WINDOW_NANOS) + 50);
     }
 
     private static JsonObject call(Fake fake, HostBridge bridge, String method, JsonObject params) {

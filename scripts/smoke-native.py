@@ -28,6 +28,9 @@ from typing import cast
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+
+if sys.platform != "linux":
+    raise SystemExit("smoke-native.py needs Linux /proc and xprop")
 from mcp.types import TextContent
 
 from bitwig_agent.client import MAX_PORT

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import PurePosixPath
+from pathlib import PurePath, PurePosixPath, PureWindowsPath
 from typing import Annotated, Any, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -35,14 +35,16 @@ def omitted(**kwargs: Any) -> Any:
     return Field(default=None, json_schema_extra=drop_default, **kwargs)
 
 
+def is_normalized_absolute(value: str, flavour: type[PurePath]) -> bool:
+    path = flavour(value)
+    return path.is_absolute() and str(path) == value and ".." not in path.parts
+
+
 def validate_local_path(value: str) -> None:
-    path = PurePosixPath(value)
     if (
-        not path.is_absolute()
-        or value.startswith("//")
-        or str(path) != value
-        or ".." in path.parts
+        value.startswith("//")
         or has_control_character(value)
+        or not any(is_normalized_absolute(value, flavour) for flavour in (PurePosixPath, PureWindowsPath))
     ):
         raise ValueError("path must be an absolute normalized path without control characters")
 

@@ -79,7 +79,9 @@ def test_file_insertion_preserves_path_and_omits_id():
     assert params == args
 
 
-@pytest.mark.parametrize("path", ["/absolute/path/audio.wav", "/tmp/Audio Sketch.bwclip", "/tmp/音楽.flac"])
+@pytest.mark.parametrize(
+    "path", ["/absolute/path/audio.wav", "/tmp/Audio Sketch.bwclip", "/tmp/音楽.flac", "C:\\Audio Sketch\\音楽.flac"]
+)
 @pytest.mark.parametrize("slot", [0, 15])
 def test_launcher_import_preserves_local_path_without_filesystem_checks(path, slot):
     args = {"trackId": TRACK, "slotIndex": slot, "path": path}
@@ -97,7 +99,9 @@ def test_launcher_import_preserves_local_path_without_filesystem_checks(path, sl
         "~/audio.wav",
         "file:///tmp/audio.wav",
         "https://example.com/audio.wav",
-        "C:\\audio.wav",
+        "C:/audio.wav",
+        "C:audio.wav",
+        "C:\\..\\audio.wav",
         "//tmp/audio.wav",
         "/tmp/../audio.wav",
         "/tmp/./audio.wav",

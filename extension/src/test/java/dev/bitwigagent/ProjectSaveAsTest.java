@@ -22,7 +22,8 @@ public final class ProjectSaveAsTest {
     }
 
     private static void validationIsStrict() {
-        ProjectModule.validateParams("project.saveAs", params("/home/u/Bitwig Studio/Projects/Song/Song.bwproject"));
+        ProjectModule.validateParams(
+                "project.saveAs", params(TestPaths.absolute("/home/u/Bitwig Studio/Projects/Song/Song.bwproject")));
         for (String bad : List.of(
                 "relative/Song/Song.bwproject",
                 "/p/Song/Song.txt",

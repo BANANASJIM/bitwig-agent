@@ -175,6 +175,7 @@ def cpd_duplicates(language: str) -> dict[tuple[str, ...], tuple[int, int]]:
     files = tracked(*prefixes, suffix=suffix)
     with tempfile.TemporaryDirectory() as scratch:
         listing = Path(scratch) / "files.txt"
+        report_file = Path(scratch) / "report.xml"
         listing.write_text("\n".join(str(ROOT / name) for name in files) + "\n")
         command = [
             *pmd_launcher(),
@@ -187,11 +188,13 @@ def cpd_duplicates(language: str) -> dict[tuple[str, ...], tuple[int, int]]:
             str(listing),
             "--format",
             "xml",
+            "--report-file",
+            str(report_file),
             "--no-fail-on-violation",
         ]
-        result = subprocess.run(command, cwd=ROOT, check=True, stdout=subprocess.PIPE)
+        subprocess.run(command, cwd=ROOT, check=True)
+        report = ET.fromstring(report_file.read_bytes())
     namespace = {"c": "https://pmd-code.org/schema/cpd-report"}
-    report = ET.fromstring(result.stdout)
     if len(report.findall("c:file", namespace)) != len(files):
         raise RuntimeError(f"CPD did not report on all {len(files)} {language} files")
     found: dict[tuple[str, ...], list[int]] = defaultdict(list)
