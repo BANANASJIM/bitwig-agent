@@ -15,7 +15,7 @@ import org.junit.jupiter.api.io.TempDir;
 public final class LauncherModuleTest {
     private static JsonObject listParams(LauncherFake f) {
         JsonObject p = new JsonObject();
-        p.add("parent", f.track());
+        p.add("target", f.track());
         return p;
     }
 
@@ -198,19 +198,19 @@ public final class LauncherModuleTest {
         f.base.bank.live("itemCount", () -> 100000);
         JsonObject p = new JsonObject();
         p.add(
-                "parent",
+                "target",
                 com.google.gson.JsonParser.parseString(
                         "{\"kind\":\"track\",\"id\":\"33333333-3333-3333-3333-333333333333\",\"name\":\"Far\"}"));
         assertRpcError("outside_window", f.startAndDrain("launcher.list", p));
     }
 
     @Test
-    void aParentRefIsLocatedByIdNotByName() {
+    void aTargetRefIsLocatedByIdNotByName() {
         LauncherFake f = new LauncherFake();
         JsonObject old = f.track();
         f.trackName = "Renamed";
         JsonObject p = new JsonObject();
-        p.add("parent", old);
+        p.add("target", old);
         JsonObject list = f.call("launcher.list", p);
         assertEquals(f.track(), list.get("ref"), "the result carries the current ref");
     }

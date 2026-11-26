@@ -67,7 +67,7 @@ public final class DeviceModule implements HostModule {
     @Override
     public void dispatch(HostOperation op, String method, JsonObject p) {
         if (method.equals("devices.catalog")) {
-            op.result.complete(deviceCatalog);
+            op.result.complete(filtered(deviceCatalog, p));
             return;
         }
         JsonObject target = p.getAsJsonObject("target");
@@ -199,6 +199,31 @@ public final class DeviceModule implements HostModule {
         result.addProperty("remoteControlsAvailable", true);
         result.addProperty("nameWritable", false);
         return result;
+    }
+
+    /**
+     * The catalog narrowed by the optional {@code query} (case-insensitive substring of name or category) and
+     * {@code category} (case-insensitive exact); the unfiltered catalog is cached, so a filter only copies.
+     */
+    static JsonObject filtered(JsonObject catalog, JsonObject p) {
+        String query = p.has("query") ? p.get("query").getAsString().toLowerCase(java.util.Locale.ROOT) : null;
+        String category = p.has("category") ? p.get("category").getAsString().toLowerCase(java.util.Locale.ROOT) : null;
+        if (query == null && category == null) return catalog;
+        JsonObject result = catalog.deepCopy();
+        JsonArray kept = new JsonArray();
+        for (JsonElement element : catalog.getAsJsonArray("devices")) {
+            JsonObject item = element.getAsJsonObject();
+            String name = text(item, "name"), own = text(item, "category");
+            if (query != null && !name.contains(query) && !own.contains(query)) continue;
+            if (category != null && !own.equals(category)) continue;
+            kept.add(item);
+        }
+        result.add("devices", kept);
+        return result;
+    }
+
+    private static String text(JsonObject item, String key) {
+        return item.has(key) ? item.get(key).getAsString().toLowerCase(java.util.Locale.ROOT) : "";
     }
 
     private static JsonObject catalog() {

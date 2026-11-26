@@ -54,7 +54,7 @@ public final class ModulatorModule implements HostModule {
         boolean one = method.equals("modulators.get");
         JsonObject modulatorRef = one ? p.getAsJsonObject("target") : null;
         DeviceSources.Source device =
-                sources.device(one ? modulatorRef.getAsJsonObject("device") : p.getAsJsonObject("parent"), false);
+                sources.device(one ? modulatorRef.getAsJsonObject("device") : p.getAsJsonObject("target"), false);
         final DeviceSources.RootReadTicket target = sources.rootRead(device);
         final JsonObject deviceRef = device.ref();
         final UUID only = one ? UUID.fromString(modulatorRef.get("id").getAsString()) : null;
@@ -107,8 +107,8 @@ public final class ModulatorModule implements HostModule {
     private static JsonObject single(JsonObject page) {
         JsonObject row = page.getAsJsonArray("modulators").get(0).getAsJsonObject();
         JsonObject result = row.deepCopy();
-        for (String key : new String[] {"parent", "complete", "unsupported", "nativeMutation"})
-            result.add(key, page.get(key));
+        result.add("parent", page.get("target")); // the modulator's device; `target` of a get is the modulator itself
+        for (String key : new String[] {"complete", "unsupported", "nativeMutation"}) result.add(key, page.get(key));
         return result;
     }
 

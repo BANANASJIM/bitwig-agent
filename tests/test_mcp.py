@@ -183,14 +183,14 @@ async def test_mcp_discovery_publishes_the_device_ref_contracts(mcp_session):
     response = await mcp_session.list_tools()
     tools = {tool.name: tool for tool in response.tools}
     for method, field in (
-        ("devices.list", "parent"),
-        ("chains.list", "parent"),
-        ("devices.insert", "parent"),
+        ("devices.list", "target"),
+        ("chains.list", "target"),
+        ("devices.insert", "to"),
         ("devices.get", "target"),
         ("devices.move", "target"),
-        ("parameters.list", "parent"),
+        ("parameters.list", "target"),
         ("parameters.set", "target"),
-        ("modulators.list", "parent"),
+        ("modulators.list", "target"),
         ("modulators.map", "source"),
     ):
         schema = tools[method].input_schema
@@ -212,7 +212,7 @@ async def test_mcp_discovery_publishes_the_device_ref_contracts(mcp_session):
     [None, {}, TARGET, {**DEVICE, "index": 1.0}, {**DEVICE, "index": True}, {**DEVICE, "layerId": TRACK}],
 )
 async def test_invalid_parent_never_reaches_tcp(mcp_session, host, method, parent):
-    response = await mcp_session.call_tool(method, {"parent": parent})
+    response = await mcp_session.call_tool(method, {"target": parent})
     assert response.is_error
     assert_rejected_before_tcp(response.structured_content, host)
 
@@ -255,7 +255,7 @@ async def test_modulator_mcp_preserves_partial_inventory_without_inventing_conte
         ],
     }
     host.reply = lambda request: {"id": request["id"], "result": result}
-    response = await mcp_session.call_tool("modulators.list", {"parent": DEVICE, "limit": 1})
+    response = await mcp_session.call_tool("modulators.list", {"target": DEVICE, "limit": 1})
     assert response.is_error is False
     assert response.structured_content == result
     assert len(host.requests) == host.connections == 1
@@ -283,6 +283,6 @@ async def test_modulator_mcp_preserves_read_errors_without_retry(mcp_session, ho
     ],
 )
 async def test_modulator_mcp_pagination_rejects_coercion_before_tcp(mcp_session, host, field, value):
-    response = await mcp_session.call_tool("modulators.list", {"parent": DEVICE, field: value})
+    response = await mcp_session.call_tool("modulators.list", {"target": DEVICE, field: value})
     assert response.is_error
     assert_rejected_before_tcp(response.structured_content, host)

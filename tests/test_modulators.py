@@ -202,18 +202,19 @@ def test_unmap_is_annotated_as_a_removal_and_the_catalog_is_describe():
 
 
 def test_insert_delete_and_get_schemas():
-    validate_call("modulators.insert", {"parent": PARENT, "typeName": "Random"})
-    validate_call("modulators.insert", {"parent": PARENT, "typeId": MOD})
+    validate_call("modulators.insert", {"to": PARENT, "typeName": "Random"})
+    validate_call("modulators.insert", {"to": PARENT, "typeId": MOD})
     bad: Any
     for bad in (
         {},
         {"typeName": "Random", "typeId": MOD},
         {"typeName": ""},
         {"typeName": "Random", "expectedCount": 0},
-        {"parent": SOURCE, "typeName": "Random"},
+        {"to": SOURCE, "typeName": "Random"},
+        {"parent": PARENT, "typeName": "Random"},
     ):
         with pytest.raises(ValueError, match=r"validation errors? for ModulatorsInsertArgs"):
-            validate_call("modulators.insert", {"parent": PARENT, **bad})
+            validate_call("modulators.insert", {"to": PARENT, **bad})
     for method in ("modulators.get", "modulators.delete"):
         assert validate_call(method, {"target": SOURCE})[0] == {"target": SOURCE}
         for bad_target in (PARENT, {**SOURCE, "id": "nope"}, {"modulatorId": MOD}):

@@ -45,7 +45,7 @@ final class NativeChainEdits {
                 rows.add(row);
             }
             JsonObject result = new JsonObject();
-            result.add("parent", parentRef != null ? parentRef : current(walk, parent));
+            result.add("target", parentRef != null ? parentRef : current(walk, parent));
             result.addProperty("scope", "one_chain_hop");
             result.add("window", DeviceListModule.nativeWindow(found.size()));
             result.add("chains", rows);
@@ -61,13 +61,14 @@ final class NativeChainEdits {
     // ---------------------------------------------------------------- insert
 
     void insert(HostOperation op, JsonObject p) {
-        JsonObject parent = p.getAsJsonObject("parent");
+        JsonObject to = DeviceChainModule.insertion(p);
+        JsonObject parent = to.getAsJsonObject("parent");
         String kind = p.get("kind").getAsString();
         String value = p.get(kind.equals("file") ? "path" : "id").getAsString();
         chains.edit(op, parent, walk -> {
             NativeChains.Chain chain = walk.chain(parent, false);
             List<Object> before = chain.devices;
-            int index = Positions.index(p.get("position"), before.size(), anchor -> anchorIn(walk, chain, anchor));
+            int index = Positions.index(to.get("position"), before.size(), anchor -> anchorIn(walk, chain, anchor));
             Object insertion = walk.a.insertion(kind, value);
             if (insertion == null)
                 throw Errors.notApplied(

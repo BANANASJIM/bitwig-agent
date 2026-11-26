@@ -13,7 +13,7 @@ class PresetSearchArgs(StatusArgs):
         max_length=4096,
         description="Words that must all occur in the preset name, folders, package, creator or readable metadata; case, spaces and punctuation ignored.",
     )
-    device: str = omitted(
+    deviceName: str = omitted(
         min_length=1,
         max_length=4096,
         description="Device name (readable metadata) or a folder named for it, e.g. Polymer, Poly Grid, Convolution.",
@@ -30,7 +30,7 @@ class PresetSearchArgs(StatusArgs):
     offset: int = Field(default=0, ge=0, le=1000000)
 
 
-PRESETS_SEARCH_DESCRIPTION = "Search the user's preset library and installed packages offline by file name and folders (no host call): query words, device (name or folder, e.g. Polymer, Convolution), deviceType, category, limit/offset. User-library presets expose device, deviceType, category, creator and comment from their plain header; package presets are encrypted, so they carry only path, creator, package and folders. Each hit has insert {kind: file, path}: pass it to devices.insert. Insertion and the resulting sound are verified separately: a hit is a file, not proof it loads."
+PRESETS_SEARCH_DESCRIPTION = "Search the user's preset library and installed packages offline by file name and folders (no host call): query words, deviceName (name or folder, e.g. Polymer, Convolution), deviceType, category, limit/offset. User-library presets expose device, deviceType, category, creator and comment from their plain header; package presets are encrypted, so they carry only path, creator, package and folders. Each hit has insert {kind: file, path}: pass it to devices.insert. Insertion and the resulting sound are verified separately: a hit is a file, not proof it loads."
 
 
 SPECS: dict[str, ToolSpec] = {
@@ -38,7 +38,7 @@ SPECS: dict[str, ToolSpec] = {
         PresetSearchArgs,
         PRESETS_SEARCH_DESCRIPTION,
         True,
-        examples=({"query": "warm pad", "device": "Polymer", "limit": 10},),
+        examples=({"query": "warm pad", "deviceName": "Polymer", "limit": 10},),
         host=False,
         records="presets",
     ),

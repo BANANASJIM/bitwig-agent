@@ -58,7 +58,7 @@ public final class LauncherModule implements HostModule {
     }
 
     private void list(HostOperation op, JsonObject p) {
-        int t = trackRefs.resolve(p.getAsJsonObject("parent"), false);
+        int t = trackRefs.resolve(p.getAsJsonObject("target"), false);
         if (!window.scenesObserved())
             throw Errors.notApplied(Reason.NOT_READY, "Scene bank has not reported its size yet.");
         int total = window.sceneCount(),

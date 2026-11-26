@@ -559,7 +559,7 @@ public final class ClipModuleTest {
         assertEquals(0, f.creates);
         assertEquals(
                 16,
-                f.call("launcher.list", params("parent", f.track()))
+                f.call("launcher.list", params("target", f.track()))
                         .getAsJsonArray("slots")
                         .size(),
                 "a held slot stays readable");

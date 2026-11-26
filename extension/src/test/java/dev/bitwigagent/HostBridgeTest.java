@@ -929,10 +929,10 @@ public final class HostBridgeTest {
         fraction.add("index", JsonParser.parseString("1.0"));
         assertRpcError("invalid_params", bridge.handle("parameters.list", list(fraction), host.deadline()));
         JsonObject newline = list(root(0));
-        newline.getAsJsonObject("parent").getAsJsonObject("track").addProperty("id", Fake.TRACK_ID + "\n");
+        newline.getAsJsonObject("target").getAsJsonObject("track").addProperty("id", Fake.TRACK_ID + "\n");
         assertRpcError("invalid_params", bridge.handle("parameters.list", newline, host.deadline()));
         RpcException refused = assertThrows(RpcException.class, () -> bridge.validate("parameters.list", newline));
-        assertTrue(refused.getMessage().contains("params.parent"), refused.getMessage());
+        assertTrue(refused.getMessage().contains("params.target"), refused.getMessage());
         assertTrue(host.tasks.isEmpty(), "a schema rejection schedules nothing");
     }
 
@@ -987,14 +987,14 @@ public final class HostBridgeTest {
             assertRpcError("invalid_params", bridge.handle("chains.list", bad, f.deadline()));
         }
         JsonObject bad = valid.deepCopy();
-        bad.add("parent", JsonNull.INSTANCE);
+        bad.add("target", JsonNull.INSTANCE);
         assertRpcError("invalid_params", bridge.handle("chains.list", bad, f.deadline()));
         assertRpcError("invalid_params", bridge.handle("chains.list", list(chainRef(0)), f.deadline()));
         assertRpcError("invalid_params", bridge.handle("parameters.list", list(chainRef(0)), f.deadline()));
         JsonObject badChain = Refs.chain(root(0), "1-2-3-4-5", "Same Layer");
         assertRpcError("invalid_params", bridge.handle("devices.list", list(badChain), f.deadline()));
         JsonObject extraParent = list(chainDevice(0, 0));
-        extraParent.getAsJsonObject("parent").getAsJsonObject("chain").addProperty("layerId", layerId(0));
+        extraParent.getAsJsonObject("target").getAsJsonObject("chain").addProperty("layerId", layerId(0));
         assertRpcError("invalid_params", bridge.handle("parameters.list", extraParent, f.deadline()));
         assertTrue(f.tasks.isEmpty(), "strict nested validation precedes host scheduling");
         JsonObject outOfRange = set(Refs.parameter(chainDevice(0, 0), "gain", null), 1.5);
@@ -1039,18 +1039,20 @@ public final class HostBridgeTest {
         return Refs.device(chainRef(layer), child, "Twin");
     }
 
-    private static JsonObject list(JsonObject parent) {
+    private static JsonObject list(JsonObject target) {
         JsonObject p = new JsonObject();
-        p.add("parent", parent);
+        p.add("target", target);
         return p;
     }
 
     private static JsonObject insert(JsonObject parent, String position) {
         JsonObject p = new JsonObject();
-        p.add("parent", parent);
+        JsonObject to = new JsonObject();
+        to.add("parent", parent);
+        if (position != null) to.addProperty("position", position);
+        p.add("to", to);
         p.addProperty("kind", "bitwig");
         p.addProperty("id", "11111111-2222-4333-8444-555555555555");
-        if (position != null) p.addProperty("position", position);
         return p;
     }
 

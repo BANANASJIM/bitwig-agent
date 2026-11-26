@@ -454,14 +454,14 @@ async def create(args: argparse.Namespace) -> int:  # noqa: C901, PLR0912, PLR09
             report["createdTracks"].append({"trackId": track_id, "ref": track_ref, "label": label})
             await call("tracks.set", {"target": track_ref, "mute": True, "arm": False, "volume": 0.5})
             owned = track_ref
-            empty = await call("devices.list", {"parent": owned})
+            empty = await call("devices.list", {"target": owned})
             if empty["window"].get("complete") is not True or empty["devices"]:
                 raise RuntimeError("Owned new track does not have a completely observed empty device chain")
             await call(
                 "devices.insert",
-                {"parent": owned, "kind": "file", "path": factory_path if scratch else str(path)},
+                {"to": {"parent": owned}, "kind": "file", "path": factory_path if scratch else str(path)},
             )
-            devices = await call("devices.list", {"parent": owned})
+            devices = await call("devices.list", {"target": owned})
             if devices["window"].get("complete") is not True or len(devices["devices"]) != 1:
                 raise RuntimeError("New track does not contain exactly one observed inserted device")
             if scratch:

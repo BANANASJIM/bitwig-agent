@@ -154,10 +154,24 @@ TOOLS: dict[str, ToolSpec] = _collect()
 CLIENT_SIDE = frozenset(name for name, spec in TOOLS.items() if not spec.host)
 
 
-def unknown_method_message(method: str) -> str:
+MAX_SUGGESTIONS = 3
+
+
+def suggest_methods(method: str) -> list[str]:
+    """The close spelling of method, unless it has another verb: then the same verb under other resources."""
     exposed = [name for name, spec in TOOLS.items() if spec.expose]
     close = difflib.get_close_matches(method, exposed, n=1, cutoff=0.6)
-    hint = f" (did you mean {close[0]}?)" if close else ""
+    verb = method.rpartition(".")[2]
+    if close and close[0].rpartition(".")[2] == verb:
+        return close
+    same_verb = [name for name in exposed if name.rpartition(".")[2] == verb and name != method]
+    return same_verb[:MAX_SUGGESTIONS] or close
+
+
+def unknown_method_message(method: str) -> str:
+    names = suggest_methods(method)
+    hint = f" (did you mean {', '.join(names[:-1])} or {names[-1]}?)" if len(names) > 1 else ""
+    hint = hint or (f" (did you mean {names[0]}?)" if names else "")
     return f"Unknown method: {method}{hint}. Call help to list the available methods."
 
 

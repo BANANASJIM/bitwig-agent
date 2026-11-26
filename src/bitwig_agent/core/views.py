@@ -113,6 +113,57 @@ def fields(name: str) -> list[dict[str, Any]]:
     ]
 
 
+def _members(label: str) -> list[str]:
+    return [member.strip() for member in label.split(" | ")]
+
+
+def is_ref_type(label: str) -> bool:
+    """Whether a field type label names only refs (TrackRef, TrackDeviceRef | ChainDeviceRef, ...)."""
+    return all(member.endswith("Ref") for member in _members(label))
+
+
+def subject(name: str) -> str | None:
+    """The one required field that is a single ref (what the method acts on); None when there is not exactly one."""
+    refs = [f["name"] for f in fields(name) if f["required"] and is_ref_type(f["type"])]
+    return refs[0] if len(refs) == 1 else None
+
+
+ENUM_WIDTH = 24
+KIND_WORD = re.compile(r"[A-Z][a-z]+")
+
+
+def _placeholder(name: str) -> str:
+    return re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", name).upper()
+
+
+def _value_label(field: dict[str, Any]) -> str:
+    """A short placeholder for one required field: the ref kind (CLIP), true|false, a short enum, else the field name."""
+    label = field["type"]
+    if label == "boolean":
+        return "true|false"
+    if "|" in label and not any(member.endswith("Ref") for member in _members(label)):
+        short = len(label) <= ENUM_WIDTH and label.replace("|", "").isalnum()
+        return label.replace(" | ", "|") if short else _placeholder(field["name"])
+    inner = label[len("array<") : -1] if label.startswith("array<") else label
+    kinds = list(
+        dict.fromkeys(
+            KIND_WORD.findall(member.removesuffix("Ref"))[-1].upper()
+            for member in _members(inner)
+            if member.endswith("Ref") and KIND_WORD.findall(member.removesuffix("Ref"))
+        )
+    )
+    if kinds:
+        text = "|".join([*kinds, *(["OBJECT"] if not all(m.endswith("Ref") for m in _members(inner)) else [])])
+        return f"[{text}]" if inner != label else text
+    return _placeholder(field["name"])
+
+
+def usage(name: str) -> str:
+    """One line for the method index: the command words and every required field, e.g. `clips launch --target=CLIP`."""
+    required = [f for f in fields(name) if f["required"]]
+    return " ".join([name.replace(".", " "), *(f"--{f['name']}={_value_label(f)}" for f in required)])
+
+
 HELP_POINTER = " Full guide: help {name}."
 ADVERTISED_EXAMPLE_LIMIT = DESCRIPTION_LIMIT // 2
 _SENTENCE_END = re.compile(r"(?<!e\.g)(?<!i\.e)\.\s+(?=[A-Z])")

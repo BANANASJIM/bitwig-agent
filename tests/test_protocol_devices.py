@@ -6,6 +6,7 @@ from pydantic import ValidationError
 from bitwig_agent.protocol import TOOLS, validate_call
 from bitwig_agent.protocol.base import TRACK
 from bitwig_agent.protocol.launcher import SLOT_REF
+from bitwig_agent.protocol.topics import REFS
 
 UUID = "abcdef01-2345-6789-abcd-0123456789ab"
 TRACK_REF: dict[str, Any] = {"kind": "track", "id": TRACK, "name": "Lead"}
@@ -36,11 +37,11 @@ FILE = {"kind": "file", "path": "/tmp/Poly Sketch.bwpreset"}
 )
 def test_insertion_rejects_ambiguous_or_malformed_identifiers(kind, fields):
     with pytest.raises(ValidationError):
-        validate_call("devices.insert", {"parent": TRACK_REF, "kind": kind, **fields})
+        validate_call("devices.insert", {"to": {"parent": TRACK_REF}, "kind": kind, **fields})
 
 
 def test_file_insertion_preserves_path_and_omits_id():
-    args = {"parent": CHAIN, "kind": "file", "path": "/tmp/Poly Sketch.bwpreset"}
+    args = {"to": {"parent": CHAIN}, "kind": "file", "path": "/tmp/Poly Sketch.bwpreset"}
     params, _ = validate_call("devices.insert", args)
     assert params == args
 
@@ -78,7 +79,7 @@ def test_file_insertion_preserves_path_and_omits_id():
 def test_file_import_and_device_insertion_share_path_syntax(path):
     cases: list[tuple[str, dict[str, Any]]] = [
         ("clips.import", {"to": SLOT_REF}),
-        ("devices.insert", {"parent": TRACK_REF, "kind": "file"}),
+        ("devices.insert", {"to": {"parent": TRACK_REF}, "kind": "file"}),
     ]
     for method, args in cases:
         with pytest.raises(ValidationError):
@@ -96,30 +97,38 @@ def test_file_import_and_device_insertion_share_path_syntax(path):
     ],
 )
 def test_insert_position_round_trips_for_a_track_and_a_chain(parent, position):
-    args = {"parent": parent, "position": position, "kind": "bitwig", "id": "11111111-2222-4333-8444-555555555555"}
+    args = {
+        "to": {"parent": parent, "position": position},
+        "kind": "bitwig",
+        "id": "11111111-2222-4333-8444-555555555555",
+    }
     params, _ = validate_call("devices.insert", args)
     assert params == args
-    params, _ = validate_call("devices.insert", {k: v for k, v in args.items() if k != "position"})
-    assert "position" not in params
+    params, _ = validate_call("devices.insert", {**args, "to": {"parent": parent}})
+    assert "position" not in params["to"]
 
 
 @pytest.mark.parametrize(
     "changes",
     [
-        {"position": "before"},
-        {"position": "middle"},
-        {"position": {"before": TRACK_REF}},
-        {"position": {"before": DEVICE, "after": DEVICE}},
-        {"position": 1},
-        {"parent": DEVICE},
-        {"parent": {"kind": "track", "id": TRACK}},
+        {"to": {"parent": TRACK_REF, "position": "before"}},
+        {"to": {"parent": TRACK_REF, "position": "middle"}},
+        {"to": {"parent": TRACK_REF, "position": {"before": TRACK_REF}}},
+        {"to": {"parent": TRACK_REF, "position": {"before": DEVICE, "after": DEVICE}}},
+        {"to": {"parent": TRACK_REF, "position": 1}},
+        {"to": {"parent": DEVICE}},
+        {"to": {"parent": {"kind": "track", "id": TRACK}}},
+        {"to": {"position": "end"}},
+        {"to": TRACK_REF},
+        {"parent": TRACK_REF},
+        {"position": "end"},
         {"expectedDeviceCount": 2},
         {"trackId": TRACK},
         {"deviceIndex": 1},
     ],
 )
 def test_insert_rejects_old_fields_and_malformed_positions(changes):
-    args = {"parent": TRACK_REF, "kind": "clap", "id": "x.y", **changes}
+    args = {"to": {"parent": TRACK_REF}, "kind": "clap", "id": "x.y", **changes}
     with pytest.raises(ValidationError):
         validate_call("devices.insert", args)
 
@@ -160,13 +169,13 @@ def test_set_requires_enabled_and_move_a_destination():
         validate_call("devices.move", {"target": CHAIN_DEVICE})
 
 
-def test_lists_take_a_parent_and_chains_a_device():
+def test_lists_take_a_container_target_and_chains_a_device():
     for parent in (TRACK_REF, CHAIN):
-        assert validate_call("devices.list", {"parent": parent})[0] == {"parent": parent}
-    assert validate_call("chains.list", {"parent": DEVICE})[0] == {"parent": DEVICE}
+        assert validate_call("devices.list", {"target": parent})[0] == {"target": parent}
+    assert validate_call("chains.list", {"target": DEVICE})[0] == {"target": DEVICE}
     for method, parent in (("devices.list", DEVICE), ("chains.list", CHAIN), ("chains.list", TRACK_REF)):
         with pytest.raises(ValidationError):
-            validate_call(method, {"parent": parent})
+            validate_call(method, {"target": parent})
     for method in ("devices.list", "chains.list", "parameters.list"):
         with pytest.raises(ValidationError):
             validate_call(method, {"trackId": TRACK})
@@ -195,3 +204,18 @@ def test_the_old_device_methods_are_gone(name):
     assert name not in TOOLS
     with pytest.raises(ValueError, match="Unknown method"):
         validate_call(name, {})
+
+
+def test_catalog_is_a_filterable_record_list():
+    assert TOOLS["devices.catalog"].records == "devices"
+    assert validate_call("devices.catalog", {})[0] == {}
+    args = {"query": "delay", "category": "Drum"}
+    assert validate_call("devices.catalog", args)[0] == args
+    for bad in ({"query": ""}, {"category": 1}, {"name": "x"}):
+        with pytest.raises(ValidationError):
+            validate_call("devices.catalog", bad)
+
+
+def test_refs_topic_says_identity_correct_hand_built_refs_work():
+    assert "works exactly when its identity fields are correct" in REFS
+    assert "pass them back unchanged" in REFS

@@ -8,8 +8,8 @@ from bitwig_agent.protocol.scenes import MAX_SCENES_PER_INSERT
 
 
 def test_launcher_list_and_stop_take_a_track_ref():
-    assert validate_call("launcher.list", {"parent": TRACK_REF})[0] == {"parent": TRACK_REF}
-    assert validate_call("launcher.list", {"parent": TRACK_REF, "sceneOffset": 32})[0]["sceneOffset"] == 32
+    assert validate_call("launcher.list", {"target": TRACK_REF})[0] == {"target": TRACK_REF}
+    assert validate_call("launcher.list", {"target": TRACK_REF, "sceneOffset": 32})[0]["sceneOffset"] == 32
     assert validate_call("launcher.stop", {"target": TRACK_REF})[0] == {"target": TRACK_REF}
     assert TOOLS["launcher.list"].read_only
     assert not TOOLS["launcher.stop"].read_only
@@ -19,9 +19,9 @@ def test_launcher_list_and_stop_take_a_track_ref():
     ("method", "args"),
     [
         ("launcher.list", {"trackId": TRACK_REF["id"]}),
-        ("launcher.list", {"parent": TRACK_REF["id"]}),
-        ("launcher.list", {"parent": TRACK_REF, "sceneOffset": -1}),
-        ("launcher.list", {"parent": SCENE_REF}),
+        ("launcher.list", {"target": TRACK_REF["id"]}),
+        ("launcher.list", {"target": TRACK_REF, "sceneOffset": -1}),
+        ("launcher.list", {"target": SCENE_REF}),
         ("launcher.stop", {"target": "all"}),
         ("launcher.stop", {"target": {**TRACK_REF, "extra": 1}}),
         ("launcher.stop", {"trackId": TRACK_REF["id"]}),

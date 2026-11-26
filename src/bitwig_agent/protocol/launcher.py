@@ -21,7 +21,7 @@ SceneOffset = Annotated[
 
 
 class LauncherListArgs(StatusArgs):
-    parent: TrackRef
+    target: TrackRef
     sceneOffset: SceneOffset = omitted()
 
 
@@ -45,7 +45,7 @@ LAUNCHER_STOP_DESCRIPTION = (
 
 SPECS: dict[str, ToolSpec] = {
     "launcher.list": ToolSpec(
-        LauncherListArgs, LAUNCHER_LIST_DESCRIPTION, True, examples=({"parent": TRACK_REF},), records="slots"
+        LauncherListArgs, LAUNCHER_LIST_DESCRIPTION, True, examples=({"target": TRACK_REF},), records="slots"
     ),
     "launcher.stop": ToolSpec(LauncherStopArgs, LAUNCHER_STOP_DESCRIPTION, False, examples=({"target": TRACK_REF},)),
 }
