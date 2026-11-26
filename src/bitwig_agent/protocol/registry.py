@@ -22,23 +22,23 @@ from bitwig_agent.protocol import (
 from bitwig_agent.protocol.base import ToolSpec
 
 _DOMAINS = (
-    actions,
-    arranger,
-    audio,
-    automation,
-    devices,
-    grid,
-    grid_workflow,
-    launcher,
+    project,
+    tracks,
     markers,
-    modulators,
+    routing,
+    transport,
+    devices,
     parameters,
     presets,
-    project,
+    grid,
+    grid_workflow,
+    modulators,
+    launcher,
+    arranger,
+    automation,
     render,
-    routing,
-    tracks,
-    transport,
+    audio,
+    actions,
 )
 
 
