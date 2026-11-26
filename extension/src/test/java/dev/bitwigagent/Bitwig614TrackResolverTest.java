@@ -57,11 +57,12 @@ public final class Bitwig614TrackResolverTest {
         String expected = "Track " + HostFixture.A + " no longer resolves to its native track; re-read tracks.list.";
         for (UUID identity : new UUID[] {UUID.fromString(HostFixture.B), null}) {
             RpcException error = assertRpcError(
-                    Reason.TARGET_NOT_FOUND.wire(),
+                    (identity == null ? Reason.TARGET_NOT_FOUND : Reason.TARGET_CHANGED).wire(),
                     () -> Bitwig614TrackResolver.requireIdentity(HostFixture.A, identity));
             assertEquals(expected, error.getMessage());
+            assertEquals("tracks.list", error.next);
         }
-        assertEquals(expected, Bitwig614TrackResolver.stale(HostFixture.A).getMessage());
+        assertEquals(expected, Bitwig614TrackResolver.stale(HostFixture.A, null).getMessage());
         assertDoesNotThrow(() ->
                 Bitwig614TrackResolver.requireIdentity(HostFixture.A.toUpperCase(), UUID.fromString(HostFixture.A)));
     }

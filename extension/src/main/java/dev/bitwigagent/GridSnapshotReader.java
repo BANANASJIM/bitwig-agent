@@ -623,7 +623,7 @@ final class GridSnapshotReader implements ParameterResolver.ModuleOwners {
             throw Errors.notApplied(
                     Reason.TARGET_NOT_FOUND,
                     "Requested exact parameter ID is no longer in the selected module.",
-                    "grid.get");
+                    "grid.export");
         return found;
     }
 

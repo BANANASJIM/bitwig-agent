@@ -42,7 +42,7 @@ Response:
 or
 
 ```json
-{"id":"client-generated-unique-id","error":{"code":"stale","reason":"stale_target","message":"expectedDeviceName does not match the device at that index.","next":"Re-list the devices."}}
+{"id":"client-generated-unique-id","error":{"code":"stale","reason":"target_changed","message":"Another device is at this position than the one read.","next":"Re-list the devices."}}
 ```
 
 The client checks response correlation. A lost connection or an unknown result must not become an automatic replay; see [Results, errors and recovery](#results-errors-and-recovery). `id` correlates requests; it is not a persistent deduplication key. A result describes actual observation/verification scope, not universal success.
@@ -126,7 +126,7 @@ The outcome is `already_matched` when the value was already within one host step
 
 Argument names are strict: there are no aliases. An unknown field gets a hint (closest accepted name, plus a small guessed-name map such as `offset`/`limit` -> `moduleOffset`/`moduleLimit`, `tempo` -> `tempoBpm`, `instanceId` -> `moduleId`/`targetModuleId`); fix the name and retry, nothing was dispatched.
 
-`stale_target` means the addressed identity differs from what was observed (for example an `expectedDeviceName` or track mismatch on any root-device method); `stale_context` is legacy: no method emits it any more; a change while a call was queued or running is `target_changed` (or `unsafe_state` when the transport, recording or automation-write state moved). Both are errors: rediscover, then retry. A deadline or target change after dispatch is an unknown result. No automatic retry or GUI fallback is implemented.
+`target_not_found` means nothing is at the addressed ref; `target_changed` means another object is there now (the error carries `current`) or the target changed while a call was queued or running; `unsafe_state` covers a transport, recording or automation-write change during the call. `stale_context` and `stale_target` are retired legacy reasons: they remain in `REASONS` only until P2-Z part B removes them after P2-C. Each of these is an error before dispatch: rediscover, then retry. A deadline or target change after dispatch is an unknown result. No automatic retry or GUI fallback is implemented.
 
 ### Chains and the devices inside them
 
@@ -528,7 +528,7 @@ For a supported scalar or boolean panel, take the target from a recent `grid.get
 | `enum` | Signed32-bit JSON integer tokens matching an actual listed option **value**, not its list position |
 | `float` | Finite JSON numbers within native range; integer tokens must be exactly representable as binary64 |
 
-Numeric strings, nulls, booleans-as-numbers, fractional/exponent tokens for integer/enum, nonfinite numbers and silent clamping are rejected. The TCP decoder preserves number lexemes before domain validation. Float fractional/exponent values use finite binary64 conversion; numeric positive/negative zero compare equal. Kind and exact raw-value preconditions precede even a no-op. A mismatch rejects `stale_context`; range/options/type failures reject `invalid_params`.
+Numeric strings, nulls, booleans-as-numbers, fractional/exponent tokens for integer/enum, nonfinite numbers and silent clamping are rejected. The TCP decoder preserves number lexemes before domain validation. Float fractional/exponent values use finite binary64 conversion; numeric positive/negative zero compare equal. Kind and exact raw-value preconditions precede even a no-op. A mismatch rejects `target_changed`; range/options/type failures reject `invalid_params`.
 
 For scalar controls, the native editor invokes only the exact public final raw controller operation `aLw.UNj(double):void` for mapped rce/Hgx/iS3/Lig/RuU/nhW implementations. Exact Hgx→rXz→rce inheritance is checked; other subclasses are not automatically authorized. It adds no engine-input setter, parser, transaction wrapper, gesture/touch management, lock acquisition, retry or rollback. Live ownership/membership/lifecycle, project/context/default-transaction, thread, license/property, touch/undo and device-lock-owner relations are checked on the document callback before dispatch. The public controller's safely published stopped/nonrecording/nonautomation observations and monotonic epoch also reject observed changes/ABA while queued or completing. This is **observed safety**, not atomic native transport/recording exclusion.
 
@@ -615,7 +615,7 @@ Native move/delete coverage does not establish sample/null equivalence, disabled
 
 `grid.modules.set` requires exactly the device `target`, a canonical current `moduleId`, and both `expectedCustomName` and `customName`. Copy `moduleId` from `grid.get.instanceId` and the expected raw string from that row's `customName`. Effective `name`, catalog `typeName`, type UUID, local key, path, position and GUI selection are not substitutes. No batch or selected-module fallback is provided.
 
-Both name fields are strict JSON strings of at most1024UTF-16 code units; empty and whitespace-only strings are allowed and preserved. There is no trimming, stringification, truncation or special treatment of `"false"`/`"null"`. Null, omitted values and other JSON types reject `invalid_params` before enqueue. Empty `customName` resets the native override; its effective fallback is independently read, not filled from the catalog. Raw CAS rejects `stale_context` even for an otherwise matching no-op.
+Both name fields are strict JSON strings of at most1024UTF-16 code units; empty and whitespace-only strings are allowed and preserved. There is no trimming, stringification, truncation or special treatment of `"false"`/`"null"`. Null, omitted values and other JSON types reject `invalid_params` before enqueue. Empty `customName` resets the native override; its effective fallback is independently read, not filled from the catalog. Raw CAS rejects `target_changed` even for an otherwise matching no-op.
 
 `moduleRename` has an independent availability gate requiring the exact declared public-final `com.bitwig.flt.document.core.master.device.Dgc.iHb(String):void` inherited by a real native `rSf`, raw/effective-name readers, actual owning device/track and shared topology context. Unrelated parameter/display/catalog/footprint bindings do not authorize or disable this name setter. At most128actual mapped modules are admitted; native names are bounded too. No move-only occupied-span limit, fake Grid owner, scalar setter, protected UI property or copied UI outer transaction is used.
 

@@ -76,7 +76,7 @@ final class GridConnectionWriter {
         snapshots.guardTarget(target);
         Graph ready = capture(target.graph, check);
         before.same(ready, true);
-        request.requireExpected(ready.require(request.target, true).sourceEndpoint);
+        request.requireExpected(ready.requireSame(request.target, true).sourceEndpoint);
         contexts.capture(target.target, target.graph, ready.members, context, check);
         nativeWriter.requireSupported(input.model, context.undo());
         snapshots.guardTarget(target);
@@ -100,7 +100,7 @@ final class GridConnectionWriter {
                 Graph after = capture(target.graph, check);
                 before.same(after, !changed);
                 contexts.capture(target.target, target.graph, after.members, context, check);
-                Port actual = after.require(request.target, true);
+                Port actual = after.requireSame(request.target, true);
                 nativeWriter.requireSupported(actual.model, context.undo());
                 JsonObject graph =
                         snapshots.snapshot(deviceSource, 0, GridTopologyContext.MAX_MODULES, false, false, null, check);
@@ -395,9 +395,19 @@ final class GridConnectionWriter {
             Port port = (input ? inputs : outputs).get(endpoint);
             if (port == null)
                 throw Errors.notApplied(
-                        Reason.TARGET_CHANGED,
+                        Reason.TARGET_NOT_FOUND,
                         "Requested exact native " + (input ? "input" : "output")
-                                + " is absent; reacquire grid.export. Matching owner/key without stream membership is insufficient.");
+                                + " is absent; reacquire grid.export. Matching owner/key without stream membership is insufficient.",
+                        "grid.export");
+            return port;
+        }
+
+        /** A port the write found before dispatch that a later capture no longer has. */
+        Port requireSame(Endpoint endpoint, boolean input) {
+            Port port = (input ? inputs : outputs).get(endpoint);
+            if (port == null)
+                throw Errors.notApplied(
+                        Reason.TARGET_CHANGED, "A requested native port left the graph during the write.");
             return port;
         }
 

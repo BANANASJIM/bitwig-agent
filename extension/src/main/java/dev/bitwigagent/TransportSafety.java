@@ -66,9 +66,7 @@ final class TransportSafety {
         if (current.epoch != before.epoch)
             throw Errors.notApplied(
                     Reason.UNSAFE_STATE,
-                    "Transport, recording or automation-write state changed while the write was queued or running;"
-                            + " nothing was written.",
-                    "transport.get");
+                    "Transport, recording or automation-write state changed while the write was queued or running.");
         current.requireStopped();
     }
 

@@ -1909,7 +1909,7 @@ public final class GridSnapshotReaderTest {
                 "post-delete graph exposes native bypass reconnection, not just incident edges");
         HostOperation absent = f.start(null);
         assertTrue(
-                !assertRpcError("target_changed", absent).unknown && f.calls == 1,
+                !assertRpcError("target_not_found", absent).unknown && f.calls == 1,
                 "missing UUID is not idempotent deletion success or a retry");
     }
 

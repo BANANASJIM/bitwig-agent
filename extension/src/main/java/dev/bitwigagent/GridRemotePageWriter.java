@@ -167,8 +167,7 @@ final class GridRemotePageWriter {
         } catch (RpcException error) {
             if (!dispatched) throw error;
             throw Errors.unknown(
-                    error.is(Reason.TARGET_CHANGED) ? Reason.READBACK_MISMATCH : error.reason,
-                    error.getMessage() + " Inspect devices.remote.get before another write.");
+                    error.reason, error.getMessage() + " Inspect devices.remote.get before another write.");
         }
         check.run();
         JsonObject result = Results.outcome(dispatched ? Outcome.APPLIED : Outcome.ALREADY_MATCHED);
@@ -355,13 +354,13 @@ final class GridRemotePageWriter {
     private void verify(Host host, Object page, Request request, Slot[] wanted) {
         if (nativeAccess.pageList(page) != host.pages
                 || !nativeAccess.pages(host.pages).contains(page))
-            throw Errors.notApplied(Reason.TARGET_CHANGED, "The defined page is no longer in the preset-page list.");
+            throw Errors.notApplied(Reason.READBACK_MISMATCH, "The defined page is no longer in the preset-page list.");
         if (!request.pageName.equals(displayName(host, page, "preset")))
             throw Errors.notApplied(
-                    Reason.TARGET_CHANGED, "Native page name readback differs from the requested pageName.");
+                    Reason.READBACK_MISMATCH, "Native page name readback differs from the requested pageName.");
         if (!nativeAccess.visiblePages(host.host).contains(page))
             throw Errors.notApplied(
-                    Reason.TARGET_CHANGED, "The defined page is not in the device's visible page list.");
+                    Reason.READBACK_MISMATCH, "The defined page is not in the device's visible page list.");
         for (int index = 0; index < SLOTS; index++) {
             Object slot = nativeAccess.slot(page, index);
             Slot want = wanted[index];
@@ -371,7 +370,7 @@ final class GridRemotePageWriter {
                             || nativeAccess.slotTarget(slot) != want.binding.parameter
                             || !want.spec.labelMatches(nativeAccess.slotLabel(slot)))
                 throw Errors.notApplied(
-                        Reason.TARGET_CHANGED, "Native slot " + index + " readback differs from the request.");
+                        Reason.READBACK_MISMATCH, "Native slot " + index + " readback differs from the request.");
         }
     }
 

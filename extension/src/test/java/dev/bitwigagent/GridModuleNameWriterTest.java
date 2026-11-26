@@ -171,7 +171,7 @@ public final class GridModuleNameWriterTest {
         Fixture missing = new Fixture();
         failed(
                 missing.start(new UUID(1, 99), new GridModuleNameWriter.Request("", "new")),
-                "target_changed",
+                "target_not_found",
                 "not_applied");
         Fixture full = new Fixture();
         full.population(1024);

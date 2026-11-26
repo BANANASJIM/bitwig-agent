@@ -1471,8 +1471,13 @@ public final class GridModuleTest {
         immediate.host.next();
         immediate.adapter.next();
         if (!immediate.adapter.tasks.isEmpty()) immediate.adapter.next();
+        JsonObject settled = assertUnknown("unsafe_state", changed);
+        assertFalse(
+                settled.get("message").getAsString().contains("nothing was written"),
+                "a post-dispatch result never claims nothing was written");
+        assertFalse(settled.has("next"), "a post-dispatch safety result does not point at a pre-dispatch hint");
         assertTrue(
-                assertUnknown("unsafe_state", changed) != null && immediate.adapter.naming.calls == 1,
+                settled != null && immediate.adapter.naming.calls == 1,
                 "a safety transition during the native setter cannot be reported not-applied");
         Fixture noop = new Fixture();
         HostOperation op = noop.host.submit(noop.module, "grid.modules.set", renameTarget("", ""));

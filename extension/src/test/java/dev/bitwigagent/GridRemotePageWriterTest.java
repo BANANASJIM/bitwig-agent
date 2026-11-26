@@ -580,6 +580,14 @@ public final class GridRemotePageWriterTest {
         moved.userPage("Macros");
         moved.afterCall = () -> moved.model.proxy.put(TARGET, new Node(DEVICE));
         assertTrue(moved.deleteFailure("Macros").unknown, "a target change after the native delete is unknown");
+        RemoteFixture changed = new RemoteFixture();
+        changed.afterCall = () -> {
+            if (changed.calls.size() == 4) changed.model.proxy.put(TARGET, new Node(DEVICE));
+        };
+        RpcException swapped = changed.defineFailure(TWO);
+        assertTrue(
+                swapped.unknown && swapped.reason.wire().equals("target_changed"),
+                "a device change after the define dispatched keeps its own reason");
         RemoteFixture dropped = new RemoteFixture();
         dropped.afterCall = () -> {
             if (dropped.calls.size() == 4) dropped.pages.clear();

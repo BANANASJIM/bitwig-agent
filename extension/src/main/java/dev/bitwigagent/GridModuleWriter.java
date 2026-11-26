@@ -129,7 +129,7 @@ final class GridModuleWriter {
                     result.addProperty("removedModuleId", moduleId.toString());
                     result.addProperty("removed", true);
                 } else {
-                    Row actual = after.require(moduleId);
+                    Row actual = after.requireSame(moduleId);
                     result.add("requestedPosition", position(request.x, request.y));
                     result.add("actualPosition", actual.position());
                 }
@@ -288,8 +288,17 @@ final class GridModuleWriter {
             Row row = find(id);
             if (row == null)
                 throw Errors.notApplied(
-                        Reason.TARGET_CHANGED,
-                        "Requested current module UUID is absent; reacquire grid.export. Deletion is not missing-is-success.");
+                        Reason.TARGET_NOT_FOUND,
+                        "Requested current module UUID is absent; reacquire grid.export. Deletion is not missing-is-success.",
+                        "grid.export");
+            return row;
+        }
+
+        /** A module the write found before dispatch that a later capture no longer has. */
+        Row requireSame(UUID id) {
+            Row row = find(id);
+            if (row == null)
+                throw Errors.notApplied(Reason.TARGET_CHANGED, "Module " + id + " left the graph during the write.");
             return row;
         }
 
@@ -340,7 +349,7 @@ final class GridModuleWriter {
 
         void requireMoveLayout(Layout after, Row selected, Move request) {
             for (Row row : rows) {
-                Row actual = after.require(row.id);
+                Row actual = after.requireSame(row.id);
                 int baselineX = row == selected ? request.x : row.x;
                 int baselineY = row == selected ? request.y : row.y;
                 // Native placement sets the selected row; BcP may only push each module rightward.
@@ -354,7 +363,7 @@ final class GridModuleWriter {
         void sameLayout(Layout after) {
             survivors(after, null);
             for (Row row : rows) {
-                Row actual = after.require(row.id);
+                Row actual = after.requireSame(row.id);
                 if (actual.x != row.x || actual.y != row.y)
                     throw Errors.notApplied(
                             Reason.TARGET_CHANGED, "Native graph layout changed during bounded capture.");

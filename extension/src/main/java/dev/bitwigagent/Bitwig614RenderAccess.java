@@ -183,7 +183,8 @@ final class Bitwig614RenderAccess implements RenderModule.Access {
         }
         if (resolver.kind(channel) != Bitwig614TrackResolver.Kind.CHANNEL)
             throw Errors.notApplied(
-                    Reason.TARGET_NOT_FOUND, "No native channel for " + (proxy == null ? "the master" : id) + ".");
+                    proxy == null ? Reason.NATIVE_UNAVAILABLE : Reason.TARGET_NOT_FOUND,
+                    "No native channel for " + (proxy == null ? "the master" : id) + ".");
         a.requireModelThread(channel);
         if (resolver.owner(channel, projectType) != project)
             throw Errors.notApplied(Reason.TARGET_CHANGED, "Source " + id + " belongs to another project.");
