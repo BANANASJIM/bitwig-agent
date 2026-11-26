@@ -1,10 +1,12 @@
-"""Python/Java contract parity: send schema-derived bound vectors straight to the Java validator.
+"""Python/Java contract parity: send schema-derived vectors straight to the Java validator.
 
 Imported by smoke-mcp-java.py and run against its fixture RpcServer. For every
 method, walk the pydantic JSON schema; each numeric/length/item bound is sent at
-the bound (accept) and just beyond it (reject), and every optional field the
-catalog examples never include is sent once. The raw TCP request bypasses the
-Python adapter, so the JVM's own validator decides; its verdict must equal
+the bound (accept) and just beyond it (reject), every optional field the catalog
+examples never include is sent once, and every object gets an unknown field, every
+field a wrong-typed and a null value, every required field is dropped and every
+pattern gets a trailing newline. The raw TCP request bypasses the Python adapter, so
+the JVM's own validation (schema, then module rules) decides; its verdict must equal
 pydantic's. No codegen: vectors are derived from the schema at run time.
 """
 
@@ -294,16 +296,28 @@ def ensure(root, path, schema, defs):
 
 
 def leaves(schema, defs, path=()):
-    """Yield (path, node) for every named property, descending objects and array item 0."""
-    for node in variants(schema, defs):
+    """Yield (path, node, required) for every named property, descending objects and array item 0."""
+    alternatives = variants(schema, defs)
+    for node in alternatives:
         if node.get("type") == "object":
             for name, sub in node.get("properties", {}).items():
                 if name == "timeoutMs":
                     continue
-                yield (*path, name), sub
+                yield (*path, name), sub, len(alternatives) == 1 and name in node.get("required", ())
                 yield from leaves(sub, defs, (*path, name))
         elif node.get("type") == "array":
             yield from leaves(node["items"], defs, (*path, 0))
+
+
+def containers(schema, defs, path=()):
+    """Yield the path of every object the schema describes: the root, nested objects and array item 0 objects."""
+    for node in variants(schema, defs):
+        if node.get("type") == "object" and "properties" in node:
+            yield path
+            for name, sub in node["properties"].items():
+                yield from containers(sub, defs, (*path, name))
+        elif node.get("type") == "array":
+            yield from containers(node["items"], defs, (*path, 0))
 
 
 def bound_vectors(node, defs):
@@ -350,6 +364,44 @@ def bound_vectors(node, defs):
                 yield "maxItems+", s["maxItems"] + 1, False
 
 
+WRONG_TYPES: tuple[tuple[str, Any], ...] = (
+    ("boolean", True),
+    ("string", "zz"),
+    ("integer", 1),
+    ("number", 1.5),
+    ("array", []),
+    ("object", {}),
+)
+ENUM_STRANGER = "zz-not-a-member"
+UNKNOWN_FIELD = "zzUnknown"
+
+
+def allowed_kinds(node, defs):
+    """JSON kinds the schema accepts at node, including null inside anyOf."""
+    node = resolve(node, defs)
+    kinds = set()
+    for branch in node.get("anyOf", [node]):
+        kinds.add(resolve(branch, defs).get("type"))
+    if "number" in kinds:
+        kinds.add("integer")
+    return kinds
+
+
+def type_vectors(node, defs):
+    """Yield (label, value, expectation): a wrong-typed value and a null at a field, plus a non-member for enums."""
+    kinds = allowed_kinds(node, defs)
+    if None in kinds:
+        return
+    wrong = [(k, v) for k, v in WRONG_TYPES if k not in kinds]
+    for label, value in wrong[:2]:
+        yield f"wrong type {label}", value, "reject"
+    if "integer" in kinds and "number" not in kinds:
+        yield "float for integer", 1.0, "reject"
+    yield "null", None, "reject" if "null" not in kinds else "same"
+    if any("enum" in v for v in variants(node, defs)):
+        yield "enum non-member", ENUM_STRANGER, "reject"
+
+
 def python_verdict(method, params):
     try:
         TOOLS[method].model.model_validate(params)
@@ -371,37 +423,77 @@ async def java_verdict(port, method, params):
     return error is None, error
 
 
+def edit(example, path, doc):
+    """A copy of the example with the containers of path created; returns (params, parent, key). doc is (schema, defs)."""
+    params = copy.deepcopy(example)
+    parent, key = ensure(params, path, *doc)
+    return params, parent, key
+
+
+def bound_cases(method, example, leaf, doc):
+    path, node, _ = leaf
+    defs = doc[1]
+    name = ".".join(map(str, path))
+    for label, value, accept in bound_vectors(node, defs):
+        params, parent, key = edit(example, path, doc)
+        if label.startswith(("minItems", "maxItems")):
+            current = parent.get(key) if isinstance(parent, dict) else parent[key]
+            template = current[0] if current else generate(variants(node, defs)[0]["items"], defs)
+            parent[key] = [vary(copy.deepcopy(template), i) for i in range(value)]
+        else:
+            parent[key] = value
+        if (method, name) in FIXUPS:
+            FIXUPS[method, name](params, value)
+        yield f"{method}:{name} {label}", params, name, "accept" if accept else "reject"
+
+
+def shape_cases(method, example, leaf, doc):
+    """Wrong-typed and null values, a dropped required field and a pattern with a trailing newline."""
+    path, node, required = leaf
+    defs = doc[1]
+    name = ".".join(map(str, path))
+    for label, value, expect in type_vectors(node, defs):
+        params, parent, key = edit(example, path, doc)
+        parent[key] = value
+        yield f"{method}:{name} {label}", params, name, expect
+    if required:
+        params, parent, key = edit(example, path, doc)
+        parent.pop(key, None)
+        yield f"{method}:{name} missing", params, name, "reject"
+    for variant in variants(node, defs):
+        params, parent, key = edit(example, path, doc)
+        current = parent.get(key)
+        if "pattern" in variant and isinstance(current, str) and re.search(variant["pattern"], current):
+            parent[key] = current + "\n"
+            yield f"{method}:{name} pattern trailing newline", params, name, "reject"
+
+
 def cases(method):
     """Yield (label, params, field, expectation) for one method."""
     spec = TOOLS[method]
     schema = spec.model.model_json_schema()
     defs = schema.get("$defs", {})
+    doc = (schema, defs)
     sent = {key for example in spec.examples for key in example}
     for example in map(host_paths, spec.examples):
-        for path, node in leaves(schema, defs):
+        for container in containers(schema, defs):
+            params, parent, key = edit(example, (*container, UNKNOWN_FIELD), doc)
+            parent[key] = 1
+            where = ".".join(map(str, container)) or "<root>"
+            yield f"{method}:{where} unknown field", params, where, "reject"
+        for path, node, required in leaves(schema, defs):
             name = ".".join(map(str, path))
             top_level_gap = len(path) == 1 and path[0] not in example
             if top_level_gap and path[0] in sent:
                 continue  # an example that carries this field covers it
-            base = copy.deepcopy(example)
-            parent, key = ensure(base, path, schema, defs)
             if top_level_gap:  # optional field the examples never send
+                base, parent, key = edit(example, path, doc)
                 parent[key] = generate(node, defs)
                 if (method, name) in FIXUPS:
                     FIXUPS[method, name](base, parent[key])
                 yield f"{method}:{name} optional", base, name, "optional"
-            for label, value, accept in bound_vectors(node, defs):
-                params = copy.deepcopy(example)
-                parent, key = ensure(params, path, schema, defs)
-                if label.startswith(("minItems", "maxItems")):
-                    current = parent.get(key) if isinstance(parent, dict) else parent[key]
-                    template = current[0] if current else generate(variants(node, defs)[0]["items"], defs)
-                    parent[key] = [vary(copy.deepcopy(template), i) for i in range(value)]
-                else:
-                    parent[key] = value
-                if (method, name) in FIXUPS:
-                    FIXUPS[method, name](params, value)
-                yield f"{method}:{name} {label}", params, name, "accept" if accept else "reject"
+            yield from bound_cases(method, example, (path, node, required), doc)
+            yield from shape_cases(method, example, (path, node, required), doc)
 
 
 async def run(port):
@@ -423,10 +515,10 @@ async def run(port):
                 problems.append(
                     f"MISMATCH {label}: python={'accept' if py else 'reject'} java={'accept' if java else 'reject'} {error}"
                 )
-            elif expect != "reject":
+            elif expect in ("accept", "optional"):
                 covered[label] = covered.get(label, False) or py
-            elif py:
-                problems.append(f"{label}: both sides accept a value beyond the schema bound")
+            elif expect == "reject" and py:
+                problems.append(f"{label}: both sides accept a value the schema forbids")
     insert = TOOLS["grid.modules.insert"].examples[0]
     for name in ("<", "=", ">", "\u2260", "\u2264", "\u2265", "Slope \u2197", "---", "\u00b2"):
         for params in (
@@ -445,5 +537,5 @@ async def run(port):
         if not ok
     ]
     if problems:
-        raise AssertionError(f"bound parity failed ({checked} vectors):\n" + "\n".join(problems))
+        raise AssertionError(f"vector parity failed ({checked} vectors):\n" + "\n".join(problems))
     return checked

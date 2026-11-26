@@ -62,7 +62,7 @@ final class ActionModule implements HostModule {
         String query = params.has("query") ? params.get("query").getAsString().toLowerCase(Locale.ROOT) : null;
         String wanted =
                 params.has("category") ? params.get("category").getAsString().toLowerCase(Locale.ROOT) : null;
-        int limit = params.has("limit") ? params.get("limit").getAsInt() : 100;
+        int limit = params.get("limit").getAsInt();
         JsonArray actions = new JsonArray();
         int total = 0;
         for (Action action : application.getActions()) {

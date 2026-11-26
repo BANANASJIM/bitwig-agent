@@ -120,8 +120,10 @@ public final class MixModuleTest {
                         .equals("already_matched"),
                 "idempotent mix set explicit");
         assertTrue(f.tracks[1].child("mute").writes == 1, "no unnecessary second mute write");
-        HostOperation absent =
-                f.submit(module, "tracks.set", HostFixture.json("{\"trackId\":\"outside\",\"mute\":true}"));
+        HostOperation absent = f.submit(
+                module,
+                "tracks.set",
+                HostFixture.json("{\"trackId\":\"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee\",\"mute\":true}"));
         f.next();
         assertRpcError("outside_window", absent);
         assertTrue(f.tracks[0].child("mute").writes == 0, "absent UUID never falls back to selected track");

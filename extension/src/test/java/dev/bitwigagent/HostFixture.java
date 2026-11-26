@@ -309,8 +309,9 @@ final class HostFixture {
     HostOperation start(HostModule module, String method, JsonObject params) {
         HostOperation op = new HostOperation(tasks.after(5000));
         try {
-            module.validate(method, params);
-            module.dispatch(op, method, params);
+            JsonObject filled = HostBridge.checkSchema(SPECS, method, params);
+            module.validate(method, filled);
+            module.dispatch(op, method, filled);
         } catch (RuntimeException error) {
             op.fail(error);
         }
@@ -328,8 +329,9 @@ final class HostFixture {
     HostOperation submit(HostModule module, String method, JsonObject params, long deadline) {
         HostOperation op = new HostOperation(deadline);
         try {
-            module.validate(method, params);
-            services.enqueue(op, () -> module.dispatch(op, method, params));
+            JsonObject filled = HostBridge.checkSchema(SPECS, method, params);
+            module.validate(method, filled);
+            services.enqueue(op, () -> module.dispatch(op, method, filled));
         } catch (RuntimeException error) {
             op.result.completeExceptionally(error);
         }

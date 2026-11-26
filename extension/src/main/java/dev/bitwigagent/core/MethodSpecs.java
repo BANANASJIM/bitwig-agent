@@ -25,13 +25,20 @@ public final class MethodSpecs {
     public static final class Spec {
         public final boolean readOnly, projectWrite, engineRequired;
         public final int defaultTimeoutMs, maxTimeoutMs;
+        public final SchemaValidator params;
 
-        private Spec(boolean readOnly, Set<String> requires, int defaultTimeoutMs, int maxTimeoutMs) {
+        private Spec(
+                boolean readOnly,
+                Set<String> requires,
+                int defaultTimeoutMs,
+                int maxTimeoutMs,
+                SchemaValidator params) {
             this.readOnly = readOnly;
             this.projectWrite = requires.contains("projectReady");
             this.engineRequired = requires.contains("engine");
             this.defaultTimeoutMs = defaultTimeoutMs;
             this.maxTimeoutMs = maxTimeoutMs;
+            this.params = params;
         }
     }
 
@@ -150,7 +157,19 @@ public final class MethodSpecs {
         }
         int def = integer(method, "defaultTimeoutMs"), max = integer(method, "maxTimeoutMs");
         if (def < minTimeoutMs || def > max) throw new IllegalStateException(name + " has an invalid timeout range");
-        return new Spec(flag(method, "readOnly"), requires, def, max);
+        return new Spec(flag(method, "readOnly"), requires, def, max, paramsSchema(name, method));
+    }
+
+    /** timeoutMs travels in the request envelope, where the transport checks it against the spec's own range. */
+    private static SchemaValidator paramsSchema(String name, JsonObject method) {
+        JsonObject schema = method.getAsJsonObject("inputSchema");
+        if (schema == null) throw new IllegalStateException(name + " has no inputSchema");
+        schema.getAsJsonObject("properties").remove("timeoutMs");
+        try {
+            return SchemaValidator.compile(schema);
+        } catch (IllegalStateException e) {
+            throw new IllegalStateException(name + " inputSchema: " + e.getMessage(), e);
+        }
     }
 
     private static boolean flag(JsonObject object, String key) {
