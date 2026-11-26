@@ -351,10 +351,12 @@ public final class SchemaValidator {
     }
 
     private static void string(Node node, String text, String path) {
-        int length = text.codePointCount(0, text.length());
-        if (node.minLength != null && length < node.minLength)
+        int codePoints = text.codePointCount(0, text.length());
+        if (node.minLength != null && codePoints < node.minLength)
             throw fail(path, "must have at least " + node.minLength + " characters");
-        if (node.maxLength != null && length > node.maxLength)
+        // maxLength counts UTF-16 units, as the module rules and the Python models do; a code point count would
+        // admit strings those reject.
+        if (node.maxLength != null && text.length() > node.maxLength)
             throw fail(path, "must have at most " + node.maxLength + " characters");
         if (node.pattern != null && !node.pattern.matcher(text).find())
             throw fail(path, "must match " + node.patternSource);

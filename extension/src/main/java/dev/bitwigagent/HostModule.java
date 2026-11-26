@@ -14,5 +14,5 @@ interface HostModule {
     default void flush() {}
 
     /** Adds this domain's section to status; only with {@code full}, so the brief status stays the same. */
-    default void status(JsonObject out, boolean full) {}
+    default void status(HostOperation operation, JsonObject out, boolean full) {}
 }

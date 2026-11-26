@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import PurePath, PurePosixPath, PureWindowsPath
-from typing import Annotated, Any, Self
+from typing import Annotated, Any, Self, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.config import JsonDict
@@ -155,6 +155,16 @@ def validate_local_path(value: str) -> PurePath:
     raise ValueError("path must be an absolute normalized path without control characters")
 
 
+def union_metadata(annotation: Any) -> tuple[Any, ...]:
+    """Constraints on the members of an optional or union annotation, which pydantic does not hoist into field.metadata."""
+    return tuple(
+        constraint
+        for member in get_args(annotation)
+        for annotated in getattr(member, "__metadata__", ())
+        for constraint in getattr(annotated, "metadata", ())
+    )
+
+
 class StrictModel(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid", allow_inf_nan=False)
 
@@ -165,7 +175,7 @@ class StrictModel(BaseModel):
             value = getattr(self, key)
             if isinstance(value, str):
                 length = len(value.encode("utf-16-le", errors="surrogatepass")) // 2
-                for constraint in field.metadata:
+                for constraint in (*field.metadata, *union_metadata(field.annotation)):
                     limit = getattr(constraint, "max_length", None)
                     if limit is not None and length > limit:
                         raise ValueError(f"{key} exceeds {limit} UTF-16 code units")

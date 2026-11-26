@@ -165,3 +165,13 @@ def test_positions_are_an_edge_or_an_anchor_ref():
     assert moved.parent.kind == "chain"
     assert "parent" not in DeviceDestination.model_validate({"position": "end"}).model_fields_set
     assert TrackDestination.model_validate({"position": {"after": TRACK}}).position
+
+
+def test_ref_name_limit_counts_utf16_units():
+    adapter = TypeAdapter(AnyRef)
+    adapter.validate_python({**TRACK, "name": "\U0001f600" * 2048})
+    with pytest.raises(ValidationError, match="UTF-16"):
+        adapter.validate_python({**TRACK, "name": "\U0001f600" * 2049})
+    adapter.validate_python({**SCENE, "name": "\U0001f600" * 2048})
+    with pytest.raises(ValidationError, match="UTF-16"):
+        adapter.validate_python({**SCENE, "name": "\U0001f600" * 2049})
