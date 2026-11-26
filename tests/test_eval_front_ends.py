@@ -245,7 +245,8 @@ def test_verify_reads_state_through_the_condition_client(tmp_path: Path) -> None
     wav.write_bytes(b"RIFF" + b"0" * 100)
     answers = {
         "status": {"projectName": "BWA Test", "instance": {"display": ":1"}},
-        "tracks.list": {"tracks": [{"name": "Drums", "ref": drums}, {"name": "Bass", "ref": bass}]},
+        # live shape: the name is only under ref
+        "tracks.list": {"tracks": [{"ref": drums, "index": 0}, {"ref": bass, "index": 1}]},
         "devices.list": {
             "devices": [
                 {"name": "Poly Grid", "ref": device, "index": 0},
@@ -261,7 +262,15 @@ def test_verify_reads_state_through_the_condition_client(tmp_path: Path) -> None
             ]
         },
         "grid.export": {"modules": []},
-        "devices.sidechain.get": {"components": [{"source": {"track": drums}}]},
+        "devices.sidechain.get": {
+            "components": [
+                {
+                    "source": {"kind": "pre_fader", "trackId": drums["id"]},
+                    "sourceName": "Pre-Fader",
+                    "sourceTrackName": "Drums",
+                }
+            ]
+        },
         "audio.analyze": {"loudness": {"integratedLufs": -14.2}},
     }
     for method, answer in answers.items():
@@ -280,8 +289,36 @@ def test_verify_reads_state_through_the_condition_client(tmp_path: Path) -> None
     assert verdict["t5"]["lufs"] == -14.2
     assert (tmp_path / "raw" / "tracks.json").is_file()
 
-    (state / "devices.sidechain.get").write_text(json.dumps({"components": [{"source": {"track": bass}}]}))
+    (state / "devices.sidechain.get").write_text(
+        json.dumps(
+            {"components": [{"source": {"kind": "pre_fader", "trackId": bass["id"]}, "sourceTrackName": "Bass"}]}
+        )
+    )
     (state / "status").write_text(json.dumps({"projectName": "BWA Test", "instance": {"display": ":0"}}))
     refused = run_script(str(EVAL / "verify.sh"), "B", str(wav.parent), str(tmp_path / "raw2"), env=env)
     assert refused.returncode != 0
     assert "not :1" in refused.stderr
+
+    # a Grid-only Bass: parameters.list has no filter, grid.export lists changed module params -> a human decides
+    (state / "devices.sidechain.get").write_text(json.dumps(answers["devices.sidechain.get"]))
+    (state / "status").write_text(json.dumps({"projectName": "BWA Test", "instance": {"display": ":1"}}))
+    (state / "parameters.list").write_text(json.dumps({"parameters": [{"name": "Output", "value": {"value": 0.8}}]}))
+    spec = {"modules": [{"name": "B: filter", "type": "SVF", "params": {"CUTOFF": 81.4, "RESONANCE": 0.3}}]}
+    (state / "grid.export").write_text(json.dumps({"spec": spec}))
+    graded = run_script(str(EVAL / "verify.sh"), "B", str(wav.parent), str(tmp_path / "raw3"), env=env)
+    assert graded.returncode == 0, graded.stderr
+    assert json.loads(graded.stdout)["t3"]["status"] == "review"
+
+
+def test_chained_help_and_call_resolve_to_the_call() -> None:
+    chained = "bitwig-agent clips launch --help | sed -n 1,14p; B='{}'\nbitwig-agent clips launch --clip=\"$B\""
+    calls = metrics.parse([use("1", "Bash", command=chained), result("1", "Exit code 2\n" + BAD_ARG, True)])[0]
+    assert metrics.method_of(calls[0]) == "clips.launch"
+    only_help = metrics.parse([use("1", "Bash", command="bitwig-agent audio route --help")])[0]
+    assert metrics.method_of(only_help[0]) is None
+
+
+def test_human_verdict_replaces_only_review() -> None:
+    verify = {"t3": {"status": "review"}, "t4": {"status": "fail"}}
+    merged = metrics.apply_verdicts(verify, {"t3": {"status": "pass", "reason": "r"}, "t4": {"status": "pass"}})
+    assert merged["t3"]["status"] == "pass" and merged["t4"]["status"] == "fail"

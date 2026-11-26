@@ -37,8 +37,9 @@ assert_test_instance "$dialect"
 tracks="$(read_state tracks tracks.list)"
 # key of a track as the dialect addresses it: a ref (new) or a UUID (old)
 track_key() {  # empty when the track does not exist
-  if [[ "$dialect" == new ]]; then jq -c --arg n "$1" '[.tracks[]? | select(.name == $n)][0].ref // empty' <<<"$tracks"
-  else jq -r --arg n "$1" '[.tracks[]? | select(.name == $n)][0].id // empty' <<<"$tracks"; fi
+  # live host: the name is under .ref (rows are {ref: {kind, id, name}, index, type, ...})
+  if [[ "$dialect" == new ]]; then jq -c --arg n "$1" '[.tracks[]? | select((.ref.name // .name) == $n)][0].ref // empty' <<<"$tracks"
+  else jq -r --arg n "$1" '[.tracks[]? | select((.ref.name // .name) == $n)][0] | (.id // .ref.id) // empty' <<<"$tracks"; fi
 }
 track_id() { if [[ "$dialect" == new ]]; then jq -r '.id' <<<"$1"; else printf '%s' "$1"; fi; }  # UUID of a track key
 devices_args() { if [[ "$dialect" == new ]]; then echo "{\"parent\":$1}"; else echo "{\"trackId\":\"$1\"}"; fi; }
@@ -83,21 +84,26 @@ while read -r device; do
   [[ -n "$device" ]] || continue
   name="$(jq -r .name <<<"$device")"
   slug="${name//[^A-Za-z0-9]/_}"
+  # the compressor's own detection filter has a "frequency" too; T3 is about the sound's filter
+  if [[ "$name" =~ [Cc]ompressor ]]; then continue; fi
   params="$(read_state "parameters-$slug" parameters.list "$(parameter_args "$bass" "$device")")"
   candidates="$(jq -c --argjson more "$params" '. + [$more | .. | objects | select(has("name") or has("parameterId"))]' <<<"$candidates")"
   if jq -e '.name | test("grid"; "i")' <<<"$device" >/dev/null; then
+    # grid.export lists only parameters that differ from their module default (includeParams "changed"):
+    # spec.modules[].params is {NAME: number}. Present means changed, but not when, so a Grid alone yields review.
     grid="$(read_state "grid-$slug" grid.export "$(device_args "$bass" "$device")")"
-    candidates="$(jq -c --argjson more "$grid" '. + [$more | .. | objects | select(has("parameterId") or (has("name") and has("value")))]' <<<"$candidates")"
+    candidates="$(jq -c --argjson more "$grid" '. + [$more | .spec.modules[]? | .name as $m | (.params // {}) | to_entries[] | {name: .key, module: $m, value: .value, gridChanged: true}]' <<<"$candidates")"
   fi
 done <<<"$device_rows"
 t3="$(jq -c --arg cut "$CUTOFF" --arg res "$RESONANCE" '
   def pick($re): [.[] | select(((.name // .parameterId // "") | tostring | test($re; "i")) and ((.value.value? // .value?) | type == "number"))];
-  def changed: any(.[]; (.default? // .defaultValue? // null) as $d | $d != null and $d != (.value.value? // .value?));
+  def changed: any(.[]; .gridChanged == true or ((.default? // .defaultValue? // null) as $d | $d != null and $d != (.value.value? // .value?)));
   def unknown: any(.[]; (.default? // .defaultValue? // null) == null);
   pick($cut) as $c | pick($res) as $r
   | {cutoff: ($c | length), resonance: ($r | length), cutoffChanged: ($c | changed), resonanceChanged: ($r | changed),
      status: (if ($c | length) == 0 or ($r | length) == 0 then "fail"
-              elif ($c | changed) and ($r | changed) then "pass"
+              elif ($c | changed) and ($r | changed) and (($c | unknown | not) and ($r | unknown | not)) then "pass"
+              elif ($c | changed) and ($r | changed) then "review"
               elif ($c | unknown) or ($r | unknown) then "review" else "fail" end)}' <<<"$candidates")"
 put t3 "$(jq -r .status <<<"$t3")" "$(jq -c 'del(.status)' <<<"$t3")"
 

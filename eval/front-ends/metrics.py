@@ -9,6 +9,7 @@ Counted from the transcript, not from the agent's own account:
   learning bytes   result bytes of `--help`/`help`/old `list`/`describe`/MCP `help` calls, plus everything read
                    from skills/** (Read, a shell cat/head/sed/grep, the Skill tool and the text it injects)
   total read bytes result bytes of every tool call
+  verdicts.json    optional per run {"t3": {"status": "pass"|"fail", "reason": ...}}; replaces a `review` only
   failures         a Bash call with exit != 0, or any call with is_error; each labelled `tool` (the Bitwig tool or
                    host answered with an error) or `agent` (the agent's own shell script, file or command broke)
   self-correction  a tool-caused failure followed, within the next CORRECTION_WINDOW calls, by a success of the
@@ -164,22 +165,29 @@ def invocation(command: str) -> tuple[str, list[str], list[str]] | None:
     return found.group(1), words, tokens
 
 
-def asks_for_help(call: Call) -> bool:
-    parsed = invocation(call.command)
-    if parsed is None:
-        return False
+def is_help(parsed: tuple[str, list[str], list[str]]) -> bool:
     binary, words, tokens = parsed
     first = words[0] if words else ""
     return bool({"--help", "-h"} & set(tokens)) or first == "help" or (binary == OLD_BINARY and first in OLD_LEARNING)
 
 
+def invocations(command: str) -> list[tuple[str, list[str], list[str]]]:
+    """Every bitwig-agent[-rpc] call of a command line, one per `;`, `&&` or newline segment, in order."""
+    found = (invocation(segment) for segment in re.split(r";|&&|\n", command))
+    return [parsed for parsed in found if parsed is not None]
+
+
+def asks_for_help(call: Call) -> bool:
+    parsed = invocation(call.command)
+    return parsed is not None and is_help(parsed)
+
+
 def method_of(call: Call) -> str | None:
+    """The method of the last non-help bitwig-agent call in the command (an agent often chains `--help` with the call)."""
     if call.tool.startswith("mcp__"):
         return call.tool.split("__", 2)[-1]
-    parsed = invocation(call.command)
-    if parsed is None or not parsed[1] or asks_for_help(call):
-        return None
-    return ".".join(parsed[1])
+    real = [parsed for parsed in invocations(call.command) if parsed[1] and not is_help(parsed)]
+    return ".".join(real[-1][1]) if real else None
 
 
 def is_learning(call: Call) -> bool:
@@ -295,6 +303,15 @@ class Run:
     verify: dict[str, Any]
 
 
+def apply_verdicts(verify: dict[str, Any], decided: dict[str, Any]) -> dict[str, Any]:
+    """A human decision for a task verify.sh left at `review`: {"t3": {"status": "pass", "reason": "..."}}."""
+    merged = dict(verify)
+    for task, decision in decided.items():
+        if (merged.get(task) or {}).get("status") == "review":
+            merged[task] = {**merged[task], **decision, "decided": True}
+    return merged
+
+
 def collect(out_dir: Path) -> list[Run]:
     runs = []
     for directory in sorted(out_dir.glob("[ABC]/run*")):
@@ -307,7 +324,9 @@ def collect(out_dir: Path) -> list[Run]:
                 int(directory.name.removeprefix("run")),
                 read_json(directory / "meta.json") or {},
                 metrics,
-                read_json(directory / "verify.json") or {},
+                apply_verdicts(
+                    read_json(directory / "verify.json") or {}, read_json(directory / "verdicts.json") or {}
+                ),
             )
         )
     return runs
