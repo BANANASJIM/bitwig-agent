@@ -2,7 +2,6 @@ package dev.bitwigagent;
 
 import dev.bitwigagent.core.MethodSpecs;
 import java.util.ArrayList;
-import java.util.EnumMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -57,19 +56,20 @@ public enum Reason {
     INTERNAL;
 
     private static final class Codes {
-        static final Map<Reason, ErrorCode> CODES = check(MethodSpecs.load().vocabulary());
+        static final Map<String, String> CODES = MethodSpecs.load().vocabulary().reasons;
     }
 
     public String wire() {
         return name().toLowerCase(Locale.ROOT);
     }
 
+    /** The bundle's code for this reason; {@link #check} proved at startup that it exists. */
     public ErrorCode code() {
-        return Codes.CODES.get(this);
+        return ErrorCode.valueOf(Codes.CODES.get(wire()).toUpperCase(Locale.ROOT));
     }
 
-    /** The Java vocabulary must equal the bundle's: the same outcomes in the same order, codes and reasons. */
-    static Map<Reason, ErrorCode> check(MethodSpecs.Vocabulary vocabulary) {
+    /** At startup, before any request: the Java vocabulary must equal the bundle's, or the extension fails to load. */
+    static void check(MethodSpecs.Vocabulary vocabulary) {
         List<String> outcomes = new ArrayList<>(), codes = new ArrayList<>();
         for (Outcome outcome : Outcome.values()) outcomes.add(outcome.wire());
         for (ErrorCode code : ErrorCode.values()) codes.add(code.wire());
@@ -77,13 +77,8 @@ public enum Reason {
             throw new IllegalStateException("Outcome or ErrorCode differs from the protocol bundle");
         if (vocabulary.reasons.size() != values().length)
             throw new IllegalStateException("Reason differs from the protocol bundle");
-        Map<Reason, ErrorCode> out = new EnumMap<>(Reason.class);
-        for (Reason reason : values()) {
-            String code = vocabulary.reasons.get(reason.wire());
-            if (code == null)
+        for (Reason reason : values())
+            if (!vocabulary.reasons.containsKey(reason.wire()))
                 throw new IllegalStateException("Reason " + reason.wire() + " is not in the protocol bundle");
-            out.put(reason, ErrorCode.valueOf(code.toUpperCase(Locale.ROOT)));
-        }
-        return out;
     }
 }

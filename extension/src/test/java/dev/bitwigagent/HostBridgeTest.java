@@ -446,6 +446,17 @@ public final class HostBridgeTest {
     }
 
     @Test
+    void aBundleWithAnotherVocabularyFailsAtStartup() {
+        JsonObject bundle = MethodSpecsTest.bundle();
+        bundle.getAsJsonObject("reasons").remove("busy");
+        bundle.getAsJsonObject("reasons").addProperty("idle", "pending");
+        IllegalStateException mismatch = assertThrows(
+                IllegalStateException.class,
+                () -> new Fake().bridge(MethodSpecs.parse(new java.io.StringReader(bundle.toString()))));
+        assertTrue(mismatch.getMessage().contains("busy"), "the startup check names the missing reason");
+    }
+
+    @Test
     void discardingActionsAreGuardedByUnsavedChanges() {
         Fake host = new Fake();
         HostBridge bridge = host.bridge();
