@@ -53,6 +53,26 @@ public final class Refs {
         return true;
     }
 
+    /** target_changed for a parameter ref that no longer fits; a same-id ref with another name says so. */
+    public static RpcException parameterChanged(JsonObject requested, JsonObject current) {
+        JsonElement id = requested.get("id"), name = requested.get("name"), now = current.get("name");
+        if (id != null
+                && id.equals(current.get("id"))
+                && name != null
+                && !name.isJsonNull()
+                && !name.equals(value(now)))
+            return Errors.targetChanged(
+                    "This ref names " + text(name) + "; the parameter here is "
+                            + (now == null || now.isJsonNull() ? "unnamed" : text(now))
+                            + ". Use the name from parameters.list (or omit name).",
+                    current);
+        return Errors.targetChanged("Another parameter is at this location than the one read.", current);
+    }
+
+    private static String text(JsonElement name) {
+        return "\"" + (name.isJsonPrimitive() ? name.getAsString() : name.toString()) + "\"";
+    }
+
     private static boolean sameAncestor(JsonElement requested, JsonElement current) {
         if (requested == null || current == null) return requested == current;
         if (!requested.isJsonObject() || !current.isJsonObject()) return requested.equals(current);

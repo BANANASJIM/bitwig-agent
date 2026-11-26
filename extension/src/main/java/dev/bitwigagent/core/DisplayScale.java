@@ -33,6 +33,12 @@ public final class DisplayScale {
 
     private static final Pattern QUANTITY =
             Pattern.compile("^\\s*([+\\-−]?)\\s*(\\d+(?:[.,]\\d+)?|[.,]\\d+)\\s*([a-z%°µ]+)\\s*$");
+    /** "1:2.00", "4:1": two plain numbers around a colon. */
+    private static final Pattern RATIO =
+            Pattern.compile("^\\s*(\\d+(?:[.,]\\d+)?|[.,]\\d+)\\s*:\\s*(\\d+(?:[.,]\\d+)?|[.,]\\d+)\\s*$");
+    /** The unit a ratio display is read in: the value is the compression-style strength, "1:x" and "x:1" both x. */
+    public static final String RATIO_UNIT = "ratio";
+
     private static final Pattern MINUS_INFINITY = Pattern.compile("^\\s*[\\-−]\\s*(?:inf|∞)\\w*\\s*([a-z%°µ]+)\\s*$");
 
     private DisplayScale() {}
@@ -43,6 +49,8 @@ public final class DisplayScale {
         String t = text.trim().toLowerCase(java.util.Locale.ROOT);
         Matcher infinite = MINUS_INFINITY.matcher(t);
         if (infinite.matches()) return new Quantity(MINUS_INF, infinite.group(1), 0.5);
+        Matcher ratio = RATIO.matcher(t);
+        if (ratio.matches()) return ratio(ratio.group(1), ratio.group(2));
         Matcher m = QUANTITY.matcher(t);
         if (!m.matches()) return null;
         double number = Double.parseDouble(m.group(2).replace(',', '.'));
@@ -66,6 +74,18 @@ public final class DisplayScale {
             default:
         }
         return new Quantity(number * factor, unit, tolerance(t) * factor);
+    }
+
+    /**
+     * A ratio display "a:b" is read as larger / smaller, so Bitwig's "1:8.00" and the usual "8:1" both mean 8 and the
+     * value is never below 1. Its resolution is that of the displayed larger side, divided by the smaller.
+     */
+    private static Quantity ratio(String left, String right) {
+        double a = Double.parseDouble(left.replace(',', '.')), b = Double.parseDouble(right.replace(',', '.'));
+        if (a <= 0 || b <= 0) return null;
+        boolean leftBig = a > b;
+        double big = leftBig ? a : b, small = leftBig ? b : a;
+        return new Quantity(big / small, RATIO_UNIT, tolerance(leftBig ? left : right) / small);
     }
 
     /** Numeric value in dB or signed percent (negative = left); NaN when the text is not understood. */

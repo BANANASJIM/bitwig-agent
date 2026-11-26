@@ -157,10 +157,31 @@ public final class DisplaySolver {
     private void requireUnit(String shown) {
         DisplayScale.Quantity now = DisplayScale.quantity(shown);
         if (now == null || !now.unit.equals(quantity.unit))
-            throw Errors.notApplied(
-                    Reason.UNSUPPORTED_UNIT,
-                    "The parameter displays \"" + shown + "\", not a number in " + quantity.unit
-                            + "; write the value you read.");
+            throw unsupportedUnit(
+                    "The parameter does not display a number in " + quantity.unit
+                            + " (write the display in the shape it shows)",
+                    port.value(),
+                    port.display());
+    }
+
+    /** The unsupported_unit refusal, carrying the parameter's current value and display so the expected format is visible. */
+    public static RpcException unsupportedUnit(String problem, JsonElement value, JsonElement display) {
+        StringBuilder message = new StringBuilder(problem).append("; it is now ");
+        boolean known = false;
+        if (value != null && !value.isJsonNull()) {
+            message.append("value ").append(value.getAsString());
+            known = true;
+        }
+        if (display != null && !display.isJsonNull()) {
+            message.append(known ? ", displaying \"" : "displaying \"")
+                    .append(display.getAsString())
+                    .append('"');
+            known = true;
+        }
+        if (!known) message.append("not observed yet");
+        return Errors.notApplied(
+                Reason.UNSUPPORTED_UNIT,
+                message.append(". Or write the value you read.").toString());
     }
 
     private void probe(double x) {
