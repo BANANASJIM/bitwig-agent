@@ -15,3 +15,93 @@ file = "junit-platform-console-standalone-1.11.4.jar"
 url = "https://repo.maven.apache.org/maven2/org/junit/platform/junit-platform-console-standalone/1.11.4/junit-platform-console-standalone-1.11.4.jar"
 sha256 = "b016ef6b1c3454d6d7c2c88ce081dabf289699686af6622d6e4e2e1b54b4a2fc"
 max_bytes = 4194304
+
+[palantir-native-linux-x86_64]
+file = "palantir-java-format-2.102.0-linux-glibc_x86-64.bin"
+url = "https://repo1.maven.org/maven2/com/palantir/javaformat/palantir-java-format-native/2.102.0/palantir-java-format-native-2.102.0-nativeImage-linux-glibc_x86-64.bin"
+sha256 = "0e8e4d55b6d7cd4803279437c364463cff117f136a7750e78f295a7570e54450"
+max_bytes = 209715200
+
+[palantir-native-linux-aarch64]
+file = "palantir-java-format-2.102.0-linux-glibc_aarch64.bin"
+url = "https://repo1.maven.org/maven2/com/palantir/javaformat/palantir-java-format-native/2.102.0/palantir-java-format-native-2.102.0-nativeImage-linux-glibc_aarch64.bin"
+sha256 = "1bfa7a0a983237c539dfcf4078f28468696059b5a2049fcb20181009aa44bf2d"
+max_bytes = 209715200
+
+[palantir-native-darwin-arm64]
+file = "palantir-java-format-2.102.0-macos_aarch64.bin"
+url = "https://repo1.maven.org/maven2/com/palantir/javaformat/palantir-java-format-native/2.102.0/palantir-java-format-native-2.102.0-nativeImage-macos_aarch64.bin"
+sha256 = "24a984105fe95594bbb360b7799ada7db13dddeb9fce69640df471061040b5a4"
+max_bytes = 209715200
+
+[palantir-jar-palantir-java-format-2.102.0]
+file = "palantir/palantir-java-format-2.102.0.jar"
+url = "https://repo1.maven.org/maven2/com/palantir/javaformat/palantir-java-format/2.102.0/palantir-java-format-2.102.0.jar"
+sha256 = "8074d7e21832edcad422f8dbf6002d296551963bec410daad97317210a55b5c1"
+max_bytes = 52428800
+
+[palantir-jar-palantir-java-format-spi-2.102.0]
+file = "palantir/palantir-java-format-spi-2.102.0.jar"
+url = "https://repo1.maven.org/maven2/com/palantir/javaformat/palantir-java-format-spi/2.102.0/palantir-java-format-spi-2.102.0.jar"
+sha256 = "ac4b8e44d90e09ee4ceafb6ad3083097871a161cc88feab6bd87378f4e4859bc"
+max_bytes = 52428800
+
+[palantir-jar-guava-33.7.2-jre]
+file = "palantir/guava-33.7.2-jre.jar"
+url = "https://repo1.maven.org/maven2/com/google/guava/guava/33.7.2-jre/guava-33.7.2-jre.jar"
+sha256 = "b530942257fb935f8b2cfaa5f8eb5bd59c555fd8e8d01b8ce98912e077ea606c"
+max_bytes = 52428800
+
+[palantir-jar-failureaccess-1.0.2]
+file = "palantir/failureaccess-1.0.2.jar"
+url = "https://repo1.maven.org/maven2/com/google/guava/failureaccess/1.0.2/failureaccess-1.0.2.jar"
+sha256 = "8a8f81cf9b359e3f6dfa691a1e776985c061ef2f223c9b2c80753e1b458e8064"
+max_bytes = 52428800
+
+[palantir-jar-functionaljava-5.0]
+file = "palantir/functionaljava-5.0.jar"
+url = "https://repo1.maven.org/maven2/org/functionaljava/functionaljava/5.0/functionaljava-5.0.jar"
+sha256 = "377ad140e7d26ba04fadf219b09d7e1c74bc0232fa4010b20c1c79db11f9670e"
+max_bytes = 52428800
+
+[palantir-jar-jackson-core-2.22.3]
+file = "palantir/jackson-core-2.22.3.jar"
+url = "https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-core/2.22.3/jackson-core-2.22.3.jar"
+sha256 = "8a501126a385b25841915d839508f8a66e2a0dbc8a6709d055ef3b3e852b094c"
+max_bytes = 52428800
+
+[palantir-jar-jackson-databind-2.22.3]
+file = "palantir/jackson-databind-2.22.3.jar"
+url = "https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-databind/2.22.3/jackson-databind-2.22.3.jar"
+sha256 = "556db5439e206114346043f68d200497dc96a0bca62a360a81784092ebd0e0a9"
+max_bytes = 52428800
+
+[palantir-jar-jackson-annotations-2.22]
+file = "palantir/jackson-annotations-2.22.jar"
+url = "https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-annotations/2.22/jackson-annotations-2.22.jar"
+sha256 = "21ddb598807d3a51a876704eb979d9296e1c6a6f47ab1826ff88c6d6a127a2d0"
+max_bytes = 52428800
+
+[palantir-jar-jackson-datatype-guava-2.22.3]
+file = "palantir/jackson-datatype-guava-2.22.3.jar"
+url = "https://repo1.maven.org/maven2/com/fasterxml/jackson/datatype/jackson-datatype-guava/2.22.3/jackson-datatype-guava-2.22.3.jar"
+sha256 = "30d44f810bd73264f2b8e46c799f5a5dc933acf827493d73bfba5525c647d6c0"
+max_bytes = 52428800
+
+[palantir-jar-jackson-datatype-jdk8-2.22.3]
+file = "palantir/jackson-datatype-jdk8-2.22.3.jar"
+url = "https://repo1.maven.org/maven2/com/fasterxml/jackson/datatype/jackson-datatype-jdk8/2.22.3/jackson-datatype-jdk8-2.22.3.jar"
+sha256 = "f223061a5aaecdc9506458143807c73bcd1a744d6b3bbb8da4703a0abc408f7d"
+max_bytes = 52428800
+
+[palantir-jar-jackson-module-parameter-names-2.22.3]
+file = "palantir/jackson-module-parameter-names-2.22.3.jar"
+url = "https://repo1.maven.org/maven2/com/fasterxml/jackson/module/jackson-module-parameter-names/2.22.3/jackson-module-parameter-names-2.22.3.jar"
+sha256 = "3f085667cd7b2dd9794a837b6e4a5c57779132bfc37b49b5c457870eee9d60ba"
+max_bytes = 52428800
+
+[palantir-jar-jsr305-3.0.2]
+file = "palantir/jsr305-3.0.2.jar"
+url = "https://repo1.maven.org/maven2/com/google/code/findbugs/jsr305/3.0.2/jsr305-3.0.2.jar"
+sha256 = "766ad2a0783f2687962c8ad74ceecc38a28b9f72a2d085ee438b7813e928d0c7"
+max_bytes = 52428800

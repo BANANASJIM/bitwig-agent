@@ -3,8 +3,13 @@
 import hashlib
 import os
 import tempfile
+import tomllib
 import urllib.request
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+DEPS_TABLE = ROOT / "extension/deps.toml"
+DEPS_DIR = ROOT / "build" / "deps"
 
 
 def sha256_of(path: Path) -> str:
@@ -29,6 +34,15 @@ def download_verified(url: str, sha256: str, target: Path, limit: int) -> Path:
     finally:
         temporary.unlink(missing_ok=True)
     return target
+
+
+def dependency(name: str) -> Path:
+    entry = tomllib.loads(DEPS_TABLE.read_text())[name]
+    return download_verified(entry["url"], entry["sha256"], DEPS_DIR / entry["file"], entry["max_bytes"])
+
+
+def dependency_group(prefix: str) -> list[str]:
+    return [name for name in tomllib.loads(DEPS_TABLE.read_text()) if name.startswith(prefix)]
 
 
 def host_paths(value):

@@ -10,19 +10,13 @@ import tomllib
 import zipfile
 from pathlib import Path
 
-from tooling import download_verified
+from tooling import dependency
 
 ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "build"
 SOURCES = ROOT / "extension/src/main/java"
-DEPS_TABLE = ROOT / "extension/deps.toml"
 SHARED = ROOT / "src/bitwig_agent/shared"
 LINUX_HOST_JAR = "/opt/bitwig-studio/bin/bitwig.jar"
-
-
-def dependency(name):
-    entry = tomllib.loads(DEPS_TABLE.read_text())[name]
-    return download_verified(entry["url"], entry["sha256"], BUILD / "deps" / entry["file"], entry["max_bytes"])
 
 
 def gson_jar():
