@@ -1,42 +1,85 @@
 package dev.bitwigagent;
 
 import java.util.ArrayList;
-import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 
-/** Every domain's unresolved or in-flight write, in one place: what {@code extension.restart} lists and refuses on. */
+/**
+ * Every domain's unresolved or in-flight write, in one place. An unresolved hold stays until the agent inspects state
+ * and calls {@code ack} with its id; an in-flight hold is released only by its owner when the work settles; a job hold
+ * is in flight until its request has returned, then {@code ack} gives up on it through its owner.
+ */
 final class Holds {
+    /** What {@code status} lists: the id {@code ack} takes, whether it accepts it and what is held. */
+    static final class View {
+        final String id, description;
+        final boolean ackable;
+
+        View(String id, String description, boolean ackable) {
+            this.id = id;
+            this.description = description;
+            this.ackable = ackable;
+        }
+    }
+
     private static final class Hold {
-        final String domain;
+        final String domain, id;
         final Object key;
         final Supplier<String> description;
+        final BooleanSupplier ackable;
+        final Runnable abandon;
 
-        Hold(String domain, Object key, Supplier<String> description) {
+        Hold(
+                String domain,
+                String id,
+                Object key,
+                Supplier<String> description,
+                BooleanSupplier ackable,
+                Runnable abandon) {
             this.domain = domain;
+            this.id = id;
             this.key = key;
             this.description = description;
+            this.ackable = ackable;
+            this.abandon = abandon;
         }
     }
 
     private final List<Hold> holds = new ArrayList<>();
+    private int sequence;
 
-    /** A hold identified by its domain alone. */
+    /** An unresolved hold identified by its domain alone; its id is the domain. */
     void place(String domain, String description) {
-        place(domain, domain, () -> description);
+        put(domain, domain, () -> description, () -> true, null);
     }
 
-    /** A hold per {@code key}; a description that supplies null counts as released. */
-    synchronized void place(String domain, Object key, Supplier<String> description) {
-        Hold hold = new Hold(domain, key, description);
+    /** An unresolved hold per {@code key}; a description that supplies null counts as released. */
+    void place(String domain, Object key, Supplier<String> description) {
+        put(domain, key, description, () -> true, null);
+    }
+
+    /** An in-flight hold: {@code ack} refuses it, its owner releases it when the work settles. */
+    void inFlight(String domain, String description) {
+        put(domain, domain, () -> description, () -> false, null);
+    }
+
+    /** A long job: in flight while {@code returned} is false; then {@code ack} calls {@code abandon} instead of waiting. */
+    void job(String domain, Supplier<String> description, BooleanSupplier returned, Runnable abandon) {
+        put(domain, domain, description, returned, abandon);
+    }
+
+    private synchronized void put(
+            String domain, Object key, Supplier<String> description, BooleanSupplier ackable, Runnable abandon) {
         for (int i = 0; i < holds.size(); i++) {
             Hold existing = holds.get(i);
             if (existing.domain.equals(domain) && existing.key.equals(key)) {
-                holds.set(i, hold);
+                holds.set(i, new Hold(domain, existing.id, key, description, ackable, abandon));
                 return;
             }
         }
-        holds.add(hold);
+        String id = key.equals(domain) ? domain : domain + ":" + ++sequence;
+        holds.add(new Hold(domain, id, key, description, ackable, abandon));
     }
 
     void release(String domain) {
@@ -59,13 +102,34 @@ final class Holds {
         return out;
     }
 
-    /** Distinct descriptions in placement order; one domain may place several holds that say the same thing. */
-    synchronized List<String> descriptions() {
-        LinkedHashSet<String> out = new LinkedHashSet<>();
+    /** The refusal a write gets while {@code domain} is held: what to inspect, then which id to ack. */
+    synchronized RpcException blocked(String domain, String message, String inspect) {
+        List<String> ids = new ArrayList<>();
+        for (Hold hold : holds) if (hold.domain.equals(domain) && hold.description.get() != null) ids.add(hold.id);
+        return Errors.notApplied(Reason.UNRESOLVED, message, inspect + ", then ack " + String.join(" / ", ids) + ".");
+    }
+
+    synchronized List<View> list() {
+        List<View> out = new ArrayList<>();
         for (Hold hold : holds) {
             String text = hold.description.get();
-            if (text != null) out.add(text);
+            if (text != null) out.add(new View(hold.id, text, hold.ackable.getAsBoolean()));
         }
-        return new ArrayList<>(out);
+        return out;
+    }
+
+    /** Releases the unresolved hold {@code id} and returns its description. */
+    synchronized String ack(String id) {
+        for (Hold hold : holds) {
+            String text = hold.description.get();
+            if (!hold.id.equals(id) || text == null) continue;
+            if (!hold.ackable.getAsBoolean())
+                throw Errors.notApplied(
+                        Reason.BUSY, text, "Wait for its request to return; ack releases only unresolved holds.");
+            if (hold.abandon == null) holds.remove(hold);
+            else hold.abandon.run();
+            return text;
+        }
+        throw Errors.notApplied(Reason.UNKNOWN_HOLD, "No current hold has id " + id + ".", "status lists the holds.");
     }
 }

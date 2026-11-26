@@ -59,7 +59,7 @@ def test_read_graph_refuses_to_return_part_of_a_device():
 
     with pytest.raises(BridgeError) as err:
         asyncio.run(read.read_graph(stalled))
-    assert err.value.error["code"] == "graph_incomplete"
+    assert err.value.error["reason"] == "not_ready"
     assert "2 of 5" in err.value.error["message"]
 
 
@@ -70,8 +70,7 @@ def test_read_graph_rejects_an_unusable_page(page):
 
     with pytest.raises(BridgeError) as err:
         asyncio.run(read.read_graph(broken))
-    assert err.value.error["code"] == "internal_error"
-    assert err.value.error["outcome"] == "not_applied"
+    assert err.value.error["reason"] == "internal"
 
 
 def test_read_params_chunks_ids_and_can_require_every_module():

@@ -50,8 +50,85 @@ public final class ProjectModuleTest {
         {
             RpcException expected =
                     assertThrows(RpcException.class, () -> ProjectModule.validateParams("project.save", saveExtra));
-            assertTrue(expected.code.equals("invalid_params"), "project.save still takes no parameters");
+            assertTrue(expected.reason.wire().equals("invalid_params"), "project.save still takes no parameters");
         }
+    }
+
+    @Test
+    void ungatedHostIsUnavailable() throws IOException {
+        HostFixture fixture = new HostFixture();
+        ProjectModule module = fixture.services.projectModule(null);
+        JsonObject capability = module.saveAsCapability(new HostOperation(fixture.tasks.after(5000)));
+        assertTrue(
+                !capability.get("available").getAsBoolean() && capability.has("reason"),
+                "capabilities report the binding unavailable off the gated host");
+        HostOperation op = fixture.submit(
+                module,
+                "project.saveAs",
+                params(temp("bwa-gate").resolve("S/S.bwproject").toString()));
+        fixture.next();
+        assertRpcError("host_mismatch", op);
+        assertTrue(fixture.services.holds.list().isEmpty(), "nothing is in flight");
+    }
+
+    @Test
+    void aNativeSaveThatThrowsAfterDispatchEndsItsJob() throws IOException {
+        Sim sim = new Sim();
+        sim.throwAfter = true;
+        HostOperation op = sim.start(sim.root.resolve("Song/Song.bwproject"), false);
+        sim.drain();
+        JsonObject result = assertUnknown("job_failed", op);
+        assertEquals("saveAs:1", result.get("job").getAsString(), "the unknown result names its job");
+        assertTrue(sim.holds().isEmpty(), "the failed job holds nothing");
+        JsonObject job = sim.job("saveAs:1");
+        assertEquals("unknown", job.get("outcome").getAsString());
+        assertEquals("job_failed", job.get("reason").getAsString());
+        HostOperation save = sim.call("project.save", 5000);
+        assertFalse(save.result.isCompletedExceptionally(), "project.save is admitted again");
+    }
+
+    @Test
+    void ackGivesUpAJobWhoseRequestReturned() throws IOException {
+        Sim silent = new Sim();
+        silent.silent = true;
+        HostOperation running = silent.start(silent.root.resolve("Song/Song.bwproject"), false, 5000);
+        silent.step();
+        assertRpcError("busy", () -> silent.fixture.services.holds.ack("project.saveAs"));
+        silent.drainUntil(running);
+        assertUnknown("deadline", running);
+        silent.fixture.services.holds.ack("project.saveAs");
+        assertTrue(silent.holds().isEmpty(), "ack released the save hold");
+        HostOperation save = silent.call("project.save", 5000);
+        assertFalse(save.result.isCompletedExceptionally(), "project.save is no longer busy");
+        assertEquals("running", silent.job("saveAs:1").get("state").getAsString(), "jobs.get still follows it");
+    }
+
+    @Test
+    void aLateCallbackOfAnAckedSaveKeepsTheNextSaveHeld() throws IOException {
+        Sim silent = new Sim();
+        silent.silent = true;
+        HostOperation first = silent.start(silent.root.resolve("Song/Song.bwproject"), false, 150);
+        silent.drainUntil(first);
+        ProjectModule.Completion stale = silent.late;
+        silent.fixture.services.holds.ack("project.saveAs");
+        HostOperation second = silent.start(silent.root.resolve("Again/Again.bwproject"), false, 150);
+        silent.drainUntil(second);
+        assertEquals("saveAs:2", assertUnknown("deadline", second).get("job").getAsString());
+        stale.completed();
+        assertEquals(1, silent.holds().size(), "the first save's callback leaves the second save held");
+        silent.late.completed();
+        assertTrue(silent.holds().isEmpty(), "its own callback releases it");
+    }
+
+    @Test
+    void executeFailureGivesTheJobSlotBack() throws IOException {
+        Sim sim = new Sim();
+        sim.executeFails = true;
+        HostOperation op = sim.start(sim.root.resolve("Song/Song.bwproject"), false);
+        sim.drain();
+        assertRpcError("not_ready", op);
+        assertTrue(sim.holds().isEmpty() && sim.dispatches == 0, "nothing was dispatched or held");
+        assertRpcError("target_not_found", sim.jobsGet("saveAs:1"));
     }
 
     @Test
@@ -67,19 +144,19 @@ public final class ProjectModuleTest {
                         && plan.name.equals("Song")
                         && !plan.before.exists,
                 "new project is dispatched as <dir>/Name.bwproject so Bitwig creates <dir>/Name/");
-        assertNotApplied(
+        assertRpcError(
                 "invalid_target",
                 () -> ProjectSaveAsPlan.resolve(root.resolve("Song.bwproject"), root, home, false, false));
-        assertNotApplied(
+        assertRpcError(
                 "invalid_target",
                 () -> ProjectSaveAsPlan.resolve(root.resolve("Song/Other.bwproject"), root, home, false, false));
-        assertNotApplied(
+        assertRpcError(
                 "invalid_target",
                 () -> ProjectSaveAsPlan.resolve(root.resolve("Missing/Song/Song.bwproject"), root, home, false, false));
-        assertNotApplied(
+        assertRpcError(
                 "path_not_allowed",
                 () -> ProjectSaveAsPlan.resolve(home.resolve("Song/Song.bwproject"), root, home, false, false));
-        assertNotApplied(
+        assertRpcError(
                 "path_not_allowed",
                 () -> ProjectSaveAsPlan.resolve(root.resolve("Song/Song.bwproject"), null, home, false, false));
         Files.createDirectories(home.resolve("Elsewhere"));
@@ -89,7 +166,7 @@ public final class ProjectModuleTest {
                 "allowAnyPath lifts only the root check");
         Path outside = temp("bwa-outside");
         Files.createSymbolicLink(root.resolve("link"), outside);
-        assertNotApplied(
+        assertRpcError(
                 "path_not_allowed",
                 () -> ProjectSaveAsPlan.resolve(root.resolve("link/Song/Song.bwproject"), root, home, false, false));
 
@@ -107,11 +184,15 @@ public final class ProjectModuleTest {
                         .folder
                         .equals(existing),
                 "subfolders belong to the nearest marked project folder");
-        assertNotApplied(
+        assertRpcError(
                 "invalid_target",
                 () -> ProjectSaveAsPlan.resolve(existing.resolve("missing/V2.bwproject"), root, home, false, false));
+        Files.createDirectories(existing.resolve("Folder.bwproject"));
+        assertRpcError(
+                "invalid_target",
+                () -> ProjectSaveAsPlan.resolve(existing.resolve("Folder.bwproject"), root, home, true, false));
         Files.write(existing.resolve("Existing.bwproject"), new byte[] {1, 2, 3});
-        assertNotApplied(
+        assertRpcError(
                 "target_exists",
                 () -> ProjectSaveAsPlan.resolve(existing.resolve("Existing.bwproject"), root, home, false, false));
         plan = ProjectSaveAsPlan.resolve(existing.resolve("Existing.bwproject"), root, home, true, false);
@@ -126,12 +207,12 @@ public final class ProjectModuleTest {
                 "an empty unmarked folder is adopted like Bitwig does");
         Files.createDirectories(root.resolve("Busy"));
         Files.createFile(root.resolve("Busy/notes.txt"));
-        assertNotApplied(
+        assertRpcError(
                 "target_exists",
                 () -> ProjectSaveAsPlan.resolve(root.resolve("Busy/Busy.bwproject"), root, home, true, false));
 
         Path stray = Files.createFile(home.resolve("Bitwig Studio").resolve(ProjectSaveAsPlan.MARKER));
-        assertNotApplied(
+        assertRpcError(
                 "invalid_target",
                 () -> ProjectSaveAsPlan.resolve(root.resolve("Fresh/Fresh.bwproject"), root, home, false, false));
         Files.delete(stray);
@@ -145,40 +226,52 @@ public final class ProjectModuleTest {
     }
 
     @Test
-    void observedSaveNeedsCallbackFileFlagAndName() throws IOException {
+    void appliedSaveNeedsCallbackFileFlagAndName() throws IOException {
         Sim sim = new Sim();
         sim.fixture.project.child("isModified").emit(true);
         HostOperation op = sim.start(sim.root.resolve("Song/Song.bwproject"), false);
         sim.drain();
-        JsonObject result = op.result.join();
+        JsonObject result = assertOutcome("applied", op);
         assertTrue(
                 sim.dispatches == 1 && sim.dispatched.equals(sim.root.resolve("Song.bwproject")),
                 "one dispatch at the planned native path");
         assertTrue(
-                result.get("status").getAsString().equals("observed")
-                        && result.get("saved").getAsBoolean()
-                        && result.get("createdProjectFolder").getAsBoolean()
+                result.get("createdProjectFolder").getAsBoolean()
                         && !result.get("overwrote").getAsBoolean()
                         && result.get("projectName").getAsString().equals("Song")
-                        && result.get("fileBytes").getAsLong() > 0,
-                "saved only with callback, written file, isModified=false and the new name");
-        assertTrue(sim.fixture.services.holds.descriptions().isEmpty(), "completed callback leaves nothing pending");
+                        && result.get("fileBytes").getAsLong() > 0
+                        && !result.has("status"),
+                "applied only with callback, written file, isModified=false and the new name");
+        assertTrue(sim.holds().isEmpty(), "completed callback leaves nothing in flight");
+        JsonObject job = sim.job("saveAs:1");
+        assertTrue(
+                job.get("method").getAsString().equals("project.saveAs")
+                        && job.get("state").getAsString().equals("completed")
+                        && job.get("outcome").getAsString().equals("applied"),
+                "jobs.get re-evaluates the save");
         HostOperation again = sim.start(sim.root.resolve("Song/Song.bwproject"), false);
         sim.drain();
         assertRpcError("target_exists", again);
         assertTrue(sim.dispatches == 1, "existing target is refused before dispatch");
-        // Name must change too: a stale name keeps the result unobserved.
+        assertTrue(
+                sim.job("saveAs:1").get("outcome").getAsString().equals("applied"),
+                "a save refused before dispatch keeps the previous job current");
+        assertRpcError("target_not_found", sim.jobsGet("saveAs:2"));
+        // Name must change too: a stale name keeps the result unknown.
         Sim stale = new Sim();
         stale.renames = false;
         op = stale.start(stale.root.resolve("Other/Other.bwproject"), false, 150);
         stale.drainUntil(op);
-        result = op.result.join();
+        result = assertUnknown("deadline", op);
         assertTrue(
-                result.get("status").getAsString().equals("dispatched")
-                        && result.get("outcome").getAsString().equals("unknown")
-                        && result.get("nativeCompletion").getAsString().equals("completed")
-                        && !result.get("saved").getAsBoolean(),
-                "completion without the expected project name is not reported saved");
+                result.get("job").getAsString().equals("saveAs:1")
+                        && result.get("nativeCompletion").getAsString().equals("completed"),
+                "completion without the expected project name is not applied");
+        job = stale.job("saveAs:1");
+        assertTrue(
+                job.get("outcome").getAsString().equals("unknown")
+                        && job.get("reason").getAsString().equals("readback_mismatch"),
+                "jobs.get reports the mismatch after completion");
     }
 
     @Test
@@ -187,46 +280,106 @@ public final class ProjectModuleTest {
         refused.refusal = "Project is already in the process of being saved";
         HostOperation op = refused.start(refused.root.resolve("Song/Song.bwproject"), false);
         refused.drain();
-        RpcException error = assertRpcError("save_refused", op);
+        RpcException error = assertRpcError("host_refused", op);
+        assertTrue(!error.unknown && error.getMessage().contains("already"), "native refusal is an error");
+        JsonObject job = refused.job("saveAs:1");
         assertTrue(
-                error.outcome.equals("not_applied") && error.getMessage().contains("already"),
-                "native refusal is not_applied with its message");
+                job.get("outcome").getAsString().equals("not_applied")
+                        && job.get("reason").getAsString().equals("host_refused")
+                        && job.get("failure").getAsString().contains("already"),
+                "jobs.get keeps the refusal");
         Sim failed = new Sim();
         failed.failure = "IOException: disk full";
         op = failed.start(failed.root.resolve("Song/Song.bwproject"), false);
         failed.drain();
-        error = assertRpcError("save_failed", op);
         assertTrue(
-                error.outcome.equals("unknown") && error.getMessage().contains("disk full"),
+                assertUnknown("job_failed", op).get("message").getAsString().contains("disk full"),
                 "native failure after the job started is unknown");
+        assertTrue(failed.holds().isEmpty(), "a failure callback also ends the job");
         assertTrue(
-                failed.fixture.services.holds.descriptions().isEmpty(),
-                "a failure callback also ends the pending state");
+                failed.job("saveAs:1").get("outcome").getAsString().equals("unknown"),
+                "jobs.get keeps the failure unknown");
     }
 
     @Test
-    void missingCallbackStaysPendingAndUnknown() throws IOException {
+    void missingCallbackStaysInFlightAndUnknown() throws IOException {
         Sim silent = new Sim();
         silent.silent = true;
         HostOperation op = silent.start(silent.root.resolve("Song/Song.bwproject"), false, 150);
         silent.drainUntil(op);
-        JsonObject result = op.result.join();
+        JsonObject result = assertUnknown("deadline", op);
         assertTrue(
-                result.get("outcome").getAsString().equals("unknown")
-                        && result.get("nativeCompletion").getAsString().equals("pending"),
-                "no callback within the deadline is unknown, never retried");
+                result.get("nativeCompletion").getAsString().equals("pending")
+                        && result.get("job").getAsString().equals("saveAs:1"),
+                "no callback within the deadline is unknown with its job, never retried");
         assertTrue(
                 silent.dispatches == 1
-                        && silent.fixture.services.holds.descriptions().size() == 1,
-                "pending native save is listed as unresolved");
+                        && silent.holds().size() == 1
+                        && silent.holds().get(0).ackable,
+                "a pending native save whose request returned is a job hold ack may give up");
         HostOperation busy = silent.start(silent.root.resolve("Again/Again.bwproject"), false);
         silent.drain();
-        assertRpcError("busy", busy);
+        assertTrue(assertRpcError("busy", busy).next.contains("jobs.get saveAs:1"), "busy points at jobs.get");
         HostOperation save = silent.fixture.submit(silent.module, "project.save", new JsonObject());
         silent.drain();
         assertRpcError("busy", save);
+        JsonObject job = silent.job("saveAs:1");
+        assertTrue(
+                job.get("state").getAsString().equals("running") && !job.has("outcome"),
+                "jobs.get reports running until the callback");
         silent.late.completed();
-        assertTrue(silent.fixture.services.holds.descriptions().isEmpty(), "a late callback clears the pending state");
+        assertTrue(silent.holds().isEmpty(), "a late callback ends the job");
+        assertTrue(
+                silent.job("saveAs:1").get("state").getAsString().equals("completed"),
+                "jobs.get then evaluates the save");
+    }
+
+    @Test
+    void saveAndActivateReportOutcomes() throws IOException {
+        Sim sim = new Sim();
+        boolean[] works = {true};
+        int[] invocations = {0};
+        sim.fixture.application.on("getAction", args -> {
+            FakeHost action = new FakeHost("action");
+            action.on("invoke", none -> {
+                invocations[0]++;
+                if (!works[0]) return null;
+                if (args[0].equals(ProjectModule.SAVE_ACTION))
+                    sim.fixture.project.child("isModified").emit(false);
+                else sim.fixture.application.child("hasActiveEngine").emit(true);
+                return null;
+            });
+            return action.proxy(com.bitwig.extension.controller.api.Action.class);
+        });
+        assertOutcome("already_matched", sim.call("project.save", 5000));
+        sim.fixture.project.child("isModified").emit(true);
+        assertTrue(
+                !assertOutcome("applied", sim.call("project.save", 5000))
+                                .get("projectModified")
+                                .getAsBoolean()
+                        && invocations[0] == 1,
+                "an observed save is applied");
+        assertTrue(
+                assertOutcome("applied", sim.call("project.activateEngine", 5000))
+                                .get("engineActive")
+                                .getAsBoolean()
+                        && invocations[0] == 2,
+                "an observed activation is applied");
+        assertOutcome("already_matched", sim.call("project.activateEngine", 5000));
+        works[0] = false;
+        sim.fixture.project.child("isModified").emit(true);
+        assertTrue(
+                assertUnknown("not_observed", sim.call("project.save", 150))
+                        .get("projectModified")
+                        .getAsBoolean(),
+                "a save blocked by a dialog is unknown");
+        sim.fixture.application.child("hasActiveEngine").emit(false);
+        assertTrue(
+                !assertUnknown("not_observed", sim.call("project.activateEngine", 150))
+                        .get("engineActive")
+                        .getAsBoolean(),
+                "an activation not observed is unknown");
+        assertTrue(invocations[0] == 4, "each dispatched once");
     }
 
     /** Simulated native side: Bitwig's observable effects of a save, or a refusal/failure callback. */
@@ -235,9 +388,10 @@ public final class ProjectModuleTest {
         final Deque<Runnable> document = new ArrayDeque<>();
         final Path home, root;
         final ProjectModule module;
+        final JobsModule jobs;
         Path dispatched;
         int dispatches;
-        boolean renames = true, silent;
+        boolean renames = true, silent, executeFails, throwAfter;
         String refusal, failure;
         ProjectModule.Completion late;
 
@@ -246,6 +400,8 @@ public final class ProjectModuleTest {
             root = Files.createDirectories(home.resolve("Projects"));
             module = fixture.services.projectModule(new ProjectModule.SaveAsAccess() {
                 public void execute(Runnable work) {
+                    if (executeFails)
+                        throw Errors.notApplied(Reason.NOT_READY, "simulated: document thread unavailable");
                     document.add(work);
                 }
 
@@ -261,6 +417,7 @@ public final class ProjectModuleTest {
                     beforeDispatch.run();
                     dispatches++;
                     dispatched = path;
+                    if (throwAfter) throw new IllegalStateException("simulated native save threw");
                     if (refusal != null) {
                         done.failed(refusal, true);
                         return;
@@ -290,6 +447,7 @@ public final class ProjectModuleTest {
                     done.completed();
                 }
             });
+            jobs = new JobsModule(module);
         }
 
         HostOperation start(Path path, boolean overwrite) {
@@ -300,6 +458,28 @@ public final class ProjectModuleTest {
             JsonObject p = params(path.toString());
             if (overwrite) p.addProperty("overwrite", true);
             return fixture.submit(module, "project.saveAs", p, fixture.tasks.after(timeoutMs));
+        }
+
+        HostOperation call(String method, long timeoutMs) {
+            HostOperation op = fixture.submit(module, method, new JsonObject(), fixture.tasks.after(timeoutMs));
+            drainUntil(op);
+            return op;
+        }
+
+        HostOperation jobsGet(String id) {
+            JsonObject p = new JsonObject();
+            p.addProperty("id", id);
+            HostOperation op = fixture.submit(jobs, "jobs.get", p);
+            drainUntil(op);
+            return op;
+        }
+
+        JsonObject job(String id) {
+            return jobsGet(id).result.join().getAsJsonObject("job");
+        }
+
+        List<Holds.View> holds() {
+            return fixture.services.holds.list();
         }
 
         void drain() {

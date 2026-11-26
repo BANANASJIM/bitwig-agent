@@ -177,7 +177,7 @@ final class RoutingModule implements HostModule {
                 entry(p, "expectedSource", SOURCE_KINDS, true);
                 break;
             default:
-                throw Errors.notApplied(ErrorCode.UNKNOWN_METHOD, "Unknown routing method.");
+                throw Errors.notApplied(Reason.UNKNOWN_METHOD, "Unknown routing method.");
         }
         uuid(p, "trackId");
     }
@@ -286,12 +286,12 @@ final class RoutingModule implements HostModule {
     public void dispatch(HostOperation op, String method, JsonObject p) {
         scheduler.check(op);
         boolean write = !specs.get(method).readOnly;
-        if (holds.held(PENDING))
-            throw Errors.notApplied(ErrorCode.BUSY, "Another native routing operation is pending.");
+        if (holds.held(PENDING)) throw Errors.notApplied(Reason.BUSY, "Another native routing operation is pending.");
         if (write && holds.held(QUARANTINE))
-            throw Errors.notApplied(
-                    ErrorCode.UNRESOLVED_MUTATION,
-                    "An unresolved routing/sidechain write requires inspection (tracks.routing.get / devices.sidechain.get) and extension.restart before further routing writes.");
+            throw holds.blocked(
+                    QUARANTINE,
+                    "An unresolved routing/sidechain write blocks further routing writes.",
+                    "Inspect tracks.routing.get / devices.sidechain.get");
         String id = p.get("trackId").getAsString();
         int slot = window.trackSlot(id);
         List<TrackRef> bank = bank();
@@ -299,25 +299,25 @@ final class RoutingModule implements HostModule {
         for (TrackRef ref : bank) if (ref.id.equals(id)) self = ref;
         if (self == null)
             throw Errors.notApplied(
-                    ErrorCode.OUTSIDE_WINDOW,
+                    Reason.OUTSIDE_WINDOW,
                     "Track UUID is absent from the current " + HostLimits.TRACKS + "-track window.");
         for (String key : List.of("output", "input", "source")) {
             if (!p.has(key) || !p.getAsJsonObject(key).has("trackId")) continue;
             String other = p.getAsJsonObject(key).get("trackId").getAsString();
             if (bank.stream().noneMatch(ref -> ref.id.equals(other)))
                 throw Errors.notApplied(
-                        ErrorCode.OUTSIDE_WINDOW,
+                        Reason.OUTSIDE_WINDOW,
                         key + ".trackId is absent from the current " + HostLimits.TRACKS
-                                + "-track window; nothing was dispatched.");
+                                + "-track window; nothing changed.");
         }
         DeviceSources.RootReadTicket ticket = method.startsWith("devices.") ? sources.rootRead(parent(p)) : null;
         SafetyObservation safety = write ? transportSafety.stopped(op) : null;
         if (access == null) {
             try {
-                access = new Bitwig614RoutingAccess(natives.get(op).access(ErrorCode.ROUTING_UNAVAILABLE));
+                access = new Bitwig614RoutingAccess(natives.get(op).access());
             } catch (ReflectiveOperationException | LinkageError error) {
                 throw Errors.notApplied(
-                        ErrorCode.ROUTING_UNAVAILABLE,
+                        Reason.NATIVE_UNAVAILABLE,
                         "Exact routing descriptors unavailable: " + Bitwig614Runtime.diagnostic(error));
             }
         }
@@ -326,19 +326,19 @@ final class RoutingModule implements HostModule {
             scheduler.check(op);
             if (epoch.get() != generation)
                 throw Errors.notApplied(
-                        ErrorCode.STALE_CONTEXT, "Track bank changed while the routing operation was queued.");
+                        Reason.STALE_CONTEXT, "Track bank changed while the routing operation was queued.");
             if (ticket != null) ticket.check();
             if (write) transportSafety.guardStopped(safety);
         };
         Runnable beforeWrite = () -> {
             check.run();
-            op.dispatched = true;
+            op.markDispatched();
             holds.place(QUARANTINE, HOLD);
         };
         Access bridge = access;
         TrackRef target = self;
         boolean choices = p.has("includeChoices") && p.get("includeChoices").getAsBoolean();
-        holds.place(PENDING, HOLD);
+        holds.inFlight(PENDING, HOLD);
         try {
             bridge.execute(() -> {
                 try {
@@ -363,9 +363,9 @@ final class RoutingModule implements HostModule {
                                 check.run();
                                 if (!window.trackMatches(id, window.at(slot)))
                                     throw Errors.notApplied(
-                                            ErrorCode.STALE_CONTEXT, "Track target changed after native access.");
+                                            Reason.STALE_CONTEXT, "Track target changed after native access.");
                                 if (ticket != null) sources.guardRootRead(ticket);
-                                if (write && !"unknown".equals(text(result, "completion"))) holds.release(QUARANTINE);
+                                if (write && Results.outcomeOf(result).succeeded()) holds.release(QUARANTINE);
                                 holds.release(PENDING);
                                 annotateTrackNames(result, trackNames());
                                 op.result.complete(result);

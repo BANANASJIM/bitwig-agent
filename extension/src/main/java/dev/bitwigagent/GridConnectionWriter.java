@@ -84,7 +84,7 @@ final class GridConnectionWriter {
         snapshots.guardTarget(target, proxy, trackId);
         if (values.read(INPUT_SOURCE, input.model) != input.source)
             throw Errors.notApplied(
-                    ErrorCode.STALE_CONTEXT,
+                    Reason.STALE_CONTEXT,
                     "Native input source changed immediately before dispatch; reacquire grid.get.");
         check.run();
         quarantine.requireAvailable(device);
@@ -111,21 +111,22 @@ final class GridConnectionWriter {
                 contexts.capture(target.target, target.graph, after.members, context, check);
                 check.run();
                 quarantine.requireAvailable(device);
-                JsonObject result = Results.observed();
+                // Native repair may leave another source after a dispatched write: fail closed.
+                boolean matches = Objects.equals(request.source, actual.sourceEndpoint);
+                JsonObject result = Results.outcome(
+                        !matches ? Outcome.UNKNOWN : changed ? Outcome.APPLIED : Outcome.ALREADY_MATCHED);
+                if (!matches) result.addProperty("reason", Reason.READBACK_MISMATCH.wire());
                 result.addProperty("targetModuleId", request.target.moduleId.toString());
                 result.addProperty("targetPortKey", request.target.portKey);
                 result.add("previousSource", Endpoint.json(input.sourceEndpoint));
                 result.add("requestedSource", Endpoint.json(request.source));
                 result.add("actualSource", Endpoint.json(actual.sourceEndpoint));
-                result.addProperty("matchesRequested", Objects.equals(request.source, actual.sourceEndpoint));
                 result.add("graph", graph);
                 if (graphBefore != null) result.add("graphBefore", graphBefore);
                 result.addProperty("mutationDispatched", changed);
                 result.addProperty("nativeMutation", changed);
                 result.addProperty("nativeUndo", changed);
-                result.addProperty(
-                        "verification",
-                        changed ? "later_document_event_bounded_native_graph_observation" : "already_matched");
+                result.addProperty("verification", "later_document_event_bounded_native_graph_observation");
                 result.addProperty(
                         "nativeUndoScope",
                         changed ? "native_operation_not_verified_grouping_or_commit" : "no_native_operation");
@@ -164,7 +165,7 @@ final class GridConnectionWriter {
         GridTopologyContext.Capture context =
                 contexts.capture(target.target, target.graph, before.members, null, check);
         StringBuilder rejected = new StringBuilder();
-        String code = null;
+        Reason code = null;
         int failures = 0;
         for (int i = 0; i < requests.size(); i++) {
             Request request = requests.get(i);
@@ -174,23 +175,22 @@ final class GridConnectionWriter {
                 request.requireExpected(input.sourceEndpoint);
                 nativeWriter.requireSupported(input.model, context.undo());
             } catch (RpcException error) {
-                if (code == null) code = error.code;
+                if (code == null) code = error.reason;
                 if (failures++ < 8)
                     rejected.append(rejected.length() == 0 ? "" : "; ")
                             .append('#')
                             .append(i)
                             .append(' ')
-                            .append(error.code)
+                            .append(error.reason.wire())
                             .append(": ")
                             .append(error.getMessage());
             }
         }
         if (failures > 0)
-            throw Errors.of(
+            throw Errors.notApplied(
                     code,
                     "No connection was written; " + failures + " of " + requests.size()
-                            + " entries failed their checks: " + rejected + (failures > 8 ? "; ..." : ""),
-                    Outcome.NOT_APPLIED);
+                            + " entries failed their checks: " + rejected + (failures > 8 ? "; ..." : ""));
         snapshots.guardTarget(target, proxy, trackId);
     }
 
@@ -223,8 +223,8 @@ final class GridConnectionWriter {
         final Consumer<Throwable> fail;
         final JsonArray items = new JsonArray();
         JsonObject lastGraph;
-        String status = "applied";
-        int written, completed;
+        boolean stale;
+        int written;
 
         Batch(
                 Object proxy,
@@ -268,7 +268,7 @@ final class GridConnectionWriter {
                         },
                         one -> {
                             if (record(item, one)) next(i + 1);
-                            else stop(i, "partial");
+                            else stop(i);
                         },
                         error -> failed(i, item, error, sent[0]),
                         false);
@@ -276,62 +276,49 @@ final class GridConnectionWriter {
                 failed(i, item, error, sent[0]);
             }
         }
-        /** Returns false when native repair left a different source: the state is known, but later entries may depend on it. */
+        /** False when native repair left another source: observed, but later entries may depend on it. */
         private boolean record(JsonObject item, JsonObject one) {
-            boolean changed = one.get("mutationDispatched").getAsBoolean();
-            boolean matches = one.get("matchesRequested").getAsBoolean();
-            item.addProperty("status", !matches ? "mismatch" : changed ? "applied" : "already_matched");
-            for (String key : new String[] {"previousSource", "actualSource", "matchesRequested"})
-                item.add(key, one.get(key));
+            for (String key : new String[] {"outcome", "reason", "previousSource", "actualSource"})
+                if (one.has(key)) item.add(key, one.get(key));
             lastGraph = one.getAsJsonObject("graph");
-            completed++;
-            if (changed) written++;
-            return matches;
+            if (one.get("mutationDispatched").getAsBoolean()) written++;
+            return Results.outcomeOf(one).succeeded();
         }
 
-        private void stop(int i, String verdict) {
-            status = verdict;
+        private void stop(int i) {
             for (int k = i + 1; k < requests.size(); k++) {
                 Request later = requests.get(k);
                 JsonObject rest = new JsonObject();
                 rest.addProperty("targetModuleId", later.target.moduleId.toString());
                 rest.addProperty("targetPortKey", later.target.portKey);
-                rest.addProperty("status", "not_dispatched");
+                GridDiff.notApplied(rest, Reason.NOT_REACHED);
                 items.add(rest);
             }
             finish();
         }
 
         private void failed(int i, JsonObject item, Throwable error, boolean dispatched) {
-            boolean unknown = dispatched || error instanceof RpcException && ((RpcException) error).is(Outcome.UNKNOWN);
-            if (completed == 0 && !unknown || !(error instanceof RuntimeException) && !unknown) {
+            boolean unknown = dispatched || error instanceof RpcException && ((RpcException) error).unknown;
+            if (written == 0 && !unknown) {
                 fail.accept(error);
                 return;
             }
-            item.addProperty("status", unknown ? "unknown" : "failed");
-            JsonObject why = new JsonObject();
-            why.addProperty(
-                    "code",
-                    error instanceof RpcException ? ((RpcException) error).code : ErrorCode.INTERNAL_ERROR.wire());
-            why.addProperty("message", error.getMessage());
-            item.add("error", why);
-            stop(i, unknown ? "unknown" : written > 0 ? "partial" : "failed");
+            GridDiff.failed(item, error, unknown);
+            stale = unknown;
+            stop(i);
         }
 
         private void finish() {
             try {
-                boolean unknown = status.equals("unknown");
-                JsonObject result = Results.observed();
-                result.addProperty("batchStatus", status);
-                result.addProperty("completion", unknown ? "unknown" : "observed");
+                JsonObject result = Results.outcome(Results.worst(items));
                 result.addProperty("written", written);
                 result.add("connections", items);
-                result.addProperty("mutationDispatched", written > 0 || unknown);
-                result.addProperty("nativeMutation", written > 0 || unknown);
-                result.addProperty("nativeUndo", written > 0 || unknown);
+                result.addProperty("mutationDispatched", written > 0 || stale);
+                result.addProperty("nativeMutation", written > 0 || stale);
+                result.addProperty("nativeUndo", written > 0 || stale);
                 result.addProperty("verification", "later_document_event_bounded_native_graph_observation_per_entry");
-                // After an unknown entry the last observed graph is not the current one: no diff is offered.
-                if (lastGraph != null && !unknown) {
+                // After a failed dispatch the last observed graph is not the current one: no diff is offered.
+                if (lastGraph != null && !stale) {
                     result.add("graph", lastGraph);
                     result.add("graphBefore", graphBefore);
                 }
@@ -360,7 +347,7 @@ final class GridConnectionWriter {
             // An xb1-like object with the same owner/key is not membership (pS excludes qXr).
             if (source == null)
                 throw Errors.notApplied(
-                        ErrorCode.STALE_CONTEXT,
+                        Reason.STALE_CONTEXT,
                         "Current native source is not an exact enumerated output of this bounded graph.");
             input.sourceEndpoint = source.endpoint;
         }
@@ -374,19 +361,19 @@ final class GridConnectionWriter {
             state.check();
             if (!values.is(input ? GridSnapshotReader.Kind.INPUT : GridSnapshotReader.Kind.OUTPUT, model))
                 throw Errors.notApplied(
-                        ErrorCode.GRID_UNAVAILABLE,
+                        Reason.NATIVE_UNAVAILABLE,
                         "Connection editing requires every enumerated port to have its mapped direction.");
             values.requireModelThread(model);
             if (values.read(OWNER_MODULE, model) != module)
                 throw Errors.notApplied(
-                        ErrorCode.STALE_CONTEXT,
+                        Reason.STALE_CONTEXT,
                         "Native port owner differs from its direction-specific module membership.");
             Endpoint endpoint =
                     new Endpoint(id, GridSnapshotReader.text(values.read(input ? INPUT_KEY : OUTPUT_KEY, model)));
             Port port = new Port(endpoint, model);
             if (ports.put(endpoint, port) != null || !graph.portIdentities.add(model))
                 throw Errors.notApplied(
-                        ErrorCode.GRID_UNAVAILABLE, "Duplicate native direction-specific port key or port identity.");
+                        Reason.NATIVE_UNAVAILABLE, "Duplicate native direction-specific port key or port identity.");
             graph.members.add(model);
             if (!input) graph.outputsByIdentity.put(model, port);
         }
@@ -415,7 +402,7 @@ final class GridConnectionWriter {
             Port port = (input ? inputs : outputs).get(endpoint);
             if (port == null)
                 throw Errors.notApplied(
-                        ErrorCode.STALE_CONTEXT,
+                        Reason.STALE_CONTEXT,
                         "Requested exact native " + (input ? "input" : "output")
                                 + " is absent; reacquire grid.get. Matching owner/key without stream membership is insufficient.");
             return port;
@@ -426,12 +413,12 @@ final class GridConnectionWriter {
                     || inputs.size() != after.inputs.size()
                     || outputs.size() != after.outputs.size())
                 throw Errors.notApplied(
-                        ErrorCode.STALE_CONTEXT,
+                        Reason.STALE_CONTEXT,
                         "Native graph or port membership changed during the connection operation.");
             for (Map.Entry<UUID, Object> module : modules.entrySet())
                 if (after.modules.get(module.getKey()) != module.getValue())
                     throw Errors.notApplied(
-                            ErrorCode.STALE_CONTEXT, "Native module identity changed during the connection operation.");
+                            Reason.STALE_CONTEXT, "Native module identity changed during the connection operation.");
             samePorts(inputs, after.inputs, sources);
             samePorts(outputs, after.outputs, false);
         }
@@ -441,7 +428,7 @@ final class GridConnectionWriter {
                 Port actual = after.get(port.endpoint);
                 if (actual == null || actual.model != port.model || (sources && actual.source != port.source))
                     throw Errors.notApplied(
-                            ErrorCode.STALE_CONTEXT,
+                            Reason.STALE_CONTEXT,
                             "Native port identity or captured source changed during the connection observation.");
             }
         }
@@ -462,24 +449,23 @@ final class GridConnectionWriter {
                     || value.getAsJsonArray().size() < 1
                     || value.getAsJsonArray().size() > MAX_BATCH)
                 throw Errors.notApplied(
-                        ErrorCode.INVALID_PARAMS,
+                        Reason.INVALID_PARAMS,
                         "connections must be an array of 1.." + MAX_BATCH + " connection edits.");
             java.util.List<Request> result = new ArrayList<>();
             Set<Endpoint> seen = new HashSet<>();
             for (JsonElement element : value.getAsJsonArray()) {
                 if (!element.isJsonObject())
-                    throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "Each connection must be an object.");
+                    throw Errors.notApplied(Reason.INVALID_PARAMS, "Each connection must be an object.");
                 JsonObject entry = element.getAsJsonObject();
                 // Source fields are explicitly nullable, so the generic null-rejecting field check does not apply.
                 if (!entry.keySet().equals(Set.of("targetModuleId", "targetPortKey", "expectedSource", "source")))
                     throw Errors.notApplied(
-                            ErrorCode.INVALID_PARAMS,
+                            Reason.INVALID_PARAMS,
                             "Each connection requires exactly targetModuleId, targetPortKey, expectedSource and source.");
                 Request request = parse(entry);
                 if (!seen.add(request.target))
                     throw Errors.notApplied(
-                            ErrorCode.INVALID_PARAMS,
-                            "connections must not repeat a targetModuleId/targetPortKey pair.");
+                            Reason.INVALID_PARAMS, "connections must not repeat a targetModuleId/targetPortKey pair.");
                 result.add(request);
             }
             return result;
@@ -495,7 +481,7 @@ final class GridConnectionWriter {
         void requireExpected(Endpoint actual) {
             if (!Objects.equals(expectedSource, actual))
                 throw Errors.notApplied(
-                        ErrorCode.STALE_CONTEXT,
+                        Reason.STALE_CONTEXT,
                         "Exact native input source differs from expectedSource; reacquire grid.get before editing.");
         }
 
@@ -503,11 +489,11 @@ final class GridConnectionWriter {
             JsonElement value = p.get(name);
             if (value == null)
                 throw Errors.notApplied(
-                        ErrorCode.INVALID_PARAMS, name + " is required, including explicit null for disconnected.");
+                        Reason.INVALID_PARAMS, name + " is required, including explicit null for disconnected.");
             if (value.isJsonNull()) return null;
             if (!value.isJsonObject())
                 throw Errors.notApplied(
-                        ErrorCode.INVALID_PARAMS, name + " must be null or an exact moduleId/portKey object.");
+                        Reason.INVALID_PARAMS, name + " must be null or an exact moduleId/portKey object.");
             JsonObject endpoint = value.getAsJsonObject();
             Params.fields(endpoint, Set.of("moduleId", "portKey"), Set.of());
             return new Endpoint(uuid(endpoint, "moduleId"), key(endpoint, "portKey"));
@@ -525,7 +511,7 @@ final class GridConnectionWriter {
                     || !value.getAsJsonPrimitive().isString()
                     || value.getAsString().length() > GridSnapshotReader.MAX_TEXT)
                 throw Errors.notApplied(
-                        ErrorCode.INVALID_PARAMS, name + " must be a string of at most 1024 UTF-16 units.");
+                        Reason.INVALID_PARAMS, name + " must be a string of at most 1024 UTF-16 units.");
             return value.getAsString();
         }
     }

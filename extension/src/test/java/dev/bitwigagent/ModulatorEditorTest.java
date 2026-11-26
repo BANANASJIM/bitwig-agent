@@ -121,7 +121,7 @@ public final class ModulatorEditorTest {
 
         @Override
         public Object device(Object proxy, UUID trackId, Runnable check) {
-            if (!TRACK.equals(trackId)) throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "track");
+            if (!TRACK.equals(trackId)) throw Errors.notApplied(Reason.STALE_CONTEXT, "track");
             return device;
         }
 
@@ -270,7 +270,7 @@ public final class ModulatorEditorTest {
         @Override
         public Object[] gridParameter(Object proxy, UUID trackId, UUID moduleId, String parameterId, Runnable check) {
             if (!MODULE.equals(moduleId) || !parameterId.equals("DECAY"))
-                throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "no such grid control");
+                throw Errors.notApplied(Reason.STALE_CONTEXT, "no such grid control");
             return new Object[] {graph, module, decay};
         }
 
@@ -282,7 +282,7 @@ public final class ModulatorEditorTest {
         @Override
         public void requireParameterWritable(
                 Object device, Object container, Object owner, Object parameter, Runnable check) {
-            if (!((Param) parameter).writable) throw Errors.notApplied(ErrorCode.UNSAFE_STATE, "touched");
+            if (!((Param) parameter).writable) throw Errors.notApplied(Reason.UNSAFE_STATE, "touched");
         }
 
         @Override
@@ -292,7 +292,7 @@ public final class ModulatorEditorTest {
         public ModulatorEditor.Type resolveType(UUID typeId, String typeName) {
             if ("Random".equals(typeName) || RANDOM_TYPE.equals(typeId))
                 return new ModulatorEditor.Type(RANDOM_TYPE, "Random");
-            throw Errors.notApplied(ErrorCode.TARGET_NOT_FOUND, "no type");
+            throw Errors.notApplied(Reason.TARGET_NOT_FOUND, "no type");
         }
 
         @Override
@@ -476,7 +476,7 @@ public final class ModulatorEditorTest {
                 d);
         assertTrue(
                 again.error instanceof RpcException
-                        && ((RpcException) again.error).code.equals("stale_context")
+                        && ((RpcException) again.error).reason.wire().equals("stale_context")
                         && d[0] == 1,
                 "expectedAmount null against an existing mapping rejects before dispatch");
     }
@@ -598,9 +598,7 @@ public final class ModulatorEditorTest {
                 o,
                 d);
         assertTrue(
-                code(o).equals("modulator_verification_failed")
-                        && "unknown".equals(((RpcException) o.error).outcome)
-                        && d[0] == 1,
+                code(o).equals("readback_mismatch") && ((RpcException) o.error).unknown && d[0] == 1,
                 "a dispatched mapping that does not read back is unknown");
     }
 
@@ -677,8 +675,8 @@ public final class ModulatorEditorTest {
         f.ignoreWrites = true;
         JsonObject next = JsonParser.parseString("{\"expectedKind\":\"float\",\"expectedValue\":0.75,\"value\":0.1}")
                 .getAsJsonObject();
-        RpcException error = assertRpcError(
-                "modulator_verification_failed",
+        RpcException error = assertThrows(
+                RpcException.class,
                 () -> new ModulatorEditor(f)
                         .setParameter(
                                 null,
@@ -688,7 +686,7 @@ public final class ModulatorEditorTest {
                                 GridParameterWriter.Request.parse(next),
                                 OK,
                                 () -> d[0]++));
-        assertTrue("unknown".equals(error.outcome), "lost scalar write is unknown");
+        assertTrue(error.unknown && error.is(Reason.READBACK_MISMATCH), "lost scalar write is unknown");
     }
 
     @Test
@@ -733,16 +731,14 @@ public final class ModulatorEditorTest {
         Outcome o = outcome();
         new ModulatorEditor(f).insert(null, TRACK, RANDOM_TYPE, null, 2, OK, OK, v -> o.value = v, e -> o.error = e);
         f.run();
-        assertTrue(
-                code(o).equals("modulator_insert_rejected") && "unknown".equals(((RpcException) o.error).outcome),
-                "native rejection is unknown");
+        assertTrue(code(o).equals("host_refused") && ((RpcException) o.error).unknown, "native rejection is unknown");
         Fake g = new Fake();
         g.wrongType = true;
         Outcome w = outcome();
         new ModulatorEditor(g).insert(null, TRACK, RANDOM_TYPE, null, 2, OK, OK, v -> w.value = v, e -> w.error = e);
         g.pendingSettle.accept(null);
         g.run();
-        assertTrue(code(w).equals("modulator_verification_failed"), "a different inserted type fails verification");
+        assertTrue(code(w).equals("readback_mismatch"), "a different inserted type fails verification");
     }
 
     @Test
@@ -843,6 +839,31 @@ public final class ModulatorEditorTest {
     }
 
     private static String code(Outcome o) {
-        return o.error instanceof RpcException ? ((RpcException) o.error).code : String.valueOf(o.error);
+        return o.error instanceof RpcException ? ((RpcException) o.error).reason.wire() : String.valueOf(o.error);
+    }
+
+    @Test
+    void moduleValidationEdgeCases() {
+        assertRpcError(
+                "unknown_method", () -> ModulatorEditModule.validateParams("modulators.bogus", new JsonObject()));
+        JsonObject notObject = JsonParser.parseString("{\"parent\":5}").getAsJsonObject();
+        assertRpcError("invalid_params", () -> ModulatorEditModule.validateParams("modulators.get", notObject));
+        JsonObject longName = JsonParser.parseString(
+                        "{\"parent\":" + parent() + ",\"expectedCount\":0,\"typeName\":\"" + "x".repeat(129) + "\"}")
+                .getAsJsonObject();
+        assertRpcError("invalid_params", () -> ModulatorEditModule.validateParams("modulators.insert", longName));
+        JsonObject longText =
+                JsonParser.parseString("{\"k\":\"" + "x".repeat(1025) + "\"}").getAsJsonObject();
+        assertRpcError("invalid_params", () -> ModulatorEditor.text(longText, "k"));
+    }
+
+    @Test
+    void editBindingsAreUnavailableUnderTheHostGate() {
+        HostFixture host = new HostFixture();
+        TestServices s = host.services;
+        ModulatorEditModule module =
+                new ModulatorEditModule(s.scheduler, s.sources, s.transportSafety, s.natives, HostFixture.SPECS);
+        JsonObject capabilities = module.capabilities(new HostOperation(Long.MAX_VALUE));
+        assertTrue(!capabilities.get("available").getAsBoolean(), "the gate keeps edit bindings closed");
     }
 }

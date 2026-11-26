@@ -59,7 +59,7 @@ final class MeterModule implements HostModule {
     }
 
     static void validateParams(String method, JsonObject p) {
-        if (!method.equals("tracks.meters")) throw Errors.notApplied(ErrorCode.UNKNOWN_METHOD, "Unknown meter method.");
+        if (!method.equals("tracks.meters")) throw Errors.notApplied(Reason.UNKNOWN_METHOD, "Unknown meter method.");
         Params.fields(p, Set.of("trackIds", "windowMs"), Set.of());
         Params.integer(p, "windowMs", MIN_WINDOW_MS, MAX_WINDOW_MS);
         JsonElement ids = p.get("trackIds");
@@ -67,15 +67,15 @@ final class MeterModule implements HostModule {
                 || ids.getAsJsonArray().size() < 1
                 || ids.getAsJsonArray().size() > HostLimits.TRACKS)
             throw Errors.notApplied(
-                    ErrorCode.INVALID_PARAMS, "trackIds must hold 1.." + HostLimits.TRACKS + " track UUIDs.");
+                    Reason.INVALID_PARAMS, "trackIds must hold 1.." + HostLimits.TRACKS + " track UUIDs.");
         Set<String> seen = new HashSet<>();
         for (JsonElement id : ids.getAsJsonArray()) {
             if (!id.isJsonPrimitive()
                     || !id.getAsJsonPrimitive().isString()
                     || !UUID.matcher(id.getAsString()).matches())
-                throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "trackIds entries must be canonical UUIDs.");
+                throw Errors.notApplied(Reason.INVALID_PARAMS, "trackIds entries must be canonical UUIDs.");
             if (!seen.add(id.getAsString().toLowerCase(Locale.ROOT)))
-                throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "trackIds must be unique.");
+                throw Errors.notApplied(Reason.INVALID_PARAMS, "trackIds must be unique.");
         }
     }
 
@@ -109,7 +109,7 @@ final class MeterModule implements HostModule {
     @Override
     public void dispatch(HostOperation op, String method, JsonObject p) {
         scheduler.check(op);
-        if (unavailable != null) throw Errors.notApplied(ErrorCode.UNSUPPORTED_SCOPE, unavailable);
+        if (unavailable != null) throw Errors.notApplied(Reason.UNSUPPORTED_SCOPE, unavailable);
         JsonArray requested = p.getAsJsonArray("trackIds");
         int[] slots = new int[requested.size()];
         String[] ids = new String[requested.size()];
@@ -121,7 +121,7 @@ final class MeterModule implements HostModule {
         long end = scheduler.now() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(windowMs);
         if (op.deadline - end < Scheduler.DEADLINE_MARGIN_NANOS)
             throw Errors.notApplied(
-                    ErrorCode.INVALID_PARAMS, "timeoutMs is too short for windowMs; allow windowMs plus about 200 ms.");
+                    Reason.INVALID_PARAMS, "timeoutMs is too short for windowMs; allow windowMs plus about 200 ms.");
         windows.removeIf(old -> old.op.result.isDone());
         Window w = new Window(op, slots, ids);
         // Standing levels count: a steady meter fires no callback during the window.
@@ -137,7 +137,7 @@ final class MeterModule implements HostModule {
 
     private void finish(HostOperation op, Window w, int windowMs, Boolean playingAtStart) {
         windows.remove(w);
-        JsonObject out = Results.observed();
+        JsonObject out = new JsonObject();
         out.addProperty("scope", "vu_meters_over_window");
         out.addProperty("windowMs", windowMs);
         out.addProperty("polls", w.ticks);

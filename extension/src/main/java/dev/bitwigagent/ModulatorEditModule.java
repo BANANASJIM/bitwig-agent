@@ -70,12 +70,12 @@ final class ModulatorEditModule implements HostModule {
                 ModulatorEditor.validateParent(p);
                 ModulatorEditor.count(p, "expectedCount", 0);
                 if (p.has("typeId") == p.has("typeName"))
-                    throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "Supply exactly one of typeId or typeName.");
+                    throw Errors.notApplied(Reason.INVALID_PARAMS, "Supply exactly one of typeId or typeName.");
                 if (p.has("typeId")) ModulatorEditor.uuid(p, "typeId");
                 else {
                     String name = Params.string(p, "typeName");
                     if (name.length() > 128)
-                        throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "typeName must be 1..128 UTF-16 units.");
+                        throw Errors.notApplied(Reason.INVALID_PARAMS, "typeName must be 1..128 UTF-16 units.");
                 }
                 return;
             case "modulators.delete":
@@ -95,7 +95,7 @@ final class ModulatorEditModule implements HostModule {
                 String kind = Params.string(p, "expectedKind");
                 if (!Set.of("float", "integer", "enum", "boolean").contains(kind))
                     throw Errors.notApplied(
-                            ErrorCode.INVALID_PARAMS, "expectedKind must be float, integer, enum or boolean.");
+                            Reason.INVALID_PARAMS, "expectedKind must be float, integer, enum or boolean.");
                 GridParameterWriter.Request.parse(p);
                 return;
             }
@@ -104,26 +104,24 @@ final class ModulatorEditModule implements HostModule {
                 ModulatorEditor.MapRequest.parse(p, method.equals("modulators.unmap"));
                 return;
             default:
-                throw Errors.notApplied(ErrorCode.UNKNOWN_METHOD, "Unknown modulator edit.");
+                throw Errors.notApplied(Reason.UNKNOWN_METHOD, "Unknown modulator edit.");
         }
     }
 
-    /** Lazily bound, so a binding failure surfaces as modulator_unavailable on use and in capabilities. */
+    /** Lazily bound, so a binding failure surfaces as native_unavailable on use and in capabilities. */
     private ModulatorEditor editor(HostOperation op) {
         if (editor != null) return editor;
-        if (unavailable != null) throw Errors.notApplied(ErrorCode.MODULATOR_UNAVAILABLE, unavailable);
-        Bitwig614Runtime.Access bindings = natives.get(op).access(ErrorCode.MODULATOR_UNAVAILABLE);
+        if (unavailable != null) throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, unavailable);
+        Bitwig614Runtime.Access bindings = natives.get(op).access();
         if (bindings.gateError() != null)
             throw Errors.notApplied(
-                    ErrorCode.MODULATOR_UNAVAILABLE, "Exact runtime gate is unavailable: " + bindings.gateError());
+                    Reason.NATIVE_UNAVAILABLE, "Exact runtime gate is unavailable: " + bindings.gateError());
         try {
-            // The Grid reader keeps its own error code: it downgrades optional metadata failures only for
-            // grid_unavailable.
-            Bitwig614GridAdapter grid = new Bitwig614GridAdapter(natives.get(op).access(ErrorCode.GRID_UNAVAILABLE));
+            Bitwig614GridAdapter grid = new Bitwig614GridAdapter(natives.get(op).access());
             editor = new ModulatorEditor(new Bitwig614ModulatorEditAccess(bindings, grid));
         } catch (ReflectiveOperationException | RuntimeException | LinkageError error) {
             unavailable = "Device-modulator edit bindings unavailable: " + Bitwig614Runtime.diagnostic(error);
-            throw Errors.notApplied(ErrorCode.MODULATOR_UNAVAILABLE, unavailable);
+            throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, unavailable);
         }
         return editor;
     }
@@ -181,14 +179,14 @@ final class ModulatorEditModule implements HostModule {
                 check.run();
                 Runnable dispatch = () -> {
                     check.run();
-                    op.dispatched = true;
+                    op.markDispatched();
                 };
                 Consumer<JsonObject> complete = value -> deliver(op, target, safety, check, value);
                 Consumer<Throwable> fail = error -> op.fail(
                         error instanceof RpcException
                                 ? error
                                 : Errors.notApplied(
-                                        ErrorCode.MODULATOR_UNAVAILABLE,
+                                        Reason.NATIVE_UNAVAILABLE,
                                         "Modulator operation failed: "
                                                 + error.getClass().getSimpleName()));
                 switch (method) {
@@ -226,20 +224,20 @@ final class ModulatorEditModule implements HostModule {
                                 fail);
                         break;
                     default:
-                        throw Errors.notApplied(ErrorCode.UNKNOWN_METHOD, "Unknown modulator edit.");
+                        throw Errors.notApplied(Reason.UNKNOWN_METHOD, "Unknown modulator edit.");
                 }
             } catch (RuntimeException error) {
                 op.fail(
                         error instanceof RpcException
                                 ? error
                                 : Errors.notApplied(
-                                        ErrorCode.MODULATOR_UNAVAILABLE,
+                                        Reason.NATIVE_UNAVAILABLE,
                                         "Modulator operation failed: "
                                                 + error.getClass().getSimpleName()
                                                 + "; inspect the exact host binding."));
             } catch (Error error) {
                 op.fail(Errors.notApplied(
-                        ErrorCode.MODULATOR_UNAVAILABLE,
+                        Reason.NATIVE_UNAVAILABLE,
                         "Native modulator operation failed; inspect the loaded host binding and current state."));
             }
         });
@@ -251,7 +249,7 @@ final class ModulatorEditModule implements HostModule {
         final String serialized = BoundedJson.serialize(
                 value,
                 MAX_RESPONSE_CHARS,
-                ErrorCode.MODULATOR_BOUNDS_EXCEEDED,
+                Reason.OUT_OF_BOUNDS,
                 "Modulator response exceeds bounded transport size; pass modulatorId. Values are never truncated.");
         scheduler.schedule(
                 op,

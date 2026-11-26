@@ -24,9 +24,9 @@ class MarkerDeleteArgs(StatusArgs):
 
 
 MARKERS_LIST_DESCRIPTION = "List arranger cue markers sorted by beat: markerIndex (rank, not a stable id), name, beat in quarter-note beats; window of 64 markers, observationsComplete says whether the list is whole. Read-only (guide 5.5.1 Cue Markers; time-signature change markers, 5.5.2, have no public API)."
-MARKERS_INSERT_DESCRIPTION = "Insert a cue marker at a beat. Needs a stopped transport and recording/automation off. Adds a marker via the native add-at-playhead call, then names it and moves it to beat in one step; the playhead is never moved. Refused if a marker already sits at that beat. Verified by comparing the whole observed marker list with the expected one; an unobserved result is unknown and blocks further marker writes until extension.restart."
-MARKERS_RENAME_DESCRIPTION = "Rename one cue marker from a fresh markers.list: markerIndex plus its exact expectedName (and optionally expectedBeat) as compare-and-set. Verified by whole-list readback."
-MARKERS_DELETE_DESCRIPTION = "Delete one cue marker from a fresh markers.list: markerIndex plus its exact expectedName (and optionally expectedBeat). Verified by whole-list readback; a lost marker cannot be undone through this API."
+MARKERS_INSERT_DESCRIPTION = "Insert a cue marker at a beat. Needs a stopped transport and recording/automation off. Adds a marker via the native add-at-playhead call, then names it and moves it to beat in one step; the playhead is never moved. Refused if a marker already sits at that beat. Verified by comparing the whole observed marker list with the expected one; an unobserved result is outcome unknown (reason not_observed) and blocks further marker writes until you inspect markers.list and ack the hold."
+MARKERS_RENAME_DESCRIPTION = "Rename one cue marker from a fresh markers.list: markerIndex plus its exact expectedName (and optionally expectedBeat) as compare-and-set. Verified by whole-list readback: outcome applied, already_matched when the name is unchanged, unknown (reason not_observed) otherwise."
+MARKERS_DELETE_DESCRIPTION = "Delete one cue marker from a fresh markers.list: markerIndex plus its exact expectedName (and optionally expectedBeat). Verified by whole-list readback: outcome applied, unknown (reason not_observed) otherwise; a lost marker cannot be undone through this API."
 
 
 SPECS: dict[str, ToolSpec] = {

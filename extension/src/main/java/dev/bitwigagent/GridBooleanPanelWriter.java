@@ -62,13 +62,14 @@ final class GridBooleanPanelWriter {
         JsonObject current = values.parameterValue(binding);
         if (!request.matches(current.get("value"), request.value))
             throw Errors.of(
-                    changed ? ErrorCode.GRID_VERIFICATION_FAILED : ErrorCode.STALE_CONTEXT,
+                    changed ? Reason.READBACK_MISMATCH : Reason.STALE_CONTEXT,
                     "Native boolean panel readback differs; inspect both panel and linked parameter before another write.",
-                    changed ? Outcome.UNKNOWN : Outcome.NOT_APPLIED);
+                    changed);
         JsonObject coupledAfter = values.parameterValue(coupled);
         values.guardBipolarParameter(binding, coupled);
         check.run();
         JsonObject result = values.parameterResult(binding, current);
+        result.addProperty("outcome", (changed ? Outcome.APPLIED : Outcome.ALREADY_MATCHED).wire());
         result.add("previousValue", previous);
         result.add("requestedValue", request.value);
         result.add("previousCoupledParameter", coupledBefore);
@@ -76,7 +77,7 @@ final class GridBooleanPanelWriter {
         result.addProperty(
                 "couplingScope", "unique_same_module_exact_TZj_reference_native_range_and_value_side_effects");
         result.addProperty("mutationDispatched", changed);
-        result.addProperty("verification", changed ? "exact_native_boolean_panel_readback" : "already_matched");
+        result.addProperty("verification", "exact_native_boolean_panel_readback");
         result.addProperty("nativeMutation", changed);
         result.addProperty("nativeUndo", changed);
         result.addProperty(

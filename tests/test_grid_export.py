@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from fakes import SPEC, TARGET, FakeGrid, apply_grid
 
-from bitwig_agent.errors import BridgeError
+from bitwig_agent.errors import BridgeError, bridge_error
 from bitwig_agent.grid import export as grid_export
 from bitwig_agent.protocol import validate_call
 
@@ -45,7 +45,7 @@ def test_round_trip_is_unchanged_and_rebuilds_an_empty_device():
     host = built()
     out = export(host)
     spec = out["spec"]
-    assert out["status"] == "exported"
+    assert "outcome" not in out
     assert spec["voicing"]["voices"] == 4
     assert {m["name"] for m in spec["modules"]} == {m["name"] for m in SPEC["modules"]}
     env = next(m for m in spec["modules"] if m["name"] == "H: env")
@@ -55,11 +55,11 @@ def test_round_trip_is_unchanged_and_rebuilds_an_empty_device():
     assert acc["params"]["DATA"] == {"steps": [1, 0, 0.5, 0.25]}
     host.calls.clear()
     again = apply_grid(host, spec)
-    assert again["status"] == "unchanged"
+    assert again["outcome"] == "already_matched"
     assert host.writes() == []
     fresh = FakeGrid()
     fresh.voicing = dict(host.voicing, voices=1)
-    assert apply_grid(fresh, spec)["status"] == "applied"
+    assert apply_grid(fresh, spec)["outcome"] == "applied"
     assert export(fresh)["spec"] == spec
 
 
@@ -73,11 +73,12 @@ def test_include_params_modes_and_out_path(tmp_path):
     assert len(everything["H: env"]) > len(changed["H: env"])
     path = str(tmp_path / "spec.json")
     out = export(host, outPath=path)
+    assert out["outcome"] == "applied"
     assert "spec" not in out
     assert json.loads(Path(path).read_text())["modules"]
     with pytest.raises(BridgeError) as err:
         export(host, outPath=path)
-    assert err.value.error["code"] == "file_exists"
+    assert err.value.error["reason"] == "target_exists"
     export(host, outPath=path, overwrite=True)
 
 
@@ -88,7 +89,7 @@ def test_unnamed_modules_get_stable_names_that_apply_matches():
     assert out["unnamed"] == ["_Add_20_8"]
     assert any("generated name" in w for w in out["warnings"])
     host.calls.clear()
-    assert apply_grid(host, out["spec"])["status"] == "unchanged"
+    assert apply_grid(host, out["spec"])["outcome"] == "already_matched"
     assert host.writes() == []
     assert not any(m["customName"] == "_Add_20_8" for m in host.mods.values())
 
@@ -109,7 +110,7 @@ def test_namespace_export_references_outside_modules_as_external():
         "to": "X: sum.IN",
     } in out["connections"]
     host.calls.clear()
-    assert apply_grid(host, out)["status"] == "unchanged"
+    assert apply_grid(host, out)["outcome"] == "already_matched"
     assert host.writes() == []
     g = graph(host, namespace="H: ")
     assert g["external"] == ["X: sum"]
@@ -195,7 +196,7 @@ def test_prune_keeps_inputs_of_modules_outside_the_namespace_and_names_both_ends
     assert "allowOutsideDisconnect" in plan["warnings"][0]
     result = apply_grid(host, spec)
     assert host.writes() == []
-    assert result["status"] == "unchanged"
+    assert result["outcome"] == "already_matched"
     assert "X: sum.IN2" in result["warnings"][0]
     assert host.conns[(s, "IN")]
     assert host.conns[(s, "IN2")]
@@ -234,7 +235,7 @@ def test_external_inputs_are_never_pruned_even_with_opt_in():
         "connections": [],
     }
     result = apply_grid(host, spec)
-    assert result["status"] == "unchanged"
+    assert result["outcome"] == "already_matched"
     assert host.writes() == []
     assert (s, "IN2") in host.conns
 
@@ -263,3 +264,17 @@ def test_external_port_and_default_module_names_are_validated_before_writing():
     assert host.writes() == []
     ok = {**bad_port, "connections": [{"from": "H: new.OUT", "to": "_Audio Out_30_0.IN"}]}
     assert apply_grid(host, ok)["applied"]["connections"] == 1
+
+
+def test_unwritable_out_path_is_a_job_failure(tmp_path):
+    with pytest.raises(BridgeError) as err:
+        export(built(), outPath=str(tmp_path), overwrite=True)
+    assert err.value.error["reason"] == "job_failed"
+
+
+def test_voicing_read_error_becomes_a_warning():
+    host = built()
+    host.fail["grid.voicing.get"] = bridge_error("native_unavailable", "no voicing")
+    out = export(host)
+    assert "voicing" not in out["spec"]
+    assert any("native_unavailable" in w for w in out["warnings"])

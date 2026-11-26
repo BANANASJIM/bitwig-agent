@@ -107,7 +107,7 @@ final class Bitwig614ModulatorAdapter implements ModulatorAdapter, ModulatorSnap
 
     @Override
     public JsonObject capabilities() {
-        JsonObject result = Results.observed();
+        JsonObject result = new JsonObject();
         result.addProperty("adapter", "bitwig_6_1_4_primary_modulators_read_only");
         result.addProperty("hostVersion", bindings.hostVersion());
         result.addProperty("expectedVersion", Bitwig614Runtime.VERSION);
@@ -161,8 +161,7 @@ final class Bitwig614ModulatorAdapter implements ModulatorAdapter, ModulatorSnap
         bindings.requireAvailable();
         if (reader == null || discoveryError != null)
             throw Errors.notApplied(
-                    ErrorCode.MODULATOR_UNAVAILABLE,
-                    "Primary modulator discovery binding unavailable: " + discoveryError);
+                    Reason.NATIVE_UNAVAILABLE, "Primary modulator discovery binding unavailable: " + discoveryError);
     }
 
     @Override
@@ -170,14 +169,13 @@ final class Bitwig614ModulatorAdapter implements ModulatorAdapter, ModulatorSnap
         if (field == PROJECT) return contextAccess.read(NativeReadContext.Field.PROJECT, object);
         if (field == VALUE) {
             if (strings == null)
-                throw Errors.notApplied(
-                        ErrorCode.MODULATOR_UNAVAILABLE, "Exact string-panel read binding unavailable.");
+                throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Exact string-panel read binding unavailable.");
             return strings.value(object);
         }
         if (field == PARAMETER_ID && strings != null && strings.isPanel(object)) return strings.identifier(object);
         Method method = readers.get(field);
         if (method == null)
-            throw Errors.notApplied(ErrorCode.MODULATOR_UNAVAILABLE, "Required modulator getter is unavailable.");
+            throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Required modulator getter is unavailable.");
         return bindings.invoke(method, object);
     }
 

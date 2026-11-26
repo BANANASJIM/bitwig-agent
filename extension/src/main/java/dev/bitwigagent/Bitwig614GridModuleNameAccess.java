@@ -33,8 +33,7 @@ final class Bitwig614GridModuleNameAccess implements GridModuleNameWriter.Access
     @Override
     public void requireSupported(Object target) {
         if (!module.isInstance(target))
-            throw Errors.notApplied(
-                    ErrorCode.GRID_UNAVAILABLE, "Module naming requires a real native rSf Grid module.");
+            throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Module naming requires a real native rSf Grid module.");
     }
 
     @Override

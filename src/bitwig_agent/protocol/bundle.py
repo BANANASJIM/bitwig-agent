@@ -2,12 +2,14 @@ import json
 from pathlib import Path
 from typing import Any
 
+from bitwig_agent.protocol.base import vocabulary
 from bitwig_agent.protocol.limits import bundle_limits
 from bitwig_agent.protocol.registry import TOOLS
 
 
 def export_bundle() -> dict[str, Any]:
     return {
+        **vocabulary(),
         "limits": bundle_limits(),
         "methods": {
             name: {

@@ -116,7 +116,7 @@ final class GridParameterContext {
                 wrapperField = Field.GUI_VOICING;
                 break;
             default:
-                throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Parameter context family is unsupported.");
+                throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Parameter context family is unsupported.");
         }
         // These getters construct fresh wrappers; wrapper identity is not native model identity.
         Object wrapper = serialize || writing ? required(a.read(wrapperField, parameter), "Native GUI property") : null;
@@ -140,31 +140,30 @@ final class GridParameterContext {
         };
         if (writing) {
             if (!initialized)
-                throw Errors.notApplied(ErrorCode.UNSAFE_STATE, "Native document context is not initialized.");
+                throw Errors.notApplied(Reason.UNSAFE_STATE, "Native document context is not initialized.");
             if (root != project)
-                throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Attached context root is not the owning project.");
+                throw Errors.notApplied(Reason.STALE_CONTEXT, "Attached context root is not the owning project.");
             if (!hasDefault || current == null || defaultDt == null)
                 throw Errors.notApplied(
-                        ErrorCode.GRID_UNAVAILABLE, "Native current/default transaction context is unavailable.");
+                        Reason.NATIVE_UNAVAILABLE, "Native current/default transaction context is unavailable.");
             if (current != defaultDt || defaultDtContext != context)
                 throw Errors.notApplied(
-                        ErrorCode.UNSAFE_STATE, "Native transaction is outside the bounded default document context.");
+                        Reason.UNSAFE_STATE, "Native transaction is outside the bounded default document context.");
             if (!panel && !bool(Field.LICENSED, parameter))
-                throw Errors.notApplied(ErrorCode.UNSAFE_STATE, "Native parameter effective licensing is false.");
+                throw Errors.notApplied(Reason.UNSAFE_STATE, "Native parameter effective licensing is false.");
             if (!bool(Field.SETTABLE, wrapper))
-                throw Errors.notApplied(ErrorCode.UNSAFE_STATE, "Native GUI property is not settable.");
+                throw Errors.notApplied(Reason.UNSAFE_STATE, "Native GUI property is not settable.");
             if (bool(Field.CIU, parameter) || (!panel && bool(Field.TOUCHED, parameter)))
                 throw Errors.notApplied(
-                        ErrorCode.UNSAFE_STATE, "Native parameter skip or active touch state blocks the write.");
+                        Reason.UNSAFE_STATE, "Native parameter skip or active touch state blocks the write.");
             required(undo, "Ancestor undo manager");
             if (bool(Field.UNDO_EXECUTING, undo) || bool(Field.UNDO_ACTIVE, undo) || bool(Field.UNDO_ICL, undo))
-                throw Errors.notApplied(
-                        ErrorCode.UNSAFE_STATE, "Native undo manager is outside the bounded idle state.");
+                throw Errors.notApplied(Reason.UNSAFE_STATE, "Native undo manager is outside the bounded idle state.");
             required(lock, "Device lock");
             required(lockOwner, "Device lock owner");
             if (lockOwner != current || lockOwner != defaultDt || lockContext != context)
                 throw Errors.notApplied(
-                        ErrorCode.UNSAFE_STATE, "Native device lock owner differs from the current/default context.");
+                        Reason.UNSAFE_STATE, "Native device lock owner differs from the current/default context.");
             check.run();
         }
         if (!serialize) return new Capture(null, identities);
@@ -262,26 +261,25 @@ final class GridParameterContext {
         check.run();
         if (writing) {
             if (!common.initialized)
-                throw Errors.notApplied(ErrorCode.UNSAFE_STATE, "Native document context is not initialized.");
+                throw Errors.notApplied(Reason.UNSAFE_STATE, "Native document context is not initialized.");
             if (common.root != project)
-                throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Attached context root is not the owning project.");
+                throw Errors.notApplied(Reason.STALE_CONTEXT, "Attached context root is not the owning project.");
             if (!common.hasDefault || common.current == null || common.defaultDt == null)
                 throw Errors.notApplied(
-                        ErrorCode.GRID_UNAVAILABLE, "Native current/default transaction context is unavailable.");
+                        Reason.NATIVE_UNAVAILABLE, "Native current/default transaction context is unavailable.");
             if (common.current != common.defaultDt || common.defaultDtContext != common.context)
                 throw Errors.notApplied(
-                        ErrorCode.UNSAFE_STATE, "Native transaction is outside the bounded default document context.");
+                        Reason.UNSAFE_STATE, "Native transaction is outside the bounded default document context.");
             if (bool(Field.CIU, device))
-                throw Errors.notApplied(ErrorCode.UNSAFE_STATE, "Native device skip state blocks the write.");
+                throw Errors.notApplied(Reason.UNSAFE_STATE, "Native device skip state blocks the write.");
             required(undo, "Ancestor undo manager");
             if (bool(Field.UNDO_EXECUTING, undo) || bool(Field.UNDO_ACTIVE, undo) || bool(Field.UNDO_ICL, undo))
-                throw Errors.notApplied(
-                        ErrorCode.UNSAFE_STATE, "Native undo manager is outside the bounded idle state.");
+                throw Errors.notApplied(Reason.UNSAFE_STATE, "Native undo manager is outside the bounded idle state.");
             required(lock, "Device lock");
             required(lockOwner, "Device lock owner");
             if (lockOwner != common.current || lockOwner != common.defaultDt || lockContext != common.context)
                 throw Errors.notApplied(
-                        ErrorCode.UNSAFE_STATE, "Native device lock owner differs from the current/default context.");
+                        Reason.UNSAFE_STATE, "Native device lock owner differs from the current/default context.");
             check.run();
         }
         return new Capture(null, new Object[] {
@@ -323,19 +321,18 @@ final class GridParameterContext {
         for (int i = 0; i < before.identities.length; i++)
             if (before.identities[i] != after.identities[i])
                 throw Errors.notApplied(
-                        ErrorCode.STALE_CONTEXT,
-                        "Native parameter inspection context identity changed during capture.");
+                        Reason.STALE_CONTEXT, "Native parameter inspection context identity changed during capture.");
     }
 
     private boolean bool(Field field, Object object) {
         Object value = a.read(field, object);
         if (!(value instanceof Boolean))
-            throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Native context predicate unavailable: " + field);
+            throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Native context predicate unavailable: " + field);
         return (Boolean) value;
     }
 
     private static Object required(Object value, String label) {
-        if (value == null) throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, label + " is unavailable.");
+        if (value == null) throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, label + " is unavailable.");
         return value;
     }
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from bitwig_agent.errors import bridge_error
+from bitwig_agent.errors import bridge_error, unknown_result
 from bitwig_agent.grid.channel import Channel, Stop, verify
 from bitwig_agent.grid.layout import Cell, has_rect, order_moves, row_rect, size_of
 from bitwig_agent.grid.params import plan_params
@@ -22,27 +22,26 @@ INSERT_BATCH, PARAM_BATCH, CONNECTION_BATCH = 16, 64, 32
 # per-entry time, and start halved on graphs this large (each entry's verification reads the whole graph).
 INSERT_BATCH_BUDGET = 0.25
 LARGE_GRAPH_MODULES = 128
+UNRUN = ("deadline", "not_reached")
 monotonic = time.monotonic  # replaceable by tests
 
 
 def next_insert_batch(size: int, elapsed_s: float, result: dict[str, Any]) -> int:
     """Next insert batch size from the measured per-entry time; a host stop at its deadline margin also shrinks it."""
-    ran = max(1, sum(1 for e in result.get("modules", []) if e.get("status") != "not_dispatched"))
+    ran = max(1, sum(1 for e in result.get("modules", []) if e.get("reason") not in UNRUN))
     per_entry = max(elapsed_s / ran, result.get("slowestEntryMs", 0) / 1000)
     fit = INSERT_BATCH if per_entry <= 0 else int(LONG_TIMEOUT_MS / 1000 * INSERT_BATCH_BUDGET / per_entry)
-    if result.get("stopReason") == "deadline_margin":
+    if any(e.get("reason") == "deadline" for e in result.get("modules", [])):
         fit = min(fit, size // 2 or 1)
     return max(1, min(INSERT_BATCH, fit))
 
 
 def _invalid_stop(exc: SpecError) -> Stop:
-    return Stop(
-        "grid.get", {"error": bridge_error("invalid_spec", "; ".join(exc.problems), "not_applied").error}, "not_applied"
-    )
+    return Stop("grid.get", {"error": bridge_error("invalid_params", "; ".join(exc.problems)).error})
 
 
 def _stale_stop(message: str) -> Stop:
-    return Stop("grid.get", {"error": bridge_error("stale_context", message, "not_applied").error}, "not_applied")
+    return Stop("grid.get", {"error": bridge_error("stale_context", message).error})
 
 
 class Executor:
@@ -61,9 +60,9 @@ class Executor:
         await self._params()
         await self._wire()
 
-    async def _write(self, method: str, params: dict[str, Any], key: str | None = None) -> dict[str, Any]:
+    async def _write(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
         result = await self.channel.call(method, params)
-        verify(method, result, key)
+        verify(method, result)
         return result
 
     async def _voicing(self) -> None:
@@ -82,7 +81,7 @@ class Executor:
         for row in self.plan.deletes:
             await self._write("grid.modules.delete", {"moduleId": row["instanceId"]})
             self.ledger.applied["deleted"] += 1
-            self.ledger.undispatched["deleted"] -= 1
+            self.ledger.unreached["deleted"] -= 1
             name = label_of(row)
             self.ledger.steps.append(
                 {"op": "delete", "name": name, **({"replace": True} if name in self.plan.replaced_names else {})}
@@ -152,24 +151,18 @@ class Executor:
     def _record_inserted(self, chunk: list[str], result: dict[str, Any]) -> list[str]:
         fresh = []
         for name, entry in zip(chunk, result.get("modules", []), strict=False):
-            if entry.get("status") == "applied" and entry.get("moduleId"):
+            if entry.get("outcome") == "applied" and entry.get("moduleId"):
                 self.ledger.ids[name] = entry["moduleId"]
                 self.ledger.awaiting_rename[entry["moduleId"]] = name
                 self.ledger.applied["inserted"] += 1
-                self.ledger.undispatched["inserted"] -= 1
+                self.ledger.unreached["inserted"] -= 1
                 fresh.append(name)
-        self.ledger.steps.append({"op": "insert", "count": len(chunk), "status": result.get("batchStatus")})
+        self.ledger.steps.append({"op": "insert", "count": len(chunk), "outcome": result["outcome"]})
         return fresh
 
     async def _name_inserted(self, fresh: list[str], result: dict[str, Any]) -> None:
         """Name what landed before anything can stop the run, or a re-apply would insert duplicates."""
-        entries = result.get("modules", [])
-        unsettled = (
-            result.get("batchStatus") == "unknown"
-            or result.get("completion") == "unknown"
-            or any(e.get("status") == "unknown" for e in entries)
-        )
-        if unsettled:
+        if result["outcome"] == "unknown":
             return
         self.ledger.phase = "rename"
         added = {r["instanceId"]: r for r in result.get("modulesAdded", [])}
@@ -177,18 +170,22 @@ class Executor:
             await self._rename(name, added.get(self.ledger.ids[name], {}).get("customName") or "")
 
     def _check_insert(self, chunk: list[str], fresh: list[str], result: dict[str, Any]) -> bool:
-        """Verify the batch; True when it was cut short only by the host deadline margin (applied entries, then not_dispatched), which just continues."""
+        """Verify the batch; True when it was cut short only by the host deadline margin (applied entries, then a deadline entry and not_reached ones), which just continues."""
+        if "modules" not in result:
+            verify("grid.modules.insert", result)  # a result-level stop carries no entries
         entries = result.get("modules", [])
         if len(entries) != len(chunk):
-            raise Stop("grid.modules.insert", result, "unknown")
+            raise Stop(
+                "grid.modules.insert",
+                {**result, **unknown_result("internal", "grid.modules.insert did not report every requested module")},
+            )
         cut = (
-            result.get("batchStatus") == "partial"
-            and result.get("status") in (None, "observed")
+            result["outcome"] == "not_applied"
             and bool(fresh)
-            and all(e.get("status") in ("applied", "not_dispatched") for e in entries)
+            and all(e.get("outcome") == "applied" or e.get("reason") in UNRUN for e in entries)
         )
         if not cut:
-            verify("grid.modules.insert", result, "modules")
+            verify("grid.modules.insert", result)
         return cut
 
     async def _settle_moves(self) -> None:
@@ -241,15 +238,15 @@ class Executor:
             chunk = writes[i : i + PARAM_BATCH]
             result = await self.channel.call("grid.parameters.set", {"writes": chunk})
             entries = result.get("writes", [])
-            self.ledger.applied["paramsWritten"] += sum(1 for e in entries if e.get("status") == "applied")
-            self.ledger.matched["params"] += sum(1 for e in entries if e.get("status") == "already_matched")
+            self.ledger.applied["paramsWritten"] += sum(1 for e in entries if e.get("outcome") == "applied")
+            self.ledger.matched["params"] += sum(1 for e in entries if e.get("outcome") == "already_matched")
             self.ledger.warnings += [
                 f"{e['parameterId']}: displayMismatch {e['displayMismatch']}"
                 for e in entries
                 if e.get("displayMismatch")
             ]
-            self.ledger.steps.append({"op": "params", "count": len(chunk), "status": result.get("batchStatus")})
-            verify("grid.parameters.set", result, "writes")
+            self.ledger.steps.append({"op": "params", "count": len(chunk), "outcome": result["outcome"]})
+            verify("grid.parameters.set", result)
 
     async def _wire(self) -> None:
         self.ledger.phase = "connections"
@@ -279,9 +276,9 @@ class Executor:
             chunk = wiring.edits[i : i + CONNECTION_BATCH]
             result = await self.channel.call("grid.connections.set", {"connections": [e["write"] for e in chunk]})
             entries = result.get("connections", [])
-            done = [e for e, r in zip(chunk, entries, strict=False) if r.get("status") == "applied"]
+            done = [e for e, r in zip(chunk, entries, strict=False) if r.get("outcome") == "applied"]
             self.ledger.applied["connections"] += sum(1 for e in done if e["from"])
             self.ledger.applied["disconnected"] += sum(1 for e in done if not e["from"])
-            self.ledger.matched["connections"] += sum(1 for e in entries if e.get("status") == "already_matched")
-            self.ledger.steps.append({"op": "connections", "count": len(chunk), "status": result.get("batchStatus")})
-            verify("grid.connections.set", result, "connections")
+            self.ledger.matched["connections"] += sum(1 for e in entries if e.get("outcome") == "already_matched")
+            self.ledger.steps.append({"op": "connections", "count": len(chunk), "outcome": result["outcome"]})
+            verify("grid.connections.set", result)

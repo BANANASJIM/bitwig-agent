@@ -26,7 +26,7 @@ final class Bitwig614GridInsertionAccess implements GridInsertionWriter.Access {
                 || GridInsertionBridge.class.getClassLoader() != extension
                 || GridInsertionBridge.Callback.class.getClassLoader() != extension)
             throw Errors.notApplied(
-                    ErrorCode.GRID_UNAVAILABLE,
+                    Reason.NATIVE_UNAVAILABLE,
                     "Insertion public boundary differs from the running extension defining loader.");
         Class<?> base = identical("bTA", extension), policy = identical("ZuD", extension);
         Class<?> project = identical(M + "g2L", extension);
@@ -41,7 +41,7 @@ final class Bitwig614GridInsertionAccess implements GridInsertionWriter.Access {
                 || !Modifier.isPublic(adapter.getModifiers())
                 || Modifier.isAbstract(adapter.getModifiers()))
             throw Errors.notApplied(
-                    ErrorCode.GRID_UNAVAILABLE,
+                    Reason.NATIVE_UNAVAILABLE,
                     "Native insertion adapter superclass/interface/defining-loader identity mismatch.");
         String extensionSource = origin(GridInsertionBridge.class);
         if (!origin(adapter).equals(extensionSource)
@@ -49,7 +49,7 @@ final class Bitwig614GridInsertionAccess implements GridInsertionWriter.Access {
                 || !origin(BitwigAgentExtension.class).equals(extensionSource)
                 || !origin(Bitwig614GridAdapter.class).equals(extensionSource))
             throw Errors.notApplied(
-                    ErrorCode.GRID_UNAVAILABLE,
+                    Reason.NATIVE_UNAVAILABLE,
                     "Native insertion adapter and public boundary do not share the loaded extension origin.");
         constructor = adapter.getConstructor(GridInsertionBridge.Callback.class);
         base.getConstructor(completionType);
@@ -59,7 +59,7 @@ final class Bitwig614GridInsertionAccess implements GridInsertionWriter.Access {
                 || callback.getReturnType() != void.class
                 || callback.isBridge())
             throw Errors.notApplied(
-                    ErrorCode.GRID_UNAVAILABLE, "Native insertion delivered-callback descriptor mismatch.");
+                    Reason.NATIVE_UNAVAILABLE, "Native insertion delivered-callback descriptor mismatch.");
         bindings.exactMethod(project, "cfM", void.class, false, String[].class, policy);
         requireConversionBridge(adapter, "cfM", conversionContext);
         requireConversionBridge(adapter, "Hnt", conversionContext);
@@ -112,7 +112,7 @@ final class Bitwig614GridInsertionAccess implements GridInsertionWriter.Access {
                 || bridge.getReturnType() != Object.class
                 || bridge.isBridge())
             throw Errors.notApplied(
-                    ErrorCode.GRID_UNAVAILABLE, "Native insertion conversion bridge descriptor mismatch: " + name);
+                    Reason.NATIVE_UNAVAILABLE, "Native insertion conversion bridge descriptor mismatch: " + name);
     }
 
     private Class<?> identical(String name, ClassLoader extension) throws ClassNotFoundException {
@@ -121,7 +121,7 @@ final class Bitwig614GridInsertionAccess implements GridInsertionWriter.Access {
                 || !Modifier.isPublic(host.getModifiers())
                 || !host.getModule().isExported(host.getPackageName(), GridInsertionBridge.class.getModule()))
             throw Errors.notApplied(
-                    ErrorCode.GRID_UNAVAILABLE, "Native insertion Class identity/public access mismatch: " + name);
+                    Reason.NATIVE_UNAVAILABLE, "Native insertion Class identity/public access mismatch: " + name);
         JsonObject row = new JsonObject();
         row.addProperty("sameClass", true);
         row.addProperty("codeSource", origin(host));
@@ -137,13 +137,13 @@ final class Bitwig614GridInsertionAccess implements GridInsertionWriter.Access {
             URL location = source == null ? null : source.getLocation();
             if (location == null)
                 throw Errors.notApplied(
-                        ErrorCode.GRID_UNAVAILABLE,
+                        Reason.NATIVE_UNAVAILABLE,
                         "Loaded insertion class has no CodeSource location: " + type.getName());
             // Compare the loaded archive origin, not a filesystem path; URL locations need not be URI-escaped.
             return location.toExternalForm();
         } catch (SecurityException error) {
             throw Errors.notApplied(
-                    ErrorCode.GRID_UNAVAILABLE, "Insertion binding CodeSource access denied: " + type.getName());
+                    Reason.NATIVE_UNAVAILABLE, "Insertion binding CodeSource access denied: " + type.getName());
         }
     }
 
@@ -161,11 +161,11 @@ final class Bitwig614GridInsertionAccess implements GridInsertionWriter.Access {
     public String resolve(UUID typeId) {
         Object app = bindings.invoke(singleton, null);
         if (app == null)
-            throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Native application singleton is unavailable.");
+            throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Native application singleton is unavailable.");
         Object file = bindings.invoke(resource, app, typeId);
         if (!(file instanceof File) || !((File) file).isFile())
             throw Errors.notApplied(
-                    ErrorCode.GRID_UNAVAILABLE,
+                    Reason.NATIVE_UNAVAILABLE,
                     "Known MODULE catalog resource is unavailable through the native resolver.");
         return ((File) file).getAbsolutePath();
     }
@@ -177,7 +177,7 @@ final class Bitwig614GridInsertionAccess implements GridInsertionWriter.Access {
             return () -> bridge.load(project, path);
         } catch (ReflectiveOperationException error) {
             throw Errors.notApplied(
-                    ErrorCode.GRID_UNAVAILABLE,
+                    Reason.NATIVE_UNAVAILABLE,
                     "Native insertion adapter construction failed: "
                             + error.getClass().getSimpleName());
         }
@@ -186,7 +186,7 @@ final class Bitwig614GridInsertionAccess implements GridInsertionWriter.Access {
     @Override
     public List<?> converted(Object result) {
         if (!convertedType.isInstance(result))
-            throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Native loader delivered an unexpected result type.");
+            throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Native loader delivered an unexpected result type.");
         return (List<?>) bindings.invoke(modules, result);
     }
 
@@ -196,14 +196,14 @@ final class Bitwig614GridInsertionAccess implements GridInsertionWriter.Access {
                 || bindings.invoke(parent, module) != null
                 || bindings.invoke(owner, module) != null)
             throw Errors.notApplied(
-                    ErrorCode.STALE_CONTEXT, "Loaded module is deleted, parented or owned; refusing placement.");
+                    Reason.STALE_CONTEXT, "Loaded module is deleted, parented or owned; refusing placement.");
     }
 
     @Override
     public void requirePlacementReady(Object graph) {
         if (!Integer.valueOf(0).equals(bindings.invoke(listSize, graph)))
             throw Errors.notApplied(
-                    ErrorCode.UNSAFE_STATE,
+                    Reason.UNSAFE_STATE,
                     "Native graph uva list is nonempty; collection placement prerequisite failed.");
     }
 
@@ -226,8 +226,7 @@ final class Bitwig614GridInsertionAccess implements GridInsertionWriter.Access {
 
     private void requireCompletion(Object completion) {
         if (!completionType.isInstance(completion))
-            throw Errors.notApplied(
-                    ErrorCode.GRID_UNAVAILABLE, "Native loader did not deliver its cleanup completion.");
+            throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Native loader did not deliver its cleanup completion.");
     }
 
     @Override

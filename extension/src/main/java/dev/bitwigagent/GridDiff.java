@@ -3,7 +3,10 @@ package dev.bitwigagent;
 import com.google.gson.*;
 import java.util.*;
 
-/** Pure JSON shaping of Grid write results: constant prose stripped, bounded graphs reduced to what changed. */
+/**
+ * Pure JSON shaping of Grid write results: constant prose stripped, bounded graphs reduced to what changed, and batch
+ * entries that did not succeed.
+ */
 final class GridDiff {
     private static final Set<String> CONSTANT = Set.of(
             "nativeUndoScope",
@@ -19,6 +22,19 @@ final class GridDiff {
             "maximumOccupiedYSpan");
 
     private GridDiff() {}
+
+    /** A batch entry whose write failed: unknown once its dispatch may have landed, else not_applied. */
+    static void failed(JsonObject entry, Throwable error, boolean unknown) {
+        entry.addProperty("outcome", (unknown ? Outcome.UNKNOWN : Outcome.NOT_APPLIED).wire());
+        entry.addProperty(
+                "reason", (error instanceof RpcException ? ((RpcException) error).reason : Reason.INTERNAL).wire());
+        entry.addProperty("message", error.getMessage());
+    }
+
+    static void notApplied(JsonObject entry, Reason reason) {
+        entry.addProperty("outcome", Outcome.NOT_APPLIED.wire());
+        entry.addProperty("reason", reason.wire());
+    }
 
     /** Writers attach graph (after) and graphBefore; the default response replaces both with the diff. */
     static JsonObject shape(JsonObject result, boolean fullGraph) {

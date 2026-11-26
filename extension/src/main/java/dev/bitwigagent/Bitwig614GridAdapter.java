@@ -346,7 +346,7 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
 
     @Override
     public JsonObject capabilities() {
-        JsonObject result = Results.observed();
+        JsonObject result = new JsonObject();
         result.addProperty("hostVersion", hostVersion);
         result.addProperty("requiredHostVersion", VERSION);
         result.addProperty("loadedHostJarSha256", actualHash);
@@ -535,7 +535,7 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
         result.add("topologyQuarantine", quarantineState(TOPOLOGY_QUARANTINE));
         result.addProperty(
                 "topologyQuarantineScope",
-                "versioned_String_only_process_marker_shared_across_extension_classloaders_one_record_per_device_released_only_by_grid_topology_reconcile");
+                "versioned_String_only_process_marker_shared_across_extension_classloaders_one_record_per_device_released_only_by_ack");
         result.addProperty("nativeRevisionAvailable", false);
         return result;
     }
@@ -545,8 +545,9 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
         com.google.gson.JsonArray devices = new com.google.gson.JsonArray();
         for (JsonObject device : guard.quarantinedDevices()) {
             device.addProperty(
-                    "next",
-                    "grid.get this device, then grid.topology.reconcile on it re-verifies the graph and releases it; no Bitwig restart");
+                    "id", GridTopologyQuarantine.holdId(device.get("device").getAsString()));
+            device.addProperty(
+                    "next", "grid.get this device, then ack its id: ack re-verifies the graph and releases it");
             devices.add(device);
         }
         boolean pending = guard.pending();
@@ -630,7 +631,7 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
                 snapshots.bindParameter(proxy, expectedTrackId, moduleId, parameterId, check);
         if (binding.kind != GridSnapshotReader.Kind.FLOAT)
             throw Errors.notApplied(
-                    ErrorCode.UNSUPPORTED_SCOPE,
+                    Reason.UNSUPPORTED_SCOPE,
                     "Only float Grid parameters are automated here; this one is "
                             + binding.kind.name().toLowerCase(Locale.ROOT) + ".");
         return binding;
@@ -648,7 +649,7 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
         require(inspectionError, "parameter inspection context");
         require(voicingError, "voicing");
         if (voicingWriter == null)
-            throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Grid voicing unavailable: no voicing binding.");
+            throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Grid voicing unavailable: no voicing binding.");
         return voicingWriter.get(proxy, expectedTrackId, check);
     }
 
@@ -809,12 +810,12 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
     }
 
     @Override
-    public JsonObject reconcileTopology(Object proxy, UUID trackId, Runnable check) {
+    public JsonObject ackTopology(Object proxy, UUID trackId, String device, Runnable check) {
         require(gateError, "gate");
         require(identityError, "native owning-track identity");
         require(structureError, "structure");
         require(moduleInsertError, "module insertion");
-        return insertionWriter.reconcile(proxy, trackId, check);
+        return insertionWriter.ack(proxy, trackId, device, check);
     }
 
     @Override
@@ -848,7 +849,7 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
     public Object read(GridSnapshotReader.Field field, Object object) {
         if (field == BIPOLAR_PANEL) {
             if (booleanPanels == null)
-                throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Boolean panel reference binding unavailable.");
+                throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Boolean panel reference binding unavailable.");
             return booleanPanels.linkedPanel(object);
         }
         if (booleanPanels != null && booleanPanels.isPanel(object)) {
@@ -865,14 +866,14 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
             if (field == STRING_VALUE) return stringPanels.value(object);
         }
         Method method = readers.get(field);
-        if (method == null) throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Unbound native reader: " + field);
+        if (method == null) throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Unbound native reader: " + field);
         Object value;
         if (field == OWNER_MODULE) value = bindings.invoke(method, object, kinds.get(GridSnapshotReader.Kind.MODULE));
         else if (field == TYPE_ENTRY) value = bindings.invoke(method, null, object);
         else value = bindings.invoke(method, object);
         if (field == ENTRY_KIND) {
             if (!(value instanceof Enum<?>))
-                throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Native catalog kind is not the mapped enum.");
+                throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Native catalog kind is not the mapped enum.");
             return ((Enum<?>) value).name();
         }
         return value;
@@ -886,11 +887,6 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
     @Override
     public void requireModelThread(Object object) {
         bindings.requireModelThread(object);
-    }
-
-    @Override
-    public ErrorCode unavailableCode() {
-        return bindings.unavailableCode();
     }
 
     @Override
@@ -922,7 +918,7 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
     private static void require(String error, String domain) {
         if (error != null)
             throw Errors.notApplied(
-                    ErrorCode.GRID_UNAVAILABLE,
+                    Reason.NATIVE_UNAVAILABLE,
                     "Grid " + domain + " unavailable: " + error
                             + " Inspect grid.capabilities; use the exact supported host binary and adapter.");
     }

@@ -16,14 +16,16 @@ import org.junit.jupiter.api.Test;
 public final class RpcServerTest {
     private static final MethodSpecs SPECS = HostFixture.SPECS;
 
+    private static final String PROTOCOL = "\"protocol\":\"" + SPECS.vocabulary().protocol + "\",";
+
     private static JsonObject ok() {
         JsonObject result = new JsonObject();
-        result.addProperty("status", "observed");
+        result.addProperty("outcome", "applied");
         return result;
     }
 
     private static String request(String id, String params, String timeout) {
-        return "{\"id\":\"" + id + "\",\"method\":\"status\",\"params\":" + params
+        return "{" + PROTOCOL + "\"id\":\"" + id + "\",\"method\":\"status\",\"params\":" + params
                 + (timeout == null ? "" : ",\"timeoutMs\":" + timeout) + "}\n";
     }
 
@@ -48,15 +50,28 @@ public final class RpcServerTest {
         }
     }
 
+    /** Requests written out in full get the envelope's protocol field unless they test it themselves. */
     private static JsonObject call(RpcServer server, String text) throws IOException {
-        return call(server, text.getBytes(StandardCharsets.UTF_8));
+        String framed = text.startsWith("{\"id\":\"") ? "{" + PROTOCOL + text.substring(1) : text;
+        return call(server, framed.getBytes(StandardCharsets.UTF_8));
     }
 
-    private static void error(JsonObject response, String code, String outcome) {
+    /** An error: nothing changed, so it names a code and reason and never an outcome. */
+    private static void error(JsonObject response, String reason) {
         assertTrue(response.has("error"), "Expected error: " + response);
-        assertTrue(response.getAsJsonObject("error").get("code").getAsString().equals(code), "Error code: " + response);
-        assertTrue(
-                response.getAsJsonObject("error").get("outcome").getAsString().equals(outcome), "Outcome: " + response);
+        JsonObject error = response.getAsJsonObject("error");
+        assertEquals(reason, error.get("reason").getAsString(), "reason: " + response);
+        assertEquals(
+                Reason.valueOf(reason.toUpperCase(Locale.ROOT)).code().wire(),
+                error.get("code").getAsString());
+        assertFalse(error.has("outcome"), "an error has no outcome: " + response);
+    }
+
+    private static void unknown(JsonObject response, String reason) {
+        assertTrue(response.has("result"), "Expected result: " + response);
+        JsonObject result = response.getAsJsonObject("result");
+        assertEquals("unknown", result.get("outcome").getAsString(), "outcome: " + response);
+        assertEquals(reason, result.get("reason").getAsString(), "reason: " + response);
     }
 
     @Test
@@ -75,7 +90,7 @@ public final class RpcServerTest {
                         + "\"trackId\":\"00000000-0000-0000-0000-000000000001\",\"deviceIndex\":0,"
                         + "\"expectedDeviceName\":\"Poly Grid\",\"moduleId\":\"00000000-0000-0000-0000-000000000002\","
                         + "\"parameterId\":\"MODE\"," + values + "}}\n";
-                error(call(server, request), "invalid_params", "not_applied");
+                error(call(server, request), "invalid_params");
             }
             for (String key : List.of("expectedX", "expectedY", "x", "y")) {
                 String coordinates = "\"expectedX\":0,\"expectedY\":0,\"x\":1,\"y\":1";
@@ -85,14 +100,14 @@ public final class RpcServerTest {
                         + "\"trackId\":\"00000000-0000-0000-0000-000000000001\",\"deviceIndex\":0,"
                         + "\"expectedDeviceName\":\"Poly Grid\",\"moduleId\":\"00000000-0000-0000-0000-000000000002\","
                         + coordinates + "}}\n";
-                error(call(server, request), "invalid_params", "not_applied");
+                error(call(server, request), "invalid_params");
             }
             for (String token : List.of("1e0", "1.0", "\"1\"", "true", "2147483648")) {
                 String request = "{\"id\":\"insert-token\",\"method\":\"grid.modules.insert\",\"params\":{"
                         + "\"trackId\":\"00000000-0000-0000-0000-000000000001\",\"deviceIndex\":0,"
                         + "\"expectedDeviceName\":\"Poly Grid\",\"typeId\":\"00000000-0000-0000-0000-000000000002\","
                         + "\"x\":" + token + ",\"y\":0}}\n";
-                error(call(server, request), "invalid_params", "not_applied");
+                error(call(server, request), "invalid_params");
             }
         }
     }
@@ -120,20 +135,16 @@ public final class RpcServerTest {
                             && result.get("actualSource").isJsonNull()
                             && !result.get("mutationDispatched").getAsBoolean(),
                     "explicit nullable CAS reaches real writer semantics and survives JSON response serialization");
-            error(call(server, prefix + "\"source\":null}}\n"), "invalid_params", "not_applied");
-            error(call(server, prefix + "\"expectedSource\":null}}\n"), "invalid_params", "not_applied");
-            error(call(server, prefix + "\"expectedSource\":null,\"source\":[]}}\n"), "invalid_params", "not_applied");
+            error(call(server, prefix + "\"source\":null}}\n"), "invalid_params");
+            error(call(server, prefix + "\"expectedSource\":null}}\n"), "invalid_params");
+            error(call(server, prefix + "\"expectedSource\":null,\"source\":[]}}\n"), "invalid_params");
             error(
                     call(
                             server,
                             prefix
                                     + "\"expectedSource\":null,\"source\":{\"moduleId\":\"1-1-1-1-1\",\"portKey\":\"out\"}}}\n"),
-                    "invalid_params",
-                    "not_applied");
-            error(
-                    call(server, prefix + "\"expectedSource\":null,\"source\":{1:\"out\"}}}\n"),
-                    "invalid_request",
-                    "not_dispatched");
+                    "invalid_params");
+            error(call(server, prefix + "\"expectedSource\":null,\"source\":{1:\"out\"}}}\n"), "invalid_request");
             assertTrue(fixture.calls == 0, "malformed endpoints and valid no-op never invoke native setter");
         }
     }
@@ -184,9 +195,9 @@ public final class RpcServerTest {
             assertTrue(response.get("id").getAsString().equals("汉字🎛"), "UTF-8 correlation");
             assertTrue(
                     response.getAsJsonObject("result")
-                            .get("status")
+                            .get("outcome")
                             .getAsString()
-                            .equals("observed"),
+                            .equals("applied"),
                     "Result envelope");
             assertTrue(
                     deadline.get() > before && deadline.get() < before + TimeUnit.SECONDS.toNanos(6),
@@ -215,22 +226,18 @@ public final class RpcServerTest {
                 request("a", "{}", null).replace("}\n", "} {}\n"),
                 request("a", "{\"x\":" + "[".repeat(65) + "0" + "]".repeat(65) + "}", null)
             };
-            for (String bad : invalid) error(call(server, bad), "invalid_request", "not_dispatched");
+            for (String bad : invalid) error(call(server, bad), "invalid_request");
             for (String method : SPECS.methods())
                 error(
                         call(
                                 server,
                                 request("a", "{}", String.valueOf(SPECS.get(method).maxTimeoutMs + 1))
                                         .replace("status", method)),
-                        "invalid_request",
-                        "not_dispatched");
-            error(
-                    call(server, request("a", "{}", null).replace("status", "unknown")),
-                    "method_not_found",
-                    "not_dispatched");
+                        "invalid_request");
+            error(call(server, request("a", "{}", null).replace("status", "unknown")), "unknown_method");
             byte[] badUtf8 = request("a", "{\"x\":\"?\"}", null).getBytes(StandardCharsets.UTF_8);
             for (int i = 0; i < badUtf8.length; i++) if (badUtf8[i] == '?') badUtf8[i] = (byte) 0xff;
-            error(call(server, badUtf8), "invalid_request", "not_dispatched");
+            error(call(server, badUtf8), "invalid_request");
             assertTrue(calls.get() == accepted, "Invalid input never invokes handler");
             for (String method : SPECS.methods())
                 assertTrue(
@@ -249,13 +256,13 @@ public final class RpcServerTest {
                 socket.getOutputStream()
                         .write(request("half", "{}", null).trim().getBytes(StandardCharsets.UTF_8));
                 socket.shutdownOutput();
-                error(read(socket), "invalid_request", "not_dispatched");
+                error(read(socket), "invalid_request");
             }
             try (Socket socket = connect(server)) {
                 long start = System.nanoTime();
                 socket.getOutputStream().write('{');
                 socket.getOutputStream().flush();
-                error(read(socket), "invalid_request", "not_dispatched");
+                error(read(socket), "invalid_request");
                 assertTrue(System.nanoTime() - start < TimeUnit.SECONDS.toNanos(4), "Idle reader bounded");
             }
             String base = request("limit", "{\"padding\":\"\"}", null);
@@ -266,7 +273,7 @@ public final class RpcServerTest {
                     boundary.getBytes(StandardCharsets.UTF_8).length == RpcServer.MAX_REQUEST_BYTES + 1,
                     "Boundary fixture");
             assertTrue(call(server, boundary).has("result"), "1 MiB request excluding newline accepted");
-            error(call(server, boundary.replace("padding", "paddingX")), "invalid_request", "not_dispatched");
+            error(call(server, boundary.replace("padding", "paddingX")), "invalid_request");
             try (Socket socket = connect(server)) {
                 byte[] bytes = request("fragmented", "{}", null).getBytes(StandardCharsets.UTF_8);
                 for (byte b : bytes) {
@@ -280,6 +287,23 @@ public final class RpcServerTest {
     }
 
     @Test
+    void protocolMismatchIsRefusedBeforeTheMethod() throws Exception {
+        AtomicInteger calls = new AtomicInteger();
+        try (RpcServer server = new RpcServer(0, SPECS, (method, params, until) -> {
+            calls.incrementAndGet();
+            return CompletableFuture.completedFuture(ok());
+        })) {
+            server.start();
+            String missing = "{\"id\":\"p\",\"method\":\"status\",\"params\":{}}\n";
+            error(call(server, missing.getBytes(StandardCharsets.UTF_8)), "protocol_mismatch");
+            error(
+                    call(server, request("p", "{}", null).replace(SPECS.vocabulary().protocol, "0.4")),
+                    "protocol_mismatch");
+            assertEquals(0, calls.get(), "a mismatched client never reaches the handler");
+        }
+    }
+
+    @Test
     void deadlines() throws Exception {
         AtomicInteger calls = new AtomicInteger();
         CompletableFuture<JsonObject> pending = new CompletableFuture<>();
@@ -288,18 +312,61 @@ public final class RpcServerTest {
             return pending;
         })) {
             server.start();
-            error(call(server, request("late", "{}", "100")), "deadline_exceeded", "unknown");
+            error(call(server, request("late", "{}", "100")), "deadline");
+            unknown(call(server, request("late-write", "{\"id\":\"x\"}", "100").replace("status", "ack")), "deadline");
             assertTrue(!pending.isCancelled(), "Transport does not claim to cancel host work");
             pending.complete(ok());
-            assertTrue(calls.get() == 1, "No automatic retry");
+            assertTrue(calls.get() == 2, "No automatic retry");
         }
         try (RpcServer server = new RpcServer(0, SPECS, (method, params, until) -> {
             CompletableFuture<JsonObject> failure = new CompletableFuture<>();
-            failure.completeExceptionally(new RpcException("target_changed", "Target changed", "not_dispatched"));
+            failure.completeExceptionally(
+                    method.equals("ack")
+                            ? Errors.unknown(Reason.NOT_OBSERVED, "Not observed")
+                            : Errors.notApplied(Reason.TARGET_CHANGED, "Target changed"));
             return failure;
         })) {
             server.start();
-            error(call(server, request("host-error", "{}", null)), "target_changed", "not_dispatched");
+            error(call(server, request("host-error", "{}", null)), "target_changed");
+            unknown(call(server, request("host-unknown", "{}", null).replace("status", "ack")), "not_observed");
+        }
+    }
+
+    @Test
+    void anOperationStillWaitingAtTheDeadlineIsRefusedAndNeverDispatches() throws Exception {
+        List<HostOperation> operations = new CopyOnWriteArrayList<>();
+        try (RpcServer server = new RpcServer(0, SPECS, (method, params, until) -> {
+            HostOperation op = new HostOperation(until);
+            operations.add(op);
+            return op.result;
+        })) {
+            server.start();
+            error(call(server, request("waiting", "{}", "100").replace("status", "ack")), "deadline");
+            assertThrows(RpcException.class, operations.get(0)::markDispatched, "it can no longer dispatch");
+        }
+    }
+
+    /** A dispatched operation: asked to expire at the deadline, it refuses and then answers with its job. */
+    private static final class Dispatched extends CompletableFuture<JsonObject> implements RpcServer.Expiring {
+        @Override
+        public boolean expire() {
+            HostOperation op = new HostOperation(Long.MAX_VALUE);
+            op.markDispatched();
+            op.job = "render:1";
+            op.fail(Errors.notApplied(Reason.DEADLINE, "Deadline expired."));
+            complete(op.result.join());
+            return false;
+        }
+    }
+
+    @Test
+    void aDispatchedOperationAnswersItselfAfterTheDeadline() throws Exception {
+        try (RpcServer server = new RpcServer(0, SPECS, (method, params, until) -> new Dispatched())) {
+            server.start();
+            JsonObject response = call(server, request("late", "{}", "100").replace("status", "ack"));
+            unknown(response, "deadline");
+            assertEquals(
+                    "render:1", response.getAsJsonObject("result").get("job").getAsString(), "its job id");
         }
     }
 
@@ -328,7 +395,7 @@ public final class RpcServerTest {
                 queued.getOutputStream().flush();
                 Thread.sleep(250); // Deliberately exceed the queued request's declared budget.
                 hold.complete(ok());
-                error(read(queued), "deadline_exceeded", "not_dispatched");
+                error(read(queued), "deadline");
                 assertTrue(calls.get() == 4, "Expired queued request never invokes handler");
             }
             for (Socket socket : occupying) assertTrue(read(socket).has("result"), "Occupying request completes");
@@ -345,7 +412,8 @@ public final class RpcServerTest {
             return CompletableFuture.completedFuture(result);
         })) {
             server.start();
-            error(call(server, request("large", "{}", null)), "internal_error", "unknown");
+            error(call(server, request("large", "{}", null)), "internal");
+            unknown(call(server, request("large-write", "{}", null).replace("status", "ack")), "internal");
         }
     }
 

@@ -54,13 +54,13 @@ final class ProjectSaveAsPlan {
         if (!allowAnyPath) {
             if (root == null || !Files.isDirectory(root))
                 throw Errors.notApplied(
-                        ErrorCode.PATH_NOT_ALLOWED,
+                        Reason.PATH_NOT_ALLOWED,
                         "Bitwig's projects folder is unknown or missing (" + root
                                 + "); pass allowAnyPath:true to save elsewhere.");
             Path real = real(path), realRoot = real(root);
             if (!real.startsWith(realRoot) || real.equals(realRoot))
                 throw Errors.notApplied(
-                        ErrorCode.PATH_NOT_ALLOWED,
+                        Reason.PATH_NOT_ALLOWED,
                         "Path is outside Bitwig's projects folder " + root + "; use "
                                 + String.join(File.separator, root.toString(), "<Name>", "<Name>" + EXTENSION)
                                 + " or pass allowAnyPath:true.");
@@ -70,30 +70,30 @@ final class ProjectSaveAsPlan {
         if (owner != null) {
             if (!Files.isDirectory(parent))
                 throw Errors.notApplied(
-                        ErrorCode.INVALID_TARGET,
+                        Reason.INVALID_TARGET,
                         "Folder " + parent + " inside project folder " + owner + " does not exist.");
             plan = new ProjectSaveAsPlan(path, owner, path, name, false);
         } else {
             if (!parent.getFileName().toString().equals(name))
                 throw Errors.notApplied(
-                        ErrorCode.INVALID_TARGET,
+                        Reason.INVALID_TARGET,
                         "A new project must be <dir>/" + name + "/" + name + EXTENSION + " (Bitwig creates the " + name
                                 + " project folder), or a file inside an existing project folder.");
             Path container = parent.getParent();
             if (!Files.isDirectory(container))
-                throw Errors.notApplied(ErrorCode.INVALID_TARGET, "Folder " + container + " does not exist.");
+                throw Errors.notApplied(Reason.INVALID_TARGET, "Folder " + container + " does not exist.");
             boolean exists = Files.exists(parent, LinkOption.NOFOLLOW_LINKS);
             if (exists && !emptyDirectory(parent))
                 throw Errors.notApplied(
-                        ErrorCode.TARGET_EXISTS,
+                        Reason.TARGET_EXISTS,
                         parent + " already exists and is not a Bitwig project folder (no " + MARKER + ").");
             plan = new ProjectSaveAsPlan(path, parent, container.resolve(path.getFileName()), name, !exists);
         }
         if (Files.isSymbolicLink(path) || Files.isDirectory(path))
-            throw Errors.notApplied(ErrorCode.INVALID_TARGET, path + " is a directory or symbolic link.");
+            throw Errors.notApplied(Reason.INVALID_TARGET, path + " is a directory or symbolic link.");
         if (plan.before.exists && !overwrite)
             throw Errors.notApplied(
-                    ErrorCode.TARGET_EXISTS,
+                    Reason.TARGET_EXISTS,
                     path
                             + " already exists; pass overwrite:true (Bitwig moves the old file into the project's auto-backups folder).");
         return plan;
@@ -112,7 +112,7 @@ final class ProjectSaveAsPlan {
                     || !Files.exists(folder.resolve(MARKER))) continue;
             if (root != null && root.startsWith(folder))
                 throw Errors.notApplied(
-                        ErrorCode.INVALID_TARGET,
+                        Reason.INVALID_TARGET,
                         "Stray " + MARKER + " in " + folder
                                 + " above the projects folder would make Bitwig treat it as the project folder; remove it first.");
             return folder;
@@ -139,7 +139,7 @@ final class ProjectSaveAsPlan {
         try {
             return existing == null ? path : existing.toRealPath().resolve(rest).normalize();
         } catch (IOException error) {
-            throw Errors.notApplied(ErrorCode.INVALID_TARGET, "Cannot resolve " + path + ": " + error.getMessage());
+            throw Errors.notApplied(Reason.INVALID_TARGET, "Cannot resolve " + path + ": " + error.getMessage());
         }
     }
 

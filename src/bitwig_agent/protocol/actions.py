@@ -19,7 +19,7 @@ class ActionListArgs(StatusArgs):
 
 
 ACTIONS_LIST_DESCRIPTION = "List native host Action IDs, names and categories (catalog is >1000 rows: filter with query/category; default limit 100, check total/complete). Availability does not prove completion in the current UI context."
-ACTIONS_INVOKE_DESCRIPTION = "Invoke one exact ID from actions.list in the current host/UI context. May edit the project or open a dialog. Quit closes every open tab and only the current tab is observable, so it always needs discardUnsavedChanges=true; Close needs the current tab observed saved (projectModified=false) or discardUnsavedChanges=true. Consent comes from the user only. New/Open open another tab and are not guarded. Returns dispatched only, never completion; inspect state before another write and do not blindly retry."
+ACTIONS_INVOKE_DESCRIPTION = "Invoke one exact ID from actions.list in the current host/UI context. May edit the project or open a dialog. Quit closes every open tab and only the current tab is observable, so it always needs discardUnsavedChanges=true; Close needs the current tab observed saved (projectModified=false) or discardUnsavedChanges=true. Consent comes from the user only. New/Open open another tab and are not guarded. Returns outcome sent only, never completion; inspect state before another write and do not blindly retry."
 
 
 SPECS: dict[str, ToolSpec] = {

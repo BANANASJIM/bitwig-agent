@@ -87,8 +87,8 @@ For an agent, copy the complete [portable skill folder](https://github.com/BANAN
 
 - **Local trust only.** The extension listens on unauthenticated `127.0.0.1:61172`. Any local process able to connect can control Bitwig. Never expose or forward it to a network.
 - **Do not bypass compatibility gates.** Private Grid/modulator access requires the exact mapped host-JAR SHA-256, in addition to the tested host version.
-- **Never blindly retry an uncertain edit.** A timeout may mean the mutation happened. Discover fresh targets, inspect the outcome and reconcile uncertainty before another write.
-- **Package checks are not native acceptance.** Model readback, GUI state, audio, Undo and save/reopen are separate evidence. See [targeting safety](https://github.com/BANANASJIM/bitwig-agent/blob/main/USAGE.md#target-safely-then-observe-completion) and [coverage limits](https://github.com/BANANASJIM/bitwig-agent/blob/main/VERIFICATION.md).
+- **Never blindly retry an uncertain edit.** A timeout may mean the mutation happened and is reported as `outcome: unknown`. Discover fresh targets, inspect, then `ack` the hold before another write; an error means nothing changed.
+- **Package checks are not native acceptance.** Model readback, GUI state, audio, Undo and save/reopen are separate evidence. See [targeting safety](https://github.com/BANANASJIM/bitwig-agent/blob/main/USAGE.md#target-safely-then-read-the-outcome) and [coverage limits](https://github.com/BANANASJIM/bitwig-agent/blob/main/VERIFICATION.md).
 
 ## Documentation
 

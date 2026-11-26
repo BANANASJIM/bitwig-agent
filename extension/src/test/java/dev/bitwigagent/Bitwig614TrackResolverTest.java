@@ -1,7 +1,7 @@
 package dev.bitwigagent;
 
 import static dev.bitwigagent.Bitwig614TrackResolver.Kind.*;
-import static dev.bitwigagent.RpcAssert.assertNotApplied;
+import static dev.bitwigagent.RpcAssert.assertRpcError;
 import static org.junit.jupiter.api.Assertions.*;
 
 import java.net.URL;
@@ -17,7 +17,7 @@ import org.junit.jupiter.api.Test;
 /**
  * Binds the track resolver and every access class built on it against the classpath host jar. With the inspected
  * 6.1.4 jar each exact descriptor must resolve offline; with any other jar the bindings must fail closed with the
- * calling domain code. No native host runs and no bound method is invoked. The kind and identity checks every
+ * host_mismatch reason. No native host runs and no bound method is invoked. The kind and identity checks every
  * access class shares are exercised directly.
  */
 public final class Bitwig614TrackResolverTest {
@@ -41,26 +41,23 @@ public final class Bitwig614TrackResolverTest {
             deniedBindingsFailClosed(runtime);
             return;
         }
-        assertTrue(
-                runtime.access(ErrorCode.NATIVE_UNAVAILABLE).gateError() == null,
-                "inspected jar passes the exact version and SHA-256 gate");
-        bind(runtime, ErrorCode.NATIVE_UNAVAILABLE, Bitwig614TrackResolver::new);
-        bind(runtime, ErrorCode.NATIVE_UNAVAILABLE, Bitwig614DeviceTargetAccess::new);
-        bind(runtime, ErrorCode.ARRANGER_UNAVAILABLE, Bitwig614ArrangerAccess::new);
-        bind(runtime, ErrorCode.AUTOMATION_UNAVAILABLE, Bitwig614AutomationAccess::new);
-        bind(runtime, ErrorCode.TRACK_GROUP_UNAVAILABLE, Bitwig614TrackGroupAccess::new);
-        bind(runtime, ErrorCode.ROUTING_UNAVAILABLE, Bitwig614RoutingAccess::new);
-        bind(runtime, RenderModule.UNAVAILABLE, Bitwig614RenderAccess::new);
-        bind(runtime, ErrorCode.LAUNCHER_SETTINGS_UNAVAILABLE, Bitwig614LauncherSettingsAccess::new);
+        assertTrue(runtime.access().gateError() == null, "inspected jar passes the exact version and SHA-256 gate");
+        bind(runtime, Bitwig614TrackResolver::new);
+        bind(runtime, Bitwig614DeviceTargetAccess::new);
+        bind(runtime, Bitwig614ArrangerAccess::new);
+        bind(runtime, Bitwig614AutomationAccess::new);
+        bind(runtime, Bitwig614TrackGroupAccess::new);
+        bind(runtime, Bitwig614RoutingAccess::new);
+        bind(runtime, Bitwig614RenderAccess::new);
+        bind(runtime, Bitwig614LauncherSettingsAccess::new);
     }
 
     @Test
     void identityMismatchOrAbsenceIsTheOneStaleError() {
         String expected = "Track " + HostFixture.A + " no longer resolves to its native track; re-read tracks.list.";
         for (UUID identity : new UUID[] {UUID.fromString(HostFixture.B), null}) {
-            RpcException error = assertNotApplied(
-                    ErrorCode.STALE_CONTEXT.wire(),
-                    () -> Bitwig614TrackResolver.requireIdentity(HostFixture.A, identity));
+            RpcException error = assertRpcError(
+                    Reason.STALE_CONTEXT.wire(), () -> Bitwig614TrackResolver.requireIdentity(HostFixture.A, identity));
             assertEquals(expected, error.getMessage());
         }
         assertEquals(expected, Bitwig614TrackResolver.stale(HostFixture.A).getMessage());
@@ -70,15 +67,15 @@ public final class Bitwig614TrackResolverTest {
 
     @Test
     void disallowedKindsShareOneUnsupportedWording() {
-        RpcException group = assertNotApplied(
-                ErrorCode.UNSUPPORTED_SCOPE.wire(),
+        RpcException group = assertRpcError(
+                Reason.UNSUPPORTED_SCOPE.wire(),
                 () -> Bitwig614TrackResolver.requireKind(HostFixture.A, GROUP, CHANNEL));
         assertEquals(
                 "Track " + HostFixture.A
                         + " is a group track; this method supports audio/instrument/hybrid/effect/master tracks only.",
                 group.getMessage());
-        RpcException transport = assertNotApplied(
-                ErrorCode.UNSUPPORTED_SCOPE.wire(),
+        RpcException transport = assertRpcError(
+                Reason.UNSUPPORTED_SCOPE.wire(),
                 () -> Bitwig614TrackResolver.requireKind(HostFixture.B, OTHER, CHANNEL, GROUP));
         assertEquals(
                 "Track " + HostFixture.B
@@ -105,15 +102,14 @@ public final class Bitwig614TrackResolverTest {
         return Class.forName(HOST_ENUM, true, loader).getEnumConstants()[0];
     }
 
-    private static void bind(Bitwig614Runtime runtime, ErrorCode code, Binding binding)
-            throws ReflectiveOperationException {
-        assertTrue(binding.bind(runtime.access(code)) != null, "exact descriptors bind for " + code.wire());
+    private static void bind(Bitwig614Runtime runtime, Binding binding) throws ReflectiveOperationException {
+        assertTrue(binding.bind(runtime.access()) != null, "exact descriptors bind");
     }
 
     private static void deniedBindingsFailClosed(Bitwig614Runtime runtime) {
-        Bitwig614Runtime.Access access = runtime.access(ErrorCode.ROUTING_UNAVAILABLE);
+        Bitwig614Runtime.Access access = runtime.access();
         assertTrue(access.gateError() != null, "a jar other than the inspected one closes the gate");
         RpcException error = assertThrows(RpcException.class, () -> new Bitwig614TrackResolver(access));
-        assertTrue(error.is(ErrorCode.ROUTING_UNAVAILABLE), "denied resolver keeps the calling domain code");
+        assertTrue(error.is(Reason.HOST_MISMATCH), "a closed gate is an incompatible host");
     }
 }

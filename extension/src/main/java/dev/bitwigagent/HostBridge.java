@@ -39,7 +39,17 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
         ProjectModule projectModule = new ProjectModule(scheduler, application, project, projectState, natives, holds);
         RenderModule render = new RenderModule(scheduler, window, project, transportSafety, natives, holds);
         register(new DiscoveryModule(
-                host, application, transport, window, sources, projectState, specs, parameters, projectModule, render));
+                host,
+                application,
+                transport,
+                window,
+                sources,
+                projectState,
+                specs,
+                parameters,
+                projectModule,
+                render,
+                holds));
         register(new ActionModule(scheduler, application, projectState, selection));
         register(projectModule);
         TransportModule transportModule =
@@ -59,13 +69,16 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
         register(new RoutingModule(scheduler, window, sources, transportSafety, natives, holds, specs));
         register(render);
         register(new ContextModule(scheduler, window, projectState, transportSafety, transportModule, mix, launcher));
-        register(new GridModule(scheduler, sources, transportSafety, natives));
+        GridModule grid = new GridModule(scheduler, sources, transportSafety, natives);
+        register(grid);
         ModulatorEditModule modulatorEdits =
                 new ModulatorEditModule(scheduler, sources, transportSafety, natives, specs);
         register(new ModulatorModule(scheduler, sources, natives, null, modulatorEdits));
         register(modulatorEdits);
-        register(new ExtensionModule(host, scheduler, holds));
+        register(new AckModule(holds, grid));
+        register(new JobsModule(render, projectModule));
         requireHandlersMatch();
+        Reason.check(specs.vocabulary());
     }
 
     private void register(HostModule module) {

@@ -8,7 +8,7 @@ import pytest
 
 from bitwig_agent import diagnostics
 from bitwig_agent.core import composed
-from bitwig_agent.errors import BridgeError
+from bitwig_agent.errors import bridge_error
 from bitwig_agent.protocol import CLIENT_SIDE, validate_call
 
 
@@ -29,7 +29,7 @@ class Bridge:
     async def call(self, method, params, timeout_ms=5000):
         assert method == "status"
         if self.fail:
-            raise BridgeError({"code": "unavailable", "message": "no host", "outcome": "not_dispatched"})
+            raise bridge_error("not_ready", "no host")
         return {"instance": self.instance}
 
 
@@ -63,7 +63,7 @@ def test_registered():
 
 def test_missing_log_is_unsupported(log):
     result = run()
-    assert result["status"] == "unsupported"
+    assert result["supported"] is False
     assert result["searched"] == [str(log)]
 
 

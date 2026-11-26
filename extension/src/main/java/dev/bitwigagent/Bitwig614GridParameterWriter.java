@@ -50,7 +50,7 @@ final class Bitwig614GridParameterWriter implements GridParameterWriter.Access {
     public void requireSupported(Object parameter, GridSnapshotReader.Kind kind) {
         if (parameter == null || models.get(parameter.getClass()) != kind)
             throw Errors.notApplied(
-                    ErrorCode.GRID_UNAVAILABLE,
+                    Reason.NATIVE_UNAVAILABLE,
                     "Native scalar implementation is not an inspected controller-write model.");
     }
 

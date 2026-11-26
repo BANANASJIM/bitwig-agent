@@ -9,7 +9,7 @@ final class BoundedJson {
 
     private BoundedJson() {}
 
-    static String serialize(JsonObject value, int maximum, ErrorCode code, String message) {
+    static String serialize(JsonObject value, int maximum, Reason code, String message) {
         StringWriter buffer = new StringWriter();
         Writer bounded = new Writer() {
             int count;

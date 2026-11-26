@@ -60,7 +60,7 @@ def test_fixture_pages_completely_and_renders_wellformed_svg(tmp_path):
     comment = next(m for m in FIXTURE["modules"] if m["typeName"] == "Comment")
     assert comment["parameters"][0]["value"].strip().split("\n")[0][:10] in text  # comment TEXT is drawn
     assert any(m["typeName"] == "Label" and m["customName"][:8] in text for m in FIXTURE["modules"])
-    assert result["status"] == "rendered"
+    assert result["outcome"] == "applied"
     assert result["bytes"] == (tmp_path / "out.svg").stat().st_size
     assert result["density"] <= 1
     assert result["boundingBox"]["width"] > 0
@@ -121,9 +121,9 @@ def test_refuses_overwrite_unless_asked(tmp_path):
     host.calls.clear()
     with pytest.raises(BridgeError) as err:
         run(host, tmp_path)
-    assert err.value.error["code"] == "file_exists"
+    assert err.value.error["reason"] == "target_exists"
     assert host.calls == []
-    assert run(host, tmp_path, overwrite=True)["status"] == "rendered"
+    assert run(host, tmp_path, overwrite=True)["outcome"] == "applied"
 
 
 def test_incomplete_paging_fails_instead_of_drawing_part(tmp_path):
@@ -140,7 +140,7 @@ def test_incomplete_paging_fails_instead_of_drawing_part(tmp_path):
     host.call = short  # type: ignore[method-assign]
     with pytest.raises(BridgeError) as err:
         run(host, tmp_path)
-    assert err.value.error["code"] == "graph_incomplete"
+    assert err.value.error["reason"] == "not_ready"
     assert not (tmp_path / "out.svg").exists()
 
 
@@ -183,3 +183,29 @@ def test_png_uses_converter_or_errors_clearly(tmp_path, monkeypatch):
     run(host, tmp_path, "a.png", format="png")
     assert (tmp_path / "a.png").read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
     assert shutil.which("rsvg-convert") or shutil.which("magick")
+
+
+def test_empty_device_is_invalid_params(tmp_path):
+    with pytest.raises(BridgeError) as err:
+        run(LayoutGrid([], []), tmp_path)
+    assert err.value.error["reason"] == "invalid_params"
+    assert not (tmp_path / "out.svg").exists()
+
+
+def test_write_failures_are_errors(tmp_path):
+    existing = tmp_path / "there.svg"
+    existing.write_bytes(b"x")
+    with pytest.raises(BridgeError) as err:
+        grid_render._write(str(existing), b"y", False)
+    assert err.value.error["reason"] == "target_exists"
+    with pytest.raises(BridgeError) as err:
+        grid_render._write(str(tmp_path), b"y", True)
+    assert err.value.error["reason"] == "job_failed"
+
+
+def test_failing_converter_is_a_job_failure(tmp_path, monkeypatch):
+    monkeypatch.setattr(grid_render, "_converter", lambda: ["false"])
+    host = LayoutGrid([mod("m", "Add", 0, 0)], [])
+    with pytest.raises(BridgeError) as err:
+        run(host, tmp_path, "a.png", format="png")
+    assert err.value.error["reason"] == "job_failed"

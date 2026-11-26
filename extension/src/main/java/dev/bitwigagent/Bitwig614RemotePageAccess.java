@@ -99,7 +99,7 @@ final class Bitwig614RemotePageAccess implements GridRemotePageWriter.Access {
     @Override
     public Object host(Object device) {
         if (!deviceType.isInstance(device))
-            throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Remote Controls pages require a native xlG device.");
+            throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Remote Controls pages require a native xlG device.");
         return bindings.invoke(host, device);
     }
 
@@ -108,7 +108,7 @@ final class Bitwig614RemotePageAccess implements GridRemotePageWriter.Access {
         Object list = bindings.invoke(devicePages, host);
         if (list != null && list.getClass() != devicePageList)
             throw Errors.notApplied(
-                    ErrorCode.GRID_UNAVAILABLE, "Native device-page list is not the exact inspected riz.");
+                    Reason.NATIVE_UNAVAILABLE, "Native device-page list is not the exact inspected riz.");
         return list;
     }
 
@@ -117,7 +117,7 @@ final class Bitwig614RemotePageAccess implements GridRemotePageWriter.Access {
         Object list = bindings.invoke(presetPages, host);
         if (list != null && list.getClass() != presetPageList)
             throw Errors.notApplied(
-                    ErrorCode.GRID_UNAVAILABLE, "Native preset-page list is not the exact inspected sZK.");
+                    Reason.NATIVE_UNAVAILABLE, "Native preset-page list is not the exact inspected sZK.");
         return list;
     }
 
@@ -135,10 +135,10 @@ final class Bitwig614RemotePageAccess implements GridRemotePageWriter.Access {
     public List<Object> pages(Object list) {
         if (list == null || (list.getClass() != presetPageList && list.getClass() != devicePageList))
             throw Errors.notApplied(
-                    ErrorCode.GRID_UNAVAILABLE, "Native page list is not the exact inspected sZK or riz.");
+                    Reason.NATIVE_UNAVAILABLE, "Native page list is not the exact inspected sZK or riz.");
         Object value = bindings.invoke(listPages, list);
         if (!(value instanceof List<?>))
-            throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Native page list is unavailable.");
+            throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Native page list is unavailable.");
         List<Object> result = new ArrayList<>((List<?>) value);
         for (Object page : result) requireType(pageType, page, "page");
         return result;
@@ -221,10 +221,10 @@ final class Bitwig614RemotePageAccess implements GridRemotePageWriter.Access {
         requireType(pageType, page, "page");
         if (index < 0 || index >= GridRemotePageWriter.SLOTS || label == null || !parameterType.isInstance(parameter))
             throw Errors.notApplied(
-                    ErrorCode.INVALID_PARAMS, "Remote control slot, label and native parameter are required.");
+                    Reason.INVALID_PARAMS, "Remote control slot, label and native parameter are required.");
         Object target = bindings.invoke(reference, null, parameter);
         if (target == null)
-            throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Native parameter reference is unavailable.");
+            throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Native parameter reference is unavailable.");
         bindings.invoke(map, page, index, label, target);
     }
 
@@ -232,7 +232,7 @@ final class Bitwig614RemotePageAccess implements GridRemotePageWriter.Access {
     public void clearSlot(Object page, int index) {
         requireType(pageType, page, "page");
         if (index < 0 || index >= GridRemotePageWriter.SLOTS)
-            throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "Remote control slot is out of range.");
+            throw Errors.notApplied(Reason.INVALID_PARAMS, "Remote control slot is out of range.");
         bindings.invoke(clear, page, index);
     }
 
@@ -246,7 +246,7 @@ final class Bitwig614RemotePageAccess implements GridRemotePageWriter.Access {
     private List<Object> stream(Method method, Object host) {
         Object value = bindings.invoke(method, host);
         if (!(value instanceof Stream<?>))
-            throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Native page stream is unavailable.");
+            throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Native page stream is unavailable.");
         List<Object> result = new ArrayList<>();
         try (Stream<?> pages = (Stream<?>) value) {
             Iterator<?> iterator = pages.iterator();
@@ -256,7 +256,7 @@ final class Bitwig614RemotePageAccess implements GridRemotePageWriter.Access {
                 result.add(page);
                 if (result.size() > 4096)
                     throw Errors.notApplied(
-                            ErrorCode.GRID_BOUNDS_EXCEEDED, "Native Remote Controls page list exceeds 4096 pages.");
+                            Reason.OUT_OF_BOUNDS, "Native Remote Controls page list exceeds 4096 pages.");
             }
         }
         return result;
@@ -265,7 +265,7 @@ final class Bitwig614RemotePageAccess implements GridRemotePageWriter.Access {
     private static void requireType(Class<?> type, Object value, String label) {
         if (value == null || value.getClass() != type)
             throw Errors.notApplied(
-                    ErrorCode.GRID_UNAVAILABLE,
+                    Reason.NATIVE_UNAVAILABLE,
                     "Native Remote Controls " + label + " is not the exact inspected " + type.getSimpleName() + ".");
     }
 }

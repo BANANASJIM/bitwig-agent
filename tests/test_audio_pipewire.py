@@ -5,16 +5,31 @@ import json
 import math
 import re
 import struct
+import subprocess
 import wave
 
 import pytest
-from fakes import NODES, RATE, SINK_LINKS, FakeBridge, FakeProc, FakePW, notes, overlapping, parse_arguments, write_wav
+from fakes import (
+    NODES,
+    RATE,
+    SINK_LINKS,
+    FakeBridge,
+    FakeProc,
+    FakePW,
+    notes,
+    overlapping,
+    parse_arguments,
+    spawn_dead,
+    write_wav,
+)
 
 from bitwig_agent.audio import pipewire
 from bitwig_agent.core import composed
-from bitwig_agent.errors import BridgeError
+from bitwig_agent.errors import BridgeError, HostChanged, bridge_error, unknown_result
 from bitwig_agent.frontends.cli import execute
 from bitwig_agent.protocol import CLIENT_SIDE, TOOLS, validate_call
+
+REAL_RUN = pipewire.run
 
 
 def run_analyze(path, **args):
@@ -92,7 +107,7 @@ def test_analyze_errors(tmp_path):
     bad.write_bytes(b"nope")
     with pytest.raises(BridgeError) as e:
         run_analyze(bad, mode="level")
-    assert e.value.error["code"] == "invalid_params"
+    assert e.value.error["reason"] == "invalid_params"
     with pytest.raises(BridgeError):
         run_analyze(tmp_path / "missing.wav", mode="level")
     with pytest.raises(ValueError, match=re.escape("1 validation error for AudioAnalyzeArgs")):
@@ -146,15 +161,14 @@ def test_silent_without_bitwig_links_fails(pw):
     pw.links.clear()
     with pytest.raises(BridgeError) as e:
         route("silent")
-    assert e.value.error["code"] == "bitwig_not_found"
+    assert e.value.error["reason"] == "not_ready"
 
 
 def test_unsupported_platform(monkeypatch):
     monkeypatch.setattr(pipewire.sys, "platform", "darwin")
     with pytest.raises(BridgeError) as e:
         route("status")
-    assert e.value.error["code"] == "unsupported_platform"
-    assert e.value.error["outcome"] == "not_dispatched"
+    assert e.value.error["reason"] == "unsupported_platform"
 
 
 def capture(tmp_path, monkeypatch, playing=(), solo=None, **extra):
@@ -179,7 +193,7 @@ def test_capture_requires_silent_route(tmp_path, monkeypatch, pw):
     bridge, spawned, params, timeout = capture(tmp_path, monkeypatch)
     with pytest.raises(BridgeError) as e:
         asyncio.run(composed.run("audio.capture", bridge, params, timeout))
-    assert e.value.error["code"] == "not_silent"
+    assert e.value.error["reason"] == "not_isolated"
     assert not spawned
     assert not bridge.calls
 
@@ -214,7 +228,7 @@ def test_capture_overwrite_rules_and_no_transport(tmp_path, monkeypatch, pw):
     bridge, _spawned, params, timeout = capture(tmp_path, monkeypatch)
     with pytest.raises(BridgeError) as e:
         asyncio.run(composed.run("audio.capture", bridge, params, timeout))
-    assert e.value.error["code"] == "file_exists"
+    assert e.value.error["reason"] == "target_exists"
     bridge, _spawned, params, timeout = capture(tmp_path, monkeypatch, overwrite=True, fromStart=False)
     asyncio.run(composed.run("audio.capture", bridge, params, timeout))
     assert [m for m, _ in bridge.calls] == ["status", "context.get"]
@@ -243,12 +257,13 @@ def test_capture_unlinks_its_own_links_when_it_fails(tmp_path, monkeypatch, pw):
 
     async def broken(method, params, timeout_ms=5000, _call=bridge.call):
         if method == "transport.set" and params.get("positionBeats") == 0:
-            raise BridgeError({"code": "host_error", "message": "x", "outcome": "unknown"})
+            return unknown_result("deadline", "x")
         return await _call(method, params, timeout_ms)
 
     bridge.call = broken
-    with pytest.raises(BridgeError):
+    with pytest.raises(HostChanged) as e:
         asyncio.run(composed.run("audio.capture", bridge, params, timeout))
+    assert e.value.result["reason"] == "deadline"
     assert pw.links == before
 
 
@@ -256,11 +271,11 @@ def test_capture_needs_bitwig_output_ports(tmp_path, monkeypatch, pw):
     route("silent")
     bridge, spawned, params, timeout = capture(tmp_path, monkeypatch)
     monkeypatch.setattr(
-        pipewire, "bitwig_outputs", lambda: (_ for _ in ()).throw(pipewire.bridge_error("bitwig_not_found", "x"))
+        pipewire, "bitwig_outputs", lambda: (_ for _ in ()).throw(pipewire.bridge_error("not_ready", "x"))
     )
     with pytest.raises(BridgeError) as e:
         asyncio.run(composed.run("audio.capture", bridge, params, timeout))
-    assert e.value.error["code"] == "bitwig_not_found"
+    assert e.value.error["reason"] == "not_ready"
     assert not spawned
 
 
@@ -291,8 +306,7 @@ def test_capture_solo_track_refuses_while_others_play(tmp_path, monkeypatch, pw)
     bridge, spawned, params, timeout = capture_solo_with_pad(tmp_path, monkeypatch, solo)
     with pytest.raises(BridgeError) as e:
         asyncio.run(composed.run("audio.capture", bridge, params, timeout))
-    assert e.value.error["code"] == "not_isolated"
-    assert e.value.error["outcome"] == "not_applied"
+    assert e.value.error["reason"] == "not_isolated"
     assert not spawned
     assert e.value.error["details"]["otherTracksPlaying"] == ["Pad"]
     assert not [m for m, _ in bridge.calls if m == "tracks.set"]
@@ -338,17 +352,20 @@ def test_capture_solo_restores_on_failure_and_reports_restore_errors(tmp_path, m
 
     async def broken(method, p, t=5000):
         if method == "transport.set" and p.get("positionBeats") == 0:
-            raise BridgeError({"code": "host_error", "message": "x", "outcome": "unknown"})
+            raise bridge_error("host_refused", "x")
         return await inner(method, p, t)
 
     bridge.call = broken
-    with pytest.raises(BridgeError):
+    with pytest.raises(HostChanged) as changed:
         asyncio.run(composed.run("audio.capture", bridge, params, timeout))
+    result = changed.value.result
+    assert (result["outcome"], result["reason"], result["transportStopped"]) == ("not_applied", "host_refused", True)
     assert bridge.solo == states
     bridge, _spawned, params, timeout = capture(tmp_path, monkeypatch, solo=states, soloTrack=solo, overwrite=True)
     bridge.fail_set = solo  # restoring the target (solo off) fails
     result = asyncio.run(composed.run("audio.capture", bridge, params, timeout))
     assert result["restoreFailed"][0]["trackId"] == solo
+    assert (result["outcome"], result["reason"]) == ("unknown", "job_failed")
 
 
 def test_capture_solo_refuses_unreadable_or_unknown_tracks(tmp_path, monkeypatch, pw):
@@ -357,12 +374,12 @@ def test_capture_solo_refuses_unreadable_or_unknown_tracks(tmp_path, monkeypatch
     bridge, spawned, params, timeout = capture(tmp_path, monkeypatch, solo={"b": False}, soloTrack=solo)
     with pytest.raises(BridgeError) as e:
         asyncio.run(composed.run("audio.capture", bridge, params, timeout))
-    assert e.value.error["code"] == "unknown_track"
+    assert e.value.error["reason"] == "target_not_found"
     assert not spawned
     bridge, spawned, params, timeout = capture(tmp_path, monkeypatch, solo={solo: None}, soloTrack=solo)
     with pytest.raises(BridgeError) as e:
         asyncio.run(composed.run("audio.capture", bridge, params, timeout))
-    assert e.value.error["code"] == "solo_unreadable"
+    assert e.value.error["reason"] == "not_ready"
     assert not spawned
 
 
@@ -379,6 +396,53 @@ def test_capture_stop_others_stops_then_records(tmp_path, monkeypatch, pw):
     assert result["stoppedTracks"] == ["Pad"]
     assert result["otherTracksPlaying"] == []
     assert spawned
+
+
+WRITES = ("launcher.stop", "tracks.set", "transport.set")
+
+
+def test_capture_resolves_the_solo_target_before_stopping_anything(tmp_path, monkeypatch, pw):
+    route("silent")
+    bridge, spawned, params, timeout = capture(
+        tmp_path,
+        monkeypatch,
+        playing=[("b", "Pad")],
+        solo={"b": False},
+        soloTrack="00000000-0000-0000-0000-00000000000f",
+        stopOthers=True,
+    )
+    with pytest.raises(BridgeError) as e:
+        asyncio.run(composed.run("audio.capture", bridge, params, timeout))
+    assert e.value.error["reason"] == "target_not_found"
+    assert not [c for c in bridge.calls if c[0] in WRITES], "an error means no host write happened"
+    assert not spawned
+
+
+def test_a_refusal_after_stopping_tracks_is_a_result_naming_them(tmp_path, monkeypatch, pw):
+    route("silent")
+    solo = "00000000-0000-0000-0000-000000000001"
+    bridge, _spawned, params, timeout = capture_solo_with_pad(tmp_path, monkeypatch, solo, stopOthers=True)
+    monkeypatch.setattr(pipewire, "spawn", spawn_dead)
+    with pytest.raises(HostChanged) as changed:
+        asyncio.run(composed.run("audio.capture", bridge, params, timeout))
+    result = changed.value.result
+    assert (result["outcome"], result["reason"]) == ("not_applied", "job_failed")
+    assert result["stoppedTracks"] == ["Pad"]
+    assert result["transportStopped"] is False
+
+
+def test_a_refusal_after_a_failed_solo_restore_is_an_unknown_result(tmp_path, monkeypatch, pw):
+    route("silent")
+    solo = "00000000-0000-0000-0000-000000000001"
+    bridge, _spawned, params, timeout = capture(tmp_path, monkeypatch, solo={solo: False, "b": True}, soloTrack=solo)
+    monkeypatch.setattr(pipewire, "spawn", spawn_dead)
+    bridge.fail_set = solo  # putting the target's solo back fails
+    with pytest.raises(HostChanged) as changed:
+        asyncio.run(composed.run("audio.capture", bridge, params, timeout))
+    result = changed.value.result
+    assert (result["outcome"], result["reason"]) == ("unknown", "job_failed")
+    assert result["restoreFailed"][0]["trackId"] == solo
+    assert "tracks.set" in result["next"]
 
 
 def test_capture_validation():
@@ -432,8 +496,7 @@ def test_capture_refuses_an_inactive_engine_before_touching_anything(tmp_path, m
     bridge.engine = False
     with pytest.raises(BridgeError) as e:
         asyncio.run(composed.run("audio.capture", bridge, params, timeout))
-    assert e.value.error["code"] == "engine_inactive"
-    assert e.value.error["outcome"] == "not_applied"
+    assert e.value.error["reason"] == "engine_inactive"
     assert "project.activateEngine" in e.value.error["message"]
     assert not spawned
     assert bridge.calls == [("status", {})]
@@ -503,3 +566,135 @@ def test_bands_key_chroma_and_spectrogram(tmp_path):
         validate_call("audio.analyze", {"path": str(wav), "mode": "level", "key": "A:aeolian"})
     with pytest.raises(ValueError, match=re.escape("1 validation error for AudioAnalyzeArgs")):
         validate_call("audio.analyze", {"path": str(wav), "mode": "bands", "key": "H:aeolian"})
+
+
+def test_route_outcomes(pw):
+    assert "outcome" not in route("status")
+    assert route("restore")["outcome"] == "already_matched"
+    assert route("silent")["outcome"] == "applied"
+    assert route("silent")["outcome"] == "already_matched"
+    assert route("restore")["outcome"] == "applied"
+
+
+def test_failed_or_timed_out_pw_link_is_unknown_not_an_error(pw, monkeypatch):
+    real = pw.run
+
+    def failing(args, timeout=5.0):
+        return (1, "", "boom") if args[:2] == ["pw-link", "-d"] else real(args, timeout)
+
+    monkeypatch.setattr(pipewire, "run", failing)
+    with pytest.raises(HostChanged) as e:
+        route("silent")
+    assert (e.value.result["outcome"], e.value.result["reason"]) == ("unknown", "job_failed")
+    assert "audio.route mode=status" in e.value.result["next"]
+
+    def slow(args, timeout=5.0):
+        raise bridge_error("deadline", "pw-link did not finish")
+
+    monkeypatch.setattr(pipewire, "run", slow)
+    with pytest.raises(HostChanged) as e:
+        pipewire.link(["-d", "a", "b"], "disconnect")
+    assert e.value.result["reason"] == "deadline"
+
+
+def test_capture_stops_on_a_write_that_did_not_succeed(tmp_path, monkeypatch, pw):
+    route("silent")
+    bridge, _spawned, params, timeout = capture(tmp_path, monkeypatch)
+    inner = bridge.call
+
+    async def refused(method, p, t=5000):
+        if method == "transport.set" and p.get("playing") is True:
+            return {"outcome": "not_applied", "reason": "unsafe_state"}
+        return await inner(method, p, t)
+
+    bridge.call = refused
+    with pytest.raises(HostChanged) as e:
+        asyncio.run(composed.run("audio.capture", bridge, params, timeout))
+    assert e.value.result["outcome"] == "not_applied"
+    assert "transport.set ended" in e.value.result["message"]
+
+
+def test_capture_reports_a_transport_that_could_not_be_stopped(tmp_path, monkeypatch, pw):
+    route("silent")
+    bridge, _spawned, params, timeout = capture(tmp_path, monkeypatch)
+    inner = bridge.call
+    stops = {"n": 0}
+
+    async def stuck(method, p, t=5000):
+        if method == "transport.set" and p == {"playing": False}:
+            stops["n"] += 1
+            if stops["n"] == 2:  # the first is the pre-roll stop, the second the final one
+                raise bridge_error("not_ready", "no host")
+        return await inner(method, p, t)
+
+    bridge.call = stuck
+    result = asyncio.run(composed.run("audio.capture", bridge, params, timeout))
+    assert (result["outcome"], result["reason"]) == ("unknown", "not_ready")
+    assert result["path"]
+
+
+def test_capture_stop_that_did_not_succeed_is_reported_unknown(tmp_path, monkeypatch, pw):
+    route("silent")
+    bridge, _spawned, params, timeout = capture(tmp_path, monkeypatch)
+    inner = bridge.call
+    stops = {"n": 0}
+
+    async def refused(method, p, t=5000):
+        if method == "transport.set" and p == {"playing": False}:
+            stops["n"] += 1
+            if stops["n"] == 2:
+                return {"outcome": "unknown", "reason": "deadline", "message": "slow"}
+        return await inner(method, p, t)
+
+    bridge.call = refused
+    result = asyncio.run(composed.run("audio.capture", bridge, params, timeout))
+    assert (result["outcome"], result["reason"]) == ("unknown", "deadline")
+
+
+def test_subprocess_failures_are_errors(monkeypatch):
+    def timeout(*_a, **_k):
+        raise subprocess.TimeoutExpired("pw-link", 5)
+
+    def missing(*_a, **_k):
+        raise FileNotFoundError(2, "No such file")
+
+    monkeypatch.setattr(subprocess, "run", timeout)
+    with pytest.raises(BridgeError) as e:
+        REAL_RUN(["pw-link", "-l"])
+    assert e.value.error["reason"] == "deadline"
+    monkeypatch.setattr(subprocess, "run", missing)
+    with pytest.raises(BridgeError) as e:
+        REAL_RUN(["pw-link", "-l"])
+    assert e.value.error["reason"] == "job_failed"
+
+
+@pytest.mark.parametrize(
+    ("failing", "call"),
+    [
+        (["pw-link", "-l"], pipewire.current_links),
+        (["pactl", "load-module"], pipewire.ensure_sink),
+        (["pw-link", "-o"], pipewire.bitwig_outputs),
+    ],
+)
+def test_failed_tool_is_a_job_failure(pw, monkeypatch, failing, call):
+    real = pw.run
+    pw.sink = False
+
+    def run(args, timeout=5.0):
+        return (1, "", "boom") if args[: len(failing)] == failing else real(args, timeout)
+
+    monkeypatch.setattr(pipewire, "run", run)
+    with pytest.raises(BridgeError) as e:
+        call()
+    assert e.value.error["reason"] == "job_failed"
+
+
+def test_capture_node_that_never_appears_is_a_job_failure(monkeypatch):
+    async def no_sleep(_):
+        return None
+
+    monkeypatch.setattr(pipewire, "run", lambda args, timeout=5.0: (0, "", ""))
+    monkeypatch.setattr(pipewire, "sleep", no_sleep)
+    with pytest.raises(BridgeError) as e:
+        asyncio.run(pipewire.wait_for_inputs("node"))
+    assert e.value.error["reason"] == "job_failed"

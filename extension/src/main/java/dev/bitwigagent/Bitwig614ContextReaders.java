@@ -28,11 +28,6 @@ abstract class Bitwig614ContextReaders<F extends Enum<F>> implements NativeReadC
     }
 
     @Override
-    public final ErrorCode unavailableCode() {
-        return bindings.unavailableCode();
-    }
-
-    @Override
     public final Object read(NativeReadContext.Field field, Object object) {
         return readContext.read(field, object);
     }
@@ -40,7 +35,7 @@ abstract class Bitwig614ContextReaders<F extends Enum<F>> implements NativeReadC
     final Object invoke(F field, F undo, Object object, String label) {
         Method reader = readers.get(field);
         if (reader == null)
-            throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Unbound " + label + " reader: " + field);
+            throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Unbound " + label + " reader: " + field);
         if (field == undo) return bindings.invoke(reader, null, object);
         return bindings.invoke(reader, object);
     }

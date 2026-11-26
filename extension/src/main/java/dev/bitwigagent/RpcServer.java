@@ -17,10 +17,16 @@ public final class RpcServer implements AutoCloseable {
         CompletableFuture<JsonObject> handle(String method, JsonObject params, long deadlineNanos);
     }
 
+    /** A pending answer that can be refused for good at the deadline if its operation never dispatched. */
+    public interface Expiring {
+        /** True when the operation had not dispatched and now never will; false when it already dispatched. */
+        boolean expire();
+    }
+
     public static final int MAX_REQUEST_BYTES = HostLimits.LIMITS.maxRequestBytes;
     public static final int MAX_RESPONSE_BYTES = HostLimits.LIMITS.maxResponseBytes;
-    private static final Set<String> FIELDS =
-            Collections.unmodifiableSet(new HashSet<>(Arrays.asList("id", "method", "params", "timeoutMs")));
+    private static final Set<String> FIELDS = Collections.unmodifiableSet(
+            new HashSet<>(Arrays.asList("id", "method", "params", "timeoutMs", "protocol")));
     private static final Gson GSON = new GsonBuilder().serializeNulls().create();
     private final int port;
     private final MethodSpecs specs;
@@ -121,6 +127,7 @@ public final class RpcServer implements AutoCloseable {
     private void serve(Socket socket, long acceptedAt, java.util.function.IntConsumer extendExpiry) {
         String id = null;
         boolean dispatched = false;
+        MethodSpecs.Spec spec = null;
         try {
             JsonObject request = readRequest(socket);
             String candidateId = string(request, "id");
@@ -129,12 +136,16 @@ public final class RpcServer implements AutoCloseable {
             id = candidateId;
             for (String key : request.keySet())
                 if (!FIELDS.contains(key)) throw invalid("Unknown request field: " + key);
+            String protocol = specs.vocabulary().protocol;
+            if (!request.has("protocol") || !protocol.equals(string(request, "protocol")))
+                throw Errors.notApplied(
+                        Reason.PROTOCOL_MISMATCH,
+                        "This extension speaks protocol " + protocol + "; install the matching client and extension.");
             String method = string(request, "method");
-            if (!specs.contains(method))
-                throw Errors.of(ErrorCode.METHOD_NOT_FOUND, "Unknown method", Outcome.NOT_DISPATCHED);
+            if (!specs.contains(method)) throw Errors.notApplied(Reason.UNKNOWN_METHOD, "Unknown method");
             if (!request.has("params") || !request.get("params").isJsonObject())
                 throw invalid("params must be an object");
-            MethodSpecs.Spec spec = specs.get(method);
+            spec = specs.get(method);
             int timeout = spec.defaultTimeoutMs;
             if (request.has("timeoutMs")) {
                 JsonElement value = request.get("timeoutMs");
@@ -151,38 +162,32 @@ public final class RpcServer implements AutoCloseable {
             extendExpiry.accept(timeout);
             long deadline = acceptedAt + TimeUnit.MILLISECONDS.toNanos(timeout);
             if (System.nanoTime() >= deadline)
-                throw Errors.of(
-                        ErrorCode.DEADLINE_EXCEEDED,
-                        "Request expired before dispatch; no host operation was scheduled.",
-                        Outcome.NOT_DISPATCHED);
+                throw Errors.notApplied(
+                        Reason.DEADLINE, "Request expired before dispatch; no host operation was scheduled.");
             dispatched = true;
             CompletableFuture<JsonObject> pending = handler.handle(method, request.getAsJsonObject("params"), deadline);
             if (pending == null) throw new IllegalStateException("Handler returned no future");
-            long remaining = deadline - System.nanoTime();
-            if (remaining <= 0) throw new TimeoutException();
-            JsonObject result = pending.get(remaining, TimeUnit.NANOSECONDS);
+            JsonObject result = answer(pending, deadline);
             if (result == null) throw new IllegalStateException("Handler returned no result");
             JsonObject response = envelope(id);
             response.add("result", result);
             send(socket, response);
         } catch (Exception e) {
             Throwable cause = e instanceof ExecutionException && e.getCause() != null ? e.getCause() : e;
+            boolean write = dispatched && !spec.readOnly;
             RpcException error;
             if (cause instanceof RpcException) error = (RpcException) cause;
             else if (cause instanceof TimeoutException)
-                error = Errors.unknown(
-                        ErrorCode.DEADLINE_EXCEEDED, "Outcome unknown; inspect state before issuing another write.");
+                error = Errors.of(
+                        Reason.DEADLINE,
+                        "No answer before the deadline; inspect state (status.holds lists any job it started) before another write.",
+                        write);
             else if (!dispatched) error = invalid("Invalid or incomplete UTF-8 JSON request");
-            else
-                error = Errors.unknown(
-                        ErrorCode.INTERNAL_ERROR, "Outcome unknown; inspect state before issuing another write.");
+            else error = Errors.of(Reason.INTERNAL, "Internal failure; inspect state before another write.", write);
             if (e instanceof InterruptedException) Thread.currentThread().interrupt();
             JsonObject response = envelope(id);
-            JsonObject detail = new JsonObject();
-            detail.addProperty("code", error.code);
-            detail.addProperty("message", error.getMessage());
-            detail.addProperty("outcome", error.outcome);
-            response.add("error", detail);
+            if (error.unknown) response.add("result", Errors.unknownResult(error));
+            else response.add("error", Errors.error(error));
             try {
                 send(socket, response);
             } catch (IOException | RuntimeException ignored) {
@@ -192,6 +197,23 @@ public final class RpcServer implements AutoCloseable {
     }
 
     static final int MIN_TIMEOUT_MS = HostLimits.LIMITS.minTimeoutMs, SOCKET_EXPIRY_MS = 15000, SOCKET_GRACE_MS = 5000;
+    /** Half the client's wait past the deadline, so a dispatched operation's own answer still reaches it. */
+    static final int ANSWER_GRACE_MS = HostLimits.LIMITS.responseGraceMs / 2;
+
+    /**
+     * The operation's own answer. At the deadline an operation that never dispatched is refused for good (an error,
+     * nothing changed); one that did gets a short grace to answer itself, so its result keeps what it dispatched.
+     */
+    private static JsonObject answer(CompletableFuture<JsonObject> pending, long deadline) throws Exception {
+        try {
+            return pending.get(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
+        } catch (TimeoutException late) {
+            if (pending instanceof Expiring && ((Expiring) pending).expire())
+                throw Errors.notApplied(
+                        Reason.DEADLINE, "Nothing was dispatched before the deadline; nothing changed.");
+            return pending.get(ANSWER_GRACE_MS, TimeUnit.MILLISECONDS);
+        }
+    }
 
     private static JsonObject envelope(String id) {
         JsonObject response = new JsonObject();
@@ -201,7 +223,7 @@ public final class RpcServer implements AutoCloseable {
     }
 
     private static RpcException invalid(String message) {
-        return Errors.of(ErrorCode.INVALID_REQUEST, message, Outcome.NOT_DISPATCHED);
+        return Errors.notApplied(Reason.INVALID_REQUEST, message);
     }
 
     private static String string(JsonObject object, String key) {

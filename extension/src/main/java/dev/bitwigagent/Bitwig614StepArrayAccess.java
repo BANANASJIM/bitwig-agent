@@ -73,7 +73,7 @@ final class Bitwig614StepArrayAccess implements GridStepArrayWriter.Access {
         requireSupported(object);
         Object size = bindings.invoke(length, object);
         if (!(size instanceof Integer))
-            throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Native step array length is unavailable.");
+            throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Native step array length is unavailable.");
         return GridSnapshotReader.effectiveSteps(bindings.invoke(data, object), (Integer) size);
     }
 
@@ -82,14 +82,14 @@ final class Bitwig614StepArrayAccess implements GridStepArrayWriter.Access {
         requireSupported(object);
         if (setter == null)
             throw Errors.notApplied(
-                    bindings.unavailableCode(), "Step array write operation is not bound: " + setterError);
-        if (values == null) throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "Step array must not be null.");
+                    Reason.NATIVE_UNAVAILABLE, "Step array write operation is not bound: " + setterError);
+        if (values == null) throw Errors.notApplied(Reason.INVALID_PARAMS, "Step array must not be null.");
         bindings.invoke(setter, object, values);
     }
 
     @Override
     public void requireSupported(Object object) {
         if (!isModel(object))
-            throw Errors.notApplied(bindings.unavailableCode(), "Step array requires the exact inspected imU model.");
+            throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Step array requires the exact inspected imU model.");
     }
 }

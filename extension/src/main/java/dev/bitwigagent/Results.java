@@ -16,10 +16,32 @@ final class Results {
         return result;
     }
 
-    static JsonObject observed() {
+    /** A write result: {outcome}. */
+    static JsonObject outcome(Outcome outcome) {
         JsonObject result = new JsonObject();
-        result.addProperty("status", "observed");
+        result.addProperty("outcome", outcome.wire());
         return result;
+    }
+
+    /** One field or entry: {requested, observed (only when it differs), outcome, reason?}. */
+    static JsonObject field(JsonElement requested, JsonElement observed, Outcome outcome, Reason reason) {
+        JsonObject field = new JsonObject();
+        field.add("requested", requested == null ? JsonNull.INSTANCE : requested);
+        if (observed != null && !observed.equals(requested)) field.add("observed", observed);
+        field.addProperty("outcome", outcome.wire());
+        if (reason != null) field.addProperty("reason", reason.wire());
+        return field;
+    }
+
+    /** The worst {@code outcome} of the entries; no entries already matched. */
+    static Outcome worst(Iterable<JsonElement> entries) {
+        Outcome worst = Outcome.ALREADY_MATCHED;
+        for (JsonElement entry : entries) worst = worst.worst(outcomeOf(entry.getAsJsonObject()));
+        return worst;
+    }
+
+    static Outcome outcomeOf(JsonObject result) {
+        return Outcome.valueOf(result.get("outcome").getAsString().toUpperCase(java.util.Locale.ROOT));
     }
 
     static JsonObject window(int offset, int capacity, int total) {

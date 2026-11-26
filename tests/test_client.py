@@ -10,6 +10,7 @@ from bitwig_agent.client import BridgeClient, configured_port, package_version
 from bitwig_agent.core import composed
 from bitwig_agent.errors import BridgeError
 from bitwig_agent.protocol import CLIENT_SIDE, TOOLS, validate_call
+from bitwig_agent.protocol.base import PROTOCOL
 from bitwig_agent.protocol.limits import MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES
 from bitwig_agent.protocol.parameters import SetArgs
 
@@ -25,13 +26,13 @@ SET: dict[str, Any] = {
 }
 
 
-async def test_timeout_unknown_and_no_retry(host):
+async def test_write_timeout_is_an_unknown_result_and_never_retried(host):
     host.delay = 1
     client = BridgeClient(host.port, response_grace_seconds=0.01)
-    with pytest.raises(BridgeError) as caught:
-        await client.call("parameters.set", SET, timeout_ms=100)
-    assert caught.value.error["code"] == "deadline_exceeded"
-    assert caught.value.error["outcome"] == "unknown"
+    result = await client.call("parameters.set", SET, timeout_ms=100)
+    assert result["outcome"] == "unknown"
+    assert result["reason"] == "deadline"
+    assert "not retried" in result["message"]
     await asyncio.sleep(0.05)
     assert host.connections == 1
     assert len(host.requests) == 1
@@ -45,11 +46,6 @@ async def test_timeout_unknown_and_no_retry(host):
         lambda request: {"id": request["id"]},
         lambda request: {"id": request["id"], "result": []},
         lambda request: {"id": request["id"], "error": {"code": 1, "message": "bad"}},
-        lambda request: {"id": request["id"], "error": {"code": "bad", "message": "missing outcome"}},
-        lambda request: {
-            "id": request["id"],
-            "error": {"code": "bad", "message": "invalid outcome", "outcome": "success"},
-        },
         lambda request: ('{"id":"' + request["id"] + '","result":{"value":1e9999}}\n').encode(),
         lambda request: b"not JSON\n",
         lambda request: b"\xff\n",
@@ -62,10 +58,48 @@ async def test_timeout_unknown_and_no_retry(host):
 )
 async def test_untrustworthy_response_rejected_without_retry(host, reply):
     host.reply = reply
-    with pytest.raises(BridgeError) as caught:
-        await BridgeClient(host.port).call("parameters.set", SET)
-    assert caught.value.error["outcome"] == "unknown"
+    result = await BridgeClient(host.port).call("parameters.set", SET)
+    assert (result["outcome"], result["reason"]) == ("unknown", "transport")
     assert host.connections == 1
+
+
+OLD_EXTENSION_ERROR = {
+    "code": "invalid_request",
+    "message": "Unknown request field: protocol",
+    "outcome": "not_dispatched",
+}
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        OLD_EXTENSION_ERROR,
+        {"code": "stale", "message": "missing reason"},
+        {"code": "stale", "reason": "busy", "message": "reason of another code"},
+        {"code": "x", "reason": "x", "message": "unknown reason"},
+    ],
+)
+@pytest.mark.parametrize(("method", "params"), [("parameters.set", SET), ("status", {})])
+async def test_an_error_without_a_current_reason_is_a_protocol_mismatch(host, error, method, params):
+    host.reply = lambda request: {"id": request["id"], "error": error}
+    with pytest.raises(BridgeError) as caught:
+        await BridgeClient(host.port).call(method, params)
+    assert (caught.value.error["code"], caught.value.error["reason"]) == ("incompatible", "protocol_mismatch")
+    assert error["message"] in caught.value.error["message"]
+    assert host.connections == 1
+
+
+async def test_an_untrustworthy_read_response_is_an_error(host):
+    host.reply = lambda request: b"not JSON\n"
+    with pytest.raises(BridgeError) as caught:
+        await BridgeClient(host.port).call("status", {})
+    assert (caught.value.error["code"], caught.value.error["reason"]) == ("unavailable", "transport")
+    assert "outcome" not in caught.value.error
+
+
+async def test_requests_carry_the_protocol_version(host):
+    await BridgeClient(host.port).call("status", {})
+    assert host.requests[0]["protocol"] == PROTOCOL
 
 
 @pytest.mark.parametrize("timeout", [99, 10001, True, 5000.0])
@@ -86,14 +120,15 @@ async def test_topology_edits_allow_a_60_second_timeout(host):
     assert host.connections == 0
 
 
-async def test_connection_refused_is_not_dispatched():
+async def test_connection_refused_is_an_error_even_for_a_write():
     server = await asyncio.start_server(lambda reader, writer: writer.close(), "127.0.0.1", 0)
     port = server.sockets[0].getsockname()[1]
     server.close()
     await server.wait_closed()
-    with pytest.raises(BridgeError) as caught:
-        await BridgeClient(port).call("status", {})
-    assert caught.value.error["outcome"] == "not_dispatched"
+    for method, params in (("status", {}), ("parameters.set", SET)):
+        with pytest.raises(BridgeError) as caught:
+            await BridgeClient(port).call(method, params)
+        assert (caught.value.error["code"], caught.value.error["reason"]) == ("unavailable", "transport")
 
 
 async def test_large_or_nonfinite_request_rejected_before_connection(host):
@@ -128,19 +163,13 @@ def test_port_environment(monkeypatch):
 
 @pytest.mark.parametrize("lost_response", [False, True])
 async def test_layer_client_unknown_write_is_not_retried(host, lost_response):
-    error = {
-        "code": "deadline_exceeded",
-        "message": "Inspect child before another write",
-        "outcome": "unknown",
-        "details": {"dispatched": True},
-    }
-    host.reply = lambda request: None if lost_response else {"id": request["id"], "error": error}
+    unknown = {"outcome": "unknown", "reason": "deadline", "message": "Inspect child before another write"}
+    host.reply = lambda request: None if lost_response else {"id": request["id"], "result": unknown}
     params = TOOLS["parameters.layer.set"].examples[0]
-    with pytest.raises(BridgeError) as caught:
-        await BridgeClient(host.port).call("parameters.layer.set", params)
-    assert caught.value.error["outcome"] == "unknown"
+    result = await BridgeClient(host.port).call("parameters.layer.set", params)
+    assert result["outcome"] == "unknown"
     if not lost_response:
-        assert caught.value.error == error
+        assert result == unknown
     assert host.requests[0]["params"] == params
     assert len(host.requests) == host.connections == 1
 
@@ -186,14 +215,17 @@ async def test_status_flags_extension_version_mismatch(host):
     assert (await BridgeClient(host.port).call("status", {}))["extensionMismatch"]["extensionVersion"] is None
 
 
-async def test_extension_restart_params(host):
-    host.reply = lambda r: {"id": r["id"], "result": {"status": "dispatched"}}
-    await BridgeClient(host.port).call("extension.restart", {"discardUnresolved": True})
-    assert host.requests[-1]["params"] == {"discardUnresolved": True}
-    assert TOOLS["extension.restart"].read_only is False
-    for bad in ({"discardUnresolved": 1}, {"discardUnresolved": None}, {"x": 1}):
-        with pytest.raises(ValidationError):
-            validate_call("extension.restart", bad)
+async def test_recovery_methods_take_one_id(host):
+    host.reply = lambda r: {"id": r["id"], "result": {"outcome": "applied"}}
+    await BridgeClient(host.port).call("ack", {"id": "routing.quarantine"})
+    assert host.requests[-1]["params"] == {"id": "routing.quarantine"}
+    assert TOOLS["ack"].read_only is False
+    assert TOOLS["jobs.get"].read_only is True
+    for method in ("ack", "jobs.get"):
+        for bad in ({}, {"id": ""}, {"id": 1}, {"id": "x", "x": 1}):
+            with pytest.raises(ValidationError):
+                validate_call(method, bad)
+    assert not {"extension.restart", "grid.topology.reconcile", "render.status"} & set(TOOLS)
 
 
 async def test_oversized_grid_get_response_says_to_lower_module_limit(host):

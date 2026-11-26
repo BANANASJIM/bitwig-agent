@@ -124,7 +124,7 @@ public final class ModulatorModuleTest {
         assertTrue(!op.result.isDone() && f.adapter.reads == 0, "controller dispatch does not complete document work");
         f.adapter.next();
         assertTrue(
-                !op.result.isDone() && f.adapter.reads == 1 && !op.dispatched,
+                !op.result.isDone() && f.adapter.reads == 1 && !op.dispatched(),
                 "document read waits for controller delivery without mutation dispatch");
         f.adapter
                 .last
@@ -143,7 +143,7 @@ public final class ModulatorModuleTest {
                         .equals("Macro"),
                 "only immutable serialized JSON crosses document/controller boundary");
         assertTrue(
-                !result.get("nativeMutation").getAsBoolean() && !op.dispatched && f.device.writes == 0,
+                !result.get("nativeMutation").getAsBoolean() && !op.dispatched() && f.device.writes == 0,
                 "read has no mutation dispatch or public write");
         assertTrue(
                 result.getAsJsonObject("target")
@@ -203,7 +203,7 @@ public final class ModulatorModuleTest {
             f.adapter.next();
             assertRpcError("stale_context", op);
             assertTrue(
-                    f.adapter.reads == 0 && f.host.tasks.isEmpty() && !op.dispatched,
+                    f.adapter.reads == 0 && f.host.tasks.isEmpty() && !op.dispatched(),
                     "target/window ABA invalidates atomic ticket before any document read");
         }
     }
@@ -219,7 +219,7 @@ public final class ModulatorModuleTest {
         during.adapter.next();
         assertRpcError("stale_context", op);
         assertTrue(
-                during.host.tasks.isEmpty() && !op.dispatched,
+                during.host.tasks.isEmpty() && !op.dispatched(),
                 "target ABA during document capture cannot enqueue delivery");
         Fixture late = new Fixture();
         op = late.start("modulators.list", request());
@@ -234,7 +234,7 @@ public final class ModulatorModuleTest {
         silent.device.child("name").data = "getter changed before callback";
         silent.host.next();
         assertRpcError("stale_context", op);
-        assertTrue(!op.dispatched, "final controller getter corroboration rejects changes not yet notified");
+        assertTrue(!op.dispatched(), "final controller getter corroboration rejects changes not yet notified");
         Fixture before = new Fixture();
         op = before.host.submit(before.module, "modulators.list", request());
         before.device.child("name").emit("Away");
@@ -284,14 +284,14 @@ public final class ModulatorModuleTest {
         assertTrue(f.adapter.reads == 0 && f.host.tasks.isEmpty(), "document cancellation never reads");
         op = f.host.submit(f.module, "modulators.list", request(), 0);
         f.host.next();
-        assertRpcError("deadline_exceeded", op);
+        assertRpcError("deadline", op);
         assertTrue(f.adapter.tasks.isEmpty(), "deadline before capture never dispatches");
         Fixture late = new Fixture();
         op = late.start("modulators.list", request());
         late.adapter.next();
         op.result.cancel(false);
         late.host.next();
-        assertTrue(op.result.isCancelled() && !op.dispatched, "late delivery cannot overwrite cancellation");
+        assertTrue(op.result.isCancelled() && !op.dispatched(), "late delivery cannot overwrite cancellation");
         Fixture during = new Fixture();
         op = during.start("modulators.list", request());
         final HostOperation cancelled = op;
@@ -303,7 +303,7 @@ public final class ModulatorModuleTest {
         op = closed.start("modulators.list", request());
         closed.host.services.scheduler.close();
         closed.adapter.next();
-        assertRpcError("unavailable", op);
+        assertRpcError("not_ready", op);
         assertTrue(closed.adapter.reads == 0, "close invalidates native queue before capture");
     }
 
@@ -331,7 +331,7 @@ public final class ModulatorModuleTest {
         wrong = f.start("modulators.parameters.get", p);
         f.adapter.next();
         assertRpcError("unsupported_scope", wrong);
-        assertTrue(!stale.dispatched && !wrong.dispatched, "identity and family failures do not imply mutation");
+        assertTrue(!stale.dispatched() && !wrong.dispatched(), "identity and family failures do not imply mutation");
     }
 
     @Test
@@ -367,19 +367,18 @@ public final class ModulatorModuleTest {
         oversized.adapter.extra = "x".repeat(ModulatorModule.MAX_RESPONSE_CHARS);
         op = oversized.start("modulators.list", request());
         oversized.adapter.next();
-        assertRpcError("modulator_bounds_exceeded", op);
+        assertRpcError("out_of_bounds", op);
         assertTrue(
-                oversized.host.tasks.isEmpty() && !op.dispatched,
+                oversized.host.tasks.isEmpty() && !op.dispatched(),
                 "oversized complete response fails without truncation or delivery");
         JsonObject exact = new JsonObject();
         exact.addProperty("v", "x");
-        String json = BoundedJson.serialize(exact, 9, ErrorCode.MODULATOR_BOUNDS_EXCEEDED, "bound");
+        String json = BoundedJson.serialize(exact, 9, Reason.OUT_OF_BOUNDS, "bound");
         assertTrue(json.equals("{\"v\":\"x\"}"), "exact transport bound is inclusive");
         {
             RpcException error = assertThrows(
-                    RpcException.class,
-                    () -> BoundedJson.serialize(exact, 8, ErrorCode.MODULATOR_BOUNDS_EXCEEDED, "bound"));
-            assertTrue(error.code.equals("modulator_bounds_exceeded"), "one character overflow fails closed");
+                    RpcException.class, () -> BoundedJson.serialize(exact, 8, Reason.OUT_OF_BOUNDS, "bound"));
+            assertTrue(error.reason.wire().equals("out_of_bounds"), "one character overflow fails closed");
         }
     }
 
@@ -391,7 +390,7 @@ public final class ModulatorModuleTest {
         assertTrue(
                 first == f.host.services.natives.get(new HostOperation(Long.MAX_VALUE)),
                 "services compose one lazy shared runtime gate");
-        GridModule grid = f.host.services.grid(new Bitwig614GridAdapter(first.access(ErrorCode.GRID_UNAVAILABLE)));
+        GridModule grid = f.host.services.grid(new Bitwig614GridAdapter(first.access()));
         f.devices.child("scrollPosition").emit(1);
         f.devices.child("itemCount").emit(2);
         f.device.child("position").emit(1);
@@ -496,7 +495,7 @@ public final class ModulatorModuleTest {
             reads++;
             during.run();
             check.run();
-            JsonObject result = Results.observed();
+            JsonObject result = new JsonObject();
             JsonArray rows = new JsonArray();
             if (offset == 0) {
                 JsonObject row = new JsonObject();
@@ -523,11 +522,11 @@ public final class ModulatorModuleTest {
             during.run();
             check.run();
             if (!currentId.equals(modulator))
-                throw Errors.notApplied(ErrorCode.TARGET_NOT_FOUND, "Previous UUID is not current.");
-            if (id.equals("UNSUPPORTED")) throw Errors.notApplied(ErrorCode.UNSUPPORTED_SCOPE, "Not a string panel.");
+                throw Errors.notApplied(Reason.TARGET_NOT_FOUND, "Previous UUID is not current.");
+            if (id.equals("UNSUPPORTED")) throw Errors.notApplied(Reason.UNSUPPORTED_SCOPE, "Not a string panel.");
             if (!strings.containsKey(id))
-                throw Errors.notApplied(ErrorCode.TARGET_NOT_FOUND, "No exact parameter identifier.");
-            JsonObject result = Results.observed();
+                throw Errors.notApplied(Reason.TARGET_NOT_FOUND, "No exact parameter identifier.");
+            JsonObject result = new JsonObject();
             result.addProperty("modulatorId", currentId.toString());
             result.addProperty("parameterId", id);
             result.addProperty("kind", "string");
@@ -538,5 +537,17 @@ public final class ModulatorModuleTest {
             result.add("display", JsonNull.INSTANCE);
             return last = result;
         }
+    }
+
+    @Test
+    void unknownReadParentShapeAndUnboundAdapter() {
+        assertRpcError("unknown_method", () -> ModulatorModule.validateParams("modulators.bogus", new JsonObject()));
+        JsonObject p = request();
+        p.addProperty("parent", 5);
+        assertRpcError("invalid_params", () -> ModulatorModule.validateParams("modulators.list", p));
+        Fixture f = new Fixture();
+        ModulatorModule bare = f.host.services.modulator(null);
+        JsonObject capabilities = f.host.call(bare, "modulators.capabilities", new JsonObject());
+        assertTrue(capabilities.has("runtimeGate"), "the runtime gate is reported without a bound adapter");
     }
 }

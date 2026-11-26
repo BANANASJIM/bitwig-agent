@@ -21,21 +21,20 @@ final class Bitwig614Runtime {
     Bitwig614Runtime(Object host, String version, Runnable check) {
         hostVersion = version;
         loader = host.getClass().getClassLoader();
-        Access binding = access(ErrorCode.NATIVE_UNAVAILABLE);
+        Access binding = access();
         try {
             check.run();
             if (!VERSION.equals(version))
                 throw Errors.notApplied(
-                        ErrorCode.NATIVE_UNAVAILABLE,
+                        Reason.NATIVE_UNAVAILABLE,
                         "Native access requires exactly Bitwig " + VERSION + "; running " + version + ".");
             hostJar = source(host.getClass());
             if (!Files.isRegularFile(hostJar))
-                throw Errors.notApplied(
-                        ErrorCode.NATIVE_UNAVAILABLE, "Loaded host CodeSource is not a regular JAR file.");
+                throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Loaded host CodeSource is not a regular JAR file.");
             actualHash = hash(hostJar, check);
             if (!SHA256.equals(actualHash))
                 throw Errors.notApplied(
-                        ErrorCode.NATIVE_UNAVAILABLE,
+                        Reason.NATIVE_UNAVAILABLE,
                         "Loaded host JAR SHA-256 is not the inspected " + VERSION
                                 + " binary; obtain a matching adapter, do not bypass this gate.");
             Class<?> app = binding.type("com.bitwig.flt.app.TL");
@@ -46,7 +45,7 @@ final class Bitwig614Runtime {
             modelThread = binding.exactMethod(scopedExecutor, "isEventDispatchThread", boolean.class, false);
             check.run();
         } catch (RuntimeException | ReflectiveOperationException | java.io.IOException error) {
-            if (error instanceof RpcException && !((RpcException) error).is(ErrorCode.NATIVE_UNAVAILABLE))
+            if (error instanceof RpcException && !((RpcException) error).is(Reason.NATIVE_UNAVAILABLE))
                 throw (RpcException) error;
             gateError = diagnostic(error);
         } catch (LinkageError error) {
@@ -62,20 +61,12 @@ final class Bitwig614Runtime {
         check.run();
     }
 
-    Access access(ErrorCode unavailableCode) {
-        return new Access(unavailableCode);
+    Access access() {
+        return new Access();
     }
 
     final class Access {
-        private final ErrorCode unavailableCode;
-
-        private Access(ErrorCode unavailableCode) {
-            this.unavailableCode = unavailableCode;
-        }
-
-        ErrorCode unavailableCode() {
-            return unavailableCode;
-        }
+        private Access() {}
 
         String hostVersion() {
             return hostVersion;
@@ -90,7 +81,8 @@ final class Bitwig614Runtime {
         }
 
         void requireAvailable() {
-            if (gateError != null) throw Errors.notApplied(unavailableCode, "Native runtime unavailable: " + gateError);
+            if (gateError != null)
+                throw Errors.notApplied(Reason.HOST_MISMATCH, "Native runtime unavailable: " + gateError);
         }
 
         Class<?> type(String name) throws ClassNotFoundException {
@@ -99,9 +91,10 @@ final class Bitwig614Runtime {
             try {
                 if (!source(type).equals(hostJar))
                     throw Errors.notApplied(
-                            unavailableCode, "Native binding class is not from the hashed loaded host JAR: " + name);
+                            Reason.NATIVE_UNAVAILABLE,
+                            "Native binding class is not from the hashed loaded host JAR: " + name);
             } catch (java.io.IOException error) {
-                throw Errors.notApplied(unavailableCode, "Cannot establish native class CodeSource: " + name);
+                throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Cannot establish native class CodeSource: " + name);
             }
             return type;
         }
@@ -123,7 +116,7 @@ final class Bitwig614Runtime {
 
         Object invoke(Method method, Object object, Object... args) {
             requireAvailable();
-            return Bitwig614Runtime.invoke(unavailableCode, method, object, args);
+            return Bitwig614Runtime.invoke(method, object, args);
         }
 
         void execute(Runnable work) {
@@ -131,7 +124,7 @@ final class Bitwig614Runtime {
             Object app = invoke(singleton, null);
             if (app == null)
                 throw Errors.notApplied(
-                        unavailableCode, "Native application singleton is not ready; wait for host startup.");
+                        Reason.NATIVE_UNAVAILABLE, "Native application singleton is not ready; wait for host startup.");
             invoke(async, app, work);
         }
 
@@ -140,14 +133,14 @@ final class Bitwig614Runtime {
             Object app = invoke(singleton, null);
             if (app == null || !Boolean.TRUE.equals(invoke(isDocumentThread, app)))
                 throw Errors.notApplied(
-                        unavailableCode, "Native read was not dispatched on the native document thread.");
+                        Reason.NATIVE_UNAVAILABLE, "Native read was not dispatched on the native document thread.");
         }
 
         void requireModelThreadAvailable() {
             requireAvailable();
             if (modelThreadError != null)
                 throw Errors.notApplied(
-                        unavailableCode, "Native model executor binding unavailable: " + modelThreadError);
+                        Reason.NATIVE_UNAVAILABLE, "Native model executor binding unavailable: " + modelThreadError);
         }
 
         void requireModelThread(Object object) {
@@ -156,20 +149,20 @@ final class Bitwig614Runtime {
             // AVL.Q_ is a scoped executor predicate, not proof of model ancestry.
             if (current == null || !Boolean.TRUE.equals(invoke(modelThread, current)))
                 throw Errors.notApplied(
-                        unavailableCode,
+                        Reason.NATIVE_UNAVAILABLE,
                         "Native model thread predicate failed: "
                                 + (current == null ? "null" : current.getClass().getName()));
         }
     }
 
-    static Object invoke(ErrorCode errorCode, Method method, Object object, Object... args) {
+    static Object invoke(Method method, Object object, Object... args) {
         try {
             return method.invoke(object, args);
         } catch (ReflectiveOperationException | IllegalArgumentException error) {
             Throwable cause =
                     error instanceof InvocationTargetException ? ((InvocationTargetException) error).getCause() : error;
             RpcException translated = Errors.notApplied(
-                    errorCode,
+                    Reason.NATIVE_UNAVAILABLE,
                     "Native call failed at " + method.getDeclaringClass().getName() + "." + method.getName() + ": "
                             + diagnostic(cause));
             translated.initCause(error);

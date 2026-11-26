@@ -15,6 +15,7 @@ import java.util.*;
  */
 final class Bitwig614AutomationAccess implements AutomationModule.Access {
     private final Bitwig614Runtime.Access a;
+    private Bitwig614GridAdapter gridAdapter;
     private final NativeReadContext context;
     private final Bitwig614TrackResolver resolver;
     private final Class<?> parameterType, rangeType, pointType, projectType;
@@ -32,6 +33,17 @@ final class Bitwig614AutomationAccess implements AutomationModule.Access {
             delete;
     private final Method begin, end;
     private final Object hold, linear;
+
+    /** The exact bindings, or native_unavailable when a descriptor does not match the loaded host. */
+    static Bitwig614AutomationAccess bind(Bitwig614Runtime.Access a) {
+        try {
+            return new Bitwig614AutomationAccess(a);
+        } catch (ReflectiveOperationException | LinkageError error) {
+            throw Errors.notApplied(
+                    Reason.NATIVE_UNAVAILABLE,
+                    "Exact automation bindings unavailable: " + Bitwig614Runtime.diagnostic(error));
+        }
+    }
 
     Bitwig614AutomationAccess(Bitwig614Runtime.Access a) throws ReflectiveOperationException {
         this.a = a;
@@ -116,22 +128,21 @@ final class Bitwig614AutomationAccess implements AutomationModule.Access {
             track = resolver.resolve(proxy, trackId, Bitwig614TrackResolver.Kind.CHANNEL);
             laneSet = a.invoke(lanes, track);
             if (laneSet == null)
-                throw Errors.notApplied(ErrorCode.AUTOMATION_UNAVAILABLE, "Track has no automation lane set.");
+                throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Track has no automation lane set.");
             grid = spec.grid()
-                    ? gridAdapter(spec)
+                    ? gridAdapter()
                             .automationParameter(
                                     spec.deviceProxy, UUID.fromString(trackId), spec.moduleId, spec.parameterId, check)
                     : null;
             parameter = resolve();
             if (!parameterType.isInstance(parameter))
-                throw Errors.notApplied(ErrorCode.UNSUPPORTED_SCOPE, "Target is not an automatable native parameter.");
+                throw Errors.notApplied(Reason.UNSUPPORTED_SCOPE, "Target is not an automatable native parameter.");
             if (resolver.owner(parameter, resolver.channelType()) != track)
-                throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Parameter does not belong to the target track.");
+                throw Errors.notApplied(Reason.STALE_CONTEXT, "Parameter does not belong to the target track.");
             ref = a.invoke(reference, null, parameter);
             if (ref == null)
                 throw Errors.notApplied(
-                        ErrorCode.AUTOMATION_UNAVAILABLE,
-                        "Native automation reference is unavailable for this parameter.");
+                        Reason.NATIVE_UNAVAILABLE, "Native automation reference is unavailable for this parameter.");
             project = resolver.owner(track, projectType);
             models = new Object[] {parameter, laneSet, track};
             capture = context.capture(project, models, labels, check, false);
@@ -141,8 +152,7 @@ final class Bitwig614AutomationAccess implements AutomationModule.Access {
         private Object resolve() {
             if (spec.grid()) return grid.parameter;
             Object mixer = a.invoke(channel, track);
-            if (mixer == null)
-                throw Errors.notApplied(ErrorCode.AUTOMATION_UNAVAILABLE, "Track has no native mixer channel.");
+            if (mixer == null) throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Track has no native mixer channel.");
             return a.invoke(spec.kind.equals("volume") ? volume : pan, mixer);
         }
 
@@ -150,7 +160,7 @@ final class Bitwig614AutomationAccess implements AutomationModule.Access {
             lane = found;
             timeline = found == null ? null : a.invoke(points, a.invoke(laneTimeline, found));
             if (found != null && timeline == null)
-                throw Errors.notApplied(ErrorCode.AUTOMATION_UNAVAILABLE, "Automation lane has no point timeline.");
+                throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Automation lane has no point timeline.");
             if (timeline != null) a.requireModelThread(timeline);
         }
 
@@ -158,14 +168,13 @@ final class Bitwig614AutomationAccess implements AutomationModule.Access {
             check.run();
             a.requireModelThread(track);
             context.guard(capture, models, labels, check);
-            if (spec.grid()) gridAdapter(spec).guardAutomationParameter(grid);
+            if (spec.grid()) gridAdapter().guardAutomationParameter(grid);
             if (!resolver.same(proxy, track)
                     || a.invoke(lanes, track) != laneSet
                     || resolve() != parameter
                     || a.invoke(findLane, laneSet, ref) != lane
                     || (lane != null && a.invoke(points, a.invoke(laneTimeline, lane)) != timeline))
-                throw Errors.notApplied(
-                        ErrorCode.STALE_CONTEXT, "Automation lane changed during the native operation.");
+                throw Errors.notApplied(Reason.STALE_CONTEXT, "Automation lane changed during the native operation.");
         }
 
         List<Object> natives() {
@@ -173,7 +182,7 @@ final class Bitwig614AutomationAccess implements AutomationModule.Access {
             List<Object> out = new ArrayList<>((List<?>) a.invoke(events, timeline));
             if (out.size() > AutomationModule.MAX_LANE)
                 throw Errors.notApplied(
-                        ErrorCode.AUTOMATION_BOUNDS_EXCEEDED,
+                        Reason.OUT_OF_BOUNDS,
                         "Automation lane holds more than " + AutomationModule.MAX_LANE + " points.");
             return out;
         }
@@ -182,7 +191,7 @@ final class Bitwig614AutomationAccess implements AutomationModule.Access {
             Object r = a.invoke(range, timeline);
             if (!rangeType.isInstance(r))
                 throw Errors.notApplied(
-                        ErrorCode.UNSUPPORTED_SCOPE, "Only continuous (decimal) automation lanes are supported.");
+                        Reason.UNSUPPORTED_SCOPE, "Only continuous (decimal) automation lanes are supported.");
             return r;
         }
 
@@ -192,10 +201,10 @@ final class Bitwig614AutomationAccess implements AutomationModule.Access {
             List<AutomationModule.Point> out = new ArrayList<>();
             for (Object point : natives) {
                 if (!pointType.isInstance(point))
-                    throw Errors.notApplied(ErrorCode.UNSUPPORTED_SCOPE, "Automation lane holds a non-point event.");
+                    throw Errors.notApplied(Reason.UNSUPPORTED_SCOPE, "Automation lane holds a non-point event.");
                 Object mode = a.invoke(interpolation, point);
                 if (mode != hold && mode != linear)
-                    throw Errors.notApplied(ErrorCode.AUTOMATION_UNAVAILABLE, "Unknown automation interpolation.");
+                    throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Unknown automation interpolation.");
                 out.add(new AutomationModule.Point(
                         (Double) a.invoke(time, point),
                         (Double) a.invoke(normalized, r, point),
@@ -215,10 +224,9 @@ final class Bitwig614AutomationAccess implements AutomationModule.Access {
         }
     }
 
-    private static Bitwig614GridAdapter gridAdapter(AutomationModule.Target spec) {
-        if (!(spec.grid instanceof Bitwig614GridAdapter))
-            throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Grid adapter unavailable for automation targets.");
-        return (Bitwig614GridAdapter) spec.grid;
+    private Bitwig614GridAdapter gridAdapter() {
+        if (gridAdapter == null) gridAdapter = new Bitwig614GridAdapter(a);
+        return gridAdapter;
     }
 
     @Override
@@ -227,7 +235,7 @@ final class Bitwig614AutomationAccess implements AutomationModule.Access {
         Lane lane = new Lane(trackProxy, trackId, target, check);
         List<AutomationModule.Point> points = lane.describe(lane.natives());
         lane.guard(check);
-        return AutomationModule.lane(trackId, target, lane.lane != null, points, range);
+        return AutomationModule.lane(new JsonObject(), trackId, target, lane.lane != null, points, range);
     }
 
     @Override
@@ -250,11 +258,10 @@ final class Bitwig614AutomationAccess implements AutomationModule.Access {
         if (existed) lane.valueRange();
         else if (!rangeType.isInstance(a.invoke(referenceRange, lane.ref)))
             throw Errors.notApplied(
-                    ErrorCode.UNSUPPORTED_SCOPE, "Only continuous (decimal) automation lanes are supported.");
+                    Reason.UNSUPPORTED_SCOPE, "Only continuous (decimal) automation lanes are supported.");
         if (AutomationModule.same(current, desired)) {
             lane.guard(check);
-            JsonObject out = written(lane, current, range, current, 0, 0, false);
-            out.addProperty("verification", "already_matched");
+            JsonObject out = written(Outcome.ALREADY_MATCHED, lane, current, range, current, 0, 0, false);
             out.addProperty("nativeUndo", false);
             return out;
         }
@@ -274,8 +281,7 @@ final class Bitwig614AutomationAccess implements AutomationModule.Access {
             if (lane.lane == null) {
                 lane.attach(a.invoke(addLane, lane.laneSet, lane.ref, false, false, false));
                 if (lane.lane == null)
-                    throw Errors.notApplied(
-                            ErrorCode.AUTOMATION_UNAVAILABLE, "Bitwig did not create the automation lane.");
+                    throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Bitwig did not create the automation lane.");
             }
             Object valueRange = lane.valueRange();
             for (Object point : removed) a.invoke(delete, lane.timeline, point);
@@ -283,8 +289,7 @@ final class Bitwig614AutomationAccess implements AutomationModule.Access {
                 AutomationModule.Point p = requested.get(i);
                 Object point = a.invoke(newPoint, valueRange, p.beat, p.value, p.linear ? linear : hold, 0.0);
                 if (point == null)
-                    throw Errors.notApplied(
-                            ErrorCode.AUTOMATION_UNAVAILABLE, "Bitwig did not create an automation point.");
+                    throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Bitwig did not create an automation point.");
                 a.invoke(insert, lane.timeline, point, insertAt + i);
             }
         });
@@ -295,19 +300,20 @@ final class Bitwig614AutomationAccess implements AutomationModule.Access {
         for (Object point : kept)
             if (!present.contains(point))
                 throw Errors.unknown(
-                        ErrorCode.AUTOMATION_VERIFICATION_FAILED,
+                        Reason.READBACK_MISMATCH,
                         "A point outside the range disappeared during the write; inspect automation.points.get.");
         for (Object point : removed)
             if (present.contains(point))
                 throw Errors.unknown(
-                        ErrorCode.AUTOMATION_VERIFICATION_FAILED,
+                        Reason.READBACK_MISMATCH,
                         "A replaced point is still on the lane; inspect automation.points.get.");
         List<AutomationModule.Point> actual = lane.describe(after);
         AutomationModule.verify(desired, actual);
-        return written(lane, actual, range, current, removed.size(), requested.size(), !existed);
+        return written(Outcome.APPLIED, lane, actual, range, current, removed.size(), requested.size(), !existed);
     }
 
     private JsonObject written(
+            Outcome outcome,
             Lane lane,
             List<AutomationModule.Point> all,
             double[] range,
@@ -315,7 +321,8 @@ final class Bitwig614AutomationAccess implements AutomationModule.Access {
             int removed,
             int inserted,
             boolean created) {
-        JsonObject out = AutomationModule.lane(lane.trackId, lane.spec, lane.lane != null, all, range);
+        JsonObject out =
+                AutomationModule.lane(Results.outcome(outcome), lane.trackId, lane.spec, lane.lane != null, all, range);
         JsonObject before = new JsonObject();
         before.addProperty("count", previous.size());
         before.addProperty("pointsHash", AutomationModule.hash(previous));

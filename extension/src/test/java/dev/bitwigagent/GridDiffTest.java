@@ -147,7 +147,7 @@ public final class GridDiffTest {
         for (String key :
                 new String[] {"nativeUndoScope", "safetyScope", "contextScope", "graphScope", "maximumModules"})
             result.addProperty(key, "constant");
-        result.addProperty("matchesRequested", true);
+        result.addProperty("outcome", "applied");
         JsonObject copy = result.deepCopy();
         JsonObject diff = GridDiff.shape(result, false);
         assertTrue(
@@ -155,7 +155,7 @@ public final class GridDiffTest {
                         && !diff.has("graphBefore")
                         && !diff.has("safetyScope")
                         && !diff.has("maximumModules")
-                        && diff.get("matchesRequested").getAsBoolean()
+                        && diff.get("outcome").getAsString().equals("applied")
                         && diff.getAsJsonArray("modulesMoved").size() == 1,
                 "default shape keeps outcome fields and replaces the graph with the diff");
         JsonObject full = GridDiff.shape(copy, true);
@@ -169,5 +169,17 @@ public final class GridDiffTest {
         bare.addProperty("x", 1);
         bare.add("graph", after);
         assertTrue(GridDiff.shape(bare, false).has("graph"), "a result without a before graph is left untouched");
+    }
+
+    @Test
+    void failedEntriesCarryOutcomeReasonAndMessage() {
+        JsonObject landed = new JsonObject(), refused = new JsonObject(), later = new JsonObject();
+        GridDiff.failed(landed, Errors.notApplied(Reason.STALE_CONTEXT, "moved"), true);
+        GridDiff.failed(refused, new IllegalStateException("broken"), false);
+        GridDiff.notApplied(later, Reason.NOT_REACHED);
+        assertEquals("{\"outcome\":\"unknown\",\"reason\":\"stale_context\",\"message\":\"moved\"}", landed.toString());
+        assertEquals(
+                "{\"outcome\":\"not_applied\",\"reason\":\"internal\",\"message\":\"broken\"}", refused.toString());
+        assertEquals("{\"outcome\":\"not_applied\",\"reason\":\"not_reached\"}", later.toString());
     }
 }

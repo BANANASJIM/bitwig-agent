@@ -4,12 +4,12 @@ import os
 import sys
 
 import pytest
-from fakes import INVALID_NAMES, LAYER_UNKNOWN_ERROR, assert_rejected_before_tcp, parse_arguments, string_panel_result
+from fakes import INVALID_NAMES, LAYER_UNKNOWN_RESULT, assert_rejected_before_tcp, parse_arguments, string_panel_result
 from pydantic import ValidationError
 
 from bitwig_agent.frontends.cli import execute, main, parser
 from bitwig_agent.protocol import TOOLS, invalid_params_message, validate_call
-from bitwig_agent.protocol.base import TARGET, TRACK
+from bitwig_agent.protocol.base import REASONS, TARGET, TRACK
 from bitwig_agent.protocol.launcher import NOTE_WINDOW
 
 pytestmark = pytest.mark.anyio
@@ -101,15 +101,15 @@ async def test_invalid_cli_inputs_return_json_error_without_tcp(host, monkeypatc
     payload, code = await execute(arguments)
     assert code == 2
     assert payload["error"]["code"] == "invalid_params"
-    assert payload["error"]["outcome"] == "not_dispatched"
+    assert "outcome" not in payload["error"]
     assert payload["error"]["message"]
     assert host.connections == 0
 
 
 async def test_cli_preserves_grid_unknown_outcome_and_raw_expected_value_without_retry(host, monkeypatch):
     monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
-    error = LAYER_UNKNOWN_ERROR
-    host.reply = lambda request: {"id": request["id"], "error": error}
+    unknown = LAYER_UNKNOWN_RESULT
+    host.reply = lambda request: {"id": request["id"], "result": unknown}
     payload, code = await execute(
         [
             "grid.parameters.set",
@@ -124,7 +124,7 @@ async def test_cli_preserves_grid_unknown_outcome_and_raw_expected_value_without
         ]
     )
     assert code == 1
-    assert payload == {"error": error}
+    assert payload == {"result": unknown}
     assert host.connections == 1
     assert len(host.requests) == 1
     assert host.requests[0]["params"]["expectedValue"] == 9007199254740993
@@ -137,8 +137,8 @@ async def test_cli_lost_response_is_unknown_not_replayed(host, monkeypatch):
     host.reply = lambda request: None
     payload, code = await execute(["transport.set", "playing=false"])
     assert code == 1
-    assert payload["error"]["code"] == "transport_error"
-    assert payload["error"]["outcome"] == "unknown"
+    assert payload["result"]["reason"] == "transport"
+    assert payload["result"]["outcome"] == "unknown"
     assert host.connections == 1
 
 
@@ -152,7 +152,11 @@ async def test_empty_grid_parameter_id_is_not_omitted_or_retargeted(host, monkey
         "parameterId": "",
     }
     arguments = [f"{key}={value}" for key, value in args.items()]
-    error = {"code": "stale_context", "message": "Module is no longer present", "outcome": "not_applied"}
+    error = {
+        "code": REASONS["stale_context"].value,
+        "reason": "stale_context",
+        "message": "Module is no longer present",
+    }
     host.reply = lambda request: {"id": request["id"], "error": error}
     payload, code = await execute(["grid.parameters.get", *arguments, "--timeout-ms", "250"])
     assert code == 1
@@ -298,16 +302,16 @@ async def test_grid_insert_cli_preserves_loader_unknown_without_retry(host, monk
     monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
     params = {**TARGET, "typeId": TRACK, "x": -(2**31), "y": 2**31 - 1}
     arguments = ["--params", json.dumps(params)] if raw else [f"{key}={value}" for key, value in params.items()]
-    error = {
-        "code": "deadline_exceeded",
-        "message": "Inspect actual graph",
+    unknown = {
         "outcome": "unknown",
+        "reason": "deadline",
+        "message": "Inspect actual graph",
         "details": {"loaderDispatched": True, "placementDispatched": False},
     }
-    host.reply = lambda request: {"id": request["id"], "error": error}
+    host.reply = lambda request: {"id": request["id"], "result": unknown}
     payload, code = await execute(["grid.modules.insert", *arguments, "--timeout-ms", "250"])
     assert code == 1
-    assert payload == {"error": error}
+    assert payload == {"result": unknown}
     assert len(host.requests) == host.connections == 1
 
 
@@ -352,7 +356,7 @@ def test_main_prints_one_exact_json_envelope(capsys, monkeypatch):
     captured = capsys.readouterr()
     assert captured.err == ""
     assert len(captured.out.splitlines()) == 1
-    assert json.loads(captured.out)["error"]["outcome"] == "not_dispatched"
+    assert "outcome" not in json.loads(captured.out)["error"]
 
 
 async def test_offline_entrypoint_and_client_do_not_import_mcp():
@@ -411,17 +415,17 @@ async def test_layer_cli_rejects_invalid_nested_params_before_tcp(host, monkeypa
 
 async def test_layer_cli_preserves_unknown_without_retry(host, monkeypatch):
     monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
-    error = {
-        "code": "deadline_exceeded",
-        "message": "Inspect child before another write",
+    unknown = {
         "outcome": "unknown",
+        "reason": "deadline",
+        "message": "Inspect child before another write",
         "details": {"dispatched": True},
     }
-    host.reply = lambda request: {"id": request["id"], "error": error}
+    host.reply = lambda request: {"id": request["id"], "result": unknown}
     params = TOOLS["parameters.layer.set"].examples[0]
     payload, code = await execute(["parameters.layer.set", "--params", json.dumps(params)])
     assert code == 1
-    assert payload == {"error": error}
+    assert payload == {"result": unknown}
     assert host.requests[0]["params"] == params
     assert len(host.requests) == host.connections == 1
 
@@ -500,15 +504,15 @@ async def test_modulator_cli_invalid_inputs_never_connect(host, monkeypatch, cha
 @pytest.mark.parametrize(
     "error_code",
     [
-        "modulator_unavailable",
-        "modulator_bounds_exceeded",
+        "native_unavailable",
+        "out_of_bounds",
         "unsupported_scope",
         "stale_context",
     ],
 )
 async def test_modulator_cli_preserves_host_error_without_retry(host, monkeypatch, error_code):
     monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
-    error = {"code": error_code, "message": "Read rejected", "outcome": "not_dispatched"}
+    error = {"code": REASONS[error_code].value, "reason": error_code, "message": "Read rejected"}
     host.reply = lambda request: {"id": request["id"], "error": error}
     payload, code = await execute(
         ["modulators.parameters.get", "--params", json.dumps(TOOLS["modulators.parameters.get"].examples[0])]
@@ -559,16 +563,16 @@ async def test_grid_rename_cli_unknown_preserves_native_uncertainty_without_retr
     monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
     params = {**TARGET, "moduleId": TRACK, "expectedCustomName": " \t\u03b1 ", "customName": ""}
     arguments = ["--params", json.dumps(params)] if raw else [f"{key}={value}" for key, value in params.items()]
-    error = {
-        "code": "stale_context",
-        "message": "Inspect actual raw name",
+    unknown = {
         "outcome": "unknown",
+        "reason": "stale_context",
+        "message": "Inspect actual raw name",
         "details": {"mutationDispatched": True, "rollbackVerified": False},
     }
-    host.reply = lambda request: {"id": request["id"], "error": error}
+    host.reply = lambda request: {"id": request["id"], "result": unknown}
     payload, code = await execute(["grid.modules.rename", *arguments])
     assert code == 1
-    assert payload == {"error": error}
+    assert payload == {"result": unknown}
     assert host.requests[0]["params"] == params
     assert len(host.requests) == host.connections == 1
 

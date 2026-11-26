@@ -21,6 +21,7 @@ from typing import Any
 
 from bitwig_agent.client import BridgeClient, configured_port
 from bitwig_agent.errors import BridgeError
+from bitwig_agent.protocol.base import SUCCEEDED, Outcome
 
 LOOP_LENGTH_BEATS = 8
 DURATION_TOLERANCE_BEATS = 1e-6
@@ -256,10 +257,10 @@ async def build_grid(call, target: dict, types: dict[str, str], label: str) -> d
     ]
     written = await call("grid.parameters.set", {**target, "writes": writes})
     if (
-        written.get("batchStatus") != "applied"
+        written.get("outcome") not in SUCCEEDED
         or len(written["writes"]) != len(writes)
         or any(
-            item.get("status") not in ("applied", "already_matched") or item.get("value") != wanted["value"]
+            item.get("outcome") not in SUCCEEDED or item.get("value") != wanted["value"]
             for item, wanted in zip(written["writes"], expected["parameters"], strict=False)
         )
     ):
@@ -284,7 +285,7 @@ async def build_grid(call, target: dict, types: dict[str, str], label: str) -> d
         for edit in edits
     ]
     if (
-        result.get("batchStatus") != "applied"
+        result.get("outcome") not in SUCCEEDED
         or sorted(result.get("connectionsChanged", []), key=repr) != sorted(changes, key=repr)
         or result.get("modulesAdded")
         or result.get("modulesRemoved")
@@ -379,8 +380,6 @@ async def create(args: argparse.Namespace) -> int:  # noqa: C901, PLR0912, PLR09
             entry["result"] = result
         except BridgeError as error:
             entry["error"] = error.error
-            if error.error.get("outcome") == "unknown":
-                report.setdefault("uncertainOperations", []).append(entry)
             raise
         except BaseException as error:
             entry["exception"] = f"{type(error).__name__}: {error}"
@@ -390,8 +389,7 @@ async def create(args: argparse.Namespace) -> int:  # noqa: C901, PLR0912, PLR09
             with (args.artifacts / "calls.jsonl").open("a", encoding="utf-8") as output:
                 output.write(json.dumps(entry, ensure_ascii=False, allow_nan=False) + "\n")
         if (
-            result.get("status") != "observed"
-            or result.get("completion") == "unknown"
+            result.get("outcome", Outcome.APPLIED) not in SUCCEEDED
             or result.get("topologyQuarantined") is True
             or result.get("topologyAdmissionBlocked") is True
         ):

@@ -144,9 +144,9 @@ async def execute(argv: list[str]) -> tuple[dict[str, Any], int]:
         envelope = await invoke(command, parse_arguments(command, arguments, args.params, args.timeout_ms))
     except (ValueError, TypeError, RecursionError) as exc:
         envelope = invalid_params(command, exc)
-    if isinstance(envelope, Error):
-        return envelope.payload, 2 if envelope.usage else 1
-    return envelope.payload, 0
+    if isinstance(envelope, Error) and envelope.usage:
+        return envelope.payload, 2
+    return envelope.payload, 1 if envelope.failed else 0
 
 
 def main(argv: list[str] | None = None) -> int:

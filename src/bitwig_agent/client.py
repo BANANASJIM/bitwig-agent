@@ -11,14 +11,16 @@ import uuid
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 
-from bitwig_agent.errors import BridgeError, bridge_error
+from bitwig_agent.errors import BridgeError, bridge_error, unknown_result
 from bitwig_agent.protocol import CLIENT_SIDE, TOOLS, validate_call
+from bitwig_agent.protocol.base import PROTOCOL, REASONS
 from bitwig_agent.protocol.limits import (
     DEFAULT_PORT,
     DEFAULT_TIMEOUT_MS,
     MAX_REQUEST_BYTES,
     MAX_RESPONSE_BYTES,
     MIN_TIMEOUT_MS,
+    RESPONSE_GRACE_MS,
     mebibytes,
 )
 
@@ -93,7 +95,7 @@ def _encode_request(method: str, params: dict[str, Any], timeout_ms: int) -> tup
         raise ValueError("Pass timeout_ms separately from host params")
     params, _ = validate_call(method, {**params, "timeoutMs": timeout_ms})
     request_id = uuid.uuid4().hex
-    request = {"id": request_id, "method": method, "params": params, "timeoutMs": timeout_ms}
+    request = {"id": request_id, "method": method, "params": params, "timeoutMs": timeout_ms, "protocol": PROTOCOL}
     payload = (json.dumps(request, allow_nan=False, separators=(",", ":")) + "\n").encode("utf-8")
     if len(payload) > MAX_REQUEST_BYTES:
         raise ValueError(f"Request exceeds {mebibytes(MAX_REQUEST_BYTES)}")
@@ -110,13 +112,16 @@ def _parse_response(raw: bytes, request_id: str, method: str) -> dict[str, Any]:
         raise ValueError("Response must contain exactly one of result or error")
     if "error" in response:
         error = response["error"]
-        if (
-            not isinstance(error, dict)
-            or not isinstance(error.get("code"), str)
-            or not isinstance(error.get("message"), str)
-            or error.get("outcome") not in ("not_dispatched", "not_applied", "unknown")
-        ):
+        if not isinstance(error, dict) or not all(isinstance(error.get(k), str) for k in ("code", "message")):
             raise ValueError("Malformed host error")
+        if REASONS.get(str(error.get("reason"))) != error.get("code"):
+            # Only a peer on another protocol answers without a 0.5 reason; it refused the envelope unread.
+            raise bridge_error(
+                "protocol_mismatch",
+                f"The extension answered in another protocol ({error.get('code')}: {error['message']}); "
+                f"this client speaks {PROTOCOL}.",
+                "Install the matching client and extension, then restart Bitwig.",
+            )
         raise BridgeError(error)
     if not isinstance(response["result"], dict):
         raise ValueError("Host result must be an object")
@@ -125,21 +130,22 @@ def _parse_response(raw: bytes, request_id: str, method: str) -> dict[str, Any]:
     return response["result"]
 
 
-def _transport_error(exc: Exception, method: str, dispatched: bool) -> BridgeError:
-    outcome = "unknown" if dispatched else "not_dispatched"
-    code = "deadline_exceeded" if isinstance(exc, TimeoutError) else "transport_error"
+def _transport_failure(exc: Exception, method: str, dispatched: bool) -> dict[str, Any]:
+    """A failed write that may have reached the host is an unknown result; anything else changed nothing."""
+    reason = "deadline" if isinstance(exc, TimeoutError) else "transport"
     hint = ""
     if method == "grid.get" and (isinstance(exc, asyncio.LimitOverrunError) or RESPONSE_TOO_LARGE in str(exc)):
         hint = f" The grid.get response exceeded the {mebibytes(MAX_RESPONSE_BYTES)} client cap: lower moduleLimit (64 works with includeParameters) or set includeParameters=false."
-    return bridge_error(
-        code,
-        f"{type(exc).__name__}: {exc}.{hint} Inspect host state before another write; request was not retried.",
-        outcome,
-    )
+    message = f"{type(exc).__name__}: {exc}.{hint}"
+    if dispatched and not TOOLS[method].read_only:
+        return unknown_result(
+            reason, message + " The request was not retried.", "Inspect host state before another write."
+        )
+    raise bridge_error(reason, message) from exc
 
 
 class BridgeClient:
-    def __init__(self, port: int = DEFAULT_PORT, *, response_grace_seconds: float = 1.0):
+    def __init__(self, port: int = DEFAULT_PORT, *, response_grace_seconds: float = RESPONSE_GRACE_MS / 1000):
         if type(port) is not int or not 1 <= port <= MAX_PORT:
             raise ValueError(f"port must be in 1..{MAX_PORT}")
         self.port = port
@@ -169,7 +175,7 @@ class BridgeClient:
             asyncio.IncompleteReadError,
             asyncio.LimitOverrunError,
         ) as exc:
-            raise _transport_error(exc, method, dispatched) from exc
+            return _transport_failure(exc, method, dispatched)
         finally:
             if writer is not None:
                 writer.close()

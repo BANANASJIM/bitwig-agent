@@ -96,7 +96,7 @@ def admission(caps: dict[str, Any], track_id: Any, inserting: bool, deleting: bo
     if any(d.get("trackId") == track_id for d in (caps.get("topologyQuarantine") or {}).get("devices") or []):
         problems.append(
             "a Grid device on this track is quarantined (topologyQuarantine.devices); inspect it with grid.get, "
-            "then grid.topology.reconcile that device to release it"
+            "then release it with ack <id> (status lists the holds)"
         )
     if inserting and any(sections.get(k, {}).get("available") is False for k in ("moduleInsert", "moduleRename")):
         problems.append("the host reports module insert/rename as unavailable")

@@ -53,8 +53,8 @@ final class TestServices {
         return new DeviceModule(host, scheduler, window, sources, transportSafety, selection);
     }
 
-    ExtensionModule extension() {
-        return new ExtensionModule(host, scheduler, holds);
+    AckModule ack(GridModule grid) {
+        return new AckModule(holds, grid);
     }
 
     GridModule grid(GridAdapter adapter) {

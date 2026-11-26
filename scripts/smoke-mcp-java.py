@@ -43,11 +43,10 @@ public class McpTransportFixture {
       bridge.validate(method, params);
       if (method.equals("parameters.set")) {
         CompletableFuture<JsonObject> failed = new CompletableFuture<>();
-        failed.completeExceptionally(new RpcException("fixture_unknown", "Observed ambiguity", "unknown"));
+        failed.completeExceptionally(Errors.unknown(Reason.NOT_OBSERVED, "Observed ambiguity"));
         return failed;
       }
       JsonObject result = new JsonObject();
-      result.addProperty("status", "observed");
       result.addProperty("fixtureOnly", true);
       result.addProperty("method", method);
       result.add("echo", params);
@@ -128,8 +127,8 @@ async def exercise(folder: Path, api: Path) -> None:  # noqa: PLR0915
                     if method == "parameters.set":
                         require(
                             response.is_error
-                            and body.get("error", {}).get("outcome") == "unknown"
-                            and body["error"]["code"] == "fixture_unknown",
+                            and body.get("result", {}).get("outcome") == "unknown"
+                            and body["result"]["reason"] == "not_observed",
                             f"Lost Java ambiguity for {method}: {body}",
                         )
                     else:
@@ -148,7 +147,7 @@ async def exercise(folder: Path, api: Path) -> None:  # noqa: PLR0915
             vectors = await bound_parity.run(port)
         print(
             f"PASS: {len(names)} matching Java/MCP tools, {calls} example roundtrips, "
-            f"Unicode, strict MCP arguments, unknown error propagation, {vectors} bound/optional parity vectors. "
+            f"Unicode, strict MCP arguments, unknown outcome propagation, {vectors} bound/optional parity vectors. "
             "FIXTURE ONLY; no native host."
         )
     finally:

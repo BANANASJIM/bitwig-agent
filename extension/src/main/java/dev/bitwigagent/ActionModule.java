@@ -39,7 +39,7 @@ final class ActionModule implements HostModule {
     }
 
     static void validateParams(String method, JsonObject params) {
-        if (!METHODS.contains(method)) throw Errors.notApplied(ErrorCode.UNKNOWN_METHOD, "Unknown Action method.");
+        if (!METHODS.contains(method)) throw Errors.notApplied(Reason.UNKNOWN_METHOD, "Unknown Action method.");
         if (method.equals("actions.invoke")) {
             Params.fields(params, Set.of("actionId"), Set.of("discardUnsavedChanges"));
             Params.string(params, "actionId");
@@ -89,7 +89,7 @@ final class ActionModule implements HostModule {
             }
             actions.add(item);
         }
-        JsonObject result = observed();
+        JsonObject result = new JsonObject();
         result.addProperty("scope", "host_action_catalog");
         result.addProperty("total", total);
         result.addProperty("complete", total <= limit);
@@ -100,20 +100,19 @@ final class ActionModule implements HostModule {
     private void invokeAction(HostOperation request, JsonObject params) {
         String actionId = params.get("actionId").getAsString();
         Action action = application.getAction(actionId);
-        if (action == null)
-            throw Errors.notApplied(ErrorCode.UNKNOWN_ACTION, "Action ID is absent from the host catalog.");
+        if (action == null) throw Errors.notApplied(Reason.UNKNOWN_NAME, "Action ID is absent from the host catalog.");
         boolean discard = params.has("discardUnsavedChanges")
                 && params.get("discardUnsavedChanges").getAsBoolean();
         if (ALWAYS_CONSENT.contains(actionId) && !discard)
             throw Errors.notApplied(
-                    ErrorCode.UNSAVED_CHANGES,
+                    Reason.UNSAVED_CHANGES,
                     "Action \"" + actionId
                             + "\" closes every open project tab; only the current tab's saved state is observable (projectModified="
                             + Results.modified(projectState.modified())
                             + "). Save each tab, then pass discardUnsavedChanges:true with user consent.");
         if (DISCARDING.contains(actionId) && !discard && !Boolean.FALSE.equals(projectState.modified()))
             throw Errors.notApplied(
-                    ErrorCode.UNSAVED_CHANGES,
+                    Reason.UNSAVED_CHANGES,
                     "Action \"" + actionId
                             + "\" closes the current project tab, which is not observed saved (projectModified="
                             + Results.modified(projectState.modified())
@@ -121,12 +120,10 @@ final class ActionModule implements HostModule {
         scheduler.check(request);
         // Host actions can retarget the launcher cursor clip (select clip/track); never mid launcher edit.
         selection.requireFree();
-        request.dispatched = true;
+        request.markDispatched();
         action.invoke();
-        JsonObject result = new JsonObject();
-        result.addProperty("status", "dispatched");
+        JsonObject result = Results.outcome(Outcome.SENT);
         result.addProperty("actionId", actionId);
-        result.addProperty("completion", "not_observed");
         request.result.complete(result);
     }
 }

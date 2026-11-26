@@ -31,7 +31,7 @@ public final class GridModuleNameWriterTest {
         Fixture f = new Fixture();
         f.model.first.put(CUSTOM_NAME, "raw").put(MODULE_NAME, "Native effective");
         HostOperation op = f.start(new GridModuleNameWriter.Request("raw", "changed"));
-        assertTrue(f.calls == 1 && op.dispatched && !op.result.isDone(), "single setter dispatch is not completion");
+        assertTrue(f.calls == 1 && op.dispatched() && !op.result.isDone(), "single setter dispatch is not completion");
         f.next();
         JsonObject result = op.result.join();
         assertTrue(
@@ -72,7 +72,7 @@ public final class GridModuleNameWriterTest {
         f.model.first.put(MODULE_NAME, "Distinct effective");
         HostOperation op = f.start(new GridModuleNameWriter.Request("", ""));
         assertTrue(
-                f.calls == 0 && !op.dispatched && !op.result.isDone(),
+                f.calls == 0 && !op.dispatched() && !op.result.isDone(),
                 "authorized no-op skips setter but waits for later observation");
         f.next();
         JsonObject result = op.result.join();
@@ -80,7 +80,7 @@ public final class GridModuleNameWriterTest {
                 !result.get("mutationDispatched").getAsBoolean()
                         && !result.get("nativeMutation").getAsBoolean()
                         && !result.get("nativeUndo").getAsBoolean()
-                        && text(result, "verification").equals("already_matched"),
+                        && text(result, "outcome").equals("already_matched"),
                 "no-op does not claim native edit");
         assertTrue(
                 text(result, "actualName").equals("Distinct effective"),
@@ -121,7 +121,7 @@ public final class GridModuleNameWriterTest {
             f.beforePrepare = () -> changeMembership(f, kind);
             HostOperation op = f.start(new GridModuleNameWriter.Request("", "new"));
             assertTrue(
-                    op.result.isCompletedExceptionally() && !op.dispatched && f.calls == 0,
+                    op.result.isCompletedExceptionally() && !op.dispatched() && f.calls == 0,
                     "late predispatch membership/currentUUID/CAS changes reject without setter");
             f.quarantine.requireAvailable(GridInsertionWriterTest.ANY);
         }
@@ -131,10 +131,8 @@ public final class GridModuleNameWriterTest {
             changeMembership(f, change);
             f.next();
             assertTrue(
-                    op.result.isCompletedExceptionally() && op.dispatched,
+                    op.dispatched() && Results.outcomeOf(op.result.join()) == Outcome.UNKNOWN,
                     "later changed membership/currentUUID/raw never becomes observed success");
-            assertTrue(
-                    error(op).outcome.equals("unknown"), "postdispatch membership failure retains uncertain outcome");
             f.quarantine.requireAvailable(GridInsertionWriterTest.ANY);
         }
     }
@@ -153,7 +151,7 @@ public final class GridModuleNameWriterTest {
     void boundedRealModulesAndOwnershipAreRequired() {
         for (int invalid = 0; invalid < 7; invalid++) {
             Fixture f = new Fixture();
-            String code = "grid_unavailable";
+            String code = "native_unavailable";
             if (invalid == 0) f.model.second.put(INSTANCE_ID, MODULE);
             if (invalid == 1) f.model.graph.put(MODULES, List.of(f.model.first, new Node()));
             if (invalid == 2) {
@@ -189,7 +187,7 @@ public final class GridModuleNameWriterTest {
                 "1024 modules returns full bounded actual graph");
         Fixture large = new Fixture();
         large.population(1025);
-        failed(large.start(new GridModuleNameWriter.Request("", "new")), "grid_bounds_exceeded", "not_applied");
+        failed(large.start(new GridModuleNameWriter.Request("", "new")), "out_of_bounds", "not_applied");
         assertTrue(large.calls == 0 && large.model.closed > 0, "over-bound enumeration closes stream before dispatch");
     }
 
@@ -213,7 +211,7 @@ public final class GridModuleNameWriterTest {
                 if (invalid == 12) f.context.values.put(GridTopologyContext.Field.LOCK_OWNER, new Object());
                 HostOperation op = f.start(new GridModuleNameWriter.Request("", noop ? "" : "new"));
                 assertTrue(
-                        op.result.isCompletedExceptionally() && !op.dispatched && f.calls == 0,
+                        op.result.isCompletedExceptionally() && !op.dispatched() && f.calls == 0,
                         "all-member lifecycle/context/idle guards apply equally to no-op");
             }
         }
@@ -237,15 +235,28 @@ public final class GridModuleNameWriterTest {
             if (drift == 5) f.model.device.put(GRAPH, new Node());
             f.next();
             assertTrue(
-                    error(pending).outcome.equals("unknown") && f.calls == 1,
+                    Results.outcomeOf(pending.result.join()) == Outcome.UNKNOWN && f.calls == 1,
                     "later context/target identity or safety drift never acknowledges the setter");
             f.quarantine.requireAvailable(GridInsertionWriterTest.ANY);
         }
     }
 
     @Test
+    void namesChangedBeforeDispatchAreRefused() {
+        for (String effective : List.of("Changed effective", "x".repeat(1025))) {
+            Fixture f = new Fixture();
+            f.beforePrepare = () -> f.model.first.put(MODULE_NAME, effective);
+            failed(
+                    f.start(new GridModuleNameWriter.Request("", "new")),
+                    effective.length() > 1024 ? "out_of_bounds" : "stale_context",
+                    "not_applied");
+            assertTrue(f.calls == 0, "a name changed before dispatch is never written");
+        }
+    }
+
+    @Test
     void lateSafetyCancellationAndTargetChangesStayUnknown() {
-        for (String rejection : List.of("cancelled", "deadline_exceeded", "unsafe_state", "stale_context")) {
+        for (String rejection : List.of("cancelled", "deadline", "unsafe_state", "stale_context")) {
             Fixture before = new Fixture();
             before.beforePrepare = () -> before.requestError = rejection;
             failed(before.start(new GridModuleNameWriter.Request("", "new")), rejection, "not_applied");
@@ -263,7 +274,7 @@ public final class GridModuleNameWriterTest {
         HostOperation op = noOpStale.start(new GridModuleNameWriter.Request("", ""));
         noOpStale.model.first.put(CUSTOM_NAME, "later");
         noOpStale.next();
-        failed(op, "grid_verification_failed", "not_applied");
+        failed(op, "readback_mismatch", "not_applied");
         Fixture cancelled = new Fixture();
         op = cancelled.start(new GridModuleNameWriter.Request("", "new"));
         cancelled.cancelled = true;
@@ -283,7 +294,7 @@ public final class GridModuleNameWriterTest {
         ignored.apply = false;
         HostOperation op = ignored.start(new GridModuleNameWriter.Request("", "new"));
         ignored.next();
-        failed(op, "grid_verification_failed", "unknown");
+        failed(op, "readback_mismatch", "unknown");
         ignored.quarantine.requireAvailable(GridInsertionWriterTest.ANY);
         Fixture effective = new Fixture();
         effective.onSet = () -> effective.model.first.put(MODULE_NAME, "Native effective != requested");
@@ -294,22 +305,21 @@ public final class GridModuleNameWriterTest {
                 "reported effective getter is never fabricated from requested raw");
         Fixture readError = new Fixture();
         op = readError.start(new GridModuleNameWriter.Request("", "new"));
-        readError.model.failures.put(
-                CUSTOM_NAME, Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "native getter failed"));
+        readError.model.failures.put(CUSTOM_NAME, Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "native getter failed"));
         readError.next();
-        failed(op, "grid_unavailable", "unknown");
+        failed(op, "native_unavailable", "unknown");
         readError.quarantine.requireAvailable(GridInsertionWriterTest.ANY);
         Fixture enqueue = new Fixture(r -> {
-            throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "queue failed");
+            throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "queue failed");
         });
-        failed(enqueue.start(new GridModuleNameWriter.Request("", "new")), "grid_unavailable", "unknown");
+        failed(enqueue.start(new GridModuleNameWriter.Request("", "new")), "native_unavailable", "unknown");
         enqueue.quarantine.requireAvailable(GridInsertionWriterTest.ANY);
         for (Object invalid : List.of(7, "x".repeat(1025))) {
             Fixture f = new Fixture();
             f.model.first.put(CUSTOM_NAME, invalid);
             failed(
                     f.start(new GridModuleNameWriter.Request("", "new")),
-                    invalid instanceof String ? "grid_bounds_exceeded" : "grid_unavailable",
+                    invalid instanceof String ? "out_of_bounds" : "native_unavailable",
                     "not_applied");
         }
     }
@@ -347,7 +357,7 @@ public final class GridModuleNameWriterTest {
                 "name result omits parameters explicitly and diagnostics prose");
         Fixture unavailable = new Fixture();
         unavailable.model.unavailable.add(MODULE_NAMES);
-        failed(unavailable.start(new GridModuleNameWriter.Request("", "new")), "grid_unavailable", "not_applied");
+        failed(unavailable.start(new GridModuleNameWriter.Request("", "new")), "native_unavailable", "not_applied");
     }
 
     @Test
@@ -355,11 +365,11 @@ public final class GridModuleNameWriterTest {
         for (Throwable cause : List.of(
                 new IllegalStateException("partial native failure"),
                 new LinkageError("native linkage"),
-                Errors.notApplied(ErrorCode.DEADLINE_EXCEEDED, "native RPC-shaped throwable"))) {
+                Errors.notApplied(Reason.DEADLINE, "native RPC-shaped throwable"))) {
             Fixture f = new Fixture();
             f.reflectedFailure = cause;
             HostOperation op = f.start(new GridModuleNameWriter.Request("", "new"));
-            failed(op, "grid_unavailable", "unknown");
+            failed(op, "native_unavailable", "unknown");
             assertTrue(
                     f.calls == 1 && f.model.first.values.get(CUSTOM_NAME).equals("new") && f.quarantine.quarantined(),
                     "partial setter is not rolled back and poisons future topology writes");
@@ -370,7 +380,7 @@ public final class GridModuleNameWriterTest {
                             && nativeError.getCause() instanceof InvocationTargetException
                             && nativeError.getCause().getCause() == cause,
                     "shared quarantine preserves translated reflection boundary and original native throwable identity");
-            failed(f.start(new GridModuleNameWriter.Request("new", "later")), "grid_unavailable", "not_applied");
+            failed(f.start(new GridModuleNameWriter.Request("new", "later")), "unresolved", "not_applied");
             assertTrue(
                     f.calls == 1 && f.events.isEmpty(),
                     "quarantine blocks retry and failed invocation never schedules fake success");
@@ -381,7 +391,7 @@ public final class GridModuleNameWriterTest {
     void pendingAndQuarantinedProcessGuardsBlockNaming() {
         Fixture pending = new Fixture();
         pending.quarantine.reserve(GridInsertionWriterTest.ANY);
-        failed(pending.start(new GridModuleNameWriter.Request("", "new")), "grid_unavailable", "not_applied");
+        failed(pending.start(new GridModuleNameWriter.Request("", "new")), "busy", "not_applied");
         assertTrue(pending.calls == 0, "existing insertion pending marker blocks name writes");
     }
 
@@ -396,21 +406,10 @@ public final class GridModuleNameWriterTest {
         return object.get(key).getAsString();
     }
 
-    private static RpcException error(HostOperation op) {
-        {
-            java.util.concurrent.CompletionException error =
-                    assertThrows(java.util.concurrent.CompletionException.class, () -> op.result.join());
-            if (!(error.getCause() instanceof RpcException)) throw new AssertionError("Expected RpcException", error);
-            return (RpcException) error.getCause();
-        }
-    }
-
-    private static RpcException failed(HostOperation op, String code, String outcome) {
-        RpcException error = error(op);
-        assertTrue(
-                error.code.equals(code) && error.outcome.equals(outcome),
-                "expected " + code + "/" + outcome + ", got " + error.code + "/" + error.outcome);
-        return error;
+    /** An error (nothing changed) for not_applied; a settled unknown result once the setter may have landed. */
+    private static void failed(HostOperation op, String reason, String outcome) {
+        if (outcome.equals(Outcome.UNKNOWN.wire())) assertUnknown(reason, op);
+        else assertRpcError(reason, op);
     }
 
     /** Real writer/context/snapshot semantics, also used by boundary queue tests. */
@@ -449,12 +448,13 @@ public final class GridModuleNameWriterTest {
                         moduleId,
                         request,
                         () -> {
-                            if (op.result.isDone()) throw Errors.notApplied(ErrorCode.CANCELLED, "request ended");
-                            if (cancelled) throw Errors.notApplied(ErrorCode.CANCELLED, "cancelled");
+                            if (op.result.isDone()) throw Errors.notApplied(Reason.CANCELLED, "request ended");
+                            if (cancelled) throw Errors.notApplied(Reason.CANCELLED, "cancelled");
                             if (requestError != null)
-                                throw Errors.of(requestError, "request changed", Outcome.NOT_APPLIED);
+                                throw Errors.notApplied(
+                                        Reason.valueOf(requestError.toUpperCase(Locale.ROOT)), "request changed");
                         },
-                        () -> op.dispatched = true,
+                        () -> op.markDispatched(),
                         value -> op.result.complete(value),
                         error -> {
                             failure = error;
@@ -491,7 +491,7 @@ public final class GridModuleNameWriterTest {
         @Override
         public void requireSupported(Object module) {
             if (!supported || !model.is(GridSnapshotReader.Kind.MODULE, module))
-                throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "not a supported native module");
+                throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "not a supported native module");
         }
 
         @Override
@@ -501,10 +501,7 @@ public final class GridModuleNameWriterTest {
                 calls++;
                 if (reflectedFailure != null) {
                     Bitwig614Runtime.invoke(
-                            ErrorCode.GRID_UNAVAILABLE,
-                            PartialSetter.SET,
-                            new PartialSetter((Node) module, reflectedFailure),
-                            customName);
+                            PartialSetter.SET, new PartialSetter((Node) module, reflectedFailure), customName);
                     return;
                 }
                 if (apply)

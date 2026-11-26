@@ -6,11 +6,11 @@ import re
 from typing import Any
 
 import pytest
-from fakes import NODES, SINK_LINKS, TARGET, FakeGrid, FakeProc, FakePW
+from fakes import NODES, SINK_LINKS, TARGET, FakeGrid, FakeProc, FakePW, spawn_dead
 
 from bitwig_agent.audio import pipewire
 from bitwig_agent.audio.analysis import FFT_SIZE, spectral_peaks
-from bitwig_agent.errors import BridgeError
+from bitwig_agent.errors import BridgeError, HostChanged, unknown_result
 from bitwig_agent.grid import probe as grid_probe
 from bitwig_agent.protocol import CLIENT_SIDE, validate_call
 
@@ -45,22 +45,22 @@ class ProbeGrid(FakeGrid):
     async def call(self, method, params, timeout_ms=5000):
         if method == "transport.get":
             self.calls.append((method, params))
-            return {"status": "observed", **self.transport}
+            return {**self.transport}
         if method == "status":  # engine pre-check
             self.calls.append((method, params))
-            return {"status": "observed", "engineActive": self.engine}
+            return {"engineActive": self.engine}
         if method == "context.get":  # audio.capture's isolation pre-check
             self.calls.append((method, params))
             return {"tracks": []}
         if method == "transport.set":
             self.calls.append((method, params))
             self.transport.update(params if "playing" in params else {})
-            return {"status": "observed"}
+            return {"outcome": "applied"}
         if method == "grid.connections.set":
             self.set_calls += 1
             if self.fail_on_set == self.set_calls:
                 self.calls.append((method, params))
-                raise BridgeError({"code": "deadline_exceeded", "message": "slow", "outcome": "unknown"})
+                return unknown_result("deadline", "slow")
         return await super().call(method, params, timeout_ms)
 
     def sets(self):
@@ -119,7 +119,7 @@ def test_probe_reroutes_records_and_restores_exactly(rig):
     assert host.wires_during_capture == {
         (host.out1, "IN"): (host.osc, "OUT")
     }  # probe on one Audio Out, the other silenced
-    assert out["status"] == "probed"
+    assert out["outcome"] == "applied"
     assert out["restored"] is True
     assert out["audioOut"] == "P: out1"
     assert out["cablesChanged"] == 2
@@ -150,8 +150,7 @@ def test_unsafe_transport_is_refused_before_any_write(rig):
     host.transport["arrangerRecordEnabled"] = True
     with pytest.raises(BridgeError) as e:
         probe(host)
-    assert e.value.error["code"] == "unsafe_state"
-    assert e.value.error["outcome"] == "not_dispatched"
+    assert e.value.error["reason"] == "unsafe_state"
     assert host.sets() == []
     assert host.transport["playing"] is True
     host.transport["arrangerRecordEnabled"] = None  # unobserved is not safe
@@ -168,7 +167,7 @@ def test_audible_output_is_refused_unless_allowed(rig):
     }
     with pytest.raises(BridgeError) as e:
         probe(host)
-    assert e.value.error["code"] == "not_silent"
+    assert e.value.error["reason"] == "not_isolated"
     assert host.sets() == []
     assert host.calls == []
     assert probe(host, allowAudible=True)["capture"]["audible"] is True
@@ -180,9 +179,10 @@ def test_unknown_module_or_port_writes_nothing(rig, port, fragment):
     host, _ = rig
     with pytest.raises(BridgeError) as e:
         probe(host, port=port)
-    assert e.value.error["code"] == "invalid_params"
+    assert e.value.error["reason"] == "invalid_params"
     assert fragment in e.value.error["message"]
     assert host.sets() == []
+    assert host.transport["playing"] is True, "an error means the transport was not stopped either"
 
 
 def test_no_audio_out_is_refused(rig):
@@ -191,35 +191,34 @@ def test_no_audio_out_is_refused(rig):
         host.h_modules_delete({"moduleId": iid})
     with pytest.raises(BridgeError) as e:
         probe(host)
-    assert e.value.error["code"] == "invalid_params"
+    assert e.value.error["reason"] == "invalid_params"
     assert "Audio Out" in e.value.error["message"]
+    assert host.transport["playing"] is True
 
 
 def test_capture_failure_still_restores_and_reports_the_capture_error(rig, monkeypatch):
     host, _ = rig
 
-    def spawn_dead(args):
-        NODES.append(args[2].split("node.name=")[1].split()[0])
-        return type("Dead", (FakeProc,), {"poll": lambda self: 1})(args[-1])
-
     monkeypatch.setattr(pipewire, "spawn", spawn_dead)
-    with pytest.raises(BridgeError) as e:
+    with pytest.raises(HostChanged) as changed:
         probe(host)
-    assert e.value.error["code"] == "audio_tool_failed"
+    result = changed.value.result
+    assert (result["outcome"], result["reason"]) == ("not_applied", "job_failed")
+    assert result["transportStopped"] is True
+    assert result["restored"] is True
     assert host.conns == host.original
 
 
 def test_failed_restore_reports_exactly_what_is_left(rig):
     host, _ = rig
     host.fail_on_set = 2
-    with pytest.raises(BridgeError) as e:
+    with pytest.raises(HostChanged) as e:
         probe(host)
-    err = e.value.error
-    assert err["code"] == "probe_restore_failed"
-    assert err["outcome"] == "unknown"
-    assert err["details"]["restoreError"]["code"] == "deadline_exceeded"
-    assert err["details"]["left"] == "unknown: reading or writing the graph failed; inspect with grid.graph"
-    assert {d["input"]: d["source"] for d in err["details"]["originally"]} == {
+    err = e.value.result
+    assert (err["outcome"], err["reason"]) == ("unknown", "job_failed")
+    assert err["restoreError"]["reason"] == "deadline"
+    assert err["left"] == "unknown: reading or writing the graph failed; inspect with grid.graph"
+    assert {d["input"]: d["source"] for d in err["originally"]} == {
         "P: out1.IN": "P: mix.OUT",
         "P: out2.IN": "P: alt.OUT",
     }
@@ -232,10 +231,10 @@ def test_restore_leaves_foreign_edits_alone_and_names_them(rig):
         host.conns[(host.out2, "IN")] = (host.mix, "OUT")
 
     host.after_spawn = meanwhile
-    with pytest.raises(BridgeError) as e:
+    with pytest.raises(HostChanged) as e:
         probe(host)
-    d = e.value.error["details"]
-    assert e.value.error["code"] == "probe_restore_failed"
+    d = e.value.result
+    assert d["reason"] == "job_failed"
     assert d["changedMeanwhile"] == [{"input": "P: out2.IN", "source": "P: mix.OUT", "wanted": "P: alt.OUT"}]
     assert host.conns[(host.out1, "IN")] == (host.mix, "OUT")  # the cable we did own is back
     assert host.conns[(host.out2, "IN")] == (host.mix, "OUT")  # theirs untouched
@@ -247,13 +246,12 @@ def test_partial_rewire_is_restored_from_the_real_state(rig):
 
     def half(p):  # applies the first entry, then reports partial
         original_set({"connections": p["connections"][:1]})
-        return {"status": "observed", "batchStatus": "partial", "completion": "complete", "connections": []}
+        return {"outcome": "not_applied", "connections": []}
 
     host.h_connections_set = lambda p: half(p) if host.set_calls == 1 else original_set(p)
-    with pytest.raises(BridgeError) as e:
+    with pytest.raises(HostChanged) as e:
         probe(host)
-    assert e.value.error["code"] == "internal_error"
-    assert e.value.error["outcome"] == "unknown"
+    assert e.value.result["outcome"] == "not_applied"
     assert host.conns == host.original
 
 
@@ -262,8 +260,7 @@ def test_inactive_engine_refuses_before_any_cable_is_touched(rig):
     host.engine = False
     with pytest.raises(BridgeError) as e:
         probe(host)
-    assert e.value.error["code"] == "engine_inactive"
-    assert e.value.error["outcome"] == "not_applied"
+    assert e.value.error["reason"] == "engine_inactive"
     assert host.sets() == []
     assert host.conns == host.original
 
@@ -287,8 +284,7 @@ def test_probe_keeps_the_wav_only_with_outpath(rig, tmp_path):
     assert out["wavPath"] == str(wav)
     with pytest.raises(BridgeError) as e:  # refused before any cable moves
         probe(host, outPath=str(wav))
-    assert e.value.error["code"] == "file_exists"
-    assert e.value.error["outcome"] == "not_dispatched"
+    assert e.value.error["reason"] == "target_exists"
     assert host.conns == host.original
     assert probe(host, outPath=str(wav), overwrite=True)["wavPath"] == str(wav)
     with pytest.raises(ValueError, match=re.escape("1 validation error for GridProbeArgs")):
@@ -310,3 +306,14 @@ def test_spectral_peaks_flag_low_notes_finer_than_one_bin_as_approximate():
     assert low.get("approximate") is True
     assert "approximate" not in high
     assert not math.isnan(high["midi"])
+
+
+def test_failed_restore_after_a_capture_error_reports_both(rig, monkeypatch):
+    host, _ = rig
+    host.fail_on_set = 2
+
+    monkeypatch.setattr(pipewire, "spawn", spawn_dead)
+    with pytest.raises(HostChanged) as e:
+        probe(host)
+    assert e.value.result["probeError"]["reason"] == "job_failed"
+    assert e.value.result["restoreError"]["reason"] == "deadline"

@@ -5,10 +5,9 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import com.google.gson.*;
 import java.util.*;
-import java.util.concurrent.CompletionException;
 import org.junit.jupiter.api.Test;
 
-/** Validation, safety, window and quarantine around a simulated native routing adapter; not native binding evidence. */
+/** Validation, safety, window and holds around a simulated native routing adapter; not native binding evidence. */
 public final class RoutingModuleTest {
     static final String A = HostFixture.A, B = HostFixture.B, C = HostFixture.C;
 
@@ -166,8 +165,7 @@ public final class RoutingModuleTest {
         f.host.transport.child("isPlaying").emit(true);
         JsonObject result = f.call("tracks.routing.get", json("{\"trackId\":\"" + A + "\",\"includeChoices\":true}"));
         assertTrue(
-                result.get("status").getAsString().equals("observed") && f.adapter.reads == 1 && f.adapter.writes == 0,
-                "get reads without writing");
+                !result.has("outcome") && f.adapter.reads == 1 && f.adapter.writes == 0, "get reads without writing");
         assertTrue(
                 f.adapter.lastChoices && f.adapter.lastSelf.id.equals(A) && f.adapter.lastBank.size() == 2,
                 "get passes the whole observed bank and includeChoices");
@@ -189,11 +187,9 @@ public final class RoutingModuleTest {
         Fixture f = new Fixture();
         JsonObject result = f.call("tracks.routing.set", outputTo(B));
         assertTrue(
-                f.adapter.writes == 1 && result.get("status").getAsString().equals("applied"),
+                f.adapter.writes == 1 && result.get("outcome").getAsString().equals("applied"),
                 "stopped transport admits the write");
-        assertTrue(
-                f.host.services.holds.descriptions().isEmpty(),
-                "an observed write clears the pending/quarantine state");
+        assertTrue(f.host.services.holds.list().isEmpty(), "an observed write clears the pending/quarantine state");
     }
 
     @Test
@@ -201,42 +197,33 @@ public final class RoutingModuleTest {
         Fixture f = new Fixture();
         f.adapter.unknown = true;
         JsonObject result = f.call("tracks.routing.set", outputTo(B));
+        assertTrue(result.get("outcome").getAsString().equals("unknown"), "unknown readback is returned, not hidden");
+        assertTrue(!f.host.services.holds.list().isEmpty(), "unknown readback quarantines routing writes");
+        assertRpcError("unresolved", f.start("tracks.routing.set", outputTo(B)));
         assertTrue(
-                result.get("completion").getAsString().equals("unknown"), "unknown readback is returned, not hidden");
-        assertTrue(!f.host.services.holds.descriptions().isEmpty(), "unknown readback quarantines routing writes");
-        assertRpcError("unresolved_mutation", f.start("tracks.routing.set", outputTo(B)));
-        assertTrue(
-                f.call("tracks.routing.get", json("{\"trackId\":\"" + A + "\"}"))
-                        .get("status")
-                        .getAsString()
-                        .equals("observed"),
+                !f.call("tracks.routing.get", json("{\"trackId\":\"" + A + "\"}"))
+                        .has("outcome"),
                 "reads stay available");
         Fixture thrown = new Fixture();
         thrown.adapter.failAfterWrite = true;
         HostOperation failed = thrown.start("tracks.routing.set", outputTo(B));
         thrown.drain();
-        assertTrue(failed.dispatched, "failure happened after dispatch");
-        {
-            CompletionException e = assertThrows(CompletionException.class, () -> failed.result.join());
-            assertTrue(((RpcException) e.getCause()).outcome.equals("unknown"), "post-dispatch failure is unknown");
-        }
-        assertRpcError("unresolved_mutation", thrown.start("devices.sidechain.set", sidechain()));
+        assertTrue(failed.dispatched(), "failure happened after dispatch");
+        assertUnknown("native_unavailable", failed);
+        assertRpcError("unresolved", thrown.start("devices.sidechain.set", sidechain()));
     }
 
     @Test
     void preDispatchRefusalDoesNotQuarantine() {
         Fixture f = new Fixture();
-        f.adapter.refuse = "kind_mismatch";
+        f.adapter.refuse = Reason.KIND_MISMATCH;
         HostOperation op = f.start("tracks.routing.set", outputTo(B));
         f.drain();
         assertRpcError("kind_mismatch", op);
         assertTrue(
-                !op.dispatched && f.host.services.holds.descriptions().isEmpty(),
+                !op.dispatched() && f.host.services.holds.list().isEmpty(),
                 "pre-dispatch refusal is not_applied and does not quarantine");
-        {
-            RpcException e = rejection(op);
-            assertTrue(e.outcome.equals("not_applied"), "refusal outcome not_applied");
-        }
+        assertTrue(!rejection(op).unknown, "refusal is an error: nothing changed");
     }
 
     @Test
@@ -361,7 +348,7 @@ public final class RoutingModuleTest {
         final Deque<Runnable> tasks = new ArrayDeque<>();
         int calls, reads, writes;
         boolean unknown, failAfterWrite, lastChoices;
-        String refuse;
+        Reason refuse;
         RoutingModule.TrackRef lastSelf;
         List<RoutingModule.TrackRef> lastBank;
         Object lastDevice;
@@ -378,7 +365,7 @@ public final class RoutingModuleTest {
             lastSelf = self;
             lastBank = bank;
             lastChoices = choices;
-            return Results.observed();
+            return new JsonObject();
         }
 
         public JsonObject trackSet(
@@ -398,7 +385,7 @@ public final class RoutingModuleTest {
             reads++;
             check.run();
             lastDevice = device;
-            return Results.observed();
+            return new JsonObject();
         }
 
         public JsonObject sidechainSet(
@@ -415,14 +402,23 @@ public final class RoutingModuleTest {
         JsonObject write(Runnable check, Runnable before) {
             calls++;
             check.run();
-            if (refuse != null) throw Errors.of(refuse, "simulated refusal", Outcome.NOT_APPLIED);
+            if (refuse != null) throw Errors.notApplied(refuse, "simulated refusal");
             before.run();
             writes++;
-            if (failAfterWrite) throw new RpcException("routing_unavailable", "simulated native failure", "unknown");
-            JsonObject out = Results.observed();
-            out.addProperty("status", unknown ? "unknown" : "applied");
-            out.addProperty("completion", unknown ? "unknown" : "observed");
+            if (failAfterWrite) throw Errors.unknown(Reason.NATIVE_UNAVAILABLE, "simulated native failure");
+            JsonObject out = new JsonObject();
+            out.addProperty("outcome", unknown ? "unknown" : "applied");
             return out;
         }
+    }
+
+    @Test
+    void unknownMethodAndUnboundNativeAccessAreRefused() {
+        assertRpcError("unknown_method", () -> RoutingModule.validateParams("tracks.routing.bogus", new JsonObject()));
+        HostFixture host = new HostFixture();
+        RoutingModule module = host.services.routing(HostFixture.SPECS, null);
+        HostOperation op = host.submit(module, "tracks.routing.get", json("{\"trackId\":\"" + A + "\"}"));
+        host.next();
+        assertRpcError("host_mismatch", op);
     }
 }

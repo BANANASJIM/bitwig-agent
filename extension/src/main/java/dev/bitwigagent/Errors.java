@@ -1,30 +1,49 @@
 package dev.bitwigagent;
 
-/** The only place protocol errors are built. */
+import com.google.gson.JsonObject;
+
+/** The only place failures are built and serialized. */
 public final class Errors {
     private Errors() {}
 
-    public static RpcException of(ErrorCode code, String message, Outcome outcome) {
-        return new RpcException(code.wire(), message, outcome.wire());
+    public static RpcException notApplied(Reason reason, String message) {
+        return new RpcException(reason, message, null, false);
     }
 
-    public static RpcException of(String code, String message, Outcome outcome) {
-        return new RpcException(code, message, outcome.wire());
+    public static RpcException notApplied(Reason reason, String message, String next) {
+        return new RpcException(reason, message, next, false);
     }
 
-    public static RpcException notApplied(ErrorCode code, String message) {
-        return of(code, message, Outcome.NOT_APPLIED);
+    /** A failure after a host change may have happened; it is reported as a result with outcome unknown. */
+    public static RpcException unknown(Reason reason, String message) {
+        return new RpcException(reason, message, null, true);
     }
 
-    public static RpcException unknown(ErrorCode code, String message) {
-        return of(code, message, Outcome.UNKNOWN);
+    public static RpcException of(Reason reason, String message, boolean changed) {
+        return new RpcException(reason, message, null, changed);
     }
 
     public static RpcException invalid(String message) {
-        return notApplied(ErrorCode.INVALID_PARAMS, message);
+        return notApplied(Reason.INVALID_PARAMS, message);
     }
 
-    public static RpcException withOutcome(RpcException error, Outcome outcome) {
-        return new RpcException(error.code, error.getMessage(), outcome.wire());
+    /** The wire error: {code, reason, message, next?}. */
+    static JsonObject error(RpcException error) {
+        JsonObject out = new JsonObject();
+        out.addProperty("code", error.code());
+        out.addProperty("reason", error.reason.wire());
+        out.addProperty("message", error.getMessage());
+        if (error.next != null) out.addProperty("next", error.next);
+        return out;
+    }
+
+    /** The wire result of a failure that may have changed state: {outcome: unknown, reason, message, next?}. */
+    static JsonObject unknownResult(RpcException error) {
+        JsonObject out = new JsonObject();
+        out.addProperty("outcome", Outcome.UNKNOWN.wire());
+        out.addProperty("reason", error.reason.wire());
+        out.addProperty("message", error.getMessage());
+        if (error.next != null) out.addProperty("next", error.next);
+        return out;
     }
 }

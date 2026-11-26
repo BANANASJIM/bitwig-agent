@@ -14,14 +14,14 @@ final class LauncherStructureLock {
     }
 
     void requireNoCursorOperation() {
-        if (selection.held()) throw Errors.notApplied(ErrorCode.BUSY, "Launcher editor operation is still pending");
+        if (selection.held()) throw Errors.notApplied(Reason.BUSY, "Launcher editor operation is still pending");
     }
 
     void requireNoSettingsWrite() {
-        if (holds.held(SETTINGS_PENDING) || holds.held(SETTINGS))
-            throw Errors.notApplied(
-                    ErrorCode.UNRESOLVED_MUTATION,
-                    "Launcher settings write is pending or unresolved; inspect state before further launcher writes");
+        if (holds.held(SETTINGS_PENDING))
+            throw Errors.notApplied(Reason.BUSY, "A launcher settings write is still pending.");
+        if (holds.held(SETTINGS))
+            throw holds.blocked(SETTINGS, "A launcher settings write is unresolved.", "Inspect launcher.get");
     }
 
     /** Scene duplicate/delete move slot rows: refuse while any of the above pins them. */
@@ -29,8 +29,9 @@ final class LauncherStructureLock {
         requireNoCursorOperation();
         requireNoSettingsWrite();
         if (holds.held(MUTATION))
-            throw Errors.notApplied(
-                    ErrorCode.UNRESOLVED_MUTATION,
-                    "A launcher mutation is unresolved; a scene edit would shift the slot rows it is quarantined by. Inspect launcher.list first.");
+            throw holds.blocked(
+                    MUTATION,
+                    "A launcher mutation is unresolved; a scene edit would shift the slot rows it holds.",
+                    "Inspect launcher.list");
     }
 }

@@ -206,12 +206,12 @@ final class DeviceModule implements HostModule {
 
     private static void requireRemotePage(Source source) {
         if (source.remoteRebindPending)
-            throw Errors.notApplied(ErrorCode.NOT_READY, "Remote source rebind awaits a host flush.");
+            throw Errors.notApplied(Reason.NOT_READY, "Remote source rebind awaits a host flush.");
         if (!source.pageNamesObserved
                 || !source.pageCountObserved
                 || !source.pageIndexObserved
                 || !source.pageNameObserved)
-            throw Errors.notApplied(ErrorCode.NOT_READY, "Remote page metadata has not been observed.");
+            throw Errors.notApplied(Reason.NOT_READY, "Remote page metadata has not been observed.");
     }
 
     private void remoteWrite(HostOperation op, String method, JsonObject p, Target target) {
@@ -219,26 +219,23 @@ final class DeviceModule implements HostModule {
         requireRemotePage(source);
         if (!remoteToken(target).equals(p.get("contextToken").getAsString()))
             throw Errors.notApplied(
-                    ErrorCode.STALE_CONTEXT, "Remote page/control observations changed; read a fresh context.");
+                    Reason.STALE_CONTEXT, "Remote page/control observations changed; read a fresh context.");
         String pageName = p.get("expectedPageName").getAsString();
         if (method.equals("devices.remote.page")) {
             int index = p.get("pageIndex").getAsInt();
             String[] names = source.page.pageNames().get();
             if (index >= source.page.pageCount().get() || index >= names.length || !pageName.equals(names[index]))
                 throw Errors.notApplied(
-                        ErrorCode.STALE_CONTEXT,
-                        "Requested remote page index/name is not in the observed page catalog.");
+                        Reason.STALE_CONTEXT, "Requested remote page index/name is not in the observed page catalog.");
             if (source.pageIndexFresh
                     && source.page.selectedPageIndex().get() == index
                     && pageName.equals(source.page.getName().get())) {
-                JsonObject result = remoteMetadata(target);
-                result.addProperty("verification", "already_observed_no_write");
-                op.result.complete(result);
+                op.result.complete(stamp(remoteMetadata(target), Outcome.ALREADY_MATCHED, null));
                 return;
             }
             long sequence = source.pageSequence;
             guard(op, target);
-            op.dispatched = true;
+            op.markDispatched();
             source.page.selectedPageIndex().set(index);
             observePage(op, target, index, pageName, sequence, observationEnd(op));
             return;
@@ -257,22 +254,20 @@ final class DeviceModule implements HostModule {
                 || !Double.isFinite(control.value().get())
                 || !name.equals(control.name().get()))
             throw Errors.notApplied(
-                    ErrorCode.STALE_CONTEXT,
+                    Reason.STALE_CONTEXT,
                     "Remote control is absent, unobserved, being remapped, or differs from its expected name/page.");
         double value = p.get("normalizedValue").getAsDouble();
         if (source.controlValuesFresh[index] && Math.abs(control.value().get() - value) <= HostLimits.TOLERANCE) {
-            JsonObject result = remoteMetadata(target);
-            result.addProperty("verification", "already_observed_no_write");
-            op.result.complete(result);
+            op.result.complete(stamp(remoteMetadata(target), Outcome.ALREADY_MATCHED, null));
             return;
         }
         String token = remoteToken(target);
         long sequence = source.controlSequences[index];
         guard(op, target);
         if (!token.equals(p.get("contextToken").getAsString()))
-            throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Remote control context changed before dispatch.");
+            throw Errors.notApplied(Reason.STALE_CONTEXT, "Remote control context changed before dispatch.");
         transportSafety.requirePlaybackSafe();
-        op.dispatched = true;
+        op.markDispatched();
         // Explicit absolute RPC writes must not wait for physical-controller takeover.
         control.value().setImmediately(value);
         observeRemote(op, target, index, value, token, sequence, observationEnd(op));
@@ -284,7 +279,8 @@ final class DeviceModule implements HostModule {
                 op,
                 end,
                 () -> {
-                    if (!matches(target)) return () -> uncertain(op, "target_changed_after_dispatch");
+                    if (!matches(target))
+                        return () -> uncertain(op, Reason.TARGET_CHANGED, "Device target changed after dispatch.");
                     Source source = target.source;
                     return source.pageSequence > sequence
                                     && source.page.selectedPageIndex().get() == index
@@ -296,10 +292,7 @@ final class DeviceModule implements HostModule {
     }
 
     private void finishPage(HostOperation op, Target target, boolean observed) {
-        JsonObject result = remoteMetadata(target);
-        result.addProperty("status", observed ? "observed" : "dispatched");
-        result.addProperty("verification", observed ? "page_observer_after_write" : "postcondition_not_observed");
-        op.result.complete(result);
+        op.result.complete(observedOrNot(remoteMetadata(target), observed));
     }
 
     private void observeRemote(
@@ -310,7 +303,8 @@ final class DeviceModule implements HostModule {
                 end,
                 () -> {
                     if (!matches(target) || !token.equals(remoteToken(target)))
-                        return () -> uncertain(op, "remote_context_changed_after_dispatch");
+                        return () -> uncertain(
+                                op, Reason.TARGET_CHANGED, "Remote page or control context changed after dispatch.");
                     Source source = target.source;
                     return source.controlValuesFresh[index]
                                     && source.controlSequences[index] > sequence
@@ -322,9 +316,7 @@ final class DeviceModule implements HostModule {
     }
 
     private void finishRemote(HostOperation op, Target target, double value, boolean observed) {
-        JsonObject result = remoteMetadata(target);
-        result.addProperty("status", observed ? "observed" : "dispatched");
-        result.addProperty("verification", observed ? "observer_after_write" : "postcondition_not_observed");
+        JsonObject result = observedOrNot(remoteMetadata(target), observed);
         result.addProperty("requestedNormalizedValue", value);
         op.result.complete(result);
     }
@@ -496,7 +488,7 @@ final class DeviceModule implements HostModule {
                 Params.number(p, "normalizedValue", 0, 1);
                 return;
             default:
-                throw Errors.notApplied(ErrorCode.UNKNOWN_METHOD, "Unknown device operation.");
+                throw Errors.notApplied(Reason.UNKNOWN_METHOD, "Unknown device operation.");
         }
     }
 
@@ -555,7 +547,7 @@ final class DeviceModule implements HostModule {
     }
 
     private static void invalid(String message) {
-        throw Errors.notApplied(ErrorCode.INVALID_PARAMS, message);
+        throw Errors.notApplied(Reason.INVALID_PARAMS, message);
     }
 
     @Override
@@ -573,7 +565,7 @@ final class DeviceModule implements HostModule {
             return;
         }
         if (mutation != null && !mutation.result.isDone())
-            throw Errors.notApplied(ErrorCode.BUSY, "Another device mutation is awaiting observations.");
+            throw Errors.notApplied(Reason.BUSY, "Another device mutation is awaiting observations.");
         mutation = op;
         if (method.equals("devices.insert")) {
             insert(op, p);
@@ -599,25 +591,19 @@ final class DeviceModule implements HostModule {
         if (method.equals("devices.select")) {
             guard(op, target);
             selection.requireFree();
-            op.dispatched = true;
+            op.markDispatched();
             target.source.device.selectInEditor();
-            JsonObject result = metadata(target);
-            result.addProperty("status", "dispatched");
-            result.addProperty("completion", "not_observed");
-            result.addProperty("verification", "selection_has_no_reliable_public_observer");
-            op.result.complete(result);
+            op.result.complete(stamp(metadata(target), Outcome.SENT, null));
             return;
         }
         boolean enabled = p.get("enabled").getAsBoolean();
         if (target.source.device.isEnabled().get() == enabled) {
-            JsonObject result = metadata(target);
-            result.addProperty("verification", "already_observed_no_write");
-            op.result.complete(result);
+            op.result.complete(stamp(metadata(target), Outcome.ALREADY_MATCHED, null));
             return;
         }
         long sequence = target.source.enabledSequence;
         guard(op, target);
-        op.dispatched = true;
+        op.markDispatched();
         target.source.device.isEnabled().set(enabled);
         observeEnabled(op, target, enabled, sequence, observationEnd(op));
     }
@@ -627,7 +613,7 @@ final class DeviceModule implements HostModule {
         DeviceSources.Source root = deviceSources.root(p);
         Source source =
                 sources[window.trackSlot(root.track.id)][p.get("deviceIndex").getAsInt()];
-        if (!source.ready()) throw Errors.notApplied(ErrorCode.NOT_READY, "Device metadata has not been observed.");
+        if (!source.ready()) throw Errors.notApplied(Reason.NOT_READY, "Device metadata has not been observed.");
         return new Target(root.track.id, root.track.slot, source.deviceIndex, root.name, source, root.revision);
     }
 
@@ -640,12 +626,11 @@ final class DeviceModule implements HostModule {
 
     private void guard(HostOperation op, Target target) {
         scheduler.check(op);
-        if (!matches(target))
-            throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Device target changed before dispatch.");
+        if (!matches(target)) throw Errors.notApplied(Reason.STALE_CONTEXT, "Device target changed before dispatch.");
     }
 
     private JsonObject metadata(Target target) {
-        JsonObject result = Results.observed();
+        JsonObject result = new JsonObject();
         JsonObject identity = new JsonObject();
         identity.addProperty("trackId", target.trackId);
         identity.addProperty("deviceIndex", target.index);
@@ -673,19 +658,16 @@ final class DeviceModule implements HostModule {
                 op,
                 end,
                 () -> {
-                    if (!matches(target)) return () -> uncertain(op, "target_changed_after_dispatch");
+                    if (!matches(target))
+                        return () -> uncertain(op, Reason.TARGET_CHANGED, "Device target changed after dispatch.");
                     if (target.source.enabledSequence <= sequence
                             || target.source.device.isEnabled().get() != enabled) return null;
                     return () -> {
-                        JsonObject result = metadata(target);
-                        result.addProperty("verification", "observer_after_write");
-                        op.result.complete(result);
+                        op.result.complete(stamp(metadata(target), Outcome.APPLIED, null));
                     };
                 },
                 () -> {
-                    JsonObject result = metadata(target);
-                    result.addProperty("status", "dispatched");
-                    result.addProperty("verification", "postcondition_not_observed");
+                    JsonObject result = observedOrNot(metadata(target), false);
                     result.addProperty("requestedEnabled", enabled);
                     op.result.complete(result);
                 });
@@ -738,14 +720,14 @@ final class DeviceModule implements HostModule {
                 anchor = p.get("deviceIndex").getAsInt();
                 if (anchor >= count)
                     throw Errors.notApplied(
-                            ErrorCode.TARGET_NOT_FOUND, "Anchor device index is beyond the observed device count.");
+                            Reason.TARGET_NOT_FOUND, "Anchor device index is beyond the observed device count.");
                 if (!sources[t][anchor]
                         .device
                         .name()
                         .get()
                         .equals(p.get("expectedDeviceName").getAsString()))
                     throw Errors.notApplied(
-                            ErrorCode.STALE_TARGET,
+                            Reason.STALE_TARGET,
                             "The device at index " + anchor + " is named \""
                                     + sources[t][anchor].device.name().get() + "\", not expectedDeviceName.");
                 index = position.equals("before") ? anchor : anchor + 1;
@@ -755,7 +737,7 @@ final class DeviceModule implements HostModule {
                 || !prefixMatches(t, state.revisions)
                 || window.devices(t).itemCount().get() != count
                 || window.devices(t).scrollPosition().get() != 0)
-            throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Insertion target changed before dispatch.");
+            throw Errors.notApplied(Reason.STALE_CONTEXT, "Insertion target changed before dispatch.");
         String kind = p.get("kind").getAsString();
         String value = p.get(kind.equals("file") ? "path" : "id").getAsString();
         InsertionPoint point;
@@ -778,7 +760,7 @@ final class DeviceModule implements HostModule {
         placed.addProperty("mode", position);
         placed.addProperty("index", index);
         edit.extra.add("position", placed);
-        op.dispatched = true;
+        op.markDispatched();
         insertAt(point, kind, value);
         observeEdit(op, edit, observationEnd(op));
     }
@@ -813,7 +795,7 @@ final class DeviceModule implements HostModule {
         int count = p.get("expectedChildCount").getAsInt();
         LayerView view = new LayerView(layer);
         if (view.count() != count)
-            throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Layer child count differs from expectedChildCount.");
+            throw Errors.notApplied(Reason.STALE_CONTEXT, "Layer child count differs from expectedChildCount.");
         DeviceChainEdit.Before before =
                 DeviceChainEdit.Before.capture(view, "Layer child count and window contents disagree.");
         boolean start = p.has("position") && p.get("position").getAsString().equals("start");
@@ -825,7 +807,7 @@ final class DeviceModule implements HostModule {
                 && Boolean.TRUE.equals(layer.exists)
                 && layerId.equals(layer.id);
         if (!context.getAsBoolean())
-            throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Layer target changed before dispatch.");
+            throw Errors.notApplied(Reason.STALE_CONTEXT, "Layer target changed before dispatch.");
         String kind = p.get("kind").getAsString();
         String value = p.get(kind.equals("file") ? "path" : "id").getAsString();
         Edit edit = new Edit(
@@ -835,7 +817,7 @@ final class DeviceModule implements HostModule {
                 DeviceChainEdit.Plan.insert(start ? 0 : count, before),
                 null,
                 context,
-                "layer_context_changed_after_dispatch");
+                "Layer context changed after dispatch.");
         edit.extra.addProperty("requestedIdentifierVerified", false);
         edit.extra.add("parent", parent.deepCopy());
         edit.extra.addProperty("layerId", layerId);
@@ -844,7 +826,7 @@ final class DeviceModule implements HostModule {
         placed.addProperty("mode", start ? "start" : "end");
         placed.addProperty("index", edit.plan.index);
         edit.extra.add("position", placed);
-        op.dispatched = true;
+        op.markDispatched();
         insertAt(
                 start ? layer.proxy.startOfDeviceChainInsertionPoint() : layer.proxy.endOfDeviceChainInsertionPoint(),
                 kind,
@@ -857,11 +839,11 @@ final class DeviceModule implements HostModule {
         transportSafety.requirePlaybackSafe();
         TopState state = captureTop(t, -1, "Device bank contents disagree with the observed device count.");
         if (index >= state.before.count)
-            throw Errors.notApplied(ErrorCode.TARGET_NOT_FOUND, "Device is beyond the observed device count.");
+            throw Errors.notApplied(Reason.TARGET_NOT_FOUND, "Device is beyond the observed device count.");
         guard(op, target);
         Edit edit = topEdit(target.trackId, t, DeviceChainEdit.Plan.delete(index, state.before), state, index);
         edit.extra.add("deleted", DeviceChainEdit.summary(index, state.before.names[index], state.before.types[index]));
-        op.dispatched = true;
+        op.markDispatched();
         target.source.device.deleteObject();
         observeEdit(op, edit, observationEnd(op));
     }
@@ -871,10 +853,8 @@ final class DeviceModule implements HostModule {
         transportSafety.requirePlaybackSafe();
         TopState state = captureTop(t, -1, "Device bank contents disagree with the observed device count.");
         int n = state.before.count;
-        if (from >= n)
-            throw Errors.notApplied(ErrorCode.TARGET_NOT_FOUND, "Device is beyond the observed device count.");
-        if (to >= n)
-            throw Errors.notApplied(ErrorCode.TARGET_NOT_FOUND, "toIndex is beyond the observed device count.");
+        if (from >= n) throw Errors.notApplied(Reason.TARGET_NOT_FOUND, "Device is beyond the observed device count.");
+        if (to >= n) throw Errors.notApplied(Reason.TARGET_NOT_FOUND, "toIndex is beyond the observed device count.");
         guard(op, target);
         DeviceChainEdit.Plan plan = DeviceChainEdit.Plan.move(from, to, state.before);
         Edit edit = topEdit(target.trackId, t, plan, state, 0);
@@ -885,11 +865,12 @@ final class DeviceModule implements HostModule {
         InsertionPoint point = to > from
                 ? sources[t][to].device.afterDeviceInsertionPoint()
                 : sources[t][to].device.beforeDeviceInsertionPoint();
-        op.dispatched = true;
+        op.markDispatched();
         point.moveDevices(target.source.device);
         if (plan.indistinguishable()) {
-            // Same names and types in the same order: the host cannot show whether anything moved.
-            finishEdit(op, edit, DeviceChainEdit.Outcome.ambiguous(), "move_indistinguishable_by_name_and_type");
+            edit.extra.addProperty(
+                    "hint", "Same names and types in the same order: the host cannot show whether anything moved.");
+            finishEdit(op, edit, DeviceChainEdit.Observation.ambiguous());
             return;
         }
         observeEdit(op, edit, observationEnd(op));
@@ -897,13 +878,13 @@ final class DeviceModule implements HostModule {
 
     /** Complete, ready top-level window: count, scroll, per-slot existence and the revisions of every present device. */
     private TopState captureTop(int t, int expectedCount, String staleMessage) {
-        if (!countObserved[t]) throw Errors.notApplied(ErrorCode.NOT_READY, "Device count has not been observed.");
+        if (!countObserved[t]) throw Errors.notApplied(Reason.NOT_READY, "Device count has not been observed.");
         int count = window.devices(t).itemCount().get();
         if (window.devices(t).scrollPosition().get() != 0 || (expectedCount >= 0 && count != expectedCount))
-            throw Errors.notApplied(ErrorCode.STALE_CONTEXT, staleMessage);
+            throw Errors.notApplied(Reason.STALE_CONTEXT, staleMessage);
         if (count > HostLimits.DEVICES)
             throw Errors.notApplied(
-                    ErrorCode.OUTSIDE_WINDOW,
+                    Reason.OUTSIDE_WINDOW,
                     "The chain is longer than the 16-device window; only inserts at a bounded count are supported.");
         long[] revisions = new long[count];
         for (int d = 0; d < HostLimits.DEVICES; d++) {
@@ -912,7 +893,7 @@ final class DeviceModule implements HostModule {
                     && source.identity.exists != null
                     && source.device.exists().get()
                     && source.device.position().get() != d)
-                throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Device count and bank contents disagree.");
+                throw Errors.notApplied(Reason.STALE_CONTEXT, "Device count and bank contents disagree.");
             if (d < count) revisions[d] = source.identity.revision;
         }
         return new TopState(count, revisions, DeviceChainEdit.Before.capture(new TopView(t), staleMessage));
@@ -928,7 +909,7 @@ final class DeviceModule implements HostModule {
                 prefix,
                 () -> window.trackMatches(trackId, window.at(t))
                         && window.devices(t).scrollPosition().get() == 0,
-                "insertion_track_or_window_changed");
+                "Track or device window changed after dispatch.");
     }
 
     private boolean prefixMatches(int t, long[] prefix) {
@@ -946,33 +927,31 @@ final class DeviceModule implements HostModule {
                 op,
                 end,
                 () -> {
-                    if (!edit.context.getAsBoolean()) return () -> uncertain(op, edit.contextLost);
-                    DeviceChainEdit.Outcome outcome = observedEdit(edit);
-                    return outcome.pending ? null : () -> finishEdit(op, edit, outcome, null);
+                    if (!edit.context.getAsBoolean())
+                        return () -> uncertain(op, Reason.TARGET_CHANGED, edit.contextLost);
+                    DeviceChainEdit.Observation outcome = observedEdit(edit);
+                    return outcome.pending ? null : () -> finishEdit(op, edit, outcome);
                 },
-                () -> finishEdit(op, edit, observedEdit(edit), null));
+                () -> finishEdit(op, edit, observedEdit(edit)));
     }
 
-    private DeviceChainEdit.Outcome observedEdit(Edit edit) {
+    private DeviceChainEdit.Observation observedEdit(Edit edit) {
         return edit.prefixRevisions != null && !prefixMatches(edit.slot, edit.prefixRevisions)
-                ? DeviceChainEdit.Outcome.ambiguous()
+                ? DeviceChainEdit.Observation.ambiguous()
                 : DeviceChainEdit.observe(edit.view, edit.plan);
     }
 
-    private void finishEdit(HostOperation op, Edit edit, DeviceChainEdit.Outcome outcome, String override) {
+    private void finishEdit(HostOperation op, Edit edit, DeviceChainEdit.Observation outcome) {
         DeviceChainEdit.View view = edit.view;
         DeviceChainEdit.Plan plan = edit.plan;
         boolean insert = plan.kind == DeviceChainEdit.INSERT;
-        String verification = override != null
-                ? override
-                : outcome.pending
-                        ? (insert
-                                ? "insertion_not_observed"
-                                : plan.kind == DeviceChainEdit.DELETE ? "deletion_not_observed" : "move_not_observed")
-                        : outcome.verification;
-        JsonObject result = Results.observed();
-        result.addProperty("status", outcome.ok ? "observed" : "dispatched");
-        result.addProperty("verification", verification);
+        JsonObject result = outcome.ok
+                ? stamp(new JsonObject(), Outcome.APPLIED, null)
+                : stamp(
+                        new JsonObject(),
+                        Outcome.UNKNOWN,
+                        outcome.pending ? Reason.NOT_OBSERVED : Reason.READBACK_MISMATCH);
+        if (outcome.ok) result.addProperty("verification", outcome.verification);
         result.addProperty("trackId", edit.trackId);
         result.addProperty("beforeCount", plan.before.count);
         result.addProperty("afterCount", view.count());
@@ -1119,12 +1098,18 @@ final class DeviceModule implements HostModule {
         return scheduler.observeUntil(op);
     }
 
-    private static void uncertain(HostOperation op, String reason) {
-        JsonObject result = new JsonObject();
-        result.addProperty("status", "dispatched");
-        result.addProperty("verification", reason);
-        result.addProperty("completion", "unknown");
-        op.result.complete(result);
+    private static void uncertain(HostOperation op, Reason reason, String message) {
+        op.result.complete(Errors.unknownResult(Errors.unknown(reason, message)));
+    }
+
+    private static JsonObject stamp(JsonObject result, Outcome outcome, Reason reason) {
+        result.addProperty("outcome", outcome.wire());
+        if (reason != null) result.addProperty("reason", reason.wire());
+        return result;
+    }
+
+    private static JsonObject observedOrNot(JsonObject result, boolean observed) {
+        return observed ? stamp(result, Outcome.APPLIED, null) : stamp(result, Outcome.UNKNOWN, Reason.NOT_OBSERVED);
     }
 
     private static JsonObject catalog() {
@@ -1133,7 +1118,7 @@ final class DeviceModule implements HostModule {
 
     /** Every factory device file under the installation, with category and description read from its localization resources at runtime. */
     static JsonObject catalog(String installation) {
-        JsonObject result = Results.observed();
+        JsonObject result = new JsonObject();
         result.addProperty("scope", "installed_bitwig_factory_devices");
         result.addProperty("completePluginCatalog", false);
         result.addProperty("verification", "local_file_presence_not_insertion_or_audio_proof");

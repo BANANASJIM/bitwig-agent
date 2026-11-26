@@ -8,39 +8,28 @@ from typing import Any, TypeVar
 from bitwig_agent.errors import BridgeError
 from bitwig_agent.grid.read import GridCall
 from bitwig_agent.protocol import TOOLS
+from bitwig_agent.protocol.base import SUCCEEDED, Outcome
 
 WRITE_TIMEOUT_MS = 10000
-CLEAN = ("applied", "already_matched")
 TOPOLOGY_PREFIX = "grid.modules."
 
 T = TypeVar("T")
 
 
 class Stop(Exception):
-    """A dispatched call ended unclean; carries the raw response."""
+    """A dispatched call ended unclean; carries the raw error or result (an error changed nothing)."""
 
-    def __init__(self, method: str, raw: dict[str, Any], outcome: str):
-        self.method, self.raw, self.outcome = method, raw, outcome
+    def __init__(self, method: str, raw: dict[str, Any]):
+        self.method, self.raw = method, raw
+        self.outcome: str = raw.get("outcome", Outcome.NOT_APPLIED.value)
+        error = raw.get("error")
+        self.reason: str | None = (error if isinstance(error, dict) else raw).get("reason")
         super().__init__(method)
 
 
-def verify(method: str, result: dict[str, Any], key: str | None = None) -> None:
-    entries = result.get(key) if key else None
-    bad = (
-        result.get("status") not in (None, "observed")
-        or result.get("batchStatus") not in (None, "applied")
-        or result.get("completion") == "unknown"
-        or (result.get("matchesRequested") is False and method == "grid.connections.set")
-        or any(e.get("status") not in CLEAN for e in entries or [])
-    )
-    if bad:
-        unknown = (
-            result.get("batchStatus") == "unknown"
-            or result.get("completion") == "unknown"
-            or any(e.get("status") == "unknown" for e in entries or [])
-            or result.get("status") == "unknown"
-        )
-        raise Stop(method, result, "unknown" if unknown else "not_applied")
+def verify(method: str, result: dict[str, Any]) -> None:
+    if Outcome(result["outcome"]) not in SUCCEEDED:
+        raise Stop(method, result)
 
 
 class Channel:
@@ -65,7 +54,7 @@ class Channel:
             host_params = {**self.target, **params} if "trackId" in spec.model.model_fields else params
             result: dict[str, Any] = await self.client.call(method, host_params, timeout)
         except BridgeError as exc:
-            raise Stop(method, {"error": exc.error}, exc.error.get("outcome", "unknown")) from exc
+            raise Stop(method, {"error": exc.error}) from exc
         return result
 
     async def read(self, reader: Callable[..., Awaitable[T]], *args: Any, **kwargs: Any) -> T:
@@ -74,4 +63,4 @@ class Channel:
         try:
             return await reader(call, *args, **kwargs)
         except BridgeError as exc:
-            raise Stop("grid.get", {"error": exc.error}, exc.error.get("outcome", "unknown")) from exc
+            raise Stop("grid.get", {"error": exc.error}) from exc

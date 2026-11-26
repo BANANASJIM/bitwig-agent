@@ -59,15 +59,16 @@ final class GridStepArrayWriter {
         float[] after = nativeWriter.current(binding.parameter);
         if (!same(after, next))
             throw Errors.of(
-                    changed ? ErrorCode.GRID_VERIFICATION_FAILED : ErrorCode.STALE_CONTEXT,
+                    changed ? Reason.READBACK_MISMATCH : Reason.STALE_CONTEXT,
                     "Native step array readback differs from the requested values; inspect state before another write.",
-                    changed ? Outcome.UNKNOWN : Outcome.NOT_APPLIED);
+                    changed);
         check.run();
         JsonObject result = values.parameterResult(binding, current);
+        result.addProperty("outcome", (changed ? Outcome.APPLIED : Outcome.ALREADY_MATCHED).wire());
         result.add("previousValues", request.expectedValues);
         result.add("requestedValues", request.values);
         result.addProperty("mutationDispatched", changed);
-        result.addProperty("verification", changed ? "exact_native_step_array_readback" : "already_matched");
+        result.addProperty("verification", "exact_native_step_array_readback");
         result.addProperty("nativeMutation", changed);
         result.addProperty("nativeUndo", changed);
         result.addProperty(
@@ -83,27 +84,22 @@ final class GridStepArrayWriter {
 
     /**
      * Kind, then exact CAS on the first expectedValues.size() live entries (independent of the live STEPS value, so a
-     * batch that also changes STEPS keeps its promise), then the prefix write bounds; stale before anything else.
+     * batch that also changes STEPS keeps its promise). Request.parse already bounds values by expectedValues.
      */
     private static void validate(JsonObject current, float[] live, GridParameterWriter.Request request) {
         if (!"steps".equals(request.kind) || !"steps".equals(current.get("kind").getAsString()))
             throw Errors.notApplied(
-                    ErrorCode.STALE_CONTEXT,
+                    Reason.STALE_CONTEXT,
                     "Parameter kind differs from the expected precondition; reacquire grid.parameters.get.");
         JsonArray expected = request.expectedValues;
         if (expected.size() > live.length)
             throw Errors.notApplied(
-                    ErrorCode.STALE_CONTEXT,
+                    Reason.STALE_CONTEXT,
                     "expectedValues is longer than the native array (" + live.length + "); reacquire grid.get.");
         for (int i = 0; i < expected.size(); i++)
             if ((float) expected.get(i).getAsDouble() != live[i])
                 throw Errors.notApplied(
-                        ErrorCode.STALE_CONTEXT,
-                        "Step values differ from the expected precondition; reacquire grid.get.");
-        if (request.values.size() > expected.size())
-            throw Errors.notApplied(
-                    ErrorCode.INVALID_PARAMS,
-                    "values must not be longer than expectedValues (" + expected.size() + ").");
+                        Reason.STALE_CONTEXT, "Step values differ from the expected precondition; reacquire grid.get.");
     }
 
     /** Element-wise float equality (so -0.0 equals 0.0), same length. */

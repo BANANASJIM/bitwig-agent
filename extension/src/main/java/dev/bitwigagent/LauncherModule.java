@@ -42,10 +42,10 @@ final class LauncherModule implements HostModule {
     // Ops that compare the cursor clip's note cells before and after; they need the observed loop inside one read
     // window.
     private static final Set<String> GRID_OPS = Set.of("transpose", "quantize", "duplicateContent");
-    private static final Map<String, ErrorCode> GRID_OP_NOT_OBSERVED = Map.of(
-            "transpose", ErrorCode.TRANSPOSE_NOT_OBSERVED,
-            "quantize", ErrorCode.QUANTIZE_NOT_OBSERVED,
-            "duplicateContent", ErrorCode.DUPLICATE_CONTENT_NOT_OBSERVED);
+    private static final Map<String, Reason> GRID_OP_NOT_OBSERVED = Map.of(
+            "transpose", Reason.NOT_OBSERVED,
+            "quantize", Reason.NOT_OBSERVED,
+            "duplicateContent", Reason.NOT_OBSERVED);
     private static final java.util.regex.Pattern RGB = java.util.regex.Pattern.compile("#[0-9a-fA-F]{6}");
     // channel defaults to 0; the five grid fields are all-or-none (omitted: window derived from the edits or the clip
     // loop).
@@ -94,7 +94,7 @@ final class LauncherModule implements HostModule {
     private final long[][] noteGenerations = new long[128][128];
     private long sequence, bindingGeneration;
     private GridObservation gridObservation;
-    // Only positive completion releases these holds; completed futures and later callbacks cannot reset quarantine.
+    // Only positive completion releases these holds; completed futures and later callbacks cannot release one.
     private Mutation cursorMutation;
     private boolean clipExistsReady, lengthReady;
     private final SceneBank sceneBank;
@@ -255,7 +255,7 @@ final class LauncherModule implements HostModule {
                 break;
             }
             default:
-                throw Errors.notApplied(ErrorCode.UNKNOWN_METHOD, "Unknown launcher method");
+                throw Errors.notApplied(Reason.UNKNOWN_METHOD, "Unknown launcher method");
         }
         Params.string(p, "trackId");
         if (p.has("slotIndex")) Params.integer(p, "slotIndex", 0, HostLimits.SCENES - 1);
@@ -442,15 +442,14 @@ final class LauncherModule implements HostModule {
 
     private void appendScenes(HostOperation op, JsonObject p) {
         int count = p.has("count") ? Params.integer(p, "count", 1, HostLimits.SCENES) : 1;
-        if (!window.observed())
-            throw Errors.notApplied(ErrorCode.NOT_READY, "Track bank has not reported its size yet.");
+        if (!window.observed()) throw Errors.notApplied(Reason.NOT_READY, "Track bank has not reported its size yet.");
         int before = sceneBank.itemCount().get();
         if (before + count > HostLimits.SCENES)
             throw Errors.notApplied(
-                    ErrorCode.SCENE_LIMIT,
+                    Reason.LIMIT_REACHED,
                     "The project has " + before + " scene(s); the launcher tools address at most " + HostLimits.SCENES
                             + ", so " + count + " more cannot be appended");
-        op.dispatched = true;
+        op.markDispatched();
         // Project.createScene() is documented to create "a new empty scene as the last scene"; existing slot indices do
         // not move.
         for (int i = 0; i < count; i++) project.createScene();
@@ -462,8 +461,7 @@ final class LauncherModule implements HostModule {
                     return sceneBank.itemCount().get() == before + count;
                 },
                 () -> {
-                    JsonObject out = Results.observed();
-                    out.addProperty("status", "observed");
+                    JsonObject out = Results.outcome(Outcome.APPLIED);
                     out.addProperty("verification", "scene_count");
                     out.addProperty("sceneCountBefore", before);
                     out.addProperty("sceneCount", before + count);
@@ -475,10 +473,10 @@ final class LauncherModule implements HostModule {
                 },
                 () -> {
                     throw Errors.unknown(
-                            ErrorCode.SCENE_COUNT_NOT_OBSERVED,
+                            Reason.NOT_OBSERVED,
                             "Scene creation was dispatched, but the scene count did not reach " + (before + count)
                                     + " (observed " + sceneBank.itemCount().get()
-                                    + "); inspect launcher.list and do not blindly repeat");
+                                    + "); inspect launcher.list and do not repeat");
                 });
     }
 
@@ -506,7 +504,7 @@ final class LauncherModule implements HostModule {
         Track track = window.track(id);
         int t = window.trackSlot(id);
         if (track.clipLauncherSlotBank().scrollPosition().get() != 0)
-            throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Launcher bank is not at scene offset zero");
+            throw Errors.notApplied(Reason.STALE_CONTEXT, "Launcher bank is not at scene offset zero");
         if (method.equals("launcher.list")) {
             JsonObject out = base(id, -1);
             JsonArray entries = new JsonArray();
@@ -521,9 +519,9 @@ final class LauncherModule implements HostModule {
             return;
         }
         if (method.equals("launcher.stop")) {
-            if (!stopReady[t]) throw Errors.notApplied(ErrorCode.NOT_READY, "Track stop state has not been observed");
+            if (!stopReady[t]) throw Errors.notApplied(Reason.NOT_READY, "Track stop state has not been observed");
             guard(op, id, track);
-            op.dispatched = true;
+            op.markDispatched();
             track.clipLauncherSlotBank().stop();
             awaitPlayback(op, id, track, null, -1, until(op));
             return;
@@ -532,7 +530,7 @@ final class LauncherModule implements HostModule {
         int scenes = track.clipLauncherSlotBank().itemCount().get();
         if (j >= scenes)
             throw Errors.notApplied(
-                    ErrorCode.SLOT_OUT_OF_RANGE,
+                    Reason.OUT_OF_BOUNDS,
                     "slotIndex " + j + " does not exist: the project has " + scenes
                             + " scene(s). Append scenes with scenes.append, then re-run launcher.list");
         Slot slot = slots[t][j];
@@ -541,7 +539,7 @@ final class LauncherModule implements HostModule {
             requireContent(slot);
             guard(op, id, track);
             transportSafety.requirePlaybackSafe();
-            op.dispatched = true;
+            op.markDispatched();
             slot.api.launch();
             awaitPlayback(op, id, track, slot, j, until(op));
             return;
@@ -550,10 +548,10 @@ final class LauncherModule implements HostModule {
         if (!method.equals("notes.read")) requireResolved(id, slot, j);
         if (method.equals("launcher.create")) {
             if (slot.api.hasContent().get())
-                throw Errors.notApplied(ErrorCode.SLOT_OCCUPIED, "Create only accepts an observed empty slot");
+                throw Errors.notApplied(Reason.TARGET_EXISTS, "Create only accepts an observed empty slot");
             guard(op, id, track);
+            op.markDispatched();
             beginMutation(id, track, slot, j, method);
-            op.dispatched = true;
             slot.api.createEmptyClip(Params.integer(p, "lengthBeats", 1, MAX_CLIP_BEATS));
             long end = until(op);
             JsonObject request = p;
@@ -567,13 +565,10 @@ final class LauncherModule implements HostModule {
                     () -> bind(op, id, track, slot, j, request, "launcher.create", end),
                     () -> {
                         JsonObject out = base(id, j);
-                        out.addProperty("status", "dispatched");
-                        out.addProperty("verification", "content_not_observed");
                         if (request.has("notes")) out.addProperty("noteWrite", "not_attempted");
-                        out.addProperty("mutationUnresolved", true);
-                        out.addProperty("quarantine", "extension_instance");
                         out.add("slot", slotJson(slot, j));
-                        op.result.complete(out);
+                        op.result.complete(unresolved(
+                                out, Reason.NOT_OBSERVED, "The new clip's content was not observed in the slot."));
                     });
         } else if (method.equals("launcher.import")) {
             importFile(op, id, track, slot, j, p);
@@ -598,13 +593,12 @@ final class LauncherModule implements HostModule {
     private void requireResolved(String id, Slot slot, int index) {
         lock.requireNoSettingsWrite();
         for (Mutation mutation : mutations()) {
-            // Keep both the logical target and its native proxy quarantined across track-bank rebinding.
+            // Keep both the logical target and its native proxy held across track-bank rebinding.
             if (mutation.slot == slot || mutation.trackId.equals(id) && mutation.index == index)
-                throw Errors.notApplied(
-                        ErrorCode.UNRESOLVED_MUTATION,
-                        mutation.description()
-                                + " Completion remains unresolved; create/import/note writes are quarantined for this extension instance."
-                                + " Read-only inspection is allowed; an empty slot or elapsed time does not release quarantine.");
+                throw holds.blocked(
+                        LauncherStructureLock.MUTATION,
+                        mutation.description() + " Writes on this slot are held; reads still work.",
+                        "Inspect launcher.list and notes.read");
         }
     }
 
@@ -630,19 +624,19 @@ final class LauncherModule implements HostModule {
     private void importFile(HostOperation op, String id, Track track, Slot slot, int index, JsonObject p) {
         Path path = Params.absoluteFilePath(p, "path");
         if (!Files.isRegularFile(path) || !Files.isReadable(path))
-            throw Errors.notApplied(ErrorCode.FILE_UNAVAILABLE, "Import requires a readable regular local file.");
+            throw Errors.notApplied(Reason.INVALID_FILE, "Import requires a readable regular local file.");
         if (slot.api.hasContent().get())
-            throw Errors.notApplied(ErrorCode.SLOT_OCCUPIED, "Import only accepts an observed empty slot.");
+            throw Errors.notApplied(Reason.TARGET_EXISTS, "Import only accepts an observed empty slot.");
         MidiImportPreflight.validate(path);
         InsertionPoint insertion = slot.api.replaceInsertionPoint();
         // Resolve everything first, then recheck the target, safety and deadline at the mutation boundary.
         guard(op, id, track);
         transportSafety.requirePlaybackSafe();
         if (slot.api.hasContent().get())
-            throw Errors.notApplied(ErrorCode.SLOT_OCCUPIED, "Import only accepts an observed empty slot.");
+            throw Errors.notApplied(Reason.TARGET_EXISTS, "Import only accepts an observed empty slot.");
         long before = slot.contentVersion;
+        op.markDispatched();
         beginMutation(id, track, slot, index, "launcher.import");
-        op.dispatched = true;
         insertion.insertFile(path.toString());
         awaitGuarded(
                 op,
@@ -652,7 +646,7 @@ final class LauncherModule implements HostModule {
                         && slot.observedContent
                         && slot.api.hasContent().get(),
                 () -> {
-                    JsonObject out = base(id, index);
+                    JsonObject out = written(id, index, Outcome.APPLIED);
                     out.addProperty("verification", "slot_content_transition");
                     out.addProperty("requestedFileVerified", false);
                     out.add("slot", slotJson(slot, index));
@@ -661,8 +655,8 @@ final class LauncherModule implements HostModule {
                 },
                 () -> {
                     throw Errors.unknown(
-                            ErrorCode.IMPORT_NOT_OBSERVED,
-                            "File insertion was dispatched, but a fresh slot content transition was not observed; create/import/note writes remain quarantined for this extension instance. Read-only inspection is allowed.");
+                            Reason.NOT_OBSERVED,
+                            "File insertion was dispatched, but a fresh slot content transition was not observed; writes on this slot are held until acked after inspection.");
                 });
     }
 
@@ -672,7 +666,7 @@ final class LauncherModule implements HostModule {
         gridObservation = null;
         bindingGeneration++;
         // clips.edit counts as dispatched only at its mutation: selecting alone leaves the clip untouched.
-        op.dispatched = !method.equals("clips.edit") && !method.equals("launcher.set");
+        if (!method.equals("clips.edit") && !method.equals("launcher.set")) op.markDispatched();
         slot.api.select();
         scheduler.schedule(op, () -> awaitBinding(op, id, track, slot, index, p, method, end), 40);
     }
@@ -701,9 +695,9 @@ final class LauncherModule implements HostModule {
                 },
                 () -> {
                     throw Errors.of(
-                            ErrorCode.TARGET_NOT_OBSERVED,
+                            Reason.NOT_OBSERVED,
                             "Cursor slot identity or clip content was not observed",
-                            op.dispatched ? Outcome.UNKNOWN : Outcome.NOT_APPLIED);
+                            op.dispatched());
                 });
     }
 
@@ -754,11 +748,12 @@ final class LauncherModule implements HostModule {
     private void finishCreate(
             HostOperation op, String id, Track track, Slot slot, int index, JsonObject p, boolean matches) {
         JsonObject out = base(id, index);
-        out.addProperty("status", matches ? "observed" : "dispatched");
-        out.addProperty("verification", matches ? "slot_content_name_length" : "readback_mismatch");
         out.add("slot", slotJson(slot, index));
         addClipMetadata(out);
-        if (matches) finishMutation();
+        if (matches) {
+            out.addProperty("verification", "slot_content_name_length");
+            finishMutation();
+        }
         if (matches && p.has("notes")) {
             // Clip creation is complete and released. The note write is an ordinary notes.edit child sharing the
             // deadline;
@@ -767,24 +762,23 @@ final class LauncherModule implements HostModule {
             selection.handOff(child);
             child.result.whenComplete((written, error) -> {
                 if (error == null) {
-                    out.addProperty("status", written.get("status").getAsString());
+                    out.addProperty(
+                            "outcome",
+                            Outcome.APPLIED.worst(Results.outcomeOf(written)).wire());
                     out.add("noteWrite", written);
                 } else {
                     Throwable cause =
                             error instanceof java.util.concurrent.CompletionException && error.getCause() != null
                                     ? error.getCause()
                                     : error;
-                    JsonObject failure = new JsonObject();
-                    failure.addProperty(
-                            "code",
-                            cause instanceof RpcException
-                                    ? ((RpcException) cause).code
-                                    : ErrorCode.INTERNAL_ERROR.wire());
-                    failure.addProperty(
+                    RpcException rpc = cause instanceof RpcException
+                            ? (RpcException) cause
+                            : Errors.notApplied(Reason.INTERNAL, String.valueOf(cause.getMessage()));
+                    JsonObject failure = Errors.unknownResult(rpc);
+                    if (!rpc.unknown) failure.addProperty("outcome", Outcome.NOT_APPLIED.wire());
+                    out.addProperty(
                             "outcome",
-                            cause instanceof RpcException ? ((RpcException) cause).outcome : Outcome.UNKNOWN.wire());
-                    failure.addProperty("message", String.valueOf(cause.getMessage()));
-                    out.addProperty("status", "dispatched");
+                            Outcome.APPLIED.worst(Results.outcomeOf(failure)).wire());
                     out.add("noteWrite", failure);
                 }
                 op.result.complete(out);
@@ -796,12 +790,14 @@ final class LauncherModule implements HostModule {
             }
             return;
         }
-        if (!matches) {
-            if (p.has("notes")) out.addProperty("noteWrite", "not_attempted");
-            out.addProperty("mutationUnresolved", true);
-            out.addProperty("quarantine", "extension_instance");
+        if (matches) {
+            out.addProperty("outcome", Outcome.APPLIED.wire());
+            op.result.complete(out);
+            return;
         }
-        op.result.complete(out);
+        if (p.has("notes")) out.addProperty("noteWrite", "not_attempted");
+        op.result.complete(
+                unresolved(out, Reason.READBACK_MISMATCH, "The new clip's name or length differs from the request."));
     }
 
     // ---- launcher.set launch fields: public Clip properties of the cursor clip, so the clip is selected (unlike the
@@ -822,12 +818,12 @@ final class LauncherModule implements HostModule {
         Track track = window.track(id);
         int t = window.trackSlot(id);
         if (track.clipLauncherSlotBank().scrollPosition().get() != 0)
-            throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Launcher bank is not at scene offset zero");
+            throw Errors.notApplied(Reason.STALE_CONTEXT, "Launcher bank is not at scene offset zero");
         int j = Params.integer(p, "slotIndex", 0, HostLimits.SCENES - 1);
         int scenes = track.clipLauncherSlotBank().itemCount().get();
         if (j >= scenes)
             throw Errors.notApplied(
-                    ErrorCode.SLOT_OUT_OF_RANGE,
+                    Reason.OUT_OF_BOUNDS,
                     "slotIndex " + j + " does not exist: the project has " + scenes + " scene(s).");
         Slot slot = slots[t][j];
         ready(slot);
@@ -838,7 +834,7 @@ final class LauncherModule implements HostModule {
                 actual = slot.api.name().get();
         if (!actual.equals(expected))
             throw Errors.notApplied(
-                    ErrorCode.STALE_TARGET,
+                    Reason.STALE_TARGET,
                     "Slot " + j + " holds clip \"" + actual + "\", not expectedClipName; re-read launcher.list");
         // Options are the host's own list; reject before the selection moves.
         if (p.has("launchQuantization"))
@@ -875,14 +871,14 @@ final class LauncherModule implements HostModule {
             HostOperation op, String id, Track track, Slot slot, int index, JsonObject p, long end) {
         cursorGuard(op, id, track, slot);
         if (!p.get("expectedClipName").getAsString().equals(slot.api.name().get()))
-            throw Errors.notApplied(ErrorCode.STALE_TARGET, "The bound clip no longer has expectedClipName.");
+            throw Errors.notApplied(Reason.STALE_TARGET, "The bound clip no longer has expectedClipName.");
         transportSafety.guardStopped(launchSafety);
         // Only differing fields are written; a written field counts only once its own observer fires after the write.
         long[] before = launchSequence.clone();
         Set<String> written = new HashSet<>();
         for (String key : LAUNCH_FIELDS) {
             if (!p.has(key) || launchValue(key).equals(p.get(key))) continue;
-            op.dispatched = true;
+            op.markDispatched();
             written.add(key);
             JsonElement value = p.get(key);
             if (key.equals("launchQuantization")) clip.launchQuantization().set(value.getAsString());
@@ -903,16 +899,12 @@ final class LauncherModule implements HostModule {
                 () -> cursorGuard(op, id, track, slot),
                 end,
                 matches,
-                () -> op.result.complete(launchDone(id, index, p, slot, true, written, before)),
-                () -> op.result.complete(launchDone(id, index, p, slot, false, written, before)));
+                () -> op.result.complete(launchDone(id, index, p, slot, written, before)),
+                () -> op.result.complete(launchDone(id, index, p, slot, written, before)));
     }
 
-    private JsonObject launchDone(
-            String id, int index, JsonObject p, Slot slot, boolean observed, Set<String> written, long[] before) {
+    private JsonObject launchDone(String id, int index, JsonObject p, Slot slot, Set<String> written, long[] before) {
         JsonObject out = base(id, index);
-        out.addProperty("status", observed ? "observed" : "dispatched");
-        out.addProperty("completion", observed ? "observed" : "unknown");
-        out.addProperty("matchesRequested", observed);
         out.addProperty("name", slot.api.name().get());
         out.addProperty("scope", "cursor_clip_launch_settings");
         out.addProperty("selectionSideEffect", "launcher_cursor_clip_selected");
@@ -920,18 +912,23 @@ final class LauncherModule implements HostModule {
         for (int i = 0; i < LAUNCH_FIELDS.size(); i++) {
             String key = LAUNCH_FIELDS.get(i);
             if (!p.has(key)) continue;
-            JsonObject f = new JsonObject();
-            f.add("requested", p.get(key));
-            f.add("observed", launchValue(key));
             boolean match = launchValue(key).equals(p.get(key)), fresh = launchSequence[i] > before[i];
-            f.addProperty("matchesRequested", match && (fresh || !written.contains(key)));
-            f.addProperty(
-                    "verification",
-                    !written.contains(key)
-                            ? (match ? "already_matched_readback" : "readback_mismatch")
-                            : !fresh ? "not_observed" : match ? "observer_after_write" : "readback_mismatch");
-            fields.add(key, f);
+            Outcome outcome = !match
+                    ? Outcome.UNKNOWN
+                    : !written.contains(key) ? Outcome.ALREADY_MATCHED : fresh ? Outcome.APPLIED : Outcome.UNKNOWN;
+            Reason reason = outcome != Outcome.UNKNOWN ? null : match ? Reason.NOT_OBSERVED : Reason.READBACK_MISMATCH;
+            fields.add(key, Results.field(p.get(key), launchValue(key), outcome, reason));
         }
+        Outcome outcome = Results.worst(fields.asMap().values());
+        out.addProperty("outcome", outcome.wire());
+        if (!outcome.succeeded())
+            for (var field : fields.entrySet()) {
+                JsonElement reason = field.getValue().getAsJsonObject().get("reason");
+                if (reason != null) {
+                    out.add("reason", reason);
+                    break;
+                }
+            }
         out.add("fields", fields);
         JsonObject options = new JsonObject();
         options.add("launchQuantization", EnumOptions.json(clip.launchQuantization()));
@@ -949,7 +946,7 @@ final class LauncherModule implements HostModule {
                 actual = slot.api.name().get();
         if (!actual.equals(expected))
             throw Errors.notApplied(
-                    ErrorCode.STALE_TARGET,
+                    Reason.STALE_TARGET,
                     "Slot " + index + " holds clip \"" + actual + "\", not expectedClipName; re-read launcher.list");
         String kind = Params.string(p, "op");
         if (kind.equals("delete")) deleteClip(op, id, track, slot, index);
@@ -969,18 +966,19 @@ final class LauncherModule implements HostModule {
         }
     }
 
-    private JsonObject clipResult(String id, int index, String kind, String verification) {
-        JsonObject out = base(id, index);
+    /** {@code verification} says how an applied edit was observed; null for any other outcome. */
+    private JsonObject clipResult(String id, int index, String kind, Outcome outcome, String verification) {
+        JsonObject out = written(id, index, outcome);
         out.addProperty("op", kind);
-        out.addProperty("verification", verification);
+        if (verification != null) out.addProperty("verification", verification);
         return out;
     }
 
-    private RpcException unobserved(ErrorCode code, String what) {
+    private RpcException unobserved(Reason code, String what) {
         return Errors.unknown(
                 code,
                 what
-                        + " was dispatched but its outcome was not observed; this slot stays quarantined for this extension instance."
+                        + " was dispatched but its outcome was not observed; writes on this slot are held until acked after inspection."
                         + " Inspect with launcher.list / notes.read, never retry.");
     }
 
@@ -990,12 +988,12 @@ final class LauncherModule implements HostModule {
                 || slot.api.isPlaybackQueued().get()
                 || slot.api.isRecording().get())
             throw Errors.notApplied(
-                    ErrorCode.UNSAFE_STATE, "Delete requires the clip to be neither playing, queued nor recording.");
+                    Reason.UNSAFE_STATE, "Delete requires the clip to be neither playing, queued nor recording.");
         guard(op, id, track);
         transportSafety.guardStopped(safety);
+        op.markDispatched();
         beginMutation(id, track, slot, index, "clips.edit delete");
         long before = cursorMutation.contentBefore;
-        op.dispatched = true;
         slot.api.deleteObject();
         awaitGuarded(
                 op,
@@ -1005,13 +1003,13 @@ final class LauncherModule implements HostModule {
                         && !slot.observedContent
                         && !slot.api.hasContent().get(),
                 () -> {
-                    JsonObject out = clipResult(id, index, "delete", "slot_empty");
+                    JsonObject out = clipResult(id, index, "delete", Outcome.APPLIED, "slot_empty");
                     out.add("slot", slotJson(slot, index));
                     finishMutation();
                     op.result.complete(out);
                 },
                 () -> {
-                    throw unobserved(ErrorCode.DELETE_NOT_OBSERVED, "Clip delete");
+                    throw unobserved(Reason.NOT_OBSERVED, "Clip delete");
                 });
     }
 
@@ -1027,19 +1025,19 @@ final class LauncherModule implements HostModule {
             String name) {
         if (target >= scenes)
             throw Errors.notApplied(
-                    ErrorCode.SLOT_OUT_OF_RANGE,
+                    Reason.OUT_OF_BOUNDS,
                     "targetSlotIndex " + target + " does not exist: the project has " + scenes
                             + " scene(s). Append scenes with scenes.append, then re-run launcher.list");
-        if (target == index) throw Errors.notApplied(ErrorCode.SLOT_OCCUPIED, "targetSlotIndex is the source slot");
+        if (target == index) throw Errors.notApplied(Reason.TARGET_EXISTS, "targetSlotIndex is the source slot");
         Slot to = slots[t][target];
         ready(to);
         requireResolved(id, to, target);
         if (to.api.hasContent().get())
-            throw Errors.notApplied(ErrorCode.SLOT_OCCUPIED, "copyTo only accepts an observed empty target slot");
+            throw Errors.notApplied(Reason.TARGET_EXISTS, "copyTo only accepts an observed empty target slot");
         guard(op, id, track);
+        op.markDispatched();
         beginMutation(id, track, to, target, "clips.edit copyTo");
         long before = cursorMutation.contentBefore;
-        op.dispatched = true;
         // copySlotsOrScenes copies the supplied slots to this insertion point; copyFrom's direction is ambiguous in the
         // javadoc.
         to.api.replaceInsertionPoint().copySlotsOrScenes(slot.api);
@@ -1048,8 +1046,12 @@ final class LauncherModule implements HostModule {
                 && to.api.hasContent().get();
         Runnable ok = () -> {
             String copied = to.api.name().get();
-            JsonObject out =
-                    clipResult(id, index, "copyTo", copied.equals(name) ? "target_content_and_name" : "target_content");
+            JsonObject out = clipResult(
+                    id,
+                    index,
+                    "copyTo",
+                    Outcome.APPLIED,
+                    copied.equals(name) ? "target_content_and_name" : "target_content");
             if (!copied.equals(name)) {
                 JsonObject changed = new JsonObject();
                 changed.addProperty("from", name);
@@ -1071,7 +1073,7 @@ final class LauncherModule implements HostModule {
                 ok,
                 () -> {
                     if (present.getAsBoolean()) ok.run();
-                    else throw unobserved(ErrorCode.COPY_NOT_OBSERVED, "Clip copy");
+                    else throw unobserved(Reason.NOT_OBSERVED, "Clip copy");
                 });
     }
 
@@ -1089,7 +1091,7 @@ final class LauncherModule implements HostModule {
     }
 
     /** Ops on the bound launcher cursor clip. Idempotent absolute setters (rename/resize/color) that cannot be read back report
-     *  status=dispatched; transpose/quantize/duplicateContent are not idempotent and latch the per-slot quarantine when unobserved. */
+     *  outcome unknown (readback_mismatch); transpose/quantize/duplicateContent are not idempotent and hold the slot when unobserved. */
     private void cursorClipEdit(
             HostOperation op, String id, Track track, Slot slot, int index, JsonObject p, long end) {
         cursorGuard(op, id, track, slot);
@@ -1124,7 +1126,7 @@ final class LauncherModule implements HostModule {
         else gridEdit(op, id, track, slot, index, p, kind, end);
     }
 
-    /** Dispatch an idempotent write unless the readback already matches; unobserved after the window is status=dispatched, no quarantine. */
+    /** Dispatch an idempotent write unless the readback already matches; unobserved after the window is unknown, no hold. */
     private void setAndRead(
             HostOperation op,
             String id,
@@ -1137,23 +1139,28 @@ final class LauncherModule implements HostModule {
             Runnable write,
             String verification) {
         if (matches.getAsBoolean()) {
-            op.result.complete(clipDone(id, index, kind, "already_matched_readback", slot, true));
+            op.result.complete(clipDone(id, index, kind, Outcome.ALREADY_MATCHED, null, slot));
             return;
         }
-        op.dispatched = true;
+        op.markDispatched();
         write.run();
         awaitGuarded(
                 op,
                 () -> cursorGuard(op, id, track, slot),
                 end,
                 matches,
-                () -> op.result.complete(clipDone(id, index, kind, verification, slot, true)),
-                () -> op.result.complete(clipDone(id, index, kind, "readback_mismatch", slot, false)));
+                () -> op.result.complete(clipDone(id, index, kind, Outcome.APPLIED, verification, slot)),
+                () -> op.result.complete(clipUnread(id, index, kind, slot)));
     }
 
-    private JsonObject clipDone(String id, int index, String kind, String verification, Slot slot, boolean observed) {
-        JsonObject out = clipResult(id, index, kind, verification);
-        out.addProperty("status", observed ? "observed" : "dispatched");
+    private JsonObject clipUnread(String id, int index, String kind, Slot slot) {
+        JsonObject out = clipDone(id, index, kind, Outcome.UNKNOWN, null, slot);
+        out.addProperty("reason", Reason.READBACK_MISMATCH.wire());
+        return out;
+    }
+
+    private JsonObject clipDone(String id, int index, String kind, Outcome outcome, String verification, Slot slot) {
+        JsonObject out = clipResult(id, index, kind, outcome, verification);
         out.add("slot", slotJson(slot, index));
         addClipMetadata(out);
         out.addProperty("color", hex());
@@ -1165,10 +1172,10 @@ final class LauncherModule implements HostModule {
         BooleanSupplier matches =
                 () -> clip.getLoopLength().get() == length && clip.getPlayStop().get() == start + length;
         if (matches.getAsBoolean()) {
-            op.result.complete(clipDone(id, index, "resize", "already_matched_readback", slot, true));
+            op.result.complete(clipDone(id, index, "resize", Outcome.ALREADY_MATCHED, null, slot));
             return;
         }
-        op.dispatched = true;
+        op.markDispatched();
         clip.getLoopLength().set(length);
         // Playback stop follows the loop end once the loop change is observed; setting both blindly can be clamped by
         // the host.
@@ -1185,10 +1192,10 @@ final class LauncherModule implements HostModule {
                             end,
                             matches,
                             () -> op.result.complete(
-                                    clipDone(id, index, "resize", "loop_length_play_stop", slot, true)),
-                            () -> op.result.complete(clipDone(id, index, "resize", "readback_mismatch", slot, false)));
+                                    clipDone(id, index, "resize", Outcome.APPLIED, "loop_length_play_stop", slot)),
+                            () -> op.result.complete(clipUnread(id, index, "resize", slot)));
                 },
-                () -> op.result.complete(clipDone(id, index, "resize", "readback_mismatch", slot, false)));
+                () -> op.result.complete(clipUnread(id, index, "resize", slot)));
     }
 
     private static float[] rgb(String hex) {
@@ -1221,7 +1228,7 @@ final class LauncherModule implements HostModule {
             for (int pitch = w.pitch; pitch < w.pitch + w.pitches; pitch++) {
                 NoteStep note = clip.getStep(w.channel, x, pitch);
                 if (note == null || note.state() == null)
-                    throw Errors.notApplied(ErrorCode.NOT_READY, "Note grid is not readable");
+                    throw Errors.notApplied(Reason.NOT_READY, "Note grid is not readable");
                 if (hasState(note, "NoteOn"))
                     cells.put(x * 128 + pitch, new double[] {midiVelocity(note.velocity()), note.duration()});
             }
@@ -1265,12 +1272,12 @@ final class LauncherModule implements HostModule {
         if (!kind.equals("duplicateContent")) {
             if (!covers)
                 throw Errors.notApplied(
-                        ErrorCode.UNVERIFIABLE_CLIP,
+                        Reason.UNVERIFIABLE_CLIP,
                         kind + " is verified by reading the whole loop in one window (at most 32 beats); this loop is "
                                 + loop + " beats, so the result could not be observed and nothing was changed");
             if (before.isEmpty())
                 throw Errors.notApplied(
-                        ErrorCode.NO_NOTES,
+                        Reason.NO_NOTES,
                         "No channel-0 onsets observed in the clip, so " + kind
                                 + " could not be verified; nothing was changed");
         }
@@ -1280,8 +1287,8 @@ final class LauncherModule implements HostModule {
                         || beforePitches.get(beforePitches.size() - 1) + semitones > 127))
             throw Errors.invalid("transpose would move a note outside MIDI 0..127 (observed pitch range "
                     + beforePitches.get(0) + ".." + beforePitches.get(beforePitches.size() - 1) + ")");
+        op.markDispatched();
         beginMutation(id, track, slot, index, "clips.edit " + kind);
-        op.dispatched = true;
         JsonObject summary = new JsonObject();
         summary.addProperty("notesBefore", before.size());
         summary.addProperty("loopLengthBeatsBefore", loop);
@@ -1297,6 +1304,7 @@ final class LauncherModule implements HostModule {
                     id,
                     index,
                     kind,
+                    Outcome.APPLIED,
                     kind.equals("transpose")
                             ? "onset_cells_shifted"
                             : kind.equals("quantize") ? "invariants_preserved_cells_changed" : "loop_length_doubled");
@@ -1353,8 +1361,7 @@ final class LauncherModule implements HostModule {
                         && clip.getLoopLength().get() == loop;
                 if (moved && stable && !invariants)
                     throw unobserved(
-                            ErrorCode.QUANTIZE_INVARIANTS_VIOLATED,
-                            "Clip quantize (note count, pitches or loop length changed)");
+                            Reason.READBACK_MISMATCH, "Clip quantize (note count, pitches or loop length changed)");
                 return moved && stable && invariants;
             };
             // amount 1 snaps to the host grid and is idempotent: no visible movement is reported, not latched.
@@ -1362,8 +1369,8 @@ final class LauncherModule implements HostModule {
                 if (amount == 1
                         && sameCells(onsets(w), before)
                         && clip.getLoopLength().get() == loop) {
-                    JsonObject out = clipResult(id, index, kind, "no_cell_change");
-                    out.addProperty("status", "dispatched");
+                    JsonObject out = clipResult(id, index, kind, Outcome.UNKNOWN, null);
+                    out.addProperty("reason", Reason.NOT_OBSERVED.wire());
                     out.addProperty(
                             "note",
                             "no onset cell moved: already on the host quantize grid, or the move stays inside a cell");
@@ -1390,7 +1397,7 @@ final class LauncherModule implements HostModule {
             NoteStep old = clip.getStep(w.channel, e.x, e.pitch);
             e.alreadyMatched = matches(e, old);
             if (e.alreadyMatched) continue; // Preserve expression and other properties on an existing matching note.
-            op.dispatched = true;
+            op.markDispatched();
             if (e.set) clip.setStep(w.channel, e.x, e.pitch, e.velocity, e.duration);
             else clip.clearStep(w.channel, e.x, e.pitch);
         }
@@ -1405,9 +1412,9 @@ final class LauncherModule implements HostModule {
         for (Edit e : changes) {
             NoteStep old = clip.getStep(w.channel, e.x, e.pitch);
             if (old == null || old.state() == null)
-                throw Errors.notApplied(ErrorCode.NOT_READY, "Note grid is not readable");
+                throw Errors.notApplied(Reason.NOT_READY, "Note grid is not readable");
             if (hasState(old, "NoteSustain"))
-                throw Errors.notApplied(ErrorCode.NOTE_COLLISION, "Edit addresses a sustained note, not its onset");
+                throw Errors.notApplied(Reason.OVERLAP, "Edit addresses a sustained note, not its onset");
             double beat = (w.start + e.x) * w.size;
             if (e.set && (beat < loopStart || beat + e.duration > end))
                 throw Errors.invalid("set note must fit inside the observed clip loop start and end");
@@ -1415,10 +1422,10 @@ final class LauncherModule implements HostModule {
             for (int x = e.x + 1; x < e.x + e.durationSteps; x++) {
                 NoteStep next = clip.getStep(w.channel, x, e.pitch);
                 if (next == null || next.state() == null)
-                    throw Errors.notApplied(ErrorCode.NOT_READY, "Note grid is not readable");
+                    throw Errors.notApplied(Reason.NOT_READY, "Note grid is not readable");
                 if (hasState(next, "NoteOn"))
                     throw Errors.notApplied(
-                            ErrorCode.NOTE_COLLISION,
+                            Reason.OVERLAP,
                             "Set duration overlaps an existing unrelated onset; clear it in a separate explicit edit first");
             }
         }
@@ -1448,37 +1455,39 @@ final class LauncherModule implements HostModule {
                     }
                     return all;
                 },
-                all -> finishNotes(op, id, index, w, changes, full, all));
+                all -> finishNotes(op, id, index, w, changes, full));
     }
 
-    private void finishNotes(
-            HostOperation op, String id, int index, Window w, List<Edit> changes, boolean full, boolean all) {
+    private void finishNotes(HostOperation op, String id, int index, Window w, List<Edit> changes, boolean full) {
         JsonObject out = notesResult(id, index, w, full);
-        // Status and verification always cover every edit; detail only changes how many entries are listed.
-        out.addProperty("status", all ? "observed" : "dispatched");
-        out.addProperty("verification", all ? "changed_cells_read_back" : "partial_or_unobserved");
+        // The outcome always covers every edit; detail only changes how many entries are listed.
+        Outcome worst = Outcome.ALREADY_MATCHED;
+        Reason firstReason = null;
         JsonArray results = new JsonArray();
         int verified = 0, matched = 0;
         for (Edit e : changes) {
             if (e.verified) verified++;
             if (e.alreadyMatched) matched++;
+            boolean fresh = noteGenerations[e.x][e.pitch] == e.generation && noteVersions[e.x][e.pitch] > e.before;
+            Outcome outcome = e.alreadyMatched && e.verified
+                    ? Outcome.ALREADY_MATCHED
+                    : e.verified ? Outcome.APPLIED : Outcome.UNKNOWN;
+            Reason reason = e.verified ? null : fresh ? Reason.READBACK_MISMATCH : Reason.NOT_OBSERVED;
+            worst = worst.worst(outcome);
+            if (firstReason == null) firstReason = reason;
             if (!full && e.verified) continue;
             JsonObject item = new JsonObject();
             item.addProperty("op", e.set ? "set" : "clear");
             if (full) item.addProperty("step", w.start + e.x);
             else item.addProperty("beat", (w.start + e.x) * w.size);
             item.addProperty("pitch", e.pitch);
-            item.addProperty("verified", e.verified);
-            item.addProperty(
-                    "verification",
-                    e.alreadyMatched
-                            ? "already_matched_readback"
-                            : noteGenerations[e.x][e.pitch] == e.generation && noteVersions[e.x][e.pitch] > e.before
-                                    ? "observer_after_write"
-                                    : "not_observed");
+            item.addProperty("outcome", outcome.wire());
+            if (reason != null) item.addProperty("reason", reason.wire());
             item.add("observed", observedJson(clip.getStep(w.channel, e.x, e.pitch), w, e.x, e.pitch));
             results.add(item);
         }
+        out.addProperty("outcome", worst.wire());
+        if (firstReason != null) out.addProperty("reason", firstReason.wire());
         JsonObject summary = new JsonObject();
         summary.addProperty("requested", changes.size());
         summary.addProperty("dispatched", changes.size() - matched);
@@ -1513,7 +1522,7 @@ final class LauncherModule implements HostModule {
             for (int pitch = w.pitch; pitch < w.pitch + w.pitches; pitch++) {
                 NoteStep note = clip.getStep(w.channel, x, pitch);
                 if (note == null || note.state() == null)
-                    throw Errors.notApplied(ErrorCode.NOT_READY, "Note grid is not readable");
+                    throw Errors.notApplied(Reason.NOT_READY, "Note grid is not readable");
                 if (hasState(note, "NoteOn")) {
                     total++;
                     if (list && notes.size() < NOTE_LIMIT) notes.add(noteJson(note, w, x, pitch));
@@ -1590,34 +1599,25 @@ final class LauncherModule implements HostModule {
     }
 
     private void finishPlayback(HostOperation op, String id, Slot slot, int index, boolean observed, boolean queued) {
-        JsonObject out = base(id, index);
-        out.addProperty("status", observed ? "observed" : "dispatched");
-        out.addProperty("completion", observed ? "observed" : queued ? "not_observed" : "unknown");
+        JsonObject out = written(id, index, observed ? Outcome.APPLIED : queued ? Outcome.SENT : Outcome.UNKNOWN);
+        if (!observed && !queued) out.addProperty("reason", Reason.NOT_OBSERVED.wire());
         out.addProperty(
                 "playbackState", observed ? slot == null ? "stopped" : "playing" : queued ? "queued" : "not_observed");
-        out.addProperty("verification", observed || queued ? "launcher_state" : "not_observed");
         if (slot != null) out.add("slot", slotJson(slot, index));
         op.result.complete(out);
     }
 
     private void guard(HostOperation op, String id, Track track) {
         scheduler.check(op);
-        if (op.result.isDone())
-            throw Errors.of(
-                    ErrorCode.CANCELLED,
-                    "Operation is no longer active",
-                    op.dispatched ? Outcome.UNKNOWN : Outcome.NOT_APPLIED);
+        if (op.result.isDone()) throw Errors.of(Reason.CANCELLED, "Operation is no longer active", op.dispatched());
         if (selection.ownedBy(op) && cursorMutation != null && cursorMutation.rebound)
             throw Errors.unknown(
-                    ErrorCode.STALE_CONTEXT,
+                    Reason.STALE_CONTEXT,
                     cursorMutation.description()
-                            + " Its target binding changed; the mutation remains quarantined for this extension instance.");
+                            + " Its target binding changed; the mutation stays held until acked after inspection.");
         if (!window.trackMatches(id, track)
                 || track.clipLauncherSlotBank().scrollPosition().get() != 0)
-            throw Errors.of(
-                    ErrorCode.STALE_CONTEXT,
-                    "Explicit track or launcher bank changed",
-                    op.dispatched ? Outcome.UNKNOWN : Outcome.NOT_APPLIED);
+            throw Errors.of(Reason.STALE_CONTEXT, "Explicit track or launcher bank changed", op.dispatched());
     }
     /** Whether the launcher cursor clip is this slot's clip; null until the cursor identity has been observed. Read-only. */
     private Boolean selected(Slot slot, String trackId) {
@@ -1680,18 +1680,16 @@ final class LauncherModule implements HostModule {
         guard(op, id, track);
         if (!selection.ownedBy(op) || !bound(id, slot))
             throw Errors.of(
-                    ErrorCode.STALE_CONTEXT,
-                    "Launcher cursor no longer proxies the explicit slot",
-                    op.dispatched ? Outcome.UNKNOWN : Outcome.NOT_APPLIED);
+                    Reason.STALE_CONTEXT, "Launcher cursor no longer proxies the explicit slot", op.dispatched());
     }
 
     private static void ready(Slot slot) {
-        if (!slot.ready()) throw Errors.notApplied(ErrorCode.NOT_READY, "Launcher slot metadata has not been observed");
+        if (!slot.ready()) throw Errors.notApplied(Reason.NOT_READY, "Launcher slot metadata has not been observed");
     }
 
     private static void requireContent(Slot slot) {
         if (!slot.api.hasContent().get())
-            throw Errors.notApplied(ErrorCode.CLIP_NOT_FOUND, "Explicit launcher slot is empty");
+            throw Errors.notApplied(Reason.TARGET_NOT_FOUND, "Explicit launcher slot is empty");
     }
 
     private long until(HostOperation op) {
@@ -1699,9 +1697,26 @@ final class LauncherModule implements HostModule {
     }
 
     private static JsonObject base(String id, int slot) {
-        JsonObject out = Results.observed();
+        JsonObject out = new JsonObject();
         out.addProperty("trackId", id);
         if (slot >= 0) out.addProperty("slotIndex", slot);
+        return out;
+    }
+
+    private static JsonObject written(String id, int slot, Outcome outcome) {
+        JsonObject out = base(id, slot);
+        out.addProperty("outcome", outcome.wire());
+        return out;
+    }
+
+    /** An unknown result whose slot stays held until the agent inspects it and acks the hold. */
+    private JsonObject unresolved(JsonObject out, Reason reason, String message) {
+        out.addProperty("outcome", Outcome.UNKNOWN.wire());
+        out.addProperty("reason", reason.wire());
+        out.addProperty("message", message);
+        out.addProperty(
+                "next",
+                holds.blocked(LauncherStructureLock.MUTATION, message, "Inspect launcher.list and notes.read").next);
         return out;
     }
 

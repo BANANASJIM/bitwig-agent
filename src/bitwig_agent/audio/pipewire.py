@@ -17,11 +17,13 @@ import sys
 import tempfile
 import time
 import uuid
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from bitwig_agent.audio import analysis
-from bitwig_agent.errors import BridgeError, bridge_error
+from bitwig_agent.errors import BridgeError, HostChanged, bridge_error, changed_before, unknown_result
+from bitwig_agent.protocol.base import SUCCEEDED
 
 NODE = "Bitwig Studio"
 SINK = "bwtest"
@@ -31,6 +33,23 @@ RUN_TIMEOUT = 5.0
 RATE = 48000
 
 
+def require_success(method: str, result: dict[str, Any]) -> dict[str, Any]:
+    """A host write that ended anything but a success stops the composed call with that result."""
+    outcome = result.get("outcome")
+    if outcome not in SUCCEEDED:
+        raise HostChanged(
+            {**result, "outcome": outcome or "unknown", "message": result.get("message", f"{method} ended {outcome}")}
+        )
+    return result
+
+
+def _failure(exc: BridgeError | HostChanged) -> dict[str, Any]:
+    """The unknown result for a cleanup step that failed after the main flow was done."""
+    if isinstance(exc, HostChanged):
+        return exc.result
+    return unknown_result(exc.error["reason"], exc.error["message"])
+
+
 async def require_engine(bridge: Any, timeout_ms: int) -> None:
     """Fail fast when status observes the audio engine inactive: a capture would only record silence."""
     status = await bridge.call("status", {}, min(timeout_ms, 5000))
@@ -38,8 +57,7 @@ async def require_engine(bridge: Any, timeout_ms: int) -> None:
         raise bridge_error(
             "engine_inactive",
             "The audio engine is not active for this project (status.engineActive=false), so playback would be silent. "
-            "Run project.activateEngine, confirm engineActive=true, then retry. Nothing was dispatched.",
-            "not_applied",
+            "Run project.activateEngine, confirm engineActive=true, then retry. Nothing changed.",
         )
 
 
@@ -48,9 +66,9 @@ def run(args: list[str], timeout: float = RUN_TIMEOUT) -> tuple[int, str, str]:
     try:
         done = subprocess.run(args, capture_output=True, text=True, timeout=timeout, check=False)
     except subprocess.TimeoutExpired as exc:
-        raise bridge_error("audio_tool_timeout", f"{args[0]} did not finish within {timeout:g}s", "unknown") from exc
+        raise bridge_error("deadline", f"{args[0]} did not finish within {timeout:g}s") from exc
     except OSError as exc:
-        raise bridge_error("audio_tool_failed", f"Cannot run {args[0]}: {exc.strerror}") from exc
+        raise bridge_error("job_failed", f"Cannot run {args[0]}: {exc.strerror}") from exc
     return done.returncode, done.stdout, done.stderr
 
 
@@ -109,7 +127,7 @@ def parse_links(text: str) -> list[tuple[str, str]]:
 def current_links() -> list[tuple[str, str]]:
     code, out, err = run(["pw-link", "-l"])
     if code != 0:
-        raise bridge_error("audio_tool_failed", f"pw-link -l failed: {err.strip() or code}")
+        raise bridge_error("job_failed", f"pw-link -l failed: {err.strip() or code}")
     return parse_links(out)
 
 
@@ -126,14 +144,24 @@ def ensure_sink() -> bool:
         ["pactl", "load-module", "module-null-sink", f"sink_name={SINK}", f"sink_properties=device.description={SINK}"]
     )
     if code != 0:
-        raise bridge_error("audio_tool_failed", f"Cannot create the {SINK} null sink: {err.strip() or code}")
+        raise bridge_error("job_failed", f"Cannot create the {SINK} null sink: {err.strip() or code}")
     return True
 
 
 def link(args: list[str], what: str) -> None:
-    code, _, err = run(["pw-link", *args])
+    """A pw-link that fails or times out may follow links that already changed: the result is unknown, not an error."""
+    try:
+        code, _, err = run(["pw-link", *args])
+    except BridgeError as exc:
+        raise HostChanged(_failure(exc)) from exc
     if code != 0 and "exists" not in err.lower():
-        raise bridge_error("audio_tool_failed", f"pw-link {what} failed: {err.strip() or code}", "unknown")
+        raise HostChanged(
+            unknown_result(
+                "job_failed",
+                f"pw-link {what} failed: {err.strip() or code}",
+                "Inspect the links with audio.route mode=status before another change.",
+            )
+        )
 
 
 def describe(links: list[tuple[str, str]]) -> dict[str, Any]:
@@ -145,27 +173,40 @@ def describe(links: list[tuple[str, str]]) -> dict[str, Any]:
 
 def _route_silent(links: list[tuple[str, str]], saved: dict[str, list[str]]) -> dict[str, Any]:
     if not links and not saved:
-        raise bridge_error(
-            "bitwig_not_found", f"No '{NODE}' output links in PipeWire; is Bitwig running and playing out?"
-        )
+        raise bridge_error("not_ready", f"No '{NODE}' output links in PipeWire; is Bitwig running and playing out?")
     created = ensure_sink()
     previous = {k: list(v) for k, v in saved.items()}
     for out, target in links:
         if not target.startswith(f"{SINK}:") and target not in previous.setdefault(out, []):
             previous[out].append(target)
     save_state(previous)  # persist before touching any link so restore can always undo
+    moved = created
     for out, target in links:
         if not target.startswith(f"{SINK}:"):
             link(["-d", out, target], "disconnect")
+            moved = True
     for out, sink_port in OUT_PORTS.items():
         if out in previous and (out, sink_port) not in links:
             link([out, sink_port], "connect")
-    return {"mode": "silent", "sinkCreated": created, **describe(current_links()), "savedPrevious": previous}
+            moved = True
+    return {
+        "outcome": "applied" if moved else "already_matched",
+        "mode": "silent",
+        "sinkCreated": created,
+        **describe(current_links()),
+        "savedPrevious": previous,
+    }
 
 
 def _route_restore(links: list[tuple[str, str]], saved: dict[str, list[str]]) -> dict[str, Any]:
     if not saved:
-        return {"mode": "restore", "restored": [], "note": "nothing saved; links unchanged", **describe(links)}
+        return {
+            "outcome": "already_matched",
+            "mode": "restore",
+            "restored": [],
+            "note": "nothing saved; links unchanged",
+            **describe(links),
+        }
     restored = []
     for out, targets in saved.items():
         for target in targets:
@@ -175,7 +216,7 @@ def _route_restore(links: list[tuple[str, str]], saved: dict[str, list[str]]) ->
         if target.startswith(f"{SINK}:"):
             link(["-d", out, target], "disconnect")
     save_state({})
-    return {"mode": "restore", "restored": restored, **describe(current_links())}
+    return {"outcome": "applied", "mode": "restore", "restored": restored, **describe(current_links())}
 
 
 def route(args: dict[str, Any]) -> dict[str, Any]:
@@ -203,8 +244,8 @@ async def playing_tracks(bridge: Any, timeout_ms: int) -> list[dict[str, str]] |
     ]
 
 
-async def isolate(bridge: Any, args: dict[str, Any], timeout_ms: int) -> dict[str, Any]:
-    """Which other tracks would end up in the recording; optionally refuse or stop them first. Raises not_applied before any recording."""
+async def isolate(bridge: Any, args: dict[str, Any], timeout_ms: int, stopped: list[str]) -> dict[str, Any]:
+    """Which other tracks would end up in the recording; optionally refuse, or stop them (appended to `stopped`)."""
     solo, stop_others = args.get("soloTrack"), args.get("stopOthers", False)
     playing = await playing_tracks(bridge, timeout_ms)
     if playing is None:
@@ -214,10 +255,9 @@ async def isolate(bridge: Any, args: dict[str, Any], timeout_ms: int) -> dict[st
             ]
         }
     others = [t for t in playing if t["trackId"] != solo]
-    stopped: list[str] = []
     if stop_others and solo:
         for t in others:
-            await bridge.call("launcher.stop", {"trackId": t["trackId"]}, timeout_ms)
+            require_success("launcher.stop", await bridge.call("launcher.stop", {"trackId": t["trackId"]}, timeout_ms))
             stopped.append(t["name"])
         others = []
     if (
@@ -227,7 +267,6 @@ async def isolate(bridge: Any, args: dict[str, Any], timeout_ms: int) -> dict[st
             "not_isolated",
             f"soloTrack {solo} is not the only playing track (other tracks are playing: {[t['name'] for t in others]}); "
             "stop the others or pass stopOthers:true",
-            "not_applied",
             otherTracksPlaying=[t["name"] for t in others],
         )
     out: dict[str, Any] = {"otherTracksPlaying": [t["name"] for t in others] if solo or len(others) > 1 else []}
@@ -242,7 +281,7 @@ async def isolate(bridge: Any, args: dict[str, Any], timeout_ms: int) -> dict[st
 
 
 async def read_solo_states(bridge: Any, timeout_ms: int) -> dict[str, bool]:
-    """trackId -> solo state of every track in the bank (tracks.list + tracks.get); not_applied when any state cannot be read."""
+    """trackId -> solo state of every track in the bank (tracks.list + tracks.get); not_ready when any state cannot be read."""
     listed = await bridge.call("tracks.list", {}, timeout_ms)
     states: dict[str, bool] = {}
     for row in listed.get("tracks") or []:
@@ -250,9 +289,8 @@ async def read_solo_states(bridge: Any, timeout_ms: int) -> dict[str, bool]:
         got = await bridge.call("tracks.get", {"trackId": tid}, timeout_ms)
         if not isinstance(got.get("solo"), bool):
             raise bridge_error(
-                "solo_unreadable",
+                "not_ready",
                 f"Cannot read the solo state of track {row.get('name') or tid}; refusing to change solos it could not restore.",
-                "not_applied",
             )
         states[tid] = got["solo"]
     return states
@@ -263,21 +301,29 @@ async def restore_solo(bridge: Any, previous: dict[str, bool], changed: list[str
     restored, failed = [], []
     for tid in reversed(changed):
         try:
-            await bridge.call("tracks.set", {"trackId": tid, "solo": previous[tid]}, timeout_ms)
+            put_back = await bridge.call("tracks.set", {"trackId": tid, "solo": previous[tid]}, timeout_ms)
+            require_success("tracks.set", put_back)
             restored.append({"trackId": tid, "solo": previous[tid]})
-        except BridgeError as exc:
-            failed.append({"trackId": tid, "solo": previous[tid], "error": exc.error.get("message", str(exc))})
+        except (BridgeError, HostChanged) as exc:
+            failed.append({"trackId": tid, "solo": previous[tid], "error": str(exc)})
     return {"restored": restored, **({"restoreFailed": failed} if failed else {})}
 
 
-async def apply_solo(bridge: Any, solo: str, timeout_ms: int) -> tuple[dict[str, bool], list[str], dict[str, Any]]:
-    """Solo `solo` exclusively (the host has no exclusive-solo write): set it on the target and clear every other soloed track.
-
-    Returns (previous states of every track, tracks changed so far, result block); a failure part-way restores what was changed.
-    """
+async def solo_states(bridge: Any, solo: str, timeout_ms: int) -> dict[str, bool]:
+    """Every track's solo state, refusing a solo target outside the bank; reads only."""
     previous = await read_solo_states(bridge, timeout_ms)
     if solo not in previous:
-        raise bridge_error("unknown_track", f"soloTrack {solo} is not in the track bank (tracks.list)", "not_applied")
+        raise bridge_error("target_not_found", f"soloTrack {solo} is not in the track bank (tracks.list)")
+    return previous
+
+
+async def apply_solo(
+    bridge: Any, solo: str, previous: dict[str, bool], timeout_ms: int, writes: _Writes
+) -> tuple[list[str], dict[str, Any]]:
+    """Solo `solo` exclusively (the host has no exclusive-solo write): set it on the target and clear every other soloed track.
+
+    Returns (tracks changed so far, result block); a failure part-way restores what was changed.
+    """
     block: dict[str, Any] = {
         "soloed": solo,
         "previousSolo": sorted(t for t, v in previous.items() if v),
@@ -289,26 +335,28 @@ async def apply_solo(bridge: Any, solo: str, timeout_ms: int) -> tuple[dict[str,
             want = tid == solo
             if previous[tid] != want:
                 changed.append(tid)
-                await bridge.call("tracks.set", {"trackId": tid, "solo": want}, timeout_ms)
+                require_success(
+                    "tracks.set", await bridge.call("tracks.set", {"trackId": tid, "solo": want}, timeout_ms)
+                )
                 if tid != solo:
                     block["unsoloed"].append(tid)
     except BaseException:
-        await restore_solo(bridge, previous, changed, timeout_ms)
+        writes.restore_failed = (await restore_solo(bridge, previous, changed, timeout_ms)).get("restoreFailed", [])
         raise
-    return previous, changed, block
+    return changed, block
 
 
 def bitwig_outputs() -> list[str]:
     """Bitwig's own output ports (out1, out2), from `pw-link -o`."""
     code, out, err = run(["pw-link", "-o"])
     if code != 0:
-        raise bridge_error("audio_tool_failed", f"pw-link -o failed: {err.strip() or code}")
+        raise bridge_error("job_failed", f"pw-link -o failed: {err.strip() or code}")
     ports = [line.strip() for line in out.splitlines()]
     wanted = (f"{NODE}:out1", f"{NODE}:out2")
     found = [p for p in wanted if p in ports]
     if len(found) != len(wanted):
         raise bridge_error(
-            "bitwig_not_found",
+            "not_ready",
             f"Expected '{NODE}:out1' and '{NODE}:out2' in pw-link -o; is Bitwig running with its audio engine on?",
         )
     return found
@@ -321,19 +369,19 @@ async def wait_for_inputs(node: str) -> list[str]:
         if code == 0 and set(wanted) <= {line.strip() for line in out.splitlines()}:
             return wanted
         await sleep(0.05)
-    raise bridge_error("audio_tool_failed", f"The capture node {node} did not appear in PipeWire")
+    raise bridge_error("job_failed", f"The capture node {node} did not appear in PipeWire")
 
 
 def check_capture_target(path: str, overwrite: bool, allow_audible: bool) -> None:
     if os.path.exists(path) and not overwrite:
-        raise bridge_error("file_exists", f"{path} exists; pass overwrite:true to replace it")
+        raise bridge_error("target_exists", f"{path} exists; pass overwrite:true to replace it")
     if not os.path.isdir(os.path.dirname(path)):
         raise bridge_error("invalid_params", f"Directory does not exist: {os.path.dirname(path)}")
     if not allow_audible:
         state = describe(current_links())
         if not state["silent"]:
             raise bridge_error(
-                "not_silent",
+                "not_isolated",
                 "Bitwig output is not routed to the silent sink; call audio.route mode=silent "
                 "first, or pass allowAudible:true to record without the silent route (the signal stays audible)",
                 **state,
@@ -353,21 +401,51 @@ async def stop_recorder(proc: Any) -> None:
 
 async def capture(bridge: Any, args: dict[str, Any], timeout_ms: int) -> dict[str, Any]:
     check_platform()
-    seconds = args["seconds"]
-    path = args["outPath"]
-    allow_audible = args.get("allowAudible", False)
-    check_capture_target(path, args.get("overwrite", False), allow_audible)
-    sources = bitwig_outputs()
+    check_capture_target(args["outPath"], args.get("overwrite", False), args.get("allowAudible", False))
     await require_engine(bridge, timeout_ms)
-    isolation = await isolate(bridge, args, timeout_ms)
     solo = args.get("soloTrack")
-    previous_solo: dict[str, bool] = {}
+    previous_solo = await solo_states(bridge, solo, timeout_ms) if solo else {}
+    writes = _Writes()
+    try:
+        return await _record(bridge, args, timeout_ms, previous_solo, writes)
+    except BridgeError as exc:
+        if not (writes.stopped or writes.transport or writes.restore_failed):
+            raise
+        changed = changed_before(exc, stoppedTracks=writes.stopped, transportStopped=writes.transport)
+        if writes.restore_failed:
+            changed.result.update(
+                outcome="unknown",
+                restoreFailed=writes.restore_failed,
+                next="Inspect tracks.list and restore the listed solo states with tracks.set.",
+            )
+        raise changed from exc
+
+
+@dataclass
+class _Writes:
+    """The host writes a capture made so far, for a refusal that comes after them."""
+
+    stopped: list[str] = field(default_factory=list)
+    transport: bool = False
+    restore_failed: list[dict[str, Any]] = field(default_factory=list)
+
+
+async def _record(
+    bridge: Any, args: dict[str, Any], timeout_ms: int, previous_solo: dict[str, bool], writes: _Writes
+) -> dict[str, Any]:
+    """Isolate, solo, record and put everything back."""
+    seconds, path = args["seconds"], args["outPath"]
+    allow_audible = args.get("allowAudible", False)
+    sources = bitwig_outputs()
+    isolation = await isolate(bridge, args, timeout_ms, writes.stopped)
+    solo = args.get("soloTrack")
     changed: list[str] = []
     solo_block: dict[str, Any] = {}
     if solo:
-        previous_solo, changed, solo_block = await apply_solo(bridge, solo, timeout_ms)
+        changed, solo_block = await apply_solo(bridge, solo, previous_solo, timeout_ms, writes)
     from_start = args.get("fromStart", True)
     transport_started = False
+    unsettled: dict[str, Any] = {}
     node = f"bwagent-capture-{os.getpid()}-{uuid.uuid4().hex[:8]}"
     created: list[tuple[str, str]] = []
     proc = None
@@ -389,31 +467,40 @@ async def capture(bridge: Any, args: dict[str, Any], timeout_ms: int) -> dict[st
         inputs = await wait_for_inputs(node)
         if proc.poll() is not None:
             err = (proc.stderr.read() or b"").decode(errors="replace").strip() if proc.stderr else ""
-            raise bridge_error("audio_tool_failed", f"pw-record exited early: {err or proc.returncode}")
+            raise bridge_error("job_failed", f"pw-record exited early: {err or proc.returncode}")
         # only links this capture creates; the user's links are never changed
         for src, dst in zip(sources, inputs, strict=False):
             link([src, dst], "connect")
             created.append((src, dst))
         if from_start:
-            await bridge.call("transport.set", {"playing": False}, timeout_ms)
-            await bridge.call("transport.set", {"positionBeats": 0}, timeout_ms)
-            await bridge.call("transport.set", {"playing": True}, timeout_ms)
-            transport_started = True
+            transport_started = writes.transport = True
+            for change in ({"playing": False}, {"positionBeats": 0}, {"playing": True}):
+                require_success("transport.set", await bridge.call("transport.set", change, timeout_ms))
         started = time.monotonic()
         await sleep(seconds)
         elapsed = time.monotonic() - started
     finally:
         if transport_started:
-            with contextlib.suppress(BridgeError):  # the main flow's error is more useful; state is reported below
-                await bridge.call("transport.set", {"playing": False}, timeout_ms)
+            try:
+                require_success("transport.set", await bridge.call("transport.set", {"playing": False}, timeout_ms))
+            except (BridgeError, HostChanged) as exc:  # the main flow's error is more useful; reported below
+                unsettled = _failure(exc)
         await stop_recorder(proc)
         for src, dst in created:
             with contextlib.suppress(BridgeError):
                 run(["pw-link", "-d", src, dst])
         if solo:
             solo_block.update(await restore_solo(bridge, previous_solo, changed, timeout_ms))
+            writes.restore_failed = solo_block.get("restoreFailed", [])
     stats = await asyncio.to_thread(analysis.analyze, {"path": path, "mode": "level", "windowSeconds": 60})
+    if solo_block.get("restoreFailed") and not unsettled:
+        unsettled = unknown_result(
+            "job_failed",
+            "A solo state this capture changed could not be put back (restoreFailed).",
+            "Inspect tracks.list and restore the listed solo states with tracks.set.",
+        )
     return {
+        "outcome": "applied",
         "path": path,
         "requestedSeconds": seconds,
         "elapsedSeconds": round(elapsed, 3),
@@ -432,6 +519,7 @@ async def capture(bridge: Any, args: dict[str, Any], timeout_ms: int) -> dict[st
         "source": {"ports": sources, "node": node},
         **isolation,
         **solo_block,
+        **unsettled,
     }
 
 

@@ -37,11 +37,6 @@ final class Bitwig614DeviceTargetAccess implements NativeDeviceTarget.Access {
     }
 
     @Override
-    public ErrorCode unavailableCode() {
-        return bindings.unavailableCode();
-    }
-
-    @Override
     public void documentThread() {
         bindings.documentThread();
     }

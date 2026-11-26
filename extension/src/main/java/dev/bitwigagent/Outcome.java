@@ -1,18 +1,24 @@
 package dev.bitwigagent;
 
-/** What an error says about host-side effects. */
+import java.util.Locale;
+
+/** What a write did, in rising severity: a result's outcome is the worst of its entries. */
 public enum Outcome {
-    NOT_APPLIED("not_applied"),
-    UNKNOWN("unknown"),
-    NOT_DISPATCHED("not_dispatched");
-
-    private final String wire;
-
-    Outcome(String wire) {
-        this.wire = wire;
-    }
+    ALREADY_MATCHED,
+    APPLIED,
+    SENT,
+    NOT_APPLIED,
+    UNKNOWN;
 
     public String wire() {
-        return wire;
+        return name().toLowerCase(Locale.ROOT);
+    }
+
+    public Outcome worst(Outcome other) {
+        return compareTo(other) >= 0 ? this : other;
+    }
+
+    public boolean succeeded() {
+        return compareTo(SENT) <= 0;
     }
 }

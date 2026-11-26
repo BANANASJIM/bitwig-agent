@@ -67,7 +67,6 @@ final class ArrangerModule implements HostModule {
     private final AtomicLongArray epochs = new AtomicLongArray(HostLimits.TRACKS);
     private Access access;
     private static final String PENDING = "arranger.pending", QUARANTINE = "arranger.quarantine";
-    private static final String HOLD = "An arranger clip write is pending or unresolved.";
 
     ArrangerModule(
             Scheduler scheduler,
@@ -138,7 +137,7 @@ final class ArrangerModule implements HostModule {
                 break;
             }
             default:
-                throw Errors.notApplied(ErrorCode.UNKNOWN_METHOD, "Unknown arranger method.");
+                throw Errors.notApplied(Reason.UNKNOWN_METHOD, "Unknown arranger method.");
         }
         if (!DeviceSources.canonicalUuid(Params.string(p, "trackId")))
             throw Errors.invalid("trackId must be a canonical UUID");
@@ -198,12 +197,12 @@ final class ArrangerModule implements HostModule {
     public void dispatch(HostOperation op, String method, JsonObject p) {
         scheduler.check(op);
         boolean write = !method.equals("arranger.clips.list");
-        if (holds.held(PENDING))
-            throw Errors.notApplied(ErrorCode.BUSY, "Another native arranger operation is pending.");
+        if (holds.held(PENDING)) throw Errors.notApplied(Reason.BUSY, "Another native arranger operation is pending.");
         if (write && holds.held(QUARANTINE))
-            throw Errors.notApplied(
-                    ErrorCode.UNRESOLVED_MUTATION,
-                    "An unresolved arranger write requires inspection (arranger.clips.list) and extension.restart before further arranger writes.");
+            throw holds.blocked(
+                    QUARANTINE,
+                    "An earlier arranger clip write has an unknown outcome; arranger writes are refused.",
+                    "Inspect arranger.clips.list");
         String id = p.get("trackId").getAsString();
         int index = window.trackSlot(id);
         Track track = window.at(index);
@@ -211,7 +210,7 @@ final class ArrangerModule implements HostModule {
         if (method.equals("arranger.clips.create")
                 && !"Instrument".equals(track.trackType().get()))
             throw Errors.notApplied(
-                    ErrorCode.UNSUPPORTED_SCOPE,
+                    Reason.UNSUPPORTED_SCOPE,
                     "arranger.clips.create makes MIDI note clips and needs an instrument track; use copyFromLauncher for audio.");
         if (method.equals("arranger.clips.copyFromLauncher")) {
             int number = p.get("slotIndex").getAsInt();
@@ -219,42 +218,36 @@ final class ArrangerModule implements HostModule {
             ClipLauncherSlotBank bank = track.clipLauncherSlotBank();
             if (bank.scrollPosition().get() != 0 || number >= bank.itemCount().get())
                 throw Errors.notApplied(
-                        ErrorCode.SLOT_OUT_OF_RANGE, "Launcher slot is outside the current zero-offset scene window.");
+                        Reason.OUT_OF_BOUNDS, "Launcher slot is outside the current zero-offset scene window.");
             ClipLauncherSlot launcherSlot = (ClipLauncherSlot) bank.getItemAt(number);
             if (!launcherSlot.hasContent().get()
                     || !expected.equals(launcherSlot.name().get())
                     || launcherSlot.sceneIndex().get() != number)
                 throw Errors.notApplied(
-                        ErrorCode.STALE_TARGET,
+                        Reason.STALE_TARGET,
                         "Observe the exact occupied slot name and index with launcher.list first.");
             slot = launcherSlot;
         }
         SafetyObservation safety = write ? transportSafety.stopped(op) : null;
-        if (access == null) {
-            try {
-                access = new Bitwig614ArrangerAccess(natives.get(op).access(ErrorCode.ARRANGER_UNAVAILABLE));
-            } catch (ReflectiveOperationException error) {
-                throw Errors.notApplied(
-                        ErrorCode.ARRANGER_UNAVAILABLE,
-                        "Exact arranger descriptors unavailable: " + error.getMessage());
-            }
-        }
+        if (access == null)
+            access = Bitwig614ArrangerAccess.bind(natives.get(op).access());
         long epoch = epochs.get(index);
         Runnable check = () -> {
             scheduler.check(op);
             if (epochs.get(index) != epoch)
                 throw Errors.notApplied(
-                        ErrorCode.STALE_CONTEXT, "Track bank changed while the arranger operation was queued.");
+                        Reason.STALE_CONTEXT, "Track bank changed while the arranger operation was queued.");
             if (write) transportSafety.guardStopped(safety);
         };
         Runnable beforeWrite = () -> {
             check.run();
-            op.dispatched = true;
-            holds.place(QUARANTINE, HOLD);
+            op.markDispatched();
+            holds.place(
+                    QUARANTINE, "An arranger clip write on track " + id + " has an unknown outcome until read back.");
         };
         Access bridge = access;
         Object launcherSlot = slot;
-        holds.place(PENDING, HOLD);
+        holds.inFlight(PENDING, "A native arranger operation on track " + id + " is running.");
         try {
             bridge.execute(() -> {
                 try {
@@ -311,7 +304,7 @@ final class ArrangerModule implements HostModule {
                                 check.run();
                                 if (!window.trackMatches(id, track))
                                     throw Errors.notApplied(
-                                            ErrorCode.STALE_CONTEXT, "Track target changed after native access.");
+                                            Reason.STALE_CONTEXT, "Track target changed after native access.");
                                 if (write) holds.release(QUARANTINE);
                                 holds.release(PENDING);
                                 op.result.complete(result);

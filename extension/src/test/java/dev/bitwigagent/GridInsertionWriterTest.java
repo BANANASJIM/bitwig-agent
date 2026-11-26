@@ -3,6 +3,8 @@ package dev.bitwigagent;
 import static dev.bitwigagent.GridSnapshotReader.Field.*;
 import static dev.bitwigagent.GridSnapshotReader.Kind.*;
 import static dev.bitwigagent.GridSnapshotReaderTest.Node;
+import static dev.bitwigagent.GridSnapshotReaderTest.outcomes;
+import static dev.bitwigagent.GridSnapshotReaderTest.unsuccessful;
 import static dev.bitwigagent.NativeDeviceTarget.Field.*;
 import static dev.bitwigagent.RpcAssert.*;
 import static org.junit.jupiter.api.Assertions.*;
@@ -28,8 +30,8 @@ public final class GridInsertionWriterTest {
                 replacement = new GridTopologyQuarantine(process);
         original.requireAvailable(ANY);
         String a = original.reserve(ANY);
-        assertRpcError("grid_unavailable", () -> replacement.requireAvailable(ANY));
-        assertRpcError("grid_unavailable", () -> replacement.requireAvailable(OTHER));
+        assertRpcError("busy", () -> replacement.requireAvailable(ANY));
+        assertRpcError("busy", () -> replacement.requireAvailable(OTHER));
         assertTrue(
                 !replacement.release(UUID.randomUUID().toString()), "unrelated owner cannot release pending lifetime");
         assertTrue(original.release(a), "exact owner can settle");
@@ -51,7 +53,7 @@ public final class GridInsertionWriterTest {
             Properties bad = new Properties();
             bad.put(GridTopologyQuarantine.KEY, invalid);
             GridTopologyQuarantine guard = new GridTopologyQuarantine(bad);
-            assertRpcError("grid_unavailable", () -> guard.requireAvailable(ANY));
+            assertRpcError("native_unavailable", () -> guard.requireAvailable(ANY));
             assertTrue(
                     bad.get(GridTopologyQuarantine.KEY) == invalid && guard.quarantined(),
                     "unknown/non-String state is never overwritten or admitted");
@@ -70,8 +72,8 @@ public final class GridInsertionWriterTest {
                 "another device is admitted while the first one is quarantined");
         kind.poison(UUID.randomUUID().toString(), ANY, new JsonObject());
         assertTrue(
-                GridTopologyQuarantine.NATIVE.equals(kind.origin(ANY)) && kind.reconcile(ANY, kind.detail(ANY)),
-                "native failure replaces the settlement kind and is released by the explicit reconcile");
+                GridTopologyQuarantine.NATIVE.equals(kind.origin(ANY)) && kind.ack(ANY, kind.detail(ANY)),
+                "native failure replaces the settlement kind and is released by an explicit ack");
         GridTopologyQuarantine other = new GridTopologyQuarantine(new Properties());
         other.reserve(ANY);
         assertTrue(
@@ -91,15 +93,15 @@ public final class GridInsertionWriterTest {
         detail.addProperty("a", 1);
         stale.mismatch(own, ANY, detail);
         assertTrue(
-                !stale.reconcile(ANY, "{\"a\":2}")
-                        && !stale.reconcile(OTHER, stale.detail(ANY))
-                        && stale.reconcile(ANY, stale.detail(ANY))
+                !stale.ack(ANY, "{\"a\":2}")
+                        && !stale.ack(OTHER, stale.detail(ANY))
+                        && stale.ack(ANY, stale.detail(ANY))
                         && stale.origin(ANY) == null,
-                "reconcile releases only the named device and only the verified record");
+                "ack releases only the named device and only the verified record");
         GridTopologyQuarantine denied = new GridTopologyQuarantine(() -> {
             throw new SecurityException("denied");
         });
-        assertRpcError("grid_unavailable", () -> denied.requireAvailable(ANY));
+        assertRpcError("native_unavailable", () -> denied.requireAvailable(ANY));
         assertTrue(
                 denied.quarantined() && denied.blockedReason() != null,
                 "inaccessible process Properties cannot become availability");
@@ -109,14 +111,14 @@ public final class GridInsertionWriterTest {
                 throw new SecurityException("read");
             }
         };
-        assertRpcError("grid_unavailable", () -> new GridTopologyQuarantine(readDenied).reserve(ANY));
+        assertRpcError("native_unavailable", () -> new GridTopologyQuarantine(readDenied).reserve(ANY));
         Properties writeDenied = new Properties() {
             @Override
             public synchronized Object setProperty(String key, String value) {
                 throw new SecurityException("write");
             }
         };
-        assertRpcError("grid_unavailable", () -> new GridTopologyQuarantine(writeDenied).requireAvailable(ANY));
+        assertRpcError("native_unavailable", () -> new GridTopologyQuarantine(writeDenied).requireAvailable(ANY));
     }
 
     @Test
@@ -127,14 +129,14 @@ public final class GridInsertionWriterTest {
         HostOperation op = f.start(new GridInsertionWriter.Request(
                 TYPE, 8, 3)); // Anchor is inside existing footprint: legal for insertion.
         assertTrue(
-                op.dispatched && f.loads == 1 && f.placements == 0 && !op.result.isDone(),
+                op.dispatched() && f.loads == 1 && f.placements == 0 && !op.result.isDone(),
                 "loader dispatch precedes callback and is not completion");
-        assertRpcError("grid_unavailable", () -> f.guard.requireAvailable(device(f)));
+        assertRpcError("busy", () -> f.guard.requireAvailable(device(f)));
         f.deliver();
         assertTrue(
                 f.placements == 1 && f.cleanups == 0 && f.successes == 1 && !op.result.isDone(),
                 "placement/success return still waits for ordinary event");
-        assertRpcError("grid_unavailable", () -> new GridTopologyQuarantine(f.process).requireAvailable(device(f)));
+        assertRpcError("busy", () -> new GridTopologyQuarantine(f.process).requireAvailable(device(f)));
         f.next();
         JsonObject result = op.result.join();
         f.guard.requireAvailable(device(f));
@@ -150,7 +152,7 @@ public final class GridInsertionWriterTest {
         assertTrue(
                 result.getAsJsonObject("requestedPosition").get("x").getAsInt() == 8
                         && result.getAsJsonObject("actualPosition").get("x").getAsInt() == 9
-                        && !result.get("matchesRequested").getAsBoolean(),
+                        && result.get("outcome").getAsString().equals("applied"),
                 "normalization is observed, not request echo");
         JsonArray modules = result.getAsJsonObject("graph").getAsJsonArray("modules");
         assertTrue(
@@ -167,10 +169,10 @@ public final class GridInsertionWriterTest {
         for (int abandoned = 0; abandoned < 4; abandoned++) {
             Fixture f = new Fixture();
             HostOperation op = f.start();
-            if (abandoned == 0) f.requestError = "deadline_exceeded";
+            if (abandoned == 0) f.requestError = "deadline";
             if (abandoned == 1) op.result.cancel(false);
-            if (abandoned == 2) op.result.completeExceptionally(Errors.notApplied(ErrorCode.UNAVAILABLE, "RPC closed"));
-            if (abandoned == 3) f.requestError = "unavailable";
+            if (abandoned == 2) op.result.completeExceptionally(Errors.notApplied(Reason.NOT_READY, "RPC closed"));
+            if (abandoned == 3) f.requestError = "not_ready";
             f.deliver();
             assertTrue(
                     f.cleanups == 1 && f.placements == 0 && f.successes == 0 && !f.guard.quarantined(),
@@ -178,26 +180,24 @@ public final class GridInsertionWriterTest {
             assertTrue(
                     f.order.equals(List.of("load", "cleanup", "enqueue")),
                     "native cleanup returns before outward error notification");
-            assertRpcError("grid_unavailable", () -> f.guard.requireAvailable(device(f)));
+            assertRpcError("busy", () -> f.guard.requireAvailable(device(f)));
             f.next();
             f.guard.requireAvailable(device(f));
             assertTrue(
-                    f.order.get(f.order.size() - 1).equals("failure") && op.result.isCompletedExceptionally(),
+                    f.order.get(f.order.size() - 1).equals("failure") && unsuccessful(op),
                     "independent healthy native settlement releases while request stays failed");
             if (abandoned == 0)
                 assertTrue(
-                        assertRpcError("deadline_exceeded", op).outcome.equals("unknown"),
-                        "expired insertion retains native-loader uncertainty");
+                        assertUnknown("deadline", op) != null, "expired insertion retains native-loader uncertainty");
         }
         Fixture afterPlacement = new Fixture();
         HostOperation op = afterPlacement.start();
         afterPlacement.deliver();
-        afterPlacement.requestError = "deadline_exceeded";
+        afterPlacement.requestError = "deadline";
         afterPlacement.next();
         afterPlacement.guard.requireAvailable(device(afterPlacement));
         assertTrue(
-                afterPlacement.placements == 1
-                        && assertRpcError("deadline_exceeded", op).outcome.equals("unknown"),
+                afterPlacement.placements == 1 && assertUnknown("deadline", op) != null,
                 "expired delivery never undoes settled native lifetime");
     }
 
@@ -213,7 +213,7 @@ public final class GridInsertionWriterTest {
         HostOperation op = early.start();
         early.callback.earlyError("loader rejected");
         assertTrue(
-                assertRpcError("grid_unavailable", op).outcome.equals("unknown") && early.guard.quarantined(),
+                assertUnknown("native_unavailable", op) != null && early.guard.quarantined(),
                 "early String error is unknown, not native cleanup acknowledgement");
         early.deliver();
         early.next();
@@ -233,7 +233,7 @@ public final class GridInsertionWriterTest {
                 "duplicate native delivery cannot place/clean twice or settle normally");
         Fixture rejectedDuplicate = new Fixture();
         rejectedDuplicate.start();
-        rejectedDuplicate.requestError = "deadline_exceeded";
+        rejectedDuplicate.requestError = "deadline";
         rejectedDuplicate.deliver();
         rejectedDuplicate.deliver();
         rejectedDuplicate.next();
@@ -281,9 +281,8 @@ public final class GridInsertionWriterTest {
                 "insertion into a 500-module device passes survivor verification");
         Fixture full = new Fixture();
         full.population(1024);
-        assertTrue(
-                assertRpcError("grid_bounds_exceeded", full.start()).outcome.equals("not_applied") && full.loads == 0,
-                "1024 plus one rejected before loader dispatch");
+        assertRpcError("out_of_bounds", full.start());
+        assertTrue(full.loads == 0, "1024 plus one rejected before loader dispatch");
         full.guard.requireAvailable(device(full));
         Fixture grew = new Fixture();
         grew.population(1023);
@@ -292,9 +291,7 @@ public final class GridInsertionWriterTest {
         grew.deliver();
         grew.next();
         assertTrue(
-                assertRpcError("grid_bounds_exceeded", op).outcome.equals("unknown")
-                        && grew.placements == 0
-                        && grew.cleanups == 1,
+                assertUnknown("out_of_bounds", op) != null && grew.placements == 0 && grew.cleanups == 1,
                 "callback capacity rechecked before native placement");
         grew.guard.requireAvailable(device(grew));
         for (int invalid = 0; invalid < 3; invalid++) {
@@ -320,7 +317,7 @@ public final class GridInsertionWriterTest {
             f.deliver();
             f.next();
             assertTrue(
-                    op.result.isCompletedExceptionally() && f.placements == 0 && f.cleanups == 1,
+                    unsuccessful(op) && f.placements == 0 && f.cleanups == 1,
                     "wrong count/kind/type/UUID/detachment always rejects through delivered cleanup");
             f.guard.requireAvailable(device(f));
         }
@@ -356,9 +353,7 @@ public final class GridInsertionWriterTest {
             f.deliver();
             f.next();
             assertTrue(
-                    assertRpcError("grid_bounds_exceeded", op).outcome.equals("unknown")
-                            && f.placements == 0
-                            && f.cleanups == 1,
+                    assertUnknown("out_of_bounds", op) != null && f.placements == 0 && f.cleanups == 1,
                     "incoming footprint/endpoints/full y span/cumulative rightward overflow checked before allocation");
             f.guard.requireAvailable(device(f));
         }
@@ -377,7 +372,7 @@ public final class GridInsertionWriterTest {
                     f.cleanups == 1 && f.placements == 0,
                     "captured membership/layout/context/target/safety/placement prerequisite cannot be rebaselined");
             f.next();
-            assertTrue(op.result.isCompletedExceptionally(), "preplacement rejection never becomes fake success");
+            assertTrue(unsuccessful(op), "preplacement rejection never becomes fake success");
             if (changed == 2 || changed == 3 || changed == 6)
                 assertTrue(
                         f.guard.quarantined(), "uncorroborated original native context remains blocked at settlement");
@@ -392,7 +387,7 @@ public final class GridInsertionWriterTest {
             if (boundary == 0) f.failLaunch = true;
             HostOperation op = f.start();
             if (boundary == 1) {
-                f.requestError = "deadline_exceeded";
+                f.requestError = "deadline";
                 f.failCleanup = true;
             }
             if (boundary == 2) f.failPlacement = true;
@@ -402,7 +397,7 @@ public final class GridInsertionWriterTest {
             if (boundary != 0) f.deliver();
             if (boundary == 5) f.next();
             assertTrue(
-                    op.result.isCompletedExceptionally() && f.guard.quarantined(),
+                    unsuccessful(op) && f.guard.quarantined(),
                     "launch/cleanup/placement/callback/scheduling/native verification failure quarantines");
             if (boundary == 1)
                 assertTrue(
@@ -415,7 +410,7 @@ public final class GridInsertionWriterTest {
         callbackError.deliver();
         callbackError.next();
         assertTrue(
-                callbackOp.result.isCompletedExceptionally()
+                unsuccessful(callbackOp)
                         && callbackError.cleanups == 1
                         && callbackError.guard.quarantined()
                         && callbackError.order.indexOf("cleanup") < callbackError.order.indexOf("failure"),
@@ -431,19 +426,17 @@ public final class GridInsertionWriterTest {
             if (changed == 4) settled.model.document = false;
             settled.next();
             assertTrue(
-                    failed.result.isCompletedExceptionally() && settled.guard.quarantined(),
+                    unsuccessful(failed) && settled.guard.quarantined(),
                     "settlement independently verifies native thread/original context/new type/row/rightward layout");
         }
         Fixture preparation = new Fixture();
         preparation.failPrepare = true;
-        assertTrue(
-                assertRpcError("grid_unavailable", preparation.start()).outcome.equals("not_applied")
-                        && preparation.loads == 0,
-                "known prelaunch failure releases own reservation");
+        assertRpcError("native_unavailable", preparation.start());
+        assertTrue(preparation.loads == 0, "known prelaunch failure releases own reservation");
         preparation.guard.requireAvailable(device(preparation));
         Fixture resolver = new Fixture();
         resolver.failResolve = true;
-        assertRpcError("grid_unavailable", resolver.start());
+        assertRpcError("native_unavailable", resolver.start());
         resolver.guard.requireAvailable(device(resolver));
         Fixture serialization = new Fixture();
         serialization.failDelivery = true;
@@ -451,18 +444,16 @@ public final class GridInsertionWriterTest {
         serialization.deliver();
         serialization.next();
         assertTrue(
-                assertRpcError("grid_bounds_exceeded", op).outcome.equals("unknown") && serialization.placements == 1,
+                assertUnknown("out_of_bounds", op) != null && serialization.placements == 1,
                 "serialization-only delivery failure preserves uncertain RPC outcome");
         serialization.guard.requireAvailable(device(serialization));
         Fixture readback = new Fixture();
         op = readback.start();
         readback.deliver();
         readback.model.failures.put(
-                INPUTS, Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "transport graph unsupported"));
+                INPUTS, Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "transport graph unsupported"));
         readback.next();
-        assertTrue(
-                op.result.isCompletedExceptionally(),
-                "bounded graph serialization failure cannot fabricate insertion success");
+        assertTrue(unsuccessful(op), "bounded graph serialization failure cannot fabricate insertion success");
         readback.guard.requireAvailable(device(readback));
         Fixture callbackReporting = new Fixture();
         callbackReporting.failFailureNotification = true;
@@ -482,7 +473,7 @@ public final class GridInsertionWriterTest {
                 new LinkageError("native conversion linkage"),
                 new IllegalStateException("native conversion failure"),
                 new Exception("native checked conversion failure"),
-                Errors.notApplied(ErrorCode.DEADLINE_EXCEEDED, "native code threw an RPC-shaped error"))) {
+                Errors.notApplied(Reason.DEADLINE, "native code threw an RPC-shaped error"))) {
             Fixture f = new Fixture();
             f.reflectedConversion = new ReflectedConversion(cause);
             HostOperation op = f.start();
@@ -498,24 +489,24 @@ public final class GridInsertionWriterTest {
                     "RPC translation retains reflection boundary and original native throwable identity");
             assertTrue(
                     f.order.equals(List.of("load", "cleanup", "failure", "enqueue"))
-                            && assertRpcError("grid_unavailable", op).outcome.equals("unknown"),
+                            && assertUnknown("native_unavailable", op) != null,
                     "cleanup returns before outward unknown notification and ordinary native settlement scheduling");
             f.next();
             assertTrue(
                     new GridTopologyQuarantine(f.process).quarantined()
                             && GridTopologyQuarantine.NATIVE.equals(f.guard.origin(device(f))),
                     "healthy later context cannot release translated native conversion failure quarantine");
-            JsonObject released = f.writer.reconcile(f.model.proxy, TRACK, () -> {});
+            JsonObject released = f.writer.ack(f.model.proxy, TRACK, device(f), () -> {});
             assertTrue(
-                    released.get("released").getAsBoolean()
+                    released.get("outcome").getAsString().equals("applied")
                             && !f.guard.quarantined()
                             && released.getAsJsonObject("recorded")
                                     .get("origin")
                                     .getAsString()
                                     .equals(GridTopologyQuarantine.NATIVE),
-                    "reconcile releases a native-failure quarantine only for the named device after re-reading it");
+                    "ack releases a native-failure hold only for the named device after re-reading it");
         }
-        for (String rejection : List.of("deadline_exceeded", "stale_context")) {
+        for (String rejection : List.of("deadline", "stale_context")) {
             Fixture f = new Fixture();
             HostOperation op = f.start();
             f.requestError = rejection;
@@ -528,9 +519,7 @@ public final class GridInsertionWriterTest {
                     "ordinary deadline/context validation remains a cleanup-and-settle rejection");
             f.next();
             f.guard.requireAvailable(device(f));
-            assertTrue(
-                    assertRpcError(rejection, op).outcome.equals("unknown"),
-                    "ordinary rejected request can settle native lifetime without claiming request success");
+            assertUnknown(rejection, op);
         }
     }
 
@@ -583,21 +572,17 @@ public final class GridInsertionWriterTest {
                     writer.delete(
                             modules.model.proxy, TRACK, new UUID(1, 1), () -> {}, () -> {}, value -> {}, error -> {});
             };
-            assertRpcError("grid_unavailable", call);
+            assertRpcError("busy", call);
         }
         GridSnapshotReaderTest.ConnectionFixture connections =
                 new GridSnapshotReaderTest.ConnectionFixture(new GridTopologyQuarantine(f.process));
+        assertRpcError("busy", connections.start(connections.request(null, connections.output())));
         assertTrue(
-                assertRpcError("grid_unavailable", connections.start(connections.request(null, connections.output())))
-                                .outcome
-                                .equals("not_applied")
-                        && connections.calls == 0
-                        && modules.calls == 0,
+                connections.calls == 0 && modules.calls == 0,
                 "replacement guards block move/delete/connection before native calls");
         Fixture second = new Fixture(f.process, null);
-        assertTrue(
-                assertRpcError("grid_unavailable", second.start()).outcome.equals("not_applied") && second.loads == 0,
-                "overlapping insertion cannot replace pending loader owner");
+        assertRpcError("busy", second.start());
+        assertTrue(second.loads == 0, "overlapping insertion cannot replace pending loader owner");
     }
 
     private static List<GridInsertionWriter.Request> batchOf(UUID... types) {
@@ -615,7 +600,7 @@ public final class GridInsertionWriterTest {
             g.catalogNames("Low-pass", "Low-pass LD", "Oscillator");
             HostOperation op = g.start(new GridInsertionWriter.Request(null, name, 8, 3));
             assertTrue(
-                    op.dispatched && g.loads == 1,
+                    op.dispatched() && g.loads == 1,
                     "typeName '" + name + "' resolves case/space/hyphen-insensitively to the exact entry");
             g.deliver();
             g.next();
@@ -634,8 +619,8 @@ public final class GridInsertionWriterTest {
                     e -> {});
         });
         assertTrue(
-                error.code.equals("invalid_params")
-                        && error.outcome.equals("not_applied")
+                error.reason.wire().equals("invalid_params")
+                        && !error.unknown
                         && f.loads == 0
                         && error.getMessage().contains("Low-pass MG")
                         && f.guard.blockedReason() == null,
@@ -756,7 +741,7 @@ public final class GridInsertionWriterTest {
                 new GridInsertionWriter.Request(new UUID(2, 101), 12, 3));
         HostOperation op = f.startAll(requests);
         assertTrue(
-                op.dispatched && f.loads == 1 && !op.result.isDone(),
+                op.dispatched() && f.loads == 1 && !op.result.isDone(),
                 "first entry loads through the single path and is not completion");
         f.deliver();
         assertTrue(f.loads == 1 && !op.result.isDone(), "second entry waits for the first native settlement");
@@ -769,10 +754,9 @@ public final class GridInsertionWriterTest {
         JsonObject result = op.result.join();
         f.guard.requireAvailable(device(f));
         JsonArray modules = result.getAsJsonArray("modules");
+        assertEquals(List.of("applied", "applied"), outcomes(modules));
         assertTrue(
-                result.get("batchStatus").getAsString().equals("applied")
-                        && result.get("status").getAsString().equals("observed")
-                        && result.get("completion").getAsString().equals("observed")
+                result.get("outcome").getAsString().equals("applied")
                         && result.get("written").getAsInt() == 2
                         && modules.size() == 2
                         && modules.get(0)
@@ -787,11 +771,6 @@ public final class GridInsertionWriterTest {
                                 .equals(new UUID(2, 101).toString())
                         && modules.get(0)
                                 .getAsJsonObject()
-                                .get("status")
-                                .getAsString()
-                                .equals("applied")
-                        && modules.get(0)
-                                .getAsJsonObject()
                                 .get("moduleId")
                                 .getAsString()
                                 .equals(new UUID(1, 1025).toString())
@@ -800,7 +779,7 @@ public final class GridInsertionWriterTest {
                                 .get("moduleId")
                                 .getAsString()
                                 .equals(new UUID(1, 1026).toString()),
-                "one result with per-entry typeId, moduleId and status, in request order");
+                "one result with per-entry typeId, moduleId and outcome, in request order");
         JsonObject diff = new JsonObject();
         GridDiff.diff(result.getAsJsonObject("graphBefore"), result.getAsJsonObject("graph"), diff);
         assertTrue(
@@ -829,10 +808,7 @@ public final class GridInsertionWriterTest {
             HostOperation op = f.startAll(bad);
             RpcException error = failed(op);
             assertTrue(
-                    error.outcome.equals("not_applied")
-                            && f.loads == 0
-                            && !op.dispatched
-                            && f.guard.blockedReason() == null,
+                    !error.unknown && f.loads == 0 && !op.dispatched() && f.guard.blockedReason() == null,
                     "any bad type or geometry rejects the whole batch before reservation, dispatch or loading");
         }
         RpcException named = null;
@@ -860,7 +836,7 @@ public final class GridInsertionWriterTest {
         crowded.population(1023);
         HostOperation op = crowded.startAll(batchOf(TYPE, TYPE));
         assertTrue(
-                assertRpcError("grid_bounds_exceeded", op).outcome.equals("not_applied") && crowded.loads == 0,
+                !assertRpcError("out_of_bounds", op).unknown && crowded.loads == 0,
                 "destination count plus the whole batch must fit before loading");
     }
 
@@ -877,12 +853,8 @@ public final class GridInsertionWriterTest {
         // Failure before the first dispatch is an ordinary not_applied error.
         Fixture first = new Fixture();
         first.failResolve = true;
-        assertTrue(
-                assertRpcError("grid_unavailable", first.startAll(batchOf(TYPE, TYPE)))
-                                .outcome
-                                .equals("not_applied")
-                        && first.loads == 0,
-                "nothing dispatched means a plain not_applied error, not a batch result");
+        assertRpcError("native_unavailable", first.startAll(batchOf(TYPE, TYPE)));
+        assertTrue(first.loads == 0, "nothing dispatched means an error, not a batch result");
         // A later prelaunch failure leaves an observed partial result with a diff.
         Fixture later = new Fixture();
         later.fresh = true;
@@ -892,35 +864,15 @@ public final class GridInsertionWriterTest {
         later.next();
         JsonObject partial = op.result.join();
         JsonArray modules = partial.getAsJsonArray("modules");
+        assertEquals(
+                List.of("applied", "not_applied/native_unavailable", "not_applied/not_reached"), outcomes(modules));
         assertTrue(
-                partial.get("batchStatus").getAsString().equals("partial")
-                        && partial.get("completion").getAsString().equals("observed")
+                partial.get("outcome").getAsString().equals("not_applied")
                         && partial.get("written").getAsInt() == 1
                         && later.loads == 1
-                        && modules.get(0)
-                                .getAsJsonObject()
-                                .get("status")
-                                .getAsString()
-                                .equals("applied")
-                        && modules.get(1)
-                                .getAsJsonObject()
-                                .get("status")
-                                .getAsString()
-                                .equals("failed")
-                        && modules.get(1)
-                                .getAsJsonObject()
-                                .getAsJsonObject("error")
-                                .get("code")
-                                .getAsString()
-                                .equals("grid_unavailable")
-                        && modules.get(2)
-                                .getAsJsonObject()
-                                .get("status")
-                                .getAsString()
-                                .equals("not_dispatched")
                         && partial.has("graph")
                         && partial.has("graphBefore"),
-                "failure before an entry's dispatch is failed; the rest is not_dispatched; applied part keeps its diff");
+                "failure before an entry's dispatch is not_applied; the rest is not reached; applied part keeps its diff");
         later.guard.requireAvailable(device(later));
         // A failure after an entry's native loader dispatch is unknown and the topology quarantine stays.
         Fixture unknown = new Fixture();
@@ -932,24 +884,9 @@ public final class GridInsertionWriterTest {
         unknown.deliver();
         JsonObject result = op.result.join();
         modules = result.getAsJsonArray("modules");
+        assertEquals(List.of("applied", "unknown/internal", "not_applied/not_reached"), outcomes(modules));
         assertTrue(
-                result.get("batchStatus").getAsString().equals("unknown")
-                        && result.get("completion").getAsString().equals("unknown")
-                        && modules.get(0)
-                                .getAsJsonObject()
-                                .get("status")
-                                .getAsString()
-                                .equals("applied")
-                        && modules.get(1)
-                                .getAsJsonObject()
-                                .get("status")
-                                .getAsString()
-                                .equals("unknown")
-                        && modules.get(2)
-                                .getAsJsonObject()
-                                .get("status")
-                                .getAsString()
-                                .equals("not_dispatched")
+                result.get("outcome").getAsString().equals("unknown")
                         && !result.has("graph")
                         && unknown.guard.quarantined()
                         && unknown.loads == 2,
@@ -980,7 +917,7 @@ public final class GridInsertionWriterTest {
         assertTrue(
                 finalX > 8
                         && first.getAsJsonObject("actualPosition").get("x").getAsInt() == finalX
-                        && !first.get("matchesRequested").getAsBoolean(),
+                        && first.get("outcome").getAsString().equals("applied"),
                 "entry positions are refreshed from the final graph, matching the diff");
         Fixture late = new Fixture();
         late.fresh = true;
@@ -990,21 +927,9 @@ public final class GridInsertionWriterTest {
         late.next();
         result = op.result.join();
         modules = result.getAsJsonArray("modules");
+        assertEquals(List.of("applied", "not_applied/deadline", "not_applied/not_reached"), outcomes(modules));
         assertTrue(
-                late.loads == 1
-                        && result.get("batchStatus").getAsString().equals("partial")
-                        && result.get("completion").getAsString().equals("observed")
-                        && modules.get(1)
-                                .getAsJsonObject()
-                                .get("status")
-                                .getAsString()
-                                .equals("not_dispatched")
-                        && modules.get(2)
-                                .getAsJsonObject()
-                                .get("status")
-                                .getAsString()
-                                .equals("not_dispatched")
-                        && result.has("graph"),
+                late.loads == 1 && result.get("outcome").getAsString().equals("not_applied") && result.has("graph"),
                 "with too little time left the batch stops cleanly, keeps its diff and dispatches nothing more");
         late.guard.requireAvailable(device(late));
     }
@@ -1023,19 +948,10 @@ public final class GridInsertionWriterTest {
         f.next(); // the first entry took 3 s; 5 s left is > 1.5 s but < 2 x 3 s
         JsonObject result = op.result.join();
         JsonArray modules = result.getAsJsonArray("modules");
+        assertEquals(List.of("applied", "not_applied/deadline", "not_applied/not_reached"), outcomes(modules));
         assertTrue(
-                f.loads == 1
-                        && result.get("batchStatus").getAsString().equals("partial")
-                        && result.get("completion").getAsString().equals("observed")
-                        && result.get("stopReason").getAsString().equals("deadline_margin")
-                        && result.get("slowestEntryMs").getAsLong() == 3000
-                        && modules.get(1)
-                                .getAsJsonObject()
-                                .get("status")
-                                .getAsString()
-                                .equals("not_dispatched")
-                        && result.has("graph"),
-                "a slow entry stops the batch before the next one (partial with a diff), never running into the deadline as unknown");
+                f.loads == 1 && result.get("slowestEntryMs").getAsLong() == 3000 && result.has("graph"),
+                "a slow entry stops the batch before the next one (with a diff), never running into the deadline as unknown");
         f.guard.requireAvailable(device(f));
         Fixture fast = new Fixture();
         fast.fresh = true;
@@ -1049,7 +965,7 @@ public final class GridInsertionWriterTest {
         fast.deliver();
         fast.next();
         assertTrue(
-                op.result.join().get("batchStatus").getAsString().equals("applied") && fast.loads == 2,
+                op.result.join().get("outcome").getAsString().equals("applied") && fast.loads == 2,
                 "fast entries keep the fixed 1.5 s margin");
     }
 
@@ -1078,24 +994,25 @@ public final class GridInsertionWriterTest {
         survivor.model.first.put(HEIGHT, 3);
         survivor.next();
         assertTrue(
-                op.result.isCompletedExceptionally()
-                        && GridTopologyQuarantine.SETTLEMENT.equals(survivor.guard.origin(device(survivor))),
+                unsuccessful(op) && GridTopologyQuarantine.SETTLEMENT.equals(survivor.guard.origin(device(survivor))),
                 "a survivor footprint change is still a settlement mismatch");
     }
 
     @Test
-    void settlementMismatchIsReleasedOnlyByConsistentReconcile() {
+    void settlementMismatchIsReleasedOnlyByConsistentAck() {
         Fixture f = new Fixture();
         HostOperation op = f.start();
         f.deliver();
         f.incoming.put(Y, 4);
         f.next(); // the native layout put the new module on another row
         assertTrue(
-                assertRpcError("grid_verification_failed", op).outcome.equals("unknown")
+                assertUnknown("readback_mismatch", op) != null
                         && f.guard.quarantined()
                         && GridTopologyQuarantine.SETTLEMENT.equals(f.guard.origin(device(f))),
                 "settlement disagreement is unknown and quarantined, as before");
-        assertRpcError("grid_unavailable", () -> f.guard.requireAvailable(device(f)));
+        RpcException held = assertRpcError("unresolved", () -> f.guard.requireAvailable(device(f)));
+        assertEquals(
+                "Inspect with grid.get, then ack grid:" + device(f) + ".", held.next, "the refusal names the hold id");
         JsonObject state = Bitwig614GridAdapter.quarantineState(f.guard);
         JsonObject entry = state.getAsJsonArray("devices").get(0).getAsJsonObject();
         assertTrue(
@@ -1105,47 +1022,34 @@ public final class GridInsertionWriterTest {
                         && entry.getAsJsonObject("error")
                                 .get("code")
                                 .getAsString()
-                                .equals("grid_verification_failed")
+                                .equals("readback_mismatch")
                         && entry.get("moduleId").getAsString().equals(new UUID(1, 1025).toString()),
                 "capabilities list the quarantined device with its origin and the recorded error/module");
         String otherOwner = f.guard.reserve(OTHER);
         f.guard.poison(otherOwner, OTHER, new JsonObject());
-        // Inconsistent state stays quarantined: a nonempty native placement list, then a busy undo manager.
+        // An inconsistent graph keeps the hold: a nonempty native placement list, a busy undo manager, twin UUIDs.
         f.placementReady = false;
-        JsonObject pending = f.writer.reconcile(f.model.proxy, TRACK, () -> {});
+        RpcException pending = assertRpcError("readback_mismatch", () -> ack(f));
         assertTrue(
-                !pending.get("released").getAsBoolean()
-                        && !pending.getAsJsonObject("found").get("consistent").getAsBoolean()
-                        && pending.getAsJsonObject("found")
-                                .getAsJsonObject("inconsistency")
-                                .get("code")
-                                .getAsString()
-                                .equals("unsafe_state")
-                        && f.guard.quarantined(),
-                "a nonempty native placement list stays quarantined");
+                pending.getMessage().contains("unsafe_state") && f.guard.quarantined(device(f)),
+                "a nonempty native placement list keeps the hold");
         f.placementReady = true;
         f.context.values.put(GridTopologyContext.Field.UNDO_ACTIVE, true);
-        assertTrue(
-                !f.writer
-                                .reconcile(f.model.proxy, TRACK, () -> {})
-                                .get("released")
-                                .getAsBoolean()
-                        && f.guard.quarantined(),
-                "an active undo transaction stays quarantined");
+        assertRpcError("readback_mismatch", () -> ack(f));
+        assertTrue(f.guard.quarantined(device(f)), "an active undo transaction keeps the hold");
         f.context.values.put(GridTopologyContext.Field.UNDO_ACTIVE, false);
         f.model.second.put(INSTANCE_ID, f.model.first.values.get(INSTANCE_ID));
-        assertTrue(
-                !f.writer
-                                .reconcile(f.model.proxy, TRACK, () -> {})
-                                .get("released")
-                                .getAsBoolean()
-                        && f.guard.quarantined(),
-                "duplicate module UUIDs stay quarantined");
+        assertRpcError("readback_mismatch", () -> ack(f));
+        assertTrue(f.guard.quarantined(device(f)), "duplicate module UUIDs keep the hold");
         f.model.second.put(INSTANCE_ID, new UUID(1, 2));
-        JsonObject released = f.writer.reconcile(f.model.proxy, TRACK, () -> {});
+        assertTrue(
+                f.writer.ack(f.model.proxy, TRACK, OTHER, () -> {}) == null,
+                "another device's hold is not this proxy's to release");
+        JsonObject released = ack(f);
         JsonObject module = released.getAsJsonObject("found").getAsJsonObject("module");
         assertTrue(
-                released.get("released").getAsBoolean()
+                released.get("outcome").getAsString().equals("applied")
+                        && !f.guard.quarantined(device(f))
                         && module.get("inserted").getAsBoolean()
                         && module.getAsJsonObject("actualPosition").get("y").getAsInt() == 4
                         && released.getAsJsonObject("found").get("moduleCount").getAsInt() == 3
@@ -1155,30 +1059,84 @@ public final class GridInsertionWriterTest {
                                 == 2,
                 "consistent graph releases and reports the late module");
         assertTrue(
-                f.guard.quarantined(OTHER) && f.guard.reconcile(OTHER, f.guard.detail(OTHER)),
-                "reconciling one device leaves a sibling quarantined until it is named itself");
+                f.guard.quarantined(OTHER) && f.guard.ack(OTHER, f.guard.detail(OTHER)),
+                "acking one device leaves a sibling held until it is named itself");
         f.guard.requireAvailable(device(f));
-        JsonObject idle = f.writer.reconcile(f.model.proxy, TRACK, () -> {});
-        assertTrue(
-                !idle.get("released").getAsBoolean()
-                        && idle.getAsJsonObject("found").get("consistent").getAsBoolean()
-                        && !idle.getAsJsonObject("found").has("module"),
-                "when idle reconcile is a consistency check of the given device and releases nothing");
+        assertRpcError("unknown_hold", () -> ack(f));
     }
 
     @Test
-    void lateCallbackSettlesAndReconcileRecoversItsMismatch() {
+    void ackRefusesARecordThatNoLongerMatchesTheGraph() {
+        Fixture f = new Fixture();
+        JsonObject recorded = new JsonObject();
+        recorded.addProperty("moduleId", new UUID(1, 1).toString());
+        recorded.addProperty("typeId", new UUID(9, 9).toString());
+        f.guard.poison("owner", device(f), recorded);
+        RpcException retyped = assertRpcError("readback_mismatch", () -> ack(f));
+        assertTrue(
+                retyped.getMessage().contains("different type") && f.guard.quarantined(device(f)),
+                "a recorded module UUID that now has another type keeps the hold");
+        f.process.setProperty(GridTopologyQuarantine.DEVICE_PREFIX + device(f), "not json");
+        assertTrue(
+                ack(f).getAsJsonObject("found").get("moduleCount").getAsInt() == 2 && !f.guard.quarantined(),
+                "a malformed record is released on a consistent graph without echoing it");
+        f.guard.poison("owner", device(f), new JsonObject());
+        int[] edits = {0};
+        assertRpcError(
+                "unknown_hold",
+                () -> f.writer.ack(f.model.proxy, TRACK, device(f), () -> {
+                    JsonObject changed = new JsonObject();
+                    changed.addProperty("edit", edits[0]++);
+                    f.guard.poison("owner", device(f), changed);
+                }));
+        assertTrue(f.guard.quarantined(device(f)), "a hold rewritten while it was checked stays");
+        f.model.device.put(GRAPH, null);
+        assertTrue(
+                f.writer.ack(f.model.proxy, TRACK, device(f), () -> {}) == null, "a non-Grid device has no Grid hold");
+    }
+
+    @Test
+    void malformedNativeCatalogAndGeometryFailClosed() {
+        assertInvalidParams(() -> GridInsertionWriter.Request.parseBatch(HostFixture.json("{\"modules\":[1]}")));
+        for (int bad = 0; bad < 4; bad++)
+            for (boolean named : List.of(false, true)) {
+                Fixture f = new Fixture();
+                Object entry = f.model.catalog.get(0);
+                if (bad == 0) f.model.catalog = null;
+                if (bad == 1) f.model.catalog = Collections.nCopies(GridSnapshotReader.MAX_CATALOG + 1, entry);
+                if (bad == 2) f.model.catalog = List.of(new Node());
+                if (bad == 3) ((Node) entry).put(ENTRY_ID, "not a uuid");
+                HostOperation op =
+                        f.start(named ? new GridInsertionWriter.Request(null, "Catalog module", 8, 3) : f.request());
+                assertRpcError(
+                        bad == 1 ? "out_of_bounds" : bad == 3 && !named ? "invalid_params" : "native_unavailable", op);
+                assertTrue(f.loads == 0, "a malformed catalog loads nothing");
+            }
+        for (int bad = 0; bad < 2; bad++) {
+            Fixture f = new Fixture();
+            if (bad == 0) f.model.first.put(DESCRIPTOR, null);
+            else f.model.first.put(WIDTH, "2");
+            assertRpcError("native_unavailable", f.start());
+            assertTrue(f.loads == 0, "unreadable native geometry or identity loads nothing");
+        }
+        Fixture detached = new Fixture();
+        detached.model.proxy.put(TARGET, null);
+        assertRpcError("invalid_target", () -> ack(detached));
+    }
+
+    private static JsonObject ack(Fixture f) {
+        return f.writer.ack(f.model.proxy, TRACK, device(f), () -> {});
+    }
+
+    @Test
+    void lateCallbackSettlesAndAckRecoversItsMismatch() {
         Fixture f = new Fixture();
         HostOperation op = f.start();
         op.result.cancel(false);
-        JsonObject waiting = f.writer.reconcile(f.model.proxy, TRACK, () -> {});
-        assertTrue(
-                !waiting.get("released").getAsBoolean()
-                        && waiting.get("quarantineBefore").getAsString().equals("none")
-                        && f.guard.blockedReason() != null,
-                "reconcile cannot release a pending native callback");
+        assertRpcError("unknown_hold", () -> ack(f));
+        assertTrue(f.guard.blockedReason() != null, "ack cannot release a pending native callback");
         Object current = f.context.values.get(NativeReadContext.Field.CURRENT_DT);
-        f.requestError = "deadline_exceeded";
+        f.requestError = "deadline";
         f.deliver(); // the late callback is rejected and cleaned
         f.context.values.put(NativeReadContext.Field.CURRENT_DT, new Object());
         f.next(); // and settles in another Dt
@@ -1187,26 +1145,22 @@ public final class GridInsertionWriterTest {
                         && f.placements == 0
                         && GridTopologyQuarantine.SETTLEMENT.equals(f.guard.origin(device(f))),
                 "a late callback whose settlement context disagreed is a recoverable mismatch, not sticky");
-        assertTrue(
-                !f.writer
-                        .reconcile(f.model.proxy, TRACK, () -> {})
-                        .get("released")
-                        .getAsBoolean(),
-                "still another Dt: stays quarantined");
+        assertRpcError("readback_mismatch", () -> ack(f));
+        assertTrue(f.guard.quarantined(device(f)), "still another Dt: the hold stays");
         f.context.values.put(NativeReadContext.Field.CURRENT_DT, current);
-        JsonObject released = f.writer.reconcile(f.model.proxy, TRACK, () -> {});
+        JsonObject released = ack(f);
         assertTrue(
-                released.get("released").getAsBoolean()
+                released.get("outcome").getAsString().equals("applied")
                         && !released.getAsJsonObject("found").has("module"),
-                "back in the default Dt, reconcile releases");
+                "back in the default Dt, ack releases");
         f.guard.requireAvailable(device(f));
         Fixture plain = new Fixture();
         HostOperation late = plain.start();
-        plain.requestError = "deadline_exceeded";
+        plain.requestError = "deadline";
         plain.deliver();
         plain.next();
         assertTrue(
-                late.result.isCompletedExceptionally() && plain.guard.origin(device(plain)) == null,
+                unsuccessful(late) && plain.guard.origin(device(plain)) == null,
                 "an ordinary late callback settles and releases by itself");
     }
 
@@ -1280,9 +1234,9 @@ public final class GridInsertionWriterTest {
                         requests,
                         () -> {
                             if (op.result.isDone())
-                                throw Errors.notApplied(ErrorCode.CANCELLED, "request already completed");
+                                throw Errors.notApplied(Reason.CANCELLED, "request already completed");
                         },
-                        () -> op.dispatched = true,
+                        () -> op.markDispatched(),
                         op.result::complete,
                         op::fail);
             } catch (Throwable error) {
@@ -1317,14 +1271,15 @@ public final class GridInsertionWriterTest {
                         request,
                         () -> {
                             if (requestError != null)
-                                throw Errors.of(requestError, "request no longer admissible", Outcome.NOT_APPLIED);
+                                throw Errors.notApplied(
+                                        Reason.valueOf(requestError.toUpperCase(Locale.ROOT)),
+                                        "request no longer admissible");
                             if (op.result.isDone())
-                                throw Errors.notApplied(ErrorCode.CANCELLED, "request already completed");
+                                throw Errors.notApplied(Reason.CANCELLED, "request already completed");
                         },
-                        () -> op.dispatched = true,
+                        () -> op.markDispatched(),
                         value -> {
-                            if (failDelivery)
-                                throw Errors.notApplied(ErrorCode.GRID_BOUNDS_EXCEEDED, "serialization failure");
+                            if (failDelivery) throw Errors.notApplied(Reason.OUT_OF_BOUNDS, "serialization failure");
                             op.result.complete(value);
                         },
                         error -> {
@@ -1366,13 +1321,13 @@ public final class GridInsertionWriterTest {
         @Override
         public String resolve(UUID id) {
             lastResolved = id;
-            if (failResolve) throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "missing native resource");
+            if (failResolve) throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "missing native resource");
             return "native-resolved-resource";
         }
 
         @Override
         public Runnable prepareLoad(Object project, String path, GridInsertionBridge.Callback callback) {
-            if (failPrepare) throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "adapter construction failed");
+            if (failPrepare) throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "adapter construction failed");
             if (fresh && created++ > 0) { // Each batch entry loads its own detached singleton.
                 incoming = model.module(1024 + created - 1, null);
                 loaded = List.of(incoming);
@@ -1391,8 +1346,7 @@ public final class GridInsertionWriterTest {
         @Override
         public List<?> converted(Object result) {
             if (reflectedConversion != null)
-                return (List<?>) Bitwig614Runtime.invoke(
-                        ErrorCode.GRID_UNAVAILABLE, ReflectedConversion.READ, reflectedConversion);
+                return (List<?>) Bitwig614Runtime.invoke(ReflectedConversion.READ, reflectedConversion);
             if (failConverted) throw new LinkageError("native callback reader failed");
             return loaded;
         }
@@ -1400,12 +1354,12 @@ public final class GridInsertionWriterTest {
         @Override
         public void requireDetached(Object module) {
             if (deleted || parented || owned || ((Node) module).values.get(MODULE_GRAPH) != null)
-                throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "not detached live singleton");
+                throw Errors.notApplied(Reason.STALE_CONTEXT, "not detached live singleton");
         }
 
         @Override
         public void requirePlacementReady(Object graph) {
-            if (!placementReady) throw Errors.notApplied(ErrorCode.UNSAFE_STATE, "nonempty XEl list");
+            if (!placementReady) throw Errors.notApplied(Reason.UNSAFE_STATE, "nonempty XEl list");
         }
 
         @Override

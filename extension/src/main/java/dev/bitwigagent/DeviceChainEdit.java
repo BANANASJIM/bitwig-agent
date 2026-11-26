@@ -58,11 +58,11 @@ final class DeviceChainEdit {
         /** Complete, consistent window or a fail-closed error; getters are never evidence on their own. */
         static Before capture(View v, String staleMessage) {
             int count = v.count();
-            if (count < 0) throw Errors.notApplied(ErrorCode.NOT_READY, "Device count has not been observed.");
+            if (count < 0) throw Errors.notApplied(Reason.NOT_READY, "Device count has not been observed.");
             for (int i = 0; i < v.window(); i++) {
                 if (!v.known(i) || (i < count && !v.ready(i)))
-                    throw Errors.notApplied(ErrorCode.NOT_READY, "Device bank has not reported the complete window.");
-                if (v.exists(i) != (i < count)) throw Errors.notApplied(ErrorCode.STALE_CONTEXT, staleMessage);
+                    throw Errors.notApplied(Reason.NOT_READY, "Device bank has not reported the complete window.");
+                if (v.exists(i) != (i < count)) throw Errors.notApplied(Reason.STALE_CONTEXT, staleMessage);
             }
             return new Before(v);
         }
@@ -118,71 +118,71 @@ final class DeviceChainEdit {
         }
     }
 
-    /** pending=true means keep observing; otherwise `verification` is final and `ok` says it was observed. */
-    static final class Outcome {
+    /** pending=true means keep observing; otherwise `ok` says it was observed and `verification` says how. */
+    static final class Observation {
         final boolean pending, ok;
         final String verification;
 
-        private Outcome(boolean pending, boolean ok, String verification) {
+        private Observation(boolean pending, boolean ok, String verification) {
             this.pending = pending;
             this.ok = ok;
             this.verification = verification;
         }
 
-        static final Outcome PENDING = new Outcome(true, false, null);
+        static final Observation PENDING = new Observation(true, false, null);
 
-        static Outcome ok(String verification) {
-            return new Outcome(false, true, verification);
+        static Observation ok(String verification) {
+            return new Observation(false, true, verification);
         }
 
-        static Outcome ambiguous() {
-            return new Outcome(false, false, "ambiguous_chain_change");
+        static Observation ambiguous() {
+            return new Observation(false, false, "ambiguous_chain_change");
         }
     }
 
-    static Outcome observe(View v, Plan p) {
+    static Observation observe(View v, Plan p) {
         Before b = p.before;
         int n = b.count, w = v.window(), c = v.count();
         boolean consistent = p.kind == INSERT ? c >= n && c <= n + 1 : p.kind == DELETE ? c >= n - 1 && c <= n : c == n;
-        if (!consistent) return Outcome.ambiguous();
+        if (!consistent) return Observation.ambiguous();
         // Slots before an edit point must be exactly what they were; a moved range has no fixed prefix.
         int fixed = p.kind == MOVE ? 0 : Math.min(p.index, Math.min(n, w));
-        for (int i = 0; i < fixed; i++) if (!v.exists(i) || !same(v, i, b, i)) return Outcome.ambiguous();
+        for (int i = 0; i < fixed; i++) if (!v.exists(i) || !same(v, i, b, i)) return Observation.ambiguous();
         if (p.kind == MOVE) return observeMove(v, p, n, w);
         int expected = p.kind == INSERT ? n + 1 : n - 1;
-        if (c != expected || v.countSequence() <= b.countSequence) return Outcome.PENDING;
+        if (c != expected || v.countSequence() <= b.countSequence) return Observation.PENDING;
         if (p.kind == INSERT) return observeInsert(v, p, n, w);
         for (int i = p.index; i < Math.min(n - 1, w); i++)
-            if (!v.exists(i) || !v.ready(i) || !same(v, i, b, i + 1)) return Outcome.PENDING;
-        for (int i = n - 1; i < w; i++) if (v.exists(i)) return Outcome.PENDING;
-        return Outcome.ok("observed_count_decrement_and_shifted_suffix");
+            if (!v.exists(i) || !v.ready(i) || !same(v, i, b, i + 1)) return Observation.PENDING;
+        for (int i = n - 1; i < w; i++) if (v.exists(i)) return Observation.PENDING;
+        return Observation.ok("observed_count_decrement_and_shifted_suffix");
     }
 
-    private static Outcome observeInsert(View v, Plan p, int n, int w) {
+    private static Observation observeInsert(View v, Plan p, int n, int w) {
         Before b = p.before;
         int k = p.index;
-        if (n < w && !(v.exists(n) && v.ready(n) && v.nameSequence(n) > b.nameSequences[n])) return Outcome.PENDING;
-        if (k < w && !(v.exists(k) && v.ready(k))) return Outcome.PENDING;
+        if (n < w && !(v.exists(n) && v.ready(n) && v.nameSequence(n) > b.nameSequences[n])) return Observation.PENDING;
+        if (k < w && !(v.exists(k) && v.ready(k))) return Observation.PENDING;
         for (int i = k + 1; i < Math.min(n + 1, w); i++)
-            if (!v.exists(i) || !v.ready(i) || !same(v, i, b, i - 1)) return Outcome.PENDING;
-        for (int i = n + 1; i < w; i++) if (v.exists(i)) return Outcome.PENDING;
-        if (k >= w) return Outcome.ok("observed_count_increment_beyond_window");
-        return Outcome.ok(
+            if (!v.exists(i) || !v.ready(i) || !same(v, i, b, i - 1)) return Observation.PENDING;
+        for (int i = n + 1; i < w; i++) if (v.exists(i)) return Observation.PENDING;
+        if (k >= w) return Observation.ok("observed_count_increment_beyond_window");
+        return Observation.ok(
                 k == n ? "observed_count_increment_and_unchanged_prefix" : "observed_count_increment_shifted_suffix");
     }
 
-    private static Outcome observeMove(View v, Plan p, int n, int w) {
+    private static Observation observeMove(View v, Plan p, int n, int w) {
         for (int i = 0; i < w; i++) {
             if (i >= n) {
-                if (v.exists(i)) return Outcome.PENDING;
+                if (v.exists(i)) return Observation.PENDING;
                 continue;
             }
             if (!v.exists(i)
                     || !v.ready(i)
                     || !Objects.equals(v.name(i), p.expectedNames[i])
-                    || !Objects.equals(v.type(i), p.expectedTypes[i])) return Outcome.PENDING;
+                    || !Objects.equals(v.type(i), p.expectedTypes[i])) return Observation.PENDING;
         }
-        return Outcome.ok("observed_expected_arrangement");
+        return Observation.ok("observed_expected_arrangement");
     }
 
     private static boolean same(View v, int slot, Before b, int old) {

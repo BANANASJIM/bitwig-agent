@@ -94,7 +94,7 @@ Both options may be combined:
 bitwig-agent-install --extension ./BitwigAgent.bwextension --destination "/absolute/path/to/Extensions"
 ```
 
-A different existing extension is backed up to `DESTINATION_PARENT/.bitwig-agent-backups/OLD_SHA256/BitwigAgent.bwextension`, outside Bitwig's extension scan directory. Installing identical bytes preserves the existing file. After replacing a loaded extension, restart Bitwig before expecting the new code to run: on 6.1.4 neither the Settings controller toggle nor `extension.restart` loads a replaced `.bwextension` (check `status.extension.build`). Keep the Python package and extension matched when upgrading or restoring a backup.
+A different existing extension is backed up to `DESTINATION_PARENT/.bitwig-agent-backups/OLD_SHA256/BitwigAgent.bwextension`, outside Bitwig's extension scan directory. Installing identical bytes preserves the existing file. After replacing a loaded extension, restart Bitwig before expecting the new code to run: on 6.1.4 the Settings controller toggle does not load a replaced `.bwextension` (check `status.extension.build`). Keep the Python package and extension matched when upgrading or restoring a backup.
 
 For a PyPI installation, review the new release's compatibility before upgrading both components:
 
@@ -129,11 +129,11 @@ bitwig-agent-install --mcp-config
 
 Use that JSON rather than a bare executable name: GUI clients may not inherit the shell's tool `PATH`. The generated command is an absolute Python interpreter path with `-m bitwig_agent`; keep the virtual-environment path intact rather than replacing it with a resolved system-Python symlink. If you move/reinstall the tool environment, regenerate the configuration. The static [example](examples/mcp-config.json) uses `bitwig-agent` and therefore needs that executable on the client's `PATH` (or an absolute executable path substituted). No configuration is installed automatically. Do not replace an existing client configuration wholesale if it contains other servers.
 
-### Write quarantine after an unresolved create/import/note write
+### Writes refused after an unresolved write
 
-`extension.restart` replaces toggling the controller in Settings for clearing this per-instance quarantine: it refuses while unresolved mutations exist unless `discardUnresolved:true`, and lists them so you can inspect the project afterwards. Poll `status` until it answers again, then re-discover targets. Observed on 6.1.4: `restart()` does not load a replaced `.bwextension` file (`status.extension.build` stays the same); restart Bitwig to run a new build. A Grid device quarantine is not cleared by it: use `grid.topology.reconcile` on that device.
+An unknown write leaves a hold that refuses further writes in its domain with `pending` / `unresolved`. `status.holds` lists every hold, and the refusal's `next` names the read to inspect with and the id to release: inspect the project, then `ack <id>` (a Grid device hold is re-checked first). Restarting Bitwig does not settle the pending native work; a replaced `.bwextension` is loaded only by a Bitwig restart. See [recovery](PROTOCOL.md#results-errors-and-recovery).
 
-### `project.save` stays `dispatched` with `saved:false`
+### `project.save` returns `unknown` / `not_observed`
 
 An open modal dialog in Bitwig, such as **Recover Projects** after a crash, keeps the save from completing, and the extension cannot see the dialog. Close it in Bitwig, check `projectModified`, then save again.
 

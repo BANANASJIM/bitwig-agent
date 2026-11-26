@@ -62,12 +62,14 @@ public final class LauncherSettingsModuleTest {
     void sourceBoundWriteIsReadBackAndReadsDoNotWrite() {
         Fixture f = new Fixture();
         JsonObject settings = settings();
+        JsonObject written = f.call("launcher.set", settings);
         assertTrue(
-                f.call("launcher.set", settings).get("nextAction").getAsString().equals("play_next"),
+                written.get("nextAction").getAsString().equals("play_next")
+                        && written.get("outcome").getAsString().equals("applied"),
                 "source-bound write read back");
         assertTrue(f.writes == 1, "one write");
-        f.call("launcher.get", target());
-        assertTrue(f.writes == 1, "read does not write");
+        JsonObject read = f.call("launcher.get", target());
+        assertTrue(f.writes == 1 && !read.has("outcome"), "read does not write and carries no outcome");
         JsonObject b = target();
         b.addProperty("expectedClipName", "Wrong");
         assertRpcError("stale_context", f.start("launcher.get", b));
@@ -81,8 +83,9 @@ public final class LauncherSettingsModuleTest {
         fail.failWrite = true;
         HostOperation failed = fail.start("launcher.set", settings);
         fail.drain();
-        assertRpcError("internal_error", failed);
-        assertRpcError("write_quarantined", fail.start("launcher.set", settings));
+        assertUnknown("internal", failed);
+        RpcException blocked = assertRpcError("unresolved", fail.start("launcher.set", settings));
+        assertTrue(blocked.next.contains("ack " + LauncherStructureLock.SETTINGS), "the refusal names the hold to ack");
         fail.call("launcher.get", target());
         assertTrue(fail.writes == 1, "unknown write stays quarantined but reads allowed");
     }
@@ -103,6 +106,29 @@ public final class LauncherSettingsModuleTest {
         Fixture unsafe = new Fixture(true);
         assertRpcError("unsafe_state", unsafe.start("launcher.set", settings));
         assertTrue(unsafe.calls == 0, "playing blocks settings write");
+    }
+
+    @Test
+    void refusalsAndValidation() {
+        assertRpcError("unknown_method", () -> LauncherSettingsModule.validateParams("launcher.bogus", target()));
+        JsonObject badId = settings();
+        badId.addProperty("trackId", "not-a-uuid");
+        bad("launcher.set", badId);
+        JsonObject longName = settings();
+        longName.addProperty("expectedClipName", "x".repeat(257));
+        bad("launcher.set", longName);
+
+        Fixture f = new Fixture();
+        JsonObject launch = target();
+        launch.addProperty("launchMode", "gate");
+        assertRpcError("native_unavailable", f.start("launcher.set", launch));
+
+        f.host.services.holds.inFlight(LauncherStructureLock.SETTINGS_PENDING, "pending");
+        assertRpcError("busy", f.start("launcher.get", target()));
+        f.host.services.holds.release(LauncherStructureLock.SETTINGS_PENDING);
+
+        LauncherSettingsModule noAccess = f.host.services.launcherSettings((LauncherSettingsModule.Access) null);
+        assertRpcError("host_mismatch", f.host.start(noAccess, "launcher.set", settings()));
     }
 
     static JsonObject target() {
@@ -148,7 +174,12 @@ public final class LauncherSettingsModuleTest {
                         if (failWrite) throw new RuntimeException("native exception");
                     }
                     JsonObject out = changes.deepCopy();
-                    out.addProperty("status", "observed");
+                    JsonObject fields = new JsonObject();
+                    for (var change : changes.entrySet())
+                        fields.add(
+                                change.getKey(),
+                                Results.field(change.getValue(), change.getValue(), Outcome.APPLIED, null));
+                    out.add("fields", fields);
                     return out;
                 }
             });
