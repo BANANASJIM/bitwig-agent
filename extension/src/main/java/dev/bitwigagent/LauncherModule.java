@@ -1214,7 +1214,7 @@ final class LauncherModule implements HostModule {
                 NoteStep note = clip.getStep(w.channel, x, pitch);
                 if (note == null || note.state() == null)
                     throw HostServices.failure("not_ready", "Note grid is not readable");
-                if (note.state() == NoteStep$State.NoteOn)
+                if (hasState(note, "NoteOn"))
                     cells.put(x * 128 + pitch, new double[] {midiVelocity(note.velocity()), note.duration()});
             }
         return cells;
@@ -1225,6 +1225,11 @@ final class LauncherModule implements HostModule {
         for (int key : cells.keySet()) out.add(key % 128);
         Collections.sort(out);
         return out;
+    }
+
+    // Matched by constant name: the host jar flattens NoteStep.State, so only the name resolves with both jars.
+    static boolean hasState(NoteStep note, String name) {
+        return note.state().name().equals(name);
     }
 
     private static boolean sameCells(Map<Integer, double[]> a, Map<Integer, double[]> b) {
@@ -1396,7 +1401,7 @@ final class LauncherModule implements HostModule {
             NoteStep old = clip.getStep(w.channel, e.x, e.pitch);
             if (old == null || old.state() == null)
                 throw HostServices.failure("not_ready", "Note grid is not readable");
-            if (old.state() == NoteStep$State.NoteSustain)
+            if (hasState(old, "NoteSustain"))
                 throw HostServices.failure("note_collision", "Edit addresses a sustained note, not its onset");
             double beat = (w.start + e.x) * w.size;
             if (e.set && (beat < loopStart || beat + e.duration > end))
@@ -1406,7 +1411,7 @@ final class LauncherModule implements HostModule {
                 NoteStep next = clip.getStep(w.channel, x, e.pitch);
                 if (next == null || next.state() == null)
                     throw HostServices.failure("not_ready", "Note grid is not readable");
-                if (next.state() == NoteStep$State.NoteOn)
+                if (hasState(next, "NoteOn"))
                     throw HostServices.failure(
                             "note_collision",
                             "Set duration overlaps an existing unrelated onset; clear it in a separate explicit edit first");
@@ -1475,8 +1480,8 @@ final class LauncherModule implements HostModule {
 
     static boolean matches(Edit e, NoteStep note) {
         if (note == null) return false;
-        if (!e.set) return note.state() == NoteStep$State.Empty;
-        return note.state() == NoteStep$State.NoteOn
+        if (!e.set) return hasState(note, "Empty");
+        return hasState(note, "NoteOn")
                 && midiVelocity(note.velocity()) == e.velocity
                 && Math.abs(note.duration() - e.duration) <= 1e-9;
     }
@@ -1496,10 +1501,10 @@ final class LauncherModule implements HostModule {
                 NoteStep note = clip.getStep(w.channel, x, pitch);
                 if (note == null || note.state() == null)
                     throw HostServices.failure("not_ready", "Note grid is not readable");
-                if (note.state() == NoteStep$State.NoteOn) {
+                if (hasState(note, "NoteOn")) {
                     total++;
                     if (list && notes.size() < NOTE_LIMIT) notes.add(noteJson(note, w, x, pitch));
-                } else if (list && note.state() == NoteStep$State.NoteSustain && x == 0) {
+                } else if (list && hasState(note, "NoteSustain") && x == 0) {
                     JsonObject row = noteJson(note, w, x, pitch);
                     row.addProperty("state", "NoteSustain"); // continues from before the window: not an onset to copy
                     sustains.add(row);
@@ -1547,7 +1552,7 @@ final class LauncherModule implements HostModule {
 
     /** A cell as read back after an edit: an onset row, or just the cell with its non-onset state. */
     static JsonObject observedJson(NoteStep note, Window w, int x, int pitch) {
-        if (note.state() == NoteStep$State.NoteOn) return noteJson(note, w, x, pitch);
+        if (hasState(note, "NoteOn")) return noteJson(note, w, x, pitch);
         JsonObject out = new JsonObject();
         out.addProperty("beat", (w.start + x) * w.size);
         out.addProperty("pitch", pitch);

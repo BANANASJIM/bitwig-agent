@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Real MCP stdio/client/Java transport + registry validation, with a fixture handler.
 
-Requires BITWIG_API_JAR and a JDK. This exercises no Bitwig instance and cannot
+Uses BITWIG_API_JAR when set, else the pinned public extension API; requires a JDK. This exercises no Bitwig instance and cannot
 prove edits, observer delivery, audio, UI, or persistence. Run with check.py.
 """
 
@@ -71,8 +71,7 @@ async def exercise(folder: Path, api: Path) -> None:  # noqa: PLR0915
     fixture = folder / "McpTransportFixture.java"
     fixture.write_text(FIXTURE, encoding="utf-8")
     gson = build.gson_jar()
-    sources = sorted((ROOT / "extension/src/main/java").rglob("*.java"))
-    build.compile_java([*sources, fixture], folder, [gson, api])
+    build.compile_java([*build.verification_sources(), fixture], folder, [gson, api], build.lint_flag(api))
     process = await asyncio.create_subprocess_exec(
         os.environ.get("JAVA", "java"),
         "-cp",
@@ -155,12 +154,9 @@ async def exercise(folder: Path, api: Path) -> None:  # noqa: PLR0915
 
 
 async def main() -> None:
-    api_setting = os.environ.get("BITWIG_API_JAR")
-    if not api_setting or not Path(api_setting).is_file():
-        raise RuntimeError("Set BITWIG_API_JAR to your installed API jar; fixture smoke does not launch Bitwig")
     build.BUILD.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="mcp-java-smoke-", dir=build.BUILD) as folder:
-        await asyncio.wait_for(exercise(Path(folder), Path(api_setting).resolve()), timeout=180)
+        await asyncio.wait_for(exercise(Path(folder), build.api_jar()), timeout=180)
 
 
 if __name__ == "__main__":

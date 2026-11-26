@@ -1,0 +1,11 @@
+[gson]
+file = "gson-2.10.jar"
+url = "https://repo.maven.apache.org/maven2/com/google/code/gson/gson/2.10/gson-2.10.jar"
+sha256 = "0cdd163ce3598a20fc04eee71b140b24f6f2a3b35f0a499dbbdd9852e83fbfaf"
+max_bytes = 1048576
+
+[extension-api]
+file = "extension-api-25.jar"
+url = "https://maven.bitwig.com/com/bitwig/extension-api/25/extension-api-25.jar"
+sha256 = "842b1a05a1b29b17c4440cb3609c102953e3a0d28be910e743bce6aa2a38d1b6"
+max_bytes = 4194304

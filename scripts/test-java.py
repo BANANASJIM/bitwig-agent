@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Run every *Test.java main deterministically; simulated host, never native Bitwig.
 
-Requires BITWIG_API_JAR pointing to the user's installed API jar and a JDK.
-Gson is checksum-verified by build.py (downloaded only when not cached).
+Compiles against BITWIG_API_JAR when set, else the pinned public extension API.
+Dependencies come from extension/deps.toml, checksum-verified; requires a JDK.
 """
 
 import importlib.util
@@ -17,10 +17,6 @@ CORE_TESTS = {"dev.bitwigagent.RpcServerTest", "dev.bitwigagent.HostBridgeTest"}
 
 
 def main() -> None:
-    api_setting = os.environ.get("BITWIG_API_JAR")
-    if not api_setting or not Path(api_setting).is_file():
-        raise RuntimeError("Set BITWIG_API_JAR to your installed Bitwig API jar; no host is downloaded")
-    api = Path(api_setting).resolve()
     tests = sorted(
         path.relative_to(TEST_ROOT).with_suffix("").as_posix().replace("/", ".")
         for path in TEST_ROOT.rglob("*Test.java")
@@ -38,10 +34,10 @@ def main() -> None:
     classes = build.BUILD / "test-classes"
     if classes.exists():
         shutil.rmtree(classes)
+    api = build.api_jar()
     gson = build.gson_jar()
-    sources = sorted((ROOT / "extension/src/main/java").rglob("*.java"))
-    sources += sorted(TEST_ROOT.rglob("*.java"))
-    build.compile_java(sources, classes, [gson, api])
+    sources = [*build.verification_sources(), *sorted(TEST_ROOT.rglob("*.java"))]
+    build.compile_java(sources, classes, [gson, api], build.lint_flag(api))
     classpath = os.pathsep.join(map(str, [classes, gson, api]))
     print(f"Java simulated-host/transport layer: {len(tests)} test mains", flush=True)
     failures = []

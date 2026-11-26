@@ -15,6 +15,17 @@ public final class LauncherModuleTest {
     private static int assertions;
     private static final String ID = "11111111-1111-1111-1111-111111111111";
 
+    private static Object stateConstant(String name) {
+        try {
+            for (Object constant :
+                    NoteStep.class.getMethod("state").getReturnType().getEnumConstants())
+                if (((Enum<?>) constant).name().equals(name)) return constant;
+        } catch (NoSuchMethodException e) {
+            throw new IllegalStateException(e);
+        }
+        throw new IllegalStateException("No NoteStep state " + name);
+    }
+
     public static void main(String[] args) throws Exception {
         settingsIsolationIsShared();
         parallelSelectionIsRejectedWhileCursorEditRuns();
@@ -2511,18 +2522,18 @@ public final class LauncherModuleTest {
             double storagePosition = (start + x) * size / storageSize;
             int storedStep = (int) storagePosition;
             Note on = storagePosition == storedStep ? notes.get(key(selected, channel, storedStep, pitch)) : null;
-            NoteStep$State state = on == null ? NoteStep$State.Empty : NoteStep$State.NoteOn;
+            Object state = stateConstant(on == null ? "Empty" : "NoteOn");
             if (on == null)
                 for (int step = 0; step < storagePosition; step++) {
                     Note earlier = notes.get(key(selected, channel, step, pitch));
                     if (earlier != null && step * storageSize + earlier.duration > (start + x) * size) {
                         on = earlier;
-                        state = NoteStep$State.NoteSustain;
+                        state = stateConstant("NoteSustain");
                         break;
                     }
                 }
             final Note found = on;
-            final NoteStep$State actual = state;
+            final Object actual = state;
             Node n = new Node(NoteStep.class);
             n.action("channel", a -> channel);
             n.action("x", a -> x);
