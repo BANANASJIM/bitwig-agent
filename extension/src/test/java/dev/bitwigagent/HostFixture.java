@@ -169,6 +169,7 @@ final class HostFixture {
         for (int s = 0; s < HostLimits.SCENES; s++) {
             scenes.item(s).child("exists").data = false;
             scenes.item(s).child("name").data = "";
+            scenes.item(s).child("sceneIndex").data = s;
         }
         launcherCursorClip(host.child("createLauncherCursorClip"));
         bank.items(Track.class);
@@ -271,7 +272,9 @@ final class HostFixture {
         track.child("channelId").data = "";
         FakeHost sameSlot = FakeHost.of(BooleanValue.class, "sameSlot");
         sameSlot.data = false;
-        clip.child("clipLauncherSlot").on("createEqualsValue", args -> sameSlot.proxy());
+        FakeHost cursorSlot = clip.child("clipLauncherSlot");
+        cursorSlot.child("sceneIndex").data = -1;
+        cursorSlot.on("createEqualsValue", args -> sameSlot.proxy());
     }
 
     /** The cursor remote-controls page a device offers, empty and unmapped. */

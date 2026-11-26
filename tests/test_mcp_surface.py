@@ -57,7 +57,7 @@ def test_tools_that_write_files_or_retrigger_are_not_read_only_or_idempotent():
         annotations = resolve(name, TOOLS[name].annotations)
         assert annotations.read_only is False
         assert annotations.destructive is True
-    for name in ("launcher.launch", "scenes.launch"):
+    for name in ("clips.launch", "scenes.launch"):
         annotations = resolve(name, TOOLS[name].annotations)
         assert annotations.idempotent is False
         assert annotations.destructive is False
@@ -81,7 +81,7 @@ def test_core_write_tools_carry_hand_written_summaries_with_their_call_critical_
     expected = {
         "notes.edit": ("velocity", "durationBeats", "stepSizeBeats"),
         "grid.parameters.set": ("option value", "grid.get"),
-        "launcher.set": ("cannot be combined",),
+        "clips.set": ("first failure", "stopped"),
         "notes.read": ("2048", "completeWindow"),
         "devices.insert": ("requestedIdentifierVerified",),
         "tracks.set": ("not dB",),

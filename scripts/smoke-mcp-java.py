@@ -132,7 +132,9 @@ async def exercise(folder: Path, api: Path) -> None:  # noqa: PLR0915
                     # Preserve omitted optional fields; the real JVM independently
                     # validates what the adapter actually sends.
                     expected = (
-                        TOOLS[method].model.model_validate(params).model_dump(exclude={"timeoutMs"}, exclude_unset=True)
+                        TOOLS[method]
+                        .model.model_validate(params)
+                        .model_dump(exclude={"timeoutMs"}, exclude_unset=True, by_alias=True)
                     )
                     response = await session.call_tool(method, params)
                     body = payload(response)

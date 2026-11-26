@@ -23,7 +23,7 @@ from tooling import host_paths
 
 from bitwig_agent.protocol import CLIENT_SIDE, TOOLS
 from bitwig_agent.protocol.base import MAX_BEAT, PROTOCOL
-from bitwig_agent.protocol.launcher import MIDI_PITCH_COUNT
+from bitwig_agent.protocol.clips import MIDI_PITCH_COUNT
 
 UUID_PATTERN = r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 UUID = re.compile(UUID_PATTERN)
@@ -44,25 +44,20 @@ SKIPS: dict[tuple[str, str, str], str] = {
         "accept",
     ): "per-kind id caps (clap 256, vst3 32) make the shared 4096 unreachable; rejects still run",
     (
-        "launcher.create",
+        "clips.insert",
         "notes.0.beat",
         "accept",
-    ): "a note must fit lengthBeats (max 4096), so beat 4194304 is unreachable here",
+    ): "a note must fit the clip length (loop 4096, arranger 65536), so beat 4194304 is unreachable here",
     (
         "notes.edit",
         "edits.0.beat",
         "accept",
     ): "no explicit window: the host derives a grid of <=128 steps (step<=4 beats, startStep<=1048576) and rejects extremes the schema allows; error names the fix",
     (
-        "launcher.create",
+        "clips.insert",
         "notes.0.durationBeats",
         "accept",
     ): "same derived-grid limit (a 4096-beat note needs >128 steps)",
-    (
-        "arranger.clips.create",
-        "notes.0.beat",
-        "accept",
-    ): "a note must fit lengthBeats (max 65536), so beat 4194304 is unreachable here",
     (
         "notes.edit",
         "edits.0.durationBeats",
@@ -223,7 +218,7 @@ FIXUPS = {
     ("transport.set", "timeSignature"): lambda p, v: p.__setitem__("timeSignature", "3/4"),
     ("devices.insert", "path"): file_insert,
     ("devices.layers.insert", "path"): file_insert,
-    ("launcher.import", "path"): lambda p, v: p.__setitem__("path", as_path(v)),
+    ("clips.import", "path"): lambda p, v: p.__setitem__("path", as_path(v)),
     ("project.saveAs", "path"): project_path,
     ("export.audio", "directory"): lambda p, v: p.__setitem__("directory", as_path(v)),
     **{

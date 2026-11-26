@@ -38,7 +38,7 @@ final class MidiImportPreflight {
         }
         throw Errors.notApplied(
                 Reason.INVALID_FILE,
-                "MIDI import requires a positive-velocity note-on or another channel event; use launcher.create for an empty timed clip.");
+                "MIDI import requires a positive-velocity note-on or another channel event; use clips.insert for an empty timed clip.");
     }
 
     private MidiImportPreflight() {}

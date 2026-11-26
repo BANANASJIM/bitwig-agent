@@ -257,7 +257,8 @@ async def isolate(bridge: Any, args: dict[str, Any], timeout_ms: int, stopped: l
     others = [t for t in playing if t["trackId"] != solo]
     if stop_others and solo:
         for t in others:
-            require_success("launcher.stop", await bridge.call("launcher.stop", {"trackId": t["trackId"]}, timeout_ms))
+            target = {"kind": "track", "id": t["trackId"], "name": t["name"]}
+            require_success("launcher.stop", await bridge.call("launcher.stop", {"target": target}, timeout_ms))
             stopped.append(t["name"])
         others = []
     if (

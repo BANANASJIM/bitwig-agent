@@ -20,6 +20,8 @@ final class TestServices {
     final SelectionLease selection;
     final Holds holds = new Holds();
     final LauncherStructureLock lock;
+    private LauncherTargets launcherTargets;
+    private LauncherState launcherState;
 
     TestServices(ControllerHost host, LongSupplier clock) {
         this.host = host;
@@ -44,7 +46,7 @@ final class TestServices {
     }
 
     ArrangerModule arranger(ArrangerModule.Access access) {
-        return new ArrangerModule(scheduler, window, transportSafety, natives, holds, access);
+        return new ArrangerModule(scheduler, window, trackRefs, projectState, transportSafety, natives, holds, access);
     }
 
     AutomationModule automation(AutomationModule.Access access) {
@@ -63,12 +65,34 @@ final class TestServices {
         return new GridModule(scheduler, sources, transportSafety, natives, adapter);
     }
 
-    LauncherModule launcher() {
-        return new LauncherModule(host, scheduler, window, transportSafety, selection, lock, holds);
+    /** The scene window lease and the refs resolved through it, shared by every launcher module of one test. */
+    LauncherTargets launcherTargets() {
+        if (launcherTargets == null)
+            launcherTargets = new LauncherTargets(window, trackRefs, new SceneWindowLease(window, scheduler));
+        return launcherTargets;
     }
 
-    LauncherSettingsModule launcherSettings(LauncherModule launcher) {
-        return new LauncherSettingsModule(scheduler, window, transportSafety, natives, holds, launcher);
+    LauncherState launcherState() {
+        if (launcherState == null)
+            launcherState = new LauncherState(
+                    host, scheduler, window, transportSafety, selection, lock, holds, launcherTargets());
+        return launcherState;
+    }
+
+    LauncherModule launcher() {
+        return new LauncherModule(launcherState(), trackRefs);
+    }
+
+    NoteModule notes() {
+        return new NoteModule(launcherState());
+    }
+
+    ClipModule clips(LauncherSettingsModule.Access settings, ArrangerModule.Access arranger) {
+        return new ClipModule(launcherState(), trackRefs, notes(), launcherSettings(settings), arranger(arranger));
+    }
+
+    ContextModule context(MixModule mix, TransportModule transport) {
+        return new ContextModule(scheduler, window, projectState, transportSafety, transport, mix, launcherState());
     }
 
     LauncherSettingsModule launcherSettings(LauncherSettingsModule.Access access) {
@@ -116,7 +140,7 @@ final class TestServices {
     }
 
     SceneModule scene() {
-        return new SceneModule(scheduler, window, transportSafety, lock);
+        return new SceneModule(scheduler, window, transportSafety, lock, launcherTargets(), project);
     }
 
     TransportModule transportModule() {

@@ -83,11 +83,9 @@ def checked_graph(graph: dict, target: dict, observed_target: dict | None = None
 
 
 def checked_notes(readback: dict, window: dict, edits: list[dict]) -> None:
-    if any(readback.get(key) != window[key] for key in ("trackId", "slotIndex")):
+    if readback.get("ref") != window["target"]:
         raise RuntimeError("Note readback target differs from the owned clip")
-    if any(
-        readback["window"].get(key) != value for key, value in window.items() if key not in {"trackId", "slotIndex"}
-    ):
+    if any(readback["window"].get(key) != value for key, value in window.items() if key != "target"):
         raise RuntimeError("Note readback window differs from the authored window")
     observed = {(item["beat"], item["pitch"]): item for item in readback["notes"]}
     expected = {(item["beat"], item["pitch"]): item for item in edits}
@@ -96,8 +94,7 @@ def checked_notes(readback: dict, window: dict, edits: list[dict]) -> None:
         or len(observed) != len(readback["notes"])
         or observed.keys() != expected.keys()
         or readback.get("continuingAtWindowStart") != []
-        or readback.get("loopStartBeats") != 0
-        or readback.get("loopLengthBeats") != LOOP_LENGTH_BEATS
+        or readback.get("loop") != {"lengthBeats": LOOP_LENGTH_BEATS, "startBeats": 0}
         or readback.get("loopEnabled") is not True
         or readback.get("playStartBeats") != 0
     ):
@@ -317,7 +314,7 @@ def report_summary(report: dict, artifacts: Path) -> dict:
             {
                 "trackId": item["trackId"],
                 "label": item["label"],
-                "slotIndex": item.get("slotIndex"),
+                "scene": item.get("scene"),
                 "noteCount": item.get("noteCount"),
             }
             for item in report["createdTracks"]
@@ -364,7 +361,7 @@ async def create(args: argparse.Namespace) -> int:  # noqa: C901, PLR0912, PLR09
             "tracks.create",
             "tracks.set",
             "devices.insert",
-            "launcher.create",
+            "clips.insert",
             "notes.edit",
             "notes.read",
             "grid.modules.insert",
@@ -483,19 +480,19 @@ async def create(args: argparse.Namespace) -> int:  # noqa: C901, PLR0912, PLR09
                     "expectedDeviceName": device["name"],
                 }
                 report["createdTracks"][-1]["patch"] = await build_grid(call, target, types, label)
-            await call(
-                "launcher.create",
+            scene = (await call("scenes.list", {}))["scenes"][0]["ref"]
+            track_ref = {"kind": "track", "id": track_id, "name": f"Toolkit {label}"}
+            inserted = await call(
+                "clips.insert",
                 {
-                    "trackId": track_id,
-                    "slotIndex": 0,
-                    "lengthBeats": LOOP_LENGTH_BEATS,
+                    "to": {"kind": "slot", "track": track_ref, "scene": scene},
+                    "loop": {"lengthBeats": LOOP_LENGTH_BEATS},
                     "name": f"{label} eight-beat sketch",
                 },
             )
-            report["createdTracks"][-1]["slotIndex"] = 0
+            report["createdTracks"][-1]["scene"] = scene["index"]
             window = {
-                "trackId": track_id,
-                "slotIndex": 0,
+                "target": inserted["ref"],
                 "channel": 0,
                 "stepSizeBeats": 0.25,
                 "startStep": 0,

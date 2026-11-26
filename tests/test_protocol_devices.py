@@ -1,9 +1,12 @@
+from typing import Any
+
 import pytest
 from pydantic import ValidationError
 
 from bitwig_agent.protocol import TOOLS, validate_call
 from bitwig_agent.protocol.base import TARGET, TRACK
 from bitwig_agent.protocol.devices import LAYER_PARENT, LAYER_TARGET
+from bitwig_agent.protocol.launcher import SLOT_REF
 
 
 @pytest.mark.parametrize(
@@ -66,10 +69,11 @@ def test_file_insertion_preserves_path_and_omits_id():
     ],
 )
 def test_file_import_and_device_insertion_share_path_syntax(path):
-    for method, args in [
-        ("launcher.import", {"trackId": TRACK, "slotIndex": 0}),
+    cases: list[tuple[str, dict[str, Any]]] = [
+        ("clips.import", {"to": SLOT_REF}),
         ("devices.insert", {"trackId": TRACK, "expectedDeviceCount": 0, "kind": "file"}),
-    ]:
+    ]
+    for method, args in cases:
         with pytest.raises(ValidationError):
             validate_call(method, {**args, "path": path})
 

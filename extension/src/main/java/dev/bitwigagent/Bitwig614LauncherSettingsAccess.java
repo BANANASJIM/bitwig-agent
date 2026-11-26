@@ -65,10 +65,10 @@ final class Bitwig614LauncherSettingsAccess implements LauncherSettingsModule.Ac
         Object nativeSlot = a.invoke(target, proxy), value = a.invoke(clip, proxy);
         if (!slotType.isInstance(nativeSlot) || !event.isInstance(value) || a.invoke(slot, value) != nativeSlot)
             throw Errors.notApplied(
-                    Reason.STALE_CONTEXT, "Launcher proxy does not resolve to one attached native clip slot.");
+                    Reason.TARGET_CHANGED, "Launcher proxy does not resolve to one attached native clip slot.");
         Object track = resolver.require(resolver.slotTrack(nativeSlot), trackId, Bitwig614TrackResolver.Kind.CHANNEL);
         if (!expectedName.equals(a.invoke(name, value)))
-            throw Errors.notApplied(Reason.STALE_CONTEXT, "Native clip name differs from expectedClipName.");
+            throw Errors.notApplied(Reason.TARGET_CHANGED, "Native clip name differs from expectedClipName.");
         Object owningProject = resolver.owner(value, projectType);
         Object[] models = {value, nativeSlot, track};
         String[] labels = {"clipDeleted", "slotDeleted", "trackDeleted", "projectDeleted"};
@@ -90,7 +90,7 @@ final class Bitwig614LauncherSettingsAccess implements LauncherSettingsModule.Ac
                     || a.invoke(clip, proxy) != value
                     || a.invoke(slot, value) != nativeSlot
                     || resolver.slotTrack(nativeSlot) != track)
-                throw Errors.notApplied(Reason.STALE_CONTEXT, "Launcher target changed during native operation.");
+                throw Errors.notApplied(Reason.TARGET_CHANGED, "Launcher target changed during native operation.");
         };
         guard.run();
         JsonObject fields = new JsonObject();

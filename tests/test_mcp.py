@@ -4,7 +4,8 @@ from mcp.shared.exceptions import MCPError
 
 from bitwig_agent.protocol import CLIENT_SIDE, TOOLS
 from bitwig_agent.protocol.base import REASONS
-from bitwig_agent.protocol.launcher import NOTE_WINDOW
+from bitwig_agent.protocol.clips import NOTE_WINDOW
+from bitwig_agent.protocol.launcher import SLOT_REF
 
 pytestmark = pytest.mark.anyio
 
@@ -155,10 +156,13 @@ async def test_absent_fields_and_explicit_nullable_fields_remain_distinct_over_m
                 "normalizedValue": 0.5,
             },
         ),
-        ("launcher.create", {"trackId": TRACK, "slotIndex": 16, "lengthBeats": 4, "name": "x"}),
-        ("launcher.import", {"trackId": TRACK, "slotIndex": 0, "path": "file:///tmp/audio.wav"}),
-        ("launcher.import", {"trackId": TRACK, "slotIndex": 16, "path": "/tmp/audio.wav"}),
-        ("launcher.import", {"trackId": TRACK, "slotIndex": 0, "path": "/tmp/audio.wav", "overwrite": True}),
+        ("clips.insert", {"to": SLOT_REF, "lengthBeats": 4, "name": "x"}),
+        ("clips.import", {"to": SLOT_REF, "path": "file:///tmp/audio.wav"}),
+        (
+            "clips.import",
+            {"to": {**SLOT_REF, "scene": {"kind": "scene", "index": -1, "name": None}}, "path": "/tmp/audio.wav"},
+        ),
+        ("clips.import", {"to": SLOT_REF, "path": "/tmp/audio.wav", "overwrite": True}),
         ("notes.read", {**NOTE_WINDOW, "pitchStart": 127, "pitchCount": 2}),
         ("notes.edit", {**NOTE_WINDOW, "edits": [{"op": "set", "beat": 0, "pitch": 60}]}),
         ("notes.edit", {**NOTE_WINDOW, "edits": [{"op": "clear", "beat": 0, "pitch": 60, "velocity": None}]}),

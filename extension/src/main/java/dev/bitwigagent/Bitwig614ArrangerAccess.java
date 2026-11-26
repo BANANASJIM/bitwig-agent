@@ -1,6 +1,7 @@
 package dev.bitwigagent;
 
 import com.google.gson.*;
+import dev.bitwigagent.core.Refs;
 import java.lang.reflect.Method;
 import java.util.*;
 
@@ -141,7 +142,7 @@ final class Bitwig614ArrangerAccess implements ArrangerModule.Access {
             if (!resolver.same(proxy, track)
                     || a.invoke(Bitwig614ArrangerAccess.this.lane, track) != lane
                     || a.invoke(Bitwig614ArrangerAccess.this.timeline, lane) != timeline)
-                throw Errors.notApplied(Reason.STALE_CONTEXT, "Arranger lane changed during the native operation.");
+                throw Errors.notApplied(Reason.TARGET_CHANGED, "Arranger lane changed during the native operation.");
         }
 
         List<Object> clips() {
@@ -314,7 +315,7 @@ final class Bitwig614ArrangerAccess implements ArrangerModule.Access {
             throw Errors.unknown(
                     Reason.READBACK_MISMATCH,
                     readback.invalidRows + " native note rows have a channel outside 0..15 or a key"
-                            + " outside 0..127; " + cleanup + ". Inspect arranger.clips.list before another write.");
+                            + " outside 0..127; " + cleanup + ". Inspect arranger.list before another write.");
         }
         if (readback != null && !readback.complete)
             throw Errors.unknown(
@@ -388,19 +389,19 @@ final class Bitwig614ArrangerAccess implements ArrangerModule.Access {
         Object slot = a.invoke(slotTarget, slotProxy), source = a.invoke(slotClip, slotProxy);
         if (!slotType.isInstance(slot) || !clipType.isInstance(source) || a.invoke(clipSlot, source) != slot)
             throw Errors.notApplied(
-                    Reason.STALE_CONTEXT, "Launcher proxy does not resolve to one attached native clip slot.");
+                    Reason.TARGET_CHANGED, "Launcher proxy does not resolve to one attached native clip slot.");
         if (resolver.slotTrack(slot) != lane.track)
-            throw Errors.notApplied(Reason.STALE_CONTEXT, "Launcher slot belongs to another native track.");
+            throw Errors.notApplied(Reason.TARGET_CHANGED, "Launcher slot belongs to another native track.");
         if (a.invoke(slotLane, slot) != lane.lane)
             throw Errors.notApplied(Reason.UNSUPPORTED_SCOPE, "Launcher slot is not on the track's main clip lane.");
         if (!expectedClipName.equals(a.invoke(name, source)))
-            throw Errors.notApplied(Reason.STALE_CONTEXT, "Native clip name differs from expectedClipName.");
+            throw Errors.notApplied(Reason.TARGET_CHANGED, "Native clip name differs from expectedClipName.");
         double expectedLength = (Double) a.invoke(arrangeLength, source);
         List<Object> before = lane.clips();
         requireFree(lane, before, null, startBeats, startBeats + expectedLength);
         lane.guard(check);
         if (a.invoke(slotClip, slotProxy) != source)
-            throw Errors.notApplied(Reason.STALE_CONTEXT, "Launcher clip changed before the copy.");
+            throw Errors.notApplied(Reason.TARGET_CHANGED, "Launcher clip changed before the copy.");
         beforeWrite.run();
         a.invoke(copy, lane.lane, new ArrayList<>(List.of(slot)), slot, startBeats, copyMode, false, null, null);
         lane.guard(check);
@@ -417,28 +418,24 @@ final class Bitwig614ArrangerAccess implements ArrangerModule.Access {
 
     @Override
     public JsonObject edit(
-            Object trackProxy,
-            String trackId,
-            int clipIndex,
-            double expectedStart,
-            String expectedName,
-            String op,
-            JsonObject args,
-            Runnable check,
-            Runnable beforeWrite) {
+            Object trackProxy, JsonObject ref, String op, JsonObject args, Runnable check, Runnable beforeWrite) {
+        String trackId = ref.getAsJsonObject("track").get("id").getAsString(),
+                expectedName = ref.get("name").getAsString();
+        double expectedStart = ref.get("startBeats").getAsDouble();
         Lane lane = new Lane(trackProxy, trackId, check);
         List<Object> before = lane.clips();
-        if (clipIndex >= before.size())
-            throw Errors.notApplied(
-                    Reason.TARGET_NOT_FOUND,
-                    "clipIndex " + clipIndex + " is outside the " + before.size() + " arranger clips.");
+        int clipIndex = locate(before, ref, expectedStart, expectedName);
         Object clip = before.get(clipIndex);
         double s = (Double) a.invoke(start, clip), l = (Double) a.invoke(length, clip);
-        if (!near(s, expectedStart) || !expectedName.equals(a.invoke(name, clip)))
-            throw Errors.notApplied(
-                    Reason.STALE_TARGET,
-                    "Arranger clip " + clipIndex + " is \"" + a.invoke(name, clip) + "\" at " + s
-                            + ", not expectedName at expectedStartBeats; re-read arranger.clips.list.");
+        if (args.has("expect")) {
+            JsonObject observed = new JsonObject();
+            observed.addProperty("name", expectedName);
+            observed.addProperty("lengthBeats", l);
+            ValueMatch.requireExpected(
+                    args.getAsJsonObject("expect"),
+                    observed,
+                    Map.of("name", ValueMatch.EXACT, "lengthBeats", ValueMatch.raw(EPS)));
+        }
         JsonObject previous = describe(clip, clipIndex);
         switch (op) {
             case "move": {
@@ -492,6 +489,23 @@ final class Bitwig614ArrangerAccess implements ArrangerModule.Access {
             default:
                 throw Errors.notApplied(Reason.INVALID_PARAMS, "Unknown arranger op.");
         }
+    }
+
+    /** The clip that starts at the ref's start and has its name; another name there is target_changed. */
+    private int locate(List<Object> clips, JsonObject ref, double expectedStart, String expectedName) {
+        int found = -1;
+        for (int i = 0; i < clips.size(); i++) {
+            if (!near((Double) a.invoke(start, clips.get(i)), expectedStart)) continue;
+            if (expectedName.equals(a.invoke(name, clips.get(i)))) return i;
+            if (found < 0) found = i;
+        }
+        if (found < 0)
+            throw Errors.targetNotFound(ref, "No arranger clip starts at " + expectedStart + " on this track.");
+        Object clip = clips.get(found);
+        throw Errors.targetChanged(
+                "Another arranger clip now starts there.",
+                Refs.arrangerClip(
+                        ref.getAsJsonObject("track"), (Double) a.invoke(start, clip), (String) a.invoke(name, clip)));
     }
 
     private JsonObject already(Lane lane, String op, Object clip, JsonObject previous) {

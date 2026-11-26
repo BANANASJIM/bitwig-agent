@@ -5,10 +5,10 @@ import com.bitwig.extension.controller.api.*;
 import com.google.gson.*;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicLongArray;
+import java.util.function.Consumer;
 
-/** Source-bound launcher properties, independent of the note editor cursor. */
-final class LauncherSettingsModule implements HostModule {
-    static final Set<String> METHODS = Set.of("launcher.get", "launcher.set");
+/** Source-bound launcher clip properties (timing and Next Action), independent of the note editor cursor. */
+final class LauncherSettingsModule {
     static final List<String> WRITE_ORDER = List.of(
             "nextAction", "nextActionLinkToLoop", "nextActionLoopCount", "nextActionDelayBeats", "nextActionEnabled");
 
@@ -31,21 +31,18 @@ final class LauncherSettingsModule implements HostModule {
     private final Holds holds;
     private final AtomicLongArray epochs = new AtomicLongArray(HostLimits.TRACKS);
     private Access access;
-    private LauncherModule launcher;
     private static final String PENDING = LauncherStructureLock.SETTINGS_PENDING,
             QUARANTINE = LauncherStructureLock.SETTINGS;
-    private static final String PENDING_HOLD = "A launcher.set settings write is pending.",
-            QUARANTINE_HOLD = "A launcher.set settings write was dispatched and its outcome is unresolved.";
+    private static final String PENDING_HOLD = "A clips.set settings write is pending.",
+            QUARANTINE_HOLD = "A clips.set settings write was dispatched and its outcome is unresolved.";
 
     LauncherSettingsModule(
             Scheduler scheduler,
             TrackWindow window,
             TransportSafety transportSafety,
             NativeRuntime natives,
-            Holds holds,
-            LauncherModule launcher) {
-        this(scheduler, window, transportSafety, natives, holds, (Access) null);
-        this.launcher = launcher;
+            Holds holds) {
+        this(scheduler, window, transportSafety, natives, holds, null);
     }
 
     LauncherSettingsModule(
@@ -64,59 +61,9 @@ final class LauncherSettingsModule implements HostModule {
         for (int i = 0; i < HostLimits.TRACKS; i++) {
             final int index = i;
             Track t = window.at(i);
-            ClipLauncherSlotBank bank = t.clipLauncherSlotBank();
             t.channelId().addValueObserver((StringValueChangedCallback) v -> epochs.incrementAndGet(index));
             t.exists().addValueObserver((BooleanValueChangedCallback) v -> epochs.incrementAndGet(index));
-            bank.scrollPosition().addValueObserver((IntegerValueChangedCallback) v -> epochs.incrementAndGet(index));
-            window.markSlotIdentityInterested(t);
         }
-    }
-
-    @Override
-    public Set<String> methods() {
-        return METHODS;
-    }
-
-    @Override
-    public void validate(String method, JsonObject p) {
-        validateParams(method, p);
-    }
-
-    static void validateParams(String method, JsonObject p) {
-        if (!METHODS.contains(method))
-            throw Errors.notApplied(Reason.UNKNOWN_METHOD, "Unknown launcher settings method");
-        Set<String> required = Set.of("trackId", "slotIndex", "expectedClipName");
-        Set<String> optional = new HashSet<>();
-        if (method.equals("launcher.set")) {
-            optional.addAll(WRITE_ORDER);
-            optional.addAll(LauncherModule.LAUNCH_FIELDS);
-        }
-        Params.fields(p, required, optional);
-        if (!DeviceSources.canonicalUuid(Params.string(p, "trackId")))
-            throw Errors.notApplied(Reason.INVALID_PARAMS, "trackId must be a canonical UUID");
-        Params.integer(p, "slotIndex", 0, HostLimits.SCENES - 1);
-        if (Params.string(p, "expectedClipName").length() > 256)
-            throw Errors.notApplied(Reason.INVALID_PARAMS, "expectedClipName is too long");
-        if (method.equals("launcher.set") && p.size() == 3)
-            throw Errors.notApplied(Reason.INVALID_PARAMS, "Supply at least one setting");
-        boolean launch = LauncherModule.hasLaunchFields(p), nextAction = false;
-        for (String key : WRITE_ORDER) nextAction |= p.has(key);
-        if (launch && nextAction)
-            throw Errors.notApplied(
-                    Reason.INVALID_PARAMS,
-                    "Launch fields (launchQuantization, launchMode, useLoopStartAsQuantizationReference) and Next Action fields use different paths; send them in two calls");
-        if (p.has("launchQuantization")) Params.string(p, "launchQuantization");
-        if (p.has("launchMode")) Params.string(p, "launchMode");
-        if (p.has("useLoopStartAsQuantizationReference")) Params.bool(p, "useLoopStartAsQuantizationReference");
-        for (String key : WRITE_ORDER)
-            if (p.has(key)) {
-                if (key.equals("nextAction")) {
-                    if (!Set.of("play_next", "stop").contains(Params.string(p, key)))
-                        throw Errors.notApplied(Reason.INVALID_PARAMS, "nextAction must be play_next or stop");
-                } else if (key.equals("nextActionLoopCount")) Params.integer(p, key, 1, 64);
-                else if (key.endsWith("Enabled") || key.equals("nextActionLinkToLoop")) Params.bool(p, key);
-                else Params.number(p, key, 0, 4194304);
-            }
     }
 
     static boolean matches(JsonElement a, JsonElement b) {
@@ -128,35 +75,24 @@ final class LauncherSettingsModule implements HostModule {
         return a.equals(b);
     }
 
-    @Override
-    public void dispatch(HostOperation op, String method, JsonObject p) {
+    /** Reads, or writes {@code changes} to, the clip in the target's slot; {@code done} gets the native result. */
+    void run(
+            HostOperation op,
+            LauncherState.Target target,
+            JsonObject changes,
+            boolean write,
+            Consumer<JsonObject> done) {
         scheduler.check(op);
-        boolean write = method.equals("launcher.set");
-        if (write && LauncherModule.hasLaunchFields(p)) {
-            if (launcher == null)
-                throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Launch settings need the launcher module");
-            launcher.launchSettings(op, p);
-            return;
-        }
         if (holds.held(PENDING))
             throw Errors.notApplied(Reason.BUSY, "Another native launcher settings operation is pending");
         if (write && holds.held(QUARANTINE))
-            throw holds.blocked(QUARANTINE, "A launcher settings write is unresolved.", "Inspect launcher.get");
-        String id = p.get("trackId").getAsString(),
-                expected = p.get("expectedClipName").getAsString();
-        int index = window.trackSlot(id), number = p.get("slotIndex").getAsInt();
-        Track track = window.at(index);
-        ClipLauncherSlotBank bank = track.clipLauncherSlotBank();
-        if (bank.scrollPosition().get() != 0 || number >= bank.itemCount().get())
-            throw Errors.notApplied(
-                    Reason.OUTSIDE_WINDOW, "Launcher slot is outside the current zero-offset scene window");
-        ClipLauncherSlot slot = (ClipLauncherSlot) bank.getItemAt(number);
-        if (!slot.hasContent().get()
-                || !expected.equals(slot.name().get())
-                || slot.sceneIndex().get() != number)
-            throw Errors.notApplied(
-                    Reason.STALE_CONTEXT, "Observe the exact occupied slot name and index before settings access");
-        if (write && launcher != null) launcher.requireSettingsSafe(id, number);
+            throw holds.blocked(QUARANTINE, "A launcher settings write is unresolved.", "Inspect clips.get");
+        String id = target.id(), expected = target.slot.api.name().get();
+        int index = target.at.track, offset = target.at.offset, scene = target.scene();
+        Track track = target.track;
+        ClipLauncherSlot slot = target.slot.api;
+        if (!slot.hasContent().get() || slot.sceneIndex().get() != scene)
+            throw Errors.notApplied(Reason.NOT_READY, "The slot proxy does not show the scene yet.");
         SafetyObservation safety = write ? transportSafety.stopped(op) : null;
         if (access == null)
             try {
@@ -166,15 +102,14 @@ final class LauncherSettingsModule implements HostModule {
                         Reason.NATIVE_UNAVAILABLE,
                         "Exact launcher settings descriptors unavailable: " + e.getMessage());
             }
-        JsonObject changes = new JsonObject();
-        for (String key : WRITE_ORDER) if (p.has(key)) changes.add(key, p.get(key));
         long epoch = epochs.get(index);
         holds.inFlight(PENDING, PENDING_HOLD);
         Runnable check = () -> {
             scheduler.check(op);
-            if (epochs.get(index) != epoch)
+            if (epochs.get(index) != epoch || window.sceneOffset() != offset)
                 throw Errors.notApplied(
-                        Reason.STALE_CONTEXT, "Launcher track bank changed while settings operation was queued");
+                        Reason.TARGET_CHANGED,
+                        "The launcher track or scene window changed while the operation was queued");
             if (write) transportSafety.guardStopped(safety);
         };
         try {
@@ -187,28 +122,19 @@ final class LauncherSettingsModule implements HostModule {
                         holds.place(QUARANTINE, QUARANTINE_HOLD);
                     });
                     check.run();
-                    if (write)
-                        result.addProperty(
-                                "outcome",
-                                Results.worst(result.getAsJsonObject("fields")
-                                                .asMap()
-                                                .values())
-                                        .wire());
-                    result.addProperty("trackId", id);
-                    result.addProperty("slotIndex", number);
                     scheduler.schedule(
                             op,
                             () -> {
                                 check.run();
                                 if (!window.trackMatches(id, track)
-                                        || bank.scrollPosition().get() != 0
-                                        || slot.sceneIndex().get() != number
+                                        || slot.sceneIndex().get() != scene
                                         || !expected.equals(slot.name().get()))
                                     throw Errors.notApplied(
-                                            Reason.STALE_CONTEXT, "Launcher public target changed after native access");
+                                            Reason.TARGET_CHANGED,
+                                            "Launcher public target changed after native access");
                                 if (write) holds.release(QUARANTINE);
                                 holds.release(PENDING);
-                                op.result.complete(result);
+                                done.accept(result);
                             },
                             0);
                 } catch (RuntimeException | Error e) {
