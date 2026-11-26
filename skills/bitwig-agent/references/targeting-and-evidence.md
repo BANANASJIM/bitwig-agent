@@ -7,17 +7,17 @@ Use the installed MCP tool schemas or `bitwig-agent help METHOD` for exact argum
 | Operation | Required discovery/binding practice |
 |---|---|
 | Track change | Discover current UUID and readable fields; send only actual changed fields and read each field's `outcome` |
-| Root device/direct parameter | Discover track, zero-based root device index and exact name; call `parameters.list` and use the returned parameter ID/context token |
-| One-hop layer parameter | Use `devices.layers.list`, the exact child address/discovery token and `parameters.layer.list` context; do not treat child indices as root indices |
-| Remote Control | Use the currently observed page/name/parameter and its own context token; do not reuse a direct-parameter token |
+| Root device/direct parameter | Read the device ref with `devices.list`, call `parameters.list` and send the returned parameter ref back unchanged; no list is needed before each write |
+| One-hop chain device | Use `chains.list` for the chain ref, `devices.list {parent: chain}` for its device refs and send them back unchanged; do not treat chain device indices as root indices |
+| Remote Control | Read `devices.remote.get` (optionally `page`) and send the control's parameter ref back; it carries the page and the control name, and a remapped control is `stale` |
 | MIDI | A clip ref from `context.get` (`cursorClip`, occupied `launcherSlots`) or `launcher.list` (slot refs need an existing scene); channel and window default sensibly. Inspect coverage and selection/auto-arm side effects before calling |
 | Grid | Read with `grid.export`; its device ref is the `target` and its module refs name parameters; stale refs are refused as an error |
-| Modulator | Use explicit root parent and current modulator/output/control IDs from `modulators.get`; edits need `expectedCount`/`expectedAmount`/`expectedValue` from a fresh read |
+| Modulator | Use the modulator and parameter refs from `modulators.list`/`get`; `expect {amount}` or `expect {value}` is an optional guard on the current value |
 | Host Action | Discover the actual host Action ID and confirm its current UI context; `sent` does not establish enablement or effect |
 
-Switching direct-parameter targets invalidates the previous shared binding. Names, tokens and native module/modulator UUIDs are not permanent identity: reacquire after reopening or changing targets. Do not assume project-name equality proves which full path is loaded. Example IDs are placeholders, not targets.
+Names and native module/modulator UUIDs are not permanent identity: reacquire refs after reopening or changing the project. Do not assume project-name equality proves which full path is loaded. Example IDs are placeholders, not targets.
 
-Tracks, root devices and Launcher slots are bounded to windows of 16; sends to eight; layers are one hop with two layers/two children. Inspect completeness and unreadable values. `null` is not zero, false, empty or safe. MIDI reads are grid-window observations, not lossless whole-clip exports; scheduled settling is not a general acknowledgement barrier.
+Tracks, root devices and Launcher slots are bounded to windows of 16; sends to eight; chains are one hop with two chains/two devices. Inspect completeness and unreadable values. `null` is not zero, false, empty or safe. MIDI reads are grid-window observations, not lossless whole-clip exports; scheduled settling is not a general acknowledgement barrier.
 
 ## Before a write
 

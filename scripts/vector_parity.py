@@ -24,10 +24,13 @@ from tooling import host_paths
 from bitwig_agent.protocol import CLIENT_SIDE, TOOLS
 from bitwig_agent.protocol.base import MAX_BEAT, PROTOCOL
 from bitwig_agent.protocol.clips import MIDI_PITCH_COUNT
+from bitwig_agent.protocol.refs import CONTROL_ID, Ref
 
 UUID_PATTERN = r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 UUID = re.compile(UUID_PATTERN)
 SAMPLE_UUID = "12345678-1234-1234-1234-123456789abc"
+PATTERN_SAMPLES = {UUID_PATTERN: SAMPLE_UUID, CONTROL_ID: "0"}
+REF_MODELS = {model.__name__ for model in Ref.__subclasses__()}
 
 # (method, field path, vector kind) -> reason. Kind "accept"/"reject"/"optional"
 # skips that vector kind for the field; "all" skips every vector for it. Use only
@@ -35,11 +38,6 @@ SAMPLE_UUID = "12345678-1234-1234-1234-123456789abc"
 SKIPS: dict[tuple[str, str, str], str] = {
     (
         "devices.insert",
-        "id",
-        "accept",
-    ): "per-kind id caps (clap 256, vst3 32) make the shared 4096 unreachable; rejects still run",
-    (
-        "devices.layers.insert",
         "id",
         "accept",
     ): "per-kind id caps (clap 256, vst3 32) make the shared 4096 unreachable; rejects still run",
@@ -217,7 +215,6 @@ FIXUPS = {
     ("grid.parameters.set", "display"): drop("value"),
     ("transport.set", "timeSignature"): lambda p, v: p.__setitem__("timeSignature", "3/4"),
     ("devices.insert", "path"): file_insert,
-    ("devices.layers.insert", "path"): file_insert,
     ("clips.import", "path"): lambda p, v: p.__setitem__("path", as_path(v)),
     ("clips.set", "expect"): lambda p, v: p.__setitem__("expect", {"name": "Hook"}),
     ("project.saveAs", "path"): project_path,
@@ -240,7 +237,20 @@ def variants(schema, defs):
     schema = resolve(schema, defs)
     if "anyOf" in schema:
         return [resolve(s, defs) for s in schema["anyOf"] if s.get("type") != "null"]
+    if ref_union(schema):
+        return [resolve(branch, defs) for branch in schema["oneOf"]]
     return [schema]
+
+
+def ref_union(schema):
+    """Whether the node is a union of the ref kinds of protocol/refs.py, named by their models."""
+    branches = schema.get("oneOf") or ()
+    return bool(branches) and all(b.get("$ref", "").rsplit("/", 1)[-1] in REF_MODELS for b in branches)
+
+
+def opaque(schema, defs):
+    """A ref (a union of ref kinds): its own parity is the exported ref schema's, so its fields are not walked."""
+    return ref_union(resolve(schema, defs))
 
 
 def nudge(value, up):
@@ -282,9 +292,9 @@ def generate(schema, defs):  # noqa: PLR0911
         return int(value) if kind == "integer" else float(value)
     if kind == "string":
         if "pattern" in schema:
-            if schema["pattern"] != UUID_PATTERN:
+            if schema["pattern"] not in PATTERN_SAMPLES:
                 raise AssertionError(f"no generator for pattern {schema['pattern']}")
-            return SAMPLE_UUID
+            return PATTERN_SAMPLES[schema["pattern"]]
         return "a" * max(schema.get("minLength", 0), 1)
     raise AssertionError(f"no generator for {schema}")
 
@@ -337,7 +347,8 @@ def leaves(schema, defs, path=()):
                     len(alternatives) == 1 and name in node.get("required", ()),
                     node if len(alternatives) > 1 else None,
                 )
-                yield from leaves(sub, defs, (*path, name))
+                if not opaque(sub, defs):
+                    yield from leaves(sub, defs, (*path, name))
         elif node.get("type") == "array":
             items = node["items"]
             if not any(v.get("type") in ("object", "array") for v in variants(items, defs)):
@@ -351,7 +362,8 @@ def containers(schema, defs, path=()):
         if node.get("type") == "object" and "properties" in node:
             yield path, node
             for name, sub in node["properties"].items():
-                yield from containers(sub, defs, (*path, name))
+                if not opaque(sub, defs):
+                    yield from containers(sub, defs, (*path, name))
         elif node.get("type") == "array":
             yield from containers(node["items"], defs, (*path, 0))
 

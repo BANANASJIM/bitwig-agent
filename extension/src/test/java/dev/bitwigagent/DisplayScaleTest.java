@@ -45,6 +45,32 @@ public final class DisplayScaleTest {
         near(DisplayScale.tolerance("Center"), 0.5, "no digits falls back to 0.5");
     }
 
+    @Test
+    void aQuantityIsANumberInABaseUnitWithTheResolutionOfItsLastDigit() {
+        DisplayScale.Quantity hertz = DisplayScale.quantity("800 Hz");
+        assertEquals("hz", hertz.unit);
+        eq(hertz.value, 800, "hertz");
+        assertEquals(0.5, hertz.resolution, 1e-3, "an integer display tells hertz apart to half a hertz");
+        DisplayScale.Quantity kilo = DisplayScale.quantity("1.20 kHz");
+        assertEquals("hz", kilo.unit, "kHz is hertz");
+        eq(kilo.value, 1200, "kilohertz scaled to hertz");
+        assertEquals(5, kilo.resolution, 1e-3, "two decimals of a kilohertz are ten hertz, half of that is five");
+        eq(DisplayScale.quantity("250 ms").value, 0.25, "milliseconds scaled to seconds");
+        assertEquals("s", DisplayScale.quantity("0.25 s").unit);
+        eq(DisplayScale.quantity("-6,5 dB").value, -6.5, "decimal comma and sign");
+        eq(DisplayScale.quantity("−6 dB").value, -6, "unicode minus");
+        eq(DisplayScale.quantity("-inf dB").value, DisplayScale.MINUS_INF, "minus infinity");
+        assertEquals("%", DisplayScale.quantity("25 %").unit);
+        assertEquals("%", DisplayScale.quantity("25%").unit);
+    }
+
+    @Test
+    void textThatIsNotANumberWithAUnitIsNoQuantity() {
+        for (String text : new String[] {"LP 24", "800", "Hz", "", "  ", "loud", "1 2 Hz", "800 Hz LP", "C#3"})
+            assertNull(DisplayScale.quantity(text), text);
+        assertNull(DisplayScale.quantity(null));
+    }
+
     private static void eq(double a, double b, String m) {
         if (Math.abs(a - b) > 1e-9) throw new AssertionError(m + ": " + a + " != " + b);
     }

@@ -30,7 +30,7 @@ class PresetSearchArgs(StatusArgs):
     offset: int = Field(default=0, ge=0, le=1000000)
 
 
-PRESETS_SEARCH_DESCRIPTION = "Search the user's preset library and installed packages offline by file name and folders (no host call): query words, device (name or folder, e.g. Polymer, Convolution), deviceType, category, limit/offset. User-library presets expose device, deviceType, category, creator and comment from their plain header; package presets are encrypted, so they carry only path, creator, package and folders. Each hit has insert {kind: file, path}: pass it to devices.insert (or devices.layers.insert). Insertion and the resulting sound are verified separately: a hit is a file, not proof it loads."
+PRESETS_SEARCH_DESCRIPTION = "Search the user's preset library and installed packages offline by file name and folders (no host call): query words, device (name or folder, e.g. Polymer, Convolution), deviceType, category, limit/offset. User-library presets expose device, deviceType, category, creator and comment from their plain header; package presets are encrypted, so they carry only path, creator, package and folders. Each hit has insert {kind: file, path}: pass it to devices.insert. Insertion and the resulting sound are verified separately: a hit is a file, not proof it loads."
 
 
 SPECS: dict[str, ToolSpec] = {

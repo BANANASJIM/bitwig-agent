@@ -160,7 +160,7 @@ public final class GridModuleNameWriterTest {
             }
             if (invalid == 3) {
                 f.model.owner.put(TRACK_UUID, new UUID(3, 2));
-                code = "stale_context";
+                code = "target_changed";
             }
             if (invalid == 4) f.model.second.threadAllowed = false;
             if (invalid == 5) f.model.first.put(INSTANCE_ID, null);

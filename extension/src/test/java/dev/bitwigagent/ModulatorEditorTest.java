@@ -4,25 +4,31 @@ import static dev.bitwigagent.RpcAssert.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 import com.google.gson.*;
+import dev.bitwigagent.core.Refs;
 import java.util.*;
 import java.util.function.Consumer;
 import org.junit.jupiter.api.Test;
 
 /** Host-free semantic fake of the device-modulator model; does not establish native acceptance. */
 public final class ModulatorEditorTest {
-    static final UUID TRACK = new UUID(9, 1), RANDOM = new UUID(7, 1), LFO = new UUID(7, 2);
+    static final UUID TRACK = UUID.fromString(HostFixture.A);
+    static final UUID RANDOM = new UUID(7, 1), LFO = new UUID(7, 2);
     static final UUID MODULE = new UUID(5, 1), RANDOM_TYPE = new UUID(8, 1), LFO_TYPE = new UUID(8, 2);
 
     // ------------------------------------------------------------------ fake model
     static final class Param {
         final String id, kind;
+        String name;
         double value;
         final double min, max;
         final Object owner;
-        boolean writable = true;
+        boolean writable = true, outside;
+        List<Object[]> options;
+        String unit;
 
-        Param(String id, String kind, double value, double min, double max, Object owner) {
+        Param(String id, String name, String kind, double value, double min, double max, Object owner) {
             this.id = id;
+            this.name = name;
             this.kind = kind;
             this.value = value;
             this.min = min;
@@ -58,9 +64,10 @@ public final class ModulatorEditorTest {
 
     static final class Modulator {
         final UUID id, type;
-        final String name;
+        String name;
         final List<Object> children = new ArrayList<>();
         int y;
+        boolean materialized = true;
 
         Modulator(UUID id, UUID type, String name) {
             this.id = id;
@@ -71,30 +78,84 @@ public final class ModulatorEditorTest {
 
     static final class Module {
         final UUID id;
+        final String name;
 
-        Module(UUID id) {
+        Module(UUID id, String name) {
             this.id = id;
+            this.name = name;
         }
     }
 
+    /** The native device helper's access: one device object behind the Source's proxy, one owning track. */
+    static final class NativeAccess implements DeviceSources.Native.Access {
+        final Object device, track = new Object();
+        final DeviceSources.Source source;
+        boolean retarget;
+
+        NativeAccess(DeviceSources.Source source, Object device) {
+            this.source = source;
+            this.device = device;
+        }
+
+        @Override
+        public boolean is(DeviceSources.Native.Kind kind, Object object) {
+            return kind == DeviceSources.Native.Kind.DEVICE
+                    ? object != track
+                    : kind == DeviceSources.Native.Kind.TRACK && object == track;
+        }
+
+        @Override
+        public Object read(DeviceSources.Native.Field field, Object object) {
+            switch (field) {
+                case TARGET:
+                    return retarget ? new Object() : device;
+                case OWNER_TRACK:
+                    return track;
+                default:
+                    return TRACK;
+            }
+        }
+
+        @Override
+        public void documentThread() {}
+
+        @Override
+        public void requireModelThread(Object object) {}
+    }
+
     static final class Fake implements ModulatorEditor.Access {
-        final Object device = new Object(), collection = new Object(), graph = new Object();
+        final Object device = new Object(), collection = new Object(), graph = new Object(), other = new Object();
         final List<Object> members = new ArrayList<>();
-        final Module module = new Module(MODULE);
-        final Param decay = new Param("DECAY", "float", 0.2, 0, 1, module);
+        final Module module = new Module(MODULE, "Env");
+        final Param decay = new Param("DECAY", "Decay", "float", 0.2, 0, 1, module);
+        final Param level = new Param("LEVEL", "Level", "float", 0.4, 0, 1, new Object());
+        final Param farAway = new Param("FAR", "Far", "float", 0.4, 0, 1, new Object());
         final Deque<Runnable> queue = new ArrayDeque<>();
+        final NativeAccess nativeAccess;
+        final DeviceSources.Native natives;
         int dispatched;
-        boolean ignoreWrites, rejectInsert, wrongType, canModulate = true;
+        boolean ignoreWrites, rejectInsert, wrongType, canModulate = true, insertAlso, deleteAlso;
         Consumer<String> pendingSettle;
 
-        Fake() {
+        Fake(DeviceSources.Source source) {
+            nativeAccess = new NativeAccess(source, device);
+            natives = new DeviceSources.Native(nativeAccess);
+            farAway.outside = true;
             Modulator random = new Modulator(RANDOM, RANDOM_TYPE, "Random");
             random.children.add(new Source("OUT", random));
-            random.children.add(new Param("RATE", "float", 0.5, 0, 1, random));
+            random.children.add(new Param("RATE", "Rate", "float", 0.5, 0, 1, random));
+            Param mode = new Param("MODE", "Mode", "enum", 0, 0, 2, random);
+            mode.options = List.of(new Object[] {0, "Free"}, new Object[] {1, "Sync"}, new Object[] {2, "Sync"});
+            random.children.add(mode);
+            random.children.add(new Param("STEPS", "Steps", "integer", 3, 0, 8, random));
+            random.children.add(new Param("ON", "On", "boolean", 0, 0, 1, random));
+            Param mix = new Param("MIX", "Mix", "float", 0.5, 0, 1, random);
+            mix.unit = "percent";
+            random.children.add(mix);
             Modulator lfo = new Modulator(LFO, LFO_TYPE, "LFO");
             lfo.y = 2;
             lfo.children.add(new Source("LFO", lfo));
-            lfo.children.add(new Param("DEPTH", "float", 1.0, 0, 1, lfo));
+            lfo.children.add(new Param("DEPTH", "Depth", "float", 1.0, 0, 1, lfo));
             members.add(random);
             members.add(lfo);
         }
@@ -105,6 +166,12 @@ public final class ModulatorEditorTest {
 
         Source source(int i) {
             return (Source) mod(i).children.get(0);
+        }
+
+        Param param(int modulator, String id) {
+            for (Object child : mod(modulator).children)
+                if (child instanceof Param && ((Param) child).id.equals(id)) return (Param) child;
+            throw new AssertionError(id);
         }
 
         void run() {
@@ -159,7 +226,7 @@ public final class ModulatorEditorTest {
 
         @Override
         public List<Object> children(Object m) {
-            return new ArrayList<>(((Modulator) m).children);
+            return ((Modulator) m).materialized ? new ArrayList<>(((Modulator) m).children) : null;
         }
 
         @Override
@@ -189,7 +256,7 @@ public final class ModulatorEditorTest {
                 case MODULE:
                     return owner instanceof Module ? owner : null;
                 default:
-                    return device;
+                    return model instanceof Param && ((Param) model).outside ? other : device;
             }
         }
 
@@ -210,9 +277,35 @@ public final class ModulatorEditorTest {
             row.addProperty("supported", true);
             row.addProperty("kind", param.kind);
             row.addProperty("parameterId", param.id);
-            row.addProperty("value", param.value);
+            row.addProperty("name", param.name);
+            switch (param.kind) {
+                case "boolean":
+                    row.addProperty("value", param.value != 0);
+                    break;
+                case "integer":
+                case "enum":
+                    row.addProperty("value", (int) param.value);
+                    break;
+                default:
+                    row.addProperty("value", param.value);
+            }
             row.addProperty("minimum", param.min);
             row.addProperty("maximum", param.max);
+            if (param.options != null) {
+                JsonArray options = new JsonArray();
+                for (Object[] option : param.options) {
+                    JsonObject entry = new JsonObject();
+                    entry.addProperty("value", (Integer) option[0]);
+                    entry.addProperty("label", (String) option[1]);
+                    options.add(entry);
+                }
+                row.add("options", options);
+                row.addProperty("valueInOptions", true);
+            }
+            if (param.unit != null) {
+                row.addProperty("numericUnit", param.unit);
+                row.addProperty("display", Math.round(param.value * 100) + " %");
+            }
             return row;
         }
 
@@ -279,6 +372,16 @@ public final class ModulatorEditorTest {
         }
 
         @Override
+        public String moduleName(Object module) {
+            return ((Module) module).name;
+        }
+
+        @Override
+        public DeviceSources.Native natives() {
+            return natives;
+        }
+
+        @Override
         public void requireParameterWritable(
                 Object device, Object container, Object owner, Object parameter, Runnable check) {
             if (!((Param) parameter).writable) throw Errors.notApplied(Reason.UNSAFE_STATE, "touched");
@@ -308,6 +411,8 @@ public final class ModulatorEditorTest {
                 for (Mapping m : ((Source) source).mappings)
                     if (m.target == target) {
                         m.amount = amount;
+                        m.transfer = transfer;
+                        m.enabled = enabled;
                         return;
                     }
                 ((Source) source).mappings.add(new Mapping((Param) target, amount, transfer, enabled));
@@ -323,7 +428,10 @@ public final class ModulatorEditorTest {
 
         @Override
         public Runnable prepareDelete(Object collection, Object modulator) {
-            return () -> members.remove(modulator);
+            return () -> {
+                members.remove(modulator);
+                if (deleteAlso) members.remove(members.size() - 1);
+            };
         }
 
         @Override
@@ -337,6 +445,7 @@ public final class ModulatorEditorTest {
                 created.y = y;
                 created.children.add(new Source("OUT", created));
                 members.add(created);
+                if (insertAlso) members.add(new Modulator(new UUID(7, 10), type, "Random"));
                 pendingSettle = settled;
             };
         }
@@ -350,522 +459,690 @@ public final class ModulatorEditorTest {
         Throwable error;
     }
 
-    static Outcome outcome() {
-        return new Outcome();
+    /** The fake model, the root device it stands behind and the refs a request carries. */
+    static final class Env {
+        final HostFixture host = new HostFixture();
+        final DeviceSources.Source source;
+        final Fake f;
+        final ModulatorEditor editor;
+        final JsonObject device, random, lfo, decay, rate, depth;
+
+        Env() {
+            FakeHost bank = host.tracks[0].child("createDeviceBank");
+            FakeHost node = bank.item(0);
+            node.child("exists").emit(true);
+            node.child("position").emit(0);
+            node.child("deviceType").emit("instrument");
+            node.child("name").emit("Poly Grid");
+            bank.child("itemCount").emit(1);
+            source = host.services.sources.roots[0][0];
+            f = new Fake(source);
+            editor = new ModulatorEditor(f);
+            device = source.ref();
+            random = Refs.modulator(device, RANDOM.toString(), "Random");
+            lfo = Refs.modulator(device, LFO.toString(), "LFO");
+            decay = Refs.parameter(Refs.gridModule(device, MODULE.toString(), "Env"), "DECAY", "Decay");
+            rate = Refs.parameter(random, "RATE", "Rate");
+            depth = Refs.parameter(lfo, "DEPTH", "Depth");
+        }
+
+        JsonObject read() {
+            return editor.read(source, device, 0, 64, null, OK);
+        }
+
+        ParameterResolver.ModuleParameter parameter(JsonObject owner, String id, String name) {
+            return new ParameterResolver.ModuleParameter(Refs.parameter(owner, id, name), source);
+        }
+
+        ModulatorEditor.MapRequest map(JsonObject from, JsonObject to, String more, boolean unmap) {
+            JsonObject p = HostFixture.json("{" + more + "}");
+            p.add("source", from);
+            p.add("target", to);
+            return ModulatorEditor.MapRequest.parse(p, unmap);
+        }
+
+        Outcome runMap(ModulatorEditor.MapRequest r, int[] dispatches) {
+            Outcome o = new Outcome();
+            try {
+                editor.map(source, device, r, OK, () -> dispatches[0]++, v -> o.value = v, e -> o.error = e);
+            } catch (RpcException error) {
+                o.error = error;
+            }
+            f.run();
+            return o;
+        }
+
+        Outcome upsert(JsonObject from, JsonObject to, String more, int[] d) {
+            return runMap(map(from, to, more, false), d);
+        }
+
+        Outcome unmap(JsonObject from, JsonObject to, String more, int[] d) {
+            return runMap(map(from, to, more, true), d);
+        }
+
+        /** setValue with the bare or object value; result, or the thrown error. */
+        JsonObject set(JsonObject ref, String valueJson, String expectJson, int[] d) {
+            ParameterResolver.ModuleParameter target = new ParameterResolver.ModuleParameter(ref, source);
+            ValueInput input = ValueInput.parse("value", JsonParser.parseString(valueJson));
+            JsonObject expect = expectJson == null ? null : HostFixture.json(expectJson);
+            return editor.setValue(
+                    new HostOperation(Long.MAX_VALUE), target, device, ref, input, expect, OK, () -> d[0]++);
+        }
     }
 
-    static ModulatorEditor.MapRequest map(String json, boolean unmap) {
-        JsonObject p = JsonParser.parseString(json).getAsJsonObject();
-        p.add("parent", parent());
-        return ModulatorEditor.MapRequest.parse(p, unmap);
+    static RpcException failure(Outcome o) {
+        assertInstanceOf(RpcException.class, o.error, String.valueOf(o.error));
+        return (RpcException) o.error;
     }
 
-    static JsonObject parent() {
-        return JsonParser.parseString(
-                        "{\"trackId\":\"" + TRACK + "\",\"deviceIndex\":0,\"expectedDeviceName\":\"Poly Grid\"}")
-                .getAsJsonObject();
+    static String code(Outcome o) {
+        return o.error instanceof RpcException ? ((RpcException) o.error).reason.wire() : String.valueOf(o.error);
     }
 
-    static String gridTarget() {
-        return "{\"moduleId\":\"" + MODULE + "\",\"parameterId\":\"DECAY\"}";
-    }
-
-    static void runMap(Fake f, ModulatorEditor.MapRequest r, Outcome o, int[] dispatches) {
-        try {
-            new ModulatorEditor(f).map(null, r, OK, () -> dispatches[0]++, v -> o.value = v, e -> o.error = e);
-        } catch (RpcException error) {
-            o.error = error;
-        } // pre-dispatch rejections throw synchronously
-        f.run();
-    }
-
-    // ------------------------------------------------------------------ tests
+    // ------------------------------------------------------------------ resolver
     @Test
     void theResolverFindsAModulatorByUuidAndItsParameterByIdOrNothing() {
-        Fake f = new Fake();
-        ModulatorEditor editor = new ModulatorEditor(f);
+        Env e = new Env();
+        Fake f = e.f;
+        ModulatorEditor editor = e.editor;
         DeviceSources.Native.Capture device = new DeviceSources.Native.Capture(null, f.device, null, null, TRACK);
         Object random = editor.owner(device, RANDOM, OK);
         assertSame(f.mod(0), random);
         assertEquals("Random", editor.ownerName(random));
         Object rate = editor.parameter(random, "RATE", OK);
-        assertSame(f.mod(0).children.get(1), rate);
-        assertNull(editor.parameterName(rate), "the fake's value row carries no name");
+        assertSame(f.param(0, "RATE"), rate);
+        assertEquals("Rate", editor.parameterName(rate));
         assertNull(editor.parameter(random, "OUT", OK), "an output is not a parameter");
         assertNull(editor.owner(device, new UUID(7, 9), OK), "no such modulator");
     }
 
+    // ------------------------------------------------------------------ read
     @Test
-    void readsParametersOutputsAndDescribedMappings() {
-        Fake f = new Fake();
+    void readRowsCarryRefsParametersAndMappingTargetsAsRefs() {
+        Env e = new Env();
+        Fake f = e.f;
         f.source(0).mappings.add(new Mapping(f.decay, 0.5, "linear", true));
-        f.source(1).mappings.add(new Mapping((Param) f.mod(0).children.get(1), -0.25, "cubic", true));
-        JsonObject all = new ModulatorEditor(f).get(null, null, OK);
+        f.source(1).mappings.add(new Mapping(f.param(0, "RATE"), -0.25, "cubic", false));
+        f.source(1).mappings.add(new Mapping(f.level, 0.1, "linear", true));
+        f.source(1).mappings.add(new Mapping(f.farAway, 0.2, "linear", true));
+        JsonObject all = e.read();
+        assertEquals(e.device, all.get("parent"));
+        assertEquals(2, all.get("count").getAsInt());
+        assertTrue(all.get("complete").getAsBoolean());
+        assertEquals(0, all.getAsJsonArray("unsupported").size());
+        assertFalse(all.get("nativeMutation").getAsBoolean());
         JsonArray rows = all.getAsJsonArray("modulators");
-        assertTrue(
-                all.get("count").getAsInt() == 2
-                        && rows.size() == 2
-                        && all.get("complete").getAsBoolean(),
-                "all modulators are listed");
         JsonObject random = rows.get(0).getAsJsonObject();
-        assertTrue(
-                random.getAsJsonArray("parameters")
-                                .get(0)
-                                .getAsJsonObject()
-                                .get("parameterId")
-                                .getAsString()
-                                .equals("RATE")
-                        && !random.getAsJsonArray("parameters")
-                                .get(0)
-                                .getAsJsonObject()
-                                .has("supported"),
-                "typed parameters are listed");
-        JsonObject target = random.getAsJsonArray("outputs")
-                .get(0)
+        assertEquals(e.random, random.get("ref"));
+        HostFixture.REF_SCHEMA.apply(random.getAsJsonObject("ref"));
+        assertEquals(0, random.get("index").getAsInt());
+        assertEquals("Random", random.get("name").getAsString());
+        assertEquals(RANDOM_TYPE.toString(), random.get("typeId").getAsString());
+        assertTrue(random.get("contentsAvailable").getAsBoolean());
+        JsonObject rate = random.getAsJsonArray("parameters").get(0).getAsJsonObject();
+        assertEquals(e.rate, rate.get("ref"));
+        HostFixture.REF_SCHEMA.apply(rate.getAsJsonObject("ref"));
+        assertEquals("Rate", rate.get("name").getAsString());
+        JsonObject unit = rate.getAsJsonObject("value");
+        assertEquals(0.5, unit.get("value").getAsDouble());
+        assertEquals("float", unit.get("kind").getAsString());
+        for (String internal : List.of("supported", "parameterId", "name")) assertFalse(unit.has(internal), internal);
+        JsonArray options = random.getAsJsonArray("parameters")
+                .get(1)
                 .getAsJsonObject()
-                .getAsJsonArray("mappings")
-                .get(0)
-                .getAsJsonObject()
-                .getAsJsonObject("target");
-        assertTrue(
-                target.get("kind").getAsString().equals("grid_module")
-                        && target.get("moduleId").getAsString().equals(MODULE.toString())
-                        && target.get("parameterId").getAsString().equals("DECAY"),
-                "Grid module targets are described by moduleId/parameterId");
-        JsonObject chained = rows.get(1)
+                .getAsJsonObject("value")
+                .getAsJsonArray("options");
+        assertEquals("Free", options.get(0).getAsJsonObject().get("label").getAsString());
+        JsonObject out = random.getAsJsonArray("outputs").get(0).getAsJsonObject();
+        assertEquals("OUT", out.get("outputId").getAsString());
+        JsonObject mapping = out.getAsJsonArray("mappings").get(0).getAsJsonObject();
+        JsonObject grid = Refs.parameter(Refs.gridModule(e.device, MODULE.toString(), "Env"), "DECAY", "Decay");
+        assertEquals(grid, mapping.get("target"));
+        HostFixture.REF_SCHEMA.apply(mapping.getAsJsonObject("target"));
+        assertEquals(0.5, mapping.get("amount").getAsDouble());
+        assertEquals("linear", mapping.get("transfer").getAsString());
+        assertTrue(mapping.get("enabled").getAsBoolean());
+        assertFalse(mapping.get("polyphonic").getAsBoolean());
+        assertFalse(mapping.get("scaledByAnotherSource").getAsBoolean());
+        JsonArray lfoMappings = rows.get(1)
                 .getAsJsonObject()
                 .getAsJsonArray("outputs")
                 .get(0)
                 .getAsJsonObject()
-                .getAsJsonArray("mappings")
-                .get(0)
-                .getAsJsonObject();
-        assertTrue(
-                chained.getAsJsonObject("target").get("kind").getAsString().equals("modulator")
-                        && chained.getAsJsonObject("target")
-                                .get("modulatorId")
-                                .getAsString()
-                                .equals(RANDOM.toString())
-                        && chained.get("amount").getAsDouble() == -0.25
-                        && chained.get("transfer").getAsString().equals("cubic"),
-                "modulator-to-modulator mappings keep amount and transfer");
-        JsonObject one = new ModulatorEditor(f).get(null, LFO, OK);
-        assertTrue(one.getAsJsonArray("modulators").size() == 1, "modulatorId filters to one row");
-        assertRpcError("target_not_found", () -> new ModulatorEditor(f).get(null, new UUID(1, 1), OK));
+                .getAsJsonArray("mappings");
+        JsonObject chained = lfoMappings.get(0).getAsJsonObject();
+        assertEquals(Refs.parameter(e.random, "RATE", "Rate"), chained.get("target"));
+        HostFixture.REF_SCHEMA.apply(chained.getAsJsonObject("target"));
+        assertEquals(-0.25, chained.get("amount").getAsDouble());
+        assertEquals("cubic", chained.get("transfer").getAsString());
+        assertFalse(chained.get("enabled").getAsBoolean());
+        assertEquals(
+                HostFixture.json("{\"location\":\"device\",\"path\":\"path\",\"parameterId\":\"LEVEL\"}"),
+                lfoMappings.get(1).getAsJsonObject().get("target"));
+        assertEquals(
+                HostFixture.json("{\"location\":\"external\",\"path\":\"path\",\"parameterId\":\"FAR\"}"),
+                lfoMappings.get(2).getAsJsonObject().get("target"));
     }
 
     @Test
-    void mapCreatesWithExactReadbackAndCasFirst() {
-        Fake f = new Fake();
-        int[] d = {0};
-        Outcome o = outcome();
-        runMap(
-                f,
-                map(
-                        "{\"modulatorId\":\"" + RANDOM + "\",\"target\":" + gridTarget()
-                                + ",\"expectedAmount\":null,\"amount\":0.5}",
-                        false),
-                o,
-                d);
-        assertTrue(
-                o.error == null
-                        && d[0] == 1
-                        && f.source(0).mappings.size() == 1
-                        && f.source(0).mappings.get(0).amount == 0.5,
-                "a new mapping is created once with the exact amount");
-        assertTrue(
-                o.value.getAsJsonObject("mapping").get("amount").getAsDouble() == 0.5
-                        && o.value.get("previousMapping").isJsonNull()
-                        && o.value.get("outputId").getAsString().equals("OUT")
-                        && o.value.get("mutationDispatched").getAsBoolean(),
-                "result carries readback, previous state and the single output id");
-        Outcome again = outcome();
-        runMap(
-                f,
-                map(
-                        "{\"modulatorId\":\"" + RANDOM + "\",\"target\":" + gridTarget()
-                                + ",\"expectedAmount\":null,\"amount\":0.5}",
-                        false),
-                again,
-                d);
-        assertTrue(
-                again.error instanceof RpcException
-                        && ((RpcException) again.error).reason.wire().equals("stale_context")
-                        && d[0] == 1,
-                "expectedAmount null against an existing mapping rejects before dispatch");
+    void readPagesAndFiltersToOneModulator() {
+        Env e = new Env();
+        JsonObject second = e.editor.read(e.source, e.device, 1, 1, null, OK);
+        assertEquals(1, second.getAsJsonArray("modulators").size());
+        assertEquals(
+                e.lfo,
+                second.getAsJsonArray("modulators").get(0).getAsJsonObject().get("ref"));
+        assertEquals(2, second.get("count").getAsInt());
+        assertEquals(HostFixture.json("{\"offset\":1,\"limit\":1,\"total\":2,\"returned\":1}"), second.get("window"));
+        assertFalse(second.get("complete").getAsBoolean(), "a later page is not the whole list");
+        JsonObject first = e.editor.read(e.source, e.device, 0, 1, null, OK);
+        assertFalse(first.get("complete").getAsBoolean(), "a page that leaves modulators out is not complete");
+        JsonObject beyond = e.editor.read(e.source, e.device, 5, 64, null, OK);
+        assertEquals(0, beyond.getAsJsonArray("modulators").size());
+        JsonObject one = e.editor.read(e.source, e.device, 0, 64, LFO, OK);
+        assertEquals(1, one.getAsJsonObject("window").get("returned").getAsInt());
+        assertTrue(one.get("complete").getAsBoolean(), "the one modulator asked for is everything asked for");
+        assertEquals(
+                "modulators.list",
+                assertRpcError("target_not_found", () -> e.editor.read(e.source, e.device, 0, 64, new UUID(1, 1), OK))
+                        .next);
     }
 
     @Test
-    void mapUpdatesAmountOnlyAndRejectsBeforeDispatch() {
-        Fake f = new Fake();
+    void readReportsWhatItCannotRead() {
+        Env e = new Env();
+        e.f.mod(0).materialized = false;
+        e.f.mod(1).children.add(new Param("TEXT", "Text", null, 0, 0, 0, e.f.mod(1)));
+        JsonObject result = e.read();
+        assertFalse(result.get("complete").getAsBoolean());
+        JsonObject row = result.getAsJsonArray("modulators").get(0).getAsJsonObject();
+        assertFalse(row.get("contentsAvailable").getAsBoolean());
+        assertFalse(row.has("parameters"));
+        List<String> unsupported = new ArrayList<>();
+        result.getAsJsonArray("unsupported").forEach(item -> unsupported.add(item.getAsString()));
+        assertEquals(List.of("0:contents_unmaterialized", "1:TEXT:Param"), unsupported);
+    }
+
+    // ------------------------------------------------------------------ map
+    @Test
+    void aNewMappingIsLinearAndEnabledAndReadBack() {
+        Env e = new Env();
         int[] d = {0};
-        f.source(0).mappings.add(new Mapping(f.decay, 0.5, "linear", true));
-        Outcome update = outcome();
-        runMap(
-                f,
-                map(
-                        "{\"modulatorId\":\"" + RANDOM + "\",\"outputId\":\"OUT\",\"target\":" + gridTarget()
-                                + ",\"expectedAmount\":0.5,\"amount\":-0.75}",
-                        false),
-                update,
-                d);
-        assertTrue(
-                update.error == null && f.source(0).mappings.get(0).amount == -0.75 && d[0] == 1,
-                "existing mapping amount changes");
-        Outcome same = outcome();
-        runMap(
-                f,
-                map(
-                        "{\"modulatorId\":\"" + RANDOM + "\",\"target\":" + gridTarget()
-                                + ",\"expectedAmount\":-0.75,\"amount\":-0.75}",
-                        false),
-                same,
-                d);
-        assertTrue(
-                same.error == null
-                        && d[0] == 1
-                        && !same.value.get("mutationDispatched").getAsBoolean(),
-                "same amount is not dispatched");
-        Outcome transfer = outcome();
-        runMap(
-                f,
-                map(
-                        "{\"modulatorId\":\"" + RANDOM + "\",\"target\":" + gridTarget()
-                                + ",\"expectedAmount\":-0.75,\"amount\":0.1,\"transfer\":\"cubic\"}",
-                        false),
-                transfer,
-                d);
-        assertTrue(
-                code(transfer).equals("invalid_params") && d[0] == 1,
-                "transfer of an existing mapping is not silently ignored");
-        Outcome self = outcome();
-        String selfTarget = "{\"modulatorId\":\"" + RANDOM + "\",\"parameterId\":\"RATE\"}";
-        runMap(
-                f,
-                map(
-                        "{\"modulatorId\":\"" + RANDOM + "\",\"target\":" + selfTarget
-                                + ",\"expectedAmount\":null,\"amount\":0.2}",
-                        false),
-                self,
-                d);
-        assertTrue(
-                code(self).equals("unsupported_scope") && d[0] == 1,
-                "a pair Bitwig refuses is rejected before dispatch");
-        Outcome touched = outcome();
-        f.decay.writable = false;
-        runMap(
-                f,
-                map(
-                        "{\"modulatorId\":\"" + LFO + "\",\"target\":" + gridTarget()
-                                + ",\"expectedAmount\":null,\"amount\":0.2}",
-                        false),
-                touched,
-                d);
-        assertTrue(
-                code(touched).equals("unsafe_state") && d[0] == 1, "target write context is required before dispatch");
-        Outcome missing = outcome();
-        f.decay.writable = true;
-        runMap(
-                f,
-                map(
-                        "{\"modulatorId\":\"" + LFO + "\",\"outputId\":\"NOPE\",\"target\":" + gridTarget()
-                                + ",\"expectedAmount\":null,\"amount\":0.2}",
-                        false),
-                missing,
-                d);
-        assertTrue(code(missing).equals("target_not_found") && d[0] == 1, "unknown output ids are not aliased");
-        Outcome chained = outcome();
-        runMap(
-                f,
-                map(
-                        "{\"modulatorId\":\"" + LFO + "\",\"target\":" + selfTarget
-                                + ",\"expectedAmount\":null,\"amount\":0.2,\"transfer\":\"rectify_pos\",\"enabled\":false}",
-                        false),
-                chained,
-                d);
-        Mapping m = f.source(1).mappings.get(0);
-        assertTrue(
-                chained.error == null
-                        && d[0] == 2
-                        && m.transfer.equals("rectify_pos")
-                        && !m.enabled
-                        && chained.value
-                                .getAsJsonObject("target")
-                                .get("kind")
-                                .getAsString()
-                                .equals("modulator"),
-                "a modulator can target another modulator's control with transfer and enabled");
+        Outcome o = e.upsert(e.random, e.decay, "\"amount\":0.5", d);
+        assertNull(o.error);
+        assertEquals(1, d[0]);
+        Mapping made = e.f.source(0).mappings.get(0);
+        assertEquals(0.5, made.amount);
+        assertEquals("linear", made.transfer);
+        assertTrue(made.enabled);
+        assertEquals("applied", o.value.get("outcome").getAsString());
+        assertEquals(
+                Refs.parameter(Refs.gridModule(e.device, MODULE.toString(), "Env"), "DECAY", "Decay"),
+                o.value.get("ref"));
+        HostFixture.REF_SCHEMA.apply(o.value.getAsJsonObject("ref"));
+        assertEquals(e.random, o.value.get("source"));
+        assertEquals("OUT", o.value.get("outputId").getAsString());
+        assertTrue(o.value.get("previousMapping").isJsonNull());
+        JsonObject mapping = o.value.getAsJsonObject("mapping");
+        assertEquals(0.5, mapping.get("amount").getAsDouble());
+        assertEquals("linear", mapping.get("transfer").getAsString());
+        assertTrue(mapping.get("enabled").getAsBoolean());
+        assertTrue(o.value.get("mutationDispatched").getAsBoolean());
     }
 
     @Test
-    void nativeNoOpIsUnknownNotSuccess() {
-        Fake f = new Fake();
+    void anExistingMappingKeepsWhatTheRequestLeavesOutAndWritesWhatItChanges() {
+        Env e = new Env();
         int[] d = {0};
-        f.ignoreWrites = true;
-        Outcome o = outcome();
-        runMap(
-                f,
-                map(
-                        "{\"modulatorId\":\"" + RANDOM + "\",\"target\":" + gridTarget()
-                                + ",\"expectedAmount\":null,\"amount\":0.5}",
-                        false),
-                o,
-                d);
-        assertTrue(
-                code(o).equals("readback_mismatch") && ((RpcException) o.error).unknown && d[0] == 1,
-                "a dispatched mapping that does not read back is unknown");
+        e.f.source(0).mappings.add(new Mapping(e.f.decay, 0.5, "cubic", false));
+        Outcome amount = e.upsert(e.random, e.decay, "\"amount\":-0.75", d);
+        assertNull(amount.error);
+        Mapping m = e.f.source(0).mappings.get(0);
+        assertEquals(-0.75, m.amount);
+        assertEquals("cubic", m.transfer, "an omitted transfer keeps the existing one");
+        assertFalse(m.enabled, "an omitted enabled keeps the existing one");
+        assertEquals(1, d[0]);
+        assertEquals(
+                0.5,
+                amount.value.getAsJsonObject("previousMapping").get("amount").getAsDouble());
+        Outcome transfer = e.upsert(e.random, e.decay, "\"amount\":-0.75,\"transfer\":\"rectify_pos\"", d);
+        assertNull(transfer.error);
+        assertEquals("rectify_pos", m.transfer);
+        assertFalse(m.enabled);
+        assertEquals(2, d[0]);
+        Outcome enabled = e.upsert(e.random, e.decay, "\"amount\":-0.75,\"enabled\":true", d);
+        assertNull(enabled.error);
+        assertTrue(m.enabled);
+        assertEquals("rectify_pos", m.transfer);
+        assertEquals(3, d[0]);
+        assertEquals("applied", enabled.value.get("outcome").getAsString());
     }
 
     @Test
-    void unmapRequiresExactExpectedAmount() {
-        Fake f = new Fake();
+    void theSameMappingIsAlreadyMatchedWithoutDispatch() {
+        Env e = new Env();
         int[] d = {0};
-        f.source(0).mappings.add(new Mapping(f.decay, 0.5, "linear", true));
-        Outcome wrong = outcome();
-        runMap(
-                f,
-                map(
-                        "{\"modulatorId\":\"" + RANDOM + "\",\"target\":" + gridTarget() + ",\"expectedAmount\":0.4}",
-                        true),
-                wrong,
-                d);
-        assertTrue(
-                code(wrong).equals("stale_context")
-                        && d[0] == 0
-                        && f.source(0).mappings.size() == 1,
-                "wrong expectedAmount never clears");
-        Outcome ok = outcome();
-        runMap(
-                f,
-                map(
-                        "{\"modulatorId\":\"" + RANDOM + "\",\"target\":" + gridTarget() + ",\"expectedAmount\":0.5}",
-                        true),
-                ok,
-                d);
-        assertTrue(
-                ok.error == null
-                        && d[0] == 1
-                        && f.source(0).mappings.isEmpty()
-                        && ok.value.get("mapping").isJsonNull()
-                        && ok.value
-                                        .getAsJsonObject("previousMapping")
-                                        .get("amount")
-                                        .getAsDouble()
-                                == 0.5,
-                "unmap clears and reports the previous mapping");
+        e.f.source(0).mappings.add(new Mapping(e.f.decay, 0.5, "cubic", false));
+        Outcome same = e.upsert(e.random, e.decay, "\"amount\":0.5", d);
+        assertNull(same.error);
+        assertEquals(0, d[0]);
+        assertEquals("already_matched", same.value.get("outcome").getAsString());
+        assertFalse(same.value.get("mutationDispatched").getAsBoolean());
+        Outcome explicit = e.upsert(e.random, e.decay, "\"amount\":0.5,\"transfer\":\"cubic\",\"enabled\":false", d);
+        assertEquals("already_matched", explicit.value.get("outcome").getAsString());
+        assertEquals(0, d[0]);
     }
 
     @Test
-    void parameterSetUsesScalarCas() {
-        Fake f = new Fake();
+    void expectAmountComparesTheCurrentMappingBeforeAnyWrite() {
+        Env e = new Env();
         int[] d = {0};
-        JsonObject p = JsonParser.parseString("{\"expectedKind\":\"float\",\"expectedValue\":0.5,\"value\":0.75}")
-                .getAsJsonObject();
-        JsonObject result = new ModulatorEditor(f)
-                .setParameter(null, RANDOM, "RATE", GridParameterWriter.Request.parse(p), OK, () -> d[0]++);
-        assertTrue(
-                d[0] == 1
-                        && ((Param) f.mod(0).children.get(1)).value == 0.75
-                        && result.get("previousValue").getAsDouble() == 0.5,
-                "scalar write applies once with readback");
-        assertRpcError(
-                "stale_context",
-                () -> new ModulatorEditor(f)
-                        .setParameter(null, RANDOM, "RATE", GridParameterWriter.Request.parse(p), OK, () -> d[0]++));
-        JsonObject far = JsonParser.parseString("{\"expectedKind\":\"float\",\"expectedValue\":0.75,\"value\":2}")
-                .getAsJsonObject();
-        assertRpcError(
-                "invalid_params",
-                () -> new ModulatorEditor(f)
-                        .setParameter(null, RANDOM, "RATE", GridParameterWriter.Request.parse(far), OK, () -> d[0]++));
-        assertRpcError(
-                "target_not_found",
-                () -> new ModulatorEditor(f)
-                        .setParameter(null, RANDOM, "OUT", GridParameterWriter.Request.parse(far), OK, () -> d[0]++));
-        assertTrue(d[0] == 1, "rejections never dispatch");
-        f.ignoreWrites = true;
-        JsonObject next = JsonParser.parseString("{\"expectedKind\":\"float\",\"expectedValue\":0.75,\"value\":0.1}")
-                .getAsJsonObject();
-        RpcException error = assertThrows(
-                RpcException.class,
-                () -> new ModulatorEditor(f)
-                        .setParameter(null, RANDOM, "RATE", GridParameterWriter.Request.parse(next), OK, () -> d[0]++));
-        assertTrue(error.unknown && error.is(Reason.READBACK_MISMATCH), "lost scalar write is unknown");
+        Outcome none = e.upsert(e.random, e.decay, "\"amount\":0.5,\"expect\":{\"amount\":0.5}", d);
+        RpcException absent = failure(none);
+        assertEquals("target_changed", absent.reason.wire());
+        assertEquals(HostFixture.json("{\"amount\":null}"), absent.observed);
+        assertTrue(e.f.source(0).mappings.isEmpty());
+        e.f.source(0).mappings.add(new Mapping(e.f.decay, 0.5, "linear", true));
+        Outcome wrong = e.upsert(e.random, e.decay, "\"amount\":0.9,\"expect\":{\"amount\":0.25}", d);
+        RpcException different = failure(wrong);
+        assertEquals("target_changed", different.reason.wire());
+        assertEquals(HostFixture.json("{\"amount\":0.5}"), different.observed);
+        assertEquals(0.5, e.f.source(0).mappings.get(0).amount);
+        assertEquals(0, d[0]);
+        Outcome match = e.upsert(e.random, e.decay, "\"amount\":0.9,\"expect\":{\"amount\":0.5}", d);
+        assertNull(match.error);
+        assertEquals(0.9, e.f.source(0).mappings.get(0).amount);
+        assertEquals(1, d[0]);
     }
 
+    @Test
+    void aMappingIsRefusedBeforeDispatchWhenItsRequestCannotBeApplied() {
+        Env e = new Env();
+        int[] d = {0};
+        assertEquals("invalid_params", code(e.upsert(e.random, e.decay, "\"amount\":1.5", d)));
+        Outcome self = e.upsert(e.random, e.rate, "\"amount\":0.2", d);
+        assertEquals("unsupported_scope", code(self));
+        e.f.decay.writable = false;
+        assertEquals("unsafe_state", code(e.upsert(e.lfo, e.decay, "\"amount\":0.2", d)));
+        e.f.decay.writable = true;
+        assertEquals("target_not_found", code(e.upsert(e.lfo, e.decay, "\"outputId\":\"NOPE\",\"amount\":0.2", d)));
+        e.f.mod(1).children.add(new Source("SECOND", e.f.mod(1)));
+        RpcException ambiguous = failure(e.upsert(e.lfo, e.decay, "\"amount\":0.2", d));
+        assertEquals("invalid_params", ambiguous.reason.wire());
+        assertTrue(ambiguous.getMessage().contains("outputId"));
+        e.f.mod(1).children.remove(e.f.mod(1).children.size() - 1);
+        e.f.canModulate = false;
+        assertEquals("unsupported_scope", code(e.upsert(e.lfo, e.decay, "\"amount\":0.2", d)));
+        e.f.canModulate = true;
+        JsonObject gone = Refs.parameter(Refs.gridModule(e.device, MODULE.toString(), "Env"), "NOPE", null);
+        assertEquals("stale_context", code(e.upsert(e.random, gone, "\"amount\":0.2", d)));
+        JsonObject missing = Refs.modulator(e.device, new UUID(7, 9).toString(), "Gone");
+        assertEquals("target_not_found", code(e.upsert(missing, e.decay, "\"amount\":0.2", d)));
+        assertEquals(0, d[0], "none of the refusals dispatched");
+    }
+
+    @Test
+    void aModulatorCanMapAnotherModulatorsControlWithTransferAndEnabled() {
+        Env e = new Env();
+        int[] d = {0};
+        Outcome o = e.upsert(e.lfo, e.rate, "\"amount\":0.2,\"transfer\":\"rectify_pos\",\"enabled\":false", d);
+        assertNull(o.error);
+        Mapping m = e.f.source(1).mappings.get(0);
+        assertEquals("rectify_pos", m.transfer);
+        assertFalse(m.enabled);
+        assertEquals(1, d[0]);
+        assertEquals(Refs.parameter(e.random, "RATE", "Rate"), o.value.get("ref"));
+    }
+
+    @Test
+    void theTargetControlNameInTheRefIsCompared() {
+        Env e = new Env();
+        int[] d = {0};
+        e.f.decay.name = "Release";
+        RpcException renamed = failure(e.upsert(e.random, e.decay, "\"amount\":0.5", d));
+        assertEquals("target_changed", renamed.reason.wire());
+        assertNotNull(renamed.current);
+        HostFixture.REF_SCHEMA.apply(renamed.current);
+        assertEquals("DECAY", renamed.current.get("id").getAsString());
+        assertEquals("Release", renamed.current.get("name").getAsString(), "current carries the name now there");
+        assertEquals(0, d[0]);
+        e.f.param(0, "RATE").name = "Speed";
+        assertEquals("target_changed", code(e.upsert(e.lfo, e.rate, "\"amount\":0.5", d)));
+        Outcome nameless = e.upsert(
+                e.random,
+                Refs.parameter(Refs.gridModule(e.device, MODULE.toString(), "Env"), "DECAY", null),
+                "\"amount\":0.5",
+                d);
+        assertNull(nameless.error, "a ref without a name compares none");
+        assertEquals(1, d[0]);
+    }
+
+    @Test
+    void aMappingThatDoesNotReadBackIsUnknown() {
+        Env e = new Env();
+        int[] d = {0};
+        e.f.ignoreWrites = true;
+        Outcome o = e.upsert(e.random, e.decay, "\"amount\":0.5", d);
+        RpcException error = failure(o);
+        assertEquals("readback_mismatch", error.reason.wire());
+        assertTrue(error.unknown);
+        assertEquals(1, d[0]);
+        Env same = new Env();
+        same.f.source(0).mappings.add(new Mapping(same.f.decay, 0.5, "linear", true));
+        same.f.ignoreWrites = true;
+        Outcome lost = same.upsert(same.random, same.decay, "\"amount\":0.75,\"transfer\":\"cubic\"", d);
+        assertEquals("readback_mismatch", code(lost));
+        assertEquals("linear", same.f.source(0).mappings.get(0).transfer);
+    }
+
+    // ------------------------------------------------------------------ unmap
+    @Test
+    void unmapRemovesAndAMissingMappingIsAlreadyMatched() {
+        Env e = new Env();
+        int[] d = {0};
+        e.f.source(0).mappings.add(new Mapping(e.f.decay, 0.5, "linear", true));
+        Outcome ok = e.unmap(e.random, e.decay, "", d);
+        assertNull(ok.error);
+        assertEquals(1, d[0]);
+        assertTrue(e.f.source(0).mappings.isEmpty());
+        assertEquals("applied", ok.value.get("outcome").getAsString());
+        assertTrue(ok.value.get("mapping").isJsonNull());
+        assertEquals(
+                0.5, ok.value.getAsJsonObject("previousMapping").get("amount").getAsDouble());
+        Outcome again = e.unmap(e.random, e.decay, "", d);
+        assertNull(again.error);
+        assertEquals(1, d[0], "nothing to remove is not dispatched");
+        assertEquals("already_matched", again.value.get("outcome").getAsString());
+        assertTrue(again.value.get("previousMapping").isJsonNull());
+    }
+
+    @Test
+    void unmapExpectMismatchClearsNothing() {
+        Env e = new Env();
+        int[] d = {0};
+        e.f.source(0).mappings.add(new Mapping(e.f.decay, 0.5, "linear", true));
+        RpcException wrong = failure(e.unmap(e.random, e.decay, "\"expect\":{\"amount\":0.4}", d));
+        assertEquals("target_changed", wrong.reason.wire());
+        assertEquals(HostFixture.json("{\"amount\":0.5}"), wrong.observed);
+        assertEquals(0, d[0]);
+        assertEquals(1, e.f.source(0).mappings.size());
+        Outcome ok = e.unmap(e.random, e.decay, "\"expect\":{\"amount\":0.5}", d);
+        assertNull(ok.error);
+        assertEquals(1, d[0]);
+        assertTrue(e.f.source(0).mappings.isEmpty());
+        RpcException gone = failure(e.unmap(e.random, e.decay, "\"expect\":{\"amount\":0.5}", d));
+        assertEquals(HostFixture.json("{\"amount\":null}"), gone.observed);
+    }
+
+    // ------------------------------------------------------------------ structure
     @Test
     void insertAppendsAndVerifiesTypeAfterSettlement() {
-        Fake f = new Fake();
+        Env e = new Env();
         int[] d = {0};
-        Outcome o = outcome();
-        assertRpcError(
-                "stale_context",
-                () -> new ModulatorEditor(f).insert(null, null, "Random", 3, OK, () -> d[0]++, v -> {}, e -> {}));
-        new ModulatorEditor(f).insert(null, null, "Random", 2, OK, () -> d[0]++, v -> o.value = v, e -> o.error = e);
-        assertTrue(
-                d[0] == 1 && o.value == null && o.error == null,
-                "insertion completes only after the native settlement");
-        f.pendingSettle.accept(null);
-        f.run();
-        assertTrue(
-                o.error == null
-                        && o.value.get("count").getAsInt() == 3
-                        && o.value.get("requestedY").getAsInt() == 4
-                        && o.value
-                                .getAsJsonObject("modulator")
-                                .get("typeId")
-                                .getAsString()
-                                .equals(RANDOM_TYPE.toString())
-                        && o.value.getAsJsonObject("modulator").get("index").getAsInt() == 2,
-                "appended below the lowest modulator and verified");
-        f.pendingSettle.accept(null);
-        f.run();
-        assertTrue(o.error == null, "a repeated settlement is ignored");
+        Outcome o = new Outcome();
+        e.editor.insert(e.source, e.device, null, "Random", OK, () -> d[0]++, v -> o.value = v, x -> o.error = x);
+        assertEquals(1, d[0]);
+        assertNull(o.value, "insertion completes only after the native settlement");
+        assertNull(o.error);
+        e.f.pendingSettle.accept(null);
+        e.f.run();
+        assertNull(o.error);
+        JsonObject row = o.value.getAsJsonObject("modulator");
+        assertEquals(Refs.modulator(e.device, new UUID(7, 9).toString(), "Random"), o.value.get("ref"));
+        HostFixture.REF_SCHEMA.apply(o.value.getAsJsonObject("ref"));
+        assertEquals(o.value.get("ref"), row.get("ref"));
+        assertEquals(RANDOM_TYPE.toString(), row.get("typeId").getAsString());
+        assertEquals(2, row.get("index").getAsInt());
+        assertEquals(3, o.value.get("count").getAsInt());
+        assertEquals(4, o.value.get("requestedY").getAsInt(), "appended below the lowest modulator");
+        assertEquals("Random", o.value.get("typeName").getAsString());
+        assertEquals("applied", o.value.get("outcome").getAsString());
+        e.f.pendingSettle.accept(null);
+        e.f.run();
+        assertNull(o.error, "a repeated settlement is ignored");
         assertRpcError(
                 "target_not_found",
-                () -> new ModulatorEditor(f).insert(null, null, "Nope", 3, OK, () -> d[0]++, v -> {}, e -> {}));
+                () -> e.editor.insert(e.source, e.device, null, "Nope", OK, () -> d[0]++, v -> {}, x -> {}));
+        assertEquals(1, d[0]);
     }
 
     @Test
     void insertFailuresAreUnknownAfterDispatch() {
-        Fake f = new Fake();
-        f.rejectInsert = true;
-        Outcome o = outcome();
-        new ModulatorEditor(f).insert(null, RANDOM_TYPE, null, 2, OK, OK, v -> o.value = v, e -> o.error = e);
-        f.run();
-        assertTrue(code(o).equals("host_refused") && ((RpcException) o.error).unknown, "native rejection is unknown");
-        Fake g = new Fake();
-        g.wrongType = true;
-        Outcome w = outcome();
-        new ModulatorEditor(g).insert(null, RANDOM_TYPE, null, 2, OK, OK, v -> w.value = v, e -> w.error = e);
-        g.pendingSettle.accept(null);
-        g.run();
-        assertTrue(code(w).equals("readback_mismatch"), "a different inserted type fails verification");
+        Env rejected = new Env();
+        rejected.f.rejectInsert = true;
+        Outcome o = new Outcome();
+        rejected.editor.insert(
+                rejected.source, rejected.device, RANDOM_TYPE, null, OK, OK, v -> o.value = v, x -> o.error = x);
+        rejected.f.run();
+        assertEquals("host_refused", code(o));
+        assertTrue(failure(o).unknown, "native rejection is unknown");
+        Env wrongType = new Env();
+        wrongType.f.wrongType = true;
+        Outcome w = new Outcome();
+        wrongType.editor.insert(
+                wrongType.source, wrongType.device, RANDOM_TYPE, null, OK, OK, v -> w.value = v, x -> w.error = x);
+        wrongType.f.pendingSettle.accept(null);
+        wrongType.f.run();
+        assertEquals("readback_mismatch", code(w), "a different inserted type fails verification");
+        Env two = new Env();
+        two.f.insertAlso = true;
+        Outcome t = new Outcome();
+        two.editor.insert(two.source, two.device, RANDOM_TYPE, null, OK, OK, v -> t.value = v, x -> t.error = x);
+        two.f.pendingSettle.accept(null);
+        two.f.run();
+        assertEquals("readback_mismatch", code(t), "two new members are not one insertion");
+        assertTrue(failure(t).unknown);
     }
 
     @Test
-    void deleteVerifiesMembership() {
-        Fake f = new Fake();
+    void deleteVerifiesMembershipAndComparesTheName() {
+        Env e = new Env();
         int[] d = {0};
-        Outcome o = outcome();
-        assertRpcError(
-                "stale_context",
-                () -> new ModulatorEditor(f).delete(null, RANDOM, 1, OK, () -> d[0]++, v -> {}, e -> {}));
-        new ModulatorEditor(f).delete(null, RANDOM, 2, OK, () -> d[0]++, v -> o.value = v, e -> o.error = e);
-        f.run();
-        assertTrue(
-                o.error == null
-                        && d[0] == 1
-                        && f.members.size() == 1
-                        && o.value.get("count").getAsInt() == 1,
-                "delete removes exactly one");
+        Outcome o = new Outcome();
+        e.editor.delete(e.source, e.device, RANDOM, "Random", OK, () -> d[0]++, v -> o.value = v, x -> o.error = x);
+        e.f.run();
+        assertNull(o.error);
+        assertEquals(1, d[0]);
+        assertEquals(1, e.f.members.size());
+        assertEquals(1, o.value.get("count").getAsInt());
+        assertEquals("applied", o.value.get("outcome").getAsString());
         assertRpcError(
                 "target_not_found",
-                () -> new ModulatorEditor(f).delete(null, RANDOM, 1, OK, () -> d[0]++, v -> {}, e -> {}));
+                () -> e.editor.delete(e.source, e.device, RANDOM, "Random", OK, () -> d[0]++, v -> {}, x -> {}));
+        assertEquals(1, d[0]);
     }
 
     @Test
-    void moduleValidationRejectsBeforeQueues() {
-        String parent = parent().toString(), target = gridTarget();
-        String base = "{\"parent\":" + parent + ",\"modulatorId\":\"" + RANDOM + "\",\"target\":" + target;
-        ModulatorEditModule.validateParams(
-                "modulators.map",
-                JsonParser.parseString(base + ",\"expectedAmount\":null,\"amount\":1}")
-                        .getAsJsonObject());
-        ModulatorEditModule.validateParams(
-                "modulators.unmap",
-                JsonParser.parseString(base + ",\"expectedAmount\":-1}").getAsJsonObject());
-        for (String bad : List.of(
-                base + ",\"expectedAmount\":null,\"amount\":1.5}",
-                base + ",\"amount\":0.5}",
-                base + ",\"expectedAmount\":null,\"amount\":\"0.5\"}",
-                base + ",\"expectedAmount\":null,\"amount\":0.5,\"transfer\":\"log\"}",
-                base + ",\"expectedAmount\":null,\"amount\":0.5,\"extra\":1}",
-                base + ",\"expectedAmount\":null,\"amount\":0.5,\"enabled\":1}",
-                base + ",\"expectedAmount\":null,\"amount\":0.5,\"outputId\":null}"))
-            assertRpcError(
-                    "invalid_params",
-                    () -> ModulatorEditModule.validateParams(
-                            "modulators.map", JsonParser.parseString(bad).getAsJsonObject()));
-        assertRpcError(
-                "invalid_params",
-                () -> ModulatorEditModule.validateParams(
-                        "modulators.unmap",
-                        JsonParser.parseString(base + ",\"expectedAmount\":null}")
-                                .getAsJsonObject()));
-        String both = "{\"parent\":" + parent + ",\"modulatorId\":\"" + RANDOM + "\",\"target\":{\"moduleId\":\""
-                + MODULE + "\",\"modulatorId\":\"" + LFO
-                + "\",\"parameterId\":\"X\"},\"expectedAmount\":null,\"amount\":0.5}";
-        assertRpcError(
-                "invalid_params",
-                () -> ModulatorEditModule.validateParams(
-                        "modulators.map", JsonParser.parseString(both).getAsJsonObject()));
-        ModulatorEditModule.validateParams(
-                "modulators.insert",
-                JsonParser.parseString("{\"parent\":" + parent + ",\"expectedCount\":0,\"typeName\":\"Random\"}")
-                        .getAsJsonObject());
-        for (String bad : List.of(
-                "{\"parent\":" + parent + ",\"expectedCount\":0}",
-                "{\"parent\":" + parent + ",\"expectedCount\":0,\"typeName\":\"Random\",\"typeId\":\"" + RANDOM_TYPE
-                        + "\"}",
-                "{\"parent\":" + parent + ",\"expectedCount\":-1,\"typeName\":\"Random\"}",
-                "{\"parent\":" + parent + ",\"expectedCount\":1.0,\"typeName\":\"Random\"}"))
-            assertRpcError(
-                    "invalid_params",
-                    () -> ModulatorEditModule.validateParams(
-                            "modulators.insert", JsonParser.parseString(bad).getAsJsonObject()));
-        assertRpcError(
-                "invalid_params",
-                () -> ModulatorEditModule.validateParams(
-                        "modulators.delete",
-                        JsonParser.parseString("{\"parent\":" + parent + ",\"modulatorId\":\"" + RANDOM
-                                        + "\",\"expectedCount\":0}")
-                                .getAsJsonObject()));
-        assertRpcError(
-                "invalid_params",
-                () -> ModulatorEditModule.validateParams(
-                        "modulators.parameters.set",
-                        JsonParser.parseString(
-                                        "{\"parent\":" + parent + ",\"modulatorId\":\"" + RANDOM
-                                                + "\",\"parameterId\":\"RATE\",\"expectedKind\":\"string\",\"expectedValue\":\"a\",\"value\":\"b\"}")
-                                .getAsJsonObject()));
-        ModulatorEditModule.validateParams(
-                "modulators.get",
-                JsonParser.parseString("{\"parent\":" + parent + "}").getAsJsonObject());
-        assertRpcError(
-                "invalid_params",
-                () -> ModulatorEditModule.validateParams(
-                        "modulators.get",
-                        JsonParser.parseString("{\"parent\":" + parent + ",\"modulatorId\":\"x\"}")
-                                .getAsJsonObject()));
-    }
-
-    private static String code(Outcome o) {
-        return o.error instanceof RpcException ? ((RpcException) o.error).reason.wire() : String.valueOf(o.error);
+    void aRenamedModulatorIsNotDeleted() {
+        Env e = new Env();
+        int[] d = {0};
+        e.f.mod(0).name = "Wobble";
+        RpcException renamed = assertRpcError(
+                "target_changed",
+                () -> e.editor.delete(e.source, e.device, RANDOM, "Random", OK, () -> d[0]++, v -> {}, x -> {}));
+        assertEquals(Refs.modulator(e.device, RANDOM.toString(), "Wobble"), renamed.current);
+        assertEquals(0, d[0]);
+        assertEquals(2, e.f.members.size());
+        Outcome o = new Outcome();
+        e.editor.delete(e.source, e.device, RANDOM, null, OK, () -> d[0]++, v -> o.value = v, x -> o.error = x);
+        e.f.run();
+        assertNull(o.error, "without a name to compare the id alone is the target");
+        assertEquals(1, e.f.members.size());
     }
 
     @Test
-    void moduleValidationEdgeCases() {
-        assertRpcError(
-                "unknown_method", () -> ModulatorEditModule.validateParams("modulators.bogus", new JsonObject()));
-        JsonObject notObject = JsonParser.parseString("{\"parent\":5}").getAsJsonObject();
-        assertRpcError("invalid_params", () -> ModulatorEditModule.validateParams("modulators.get", notObject));
-        JsonObject longName = JsonParser.parseString(
-                        "{\"parent\":" + parent() + ",\"expectedCount\":0,\"typeName\":\"" + "x".repeat(129) + "\"}")
-                .getAsJsonObject();
-        assertRpcError("invalid_params", () -> ModulatorEditModule.validateParams("modulators.insert", longName));
-        JsonObject longText =
-                JsonParser.parseString("{\"k\":\"" + "x".repeat(1025) + "\"}").getAsJsonObject();
-        assertRpcError("invalid_params", () -> ModulatorEditor.text(longText, "k"));
+    void aDeleteThatRemovesMoreThanTheModulatorIsUnknown() {
+        Env e = new Env();
+        e.f.deleteAlso = true;
+        Outcome o = new Outcome();
+        e.editor.delete(e.source, e.device, RANDOM, "Random", OK, OK, v -> o.value = v, x -> o.error = x);
+        e.f.run();
+        assertEquals("readback_mismatch", code(o));
+        assertTrue(failure(o).unknown);
     }
 
+    // ------------------------------------------------------------------ modulator control write
+    @Test
+    void aBareValueIsWrittenAndReadBackForEveryKind() {
+        Env e = new Env();
+        int[] d = {0};
+        JsonObject rate = e.set(e.rate, "0.75", null, d);
+        assertEquals(0.75, e.f.param(0, "RATE").value);
+        assertEquals("applied", rate.get("outcome").getAsString());
+        assertEquals(e.rate, rate.get("ref"));
+        assertEquals(
+                0.75,
+                rate.getAsJsonObject("fields")
+                        .getAsJsonObject("value")
+                        .get("requested")
+                        .getAsDouble());
+        assertEquals(0.75, rate.getAsJsonObject("parameter").get("value").getAsDouble());
+        assertEquals("float", rate.getAsJsonObject("parameter").get("kind").getAsString());
+        assertEquals(
+                "applied",
+                rate.getAsJsonObject("fields")
+                        .getAsJsonObject("value")
+                        .get("outcome")
+                        .getAsString());
+        e.set(Refs.parameter(e.random, "STEPS", "Steps"), "5", null, d);
+        assertEquals(5, e.f.param(0, "STEPS").value);
+        e.set(Refs.parameter(e.random, "ON", "On"), "true", null, d);
+        assertEquals(1, e.f.param(0, "ON").value);
+        e.set(Refs.parameter(e.random, "MODE", "Mode"), "2", null, d);
+        assertEquals(2, e.f.param(0, "MODE").value);
+        assertEquals(4, d[0]);
+    }
+
+    @Test
+    void aDisplayWritesAFloatAndIsUnsupportedElsewhere() {
+        Env e = new Env();
+        int[] d = {0};
+        JsonObject mix = e.set(Refs.parameter(e.random, "MIX", "Mix"), "{\"display\":\"75 %\"}", null, d);
+        assertEquals(0.75, e.f.param(0, "MIX").value, 1e-9);
+        assertEquals(
+                HostFixture.json("{\"display\":\"75 %\"}"),
+                mix.getAsJsonObject("fields").getAsJsonObject("value").get("requested"));
+        assertEquals("75 %", mix.getAsJsonObject("parameter").get("display").getAsString());
+        assertEquals(1, d[0]);
+        assertRpcError(
+                "unsupported_unit",
+                () -> e.set(Refs.parameter(e.random, "STEPS", "Steps"), "{\"display\":\"5\"}", null, d));
+        assertRpcError(
+                "unsupported_unit",
+                () -> e.set(Refs.parameter(e.random, "MODE", "Mode"), "{\"display\":\"Free\"}", null, d));
+        assertRpcError(
+                "unsupported_unit", () -> e.set(Refs.parameter(e.random, "ON", "On"), "{\"display\":\"on\"}", null, d));
+        RpcException noUnit = assertThrows(RpcException.class, () -> e.set(e.rate, "{\"display\":\"0.5\"}", null, d));
+        assertEquals(
+                "unsupported_unit",
+                noUnit.reason.wire(),
+                "a float without a verified unit cannot be written by display");
+        assertEquals(1, d[0]);
+    }
+
+    @Test
+    void aLabelWritesAnEnumByItsUniqueLabel() {
+        Env e = new Env();
+        int[] d = {0};
+        JsonObject mode = Refs.parameter(e.random, "MODE", "Mode");
+        e.f.param(0, "MODE").value = 1;
+        e.set(mode, "{\"label\":\"Free\"}", null, d);
+        assertEquals(0, e.f.param(0, "MODE").value);
+        assertEquals(1, d[0]);
+        RpcException unknown = assertRpcError("invalid_params", () -> e.set(mode, "{\"label\":\"Tape\"}", null, d));
+        assertTrue(
+                unknown.getMessage().contains("Free") && unknown.getMessage().contains("Sync"), unknown.getMessage());
+        RpcException ambiguous = assertRpcError("invalid_params", () -> e.set(mode, "{\"label\":\"Sync\"}", null, d));
+        assertTrue(ambiguous.getMessage().contains("Several"), ambiguous.getMessage());
+        assertRpcError("invalid_params", () -> e.set(e.rate, "{\"label\":\"Free\"}", null, d));
+        assertEquals(1, d[0]);
+    }
+
+    @Test
+    void expectValueComparesTheCurrentValueBeforeAnyWrite() {
+        Env e = new Env();
+        int[] d = {0};
+        RpcException mismatch = assertRpcError("target_changed", () -> e.set(e.rate, "0.75", "{\"value\":0.25}", d));
+        assertEquals(HostFixture.json("{\"value\":0.5}"), mismatch.observed);
+        assertEquals(0.5, e.f.param(0, "RATE").value);
+        assertEquals(0, d[0]);
+        e.set(e.rate, "0.75", "{\"value\":0.5}", d);
+        assertEquals(0.75, e.f.param(0, "RATE").value);
+        assertEquals(1, d[0]);
+        JsonObject steps = Refs.parameter(e.random, "STEPS", "Steps");
+        e.set(steps, "4", "{\"value\":3}", d);
+        assertEquals(4, e.f.param(0, "STEPS").value);
+        JsonObject on = Refs.parameter(e.random, "ON", "On");
+        assertRpcError("target_changed", () -> e.set(on, "true", "{\"value\":true}", d));
+        e.set(on, "true", "{\"value\":false}", d);
+        assertEquals(1, e.f.param(0, "ON").value);
+    }
+
+    @Test
+    void aValueWriteIsAlreadyMatchedWithoutDispatchAndRefusesWhatItCannotWrite() {
+        Env e = new Env();
+        int[] d = {0};
+        JsonObject same = e.set(e.rate, "0.5", null, d);
+        assertEquals("already_matched", same.get("outcome").getAsString());
+        assertEquals(0, d[0]);
+        assertFalse(same.get("mutationDispatched").getAsBoolean());
+        assertRpcError("invalid_params", () -> e.set(e.rate, "2", null, d));
+        e.f.param(0, "RATE").writable = false;
+        assertRpcError("unsafe_state", () -> e.set(e.rate, "0.75", null, d));
+        e.f.param(0, "RATE").writable = true;
+        assertRpcError("target_not_found", () -> e.set(Refs.parameter(e.random, "NOPE", null), "0.5", null, d));
+        assertRpcError("target_not_found", () -> e.set(Refs.parameter(e.random, "OUT", null), "0.5", null, d));
+        RpcException renamed = assertRpcError(
+                "target_changed", () -> e.set(Refs.parameter(e.random, "RATE", "Speed"), "0.5", null, d));
+        assertEquals("Rate", renamed.current.get("name").getAsString());
+        e.f.param(0, "RATE").name = "Speed";
+        assertRpcError("target_changed", () -> e.set(e.rate, "0.75", null, d));
+        assertEquals(0, d[0]);
+    }
+
+    @Test
+    void aValueThatDoesNotReadBackIsUnknown() {
+        Env e = new Env();
+        int[] d = {0};
+        e.f.ignoreWrites = true;
+        RpcException lost = assertThrows(RpcException.class, () -> e.set(e.rate, "0.75", null, d));
+        assertEquals("readback_mismatch", lost.reason.wire());
+        assertTrue(lost.unknown, "a lost scalar write is unknown");
+        assertEquals(1, d[0]);
+    }
+
+    @Test
+    void aValueWriteIsTargetChangedWhenTheNativeDeviceMovesUnderIt() {
+        Env e = new Env();
+        int[] d = {0};
+        e.f.nativeAccess.retarget = true;
+        assertRpcError("target_changed", () -> e.set(e.rate, "0.75", null, d));
+        assertEquals(0, d[0]);
+    }
+
+    // ------------------------------------------------------------------ edit bindings
     @Test
     void editBindingsAreUnavailableUnderTheHostGate() {
         HostFixture host = new HostFixture();
-        TestServices s = host.services;
-        ModulatorEditModule module =
-                new ModulatorEditModule(s.scheduler, s.sources, s.transportSafety, s.natives, HostFixture.SPECS);
-        JsonObject capabilities = module.capabilities(new HostOperation(Long.MAX_VALUE));
-        assertTrue(!capabilities.get("available").getAsBoolean(), "the gate keeps edit bindings closed");
+        ModulatorEditModule module = host.services.modulatorEdits(null);
+        assertRpcError("native_unavailable", () -> module.editor(new HostOperation(Long.MAX_VALUE)));
+    }
+
+    @Test
+    void aSchemaFilledRequestWithoutExpectParses() {
+        Env e = new Env();
+        JsonObject p = new JsonObject();
+        p.add("source", e.random);
+        p.add("target", e.decay);
+        p.addProperty("amount", 0.5);
+        ModulatorEditor.MapRequest map =
+                ModulatorEditor.MapRequest.parse(HostBridge.checkSchema(HostFixture.SPECS, "modulators.map", p), false);
+        assertFalse(map.expected);
+        JsonObject q = new JsonObject();
+        q.add("source", e.random);
+        q.add("target", e.decay);
+        assertFalse(
+                ModulatorEditor.MapRequest.parse(HostBridge.checkSchema(HostFixture.SPECS, "modulators.unmap", q), true)
+                        .expected);
     }
 }

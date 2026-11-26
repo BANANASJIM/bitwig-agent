@@ -19,7 +19,6 @@ final class DiscoveryModule implements HostModule {
     private final TrackWindow window;
     private final ProjectState projectState;
     private final MethodSpecs specs;
-    private final ParameterModule parameters;
     private final Holds holds;
     private final List<HostModule> domains;
 
@@ -31,7 +30,6 @@ final class DiscoveryModule implements HostModule {
             TrackWindow window,
             ProjectState projectState,
             MethodSpecs specs,
-            ParameterModule parameters,
             Holds holds,
             List<HostModule> domains) {
         this.host = host;
@@ -40,7 +38,6 @@ final class DiscoveryModule implements HostModule {
         this.window = window;
         this.projectState = projectState;
         this.specs = specs;
-        this.parameters = parameters;
         this.holds = holds;
         this.domains = domains;
     }
@@ -74,7 +71,6 @@ final class DiscoveryModule implements HostModule {
         result.add("instance", Results.instance());
         result.addProperty("trackWindowCapacity", TRACKS);
         result.addProperty("deviceWindowCapacity", DEVICES);
-        result.add("parameterBindingDiagnostics", parameters.diagnostics());
         result.add("holds", holds(holds, GRID_HOLDS));
         addDomainSections(operation, result, domains, full);
         if (full) implementation(result);

@@ -114,6 +114,7 @@ def fields(name: str) -> list[dict[str, Any]]:
 
 
 HELP_POINTER = " Full guide: help {name}."
+ADVERTISED_EXAMPLE_LIMIT = DESCRIPTION_LIMIT // 2
 _SENTENCE_END = re.compile(r"(?<!e\.g)(?<!i\.e)\.\s+(?=[A-Z])")
 
 
@@ -132,12 +133,19 @@ def _lead(name: str, text: str, budget: int) -> str:
     return lead
 
 
+def _example(spec: ToolSpec) -> str:
+    """The first example as advertised: left out when it is a ref chain too long to leave room for the summary."""
+    text = json.dumps(spec.examples[0], ensure_ascii=False) if spec.examples[0] else ""
+    return f" Example arguments: {text}" if text and len(text) <= ADVERTISED_EXAMPLE_LIMIT else ""
+
+
 def _advertised(name: str, spec: ToolSpec) -> str:
     """What the agent reads with the tool: the description, or its summary and a help pointer, then the example."""
-    example = f" Example arguments: {json.dumps(spec.examples[0], ensure_ascii=False)}" if spec.examples[0] else ""
-    if len(spec.description) + len(example) <= DESCRIPTION_LIMIT:
-        return spec.description + example
+    example = _example(spec)
     pointer = HELP_POINTER.format(name=name)
+    hidden = pointer if spec.examples[0] and not example else ""  # help shows the example that is not advertised
+    if len(spec.description) + len(hidden) + len(example) <= DESCRIPTION_LIMIT:
+        return spec.description + hidden + example
     budget = DESCRIPTION_LIMIT - len(pointer) - len(example)
     lead = spec.summary or _lead(name, spec.description, budget)
     if len(lead) > budget:

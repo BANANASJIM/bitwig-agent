@@ -1,9 +1,9 @@
-"""Client-side `modulators.catalog` / `modulators.describe`: Bitwig's own modulator help, read at runtime.
+"""Client-side `modulators.describe`: Bitwig's own modulator help, read at runtime.
 
 Nothing from Bitwig's resource files is copied into this package. Names come from the installed
 `<root>/Library/modulators/*.bwmodulator` files, help text from `<root>/resources/localization/`
 (`Modulator-descriptions-resources` and `Modulators-resources`, the in-app "Show help" texts).
-Live kinds, ranges and values come from the host via modulators.get, never from these files.
+Live kinds, ranges and values come from the host via modulators.list, never from these files.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ PREFIX_ALIASES: dict[str, tuple[str, ...]] = {
     "Stack Spread": ("voice_stack",),
     "Voice Control": ("voice_stack",),
 }
-LIVE_FACTS = "kind, value, range and options of each control: read them live with modulators.get (parameters rows)"
+LIVE_FACTS = "kind, value, range and options of each control: read them live with modulators.list (parameters rows)"
 
 
 DOCUMENTED_STATUS = "documented_display_values_unverified_against_raw"
@@ -162,13 +162,9 @@ def catalog(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def describe(args: dict[str, Any]) -> dict[str, Any]:
+    if "type" not in args:
+        return catalog(args)
     docs = get_docs(args.get("installationRoot"), args.get("lang", "en"))
-    if "query" in args:
-        return {
-            "query": args["query"],
-            "matches": search(docs, args["query"])[:10],
-            "next": "modulators.describe type=<name> for controls",
-        }
     name = resolve(docs, args["type"])
     prefixes, controls = docs.controls(name)
     general = [

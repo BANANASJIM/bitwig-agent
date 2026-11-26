@@ -5,8 +5,15 @@ from pydantic import ValidationError
 
 from bitwig_agent.protocol import TOOLS, validate_call
 from bitwig_agent.protocol.base import TARGET, TRACK
-from bitwig_agent.protocol.devices import LAYER_PARENT, LAYER_TARGET
 from bitwig_agent.protocol.launcher import SLOT_REF
+
+UUID = "abcdef01-2345-6789-abcd-0123456789ab"
+TRACK_REF: dict[str, Any] = {"kind": "track", "id": TRACK, "name": "Lead"}
+DEVICE: dict[str, Any] = {"kind": "device", "track": TRACK_REF, "index": 1, "name": "Instrument Layer"}
+CHAIN: dict[str, Any] = {"kind": "chain", "device": DEVICE, "id": UUID, "name": "Pad"}
+CHAIN_DEVICE: dict[str, Any] = {"kind": "device", "chain": CHAIN, "index": 0, "name": "Polysynth"}
+PAGE: dict[str, Any] = {"kind": "remotePage", "device": DEVICE, "index": 0, "name": "Main"}
+FILE = {"kind": "file", "path": "/tmp/Poly Sketch.bwpreset"}
 
 
 @pytest.mark.parametrize(
@@ -29,11 +36,11 @@ from bitwig_agent.protocol.launcher import SLOT_REF
 )
 def test_insertion_rejects_ambiguous_or_malformed_identifiers(kind, fields):
     with pytest.raises(ValidationError):
-        validate_call("devices.insert", {"trackId": TRACK, "expectedDeviceCount": 0, "kind": kind, **fields})
+        validate_call("devices.insert", {"parent": TRACK_REF, "kind": kind, **fields})
 
 
 def test_file_insertion_preserves_path_and_omits_id():
-    args = {"trackId": TRACK, "expectedDeviceCount": 2, "kind": "file", "path": "/tmp/Poly Sketch.bwpreset"}
+    args = {"parent": CHAIN, "kind": "file", "path": "/tmp/Poly Sketch.bwpreset"}
     params, _ = validate_call("devices.insert", args)
     assert params == args
 
@@ -71,239 +78,120 @@ def test_file_insertion_preserves_path_and_omits_id():
 def test_file_import_and_device_insertion_share_path_syntax(path):
     cases: list[tuple[str, dict[str, Any]]] = [
         ("clips.import", {"to": SLOT_REF}),
-        ("devices.insert", {"trackId": TRACK, "expectedDeviceCount": 0, "kind": "file"}),
+        ("devices.insert", {"parent": TRACK_REF, "kind": "file"}),
     ]
     for method, args in cases:
         with pytest.raises(ValidationError):
             validate_call(method, {**args, "path": path})
 
 
-def test_remote_control_target_and_identity_fields_are_required():
-    args = {
-        **TARGET,
-        "contextToken": "observed-page-token",
-        "expectedPageName": "Main",
-        "parameterIndex": 7,
-        "expectedParameterName": "Macro",
-        "normalizedValue": 0.5,
-    }
-    params, _ = validate_call("devices.remote.set", args)
-    assert params == args
-    for field in args:
-        with pytest.raises(ValidationError):
-            validate_call("devices.remote.set", {key: value for key, value in args.items() if key != field})
-
-
-@pytest.mark.parametrize("method", ["devices.layers.list", "parameters.layer.list", "parameters.layer.set"])
-def test_layer_contract_requires_all_fields_and_preserves_nested_target(method):
-    args = TOOLS[method].examples[0]
-    params, timeout = validate_call(method, {**args, "timeoutMs": 250})
-    assert params == args
-    assert timeout == 250
-    for field in args:
-        for invalid in ({key: value for key, value in args.items() if key != field}, {**args, field: None}):
-            with pytest.raises(ValidationError):
-                validate_call(method, invalid)
-    for field in LAYER_PARENT:
-        with pytest.raises(ValidationError):
-            validate_call(
-                method, {**args, "parent": {key: value for key, value in LAYER_PARENT.items() if key != field}}
-            )
-
-
+@pytest.mark.parametrize("parent", [TRACK_REF, CHAIN])
 @pytest.mark.parametrize(
-    "changes",
+    "position",
     [
-        {"trackId": "1-1-1-1-1"},
-        {"trackId": None},
-        {"deviceIndex": -1},
-        {"deviceIndex": 16},
-        {"deviceIndex": True},
-        {"deviceIndex": 1.0},
-        {"deviceIndex": "1"},
-        {"expectedDeviceName": ""},
-        {"expectedDeviceName": None},
-        {"expectedDeviceName": "𝄞" * 2049},
-        {"timeoutMs": 250},
-        {"parent": LAYER_PARENT},
-        {"layerId": TRACK},
-        {"padIndex": 0},
-        {"slotIndex": 0},
-        {"unexpected": None},
+        "start",
+        "end",
+        {"before": DEVICE},
+        {"after": CHAIN_DEVICE},
     ],
 )
-@pytest.mark.parametrize("method", ["devices.layers.list", "parameters.layer.list", "parameters.layer.set"])
-def test_layer_parent_is_strict_nonrecursive_and_has_no_nested_timeout(method, changes):
-    with pytest.raises(ValidationError):
-        validate_call(method, {**TOOLS[method].examples[0], "parent": {**LAYER_PARENT, **changes}})
-
-
-@pytest.mark.parametrize(
-    "changes",
-    [
-        {"parent": None},
-        {"parent": []},
-        {"parent": "selected"},
-        {"layerId": "1-1-1-1-1"},
-        {"layerId": ""},
-        {"childDeviceIndex": -1},
-        {"childDeviceIndex": 2},
-        {"childDeviceIndex": True},
-        {"childDeviceIndex": 1.0},
-        {"childDeviceIndex": "1"},
-        {"expectedChildDeviceName": ""},
-        {"expectedChildDeviceName": "𝄞" * 2049},
-        {"discoveryToken": ""},
-        {"discoveryToken": "x" * 4097},
-        {"layerIndex": 0},
-        {"padIndex": 0},
-        {"slotIndex": 0},
-        {"path": []},
-        {"child": LAYER_TARGET},
-        {"trackId": TRACK},
-        {"selected": True},
-    ],
-)
-@pytest.mark.parametrize("method", ["parameters.layer.list", "parameters.layer.set"])
-def test_layer_parameters_reject_ambiguous_or_deeper_targets(method, changes):
-    with pytest.raises(ValidationError):
-        validate_call(method, {**TOOLS[method].examples[0], **changes})
-
-
-@pytest.mark.parametrize("value", [None, True, "0.5", -0.01, 1.01, float("nan"), float("inf"), -float("inf")])
-def test_layer_set_requires_finite_normalized_number(value):
-    with pytest.raises(ValidationError):
-        validate_call("parameters.layer.set", {**TOOLS["parameters.layer.set"].examples[0], "value": value})
-
-
-@pytest.mark.parametrize("value", [0, 0.5, 1])
-@pytest.mark.parametrize("index", [0, 1])
-def test_layer_set_accepts_window_and_normalized_endpoints(value, index):
-    args = {
-        **TOOLS["parameters.layer.set"].examples[0],
-        "childDeviceIndex": index,
-        "value": value,
-        "parent": {**LAYER_PARENT, "deviceIndex": 15, "trackId": TRACK.upper()},
-        "layerId": TRACK.upper(),
-    }
-    params, _ = validate_call("parameters.layer.set", args)
-    assert params == args
-
-
-@pytest.mark.parametrize(
-    "method",
-    [
-        "devices.get",
-        "devices.set",
-        "devices.select",
-        "devices.remote.get",
-        "devices.remote.page",
-        "devices.remote.set",
-        "parameters.list",
-        "parameters.set",
-        "grid.connections.set",
-    ],
-)
-def test_existing_flat_device_contracts_do_not_accept_layer_targets(method):
-    args = TOOLS[method].examples[0]
-    for field, value in LAYER_TARGET.items():
-        with pytest.raises(ValidationError):
-            validate_call(method, {**args, field: value})
-
-
-@pytest.mark.parametrize("method", ["devices.layers.list", "parameters.layer.list"])
-def test_layer_reads_reject_write_fields(method):
-    for field, value in {"contextToken": "c", "parameterId": "p", "value": 0.5}.items():
-        with pytest.raises(ValidationError):
-            validate_call(method, {**TOOLS[method].examples[0], field: value})
-
-
-@pytest.mark.parametrize("field", ["contextToken", "parameterId"])
-@pytest.mark.parametrize("value", ["", "x" * 4097, False])
-def test_layer_set_rejects_invalid_write_identity(field, value):
-    with pytest.raises(ValidationError):
-        validate_call("parameters.layer.set", {**TOOLS["parameters.layer.set"].examples[0], field: value})
-
-
-@pytest.mark.parametrize(
-    ("field", "value"),
-    [
-        ("layerId", TRACK),
-        ("childDeviceIndex", 0),
-        ("discoveryToken", "d"),
-        ("padIndex", 0),
-        ("slotIndex", 0),
-        ("path", []),
-        ("unknown", None),
-    ],
-)
-def test_layer_discovery_accepts_only_parent_and_top_level_timeout(field, value):
-    with pytest.raises(ValidationError):
-        validate_call("devices.layers.list", {"parent": LAYER_PARENT, field: value})
-
-
-@pytest.mark.parametrize(
-    "fields",
-    [
-        {"position": "start"},
-        {"position": "end"},
-        {"position": "before", "deviceIndex": 1, "expectedDeviceName": "EQ-5"},
-        {"position": "after", "deviceIndex": 0, "expectedDeviceName": "Polymer"},
-    ],
-)
-def test_insert_position_round_trips(fields):
-    args = {
-        "trackId": TRACK,
-        "expectedDeviceCount": 2,
-        "kind": "bitwig",
-        "id": "11111111-2222-4333-8444-555555555555",
-        **fields,
-    }
+def test_insert_position_round_trips_for_a_track_and_a_chain(parent, position):
+    args = {"parent": parent, "position": position, "kind": "bitwig", "id": "11111111-2222-4333-8444-555555555555"}
     params, _ = validate_call("devices.insert", args)
     assert params == args
+    params, _ = validate_call("devices.insert", {k: v for k, v in args.items() if k != "position"})
+    assert "position" not in params
 
 
 @pytest.mark.parametrize(
-    "fields",
+    "changes",
     [
         {"position": "before"},
-        {"position": "after", "deviceIndex": 1},
-        {"position": "before", "expectedDeviceName": "EQ-5"},
-        {"position": "end", "deviceIndex": 1, "expectedDeviceName": "EQ-5"},
-        {"deviceIndex": 1, "expectedDeviceName": "EQ-5"},
         {"position": "middle"},
-        {"position": "before", "deviceIndex": 16, "expectedDeviceName": "EQ-5"},
+        {"position": {"before": TRACK_REF}},
+        {"position": {"before": DEVICE, "after": DEVICE}},
+        {"position": 1},
+        {"parent": DEVICE},
+        {"parent": {"kind": "track", "id": TRACK}},
+        {"expectedDeviceCount": 2},
+        {"trackId": TRACK},
+        {"deviceIndex": 1},
     ],
 )
-def test_insert_position_anchor_rules(fields):
+def test_insert_rejects_old_fields_and_malformed_positions(changes):
+    args = {"parent": TRACK_REF, "kind": "clap", "id": "x.y", **changes}
     with pytest.raises(ValidationError):
-        validate_call(
-            "devices.insert", {"trackId": TRACK, "expectedDeviceCount": 2, "kind": "clap", "id": "x.y", **fields}
-        )
+        validate_call("devices.insert", args)
 
 
-def test_delete_move_and_layer_insert_shapes():
-    assert validate_call("devices.delete", TARGET)[0] == TARGET
-    move = {**TARGET, "toIndex": 3}
-    assert validate_call("devices.move", move)[0] == move
-    for bad in ({**TARGET, "toIndex": 0}, {**TARGET, "toIndex": 16}, TARGET, {**TARGET, "toIndex": 1, "extra": 1}):
-        with pytest.raises(ValidationError):
-            validate_call("devices.move", bad)
-    layer = {
-        "parent": LAYER_PARENT,
-        "layerId": LAYER_TARGET["layerId"],
-        "expectedChildCount": 0,
-        "kind": "file",
-        "path": "/tmp/FX.bwdevice",
-        "position": "start",
+@pytest.mark.parametrize("method", ["devices.get", "devices.select", "devices.delete", "devices.remote.get"])
+@pytest.mark.parametrize("target", [DEVICE, CHAIN_DEVICE])
+def test_device_targets_take_a_root_or_a_chain_device_ref(method, target):
+    params, _ = validate_call(method, {"target": target})
+    assert params == {"target": target}
+
+
+@pytest.mark.parametrize("method", ["devices.get", "devices.set", "devices.select", "devices.delete", "devices.move"])
+@pytest.mark.parametrize(
+    "target",
+    [TRACK_REF, CHAIN, PAGE, {**DEVICE, "index": 16}, {"trackId": TRACK, "deviceIndex": 0}],
+)
+def test_device_targets_reject_other_refs_and_the_old_triple(method, target):
+    required: dict[str, dict[str, Any]] = {
+        "devices.set": {"enabled": True},
+        "devices.move": {"to": {"position": "end"}},
     }
-    assert validate_call("devices.layers.insert", layer)[0] == layer
-    for bad in (
-        {**layer, "position": "before"},
-        {**layer, "expectedChildCount": -1},
-        {**layer, "id": "x"},
-        {**layer, "layerId": "not-a-uuid"},
-        {k: v for k, v in layer.items() if k != "parent"},
-    ):
+    args = required.get(method, {})
+    with pytest.raises(ValidationError):
+        validate_call(method, {"target": target, **args})
+
+
+def test_set_requires_enabled_and_move_a_destination():
+    assert validate_call("devices.set", {"target": DEVICE, "enabled": False})[0]["enabled"] is False
+    with pytest.raises(ValidationError):
+        validate_call("devices.set", {"target": DEVICE})
+    for to in ({"position": "start"}, {"position": {"after": CHAIN_DEVICE}}, {"parent": CHAIN, "position": "end"}):
+        params, _ = validate_call("devices.move", {"target": CHAIN_DEVICE, "to": to})
+        assert params["to"] == to
+    for bad in ({}, {"parent": CHAIN}, {"position": "middle"}, {"toIndex": 1}):
         with pytest.raises(ValidationError):
-            validate_call("devices.layers.insert", bad)
+            validate_call("devices.move", {"target": CHAIN_DEVICE, "to": bad})
+    with pytest.raises(ValidationError):
+        validate_call("devices.move", {"target": CHAIN_DEVICE})
+
+
+def test_lists_take_a_parent_and_chains_a_device():
+    for parent in (TRACK_REF, CHAIN):
+        assert validate_call("devices.list", {"parent": parent})[0] == {"parent": parent}
+    assert validate_call("chains.list", {"parent": DEVICE})[0] == {"parent": DEVICE}
+    for method, parent in (("devices.list", DEVICE), ("chains.list", CHAIN), ("chains.list", TRACK_REF)):
+        with pytest.raises(ValidationError):
+            validate_call(method, {"parent": parent})
+    for method in ("devices.list", "chains.list", "parameters.list"):
+        with pytest.raises(ValidationError):
+            validate_call(method, {"trackId": TRACK})
+
+
+@pytest.mark.parametrize("page", [0, 7, 4095])
+def test_remote_get_takes_an_optional_page_index(page):
+    assert validate_call("devices.remote.get", {"target": DEVICE, "page": page})[0]["page"] == page
+    for bad in (-1, 4096, 1.0, True, "1", None):
+        with pytest.raises(ValidationError):
+            validate_call("devices.remote.get", {"target": DEVICE, "page": bad})
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "devices.layers.list",
+        "devices.layers.insert",
+        "devices.remote.page",
+        "devices.remote.set",
+        "parameters.layer.list",
+        "parameters.layer.set",
+    ],
+)
+def test_the_old_device_methods_are_gone(name):
+    assert name not in TOOLS
+    with pytest.raises(ValueError, match="Unknown method"):
+        validate_call(name, {})

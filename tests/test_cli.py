@@ -7,7 +7,7 @@ import shlex
 import sys
 
 import pytest
-from fakes import INVALID_NAMES, LAYER_UNKNOWN_RESULT, assert_rejected_before_tcp, parse_arguments, string_panel_result
+from fakes import INVALID_NAMES, LAYER_UNKNOWN_RESULT, assert_rejected_before_tcp, parse_arguments
 from fakes import execute_cli as execute
 from pydantic import ValidationError
 
@@ -348,56 +348,55 @@ async def test_offline_entrypoint_and_client_do_not_import_mcp():
     assert json.loads(stdout)["method"] == "notes.edit"
 
 
+DEVICE_REF = {"kind": "device", "track": {"kind": "track", "id": TRACK, "name": "Lead"}, "index": 0, "name": "Polymer"}
+MODULATOR_REF = {"kind": "modulator", "device": DEVICE_REF, "id": TRACK, "name": "LFO"}
+
+
 @pytest.mark.parametrize(
     "changes",
     [
-        {"parent": None},
-        {"parent": {**TARGET, "timeoutMs": 250}},
-        {"parent": {**TARGET, "deviceIndex": 1.0}},
-        {"parent": {**TARGET, "padIndex": 0}},
-        {"parent": {**TARGET, "slotIndex": 0}},
-        {"parent": {**TARGET, "parent": TARGET}},
-        {"layerId": "1-1-1-1-1"},
-        {"childDeviceIndex": 2},
-        {"childDeviceIndex": True},
-        {"childDeviceIndex": 1.0},
-        {"discoveryToken": ""},
-        {"contextToken": None},
-        {"expectedChildDeviceName": ""},
+        {"target": None},
+        {"target": {"kind": "parameter", "owner": {**DEVICE_REF, "index": 1.0}, "id": "p"}},
+        {"target": {"kind": "parameter", "owner": {**DEVICE_REF, "index": True}, "id": "p"}},
+        {"target": {"kind": "parameter", "owner": DEVICE_REF, "id": "p", "layerId": TRACK}},
+        {"target": {"kind": "parameter", "owner": DEVICE_REF, "id": ""}},
         {"value": "0.5"},
         {"value": True},
         {"value": -0.01},
-        {"path": []},
+        {"value": {"label": "Bipolar"}},
+        {"contextToken": "c"},
         {"trackId": TRACK},
     ],
 )
-async def test_layer_cli_rejects_invalid_nested_params_before_tcp(host, monkeypatch, changes):
+async def test_parameter_cli_rejects_invalid_nested_params_before_tcp(host, monkeypatch, changes):
     monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
-    params = {**TOOLS["parameters.layer.set"].examples[0], **changes}
-    payload, code = await execute(["parameters.layer.set", json.dumps(params)])
+    params = {**TOOLS["parameters.set"].examples[0], **changes}
+    payload, code = await execute(["parameters.set", json.dumps(params)])
     assert code == 2
     assert_rejected_before_tcp(payload["error"], host)
 
 
-async def test_layer_cli_preserves_unknown_without_retry(host, monkeypatch):
+async def test_parameter_cli_preserves_unknown_without_retry(host, monkeypatch):
     monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
     unknown = {
         "outcome": "unknown",
         "reason": "deadline",
-        "message": "Inspect child before another write",
+        "message": "Inspect the parameter before another write",
         "details": {"dispatched": True},
     }
     host.reply = lambda request: {"id": request["id"], "result": unknown}
-    params = TOOLS["parameters.layer.set"].examples[0]
-    payload, code = await execute(["parameters.layer.set", json.dumps(params)])
+    params = TOOLS["parameters.set"].examples[1]
+    payload, code = await execute(["parameters.set", json.dumps(params)])
     assert code == 3
     assert payload == {"result": unknown}
     assert host.requests[0]["params"] == params
     assert len(host.requests) == host.connections == 1
 
 
-@pytest.mark.parametrize("method", ["modulators.capabilities", "modulators.list", "modulators.parameters.get"])
-async def test_modulator_generated_help_and_parse_work_offline(monkeypatch, method):
+@pytest.mark.parametrize(
+    "method", ["devices.list", "chains.list", "parameters.list", "modulators.list", "modulators.get"]
+)
+async def test_ref_methods_generated_help_and_parse_work_offline(monkeypatch, method):
     monkeypatch.setenv("BITWIG_AGENT_PORT", "not-a-port")
     out = await cli.execute([*method.split("."), "--help"])
     assert out.code == 0
@@ -406,10 +405,9 @@ async def test_modulator_generated_help_and_parse_work_offline(monkeypatch, meth
     assert schema == views.method(method)
     args = schema["examples"][0]
     assert parse_arguments(method, flags(method, args)) == (args, 5000)
-    if method != "modulators.capabilities":
-        parent = schema["inputSchema"]["$defs"]["DeviceParent"]
-        assert parent["additionalProperties"] is False
-        assert set(parent["required"]) == {"trackId", "deviceIndex", "expectedDeviceName"}
+    field = "target" if method == "modulators.get" else "parent"
+    assert field in schema["inputSchema"]["required"]
+    assert "trackId" not in schema["inputSchema"]["properties"]
     listing = (await cli.execute(["modulators", "--help"])).stdout
     for name in views.names():
         if name.startswith("modulators."):
@@ -417,55 +415,42 @@ async def test_modulator_generated_help_and_parse_work_offline(monkeypatch, meth
 
 
 @pytest.mark.parametrize("raw", [False, True])
-@pytest.mark.parametrize("value", ["", " \tMacro \u03b1𝄞\n "])
-async def test_modulator_cli_preserves_raw_string_and_null_metadata(host, monkeypatch, raw, value):
+async def test_modulator_cli_passes_refs_through_unchanged(host, monkeypatch, raw):
     monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
-    params = {**TOOLS["modulators.parameters.get"].examples[0], "parameterId": ""}
-    result = string_panel_result(params["modulatorId"], value)
+    params = {"target": MODULATOR_REF}
+    result = {"modulators": [{"ref": MODULATOR_REF, "name": "LFO", "parameters": []}], "complete": True}
     host.reply = lambda request: {"id": request["id"], "result": result}
-    arguments = [json.dumps(params)] if raw else flags("modulators.parameters.get", params)
-    payload, code = await execute(["modulators.parameters.get", *arguments])
+    arguments = [json.dumps(params)] if raw else flags("modulators.get", params)
+    payload, code = await execute(["modulators.get", *arguments])
     assert code == 0
-    assert json.loads(json.dumps(payload)) == {"result": result}
-    assert host.requests[0]["params"]["parameterId"] == ""
+    assert payload == {"result": result}
+    assert host.requests[0]["params"] == params
     assert len(host.requests) == host.connections == 1
 
 
 @pytest.mark.parametrize(
     "changes",
     [
-        {"parent": {**TARGET, "deviceIndex": True}},
-        {"parent": {**TARGET, "deviceIndex": 1.0}},
-        {"modulatorId": "Macro"},
-        {"parameterId": None},
-        {"parameterId": "𝄞" * 513},
-        {"value": "forbidden"},
+        {"target": {**MODULATOR_REF, "id": "Macro"}},
+        {"target": DEVICE_REF},
+        {"target": {**MODULATOR_REF, "device": {**DEVICE_REF, "index": 1.0}}},
+        {"modulatorId": TRACK},
     ],
 )
 async def test_modulator_cli_invalid_inputs_never_connect(host, monkeypatch, changes):
     monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
-    params = {**TOOLS["modulators.parameters.get"].examples[0], **changes}
-    payload, code = await execute(["modulators.parameters.get", json.dumps(params)])
+    params = {"target": MODULATOR_REF, **changes}
+    payload, code = await execute(["modulators.get", json.dumps(params)])
     assert code == 2
     assert_rejected_before_tcp(payload["error"], host)
 
 
-@pytest.mark.parametrize(
-    "error_code",
-    [
-        "native_unavailable",
-        "out_of_bounds",
-        "unsupported_scope",
-        "stale_context",
-    ],
-)
+@pytest.mark.parametrize("error_code", ["native_unavailable", "out_of_bounds", "unsupported_scope", "target_not_found"])
 async def test_modulator_cli_preserves_host_error_without_retry(host, monkeypatch, error_code):
     monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
     error = {"code": REASONS[error_code].value, "reason": error_code, "message": "Read rejected"}
     host.reply = lambda request: {"id": request["id"], "error": error}
-    payload, code = await execute(
-        ["modulators.parameters.get", json.dumps(TOOLS["modulators.parameters.get"].examples[0])]
-    )
+    payload, code = await execute(["modulators.get", json.dumps({"target": MODULATOR_REF})])
     assert code == (2 if error["code"] == "invalid_params" else 1)
     assert payload == {"error": error}
     assert len(host.requests) == host.connections == 1
@@ -1100,11 +1085,11 @@ async def test_a_repeated_row_flag_is_an_error(flag):
     ],
 )
 async def test_partial_is_decided_by_the_window_alone_when_there_is_one(host, monkeypatch, result, warns):
-    argv = [*["modulators", "list"], *flags("modulators.list", {"parent": TARGET}), "--format=jsonl"]
+    argv = [*["modulators", "list"], *flags("modulators.list", {"parent": DEVICE_REF}), "--format=jsonl"]
     out = await stdout_of(argv, host, monkeypatch, result)
     assert out.code == 0
     assert (json.loads(out.stderr)["warning"] == "partial") if warns else out.stderr == ""
-    plain = [*["modulators", "list"], *flags("modulators.list", {"parent": TARGET})]
+    plain = [*["modulators", "list"], *flags("modulators.list", {"parent": DEVICE_REF})]
     assert (await stdout_of(plain, host, monkeypatch, result)).stderr == ""
 
 

@@ -143,7 +143,7 @@ final class ModulatorSnapshotReader {
         contexts.guard(context, models, labels, check);
         guard(snapshot, check);
         if (!value.equals(text(a.read(Field.VALUE, selected.object), false)))
-            throw Errors.notApplied(Reason.STALE_CONTEXT, "Selected string value changed during capture.");
+            throw Errors.notApplied(Reason.TARGET_CHANGED, "Selected string value changed during capture.");
         JsonObject result = result();
         result.addProperty("modulatorId", row.id.toString());
         result.addProperty("typeId", row.typeId.toString());
@@ -334,7 +334,7 @@ final class ModulatorSnapshotReader {
     }
 
     private static void stale(String message) {
-        throw Errors.notApplied(Reason.STALE_CONTEXT, message);
+        throw Errors.notApplied(Reason.TARGET_CHANGED, message);
     }
 
     private static void bounds(String message) {

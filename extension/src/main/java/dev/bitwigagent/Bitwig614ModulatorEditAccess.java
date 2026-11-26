@@ -181,7 +181,7 @@ final class Bitwig614ModulatorEditAccess implements ModulatorEditor.Access {
     public void guardDevice(DeviceSources.Source source, Object device, Runnable check) {
         DeviceSources.Native.Capture now = targets.capture(source, check);
         if (now.device != device)
-            throw Errors.notApplied(Reason.STALE_CONTEXT, "The device changed during the operation.");
+            throw Errors.notApplied(Reason.TARGET_CHANGED, "The device changed during the operation.");
     }
 
     @Override
@@ -370,6 +370,17 @@ final class Bitwig614ModulatorEditAccess implements ModulatorEditor.Access {
     }
 
     @Override
+    public String moduleName(Object module) {
+        String name = grid.effectiveModuleName(module);
+        return name == null ? "" : name;
+    }
+
+    @Override
+    public DeviceSources.Native natives() {
+        return targets;
+    }
+
+    @Override
     public void requireParameterWritable(
             Object device, Object container, Object owner, Object parameter, Runnable check) {
         GridSnapshotReader.Kind kind = grid.detachedKind(parameter);
@@ -410,7 +421,7 @@ final class Bitwig614ModulatorEditAccess implements ModulatorEditor.Access {
                         + (wantedName == null
                                 ? ""
                                 : "; nearest: " + GridNames.nearest(byName.keySet(), wantedName, GridNames.SUGGESTIONS))
-                        + ". Use modulators.catalog.");
+                        + ". Use modulators.describe.");
     }
 
     @Override

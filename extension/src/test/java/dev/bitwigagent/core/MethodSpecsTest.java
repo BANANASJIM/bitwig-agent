@@ -21,7 +21,7 @@ public final class MethodSpecsTest {
             "devices.sidechain.set",
             "modulators.insert",
             "modulators.delete",
-            "modulators.parameters.set",
+            "parameters.set",
             "modulators.map",
             "modulators.unmap");
 

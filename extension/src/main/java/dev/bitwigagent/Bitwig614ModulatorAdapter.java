@@ -20,12 +20,12 @@ final class Bitwig614ModulatorAdapter implements ModulatorAdapter, ModulatorSnap
     private Bitwig614StringPanelAccess strings;
     private Bitwig614ReadContextAccess contextAccess;
     private ModulatorSnapshotReader reader;
-    private String discoveryError, stringError;
+    private String discoveryError;
 
     Bitwig614ModulatorAdapter(Bitwig614Runtime.Access bindings) {
         this.bindings = bindings;
         if (bindings.gateError() != null) {
-            discoveryError = stringError = "Exact runtime gate is unavailable.";
+            discoveryError = "Exact runtime gate is unavailable.";
             return;
         }
         try {
@@ -40,7 +40,7 @@ final class Bitwig614ModulatorAdapter implements ModulatorAdapter, ModulatorSnap
             panelClass = bindings.type("xMn");
             strings = new Bitwig614StringPanelAccess(bindings);
         } catch (ReflectiveOperationException | RuntimeException | LinkageError error) {
-            stringError = diagnostic(error);
+            strings = null;
         }
     }
 
@@ -103,41 +103,6 @@ final class Bitwig614ModulatorAdapter implements ModulatorAdapter, ModulatorSnap
             ModulatorSnapshotReader.Field field, Class<?> owner, String name, Class<?> returns, String declaring)
             throws ReflectiveOperationException {
         readers.put(field, exact(owner, name, returns, declaring));
-    }
-
-    @Override
-    public JsonObject capabilities() {
-        JsonObject result = new JsonObject();
-        result.addProperty("adapter", "bitwig_6_1_4_primary_modulators_read_only");
-        result.addProperty("hostVersion", bindings.hostVersion());
-        result.addProperty("expectedVersion", Bitwig614Runtime.VERSION);
-        result.addProperty("expectedSha256", Bitwig614Runtime.SHA256);
-        result.addProperty("actualSha256", bindings.actualHash());
-        result.add("runtimeGate", capability(bindings.gateError()));
-        result.add("discovery", capability(discoveryError));
-        result.add("stringPanelRead", capability(stringError));
-        result.addProperty("available", bindings.gateError() == null && discoveryError == null);
-        result.addProperty(
-                "parameterReadAvailable",
-                bindings.gateError() == null && discoveryError == null && stringError == null);
-        result.addProperty("writeAvailable", false);
-        result.addProperty("nativeMutation", false);
-        result.addProperty("nativeVerification", "not_established_by_binding");
-        result.addProperty("scope", "primary_modulators_on_root_device");
-        JsonObject limits = new JsonObject();
-        limits.addProperty("primaryModulators", ModulatorSnapshotReader.MAX_MODULATORS);
-        limits.addProperty("directChildrenPerContents", ModulatorSnapshotReader.MAX_CHILDREN);
-        limits.addProperty("directChildVisitsIncludingRevalidation", ModulatorSnapshotReader.MAX_EXAMINED);
-        limits.addProperty("textUtf16Units", ModulatorSnapshotReader.MAX_TEXT);
-        result.add("limits", limits);
-        return result;
-    }
-
-    private static JsonObject capability(String error) {
-        JsonObject result = new JsonObject();
-        result.addProperty("available", error == null);
-        result.addProperty("reason", error);
-        return result;
     }
 
     @Override

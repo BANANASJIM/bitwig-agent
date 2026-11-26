@@ -54,7 +54,19 @@ final class TestServices {
     }
 
     DeviceModule device() {
-        return new DeviceModule(host, scheduler, window, sources, transportSafety, selection);
+        return new DeviceModule(scheduler, sources, selection);
+    }
+
+    DeviceListModule deviceList() {
+        return new DeviceListModule(window, trackRefs, sources);
+    }
+
+    DeviceChainModule deviceChain() {
+        return new DeviceChainModule(scheduler, window, trackRefs, sources, transportSafety);
+    }
+
+    RemoteModule remote() {
+        return new RemoteModule(host, scheduler, window, sources, transportSafety);
     }
 
     AckModule ack(GridModule grid) {
@@ -115,16 +127,25 @@ final class TestServices {
         return new MixModule(host, scheduler, window, application, transportSafety, selection, natives, holds, access);
     }
 
-    ModulatorModule modulator(ModulatorAdapter adapter) {
-        return new ModulatorModule(scheduler, sources, natives, adapter);
+    ModulatorEditModule modulatorEdits(ModulatorEditor editor) {
+        return new ModulatorEditModule(scheduler, sources, transportSafety, natives, editor);
     }
 
-    ParameterModule parameters() {
-        return new ParameterModule(scheduler, sources);
+    ModulatorModule modulator(ModulatorAdapter adapter, ModulatorEditModule edits) {
+        return new ModulatorModule(scheduler, sources, natives, adapter, edits);
     }
 
-    ParameterResolver parameterResolver(ParameterModule parameters, DeviceModule devices) {
-        return new ParameterResolver(sources, trackRefs, window, parameters, devices);
+    ParameterModule parameters(RemoteModule remotes, ModulatorEditModule edits) {
+        return new ParameterModule(scheduler, sources, trackRefs, window, transportSafety, remotes, edits);
+    }
+
+    /** Direct parameters and Remote Controls alone; a modulator control would need native edit bindings. */
+    ParameterModule parameters(RemoteModule remotes) {
+        return parameters(remotes, modulatorEdits(null));
+    }
+
+    ParameterResolver parameterResolver(ParameterModule parameters, RemoteModule remotes) {
+        return new ParameterResolver(sources, trackRefs, window, parameters, remotes);
     }
 
     ProjectModule projectModule(ProjectModule.SaveAsAccess access) {

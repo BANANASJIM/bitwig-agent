@@ -13,18 +13,17 @@ from bitwig_agent.protocol import CLIENT_SIDE, TOOLS, validate_call
 from bitwig_agent.protocol.base import PROTOCOL
 from bitwig_agent.protocol.grid import TARGET as GRID
 from bitwig_agent.protocol.limits import MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES
-from bitwig_agent.protocol.parameters import SetArgs
+from bitwig_agent.protocol.parameters import ParametersSetArgs
 
 pytestmark = pytest.mark.anyio
 
-SET: dict[str, Any] = {
-    "trackId": "12345678-1234-1234-1234-123456789abc",
-    "deviceIndex": 0,
-    "expectedDeviceName": "Polymer",
-    "contextToken": "c",
-    "parameterId": "p",
-    "value": 0.5,
+DEVICE: dict[str, Any] = {
+    "kind": "device",
+    "track": {"kind": "track", "id": "12345678-1234-1234-1234-123456789abc", "name": "Lead"},
+    "index": 0,
+    "name": "Polymer",
 }
+SET: dict[str, Any] = {"target": {"kind": "parameter", "owner": DEVICE, "id": "p"}, "value": 0.5}
 
 
 async def test_write_timeout_is_an_unknown_result_and_never_retried(host):
@@ -133,22 +132,15 @@ async def test_connection_refused_is_an_error_even_for_a_write():
 async def test_large_or_nonfinite_request_rejected_before_connection(host):
     unsendable: list[dict[str, Any]] = [{"large": "x" * MAX_REQUEST_BYTES}, {"value": float("nan")}]
     for params in unsendable:
-        with pytest.raises(ValueError, match=r"validation errors? for SetArgs"):
+        with pytest.raises(ValueError, match=r"validation errors? for ParametersSetArgs"):
             await BridgeClient(host.port).call("parameters.set", params)
     assert host.connections == 0
 
 
 def test_nonfinite_parameter_values_rejected():
-    args = {
-        "trackId": "12345678-1234-1234-1234-123456789abc",
-        "deviceIndex": 0,
-        "expectedDeviceName": "Polymer",
-        "contextToken": "c",
-        "parameterId": "p",
-    }
     for value in [float("nan"), float("inf"), -float("inf")]:
         with pytest.raises(ValidationError):
-            SetArgs.model_validate({**args, "value": value})
+            ParametersSetArgs.model_validate({**SET, "value": value})
 
 
 def test_port_environment(monkeypatch):
@@ -161,11 +153,19 @@ def test_port_environment(monkeypatch):
 
 
 @pytest.mark.parametrize("lost_response", [False, True])
-async def test_layer_client_unknown_write_is_not_retried(host, lost_response):
-    unknown = {"outcome": "unknown", "reason": "deadline", "message": "Inspect child before another write"}
+async def test_chain_device_client_unknown_write_is_not_retried(host, lost_response):
+    unknown = {"outcome": "unknown", "reason": "deadline", "message": "Inspect the parameter before another write"}
     host.reply = lambda request: None if lost_response else {"id": request["id"], "result": unknown}
-    params = TOOLS["parameters.layer.set"].examples[0]
-    result = await BridgeClient(host.port).call("parameters.layer.set", params)
+    chain = {"kind": "chain", "device": DEVICE, "id": "abcdef01-2345-6789-abcd-0123456789ab", "name": "Pad"}
+    params = {
+        "target": {
+            "kind": "parameter",
+            "owner": {"kind": "device", "chain": chain, "index": 0, "name": "Synth"},
+            "id": "p",
+        },
+        "value": {"display": "800 Hz"},
+    }
+    result = await BridgeClient(host.port).call("parameters.set", params)
     assert result["outcome"] == "unknown"
     if not lost_response:
         assert result == unknown
@@ -176,23 +176,18 @@ async def test_layer_client_unknown_write_is_not_retried(host, lost_response):
 @pytest.mark.parametrize(
     "changes",
     [
-        {"parent": None},
-        {"childDeviceIndex": 2},
-        {"childDeviceIndex": 1.0},
-        {"layerId": "1-1-1-1-1"},
-        {"discoveryToken": ""},
-        {"value": float("nan")},
-        {"value": float("inf")},
+        {"target": None},
         {"value": True},
+        {"value": 1.5},
+        {"value": {"label": "Bipolar"}},
+        {"value": {"display": ""}},
+        {"expect": {}},
         {"padIndex": 0},
-        {"slotIndex": 0},
     ],
 )
-async def test_invalid_layer_client_arguments_do_not_connect(host, changes):
+async def test_invalid_parameter_client_arguments_do_not_connect(host, changes):
     with pytest.raises(ValidationError):
-        await BridgeClient(host.port).call(
-            "parameters.layer.set", {**TOOLS["parameters.layer.set"].examples[0], **changes}
-        )
+        await BridgeClient(host.port).call("parameters.set", {**SET, **changes})
     assert host.connections == 0
 
 

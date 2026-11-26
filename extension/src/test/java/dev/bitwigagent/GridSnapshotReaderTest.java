@@ -448,7 +448,7 @@ public final class GridSnapshotReaderTest {
         assertRpcError("kind_mismatch", () -> f.read(0, 64, true));
         f.device.put(GRAPH, f.graph);
         f.afterModules = () -> f.proxy.put(TARGET, new Node(DEVICE));
-        assertRpcError("stale_context", () -> f.read(0, 64, true));
+        assertRpcError("target_changed", () -> f.read(0, 64, true));
         assertTrue(f.closed > 0, "stale read still closes streams");
         Fixture other = new Fixture();
         other.document = false;
@@ -460,7 +460,7 @@ public final class GridSnapshotReaderTest {
         Fixture f = new Fixture();
         // The requested/public-observed ID is still TRACK_ID; the already-bound device has moved.
         f.owner.put(TRACK_UUID, new UUID(3, 2));
-        assertRpcError("stale_context", () -> f.read(0, 64, true));
+        assertRpcError("target_changed", () -> f.read(0, 64, true));
         assertTrue(
                 f.graphReads == 0 && f.closed == 0,
                 "native rebound owner rejected before graph accessor or enumeration");
@@ -483,7 +483,7 @@ public final class GridSnapshotReaderTest {
                 "SCA uses alias UUID even when raw owner UUID differs");
         Fixture mismatch = new Fixture();
         mismatch.alias().put(ALIAS_UUID, new UUID(3, 9));
-        assertRpcError("stale_context", () -> mismatch.read(0, 64, true));
+        assertRpcError("target_changed", () -> mismatch.read(0, 64, true));
         assertTrue(mismatch.graphReads == 0, "matching raw owner UUID cannot rescue mismatched alias UUID");
     }
 
@@ -558,18 +558,18 @@ public final class GridSnapshotReaderTest {
     void nativeIdentityChangesAtFinalGuardAreRejected() {
         Fixture owner = new Fixture();
         owner.afterModules = () -> owner.device.put(OWNER_TRACK, new Node(TRACK).put(TRACK_UUID, TRACK_ID));
-        assertRpcError("stale_context", () -> owner.read(0, 64, true));
+        assertRpcError("target_changed", () -> owner.read(0, 64, true));
         Fixture alias = new Fixture();
         alias.alias();
         alias.afterModules = () -> alias.owner.put(TRACK_ALIAS, new Node(CHANNEL_ALIAS).put(ALIAS_UUID, TRACK_ID));
-        assertRpcError("stale_context", () -> alias.read(0, 64, true));
+        assertRpcError("target_changed", () -> alias.read(0, 64, true));
         Fixture uuid = new Fixture();
         uuid.afterModules = () -> uuid.owner.put(TRACK_UUID, new UUID(3, 9));
-        assertRpcError("stale_context", () -> uuid.read(0, 64, true));
+        assertRpcError("target_changed", () -> uuid.read(0, 64, true));
         Fixture aliasUuid = new Fixture();
         Node identity = aliasUuid.alias();
         aliasUuid.afterModules = () -> identity.put(ALIAS_UUID, new UUID(3, 9));
-        assertRpcError("stale_context", () -> aliasUuid.read(0, 64, true));
+        assertRpcError("target_changed", () -> aliasUuid.read(0, 64, true));
         Fixture missing = new Fixture();
         missing.afterModules = () -> missing.device.put(OWNER_TRACK, null);
         assertRpcError("native_unavailable", () -> missing.read(0, 64, true));
@@ -1106,7 +1106,7 @@ public final class GridSnapshotReaderTest {
         f.source = HostFixture.freshRootSource(TRACK_ID);
         GridSnapshotReader.NativeTarget target = f.reader.target(f.source);
         f.source.track.id = new UUID(9, 9).toString();
-        assertRpcError("stale_context", () -> f.reader.guardTarget(target));
+        assertRpcError("target_changed", () -> f.reader.guardTarget(target));
         f.source.track.id = TRACK_ID.toString();
         GridSnapshotReader.ParameterBinding scalar =
                 f.reader.bindParameter(f.source, new UUID(1, 1), "LOCAL_ID", () -> {});
@@ -1314,7 +1314,7 @@ public final class GridSnapshotReaderTest {
         target.afterMutation = () -> target.model.proxy.put(TARGET, new Node(DEVICE));
         error = target.failure(request("boolean", "true", "false"));
         assertTrue(
-                error.reason.wire().equals("stale_context") && error.unknown && target.calls == 1,
+                error.reason.wire().equals("target_changed") && error.unknown && target.calls == 1,
                 "post-dispatch target failure remains unknown without retry");
         WriterFixture closed = new WriterFixture();
         closed.afterMutation = () -> closed.cancelled = true;
@@ -1965,7 +1965,7 @@ public final class GridSnapshotReaderTest {
         ModuleWriterFixture wrongTrack = new ModuleWriterFixture();
         wrongTrack.model.source = HostFixture.freshRootSource(TRACK_ID);
         wrongTrack.model.source.track.id = new UUID(99, 99).toString();
-        assertRpcError("stale_context", wrongTrack.start(null));
+        assertRpcError("target_changed", wrongTrack.start(null));
         ModuleWriterFixture moved = new ModuleWriterFixture();
         moved.model.first.put(MODULE_GRAPH, new Node());
         assertRpcError("stale_context", moved.start(null));
@@ -2427,7 +2427,7 @@ public final class GridSnapshotReaderTest {
             if (change == 3) f.model.proxy.put(TARGET, new Node(DEVICE));
             if (change == 4) f.cancelled = true;
             f.next();
-            assertUnknown(change == 4 ? "cancelled" : "stale_context", op);
+            assertUnknown(change == 4 ? "cancelled" : change == 3 ? "target_changed" : "stale_context", op);
             assertTrue(
                     f.calls == 1 && !f.quarantine.quarantined(),
                     "later source membership/context/target/cancellation failure never retries or masquerades as synchronous native failure");
