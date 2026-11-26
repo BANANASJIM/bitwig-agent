@@ -231,12 +231,9 @@ def _dropped_cables(
     return out
 
 
-def _capacity_problems(
-    caps: dict[str, Any], track_id: Any, total: int, inserting: bool, deleting: bool, dry: bool
-) -> list[str]:
+def _capacity_problems(caps: dict[str, Any], total: int) -> list[str]:
     limit = module_limit(caps)
-    problems = [f"the device would hold {total} modules; the host limit is {limit}"] if total > limit else []
-    return problems if dry else [*problems, *admission(caps, track_id, inserting, deleting)]
+    return [f"the device would hold {total} modules; the host limit is {limit}"] if total > limit else []
 
 
 def build_plan(spec: Spec, caps: dict[str, Any], graph: Graph, dry: bool) -> Plan:
@@ -249,9 +246,9 @@ def build_plan(spec: Spec, caps: dict[str, Any], graph: Graph, dry: bool) -> Pla
         notes.append(f"replace drops {len(dropped)} cable(s) the spec does not declare: {preview(dropped)}")
     existing = match.existing
     inserts = [n for n in spec.names if n not in existing]
-    capacity = _capacity_problems(
-        caps, spec.target.get("trackId"), len(rows) - len(deletes) + len(inserts), bool(inserts), bool(deletes), dry
-    )
+    capacity = _capacity_problems(caps, len(rows) - len(deletes) + len(inserts))
+    if not dry:
+        capacity += admission(caps, spec.target.get("trackId"), bool(inserts), bool(deletes))
     layout = footprints(spec, existing, rows, deletes)
     problems = [*match.problems, *capacity, *layout.problems]
     if problems:
