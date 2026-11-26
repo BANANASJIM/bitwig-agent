@@ -1,5 +1,6 @@
 package dev.bitwigagent;
 
+import java.io.File;
 import java.io.IOException;
 import java.nio.file.*;
 
@@ -61,7 +62,8 @@ final class ProjectSaveAsPlan {
                 throw Errors.notApplied(
                         ErrorCode.PATH_NOT_ALLOWED,
                         "Path is outside Bitwig's projects folder " + root + "; use "
-                                + root.resolve("<Name>").resolve("<Name>" + EXTENSION) + " or pass allowAnyPath:true.");
+                                + String.join(File.separator, root.toString(), "<Name>", "<Name>" + EXTENSION)
+                                + " or pass allowAnyPath:true.");
         }
         Path parent = path.getParent(), owner = projectFolder(parent, root, home);
         ProjectSaveAsPlan plan;

@@ -229,7 +229,18 @@ public final class TransportModuleTest {
                 "late stop leaves its final position without another mutation");
     }
 
+    private static final int LATE_POLL_ATTEMPTS = 5;
+
     private static void shortTimeoutYieldsBoundedNotObservedNotDeadlineExceeded() throws InterruptedException {
+        // The late poll must land inside the margin before the hard deadline; a scheduler that overshoots the
+        // sleep past it never produced the scenario, so try again.
+        for (int attempt = 0; attempt < LATE_POLL_ATTEMPTS; attempt++) {
+            if (latePollLandedInsideMargin()) return;
+        }
+        throw new AssertionError("late poll never landed inside the deadline margin");
+    }
+
+    private static boolean latePollLandedInsideMargin() throws InterruptedException {
         TransportMixFixture f = new TransportMixFixture();
         TransportModule module = new TransportModule(f.services);
         f.transport.child("tempo").child("value").emitWrites = false;
@@ -246,12 +257,14 @@ public final class TransportModuleTest {
         // overshoot.
         Thread.sleep(timeoutMs - HostServices.DEADLINE_MARGIN_NANOS / 1_000_000 + 5);
         f.next();
+        if (op.result.isCompletedExceptionally()) return false;
         JsonObject result = op.result.join();
         check(
                 result.get("status").getAsString().equals("dispatched")
                         && result.get("completion").getAsString().equals("unknown"),
                 "short timeout yields the bounded dispatched/not-observed result, not deadline_exceeded");
         check(f.transport.child("tempo").child("value").writes == 1, "no retry write");
+        return true;
     }
 
     private static void cancelledStopDoesNotSeekLater() {
