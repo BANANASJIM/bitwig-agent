@@ -74,6 +74,51 @@ public final class NativeRemoteValuesTest {
     }
 
     @Test
+    void theValueIsReadOnTheDocumentThreadFromTheVerifiedRootDevice() {
+        DeviceFixture f = DeviceFixture.twins();
+        Object main = new Object();
+        FakeChains.Param mapped = new FakeChains.Param("Gain", .6);
+        int[] bound = {0};
+        NativeRemoteValues model = new NativeRemoteValues(
+                op -> {
+                    bound[0]++;
+                    return pages(List.of(main), Map.of(main, "Main"), mapped);
+                },
+                f.services.chains);
+        DeviceSources.Source device = f.services.sources.device(f.twin(1), false);
+        List<Double> held = new ArrayList<>();
+        List<RuntimeException> failed = new ArrayList<>();
+        model.read(new HostOperation(Long.MAX_VALUE), device, 0, "Main", 1, 0, held::add, failed::add);
+        model.read(new HostOperation(Long.MAX_VALUE), device, 0, "Main", 2, 0, held::add, failed::add);
+        assertEquals(Arrays.asList(.6, null), held);
+        assertTrue(failed.isEmpty());
+        assertEquals(1, bound[0], "the binding is made once");
+    }
+
+    @Test
+    void aBindingThatIsUnavailableIsNoAnswerAndAnyOtherFailureIsReported() {
+        DeviceFixture f = DeviceFixture.twins();
+        DeviceSources.Source device = f.services.sources.device(f.twin(1), false);
+        List<Double> held = new ArrayList<>();
+        List<RuntimeException> failed = new ArrayList<>();
+        new NativeRemoteValues(
+                        op -> {
+                            throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "no binding");
+                        },
+                        f.services.chains)
+                .read(new HostOperation(Long.MAX_VALUE), device, 0, "Main", 1, 0, held::add, failed::add);
+        assertEquals(Arrays.asList((Double) null), held);
+        new NativeRemoteValues(
+                        op -> {
+                            throw Errors.notApplied(Reason.BUSY, "busy");
+                        },
+                        f.services.chains)
+                .read(new HostOperation(Long.MAX_VALUE), device, 0, "Main", 1, 0, held::add, failed::add);
+        assertEquals(1, held.size());
+        assertEquals(1, failed.size());
+    }
+
+    @Test
     void onlyAnUnavailableBindingFallsBackAndAnyOtherFailureIsAnError() {
         List<Double> done = new ArrayList<>();
         List<RuntimeException> failed = new ArrayList<>();

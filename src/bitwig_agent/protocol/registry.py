@@ -114,6 +114,27 @@ INSPECT: dict[str, str] = {
 """By host write, the read method an `unknown` result points at: the place to look before another write."""
 
 
+def with_inspect(specs: dict[str, ToolSpec], table: dict[str, str]) -> dict[str, ToolSpec]:
+    """The specs with each host write's `inspect` set from `table`; every write needs a host read."""
+    stray = table.keys() - specs.keys()
+    if stray:
+        raise ValueError(f"INSPECT names unknown methods: {sorted(stray)}")
+    out = dict(specs)
+    for name, spec in specs.items():
+        write = spec.host and not spec.read_only
+        target = table.get(name)
+        if write and target is None:
+            raise ValueError(f"Host write without an inspect method: {name}")
+        if target is None:
+            continue
+        if not write:
+            raise ValueError(f"INSPECT names a method that is not a host write: {name}")
+        if target not in specs or not specs[target].host or not specs[target].read_only:
+            raise ValueError(f"{name} inspects {target}, which is not a host read")
+        out[name] = dataclasses.replace(spec, inspect=target)
+    return out
+
+
 def _collect() -> dict[str, ToolSpec]:
     specs: dict[str, ToolSpec] = {}
     for domain in _DOMAINS:
@@ -124,20 +145,7 @@ def _collect() -> dict[str, ToolSpec]:
     writes = [name for name, spec in specs.items() if spec.records and not spec.read_only]
     if writes:
         raise ValueError(f"Only reads declare a record list: {writes}")
-    stray = INSPECT.keys() - specs.keys()
-    if stray:
-        raise ValueError(f"INSPECT names unknown methods: {sorted(stray)}")
-    for name, spec in list(specs.items()):
-        target = INSPECT.get(name)
-        if spec.host and not spec.read_only and target is None:
-            raise ValueError(f"Host write without an inspect method: {name}")
-        if target is not None:
-            if not spec.host or spec.read_only:
-                raise ValueError(f"INSPECT names a method that is not a host write: {name}")
-            if target not in specs or not specs[target].host or not specs[target].read_only:
-                raise ValueError(f"{name} inspects {target}, which is not a host read")
-            specs[name] = dataclasses.replace(spec, inspect=target)
-    return specs
+    return with_inspect(specs, INSPECT)
 
 
 TOOLS: dict[str, ToolSpec] = _collect()

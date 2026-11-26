@@ -5,6 +5,7 @@ from bitwig_agent.core.invoke import Error, Result, invoke
 from bitwig_agent.errors import HostChanged, bridge_error, unknown_result
 from bitwig_agent.protocol import TOOLS, export_bundle
 from bitwig_agent.protocol.base import REASONS, SUCCEEDED, ErrorCode, Outcome, vocabulary
+from bitwig_agent.protocol.registry import INSPECT, with_inspect
 
 pytestmark = pytest.mark.anyio
 
@@ -73,3 +74,18 @@ def test_every_host_write_names_the_host_read_an_unknown_result_points_at():
         else:
             assert spec.inspect is None
             assert methods[name]["inspect"] is None
+
+
+def test_a_write_without_a_host_read_to_inspect_is_refused_when_the_registry_is_built():
+    write, read = "transport.set", "transport.get"
+    specs = dict(TOOLS)
+    with pytest.raises(ValueError, match="without an inspect method"):
+        with_inspect(specs, {})
+    with pytest.raises(ValueError, match="unknown methods"):
+        with_inspect(specs, {**INSPECT, "no.such": read})
+    with pytest.raises(ValueError, match="not a host write"):
+        with_inspect(specs, {**INSPECT, read: read})
+    with pytest.raises(ValueError, match="not a host read"):
+        with_inspect(specs, {**INSPECT, write: write})
+    with pytest.raises(ValueError, match="not a host read"):
+        with_inspect(specs, {**INSPECT, write: "grid.apply"})

@@ -2,6 +2,7 @@ package dev.bitwigagent;
 
 import java.util.List;
 import java.util.function.Consumer;
+import java.util.function.Function;
 
 /**
  * What a Remote Controls slot holds, read from the native document: the page shown at an index of the device's visible
@@ -10,13 +11,27 @@ import java.util.function.Consumer;
  * name, an empty slot, an unavailable binding) is no answer rather than a guess.
  */
 final class NativeRemoteValues implements RemoteModule.NativeValues {
-    private final NativeRuntime natives;
+    private final Function<HostOperation, GridRemotePageWriter.Access> binding;
     private final NativeChains chains;
     private GridRemotePageWriter.Access pages;
 
-    NativeRemoteValues(NativeRuntime natives, NativeChains chains) {
-        this.natives = natives;
+    NativeRemoteValues(Function<HostOperation, GridRemotePageWriter.Access> binding, NativeChains chains) {
+        this.binding = binding;
         this.chains = chains;
+    }
+
+    /** The 6.1.4 Remote Controls page model, bound on first use. */
+    static NativeRemoteValues on(NativeRuntime natives, NativeChains chains) {
+        return new NativeRemoteValues(
+                op -> {
+                    try {
+                        return new Bitwig614RemotePageAccess(natives.get(op).access());
+                    } catch (ReflectiveOperationException | LinkageError error) {
+                        throw Errors.notApplied(
+                                Reason.NATIVE_UNAVAILABLE, "Native Remote Controls binding unavailable.");
+                    }
+                },
+                chains);
     }
 
     @Override
@@ -31,7 +46,8 @@ final class NativeRemoteValues implements RemoteModule.NativeValues {
             Consumer<RuntimeException> failed) {
         GridRemotePageWriter.Access access;
         try {
-            access = access(op);
+            if (pages == null) pages = binding.apply(op);
+            access = pages;
             chains.async(
                     op,
                     device.ref(),
@@ -48,17 +64,6 @@ final class NativeRemoteValues implements RemoteModule.NativeValues {
                 && (((RpcException) error).is(Reason.NATIVE_UNAVAILABLE)
                         || ((RpcException) error).is(Reason.HOST_MISMATCH))) done.accept(null);
         else failed.accept(error);
-    }
-
-    private GridRemotePageWriter.Access access(HostOperation op) {
-        if (pages == null) {
-            try {
-                pages = new Bitwig614RemotePageAccess(natives.get(op).access());
-            } catch (ReflectiveOperationException | LinkageError error) {
-                throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Native Remote Controls binding unavailable.");
-            }
-        }
-        return pages;
     }
 
     static Double held(

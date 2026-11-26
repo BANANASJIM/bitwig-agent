@@ -43,7 +43,7 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
                 scheduler, sources, chains, trackRefs, window, transportSafety, remotes, modulatorEdits);
         register(parameters);
         ParameterResolver parameterResolver = new ParameterResolver(sources, trackRefs, window, parameters, remotes);
-        remotes.nativeValues = new NativeRemoteValues(natives, chains);
+        remotes.nativeValues = NativeRemoteValues.on(natives, chains);
         register(remotes);
         ProjectModule projectModule = new ProjectModule(scheduler, application, project, projectState, natives, holds);
         RenderModule render = new RenderModule(scheduler, window, trackRefs, project, transportSafety, natives, holds);
