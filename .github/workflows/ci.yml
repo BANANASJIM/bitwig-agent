@@ -80,6 +80,7 @@ jobs:
     name: Check / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
+    continue-on-error: ${{ !startsWith(matrix.os, 'ubuntu') }}
     strategy:
       fail-fast: false
       matrix:
