@@ -50,7 +50,7 @@ final class GridStringPanelWriter {
         JsonObject current = values.parameterValue(binding);
         if (!request.matches(current.get("value"), request.value))
             throw Errors.of(
-                    changed ? Reason.READBACK_MISMATCH : Reason.STALE_CONTEXT,
+                    changed ? Reason.READBACK_MISMATCH : Reason.TARGET_CHANGED,
                     "Native string panel readback differs from the requested text; inspect state before another write.",
                     changed);
         check.run();

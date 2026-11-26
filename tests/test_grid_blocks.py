@@ -176,7 +176,7 @@ async def test_grid_rename_mcp_preserves_unknown_raw_reset_outcome_without_retry
     params = {**TARGET, "moduleId": TRACK, "expectedCustomName": " \t\u03b1𝄞 ", "customName": ""}
     unknown = {
         "outcome": "unknown",
-        "reason": "stale_context",
+        "reason": "target_changed",
         "message": "Inspect actual raw name",
         "details": {"mutationDispatched": True, "rollbackVerified": False},
     }

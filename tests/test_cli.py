@@ -493,7 +493,7 @@ async def test_grid_rename_cli_unknown_preserves_native_uncertainty_without_retr
     arguments = [json.dumps(params)] if raw else flags("grid.modules.set", params)
     unknown = {
         "outcome": "unknown",
-        "reason": "stale_context",
+        "reason": "target_changed",
         "message": "Inspect actual raw name",
         "details": {"mutationDispatched": True, "rollbackVerified": False},
     }

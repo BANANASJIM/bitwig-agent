@@ -23,7 +23,7 @@ public final class GridModuleNameWriterTest {
         for (String wrong : List.of("Union", "Catalog type", " raw")) {
             Fixture f = new Fixture();
             f.model.first.put(CUSTOM_NAME, "raw");
-            failed(f.start(new GridModuleNameWriter.Request(wrong, wrong)), "stale_context", "not_applied");
+            failed(f.start(new GridModuleNameWriter.Request(wrong, wrong)), "target_changed", "not_applied");
             assertTrue(
                     f.calls == 0 && f.events.isEmpty(),
                     "even a no-op requires exact raw CAS, never effective/type/trimmed text");
@@ -156,7 +156,7 @@ public final class GridModuleNameWriterTest {
             if (invalid == 1) f.model.graph.put(MODULES, List.of(f.model.first, new Node()));
             if (invalid == 2) {
                 f.model.second.put(MODULE_GRAPH, new Node());
-                code = "stale_context";
+                code = "target_changed";
             }
             if (invalid == 3) {
                 f.model.owner.put(TRACK_UUID, new UUID(3, 2));
@@ -171,7 +171,7 @@ public final class GridModuleNameWriterTest {
         Fixture missing = new Fixture();
         failed(
                 missing.start(new UUID(1, 99), new GridModuleNameWriter.Request("", "new")),
-                "stale_context",
+                "target_changed",
                 "not_applied");
         Fixture full = new Fixture();
         full.population(1024);
@@ -217,12 +217,12 @@ public final class GridModuleNameWriterTest {
         }
         Fixture changed = new Fixture();
         changed.beforePrepare = () -> changed.context.values.put(GridTopologyContext.Field.LOCK, new Object());
-        failed(changed.start(new GridModuleNameWriter.Request("", "new")), "stale_context", "not_applied");
+        failed(changed.start(new GridModuleNameWriter.Request("", "new")), "target_changed", "not_applied");
         Fixture late = new Fixture();
         HostOperation op = late.start(new GridModuleNameWriter.Request("", "new"));
         late.context.override(late.model.second, NativeReadContext.Field.DELETED, true);
         late.next();
-        failed(op, "stale_context", "unknown");
+        failed(op, "target_changed", "unknown");
         late.quarantine.requireAvailable(GridInsertionWriterTest.ANY);
         for (int drift = 0; drift < 6; drift++) {
             Fixture f = new Fixture();
@@ -248,7 +248,7 @@ public final class GridModuleNameWriterTest {
             f.beforePrepare = () -> f.model.first.put(MODULE_NAME, effective);
             failed(
                     f.start(new GridModuleNameWriter.Request("", "new")),
-                    effective.length() > 1024 ? "out_of_bounds" : "stale_context",
+                    effective.length() > 1024 ? "out_of_bounds" : "target_changed",
                     "not_applied");
             assertTrue(f.calls == 0, "a name changed before dispatch is never written");
         }
@@ -256,7 +256,7 @@ public final class GridModuleNameWriterTest {
 
     @Test
     void lateSafetyCancellationAndTargetChangesStayUnknown() {
-        for (String rejection : List.of("cancelled", "deadline", "unsafe_state", "stale_context")) {
+        for (String rejection : List.of("cancelled", "deadline", "unsafe_state", "target_changed")) {
             Fixture before = new Fixture();
             before.beforePrepare = () -> before.requestError = rejection;
             failed(before.start(new GridModuleNameWriter.Request("", "new")), rejection, "not_applied");

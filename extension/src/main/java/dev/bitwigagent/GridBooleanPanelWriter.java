@@ -62,7 +62,7 @@ final class GridBooleanPanelWriter {
         JsonObject current = values.parameterValue(binding);
         if (!request.matches(current.get("value"), request.value))
             throw Errors.of(
-                    changed ? Reason.READBACK_MISMATCH : Reason.STALE_CONTEXT,
+                    changed ? Reason.READBACK_MISMATCH : Reason.TARGET_CHANGED,
                     "Native boolean panel readback differs; inspect both panel and linked parameter before another write.",
                     changed);
         JsonObject coupledAfter = values.parameterValue(coupled);

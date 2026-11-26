@@ -82,7 +82,7 @@ final class GridConnectionWriter {
         snapshots.guardTarget(target);
         if (values.read(INPUT_SOURCE, input.model) != input.source)
             throw Errors.notApplied(
-                    Reason.STALE_CONTEXT,
+                    Reason.TARGET_CHANGED,
                     "Native input source changed immediately before dispatch; reacquire grid.export.");
         check.run();
         quarantine.requireAvailable(device);
@@ -340,7 +340,7 @@ final class GridConnectionWriter {
             // An xb1-like object with the same owner/key is not membership (pS excludes qXr).
             if (source == null)
                 throw Errors.notApplied(
-                        Reason.STALE_CONTEXT,
+                        Reason.TARGET_CHANGED,
                         "Current native source is not an exact enumerated output of this bounded graph.");
             input.sourceEndpoint = source.endpoint;
         }
@@ -359,7 +359,7 @@ final class GridConnectionWriter {
             values.requireModelThread(model);
             if (values.read(OWNER_MODULE, model) != module)
                 throw Errors.notApplied(
-                        Reason.STALE_CONTEXT,
+                        Reason.TARGET_CHANGED,
                         "Native port owner differs from its direction-specific module membership.");
             Endpoint endpoint =
                     new Endpoint(id, GridSnapshotReader.text(values.read(input ? INPUT_KEY : OUTPUT_KEY, model)));
@@ -395,7 +395,7 @@ final class GridConnectionWriter {
             Port port = (input ? inputs : outputs).get(endpoint);
             if (port == null)
                 throw Errors.notApplied(
-                        Reason.STALE_CONTEXT,
+                        Reason.TARGET_CHANGED,
                         "Requested exact native " + (input ? "input" : "output")
                                 + " is absent; reacquire grid.export. Matching owner/key without stream membership is insufficient.");
             return port;
@@ -406,12 +406,12 @@ final class GridConnectionWriter {
                     || inputs.size() != after.inputs.size()
                     || outputs.size() != after.outputs.size())
                 throw Errors.notApplied(
-                        Reason.STALE_CONTEXT,
+                        Reason.TARGET_CHANGED,
                         "Native graph or port membership changed during the connection operation.");
             for (Map.Entry<UUID, Object> module : modules.entrySet())
                 if (after.modules.get(module.getKey()) != module.getValue())
                     throw Errors.notApplied(
-                            Reason.STALE_CONTEXT, "Native module identity changed during the connection operation.");
+                            Reason.TARGET_CHANGED, "Native module identity changed during the connection operation.");
             samePorts(inputs, after.inputs, sources);
             samePorts(outputs, after.outputs, false);
         }
@@ -421,7 +421,7 @@ final class GridConnectionWriter {
                 Port actual = after.get(port.endpoint);
                 if (actual == null || actual.model != port.model || (sources && actual.source != port.source))
                     throw Errors.notApplied(
-                            Reason.STALE_CONTEXT,
+                            Reason.TARGET_CHANGED,
                             "Native port identity or captured source changed during the connection observation.");
             }
         }
@@ -474,7 +474,7 @@ final class GridConnectionWriter {
         void requireExpected(Endpoint actual) {
             if (!Objects.equals(expectedSource, actual))
                 throw Errors.notApplied(
-                        Reason.STALE_CONTEXT,
+                        Reason.TARGET_CHANGED,
                         "Exact native input source differs from expectedSource; reacquire grid.export before editing.");
         }
 

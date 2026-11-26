@@ -232,7 +232,7 @@ public final class ArrangerModuleTest {
         HostOperation op = x.start("clips.insert", x.insert(0, 4));
         x.lane.beforeRun = () -> x.play(true);
         x.drain(op);
-        assertRpcError("stale_context", op);
+        assertRpcError("unsafe_state", op);
         assertEquals(0, x.lane.writes);
         assertTrue(x.f.services.holds.list().isEmpty(), "the refused operation holds nothing");
     }

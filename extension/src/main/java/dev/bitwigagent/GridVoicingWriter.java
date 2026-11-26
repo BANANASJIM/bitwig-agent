@@ -102,7 +102,7 @@ final class GridVoicingWriter {
         for (Map.Entry<String, JsonElement> wanted : request.set.entrySet())
             if (!wanted.getValue().equals(current.get(wanted.getKey())))
                 throw Errors.of(
-                        changed ? Reason.READBACK_MISMATCH : Reason.STALE_CONTEXT,
+                        changed ? Reason.READBACK_MISMATCH : Reason.TARGET_CHANGED,
                         "Native voicing readback differs from the requested " + wanted.getKey()
                                 + "; inspect state before another write.",
                         changed);
@@ -215,7 +215,7 @@ final class GridVoicingWriter {
             for (Map.Entry<String, JsonElement> entry : expected.entrySet())
                 if (!entry.getValue().equals(current.get(entry.getKey())))
                     throw Errors.notApplied(
-                            Reason.STALE_CONTEXT,
+                            Reason.TARGET_CHANGED,
                             "Voicing " + entry.getKey()
                                     + " differs from the expected precondition; reacquire grid.export.");
         }

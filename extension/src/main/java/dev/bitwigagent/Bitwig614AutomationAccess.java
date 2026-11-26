@@ -134,7 +134,7 @@ final class Bitwig614AutomationAccess implements AutomationModule.Access {
             if (!parameterType.isInstance(parameter))
                 throw Errors.notApplied(Reason.UNSUPPORTED_SCOPE, "Target is not an automatable native parameter.");
             if (resolver.owner(parameter, resolver.channelType()) != track)
-                throw Errors.notApplied(Reason.STALE_CONTEXT, "Parameter does not belong to the target track.");
+                throw Errors.notApplied(Reason.TARGET_CHANGED, "Parameter does not belong to the target track.");
             ref = a.invoke(reference, null, parameter);
             if (ref == null)
                 throw Errors.notApplied(
@@ -170,7 +170,7 @@ final class Bitwig614AutomationAccess implements AutomationModule.Access {
                     || resolve() != parameter
                     || a.invoke(findLane, laneSet, ref) != lane
                     || (lane != null && a.invoke(points, a.invoke(laneTimeline, lane)) != timeline))
-                throw Errors.notApplied(Reason.STALE_CONTEXT, "Automation lane changed during the native operation.");
+                throw Errors.notApplied(Reason.TARGET_CHANGED, "Automation lane changed during the native operation.");
         }
 
         List<Object> natives() {

@@ -56,16 +56,16 @@ public final class NativeReadContextTest {
                         && !captured.lifecycle.get("projectDeleted").getAsBoolean(),
                 "project is an independently checked lifecycle participant, not an ancestor of itself");
         f.override(f.project, DELETED, true);
-        assertRpcError("stale_context", () -> f.capture(false));
+        assertRpcError("target_changed", () -> f.capture(false));
         f.override(f.project, DELETED, false);
         f.override(f.project, CONTEXT, new Object());
-        assertRpcError("stale_context", () -> f.capture(false));
+        assertRpcError("target_changed", () -> f.capture(false));
         Fixture moved = new Fixture();
         moved.override(moved.models[0], PROJECT, new Object());
-        assertRpcError("stale_context", () -> moved.capture(false));
+        assertRpcError("target_changed", () -> moved.capture(false));
         Fixture detached = new Fixture();
         detached.override(detached.models[1], CONTEXT, null);
-        assertRpcError("stale_context", () -> detached.capture(false));
+        assertRpcError("target_changed", () -> detached.capture(false));
     }
 
     @Test
@@ -74,23 +74,24 @@ public final class NativeReadContextTest {
             Fixture f = new Fixture();
             NativeReadContext.Capture before = f.capture(false);
             f.values.put(field, new Object());
-            assertRpcError("stale_context", () -> f.contexts.guard(before, f.models, f.labels, () -> {}));
+            assertRpcError("target_changed", () -> f.contexts.guard(before, f.models, f.labels, () -> {}));
         }
         Fixture rebound = new Fixture();
         NativeReadContext.Capture before = rebound.capture(false);
         Object other = new Object();
         rebound.values.put(CONTEXT, other);
         rebound.values.put(DT_CONTEXT, other);
-        assertRpcError("stale_context", () -> rebound.contexts.guard(before, rebound.models, rebound.labels, () -> {}));
+        assertRpcError(
+                "target_changed", () -> rebound.contexts.guard(before, rebound.models, rebound.labels, () -> {}));
         Fixture defaultOwner = new Fixture();
         NativeReadContext.Capture oldDefault = defaultOwner.capture(false);
         defaultOwner.override(defaultOwner.defaultDt, DT_CONTEXT, new Object());
         assertRpcError(
-                "stale_context",
+                "target_changed",
                 () -> defaultOwner.contexts.guard(oldDefault, defaultOwner.models, defaultOwner.labels, () -> {}));
         Fixture currentOwner = new Fixture();
         currentOwner.override(currentOwner.current, DT_CONTEXT, new Object());
-        assertRpcError("stale_context", () -> currentOwner.capture(false));
+        assertRpcError("target_changed", () -> currentOwner.capture(false));
         Fixture cancelled = new Fixture();
         assertRpcError(
                 "cancelled",
@@ -113,7 +114,7 @@ public final class NativeReadContextTest {
         assertRpcError("native_unavailable", () -> f.capture(false));
         f.values.put(CONTEXT_THREAD, true);
         f.values.put(DISPOSED, true);
-        assertRpcError("stale_context", () -> f.capture(false));
+        assertRpcError("target_changed", () -> f.capture(false));
     }
 
     private static final class Fixture implements NativeReadContext.Access {

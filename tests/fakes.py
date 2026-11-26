@@ -197,14 +197,14 @@ class FakeGrid:
     def h_modules_set(self, p):
         m = self.mods[p["moduleId"]]
         if m["customName"] != p["expectedCustomName"]:
-            raise bridge_error("stale_context", "name changed")
+            raise bridge_error("target_changed", "name changed")
         m["customName"] = m["name"] = p["customName"]
         return {"outcome": "applied", "operation": "rename"}
 
     def h_modules_move(self, p):
         m = self.mods[p["moduleId"]]
         if (m["x"], m["y"]) != (p["expectedX"], p["expectedY"]):
-            raise bridge_error("stale_context", "moved")
+            raise bridge_error("target_changed", "moved")
         for o in self.mods.values():  # host rule: the anchor may not lie inside another module's footprint
             if (
                 o is not m
@@ -228,12 +228,12 @@ class FakeGrid:
                 n = len(w["expectedValues"])
                 assert len(w["values"]) <= n <= 64
                 if [values.f32(x) for x in par["value"][:n]] != [values.f32(x) for x in w["expectedValues"]]:
-                    raise bridge_error("stale_context", "stale")
+                    raise bridge_error("target_changed", "stale")
                 par["value"][: len(w["values"])] = [values.f32(x) for x in w["values"]]
                 entries.append({"moduleId": w["moduleId"], "parameterId": w["parameterId"], "outcome": "applied"})
                 continue
             if (par["kind"], par["value"]) != (w["expectedKind"], w["expectedValue"]):
-                raise bridge_error("stale_context", "stale")
+                raise bridge_error("target_changed", "stale")
             if "display" in w:
                 par["value"], par["display"] = 99.0, w["display"]
             elif par.get("numericUnit") == "seconds":
@@ -271,7 +271,7 @@ class FakeGrid:
     def h_voicing_set(self, p):
         assert self.voicing is not None
         if any(self.voicing[k] != v for k, v in p["expected"].items()):
-            raise bridge_error("stale_context", "stale voicing")
+            raise bridge_error("target_changed", "stale voicing")
         self.voicing.update(p["set"])
         return {"outcome": "applied", "supported": True, "voicing": dict(self.voicing), "changedUnrequested": []}
 
@@ -281,7 +281,7 @@ class FakeGrid:
             key = (c["targetModuleId"], c["targetPortKey"])
             cur = self.conns.get(key)
             if (cur and {"moduleId": cur[0], "portKey": cur[1]}) != c["expectedSource"]:
-                raise bridge_error("stale_context", "stale")
+                raise bridge_error("target_changed", "stale")
             if c["source"]:
                 self.conns[key] = (c["source"]["moduleId"], c["source"]["portKey"])
             else:
@@ -506,7 +506,7 @@ class RecipeGrid:
             for entry in entries:
                 current = self.parameter(entry["moduleId"], entry["parameterId"])
                 if current["kind"] != entry["expectedKind"] or current["value"] != entry["expectedValue"]:
-                    raise bridge_error("stale_context", "stale")
+                    raise bridge_error("target_changed", "stale")
             results = []
             for entry in entries:
                 current = self.parameter(entry["moduleId"], entry["parameterId"])

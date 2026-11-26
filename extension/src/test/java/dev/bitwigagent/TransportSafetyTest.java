@@ -40,7 +40,7 @@ public final class TransportSafetyTest {
         f.transport.child("isPlaying").emit(false);
         Runnable guard = f.services.transportSafety.writeGuard(op(), true);
         f.transport.child("isPlaying").emit(true);
-        assertRpcError("stale_context", guard);
+        assertRpcError("unsafe_state", guard);
     }
 
     @Test
@@ -83,7 +83,7 @@ public final class TransportSafetyTest {
         queued.safetyAtEnqueue = safety.observation();
         f.transport.child("isPlaying").emit(true);
         f.transport.child("isPlaying").emit(false);
-        assertRpcError("stale_context", () -> safety.stopped(queued));
+        assertRpcError("unsafe_state", () -> safety.stopped(queued));
         assertDoesNotThrow(() -> safety.stopped(op()), "an operation without a snapshot reads the current state");
     }
 

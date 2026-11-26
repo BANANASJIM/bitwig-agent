@@ -214,7 +214,7 @@ def test_stop_on_unknown_never_retries_and_reports():
     host.fail["grid.parameters.set"] = raw
     result = apply_grid(host, SPEC)
     assert result["outcome"] == "unknown"
-    assert result["failure"] == {"phase": "params", "method": "grid.parameters.set", "response": raw}
+    assert result["failure"] == {"phase": "params", "method": "params", "response": raw}
     assert result["notReached"]["phasesNotStarted"] == ["connections"]
     assert "ack <id>" in result["next"]
     assert result["applied"]["inserted"] == 5
@@ -240,10 +240,10 @@ def test_stop_on_partial_and_on_host_error():
     assert result["applied"]["paramsWritten"] == 5
 
     host = FakeGrid()
-    host.fail["grid.modules.set"] = bridge_error("stale_context", "no")
+    host.fail["grid.modules.set"] = bridge_error("target_changed", "no")
     result = apply_grid(host, SPEC)
     assert result["outcome"] == "not_applied"  # inserts already landed
-    assert result["reason"] == "stale_context"
+    assert result["reason"] == "target_changed"
     assert result["failure"]["response"]["error"]["code"] == "stale"
     assert result["notReached"]["phasesNotStarted"] == ["move", "params", "connections"]
     assert [m for m, _ in host.calls].count("grid.modules.set") == 1
@@ -256,10 +256,10 @@ def test_stop_on_partial_and_on_host_error():
 
 def test_read_error_before_any_write_is_a_plain_error():
     host = FakeGrid()
-    host.fail["grid.get"] = bridge_error("stale_context", "wrong device")
+    host.fail["grid.get"] = bridge_error("target_changed", "wrong device")
     with pytest.raises(BridgeError) as err:
         apply_grid(host, SPEC)
-    assert err.value.error["reason"] == "stale_context"
+    assert err.value.error["reason"] == "target_changed"
     assert host.writes() == []
 
 
@@ -1394,7 +1394,7 @@ def test_insert_result_missing_entries_is_unknown():
     host.fail["grid.modules.insert"] = {"outcome": "applied", "modules": []}
     result = apply_grid(host, SPEC)
     assert (result["outcome"], result["reason"]) == ("unknown", "internal")
-    assert result["failure"]["method"] == "grid.modules.insert"
+    assert result["failure"]["method"] == "insert"
 
 
 def test_unexpected_exception_before_any_write_is_an_internal_error(monkeypatch):
@@ -1431,7 +1431,7 @@ def test_module_lost_after_insertion_stops_as_stale(monkeypatch):
 
     monkeypatch.setattr(host, "call", losing)
     result = apply_grid(host, SPEC)
-    assert (result["outcome"], result["reason"]) == ("not_applied", "stale_context")
+    assert (result["outcome"], result["reason"]) == ("not_applied", "target_not_found")
 
 
 def test_partial_entry_sets_params_on_the_live_module_and_touches_nothing_else():

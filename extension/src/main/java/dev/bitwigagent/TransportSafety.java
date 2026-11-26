@@ -65,8 +65,10 @@ final class TransportSafety {
         SafetyObservation current = observed;
         if (current.epoch != before.epoch)
             throw Errors.notApplied(
-                    Reason.STALE_CONTEXT,
-                    "Observed transport safety changed while the Grid write was queued or running.");
+                    Reason.UNSAFE_STATE,
+                    "Transport, recording or automation-write state changed while the write was queued or running;"
+                            + " nothing was written.",
+                    "transport.get");
         current.requireStopped();
     }
 

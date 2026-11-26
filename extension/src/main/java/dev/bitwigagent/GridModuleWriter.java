@@ -227,7 +227,7 @@ final class GridModuleWriter {
         void preflight(Layout layout, Row selected) {
             if (selected.x != expectedX || selected.y != expectedY)
                 throw Errors.notApplied(
-                        Reason.STALE_CONTEXT,
+                        Reason.TARGET_CHANGED,
                         "Exact native module position differs from expectedX/expectedY; reacquire grid.export before editing.");
             checked((long) x - selected.x);
             checked((long) y - selected.y);
@@ -288,7 +288,7 @@ final class GridModuleWriter {
             Row row = find(id);
             if (row == null)
                 throw Errors.notApplied(
-                        Reason.STALE_CONTEXT,
+                        Reason.TARGET_CHANGED,
                         "Requested current module UUID is absent; reacquire grid.export. Deletion is not missing-is-success.");
             return row;
         }
@@ -333,7 +333,7 @@ final class GridModuleWriter {
                         || actual.width != row.width
                         || actual.height != row.height)
                     throw Errors.notApplied(
-                            Reason.STALE_CONTEXT,
+                            Reason.TARGET_CHANGED,
                             "Surviving native module identity or footprint changed during topology editing.");
             }
         }
@@ -357,7 +357,7 @@ final class GridModuleWriter {
                 Row actual = after.require(row.id);
                 if (actual.x != row.x || actual.y != row.y)
                     throw Errors.notApplied(
-                            Reason.STALE_CONTEXT, "Native graph layout changed during bounded capture.");
+                            Reason.TARGET_CHANGED, "Native graph layout changed during bounded capture.");
             }
         }
     }

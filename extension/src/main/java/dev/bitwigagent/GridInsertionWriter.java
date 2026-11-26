@@ -526,7 +526,7 @@ final class GridInsertionWriter {
                 incoming = row(module, request.x, request.y);
                 if (!request.typeId.equals(incoming.typeId) || before.find(incoming.id) != null)
                     throw Errors.notApplied(
-                            Reason.STALE_CONTEXT,
+                            Reason.TARGET_CHANGED,
                             "Loaded singleton has the wrong catalog type or a non-fresh instance UUID.");
                 ready.bounds(incoming);
                 nativeWriter.requirePlacementReady(target.graph);
@@ -731,7 +731,7 @@ final class GridInsertionWriter {
     }
     /** Observed graph disagreements; anything else at settlement (reader/binding/thread failures) stays sticky. */
     private static final Set<Reason> MISMATCH_CODES =
-            EnumSet.of(Reason.READBACK_MISMATCH, Reason.STALE_CONTEXT, Reason.UNSAFE_STATE, Reason.OUT_OF_BOUNDS);
+            EnumSet.of(Reason.READBACK_MISMATCH, Reason.TARGET_CHANGED, Reason.UNSAFE_STATE, Reason.OUT_OF_BOUNDS);
 
     static boolean settlementMismatch(Throwable error) {
         return error instanceof RpcException
@@ -863,7 +863,7 @@ final class GridInsertionWriter {
                     || !id.equals(actual.id)
                     || !typeId.equals(actual.typeId)
                     || footprint && (width != actual.width || height != actual.height))
-                throw Errors.notApplied(Reason.STALE_CONTEXT, "Native insertion membership/type/footprint changed.");
+                throw Errors.notApplied(Reason.TARGET_CHANGED, "Native insertion membership/type/footprint changed.");
         }
     }
 
@@ -914,13 +914,13 @@ final class GridInsertionWriter {
         void same(Layout actual) {
             if (rows.size() != actual.rows.size())
                 throw Errors.notApplied(
-                        Reason.STALE_CONTEXT, "Native destination membership changed during insertion.");
+                        Reason.TARGET_CHANGED, "Native destination membership changed during insertion.");
             for (Row row : rows) {
                 Row now = actual.find(row.id);
                 row.identity(now);
                 if (now.x != row.x || now.y != row.y)
                     throw Errors.notApplied(
-                            Reason.STALE_CONTEXT, "Native destination layout changed during insertion.");
+                            Reason.TARGET_CHANGED, "Native destination layout changed during insertion.");
             }
         }
 

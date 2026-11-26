@@ -174,10 +174,11 @@ public final class GridDiffTest {
     @Test
     void failedEntriesCarryOutcomeReasonAndMessage() {
         JsonObject landed = new JsonObject(), refused = new JsonObject(), later = new JsonObject();
-        GridDiff.failed(landed, Errors.notApplied(Reason.STALE_CONTEXT, "moved"), true);
+        GridDiff.failed(landed, Errors.notApplied(Reason.TARGET_CHANGED, "moved"), true);
         GridDiff.failed(refused, new IllegalStateException("broken"), false);
         GridDiff.notApplied(later, Reason.NOT_REACHED);
-        assertEquals("{\"outcome\":\"unknown\",\"reason\":\"stale_context\",\"message\":\"moved\"}", landed.toString());
+        assertEquals(
+                "{\"outcome\":\"unknown\",\"reason\":\"target_changed\",\"message\":\"moved\"}", landed.toString());
         assertEquals(
                 "{\"outcome\":\"not_applied\",\"reason\":\"internal\",\"message\":\"broken\"}", refused.toString());
         assertEquals("{\"outcome\":\"not_applied\",\"reason\":\"not_reached\"}", later.toString());

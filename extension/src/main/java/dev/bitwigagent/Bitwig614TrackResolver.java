@@ -83,7 +83,7 @@ final class Bitwig614TrackResolver {
 
     static RpcException stale(String trackId) {
         return Errors.notApplied(
-                Reason.STALE_CONTEXT,
+                Reason.TARGET_NOT_FOUND,
                 "Track " + trackId + " no longer resolves to its native track; re-read tracks.list.");
     }
 

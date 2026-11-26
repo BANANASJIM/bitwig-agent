@@ -344,12 +344,12 @@ public final class GridStepsVoicingTest {
         StepFixture f = new StepFixture(256, 4);
         RpcException error = f.failure(steps("[0.9,0.9,0.9,0.9]", "[0.5]", false));
         assertTrue(
-                error.reason.wire().equals("stale_context") && !error.unknown && f.calls == 0 && !f.op.dispatched(),
+                error.reason.wire().equals("target_changed") && !error.unknown && f.calls == 0 && !f.op.dispatched(),
                 "a stale expectation is rejected before dispatch, even for a no-op");
         StepFixture shortArray = new StepFixture(4, 4);
         error = shortArray.failure(steps("[0,0,0,0,0]", "[0.5]", false));
         assertTrue(
-                error.reason.wire().equals("stale_context") && shortArray.calls == 0,
+                error.reason.wire().equals("target_changed") && shortArray.calls == 0,
                 "expectedValues longer than the native array is stale");
         StepFixture window = new StepFixture(256, 4);
         window.set(steps(window.json(0, 6), "[0.5,0.5,0.5,0.5,0.5,0.5]", false));
@@ -360,7 +360,7 @@ public final class GridStepsVoicingTest {
                 HostFixture.json("{\"expectedKind\":\"float\",\"expectedValue\":0.0,\"value\":0.5}"));
         error = f.failure(scalar);
         assertTrue(
-                error.reason.wire().equals("stale_context") && f.calls == 0,
+                error.reason.wire().equals("target_changed") && f.calls == 0,
                 "a scalar request cannot target a step array");
         StepFixture scalarTarget = new StepFixture(256, 4);
         Node floating = scalarTarget
@@ -397,7 +397,7 @@ public final class GridStepsVoicingTest {
                                 });
             });
             assertTrue(
-                    caught.reason.wire().equals("stale_context") && !caught.unknown,
+                    caught.reason.wire().equals("target_changed") && !caught.unknown,
                     "a steps request cannot target a scalar parameter");
         }
         StepFixture skipped = new StepFixture(256, 4);
@@ -434,7 +434,7 @@ public final class GridStepsVoicingTest {
                 project.failure(steps(project.json(0, 4), "[0.5]", false))
                                 .reason
                                 .wire()
-                                .equals("stale_context")
+                                .equals("target_changed")
                         && project.calls == 0,
                 "owning project mismatch gates step array writes");
     }
@@ -696,7 +696,7 @@ public final class GridStepsVoicingTest {
         VoicingFixture f = new VoicingFixture();
         RpcException error = f.failure("{\"expected\":{\"voices\":2},\"set\":{\"voices\":3}}");
         assertTrue(
-                error.reason.wire().equals("stale_context")
+                error.reason.wire().equals("target_changed")
                         && !error.unknown
                         && f.calls.isEmpty()
                         && !f.op.dispatched(),
@@ -754,7 +754,7 @@ public final class GridStepsVoicingTest {
                 project.failure("{\"expected\":{\"voices\":1},\"set\":{\"voices\":4}}")
                                 .reason
                                 .wire()
-                                .equals("stale_context")
+                                .equals("target_changed")
                         && project.calls.isEmpty(),
                 "owning project mismatch gates voicing writes");
         for (String bad : List.of(
