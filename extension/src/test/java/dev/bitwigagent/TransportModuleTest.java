@@ -404,10 +404,11 @@ public final class TransportModuleTest {
     void aMetronomeDisplayIsRefusedUntilTheHostDisplayIsMeasured() {
         HostFixture f = new HostFixture();
         TransportModule module = f.services.transportModule();
-        assertRpcError(
-                "unsupported_unit",
-                f.submit(module, "transport.set", HostFixture.json("{\"metronomeVolume\":{\"display\":\"-6 dB\"}}")));
-        assertTrue(f.tasks.isEmpty() && f.transport.child("metronomeVolume").writes == 0, "nothing dispatched");
+        HostOperation op =
+                f.submit(module, "transport.set", HostFixture.json("{\"metronomeVolume\":{\"display\":\"-6 dB\"}}"));
+        f.next();
+        assertRpcError("unsupported_unit", op);
+        assertTrue(f.transport.child("metronomeVolume").writes == 0, "nothing dispatched");
     }
 
     private static String value(JsonObject read, String field) {

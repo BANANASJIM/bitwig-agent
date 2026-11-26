@@ -28,6 +28,10 @@ final class TransportModule implements HostModule {
         "playing"
     };
 
+    /** Host-listed enums: the API's own option list validates them at dispatch. */
+    private static final Set<String> ENUM_FIELDS =
+            Set.of("preRoll", "defaultLaunchQuantization", "recordQuantizationGrid");
+
     private static final ValueMatch BEATS_AND_TEMPO = ValueMatch.raw(1e-6);
     /** Fields every host reports at startup; a newer field that is not (yet) observed reads null instead of blocking the rest. */
     private static final Set<String> BASE = Set.of(
@@ -99,8 +103,9 @@ final class TransportModule implements HostModule {
         if (!method.equals("transport.set"))
             throw Errors.notApplied(Reason.UNKNOWN_METHOD, "Unknown transport method.");
         if (p.size() == 0) throw Errors.notApplied(Reason.INVALID_PARAMS, "At least one transport field is required.");
-        if (p.has("metronomeVolume"))
-            ValueInput.parse("metronomeVolume", p.get("metronomeVolume")).normalized("metronomeVolume");
+        for (String key : ENUM_FIELDS) if (p.has(key)) Params.string(p, key);
+        if (p.has("metronomeVolume") && p.get("metronomeVolume").isJsonObject())
+            Params.string(p.getAsJsonObject("metronomeVolume"), "display");
         if (p.has("timeSignature") && !validSignature(Params.string(p, "timeSignature")))
             throw Errors.notApplied(
                     Reason.INVALID_PARAMS,
@@ -126,6 +131,8 @@ final class TransportModule implements HostModule {
             op.result.complete(snapshot());
             return;
         }
+        if (p.has("metronomeVolume"))
+            ValueInput.parse("metronomeVolume", p.get("metronomeVolume")).normalized("metronomeVolume");
         for (String key : BASE) require(key);
         for (String key : p.keySet()) require(key);
         for (String key : p.keySet()) guard(key, p.get(key));
