@@ -12,6 +12,7 @@ import asyncio
 import copy
 import json
 import math
+import os
 import re
 from typing import Any
 
@@ -80,11 +81,16 @@ MAX_BMP_CODEPOINT = 0xFFFF
 ASTRAL_UTF16_UNITS = 2
 
 
+ROOT = os.path.abspath(os.sep)
+
+
 def as_path(value):
     """Make a vector string an absolute path of the same UTF-16 length."""
     if not value:
         return value
-    return "/a" + value[1:] if ord(value[0]) > MAX_BMP_CODEPOINT else "/" + value[1:]
+    if ord(value[0]) > MAX_BMP_CODEPOINT:
+        return ROOT + "a" + value[1:]
+    return ROOT + value[len(ROOT) :]
 
 
 def file_insert(params, value):
@@ -95,15 +101,15 @@ def file_insert(params, value):
 
 def project_path(params, value):
     """A final <dir>/S/S.bwproject path of the vector's UTF-16 length (same astral-character mix)."""
-    tail = "/S/S.bwproject"
-    body = len(value.encode("utf-16-le", errors="surrogatepass")) // 2 - len(tail) - 1
+    tail = f"{os.sep}S{os.sep}S.bwproject"
+    body = len(value.encode("utf-16-le", errors="surrogatepass")) // 2 - len(tail) - len(ROOT)
     if body > 0:
         filler = (
             "\U0001f600" * (body // 2) + "a" * (body % 2)
             if any(ord(c) > MAX_BMP_CODEPOINT for c in value)
             else "a" * body
         )
-        params["path"] = "/" + filler + tail
+        params["path"] = ROOT + filler + tail
 
 
 def window_fix(field):
