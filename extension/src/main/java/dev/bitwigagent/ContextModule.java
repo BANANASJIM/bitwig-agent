@@ -14,17 +14,29 @@ final class ContextModule implements HostModule {
     private final LauncherModule launcher;
 
     ContextModule(HostServices services, TransportModule transport, MixModule mix, LauncherModule launcher) {
-        s = services; this.transport = transport; this.mix = mix; this.launcher = launcher;
+        s = services;
+        this.transport = transport;
+        this.mix = mix;
+        this.launcher = launcher;
     }
 
-    @Override public Set<String> methods() { return METHODS; }
-    @Override public void validate(String method, JsonObject params) { validateParams(method, params); }
+    @Override
+    public Set<String> methods() {
+        return METHODS;
+    }
+
+    @Override
+    public void validate(String method, JsonObject params) {
+        validateParams(method, params);
+    }
+
     static void validateParams(String method, JsonObject p) {
         if (!METHODS.contains(method)) throw HostServices.failure("unknown_method", "Unknown context method.");
         Params.fields(p, Set.of(), Set.of());
     }
 
-    @Override public void dispatch(HostOperation op, String method, JsonObject p) {
+    @Override
+    public void dispatch(HostOperation op, String method, JsonObject p) {
         s.check(op);
         op.result.complete(snapshot());
     }
@@ -38,8 +50,14 @@ final class ContextModule implements HostModule {
         for (Map.Entry<String, JsonElement> e : s.projectReadiness().entrySet()) out.add(e.getKey(), e.getValue());
         out.add("instance", HostServices.instance());
         for (Map.Entry<String, JsonElement> e : s.playbackSafety().entrySet()) out.add(e.getKey(), e.getValue());
-        out.add("sceneCount", s.tracksObserved ? new JsonPrimitive(s.tracks.sceneBank().itemCount().get()) : JsonNull.INSTANCE);
-        out.add("tracks", JsonNull.INSTANCE); out.add("selectedTrack", JsonNull.INSTANCE); out.add("cursorClip", JsonNull.INSTANCE);
+        out.add(
+                "sceneCount",
+                s.tracksObserved
+                        ? new JsonPrimitive(s.tracks.sceneBank().itemCount().get())
+                        : JsonNull.INSTANCE);
+        out.add("tracks", JsonNull.INSTANCE);
+        out.add("selectedTrack", JsonNull.INSTANCE);
+        out.add("cursorClip", JsonNull.INSTANCE);
         if (!s.tracksObserved) return out;
         JsonArray tracks = new JsonArray();
         JsonElement selectedTrack = JsonNull.INSTANCE, cursorClip = JsonNull.INSTANCE;
@@ -50,16 +68,21 @@ final class ContextModule implements HostModule {
             JsonElement id = item.get("trackId");
             item.add("launcherSlots", launcher.occupiedSlots(t, track));
             tracks.add(item);
-            if (item.get("selected").isJsonPrimitive() && item.get("selected").getAsBoolean() && selectedTrack.isJsonNull()) selectedTrack = id;
+            if (item.get("selected").isJsonPrimitive()
+                    && item.get("selected").getAsBoolean()
+                    && selectedTrack.isJsonNull()) selectedTrack = id;
             int slot = launcher.cursorSlotIndex(t, track);
             if (slot >= 0) {
                 JsonObject clip = new JsonObject();
-                clip.add("trackId", id); clip.addProperty("slotIndex", slot);
+                clip.add("trackId", id);
+                clip.addProperty("slotIndex", slot);
                 clip.addProperty("name", launcher.slotName(t, slot));
                 cursorClip = clip;
             }
         }
-        out.add("tracks", tracks); out.add("selectedTrack", selectedTrack); out.add("cursorClip", cursorClip);
+        out.add("tracks", tracks);
+        out.add("selectedTrack", selectedTrack);
+        out.add("cursorClip", cursorClip);
         return out;
     }
 }

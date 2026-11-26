@@ -7,8 +7,11 @@ public interface GridInsertionBridge {
     /** All callbacks are document-side except earlyError; implementations must never throw outward. */
     interface Callback {
         boolean delivered(Object converted, Object completion);
+
         void returned();
+
         void earlyError(String message);
+
         void adapterFailure(Throwable error);
     }
 }

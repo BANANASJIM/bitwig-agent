@@ -22,15 +22,23 @@ _KEY_RE = re.compile(rb"[A-Za-z0-9_]{1,64}")
 _STRING, _BLOB, _STRING_LIST = 0x08, 0x0D, 0x19
 
 
+CREATOR_AND_PACKAGE_PARTS = 2
+
+
 def default_roots() -> list[tuple[str, Path]]:
     """(source, root) pairs: BITWIG_PRESET_ROOTS (os.pathsep list) replaces the defaults."""
     if os.environ.get("BITWIG_PRESET_ROOTS"):
-        return [("package" if "installed-packages" in Path(r).parts else "user", Path(r))
-                for r in os.environ["BITWIG_PRESET_ROOTS"].split(os.pathsep) if r]
+        return [
+            ("package" if "installed-packages" in Path(r).parts else "user", Path(r))
+            for r in os.environ["BITWIG_PRESET_ROOTS"].split(os.pathsep)
+            if r
+        ]
     home = Path.home()
     user = [home / "Bitwig Studio" / "Library", home / "Documents" / "Bitwig Studio" / "Library"]
-    packages = [home / ".BitwigStudio" / "installed-packages",
-                home / "Library" / "Application Support" / "Bitwig" / "Bitwig Studio" / "installed-packages"]
+    packages = [
+        home / ".BitwigStudio" / "installed-packages",
+        home / "Library" / "Application Support" / "Bitwig" / "Bitwig Studio" / "installed-packages",
+    ]
     if sys.platform == "win32" and os.environ.get("LOCALAPPDATA"):
         packages.append(Path(os.environ["LOCALAPPDATA"]) / "Bitwig Studio" / "installed-packages")
     return [("user", p) for p in user] + [("package", p) for p in packages]
@@ -43,11 +51,12 @@ def read_meta(data: bytes) -> dict[str, Any] | None:
     at = data.find(b"meta", 0, 128)
     if at < 0:
         return None
-    pos, meta = at + 4, {}
+    pos = at + 4
+    meta: dict[str, Any] = {}
     try:
         while pos + 8 <= len(data):
             marker, klen = struct.unpack_from(">II", data, pos)
-            key = data[pos + 8:pos + 8 + klen]
+            key = data[pos + 8 : pos + 8 + klen]
             if marker != 1 or not _KEY_RE.fullmatch(key):
                 break
             pos += 8 + klen
@@ -55,7 +64,7 @@ def read_meta(data: bytes) -> dict[str, Any] | None:
             pos += 1
             if kind == _STRING:
                 (n,) = struct.unpack_from(">I", data, pos)
-                meta[key.decode()] = data[pos + 4:pos + 4 + n].decode("utf-8", "replace")
+                meta[key.decode()] = data[pos + 4 : pos + 4 + n].decode("utf-8", "replace")
                 pos += 4 + n
             elif kind == _BLOB:
                 (n,) = struct.unpack_from(">I", data, pos)
@@ -66,7 +75,7 @@ def read_meta(data: bytes) -> dict[str, Any] | None:
                 items = []
                 for _ in range(count):
                     (n,) = struct.unpack_from(">I", data, pos)
-                    items.append(data[pos + 4:pos + 4 + n].decode("utf-8", "replace"))
+                    items.append(data[pos + 4 : pos + 4 + n].decode("utf-8", "replace"))
                     pos += 4 + n
                 meta[key.decode()] = items
             else:
@@ -81,7 +90,7 @@ def _entry(source: str, root: Path, path: Path, parts: tuple[str, ...]) -> dict[
     entry: dict[str, Any] = {"name": name, "path": str(path), "source": source}
     if source == "package":
         entry["creator"] = parts[0] if len(parts) > 1 else None
-        entry["package"] = parts[1] if len(parts) > 2 else None
+        entry["package"] = parts[1] if len(parts) > CREATOR_AND_PACKAGE_PARTS else None
         entry["folders"] = list(parts[2:-1])
     else:
         entry["folders"] = list(parts[:-1])
@@ -94,12 +103,18 @@ def _entry(source: str, root: Path, path: Path, parts: tuple[str, ...]) -> dict[
         meta = None
     if meta:
         entry["metadataReadable"] = True
-        if meta.get("device_name"): entry["device"] = meta["device_name"]
-        if meta.get("device_type"): entry["deviceType"] = DEVICE_TYPES.get(meta["device_type"], meta["device_type"])
-        if meta.get("preset_category"): entry["category"] = meta["preset_category"]
-        if meta.get("device_category"): entry["deviceCategory"] = meta["device_category"]
-        if meta.get("creator"): entry["creator"] = meta["creator"]
-        if meta.get("comment"): entry["comment"] = meta["comment"][:COMMENT_CHARS]
+        if meta.get("device_name"):
+            entry["device"] = meta["device_name"]
+        if meta.get("device_type"):
+            entry["deviceType"] = DEVICE_TYPES.get(meta["device_type"], meta["device_type"])
+        if meta.get("preset_category"):
+            entry["category"] = meta["preset_category"]
+        if meta.get("device_category"):
+            entry["deviceCategory"] = meta["device_category"]
+        if meta.get("creator"):
+            entry["creator"] = meta["creator"]
+        if meta.get("comment"):
+            entry["comment"] = meta["comment"][:COMMENT_CHARS]
     entry["insert"] = {"kind": "file", "path": str(path)}
     return entry
 
@@ -111,8 +126,11 @@ def scan(roots: list[tuple[str, Path]]) -> tuple[list[dict[str, Any]], list[str]
             continue
         searched.append(str(root))
         # installed-packages holds one folder per Bitwig version, then creator/package/...
-        bases = [d for d in sorted(root.iterdir()) if d.is_dir() and not d.name.startswith(".")] \
-            if source == "package" and root.name == "installed-packages" else [root]
+        bases = (
+            [d for d in sorted(root.iterdir()) if d.is_dir() and not d.name.startswith(".")]
+            if source == "package" and root.name == "installed-packages"
+            else [root]
+        )
         for base in bases:
             for folder, dirs, files in os.walk(base):
                 dirs.sort()
@@ -129,7 +147,9 @@ def _norm(text: str) -> str:
 
 def _haystack(entry: dict[str, Any]) -> tuple[str, str]:
     near = " ".join([entry["name"], *entry.get("folders", [])])
-    far = " ".join(str(entry.get(k) or "") for k in ("package", "creator", "device", "category", "deviceCategory", "comment"))
+    far = " ".join(
+        str(entry.get(k) or "") for k in ("package", "creator", "device", "category", "deviceCategory", "comment")
+    )
     return _norm(near), _norm(far)
 
 
@@ -150,7 +170,9 @@ def search(args: dict[str, Any], roots: list[tuple[str, Path]] | None = None) ->
         # Encrypted package presets carry no device field: their folders are the only hint.
         if device and not (_contains(entry.get("device"), device) or _contains(entry.get("folders"), device)):
             continue
-        if category and not any(_contains(entry.get(k), category) for k in ("category", "deviceCategory", "folders", "package")):
+        if category and not any(
+            _contains(entry.get(k), category) for k in ("category", "deviceCategory", "folders", "package")
+        ):
             continue
         near, far = _haystack(entry)
         if any(w not in near and w not in far for w in words):
@@ -160,14 +182,17 @@ def search(args: dict[str, Any], roots: list[tuple[str, Path]] | None = None) ->
         hits.append((-score, entry["source"] != "user", entry["name"].casefold(), entry["path"], entry))
     hits.sort(key=lambda h: h[:4])
     offset, limit = args.get("offset", 0), args.get("limit", 25)
-    page = [h[4] for h in hits[offset:offset + limit]]
+    page = [h[4] for h in hits[offset : offset + limit]]
     return {
         "status": "observed",
         "scope": "offline_preset_files",
         "verification": "file_names_and_plain_headers_not_insertion_or_audio_proof",
         "roots": searched,
-        "scanned": {"presets": len(entries), "metadataReadable": sum(e["metadataReadable"] for e in entries),
-                    "note": "Package presets are encrypted: only path, package, creator and folders are known for them."},
+        "scanned": {
+            "presets": len(entries),
+            "metadataReadable": sum(e["metadataReadable"] for e in entries),
+            "note": "Package presets are encrypted: only path, package, creator and folders are known for them.",
+        },
         "window": {"offset": offset, "limit": limit, "total": len(hits), "complete": offset + len(page) >= len(hits)},
         "presets": page,
     }

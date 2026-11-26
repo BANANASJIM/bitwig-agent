@@ -8,10 +8,12 @@ process start time to the `Starting application` headers.
 from __future__ import annotations
 
 import base64
+import contextlib
 import json
 import os
 import re
 import sys
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -28,8 +30,10 @@ EXTENSION = re.compile(r"extension|controller|script", re.I)
 BENIGN = ("Cannot use realtime priority", "Analyzing audio")
 PROBLEM_LEVELS = ("warn", "warning", "error", "severe", "fatal")
 CATEGORIES = ("grid_rejected", "engine", "extension", "exception", "dialog", "other")
-DIALOG_NOTE = ("Modal dialogs (Dashboard, Save Project?, Recover Projects) leave no log line and are not detectable here; "
-               "only logged notifications (e.g. 'Update Available') are reported as dialog. Check the screen.")
+DIALOG_NOTE = (
+    "Modal dialogs (Dashboard, Save Project?, Recover Projects) leave no log line and are not detectable here; "
+    "only logged notifications (e.g. 'Update Available') are reported as dialog. Check the screen."
+)
 
 
 def candidates() -> list[Path]:
@@ -56,7 +60,7 @@ def parse_line(line: str) -> tuple[datetime, str, str, str] | None:
     return ts, " ".join(tokens[:-1]), (tokens[-1].lower() if tokens else ""), msg
 
 
-def read_back(path: Path, size: int, done) -> tuple[int, bytes, bool]:
+def read_back(path: Path, size: int, done: Callable[[bytes], bool]) -> tuple[int, bytes, bool]:
     """Read chunks from the end until done(view) or MAX_READ. Returns (offset of view, view, hit cap)."""
     start, buf = size, b""
     with path.open("rb") as f:
@@ -78,7 +82,7 @@ def process_start(pid: Any) -> datetime | None:
         return None
     try:
         stat = Path(f"/proc/{pid}/stat").read_text()
-        ticks = int(stat[stat.rindex(")") + 2:].split()[19])
+        ticks = int(stat[stat.rindex(")") + 2 :].split()[19])
         btime = next(int(x.split()[1]) for x in Path("/proc/stat").read_text().splitlines() if x.startswith("btime"))
         return datetime.fromtimestamp(btime + ticks / os.sysconf("SC_CLK_TCK"))
     except (OSError, ValueError, StopIteration, IndexError):
@@ -90,10 +94,8 @@ def bitwig_processes() -> int | None:
         return None
     count = 0
     for p in Path("/proc").glob("[0-9]*/comm"):
-        try:
+        with contextlib.suppress(OSError):
             count += p.read_text().strip() == "BitwigStudio"
-        except OSError:
-            pass
     return count
 
 
@@ -103,7 +105,9 @@ def header_time(raw: bytes) -> datetime | None:
 
 
 def encode_marker(head_offset: int, head_line: str, end: int) -> str:
-    return base64.urlsafe_b64encode(json.dumps({"h": head_offset, "l": head_line[:60], "o": end}, separators=(",", ":")).encode()).decode()
+    return base64.urlsafe_b64encode(
+        json.dumps({"h": head_offset, "l": head_line[:60], "o": end}, separators=(",", ":")).encode()
+    ).decode()
 
 
 def decode_marker(marker: str) -> dict[str, Any] | None:
@@ -116,14 +120,19 @@ def decode_marker(marker: str) -> dict[str, Any] | None:
     return None
 
 
-def classify(ts: datetime, component: str, level: str, msg: str) -> dict[str, Any] | None:
+def classify(ts: datetime, component: str, level: str, msg: str) -> dict[str, Any] | None:  # noqa: PLR0911
     msg = msg.strip()
     if any(b in msg for b in BENIGN):
         return None
-    event: dict[str, Any] = {"time": ts.isoformat(timespec="milliseconds"), "level": level, "component": component, "message": msg[:300]}
-    if (m := GRID.search(msg)):
+    event: dict[str, Any] = {
+        "time": ts.isoformat(timespec="milliseconds"),
+        "level": level,
+        "component": component,
+        "message": msg[:300],
+    }
+    if m := GRID.search(msg):
         return {**event, "category": "grid_rejected", "gridComponent": m.group(1)}
-    if (m := ENGINE.search(msg)):
+    if m := ENGINE.search(msg):
         return {**event, "category": "engine", "engineReady": m.group(1) == "true"}
     if component == "notifications":
         return {**event, "category": "dialog"}
@@ -159,18 +168,23 @@ def scan(text: str, cutoff: datetime | None) -> list[dict[str, Any]]:
     return events
 
 
-async def diagnostics(client: Any, args: dict[str, Any], timeout_ms: int) -> dict[str, Any]:
+async def diagnostics(client: Any, args: dict[str, Any], timeout_ms: int) -> dict[str, Any]:  # noqa: C901, PLR0912, PLR0915
     now = datetime.now()
     path = next((p for p in candidates() if p.is_file()), None)
     if path is None:
-        return {"status": "unsupported", "platform": sys.platform, "searched": [str(p) for p in candidates()],
-                "reason": "Bitwig log file not found (BITWIG_LOG_PATH overrides)", "dialogs": DIALOG_NOTE}
+        return {
+            "status": "unsupported",
+            "platform": sys.platform,
+            "searched": [str(p) for p in candidates()],
+            "reason": "Bitwig log file not found (BITWIG_LOG_PATH overrides)",
+            "dialogs": DIALOG_NOTE,
+        }
 
     instance, instance_error = None, None
     try:
         status = await client.call("status", {}, timeout_ms)
         instance = status.get("instance") if isinstance(status, dict) else None
-    except Exception as exc:  # attribution degrades; the log is still useful
+    except Exception as exc:  # noqa: BLE001 - attribution degrades; the log is still useful
         instance_error = f"status unavailable ({type(exc).__name__})"
     started = process_start(instance.get("pid") if isinstance(instance, dict) else None)
 
@@ -184,27 +198,33 @@ async def diagnostics(client: Any, args: dict[str, Any], timeout_ms: int) -> dic
     base, data, capped = read_back(path, size, done)
     end = base + data.rfind(b"\n") + 1  # ignore a half-written last line
     data = data[: end - base]
-    headers = [(base + m.start(), m.group(0).decode("utf-8", "replace"), header_time(m.group(0))) for m in HEADER.finditer(data)]
-    headers = [h for h in headers if h[2]]
+    headers = [
+        (base + m.start(), m.group(0).decode("utf-8", "replace"), header_time(m.group(0)))
+        for m in HEADER.finditer(data)
+    ]
+    sections = [(offset, text, when) for offset, text, when in headers if when]
 
     reasons: list[str] = []
-    chosen, method = None, "latest_section"
+    chosen: tuple[int, str, datetime] | None = None
+    method = "latest_section"
     if started:
-        near = [h for h in headers if abs(h[2] - started) <= START_TOLERANCE]
+        near = [h for h in sections if abs(h[2] - started) <= START_TOLERANCE]
         if near:
             chosen, method = min(near, key=lambda h: abs(h[2] - started)), "pid_start_time"
         else:
             reasons.append("no log start header within 120 s of the instance's process start")
     else:
         reasons.append(instance_error or "instance start time unavailable (non-Linux or no pid)")
-    if chosen is None and headers:
-        chosen = headers[-1]
+    if chosen is None and sections:
+        chosen = sections[-1]
     if chosen is None:
         reasons.append("no 'Starting application' header found; the whole readable tail was used")
-    idx = headers.index(chosen) if chosen else -1
-    later = headers[idx + 1:] if chosen else []
+    idx = sections.index(chosen) if chosen else -1
+    later = sections[idx + 1 :] if chosen else []
     if later:
-        reasons.append(f"{len(later)} later Bitwig start(s) in the same log; their lines may interleave with this instance's")
+        reasons.append(
+            f"{len(later)} later Bitwig start(s) in the same log; their lines may interleave with this instance's"
+        )
     procs = bitwig_processes()
     if procs and procs > 1:
         reasons.append(f"{procs} Bitwig processes running")
@@ -223,7 +243,7 @@ async def diagnostics(client: Any, args: dict[str, Any], timeout_ms: int) -> dic
             with path.open("rb") as f:
                 f.seek(m["h"])
                 valid = f.read(len(m["l"].encode())).decode("utf-8", "replace") == m["l"]
-        if valid:
+        if m and valid:
             read_from, window = m["o"], {"sinceMarker": True}
         else:
             warnings.append("sinceMarker is stale or from another instance/log; used the sinceSeconds window instead")
@@ -231,7 +251,7 @@ async def diagnostics(client: Any, args: dict[str, Any], timeout_ms: int) -> dic
         cutoff = now - timedelta(seconds=seconds)
         window["from"] = cutoff.isoformat(timespec="seconds")
 
-    events = scan(data[read_from - base: sec_end - base].decode("utf-8", "replace"), cutoff)
+    events = scan(data[read_from - base : sec_end - base].decode("utf-8", "replace"), cutoff)
     counts = {c: sum(e["count"] for e in events if e["category"] == c) for c in CATEGORIES}
     summary: dict[str, Any] = {"counts": counts, "totalEvents": sum(counts.values())}
     ready = [e["engineReady"] for e in events if e["category"] == "engine"]
@@ -243,11 +263,22 @@ async def diagnostics(client: Any, args: dict[str, Any], timeout_ms: int) -> dic
     max_events = args.get("maxEvents", 50)
 
     result: dict[str, Any] = {
-        "status": "observed", "platform": sys.platform, "logPath": str(path), "window": window,
-        "events": events[-max_events:], "summary": summary,
-        "marker": encode_marker(chosen[0], chosen[1], end) if chosen else None, "dialogs": DIALOG_NOTE,
-        "attribution": {"method": method, "certain": method == "pid_start_time" and not reasons, "instance": instance,
-                        "sectionStart": chosen[2].isoformat(timespec="seconds") if chosen else None, "sectionsSeen": len(headers)}}
+        "status": "observed",
+        "platform": sys.platform,
+        "logPath": str(path),
+        "window": window,
+        "events": events[-max_events:],
+        "summary": summary,
+        "marker": encode_marker(chosen[0], chosen[1], end) if chosen else None,
+        "dialogs": DIALOG_NOTE,
+        "attribution": {
+            "method": method,
+            "certain": method == "pid_start_time" and not reasons,
+            "instance": instance,
+            "sectionStart": chosen[2].isoformat(timespec="seconds") if chosen else None,
+            "sectionsSeen": len(sections),
+        },
+    }
     if reasons:
         result["attribution"]["uncertainty"] = reasons
     if len(events) > max_events:

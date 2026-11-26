@@ -1,7 +1,9 @@
 """grid.describe: parser, mapping and search on synthetic fixtures; coverage against a real install when present."""
 
 import asyncio
+import re
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -11,8 +13,10 @@ from bitwig_agent.cli import execute
 from bitwig_agent.grid_apply import bundled_schema
 
 REAL_ROOT = Path("/opt/bitwig-studio")
-real = pytest.mark.skipif(not (REAL_ROOT / "resources/localization/Module-descriptions-resources.properties").is_file(),
-                          reason="Bitwig install not present")
+real = pytest.mark.skipif(
+    not (REAL_ROOT / "resources/localization/Module-descriptions-resources.properties").is_file(),
+    reason="Bitwig install not present",
+)
 
 DESCRIPTIONS = """\
 #comment
@@ -32,11 +36,19 @@ chance.out.desc=Short triggers
 chance.extra.desc=Unmatched leftover
 math.out.desc=Shared math out
 """
-SCHEMA = {
-    "Select In": {"typeId": "1", "inputs": [{"key": "SEL", "name": "Select In"}],
-                  "outputs": [{"key": "OUT", "name": "Signal Out"}], "parameters": []},
-    "Chance": {"typeId": "2", "inputs": [{"key": "IN", "name": "Trigger In"}], "outputs": [{"key": "OUT", "name": "Trigger Out"}],
-               "parameters": [{"parameterId": "PROBABILITY", "name": "Chance"}]},
+SCHEMA: dict[str, dict[str, Any]] = {
+    "Select In": {
+        "typeId": "1",
+        "inputs": [{"key": "SEL", "name": "Select In"}],
+        "outputs": [{"key": "OUT", "name": "Signal Out"}],
+        "parameters": [],
+    },
+    "Chance": {
+        "typeId": "2",
+        "inputs": [{"key": "IN", "name": "Trigger In"}],
+        "outputs": [{"key": "OUT", "name": "Trigger Out"}],
+        "parameters": [{"parameterId": "PROBABILITY", "name": "Chance"}],
+    },
     "Add": {"typeId": "3", "inputs": [], "outputs": [{"key": "OUT", "name": "A + B"}], "parameters": []},
     "Mystery": {"typeId": "4", "inputs": [], "outputs": [], "parameters": []},
 }
@@ -47,38 +59,55 @@ def root(tmp_path, monkeypatch):
     directory = tmp_path / "resources" / "localization"
     directory.mkdir(parents=True)
     (directory / "Module-descriptions-resources.properties").write_text(DESCRIPTIONS, encoding="utf-8")
-    (directory / "Modules-resources.properties").write_bytes(b"\xef\xbb\xbf" + MODULES.encode())  # real files carry a BOM
-    (directory / "Module-descriptions-resources_de.properties").write_text("module.select_in.desc=Auswahl\n", encoding="utf-8")
+    (directory / "Modules-resources.properties").write_bytes(
+        b"\xef\xbb\xbf" + MODULES.encode()
+    )  # real files carry a BOM
+    (directory / "Module-descriptions-resources_de.properties").write_text(
+        "module.select_in.desc=Auswahl\n", encoding="utf-8"
+    )
     monkeypatch.setattr(grid_docs, "_cache", {})
     monkeypatch.setenv("BITWIG_INSTALLATION_ROOT", str(tmp_path))
     return tmp_path
 
 
 def test_parse_properties_escapes_and_continuations():
-    text = ("﻿# c\n! c\na=1\nb : two words\nc\\ d=k\\=v\nlong=one \\\n    two\nu=\\u00f8 \\u2192\\n!\nempty=\nnovalue\n"
-            "back=ends\\\\\nnext=1\nsur=\\ud83d\\ude00\n")
+    text = (
+        "﻿# c\n! c\na=1\nb : two words\nc\\ d=k\\=v\nlong=one \\\n    two\nu=\\u00f8 \\u2192\\n!\nempty=\nnovalue\n"
+        "back=ends\\\\\nnext=1\nsur=\\ud83d\\ude00\n"
+    )
     got = grid_docs.parse_properties(text)
-    assert got["a"] == "1" and got["b"] == "two words" and got["c d"] == "k=v"
-    assert got["long"] == "one two" and got["u"] == "ø →\n!"
-    assert got["empty"] == "" and got["novalue"] == "" and got["back"] == "ends\\" and got["next"] == "1"
+    assert got["a"] == "1"
+    assert got["b"] == "two words"
+    assert got["c d"] == "k=v"
+    assert got["long"] == "one two"
+    assert got["u"] == "ø →\n!"
+    assert got["empty"] == ""
+    assert got["novalue"] == ""
+    assert got["back"] == "ends\\"
+    assert got["next"] == "1"
     assert got["sur"] == "\U0001f600"
 
 
 def test_describe_maps_ports_and_keeps_raw_entries(root):
     docs = grid_docs.get_docs()
     select = grid_docs.describe_module(docs, "Select In", SCHEMA["Select In"])
-    assert select["resourceId"] == "select_in" and select["description"] == "Fake selector" and select["category"] == "Mix"
+    assert select["resourceId"] == "select_in"
+    assert select["description"] == "Fake selector"
+    assert select["category"] == "Mix"
     sel = next(p for p in select["ports"] if p["key"] == "SEL")
     assert sel["description"] == "Low routes 1\nhigh routes 2"
     assert select["rawEntries"] == {"select_in.logic_in.desc": "Low routes 1\nhigh routes 2"}
     chance = grid_docs.describe_module(docs, "Chance", SCHEMA["Chance"])
     by_key = {p["key"]: p.get("description") for p in chance["ports"]}
     assert by_key == {"IN": "Trigger in text", "OUT": "Short triggers"}
-    assert "chance.extra.desc" in chance["rawEntries"] and chance["keywords"] == ["weighted", "noise"]
+    assert "chance.extra.desc" in chance["rawEntries"]
+    assert chance["keywords"] == ["weighted", "noise"]
     add = grid_docs.describe_module(docs, "Add", SCHEMA["Add"])  # category-shared entry, no module-own entries
-    assert add["ports"][0]["description"] == "Shared math out" and add["rawEntries"] == {}
+    assert add["ports"][0]["description"] == "Shared math out"
+    assert add["rawEntries"] == {}
     mystery = grid_docs.describe_module(docs, "Mystery", SCHEMA["Mystery"])
-    assert mystery["resourceId"] is None and "note" in mystery
+    assert mystery["resourceId"] is None
+    assert "note" in mystery
 
 
 def test_language_overlay_falls_back_to_english(root):
@@ -96,7 +125,8 @@ def test_search_ranks_name_then_keywords(root, monkeypatch):
 
 
 def test_type_resolution_by_name_loose_name_or_type_id():
-    assert grid_docs.resolve_type(SCHEMA, "select in") == "Select In" and grid_docs.resolve_type(SCHEMA, "2") == "Chance"
+    assert grid_docs.resolve_type(SCHEMA, "select in") == "Select In"
+    assert grid_docs.resolve_type(SCHEMA, "2") == "Chance"
     with pytest.raises(ValueError, match="did you mean"):
         grid_docs.resolve_type(SCHEMA, "Chanse")
 
@@ -110,20 +140,23 @@ def test_missing_install_is_an_actionable_error(tmp_path, monkeypatch):
 def test_argument_validation():
     assert validate_call("grid.describe", {"type": "Chance"})[0] == {"type": "Chance"}
     for bad in ({}, {"type": "A", "query": "b"}, {"type": "A", "limit": 3}, {"query": "x", "lang": "xx"}):
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=re.escape("1 validation error for GridDescribeArgs")):
             validate_call("grid.describe", bad)
 
 
 def test_cli_runs_offline(root):
     payload, code = asyncio.run(execute(["grid.describe", "type=Select In"]))
-    assert code == 0 and payload["result"]["description"] == "Fake selector"
+    assert code == 0
+    assert payload["result"]["description"] == "Fake selector"
     payload, code = asyncio.run(execute(["grid.describe", "query=selector", "installationRoot=/nonexistent"]))
-    assert code == 2 and "installationRoot" in payload["error"]["message"]
+    assert code == 2
+    assert "installationRoot" in payload["error"]["message"]
 
 
 def test_overrides_and_aliases_name_real_schema_modules():
     modules = bundled_schema()["modules"]
-    assert set(grid_docs.ID_OVERRIDES) <= set(modules) and set(grid_docs.PREFIX_ALIASES) <= set(modules)
+    assert set(grid_docs.ID_OVERRIDES) <= set(modules)
+    assert set(grid_docs.PREFIX_ALIASES) <= set(modules)
 
 
 @real

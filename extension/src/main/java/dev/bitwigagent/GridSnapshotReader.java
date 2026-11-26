@@ -1,9 +1,10 @@
 package dev.bitwigagent;
 
+import static dev.bitwigagent.HostServices.failure;
+
 import com.google.gson.*;
 import java.util.*;
 import java.util.stream.Stream;
-import static dev.bitwigagent.HostServices.failure;
 
 /** Document-thread traversal, independent of version-specific symbol resolution and RPC targeting. */
 final class GridSnapshotReader {
@@ -11,6 +12,7 @@ final class GridSnapshotReader {
     static final int MAX_ITEMS = 131072, MAX_TEXT = 1024;
     /** Step arrays: default exposure when STEPS is unreadable, the full-array cap, and the finite sanity bound for step values (not a per-module range: Pitches are in Grid pitch units, the rest 0..1). */
     static final int STEP_FALLBACK = 64, STEP_FULL = 256;
+
     static final double STEP_MIN = -128.0, STEP_MAX = 128.0;
     /**
      * Child models of the 6.1.4 module classes that carry no user data (engine feeds, indicators, display state);
@@ -19,17 +21,87 @@ final class GridSnapshotReader {
     static final Set<String> INTERNAL_MODELS = Set.of("BgP", "HQh", "L1", "uUS", "fwH", "qzH", "Znu");
     /** Kiy also names another class, so it is matched by its fully qualified name. */
     static final String INTERNAL_KIY = "com.bitwig.flt.document.core.master.device.Kiy";
-    enum Kind { MODULE, INPUT, OUTPUT, PARAMETER, FLOAT, BOOLEAN, INTEGER, ENUM, PANEL_BOOLEAN, PANEL_STRING, STEP_ARRAY, VOICING, BIPOLAR_FLOAT, ENTRY, OPTION }
-    private static final Kind[] PARAMETER_KINDS = {Kind.FLOAT, Kind.BOOLEAN, Kind.INTEGER, Kind.ENUM, Kind.PANEL_BOOLEAN, Kind.PANEL_STRING, Kind.STEP_ARRAY};
-    enum Field {
-        GRAPH, MODULES, INSTANCE_ID, LOCAL_KEY, X, Y, WIDTH, HEIGHT, DESCRIPTOR, TYPE_ID,
-        INPUTS, OUTPUTS, CHILDREN, MODULE_GRAPH, OWNER_MODULE, INPUT_SOURCE, INPUT_KEY, OUTPUT_KEY,
-        PATH, FLOAT_VALUE, FLOAT_DEFINITION, FLOAT_MIN, FLOAT_MAX, BOOLEAN_VALUE, STRING_VALUE, BIPOLAR_PANEL,
-        INTEGER_VALUE, INTEGER_DEFINITION, INTEGER_MIN, INTEGER_MAX, ENUM_VALUE, ENUM_DEFINITION,
-        OPTIONS, OPTION_VALUE, OPTION_LABEL, DISPLAY, CATALOG, ENTRY_ID, ENTRY_NAME, ENTRY_KIND,
-        MODULE_NAME, CUSTOM_NAME, TYPE_ENTRY, TYPE_NAME, PARAMETER_ID, PARAMETER_NAME, SHORT_NAME,
-        INPUT_NAME, OUTPUT_NAME, FLOAT_UNIT, UNIT_TOKEN, INTEGER_PREFIX, INTEGER_SUFFIX, STEP_VALUES, STEP_LENGTH
+
+    enum Kind {
+        MODULE,
+        INPUT,
+        OUTPUT,
+        PARAMETER,
+        FLOAT,
+        BOOLEAN,
+        INTEGER,
+        ENUM,
+        PANEL_BOOLEAN,
+        PANEL_STRING,
+        STEP_ARRAY,
+        VOICING,
+        BIPOLAR_FLOAT,
+        ENTRY,
+        OPTION
     }
+
+    private static final Kind[] PARAMETER_KINDS = {
+        Kind.FLOAT, Kind.BOOLEAN, Kind.INTEGER, Kind.ENUM, Kind.PANEL_BOOLEAN, Kind.PANEL_STRING, Kind.STEP_ARRAY
+    };
+
+    enum Field {
+        GRAPH,
+        MODULES,
+        INSTANCE_ID,
+        LOCAL_KEY,
+        X,
+        Y,
+        WIDTH,
+        HEIGHT,
+        DESCRIPTOR,
+        TYPE_ID,
+        INPUTS,
+        OUTPUTS,
+        CHILDREN,
+        MODULE_GRAPH,
+        OWNER_MODULE,
+        INPUT_SOURCE,
+        INPUT_KEY,
+        OUTPUT_KEY,
+        PATH,
+        FLOAT_VALUE,
+        FLOAT_DEFINITION,
+        FLOAT_MIN,
+        FLOAT_MAX,
+        BOOLEAN_VALUE,
+        STRING_VALUE,
+        BIPOLAR_PANEL,
+        INTEGER_VALUE,
+        INTEGER_DEFINITION,
+        INTEGER_MIN,
+        INTEGER_MAX,
+        ENUM_VALUE,
+        ENUM_DEFINITION,
+        OPTIONS,
+        OPTION_VALUE,
+        OPTION_LABEL,
+        DISPLAY,
+        CATALOG,
+        ENTRY_ID,
+        ENTRY_NAME,
+        ENTRY_KIND,
+        MODULE_NAME,
+        CUSTOM_NAME,
+        TYPE_ENTRY,
+        TYPE_NAME,
+        PARAMETER_ID,
+        PARAMETER_NAME,
+        SHORT_NAME,
+        INPUT_NAME,
+        OUTPUT_NAME,
+        FLOAT_UNIT,
+        UNIT_TOKEN,
+        INTEGER_PREFIX,
+        INTEGER_SUFFIX,
+        STEP_VALUES,
+        STEP_LENGTH
+    }
+
     enum Metadata {
         FOOTPRINT("moduleFootprint", "native_primitive_width_height_grid_coordinates_not_pixels"),
         MODULE_NAMES("moduleNames", "native_effective_name_and_raw_custom_override"),
@@ -39,28 +111,47 @@ final class GridSnapshotReader {
         FLOAT_UNITS("numericUnits", "stored_definition_unit_kind_not_raw_value_unit"),
         INTEGER_AFFIXES("integerDisplayAffixes", "native_definition_prefix_and_suffix");
         final String key, coverage;
-        Metadata(String key, String coverage) { this.key = key; this.coverage = coverage; }
+
+        Metadata(String key, String coverage) {
+            this.key = key;
+            this.coverage = coverage;
+        }
     }
+
     static final Metadata[] METADATA = Metadata.values();
+
     interface Access extends NativeDeviceTarget.Access {
         Object read(Field field, Object object);
+
         boolean is(Kind kind, Object object);
+
         void documentThread();
+
         void requireModelThread(Object object);
+
         boolean parametersAvailable();
+
         boolean displayAvailable();
+
         boolean metadataAvailable(Metadata metadata);
     }
+
     private final Access a;
     private final NativeDeviceTarget targets;
-    GridSnapshotReader(Access access) { a = access; targets = new NativeDeviceTarget(access); }
+
+    GridSnapshotReader(Access access) {
+        a = access;
+        targets = new NativeDeviceTarget(access);
+    }
 
     JsonObject catalog(String query, int offset, int limit, Runnable check) {
-        a.documentThread(); check.run();
+        a.documentThread();
+        check.run();
         Object value = a.read(Field.CATALOG, null);
         if (!(value instanceof List<?>)) throw failure("grid_unavailable", "Native Grid catalog is not a list.");
         List<?> catalog = (List<?>) value;
-        if (catalog.size() > MAX_CATALOG) throw failure("grid_bounds_exceeded", "Native catalog exceeds 16384 entries; no partial catalog returned.");
+        if (catalog.size() > MAX_CATALOG)
+            throw failure("grid_bounds_exceeded", "Native catalog exceeds 16384 entries; no partial catalog returned.");
         List<CatalogEntry> matches = new ArrayList<>();
         List<CatalogEntry> everything = new ArrayList<>();
         for (Object entry : catalog) {
@@ -73,27 +164,36 @@ final class GridSnapshotReader {
             if (GridNames.matches(name, query)) matches.add(row);
         }
         matches.sort(Comparator.comparing((CatalogEntry x) -> x.name, String.CASE_INSENSITIVE_ORDER)
-                .thenComparing(x -> x.name).thenComparing(x -> x.id));
+                .thenComparing(x -> x.name)
+                .thenComparing(x -> x.id));
         JsonArray entries = new JsonArray();
         for (int i = offset; i < Math.min(matches.size(), offset + limit); i++) {
-            CatalogEntry entry = matches.get(i); JsonObject item = new JsonObject();
-            item.addProperty("typeId", entry.id); item.addProperty("name", entry.name); entries.add(item);
+            CatalogEntry entry = matches.get(i);
+            JsonObject item = new JsonObject();
+            item.addProperty("typeId", entry.id);
+            item.addProperty("name", entry.name);
+            entries.add(item);
         }
         JsonObject result = HostServices.observed();
-        result.add("entries", entries); result.add("window", window(offset, limit, matches.size()));
+        result.add("entries", entries);
+        result.add("window", window(offset, limit, matches.size()));
         if (matches.isEmpty() && !query.trim().isEmpty()) {
             Map<String, CatalogEntry> byName = new LinkedHashMap<>();
             for (CatalogEntry row : everything) byName.putIfAbsent(row.name, row);
             JsonArray suggestions = new JsonArray();
             for (String name : GridNames.nearest(byName.keySet(), query, GridNames.SUGGESTIONS)) {
                 JsonObject item = new JsonObject();
-                item.addProperty("typeId", byName.get(name).id); item.addProperty("name", name); suggestions.add(item);
+                item.addProperty("typeId", byName.get(name).id);
+                item.addProperty("name", name);
+                suggestions.add(item);
             }
             result.add("suggestions", suggestions);
         }
         result.addProperty("source", "native_module_catalog");
-        result.addProperty("nativeMutation", false); result.addProperty("nativeUndo", false);
-        check.run(); return result;
+        result.addProperty("nativeMutation", false);
+        result.addProperty("nativeUndo", false);
+        check.run();
+        return result;
     }
 
     JsonObject snapshot(Object proxy, UUID expectedTrackId, int offset, int limit, boolean parameters, Runnable check) {
@@ -101,52 +201,82 @@ final class GridSnapshotReader {
     }
 
     /** diagnostics adds native modelClass/path and constant coverage prose; moduleIds (lowercase UUIDs) selects rows. */
-    JsonObject snapshot(Object proxy, UUID expectedTrackId, int offset, int limit, boolean parameters,
-            boolean diagnostics, Set<String> moduleIds, Runnable check) {
+    JsonObject snapshot(
+            Object proxy,
+            UUID expectedTrackId,
+            int offset,
+            int limit,
+            boolean parameters,
+            boolean diagnostics,
+            Set<String> moduleIds,
+            Runnable check) {
         return snapshot(proxy, expectedTrackId, offset, limit, parameters, diagnostics, moduleIds, false, check);
     }
 
     /** fullSteps exposes up to 256 step-array entries instead of the first STEPS ones. */
-    JsonObject snapshot(Object proxy, UUID expectedTrackId, int offset, int limit, boolean parameters,
-            boolean diagnostics, Set<String> moduleIds, boolean fullSteps, Runnable check) {
-        a.documentThread(); check.run();
+    JsonObject snapshot(
+            Object proxy,
+            UUID expectedTrackId,
+            int offset,
+            int limit,
+            boolean parameters,
+            boolean diagnostics,
+            Set<String> moduleIds,
+            boolean fullSteps,
+            Runnable check) {
+        a.documentThread();
+        check.run();
         NativeTarget binding = target(proxy, expectedTrackId);
         Object graph = binding.graph;
-        State state = new State(check); state.full = fullSteps;
+        State state = new State(check);
+        state.full = fullSteps;
         List<Object> all = collect(Field.MODULES, graph, MAX_MODULES, state);
         IdentityHashMap<Object, String> ids = new IdentityHashMap<>();
         Set<String> seenIds = new HashSet<>();
         for (Object module : all) {
             state.check();
-            if (!a.is(Kind.MODULE, module)) { state.unsupported("unknown_graph_child"); continue; }
+            if (!a.is(Kind.MODULE, module)) {
+                state.unsupported("unknown_graph_child");
+                continue;
+            }
             a.requireModelThread(module);
-            if (a.read(Field.MODULE_GRAPH, module) != graph) throw failure("stale_context", "Grid module belongs to a different graph.");
+            if (a.read(Field.MODULE_GRAPH, module) != graph)
+                throw failure("stale_context", "Grid module belongs to a different graph.");
             String id = uuid(a.read(Field.INSTANCE_ID, module));
-            if (!seenIds.add(id)) throw failure("grid_unavailable", "Duplicate native module UUID; cannot identify cable endpoints safely.");
+            if (!seenIds.add(id))
+                throw failure(
+                        "grid_unavailable", "Duplicate native module UUID; cannot identify cable endpoints safely.");
             ids.put(module, id);
         }
         JsonArray modules = new JsonArray(), connections = new JsonArray();
         List<Object> window = all;
         JsonArray missing = new JsonArray();
         if (moduleIds != null) {
-            window = new ArrayList<>(); Set<String> found = new HashSet<>();
+            window = new ArrayList<>();
+            Set<String> found = new HashSet<>();
             for (Object module : all) {
                 String id = ids.get(module);
-                if (id != null && moduleIds.contains(id)) { window.add(module); found.add(id); }
+                if (id != null && moduleIds.contains(id)) {
+                    window.add(module);
+                    found.add(id);
+                }
             }
             for (String id : new TreeSet<>(moduleIds)) if (!found.contains(id)) missing.add(id);
             state.unsupported("module_filter_partial");
         }
         int end = Math.min(window.size(), offset + limit);
         for (int i = offset; i < end; i++) {
-            Object module = window.get(i); state.check();
+            Object module = window.get(i);
+            state.check();
             if (!ids.containsKey(module)) continue;
             JsonObject item = new JsonObject();
-            if (diagnostics) item.addProperty("modelClass", text(module.getClass().getName()));
+            if (diagnostics)
+                item.addProperty("modelClass", text(module.getClass().getName()));
             item.addProperty("instanceId", ids.get(module));
             item.addProperty("localKey", text(a.read(Field.LOCAL_KEY, module)));
             metadataText(item, "name", Field.MODULE_NAME, module, Metadata.MODULE_NAMES, state, "module_name");
-            metadataText(item, "customName", Field.CUSTOM_NAME, module, Metadata.MODULE_NAMES, state, "module_custom_name");
+            metadataText(
+                    item, "customName", Field.CUSTOM_NAME, module, Metadata.MODULE_NAMES, state, "module_custom_name");
             item.addProperty("x", integer(a.read(Field.X, module)));
             item.addProperty("y", integer(a.read(Field.Y, module)));
             metadataDimension(item, "width", Field.WIDTH, module, state);
@@ -154,7 +284,8 @@ final class GridSnapshotReader {
             Object descriptor = a.read(Field.DESCRIPTOR, module);
             Object typeId = descriptor == null ? null : a.read(Field.TYPE_ID, descriptor);
             if (descriptor == null) {
-                item.add("typeId", JsonNull.INSTANCE); state.unsupported("module_type_id_unavailable");
+                item.add("typeId", JsonNull.INSTANCE);
+                state.unsupported("module_type_id_unavailable");
             } else item.addProperty("typeId", uuid(typeId));
             Object entry = metadataValue(Field.TYPE_ENTRY, typeId, Metadata.TYPE_NAMES, state, "module_type_name");
             metadataText(item, "typeName", Field.TYPE_NAME, entry, Metadata.TYPE_NAMES, state, "module_type_name");
@@ -178,7 +309,8 @@ final class GridSnapshotReader {
                 }
                 if (internal > 0) item.addProperty("internalChildren", internal);
             } else state.unsupported(parameters ? "typed_parameter_binding_unavailable" : "parameters_not_requested");
-            item.add("parameters", values); modules.add(item);
+            item.add("parameters", values);
+            modules.add(item);
         }
         if (offset != 0 || window.size() > limit) state.unsupported("module_window_partial");
         if (parameters && !a.parametersAvailable()) state.unsupported("typed_parameter_binding_unavailable");
@@ -189,45 +321,74 @@ final class GridSnapshotReader {
         JsonObject deviceMetadata = new JsonObject(), graphMetadata = new JsonObject();
         deviceMetadata.addProperty("modelClass", text(binding.target.getClass().getName()));
         graphMetadata.addProperty("modelClass", text(graph.getClass().getName()));
-        if (diagnostics) { result.add("device", deviceMetadata); result.add("graph", graphMetadata); }
-        result.add("modules", modules); result.add("connections", connections);
+        if (diagnostics) {
+            result.add("device", deviceMetadata);
+            result.add("graph", graphMetadata);
+        }
+        result.add("modules", modules);
+        result.add("connections", connections);
         if (missing.size() > 0) result.add("missingModuleIds", missing);
         result.add("window", window(offset, limit, window.size()));
         result.addProperty("complete", state.unsupported.isEmpty());
         JsonObject coverage = new JsonObject();
         if (diagnostics) {
-        coverage.addProperty("structure", "mapped_modules_and_ports");
-        coverage.addProperty("nativeOwningTrack", "device_ancestor_channel_uuid_checked_before_and_after_capture");
-        coverage.addProperty("connections", "incoming_to_returned_modules_same_graph_only");
-        coverage.addProperty("parameters", !parameters ? "not_requested" : a.parametersAvailable() ? "known_typed_children_only" : "unavailable");
-        coverage.addProperty("display", a.displayAvailable() ? "native_reader_unverified_semantics" : "unsupported");
-        for (Metadata metadata : METADATA)
-            coverage.addProperty(metadata.key, a.metadataAvailable(metadata) ? metadata.coverage : "unsupported");
-        coverage.addProperty("positionUnits", "native_grid_coordinates_unverified");
-        coverage.addProperty("nestedChildren", "not_traversed");
-        result.add("coverage", coverage);
+            coverage.addProperty("structure", "mapped_modules_and_ports");
+            coverage.addProperty("nativeOwningTrack", "device_ancestor_channel_uuid_checked_before_and_after_capture");
+            coverage.addProperty("connections", "incoming_to_returned_modules_same_graph_only");
+            coverage.addProperty(
+                    "parameters",
+                    !parameters
+                            ? "not_requested"
+                            : a.parametersAvailable() ? "known_typed_children_only" : "unavailable");
+            coverage.addProperty(
+                    "display", a.displayAvailable() ? "native_reader_unverified_semantics" : "unsupported");
+            for (Metadata metadata : METADATA)
+                coverage.addProperty(metadata.key, a.metadataAvailable(metadata) ? metadata.coverage : "unsupported");
+            coverage.addProperty("positionUnits", "native_grid_coordinates_unverified");
+            coverage.addProperty("nestedChildren", "not_traversed");
+            result.add("coverage", coverage);
         }
-        JsonArray unsupported = new JsonArray(); state.unsupported.forEach(unsupported::add); result.add("unsupported", unsupported);
+        JsonArray unsupported = new JsonArray();
+        state.unsupported.forEach(unsupported::add);
+        result.add("unsupported", unsupported);
         if (diagnostics) result.addProperty("nativeRevisionAvailable", false);
-        if (diagnostics) result.addProperty("identityCaveat", "instanceId is a current native UUID, not typeId or localKey; observed UUIDs changed across project reopen and must be reacquired. localKey and paths may change after edits. Native owning-track channel UUID is corroborated before and after capture, including the SCA alias mapping. Device index and name remain public observations that can lag native rebinding; same-track same-name replacement is not distinguished. No persistent device identity, native device-position corroboration, native ABA detection, native revision or cross-request atomicity.");
-        result.addProperty("nativeMutation", false); result.addProperty("nativeUndo", false);
+        if (diagnostics)
+            result.addProperty(
+                    "identityCaveat",
+                    "instanceId is a current native UUID, not typeId or localKey; observed UUIDs changed across project reopen and must be reacquired. localKey and paths may change after edits. Native owning-track channel UUID is corroborated before and after capture, including the SCA alias mapping. Device index and name remain public observations that can lag native rebinding; same-track same-name replacement is not distinguished. No persistent device identity, native device-position corroboration, native ABA detection, native revision or cross-request atomicity.");
+        result.addProperty("nativeMutation", false);
+        result.addProperty("nativeUndo", false);
         return result;
     }
 
-    JsonObject parameter(Object proxy, UUID expectedTrackId, UUID moduleId, String parameterId,
-            GridParameterContext contexts, Runnable check) {
+    JsonObject parameter(
+            Object proxy,
+            UUID expectedTrackId,
+            UUID moduleId,
+            String parameterId,
+            GridParameterContext contexts,
+            Runnable check) {
         return parameter(proxy, expectedTrackId, moduleId, parameterId, contexts, false, check);
     }
 
-    JsonObject parameter(Object proxy, UUID expectedTrackId, UUID moduleId, String parameterId,
-            GridParameterContext contexts, boolean fullSteps, Runnable check) {
-        if (contexts == null) throw failure("grid_unavailable", "Required parameter inspection bindings are unavailable.");
+    JsonObject parameter(
+            Object proxy,
+            UUID expectedTrackId,
+            UUID moduleId,
+            String parameterId,
+            GridParameterContext contexts,
+            boolean fullSteps,
+            Runnable check) {
+        if (contexts == null)
+            throw failure("grid_unavailable", "Required parameter inspection bindings are unavailable.");
         ParameterBinding binding = bindParameter(proxy, expectedTrackId, moduleId, parameterId, fullSteps, check);
-        GridParameterContext.Capture context = contexts.capture(binding.device, binding.graph, binding.module,
-                binding.parameter, binding.kind, check);
+        GridParameterContext.Capture context =
+                contexts.capture(binding.device, binding.graph, binding.module, binding.parameter, binding.kind, check);
         ParameterBinding coupled = binding.kind == Kind.PANEL_BOOLEAN ? bindBipolarParameter(binding) : null;
-        GridParameterContext.Capture coupledContext = coupled == null ? null
-                : contexts.capture(coupled.device, coupled.graph, coupled.module, coupled.parameter, coupled.kind, check);
+        GridParameterContext.Capture coupledContext = coupled == null
+                ? null
+                : contexts.capture(
+                        coupled.device, coupled.graph, coupled.module, coupled.parameter, coupled.kind, check);
         JsonObject value = parameterValue(binding);
         JsonObject coupledValue = coupled == null ? null : parameterValue(coupled);
         guardParameter(binding);
@@ -235,7 +396,14 @@ final class GridSnapshotReader {
         guardParameter(binding);
         if (coupled != null) {
             guardBipolarParameter(binding, coupled);
-            contexts.guard(coupledContext, coupled.device, coupled.graph, coupled.module, coupled.parameter, coupled.kind, check);
+            contexts.guard(
+                    coupledContext,
+                    coupled.device,
+                    coupled.graph,
+                    coupled.module,
+                    coupled.parameter,
+                    coupled.kind,
+                    check);
             guardBipolarParameter(binding, coupled);
         }
         JsonObject result = parameterResult(binding, value);
@@ -244,20 +412,25 @@ final class GridSnapshotReader {
             result.add("coupledParameter", coupledValue);
             result.add("coupledEditContext", coupledContext.json);
         }
-        result.addProperty("nativeMutation", false); result.addProperty("nativeUndo", false);
+        result.addProperty("nativeMutation", false);
+        result.addProperty("nativeUndo", false);
         return result;
     }
 
-    ParameterBinding bindParameter(Object proxy, UUID expectedTrackId, UUID moduleId, String parameterId, Runnable check) {
+    ParameterBinding bindParameter(
+            Object proxy, UUID expectedTrackId, UUID moduleId, String parameterId, Runnable check) {
         return bindParameter(proxy, expectedTrackId, moduleId, parameterId, false, check);
     }
 
-    ParameterBinding bindParameter(Object proxy, UUID expectedTrackId, UUID moduleId, String parameterId,
-            boolean fullSteps, Runnable check) {
-        a.documentThread(); check.run();
-        if (!a.parametersAvailable()) throw failure("grid_unavailable", "Required typed parameter bindings are unavailable.");
+    ParameterBinding bindParameter(
+            Object proxy, UUID expectedTrackId, UUID moduleId, String parameterId, boolean fullSteps, Runnable check) {
+        a.documentThread();
+        check.run();
+        if (!a.parametersAvailable())
+            throw failure("grid_unavailable", "Required typed parameter bindings are unavailable.");
         NativeTarget target = target(proxy, expectedTrackId);
-        State state = new State(check); state.full = fullSteps;
+        State state = new State(check);
+        state.full = fullSteps;
         Object module = findModule(target.graph, moduleId, state);
         Object child = findParameter(module, parameterId, state);
         Kind kind = parameterKind(child);
@@ -279,14 +452,23 @@ final class GridSnapshotReader {
     ParameterBinding bindBipolarParameter(ParameterBinding panel) {
         Object child = findBipolarParameter(panel);
         String id = text(a.read(Field.PARAMETER_ID, child));
-        ParameterBinding result = new ParameterBinding(panel.proxy, panel.trackId, panel.moduleId, id,
-                panel.target, panel.module, child, Kind.FLOAT, panel.state);
+        ParameterBinding result = new ParameterBinding(
+                panel.proxy,
+                panel.trackId,
+                panel.moduleId,
+                id,
+                panel.target,
+                panel.module,
+                child,
+                Kind.FLOAT,
+                panel.state);
         guardParameter(result);
         return result;
     }
 
     void guardBipolarParameter(ParameterBinding panel, ParameterBinding coupled) {
-        guardParameter(panel); guardParameter(coupled);
+        guardParameter(panel);
+        guardParameter(coupled);
         if (findBipolarParameter(panel) != coupled.parameter)
             throw failure("stale_context", "Boolean panel's unique native bipolar reference changed.");
     }
@@ -303,11 +485,15 @@ final class GridSnapshotReader {
             if (a.read(Field.OWNER_MODULE, child) != panel.module || parameterKind(child) != Kind.FLOAT)
                 throw failure("stale_context", "Linked bipolar parameter belongs to another module or family.");
             if (found != null)
-                throw failure("grid_unavailable", "Boolean panel has multiple linked bipolar parameters; coupled editing is unsupported.");
+                throw failure(
+                        "grid_unavailable",
+                        "Boolean panel has multiple linked bipolar parameters; coupled editing is unsupported.");
             found = child;
         }
         if (found == null)
-            throw failure("grid_unavailable", "Boolean panel requires one same-module exact mapped bipolar scalar reference for inspection or editing.");
+            throw failure(
+                    "grid_unavailable",
+                    "Boolean panel requires one same-module exact mapped bipolar scalar reference for inspection or editing.");
         return found;
     }
 
@@ -320,26 +506,41 @@ final class GridSnapshotReader {
         Kind kind = parameterKind(child);
         return kind == Kind.FLOAT || kind == Kind.INTEGER || kind == Kind.ENUM || kind == Kind.BOOLEAN ? kind : null;
     }
+
     JsonObject detachedParameter(Object child, Runnable check, Collection<String> unsupported) {
-        if (detachedKind(child) == null) throw failure("unsupported_scope", "Only float, integer, enum and boolean controls are supported here.");
-        if (a.read(Field.OWNER_MODULE, child) != null) throw failure("stale_context", "Control belongs to a Grid module, not a modulator.");
+        if (detachedKind(child) == null)
+            throw failure("unsupported_scope", "Only float, integer, enum and boolean controls are supported here.");
+        if (a.read(Field.OWNER_MODULE, child) != null)
+            throw failure("stale_context", "Control belongs to a Grid module, not a modulator.");
         State state = new State(check);
         JsonObject result = parameter(child, null, false, state);
         unsupported.addAll(state.unsupported);
         return result;
     }
     /** Module instance UUID and parameter id of a control inside a Grid module, or null when it is not in one. */
-    Object ownerModule(Object child) { return a.read(Field.OWNER_MODULE, child); }
-    String moduleId(Object module) { return uuid(a.read(Field.INSTANCE_ID, module)); }
-    String parameterId(Object child) { return text(a.read(Field.PARAMETER_ID, child)); }
-    Object moduleGraph(Object module) { return a.read(Field.MODULE_GRAPH, module); }
+    Object ownerModule(Object child) {
+        return a.read(Field.OWNER_MODULE, child);
+    }
+
+    String moduleId(Object module) {
+        return uuid(a.read(Field.INSTANCE_ID, module));
+    }
+
+    String parameterId(Object child) {
+        return text(a.read(Field.PARAMETER_ID, child));
+    }
+
+    Object moduleGraph(Object module) {
+        return a.read(Field.MODULE_GRAPH, module);
+    }
 
     JsonObject parameterResult(ParameterBinding binding, JsonObject value) {
         JsonObject result = HostServices.observed();
         result.addProperty("moduleId", binding.moduleId.toString());
         result.add("parameter", value);
         result.addProperty("complete", binding.state.unsupported.isEmpty());
-        JsonArray unsupported = new JsonArray(); binding.state.unsupported.forEach(unsupported::add);
+        JsonArray unsupported = new JsonArray();
+        binding.state.unsupported.forEach(unsupported::add);
         result.add("unsupported", unsupported);
         return result;
     }
@@ -353,11 +554,28 @@ final class GridSnapshotReader {
         private final String parameterId;
         private final NativeTarget target;
         private final State state;
-        ParameterBinding(Object proxy, UUID trackId, UUID moduleId, String parameterId, NativeTarget target,
-                Object module, Object parameter, Kind kind, State state) {
-            this.proxy = proxy; this.trackId = trackId; this.moduleId = moduleId; this.parameterId = parameterId;
-            this.target = target; this.device = target.target; this.graph = target.graph;
-            this.module = module; this.parameter = parameter; this.kind = kind; this.state = state;
+
+        ParameterBinding(
+                Object proxy,
+                UUID trackId,
+                UUID moduleId,
+                String parameterId,
+                NativeTarget target,
+                Object module,
+                Object parameter,
+                Kind kind,
+                State state) {
+            this.proxy = proxy;
+            this.trackId = trackId;
+            this.moduleId = moduleId;
+            this.parameterId = parameterId;
+            this.target = target;
+            this.device = target.target;
+            this.graph = target.graph;
+            this.module = module;
+            this.parameter = parameter;
+            this.kind = kind;
+            this.state = state;
         }
     }
 
@@ -373,7 +591,9 @@ final class GridSnapshotReader {
                 throw failure("stale_context", "Requested module moved outside the target graph.");
             found = module;
         }
-        if (found == null) throw failure("stale_context", "Requested module UUID is no longer in the target graph; reacquire grid.get.");
+        if (found == null)
+            throw failure(
+                    "stale_context", "Requested module UUID is no longer in the target graph; reacquire grid.get.");
         return found;
     }
 
@@ -381,7 +601,9 @@ final class GridSnapshotReader {
         Object found = null;
         for (Object child : collect(Field.CHILDREN, module, MAX_CHILDREN, state)) {
             state.check();
-            if (!a.is(Kind.PARAMETER, child) && !a.is(Kind.PANEL_BOOLEAN, child) && !a.is(Kind.PANEL_STRING, child)
+            if (!a.is(Kind.PARAMETER, child)
+                    && !a.is(Kind.PANEL_BOOLEAN, child)
+                    && !a.is(Kind.PANEL_STRING, child)
                     && !a.is(Kind.STEP_ARRAY, child)) continue;
             a.requireModelThread(child);
             if (!id.equals(text(a.read(Field.PARAMETER_ID, child)))) continue;
@@ -390,7 +612,8 @@ final class GridSnapshotReader {
                 throw failure("stale_context", "Requested parameter moved outside the selected module.");
             found = child;
         }
-        if (found == null) throw failure("stale_context", "Requested exact parameter ID is no longer in the selected module.");
+        if (found == null)
+            throw failure("stale_context", "Requested exact parameter ID is no longer in the selected module.");
         return found;
     }
 
@@ -398,6 +621,7 @@ final class GridSnapshotReader {
     List<Object> topologyModules(Object graph, Runnable check) {
         return topologyModules(graph, new State(check));
     }
+
     List<Object> topologyModules(Object graph, State state) {
         List<Object> modules = collect(Field.MODULES, graph, GridTopologyContext.MAX_MODULES, state);
         Set<UUID> ids = new HashSet<>();
@@ -428,7 +652,8 @@ final class GridSnapshotReader {
             if (!name.equals(a.read(Field.MODULE_NAME, module))) continue;
             Object id = a.read(Field.INSTANCE_ID, module);
             if (!(id instanceof UUID)) throw failure("grid_unavailable", "Native module UUID is unavailable.");
-            if (found != null) throw failure("stale_context", "Several modules are named \"" + name + "\"; use moduleId.");
+            if (found != null)
+                throw failure("stale_context", "Several modules are named \"" + name + "\"; use moduleId.");
             found = (UUID) id;
         }
         if (found == null) throw failure("stale_context", "No module is named \"" + name + "\"; check grid.get names.");
@@ -437,22 +662,28 @@ final class GridSnapshotReader {
 
     /** Native effective name when candidate is a mapped Grid module, else null. */
     String effectiveModuleName(Object candidate) {
-        if (candidate == null || !a.is(Kind.MODULE, candidate) || !a.metadataAvailable(Metadata.MODULE_NAMES)) return null;
+        if (candidate == null || !a.is(Kind.MODULE, candidate) || !a.metadataAvailable(Metadata.MODULE_NAMES))
+            return null;
         Object name = a.read(Field.MODULE_NAME, candidate);
         return name instanceof String ? (String) name : null;
     }
 
     /** Document-thread-checked device target for device-level (non-module) operations such as voicing. */
     NativeTarget bindTarget(Object proxy, UUID expectedTrackId, Runnable check) {
-        a.documentThread(); check.run();
+        a.documentThread();
+        check.run();
         return target(proxy, expectedTrackId);
     }
-    void requireModelThread(Object model) { a.requireModelThread(model); }
+
+    void requireModelThread(Object model) {
+        a.requireModelThread(model);
+    }
 
     NativeTarget target(Object proxy, UUID expectedTrackId) {
         NativeDeviceTarget.Capture capture;
-        try { capture = targets.capture(proxy, expectedTrackId, () -> {}); }
-        catch (RpcException error) {
+        try {
+            capture = targets.capture(proxy, expectedTrackId, () -> {});
+        } catch (RpcException error) {
             if ("unsupported_scope".equals(error.code))
                 throw failure("not_grid", "Explicit native device has no mapped Grid graph accessor.");
             throw error;
@@ -475,8 +706,11 @@ final class GridSnapshotReader {
     static final class NativeTarget {
         final Object target, graph;
         final NativeDeviceTarget.Capture ownership;
+
         NativeTarget(NativeDeviceTarget.Capture ownership, Object graph) {
-            this.ownership = ownership; this.target = ownership.device; this.graph = graph;
+            this.ownership = ownership;
+            this.target = ownership.device;
+            this.graph = graph;
         }
     }
 
@@ -485,41 +719,65 @@ final class GridSnapshotReader {
         return null;
     }
 
-
-    private JsonArray ports(Object module, Object graph, IdentityHashMap<Object, String> ids,
-            boolean input, JsonArray connections, Set<Object> enumeratedPorts, boolean diagnostics, State state) {
-        JsonArray ports = new JsonArray(); Set<String> keys = new HashSet<>();
+    private JsonArray ports(
+            Object module,
+            Object graph,
+            IdentityHashMap<Object, String> ids,
+            boolean input,
+            JsonArray connections,
+            Set<Object> enumeratedPorts,
+            boolean diagnostics,
+            State state) {
+        JsonArray ports = new JsonArray();
+        Set<String> keys = new HashSet<>();
         for (Object port : collect(input ? Field.INPUTS : Field.OUTPUTS, module, MAX_CHILDREN, state)) {
             state.check();
-            if (!a.is(input ? Kind.INPUT : Kind.OUTPUT, port)) { state.unsupported("unknown_port_type"); continue; }
+            if (!a.is(input ? Kind.INPUT : Kind.OUTPUT, port)) {
+                state.unsupported("unknown_port_type");
+                continue;
+            }
             a.requireModelThread(port);
-            if (a.read(Field.OWNER_MODULE, port) != module) throw failure("stale_context", "Port owner differs from its enumerated module.");
+            if (a.read(Field.OWNER_MODULE, port) != module)
+                throw failure("stale_context", "Port owner differs from its enumerated module.");
             String key = text(a.read(input ? Field.INPUT_KEY : Field.OUTPUT_KEY, port));
-            if (!keys.add(key)) throw failure("grid_unavailable", "Duplicate native port key; endpoint identity is ambiguous.");
+            if (!keys.add(key))
+                throw failure("grid_unavailable", "Duplicate native port key; endpoint identity is ambiguous.");
             enumeratedPorts.add(port);
-            JsonObject item = new JsonObject(); item.addProperty("key", key);
+            JsonObject item = new JsonObject();
+            item.addProperty("key", key);
             if (diagnostics) {
                 item.addProperty("modelClass", text(port.getClass().getName()));
                 item.addProperty("path", text(a.read(Field.PATH, port)));
             }
-            metadataText(item, "name", input ? Field.INPUT_NAME : Field.OUTPUT_NAME, port,
-                    Metadata.PORT_NAMES, state, input ? "input_name" : "output_name");
+            metadataText(
+                    item,
+                    "name",
+                    input ? Field.INPUT_NAME : Field.OUTPUT_NAME,
+                    port,
+                    Metadata.PORT_NAMES,
+                    state,
+                    input ? "input_name" : "output_name");
             ports.add(item);
             if (!input) continue;
             Object source = a.read(Field.INPUT_SOURCE, port);
             item.addProperty("connected", source != null);
             if (source == null) continue;
-            if (!a.is(Kind.OUTPUT, source)) { state.unsupported("unknown_connection_source_type"); continue; }
+            if (!a.is(Kind.OUTPUT, source)) {
+                state.unsupported("unknown_connection_source_type");
+                continue;
+            }
             a.requireModelThread(source);
             Object owner = a.read(Field.OWNER_MODULE, source);
             if (!a.is(Kind.MODULE, owner) || a.read(Field.MODULE_GRAPH, owner) != graph || !ids.containsKey(owner)) {
-                state.unsupported("connection_source_outside_graph"); continue;
+                state.unsupported("connection_source_outside_graph");
+                continue;
             }
             a.requireModelThread(owner);
             JsonObject connection = new JsonObject();
             connection.addProperty("sourceModuleId", ids.get(owner));
             connection.addProperty("sourcePortKey", text(a.read(Field.OUTPUT_KEY, source)));
-            connection.addProperty("targetModuleId", ids.get(module)); connection.addProperty("targetPortKey", key);
+            connection.addProperty("targetModuleId", ids.get(module));
+            connection.addProperty("targetPortKey", key);
             connections.add(connection);
         }
         return ports;
@@ -529,90 +787,151 @@ final class GridSnapshotReader {
         JsonObject result = new JsonObject();
         Kind kind = parameterKind(child);
         if (kind == null && isInternal(child)) {
-            result.addProperty("supported", false); result.addProperty("reason", "internal_child_model");
-            result.addProperty("internal", true); result.addProperty("modelClass", child.getClass().getName());
+            result.addProperty("supported", false);
+            result.addProperty("reason", "internal_child_model");
+            result.addProperty("internal", true);
+            result.addProperty("modelClass", child.getClass().getName());
             return result;
         }
         if (kind == null) {
-            result.addProperty("supported", false); result.addProperty("reason", "unknown_child_model");
-            result.addProperty("modelClass", child == null ? "null" : child.getClass().getName());
-            state.unsupported("unknown_child_model"); return result;
+            result.addProperty("supported", false);
+            result.addProperty("reason", "unknown_child_model");
+            result.addProperty(
+                    "modelClass", child == null ? "null" : child.getClass().getName());
+            state.unsupported("unknown_child_model");
+            return result;
         }
         a.requireModelThread(child);
-        if (a.read(Field.OWNER_MODULE, child) != module) throw failure("stale_context", "Parameter belongs to a different module.");
+        if (a.read(Field.OWNER_MODULE, child) != module)
+            throw failure("stale_context", "Parameter belongs to a different module.");
         if (kind == Kind.STEP_ARRAY) return stepArray(child, module, diagnostics, state);
         boolean panel = kind == Kind.PANEL_BOOLEAN || kind == Kind.PANEL_STRING;
         String panelFamily = kind == Kind.PANEL_STRING ? "string_panel" : "boolean_panel";
         result.addProperty("supported", true);
-        result.addProperty("kind", panel ? (kind == Kind.PANEL_STRING ? "string" : "boolean") : kind.name().toLowerCase(Locale.ROOT));
+        result.addProperty(
+                "kind",
+                panel
+                        ? (kind == Kind.PANEL_STRING ? "string" : "boolean")
+                        : kind.name().toLowerCase(Locale.ROOT));
         if (diagnostics) result.addProperty("path", text(a.read(Field.PATH, child)));
         if (panel) {
             result.addProperty("controlFamily", panelFamily);
             result.addProperty("parameterId", text(a.read(Field.PARAMETER_ID, child)));
-            result.add("name", JsonNull.INSTANCE); result.add("shortName", JsonNull.INSTANCE);
+            result.add("name", JsonNull.INSTANCE);
+            result.add("shortName", JsonNull.INSTANCE);
             state.unsupported(panelFamily + "_labels_unmapped");
         } else {
-            metadataText(result, "parameterId", Field.PARAMETER_ID, child, Metadata.PARAMETER_NAMES, state, "parameter_id");
-            metadataText(result, "name", Field.PARAMETER_NAME, child, Metadata.PARAMETER_NAMES, state, "parameter_name");
-            metadataText(result, "shortName", Field.SHORT_NAME, child, Metadata.PARAMETER_NAMES, state, "parameter_short_name");
+            metadataText(
+                    result, "parameterId", Field.PARAMETER_ID, child, Metadata.PARAMETER_NAMES, state, "parameter_id");
+            metadataText(
+                    result, "name", Field.PARAMETER_NAME, child, Metadata.PARAMETER_NAMES, state, "parameter_name");
+            metadataText(
+                    result,
+                    "shortName",
+                    Field.SHORT_NAME,
+                    child,
+                    Metadata.PARAMETER_NAMES,
+                    state,
+                    "parameter_short_name");
         }
         switch (kind) {
             case PANEL_STRING:
-                result.addProperty("value", text(a.read(Field.STRING_VALUE, child))); break;
+                result.addProperty("value", text(a.read(Field.STRING_VALUE, child)));
+                break;
             case FLOAT: {
                 double value = finite(a.read(Field.FLOAT_VALUE, child));
                 Object definition = a.read(Field.FLOAT_DEFINITION, child);
-                double min = finite(a.read(Field.FLOAT_MIN, definition)), max = finite(a.read(Field.FLOAT_MAX, definition));
+                double min = finite(a.read(Field.FLOAT_MIN, definition)),
+                        max = finite(a.read(Field.FLOAT_MAX, definition));
                 Object unit = metadataValue(Field.FLOAT_UNIT, definition, Metadata.FLOAT_UNITS, state, "numeric_unit");
-                metadataText(result, "numericUnit", Field.UNIT_TOKEN, unit, Metadata.FLOAT_UNITS, state, "numeric_unit");
-                range(min, max); result.addProperty("value", value); result.addProperty("minimum", min); result.addProperty("maximum", max); break;
+                metadataText(
+                        result, "numericUnit", Field.UNIT_TOKEN, unit, Metadata.FLOAT_UNITS, state, "numeric_unit");
+                range(min, max);
+                result.addProperty("value", value);
+                result.addProperty("minimum", min);
+                result.addProperty("maximum", max);
+                break;
             }
             case PANEL_BOOLEAN:
             case BOOLEAN: {
                 Object value = a.read(Field.BOOLEAN_VALUE, child);
                 if (!(value instanceof Boolean)) throw failure("grid_unavailable", "Invalid boolean parameter value.");
-                result.addProperty("value", (Boolean) value); break;
+                result.addProperty("value", (Boolean) value);
+                break;
             }
             case INTEGER: {
                 int value = integer(a.read(Field.INTEGER_VALUE, child));
                 Object definition = a.read(Field.INTEGER_DEFINITION, child);
-                int min = integer(a.read(Field.INTEGER_MIN, definition)), max = integer(a.read(Field.INTEGER_MAX, definition));
-                metadataText(result, "displayPrefix", Field.INTEGER_PREFIX, definition, Metadata.INTEGER_AFFIXES, state, "integer_display_prefix");
-                metadataText(result, "displaySuffix", Field.INTEGER_SUFFIX, definition, Metadata.INTEGER_AFFIXES, state, "integer_display_suffix");
-                range(min, max); result.addProperty("value", value); result.addProperty("minimum", min); result.addProperty("maximum", max); break;
+                int min = integer(a.read(Field.INTEGER_MIN, definition)),
+                        max = integer(a.read(Field.INTEGER_MAX, definition));
+                metadataText(
+                        result,
+                        "displayPrefix",
+                        Field.INTEGER_PREFIX,
+                        definition,
+                        Metadata.INTEGER_AFFIXES,
+                        state,
+                        "integer_display_prefix");
+                metadataText(
+                        result,
+                        "displaySuffix",
+                        Field.INTEGER_SUFFIX,
+                        definition,
+                        Metadata.INTEGER_AFFIXES,
+                        state,
+                        "integer_display_suffix");
+                range(min, max);
+                result.addProperty("value", value);
+                result.addProperty("minimum", min);
+                result.addProperty("maximum", max);
+                break;
             }
             case ENUM: {
-                int value = integer(a.read(Field.ENUM_VALUE, child)); result.addProperty("value", value);
+                int value = integer(a.read(Field.ENUM_VALUE, child));
+                result.addProperty("value", value);
                 Object definition = a.read(Field.ENUM_DEFINITION, child);
                 Object options = a.read(Field.OPTIONS, definition);
                 if (!(options instanceof List<?>)) throw failure("grid_unavailable", "Invalid native enum choices.");
                 List<?> list = (List<?>) options;
                 if (list.size() > MAX_OPTIONS) throw failure("grid_bounds_exceeded", "Enum exceeds 256 choices.");
-                JsonArray choices = new JsonArray(); boolean found = false; Set<Integer> seen = new HashSet<>();
+                JsonArray choices = new JsonArray();
+                boolean found = false;
+                Set<Integer> seen = new HashSet<>();
                 for (Object option : list) {
                     state.check();
                     if (!a.is(Kind.OPTION, option)) throw failure("grid_unavailable", "Unknown enum option model.");
                     int number = integer(a.read(Field.OPTION_VALUE, option));
                     if (!seen.add(number)) throw failure("grid_unavailable", "Duplicate native enum choice values.");
                     found |= number == value;
-                    JsonObject choice = new JsonObject(); choice.addProperty("value", number);
-                    choice.addProperty("label", text(a.read(Field.OPTION_LABEL, option))); choices.add(choice);
+                    JsonObject choice = new JsonObject();
+                    choice.addProperty("value", number);
+                    choice.addProperty("label", text(a.read(Field.OPTION_LABEL, option)));
+                    choices.add(choice);
                 }
-                result.add("options", choices); result.addProperty("valueInOptions", found);
-                if (!found) state.unsupported("enum_value_not_in_options"); break;
+                result.add("options", choices);
+                result.addProperty("valueInOptions", found);
+                if (!found) state.unsupported("enum_value_not_in_options");
+                break;
             }
-            default: throw new AssertionError(kind);
+            default:
+                throw new AssertionError(kind);
         }
-        if (panel) { result.add("display", JsonNull.INSTANCE); state.unsupported(panelFamily + "_display_unmapped"); }
-        else if (a.displayAvailable()) result.addProperty("display", text(a.read(Field.DISPLAY, child)));
-        else { result.add("display", JsonNull.INSTANCE); state.unsupported("parameter_display_unavailable"); }
+        if (panel) {
+            result.add("display", JsonNull.INSTANCE);
+            state.unsupported(panelFamily + "_display_unmapped");
+        } else if (a.displayAvailable()) result.addProperty("display", text(a.read(Field.DISPLAY, child)));
+        else {
+            result.add("display", JsonNull.INSTANCE);
+            state.unsupported("parameter_display_unavailable");
+        }
         return result;
     }
 
     private static boolean isInternal(Object child) {
         if (child == null) return false;
         String name = child.getClass().getName();
-        return name.equals(INTERNAL_KIY) || INTERNAL_MODELS.contains(name.substring(Math.max(name.lastIndexOf('.'), name.lastIndexOf('$')) + 1));
+        return name.equals(INTERNAL_KIY)
+                || INTERNAL_MODELS.contains(name.substring(Math.max(name.lastIndexOf('.'), name.lastIndexOf('$')) + 1));
     }
 
     /** Entries exposed for a step array: the STEPS prefix by default, up to 256 with full. */
@@ -623,17 +942,20 @@ final class GridSnapshotReader {
     /** The native array as the model sees it: padded with zeros or truncated to its declared length. */
     static float[] effectiveSteps(Object raw, int length) {
         if (!(raw instanceof float[])) throw failure("grid_unavailable", "Native step array is not a float array.");
-        if (length < 0 || length > 65536) throw failure("grid_unavailable", "Native step array length is out of range.");
+        if (length < 0 || length > 65536)
+            throw failure("grid_unavailable", "Native step array length is out of range.");
         return java.util.Arrays.copyOf((float[]) raw, length);
     }
 
     private JsonObject stepArray(Object child, Object module, boolean diagnostics, State state) {
         JsonObject result = new JsonObject();
-        result.addProperty("supported", true); result.addProperty("kind", "steps");
+        result.addProperty("supported", true);
+        result.addProperty("kind", "steps");
         if (diagnostics) result.addProperty("path", text(a.read(Field.PATH, child)));
         result.addProperty("controlFamily", "step_array");
         result.addProperty("parameterId", text(a.read(Field.PARAMETER_ID, child)));
-        result.add("name", JsonNull.INSTANCE); result.add("shortName", JsonNull.INSTANCE);
+        result.add("name", JsonNull.INSTANCE);
+        result.add("shortName", JsonNull.INSTANCE);
         int length = integer(a.read(Field.STEP_LENGTH, child));
         float[] steps = effectiveSteps(a.read(Field.STEP_VALUES, child), length);
         Integer count = stepCount(module, state);
@@ -646,10 +968,12 @@ final class GridSnapshotReader {
         }
         if (state.full && length > STEP_FULL) state.unsupported("step_array_longer_than_full_window");
         result.addProperty("arrayLength", length);
-        if (count == null) result.add("stepCount", JsonNull.INSTANCE); else result.addProperty("stepCount", count);
+        if (count == null) result.add("stepCount", JsonNull.INSTANCE);
+        else result.addProperty("stepCount", count);
         result.add("values", values);
         result.addProperty("valuesComplete", exposed == length);
-        result.addProperty("minimum", STEP_MIN); result.addProperty("maximum", STEP_MAX);
+        result.addProperty("minimum", STEP_MIN);
+        result.addProperty("maximum", STEP_MAX);
         result.addProperty("valueDomain", "finite_sanity_bound_not_a_module_range");
         result.add("display", JsonNull.INSTANCE);
         return result;
@@ -671,7 +995,8 @@ final class GridSnapshotReader {
 
     private Object metadataValue(Field field, Object owner, Metadata metadata, State state, String reason) {
         if (!a.metadataAvailable(metadata) || owner == null) {
-            state.unsupported(reason + "_unavailable"); return null;
+            state.unsupported(reason + "_unavailable");
+            return null;
         }
         try {
             Object value = a.read(field, owner);
@@ -680,11 +1005,13 @@ final class GridSnapshotReader {
         } catch (RpcException error) {
             // Optional descriptive reads never suppress identity, ownership, cancellation or size failures.
             if (!"grid_unavailable".equals(error.code)) throw error;
-            state.unsupported(reason + "_read_failed"); return null;
+            state.unsupported(reason + "_read_failed");
+            return null;
         }
     }
-    private void metadataText(JsonObject result, String key, Field field, Object owner,
-            Metadata metadata, State state, String reason) {
+
+    private void metadataText(
+            JsonObject result, String key, Field field, Object owner, Metadata metadata, State state, String reason) {
         Object value = metadataValue(field, owner, metadata, state, reason);
         if (value instanceof String) result.addProperty(key, text(value));
         else {
@@ -704,53 +1031,85 @@ final class GridSnapshotReader {
 
     List<Object> collect(Field field, Object owner, int maximum, State state) {
         Object value = a.read(field, owner);
-        if (!(value instanceof Stream<?>)) throw failure("grid_unavailable", "Native " + field + " reader did not return a stream.");
+        if (!(value instanceof Stream<?>))
+            throw failure("grid_unavailable", "Native " + field + " reader did not return a stream.");
         List<Object> result = new ArrayList<>();
         try (Stream<?> stream = (Stream<?>) value) {
             Iterator<?> iterator = stream.iterator();
             while (iterator.hasNext()) {
                 state.check();
-                if (result.size() == maximum) throw failure("grid_bounds_exceeded", field + " exceeds traversal limit " + maximum + "; no fake partial graph returned.");
+                if (result.size() == maximum)
+                    throw failure(
+                            "grid_bounds_exceeded",
+                            field + " exceeds traversal limit " + maximum + "; no fake partial graph returned.");
                 result.add(iterator.next());
             }
         }
         return result;
     }
+
     static JsonObject window(int offset, int limit, int total) {
-        JsonObject result = HostServices.window(offset, limit, total); result.addProperty("limit", limit); return result;
+        JsonObject result = HostServices.window(offset, limit, total);
+        result.addProperty("limit", limit);
+        return result;
     }
+
     private static String uuid(Object value) {
         if (!(value instanceof UUID)) throw failure("grid_unavailable", "Native UUID identity is unavailable.");
         return value.toString();
     }
+
     static String text(Object value) {
         if (!(value instanceof String)) throw failure("grid_unavailable", "Native text field is unavailable.");
         String text = (String) value;
-        if (text.length() > MAX_TEXT) throw failure("grid_bounds_exceeded", "Native text field exceeds 1024 characters.");
+        if (text.length() > MAX_TEXT)
+            throw failure("grid_bounds_exceeded", "Native text field exceeds 1024 characters.");
         return text;
     }
+
     private static int integer(Object value) {
-        if (!(value instanceof Integer)) throw failure("grid_unavailable", "Native integer field has an unexpected type.");
+        if (!(value instanceof Integer))
+            throw failure("grid_unavailable", "Native integer field has an unexpected type.");
         return (Integer) value;
     }
+
     private static double finite(Object value) {
-        if (!(value instanceof Double) || !Double.isFinite((Double) value)) throw failure("grid_unavailable", "Native floating value is nonfinite or unsupported.");
+        if (!(value instanceof Double) || !Double.isFinite((Double) value))
+            throw failure("grid_unavailable", "Native floating value is nonfinite or unsupported.");
         return (Double) value;
     }
+
     private static void range(double min, double max) {
         if (min > max) throw failure("grid_unavailable", "Native parameter range is inverted.");
     }
+
     private static final class CatalogEntry {
         final String id, name;
-        CatalogEntry(String id, String name) { this.id = id; this.name = name; }
+
+        CatalogEntry(String id, String name) {
+            this.id = id;
+            this.name = name;
+        }
     }
+
     static final class State {
-        final Runnable guard; final Set<String> unsupported = new LinkedHashSet<>(); int work; boolean full;
-        State(Runnable guard) { this.guard = guard; }
+        final Runnable guard;
+        final Set<String> unsupported = new LinkedHashSet<>();
+        int work;
+        boolean full;
+
+        State(Runnable guard) {
+            this.guard = guard;
+        }
+
         void check() {
             guard.run();
-            if (++work > MAX_ITEMS) throw failure("grid_bounds_exceeded", "Grid read exceeds total traversal budget; reduce moduleLimit.");
+            if (++work > MAX_ITEMS)
+                throw failure("grid_bounds_exceeded", "Grid read exceeds total traversal budget; reduce moduleLimit.");
         }
-        void unsupported(String reason) { unsupported.add(reason); }
+
+        void unsupported(String reason) {
+            unsupported.add(reason);
+        }
     }
 }

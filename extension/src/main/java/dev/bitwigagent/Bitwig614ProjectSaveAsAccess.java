@@ -1,10 +1,11 @@
 package dev.bitwigagent;
 
+import static dev.bitwigagent.HostServices.failure;
+
 import java.io.File;
 import java.lang.reflect.*;
 import java.nio.file.Path;
 import java.util.Set;
-import static dev.bitwigagent.HostServices.failure;
 
 /**
  * Exact 6.1.4 bindings for the Save Project pipeline without its file dialog: TL.cfM(aBF,File,boolean,boolean,lBQ)
@@ -13,8 +14,8 @@ import static dev.bitwigagent.HostServices.failure;
  * or completion (taskCompleted()).
  */
 final class Bitwig614ProjectSaveAsAccess implements ProjectModule.SaveAsAccess {
-    private static final Set<String> CALLBACK_METHODS = Set.of("taskCompleted()", "cfM(java.lang.Exception)",
-            "cfM(java.lang.String)", "cfM(java.lang.Object)");
+    private static final Set<String> CALLBACK_METHODS =
+            Set.of("taskCompleted()", "cfM(java.lang.Exception)", "cfM(java.lang.String)", "cfM(java.lang.Object)");
     private final Bitwig614Runtime.Access a;
     private final Class<?> projectType, projectProxyType, callbackType;
     private final Method application, target, window, save, projectsRoot, saving;
@@ -25,7 +26,8 @@ final class Bitwig614ProjectSaveAsAccess implements ProjectModule.SaveAsAccess {
         application = a.exactMethod(app, "hIO", app, true);
         projectType = a.type("com.bitwig.flt.document.core.master.g2L");
         projectProxyType = a.type("com.bitwig.flt.control_surface.proxy.ProjectProxy");
-        target = a.exactMethod(a.type("com.bitwig.flt.control_surface.proxy.ControlSurfaceProxy"), "getTarget", Object.class, false);
+        target = a.exactMethod(
+                a.type("com.bitwig.flt.control_surface.proxy.ControlSurfaceProxy"), "getTarget", Object.class, false);
         window = a.exactMethod(app, "hUR", a.type("com.bitwig.flt.app.eD"), false, projectType);
         callbackType = a.type("com.bitwig.base.async.lBQ");
         if (!callbackType.isInterface() || !Modifier.isPublic(callbackType.getModifiers()))
@@ -34,8 +36,11 @@ final class Bitwig614ProjectSaveAsAccess implements ProjectModule.SaveAsAccess {
             if (!CALLBACK_METHODS.contains(signature(method)))
                 throw new NoSuchMethodException("Unexpected save callback method: " + signature(method));
         }
-        callbackType.getMethod("taskCompleted"); callbackType.getMethod("cfM", Exception.class); callbackType.getMethod("cfM", String.class);
-        save = a.exactMethod(app, "cfM", void.class, false, a.type("aBF"), File.class, boolean.class, boolean.class, callbackType);
+        callbackType.getMethod("taskCompleted");
+        callbackType.getMethod("cfM", Exception.class);
+        callbackType.getMethod("cfM", String.class);
+        save = a.exactMethod(
+                app, "cfM", void.class, false, a.type("aBF"), File.class, boolean.class, boolean.class, callbackType);
         projectsRoot = a.exactMethod(app, "iW2", File.class, false);
         saving = a.exactMethod(a.type("com.bitwig.flt.document.core.iface.pHd"), "zpW", boolean.class, false);
     }
@@ -47,8 +52,15 @@ final class Bitwig614ProjectSaveAsAccess implements ProjectModule.SaveAsAccess {
         return text.append(')').toString();
     }
 
-    @Override public void execute(Runnable work) { a.execute(work); }
-    @Override public String nativeJarSha256() { return a.actualHash(); }
+    @Override
+    public void execute(Runnable work) {
+        a.execute(work);
+    }
+
+    @Override
+    public String nativeJarSha256() {
+        return a.actualHash();
+    }
 
     private Object app() {
         Object app = a.invoke(application, null);
@@ -56,33 +68,49 @@ final class Bitwig614ProjectSaveAsAccess implements ProjectModule.SaveAsAccess {
         return app;
     }
 
-    @Override public Path projectsRoot() {
+    @Override
+    public Path projectsRoot() {
         a.documentThread();
         File root = (File) a.invoke(projectsRoot, app());
         return root == null ? null : root.toPath();
     }
 
-    @Override public void saveAs(Object projectProxy, Path file, Runnable beforeDispatch, ProjectModule.Completion done) {
+    @Override
+    public void saveAs(Object projectProxy, Path file, Runnable beforeDispatch, ProjectModule.Completion done) {
         a.documentThread();
-        if (!projectProxyType.isInstance(projectProxy)) throw failure("project_save_as_unavailable", "Controller Project is not the native project proxy.");
+        if (!projectProxyType.isInstance(projectProxy))
+            throw failure("project_save_as_unavailable", "Controller Project is not the native project proxy.");
         Object project = a.invoke(target, projectProxy);
-        if (!projectType.isInstance(project)) throw failure("not_ready", "Controller Project proxy is not bound to an open project.");
+        if (!projectType.isInstance(project))
+            throw failure("not_ready", "Controller Project proxy is not bound to an open project.");
         Object app = app(), documentWindow = a.invoke(window, app, project);
         if (documentWindow == null) throw failure("not_ready", "The current project has no document window.");
-        if (Boolean.TRUE.equals(a.invoke(saving, project))) throw failure("busy", "Bitwig is already saving this project.");
-        Object callback = Proxy.newProxyInstance(callbackType.getClassLoader(), new Class<?>[]{callbackType}, (proxy, method, args) -> {
-            switch (signature(method)) {
-                case "taskCompleted()": case "cfM(java.lang.Object)": done.completed(); return null;
-                case "cfM(java.lang.String)": done.failed(String.valueOf(args[0]), true); return null;
-                case "cfM(java.lang.Exception)":
-                    Throwable error = (Throwable) args[0];
-                    done.failed(error == null ? "unknown error" : Bitwig614Runtime.diagnostic(error), false); return null;
-                case "hashCode()": return System.identityHashCode(proxy);
-                case "equals(java.lang.Object)": return proxy == args[0];
-                case "toString()": return "bitwig-agent project.saveAs callback";
-                default: throw new UnsupportedOperationException(method.toString());
-            }
-        });
+        if (Boolean.TRUE.equals(a.invoke(saving, project)))
+            throw failure("busy", "Bitwig is already saving this project.");
+        Object callback = Proxy.newProxyInstance(
+                callbackType.getClassLoader(), new Class<?>[] {callbackType}, (proxy, method, args) -> {
+                    switch (signature(method)) {
+                        case "taskCompleted()":
+                        case "cfM(java.lang.Object)":
+                            done.completed();
+                            return null;
+                        case "cfM(java.lang.String)":
+                            done.failed(String.valueOf(args[0]), true);
+                            return null;
+                        case "cfM(java.lang.Exception)":
+                            Throwable error = (Throwable) args[0];
+                            done.failed(error == null ? "unknown error" : Bitwig614Runtime.diagnostic(error), false);
+                            return null;
+                        case "hashCode()":
+                            return System.identityHashCode(proxy);
+                        case "equals(java.lang.Object)":
+                            return proxy == args[0];
+                        case "toString()":
+                            return "bitwig-agent project.saveAs callback";
+                        default:
+                            throw new UnsupportedOperationException(method.toString());
+                    }
+                });
         beforeDispatch.run();
         a.invoke(save, app, documentWindow, file.toFile(), false, false, callback);
     }

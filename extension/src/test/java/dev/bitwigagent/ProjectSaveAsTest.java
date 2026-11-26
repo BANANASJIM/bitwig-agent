@@ -23,64 +23,125 @@ public final class ProjectSaveAsTest {
 
     private static void validationIsStrict() {
         ProjectModule.validateParams("project.saveAs", params("/home/u/Bitwig Studio/Projects/Song/Song.bwproject"));
-        for (String bad : List.of("relative/Song/Song.bwproject", "/p/Song/Song.txt", "/p/Song/.bwproject", "/p/Song/ Song.bwproject",
-                "/p/Song/Song .bwproject", "/p/.hidden/.hidden.bwproject", "/p/template/template.bwproject",
-                "/p/Song/auto-backups/Song/Song.bwproject", "/p/../Song/Song.bwproject", "/Song.bwproject", "~/Song/Song.bwproject"))
-            invalid(params(bad), bad);
+        for (String bad : List.of(
+                "relative/Song/Song.bwproject",
+                "/p/Song/Song.txt",
+                "/p/Song/.bwproject",
+                "/p/Song/ Song.bwproject",
+                "/p/Song/Song .bwproject",
+                "/p/.hidden/.hidden.bwproject",
+                "/p/template/template.bwproject",
+                "/p/Song/auto-backups/Song/Song.bwproject",
+                "/p/../Song/Song.bwproject",
+                "/Song.bwproject",
+                "~/Song/Song.bwproject")) invalid(params(bad), bad);
         invalid(new JsonObject(), "missing path");
-        JsonObject extra = params("/p/Song/Song.bwproject"); extra.addProperty("force", true); invalid(extra, "unknown field");
-        JsonObject flag = params("/p/Song/Song.bwproject"); flag.addProperty("overwrite", 1); invalid(flag, "overwrite must be boolean");
-        flag = params("/p/Song/Song.bwproject"); flag.addProperty("allowAnyPath", "yes"); invalid(flag, "allowAnyPath must be boolean");
-        JsonObject saveExtra = new JsonObject(); saveExtra.addProperty("path", "/p/Song/Song.bwproject");
-        try { ProjectModule.validateParams("project.save", saveExtra); throw new AssertionError("project.save accepted a path"); }
-        catch (RpcException expected) { check(expected.code.equals("invalid_params"), "project.save still takes no parameters"); }
-        check(RpcServer.maxTimeoutMs("project.saveAs") == 60000 && RpcServer.maxTimeoutMs("project.save") == 10000, "only saveAs gets the long timeout");
+        JsonObject extra = params("/p/Song/Song.bwproject");
+        extra.addProperty("force", true);
+        invalid(extra, "unknown field");
+        JsonObject flag = params("/p/Song/Song.bwproject");
+        flag.addProperty("overwrite", 1);
+        invalid(flag, "overwrite must be boolean");
+        flag = params("/p/Song/Song.bwproject");
+        flag.addProperty("allowAnyPath", "yes");
+        invalid(flag, "allowAnyPath must be boolean");
+        JsonObject saveExtra = new JsonObject();
+        saveExtra.addProperty("path", "/p/Song/Song.bwproject");
+        try {
+            ProjectModule.validateParams("project.save", saveExtra);
+            throw new AssertionError("project.save accepted a path");
+        } catch (RpcException expected) {
+            check(expected.code.equals("invalid_params"), "project.save still takes no parameters");
+        }
+        check(
+                RpcServer.maxTimeoutMs("project.saveAs") == 60000 && RpcServer.maxTimeoutMs("project.save") == 10000,
+                "only saveAs gets the long timeout");
     }
 
     private static void planningMirrorsNativeFolderRules() throws IOException {
         Path home = temp("bwa-saveas"), root = Files.createDirectories(home.resolve("Bitwig Studio/Projects"));
         Files.createFile(root.resolve(ProjectSaveAsPlan.MARKER)); // Bitwig ignores markers in the projects root chain.
-        ProjectSaveAsPlan plan = ProjectSaveAsPlan.resolve(root.resolve("Song/Song.bwproject"), root, home, false, false);
-        check(plan.dispatchPath.equals(root.resolve("Song.bwproject")) && plan.folder.equals(root.resolve("Song")) && plan.newFolder
-                && plan.name.equals("Song") && !plan.before.exists, "new project is dispatched as <dir>/Name.bwproject so Bitwig creates <dir>/Name/");
-        refused("invalid_target", () -> ProjectSaveAsPlan.resolve(root.resolve("Song.bwproject"), root, home, false, false));
-        refused("invalid_target", () -> ProjectSaveAsPlan.resolve(root.resolve("Song/Other.bwproject"), root, home, false, false));
-        refused("invalid_target", () -> ProjectSaveAsPlan.resolve(root.resolve("Missing/Song/Song.bwproject"), root, home, false, false));
-        refused("path_not_allowed", () -> ProjectSaveAsPlan.resolve(home.resolve("Song/Song.bwproject"), root, home, false, false));
-        refused("path_not_allowed", () -> ProjectSaveAsPlan.resolve(root.resolve("Song/Song.bwproject"), null, home, false, false));
+        ProjectSaveAsPlan plan =
+                ProjectSaveAsPlan.resolve(root.resolve("Song/Song.bwproject"), root, home, false, false);
+        check(
+                plan.dispatchPath.equals(root.resolve("Song.bwproject"))
+                        && plan.folder.equals(root.resolve("Song"))
+                        && plan.newFolder
+                        && plan.name.equals("Song")
+                        && !plan.before.exists,
+                "new project is dispatched as <dir>/Name.bwproject so Bitwig creates <dir>/Name/");
+        refused(
+                "invalid_target",
+                () -> ProjectSaveAsPlan.resolve(root.resolve("Song.bwproject"), root, home, false, false));
+        refused(
+                "invalid_target",
+                () -> ProjectSaveAsPlan.resolve(root.resolve("Song/Other.bwproject"), root, home, false, false));
+        refused(
+                "invalid_target",
+                () -> ProjectSaveAsPlan.resolve(root.resolve("Missing/Song/Song.bwproject"), root, home, false, false));
+        refused(
+                "path_not_allowed",
+                () -> ProjectSaveAsPlan.resolve(home.resolve("Song/Song.bwproject"), root, home, false, false));
+        refused(
+                "path_not_allowed",
+                () -> ProjectSaveAsPlan.resolve(root.resolve("Song/Song.bwproject"), null, home, false, false));
         Files.createDirectories(home.resolve("Elsewhere"));
-        check(ProjectSaveAsPlan.resolve(home.resolve("Elsewhere/Song/Song.bwproject"), root, home, false, true).newFolder, "allowAnyPath lifts only the root check");
+        check(
+                ProjectSaveAsPlan.resolve(home.resolve("Elsewhere/Song/Song.bwproject"), root, home, false, true)
+                        .newFolder,
+                "allowAnyPath lifts only the root check");
         Path outside = temp("bwa-outside");
         Files.createSymbolicLink(root.resolve("link"), outside);
-        refused("path_not_allowed", () -> ProjectSaveAsPlan.resolve(root.resolve("link/Song/Song.bwproject"), root, home, false, false));
+        refused(
+                "path_not_allowed",
+                () -> ProjectSaveAsPlan.resolve(root.resolve("link/Song/Song.bwproject"), root, home, false, false));
 
         Path existing = Files.createDirectories(root.resolve("Existing"));
         Files.createFile(existing.resolve(ProjectSaveAsPlan.MARKER));
         Files.createDirectories(existing.resolve("versions"));
         plan = ProjectSaveAsPlan.resolve(existing.resolve("Alt.bwproject"), root, home, false, false);
-        check(plan.dispatchPath.equals(existing.resolve("Alt.bwproject")) && plan.folder.equals(existing) && !plan.newFolder,
+        check(
+                plan.dispatchPath.equals(existing.resolve("Alt.bwproject"))
+                        && plan.folder.equals(existing)
+                        && !plan.newFolder,
                 "inside an existing project folder the file is saved where named");
-        check(ProjectSaveAsPlan.resolve(existing.resolve("versions/V2.bwproject"), root, home, false, false).folder.equals(existing),
+        check(
+                ProjectSaveAsPlan.resolve(existing.resolve("versions/V2.bwproject"), root, home, false, false)
+                        .folder
+                        .equals(existing),
                 "subfolders belong to the nearest marked project folder");
-        refused("invalid_target", () -> ProjectSaveAsPlan.resolve(existing.resolve("missing/V2.bwproject"), root, home, false, false));
-        Files.write(existing.resolve("Existing.bwproject"), new byte[]{1, 2, 3});
-        refused("target_exists", () -> ProjectSaveAsPlan.resolve(existing.resolve("Existing.bwproject"), root, home, false, false));
+        refused(
+                "invalid_target",
+                () -> ProjectSaveAsPlan.resolve(existing.resolve("missing/V2.bwproject"), root, home, false, false));
+        Files.write(existing.resolve("Existing.bwproject"), new byte[] {1, 2, 3});
+        refused(
+                "target_exists",
+                () -> ProjectSaveAsPlan.resolve(existing.resolve("Existing.bwproject"), root, home, false, false));
         plan = ProjectSaveAsPlan.resolve(existing.resolve("Existing.bwproject"), root, home, true, false);
         check(plan.before.exists && plan.before.size == 3, "overwrite records the previous file for change detection");
 
         Files.createDirectories(root.resolve("Empty"));
         plan = ProjectSaveAsPlan.resolve(root.resolve("Empty/Empty.bwproject"), root, home, false, false);
-        check(!plan.newFolder && plan.dispatchPath.equals(root.resolve("Empty.bwproject")), "an empty unmarked folder is adopted like Bitwig does");
-        Files.createDirectories(root.resolve("Busy")); Files.createFile(root.resolve("Busy/notes.txt"));
-        refused("target_exists", () -> ProjectSaveAsPlan.resolve(root.resolve("Busy/Busy.bwproject"), root, home, true, false));
+        check(
+                !plan.newFolder && plan.dispatchPath.equals(root.resolve("Empty.bwproject")),
+                "an empty unmarked folder is adopted like Bitwig does");
+        Files.createDirectories(root.resolve("Busy"));
+        Files.createFile(root.resolve("Busy/notes.txt"));
+        refused(
+                "target_exists",
+                () -> ProjectSaveAsPlan.resolve(root.resolve("Busy/Busy.bwproject"), root, home, true, false));
 
         Path stray = Files.createFile(home.resolve("Bitwig Studio").resolve(ProjectSaveAsPlan.MARKER));
-        refused("invalid_target", () -> ProjectSaveAsPlan.resolve(root.resolve("Fresh/Fresh.bwproject"), root, home, false, false));
+        refused(
+                "invalid_target",
+                () -> ProjectSaveAsPlan.resolve(root.resolve("Fresh/Fresh.bwproject"), root, home, false, false));
         Files.delete(stray);
 
-        ProjectSaveAsPlan.Stat none =ProjectSaveAsPlan.Stat.of(root.resolve("nothing.bwproject"));
-        Path written = Files.write(root.resolve("w.bwproject"), new byte[]{1});
-        check(ProjectSaveAsPlan.Stat.of(written).writtenSince(none) && !ProjectSaveAsPlan.Stat.of(written).writtenSince(ProjectSaveAsPlan.Stat.of(written)),
+        ProjectSaveAsPlan.Stat none = ProjectSaveAsPlan.Stat.of(root.resolve("nothing.bwproject"));
+        Path written = Files.write(root.resolve("w.bwproject"), new byte[] {1});
+        check(
+                ProjectSaveAsPlan.Stat.of(written).writtenSince(none)
+                        && !ProjectSaveAsPlan.Stat.of(written).writtenSince(ProjectSaveAsPlan.Stat.of(written)),
                 "a file counts as written only if new or changed and nonempty");
     }
 
@@ -90,10 +151,16 @@ public final class ProjectSaveAsTest {
         HostOperation op = sim.start(sim.root.resolve("Song/Song.bwproject"), false);
         sim.drain();
         JsonObject result = op.result.join();
-        check(sim.dispatches == 1 && sim.dispatched.equals(sim.root.resolve("Song.bwproject")), "one dispatch at the planned native path");
-        check(result.get("status").getAsString().equals("observed") && result.get("saved").getAsBoolean()
-                && result.get("createdProjectFolder").getAsBoolean() && !result.get("overwrote").getAsBoolean()
-                && result.get("projectName").getAsString().equals("Song") && result.get("fileBytes").getAsLong() > 0,
+        check(
+                sim.dispatches == 1 && sim.dispatched.equals(sim.root.resolve("Song.bwproject")),
+                "one dispatch at the planned native path");
+        check(
+                result.get("status").getAsString().equals("observed")
+                        && result.get("saved").getAsBoolean()
+                        && result.get("createdProjectFolder").getAsBoolean()
+                        && !result.get("overwrote").getAsBoolean()
+                        && result.get("projectName").getAsString().equals("Song")
+                        && result.get("fileBytes").getAsLong() > 0,
                 "saved only with callback, written file, isModified=false and the new name");
         check(sim.module.unresolved().isEmpty(), "completed callback leaves nothing pending");
         HostOperation again = sim.start(sim.root.resolve("Song/Song.bwproject"), false);
@@ -101,37 +168,52 @@ public final class ProjectSaveAsTest {
         TransportMixFixture.error(again, "target_exists");
         check(sim.dispatches == 1, "existing target is refused before dispatch");
         // Name must change too: a stale name keeps the result unobserved.
-        Sim stale = new Sim(); stale.renames = false;
+        Sim stale = new Sim();
+        stale.renames = false;
         op = stale.start(stale.root.resolve("Other/Other.bwproject"), false, 150);
         stale.drainUntil(op);
         result = op.result.join();
-        check(result.get("status").getAsString().equals("dispatched") && result.get("outcome").getAsString().equals("unknown")
-                && result.get("nativeCompletion").getAsString().equals("completed") && !result.get("saved").getAsBoolean(),
+        check(
+                result.get("status").getAsString().equals("dispatched")
+                        && result.get("outcome").getAsString().equals("unknown")
+                        && result.get("nativeCompletion").getAsString().equals("completed")
+                        && !result.get("saved").getAsBoolean(),
                 "completion without the expected project name is not reported saved");
     }
 
     private static void refusalsAndFailuresKeepTheirOutcome() throws IOException {
-        Sim refused = new Sim(); refused.refusal = "Project is already in the process of being saved";
+        Sim refused = new Sim();
+        refused.refusal = "Project is already in the process of being saved";
         HostOperation op = refused.start(refused.root.resolve("Song/Song.bwproject"), false);
         refused.drain();
         RpcException error = TransportMixFixture.error(op, "save_refused");
-        check(error.outcome.equals("not_applied") && error.getMessage().contains("already"), "native refusal is not_applied with its message");
-        Sim failed = new Sim(); failed.failure = "IOException: disk full";
+        check(
+                error.outcome.equals("not_applied") && error.getMessage().contains("already"),
+                "native refusal is not_applied with its message");
+        Sim failed = new Sim();
+        failed.failure = "IOException: disk full";
         op = failed.start(failed.root.resolve("Song/Song.bwproject"), false);
         failed.drain();
         error = TransportMixFixture.error(op, "save_failed");
-        check(error.outcome.equals("unknown") && error.getMessage().contains("disk full"), "native failure after the job started is unknown");
+        check(
+                error.outcome.equals("unknown") && error.getMessage().contains("disk full"),
+                "native failure after the job started is unknown");
         check(failed.module.unresolved().isEmpty(), "a failure callback also ends the pending state");
     }
 
     private static void missingCallbackStaysPendingAndUnknown() throws IOException {
-        Sim silent = new Sim(); silent.silent = true;
+        Sim silent = new Sim();
+        silent.silent = true;
         HostOperation op = silent.start(silent.root.resolve("Song/Song.bwproject"), false, 150);
         silent.drainUntil(op);
         JsonObject result = op.result.join();
-        check(result.get("outcome").getAsString().equals("unknown") && result.get("nativeCompletion").getAsString().equals("pending"),
+        check(
+                result.get("outcome").getAsString().equals("unknown")
+                        && result.get("nativeCompletion").getAsString().equals("pending"),
                 "no callback within the deadline is unknown, never retried");
-        check(silent.dispatches == 1 && silent.module.unresolved().size() == 1, "pending native save is listed as unresolved");
+        check(
+                silent.dispatches == 1 && silent.module.unresolved().size() == 1,
+                "pending native save is listed as unresolved");
         HostOperation busy = silent.start(silent.root.resolve("Again/Again.bwproject"), false);
         silent.drain();
         TransportMixFixture.error(busy, "busy");
@@ -158,52 +240,118 @@ public final class ProjectSaveAsTest {
             home = temp("bwa-saveas-sim");
             root = Files.createDirectories(home.resolve("Projects"));
             module = new ProjectModule(fixture.services, new ProjectModule.SaveAsAccess() {
-                public void execute(Runnable work) { document.add(work); }
-                public String nativeJarSha256() { return "simulated"; }
-                public Path projectsRoot() { return root; }
+                public void execute(Runnable work) {
+                    document.add(work);
+                }
+
+                public String nativeJarSha256() {
+                    return "simulated";
+                }
+
+                public Path projectsRoot() {
+                    return root;
+                }
+
                 public void saveAs(Object proxy, Path path, Runnable beforeDispatch, ProjectModule.Completion done) {
-                    beforeDispatch.run(); dispatches++; dispatched = path;
-                    if (refusal != null) { done.failed(refusal, true); return; }
-                    if (failure != null) { done.failed(failure, false); return; }
-                    if (silent) { late = done; return; }
+                    beforeDispatch.run();
+                    dispatches++;
+                    dispatched = path;
+                    if (refusal != null) {
+                        done.failed(refusal, true);
+                        return;
+                    }
+                    if (failure != null) {
+                        done.failed(failure, false);
+                        return;
+                    }
+                    if (silent) {
+                        late = done;
+                        return;
+                    }
                     try {
-                        Path folder = path.getParent().resolve(path.getFileName().toString().replace(".bwproject", ""));
+                        Path folder = path.getParent()
+                                .resolve(path.getFileName().toString().replace(".bwproject", ""));
                         Files.createDirectories(folder);
                         Files.createFile(folder.resolve(ProjectSaveAsPlan.MARKER));
-                        Files.write(folder.resolve(path.getFileName()), new byte[]{42});
-                    } catch (IOException error) { throw new AssertionError(error); }
+                        Files.write(folder.resolve(path.getFileName()), new byte[] {42});
+                    } catch (IOException error) {
+                        throw new AssertionError(error);
+                    }
                     fixture.project.child("isModified").emit(false);
-                    if (renames) fixture.application.child("projectName").emit(path.getFileName().toString().replace(".bwproject", ""));
+                    if (renames)
+                        fixture.application
+                                .child("projectName")
+                                .emit(path.getFileName().toString().replace(".bwproject", ""));
                     done.completed();
                 }
             });
         }
-        HostOperation start(Path path, boolean overwrite) { return start(path, overwrite, 5000); }
+
+        HostOperation start(Path path, boolean overwrite) {
+            return start(path, overwrite, 5000);
+        }
+
         HostOperation start(Path path, boolean overwrite, long timeoutMs) {
             JsonObject p = params(path.toString());
             if (overwrite) p.addProperty("overwrite", true);
-            return fixture.submit(module, "project.saveAs", p, System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs));
+            return fixture.submit(
+                    module, "project.saveAs", p, System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs));
         }
-        void drain() { while (!fixture.tasks.isEmpty() || !document.isEmpty()) step(); }
-        void drainUntil(HostOperation op) { long spins = 0; while (!op.result.isDone() && spins++ < 100000000) step(); }
+
+        void drain() {
+            while (!fixture.tasks.isEmpty() || !document.isEmpty()) step();
+        }
+
+        void drainUntil(HostOperation op) {
+            long spins = 0;
+            while (!op.result.isDone() && spins++ < 100000000) step();
+        }
+
         private void step() {
             if (!document.isEmpty()) document.removeFirst().run();
             else if (!fixture.tasks.isEmpty()) fixture.next();
         }
     }
 
-    private static Path temp(String prefix) throws IOException { Path tree = Files.createTempDirectory(prefix); temporary.add(tree); return tree; }
+    private static Path temp(String prefix) throws IOException {
+        Path tree = Files.createTempDirectory(prefix);
+        temporary.add(tree);
+        return tree;
+    }
+
     private static void delete(Path tree) throws IOException {
-        try (var walk = Files.walk(tree)) { for (Path path : (Iterable<Path>) walk.sorted(Comparator.reverseOrder())::iterator) Files.deleteIfExists(path); }
+        try (var walk = Files.walk(tree)) {
+            for (Path path : (Iterable<Path>) walk.sorted(Comparator.reverseOrder())::iterator)
+                Files.deleteIfExists(path);
+        }
     }
-    private static JsonObject params(String path) { JsonObject p = new JsonObject(); p.addProperty("path", path); return p; }
+
+    private static JsonObject params(String path) {
+        JsonObject p = new JsonObject();
+        p.addProperty("path", path);
+        return p;
+    }
+
     private static void invalid(JsonObject params, String label) {
-        try { ProjectModule.validateParams("project.saveAs", params); throw new AssertionError("accepted " + label); }
-        catch (RpcException error) { check(error.code.equals("invalid_params"), "invalid: " + label); }
+        try {
+            ProjectModule.validateParams("project.saveAs", params);
+            throw new AssertionError("accepted " + label);
+        } catch (RpcException error) {
+            check(error.code.equals("invalid_params"), "invalid: " + label);
+        }
     }
+
     private static void refused(String code, Runnable action) {
-        try { action.run(); throw new AssertionError("expected " + code); }
-        catch (RpcException error) { check(error.code.equals(code) && error.outcome.equals("not_applied"), code + ": " + error.getMessage()); }
+        try {
+            action.run();
+            throw new AssertionError("expected " + code);
+        } catch (RpcException error) {
+            check(error.code.equals(code) && error.outcome.equals("not_applied"), code + ": " + error.getMessage());
+        }
     }
-    private static void check(boolean value, String message) { assertions++; if (!value) throw new AssertionError(message); }
+
+    private static void check(boolean value, String message) {
+        assertions++;
+        if (!value) throw new AssertionError(message);
+    }
 }

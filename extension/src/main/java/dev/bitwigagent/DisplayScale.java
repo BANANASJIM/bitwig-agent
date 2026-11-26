@@ -4,13 +4,18 @@ import java.util.regex.*;
 
 /** Host-free reading of the display strings Bitwig shows for mixer values. No curve is assumed: only text is read. */
 final class DisplayScale {
-    enum Kind { DB, PERCENT }
+    enum Kind {
+        DB,
+        PERCENT
+    }
     /** Stand-in for a displayed "-inf": finite so it orders and compares like a number. */
     static final double MINUS_INF = -1e9;
+
     private static final Pattern NUMBER = Pattern.compile("([+\\-−]?)\\s*(\\d+(?:[.,]\\d+)?|[.,]\\d+)");
     private static final Pattern LEFT = Pattern.compile("(?<![a-z])(l|left)(?![a-z])");
     private static final Pattern RIGHT = Pattern.compile("(?<![a-z])(r|right)(?![a-z])");
     private static final Pattern CENTER = Pattern.compile("center|centre|(?<![a-z])c(?![a-z])");
+
     private DisplayScale() {}
 
     /** Numeric value in dB or signed percent (negative = left); NaN when the text is not understood. */
@@ -21,7 +26,8 @@ final class DisplayScale {
         Matcher m = NUMBER.matcher(t);
         boolean number = m.find();
         if (kind == Kind.DB) {
-            if (t.contains("inf") || t.contains("∞")) return t.contains("-") || t.contains("−") ? MINUS_INF : Double.NaN;
+            if (t.contains("inf") || t.contains("∞"))
+                return t.contains("-") || t.contains("−") ? MINUS_INF : Double.NaN;
             if (!number || !t.contains("db")) return Double.NaN;
             return signed(m);
         }

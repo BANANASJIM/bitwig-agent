@@ -1,10 +1,10 @@
 package dev.bitwigagent;
 
+import static dev.bitwigagent.HostServices.failure;
+
 import com.google.gson.*;
 import java.util.*;
 import java.util.regex.Pattern;
-
-import static dev.bitwigagent.HostServices.failure;
 
 /** Poly Grid device voicing: guarded read and compare-and-set with exact readback, one model per device. */
 final class GridVoicingWriter {
@@ -13,11 +13,20 @@ final class GridVoicingWriter {
         Object model(Object device);
         /** Every field as a JSON primitive (voices, voiceStacking, monoMode, ...). */
         JsonObject read(Object voicing);
+
         void set(Object voicing, String field, JsonElement value);
     }
     /** Field order is also the native write order. */
-    static final List<String> FIELDS = List.of("voices", "voiceStacking", "monoMode", "retriggerMode", "notePriority",
-            "legatoGlide", "stealSameKey", "allowOverlappingNotes");
+    static final List<String> FIELDS = List.of(
+            "voices",
+            "voiceStacking",
+            "monoMode",
+            "retriggerMode",
+            "notePriority",
+            "legatoGlide",
+            "stealSameKey",
+            "allowOverlappingNotes");
+
     static final Map<String, Set<String>> ENUMS = Map.of(
             "monoMode", Set.of("true_mono", "digi_mono"),
             "retriggerMode", Set.of("never", "on_note_on", "always"),
@@ -31,7 +40,10 @@ final class GridVoicingWriter {
     private final boolean writable;
 
     GridVoicingWriter(GridSnapshotReader values, GridParameterContext contexts, Access nativeAccess, boolean writable) {
-        this.values = values; this.contexts = contexts; this.nativeAccess = nativeAccess; this.writable = writable;
+        this.values = values;
+        this.contexts = contexts;
+        this.nativeAccess = nativeAccess;
+        this.writable = writable;
     }
 
     JsonObject get(Object proxy, java.util.UUID trackId, Runnable check) {
@@ -40,8 +52,10 @@ final class GridVoicingWriter {
         JsonObject result = HostServices.observed();
         if (model == null) {
             result.addProperty("supported", false);
-            result.addProperty("reason", "no_voicing_model: only Poly Grid has device voicing; Note Grid and FX Grid have none");
-            values.guardTarget(target, proxy, trackId); check.run();
+            result.addProperty(
+                    "reason", "no_voicing_model: only Poly Grid has device voicing; Note Grid and FX Grid have none");
+            values.guardTarget(target, proxy, trackId);
+            check.run();
             return finish(result);
         }
         values.requireModelThread(model);
@@ -66,7 +80,8 @@ final class GridVoicingWriter {
         values.requireModelThread(model);
         JsonObject before = nativeAccess.read(model);
         request.validateCurrent(before);
-        GridParameterContext.Capture context = contexts.requireVoicingWritable(target.target, target.graph, model, null, check);
+        GridParameterContext.Capture context =
+                contexts.requireVoicingWritable(target.target, target.graph, model, null, check);
         before = nativeAccess.read(model);
         request.validateCurrent(before);
         values.guardTarget(target, proxy, trackId);
@@ -74,7 +89,8 @@ final class GridVoicingWriter {
         check.run();
         List<String> changing = new ArrayList<>();
         for (String field : FIELDS)
-            if (request.set.containsKey(field) && !request.set.get(field).equals(before.get(field))) changing.add(field);
+            if (request.set.containsKey(field) && !request.set.get(field).equals(before.get(field)))
+                changing.add(field);
         boolean changed = !changing.isEmpty();
         if (changed) {
             dispatch.run();
@@ -86,13 +102,16 @@ final class GridVoicingWriter {
         JsonObject current = nativeAccess.read(model);
         for (Map.Entry<String, JsonElement> wanted : request.set.entrySet())
             if (!wanted.getValue().equals(current.get(wanted.getKey())))
-                throw new RpcException(changed ? "grid_verification_failed" : "stale_context",
-                        "Native voicing readback differs from the requested " + wanted.getKey() + "; inspect state before another write.",
+                throw new RpcException(
+                        changed ? "grid_verification_failed" : "stale_context",
+                        "Native voicing readback differs from the requested " + wanted.getKey()
+                                + "; inspect state before another write.",
                         changed ? "unknown" : "not_applied");
         check.run();
         JsonObject result = HostServices.observed();
         result.addProperty("supported", true);
-        result.add("voicing", current); result.addProperty("mode", mode(current));
+        result.add("voicing", current);
+        result.addProperty("mode", mode(current));
         result.add("previousVoicing", before);
         // Fields the request did not name but the native change moved (e.g. a mono-mode side effect on voices).
         JsonArray side = new JsonArray();
@@ -101,58 +120,82 @@ final class GridVoicingWriter {
         result.add("changedUnrequested", side);
         result.addProperty("mutationDispatched", changed);
         result.addProperty("verification", changed ? "exact_native_voicing_readback" : "already_matched");
-        result.addProperty("nativeMutation", changed); result.addProperty("nativeUndo", changed);
-        result.addProperty("nativeUndoScope", changed ? "native_undo_aware_voicing_operations_not_verified_grouping" : "no_native_operation");
-        result.addProperty("undoGroupingVerified", false); result.addProperty("engineAcknowledgement", false);
-        result.addProperty("safetyScope", "voicing_common_context_guards_observed_stopped_not_native_transport_atomicity");
+        result.addProperty("nativeMutation", changed);
+        result.addProperty("nativeUndo", changed);
+        result.addProperty(
+                "nativeUndoScope",
+                changed ? "native_undo_aware_voicing_operations_not_verified_grouping" : "no_native_operation");
+        result.addProperty("undoGroupingVerified", false);
+        result.addProperty("engineAcknowledgement", false);
+        result.addProperty(
+                "safetyScope", "voicing_common_context_guards_observed_stopped_not_native_transport_atomicity");
         return result;
     }
 
     private static JsonObject finish(JsonObject result) {
-        result.addProperty("nativeMutation", false); result.addProperty("nativeUndo", false);
+        result.addProperty("nativeMutation", false);
+        result.addProperty("nativeUndo", false);
         return result;
     }
 
     /** poly with several voices; with one voice the stored mono mode is what the device plays. */
     private static String mode(JsonObject voicing) {
-        return voicing.get("voices").getAsInt() > 1 ? "poly" : voicing.get("monoMode").getAsString();
+        return voicing.get("voices").getAsInt() > 1
+                ? "poly"
+                : voicing.get("monoMode").getAsString();
     }
 
     /** grid.voicing.set: expected (exact current values, a superset of set's fields) and set (new values). */
     static final class Request {
         final Map<String, JsonElement> expected, set;
-        private Request(Map<String, JsonElement> expected, Map<String, JsonElement> set) { this.expected = expected; this.set = set; }
+
+        private Request(Map<String, JsonElement> expected, Map<String, JsonElement> set) {
+            this.expected = expected;
+            this.set = set;
+        }
 
         static Request parse(JsonObject params) {
             Map<String, JsonElement> expected = fields(params.get("expected"), "expected");
             Map<String, JsonElement> set = fields(params.get("set"), "set");
             if (set.isEmpty()) throw failure("invalid_params", "set must name at least one voicing field.");
             for (String key : set.keySet())
-                if (!expected.containsKey(key)) throw failure("invalid_params", "expected must also give the current " + key + " (compare-and-set).");
+                if (!expected.containsKey(key))
+                    throw failure(
+                            "invalid_params", "expected must also give the current " + key + " (compare-and-set).");
             return new Request(expected, set);
         }
+
         private static Map<String, JsonElement> fields(JsonElement element, String label) {
-            if (element == null || !element.isJsonObject()) throw failure("invalid_params", label + " must be an object of voicing fields.");
+            if (element == null || !element.isJsonObject())
+                throw failure("invalid_params", label + " must be an object of voicing fields.");
             Map<String, JsonElement> result = new LinkedHashMap<>();
-            for (Map.Entry<String, JsonElement> entry : element.getAsJsonObject().entrySet()) {
+            for (Map.Entry<String, JsonElement> entry :
+                    element.getAsJsonObject().entrySet()) {
                 String key = entry.getKey();
-                if (!FIELDS.contains(key)) throw failure("invalid_params", "Unknown voicing field in " + label + ": " + key);
+                if (!FIELDS.contains(key))
+                    throw failure("invalid_params", "Unknown voicing field in " + label + ": " + key);
                 result.put(key, value(key, entry.getValue(), label));
             }
             return result;
         }
+
         private static JsonElement value(String key, JsonElement element, String label) {
             String where = label + "." + key;
             if (!element.isJsonPrimitive()) throw failure("invalid_params", where + " must be a JSON primitive.");
             JsonPrimitive value = element.getAsJsonPrimitive();
             if (key.equals("voices") || key.equals("voiceStacking")) {
                 int max = key.equals("voices") ? MAX_VOICES : MAX_STACKING;
-                if (!value.isNumber() || !INTEGER_TOKEN.matcher(value.getAsString()).matches())
+                if (!value.isNumber()
+                        || !INTEGER_TOKEN.matcher(value.getAsString()).matches())
                     throw failure("invalid_params", where + " must be an integer token.");
                 int number;
-                try { number = Integer.parseInt(value.getAsString()); }
-                catch (NumberFormatException error) { throw failure("invalid_params", where + " must be an integer token."); }
-                if (number < 1 || number > max) throw failure("invalid_params", where + " must be within 1.." + max + ".");
+                try {
+                    number = Integer.parseInt(value.getAsString());
+                } catch (NumberFormatException error) {
+                    throw failure("invalid_params", where + " must be an integer token.");
+                }
+                if (number < 1 || number > max)
+                    throw failure("invalid_params", where + " must be within 1.." + max + ".");
                 return new JsonPrimitive(number);
             }
             if (ENUMS.containsKey(key)) {
@@ -167,7 +210,10 @@ final class GridVoicingWriter {
         void validateCurrent(JsonObject current) {
             for (Map.Entry<String, JsonElement> entry : expected.entrySet())
                 if (!entry.getValue().equals(current.get(entry.getKey())))
-                    throw failure("stale_context", "Voicing " + entry.getKey() + " differs from the expected precondition; reacquire grid.voicing.get.");
+                    throw failure(
+                            "stale_context",
+                            "Voicing " + entry.getKey()
+                                    + " differs from the expected precondition; reacquire grid.voicing.get.");
         }
     }
 }

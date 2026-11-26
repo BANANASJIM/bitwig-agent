@@ -1,10 +1,10 @@
 package dev.bitwigagent;
 
+import static dev.bitwigagent.GridTopologyContext.Field.*;
+import static dev.bitwigagent.HostServices.failure;
+
 import java.lang.reflect.Method;
 import java.util.EnumMap;
-import static dev.bitwigagent.GridTopologyContext.Field.*;
-
-import static dev.bitwigagent.HostServices.failure;
 
 /** Shared public context observations, independent of move geometry and connection setter bindings. */
 final class Bitwig614GridTopologyContext implements GridTopologyContext.Access {
@@ -30,14 +30,29 @@ final class Bitwig614GridTopologyContext implements GridTopologyContext.Access {
         bind(LOCK, bindings.type(D + "FDA"), "cm_", lock);
         bind(LOCK_OWNER, lock, "IwV", dt);
     }
+
     private void bind(GridTopologyContext.Field field, Class<?> owner, String name, Class<?> returns)
             throws ReflectiveOperationException {
         readers.put(field, bindings.exactMethod(owner, name, returns, false));
     }
-    @Override public boolean defaultContext(Object context) { return readContext.defaultContext(context); }
-    @Override public String unavailableCode() { return bindings.unavailableCode(); }
-    @Override public Object read(NativeReadContext.Field field, Object object) { return readContext.read(field, object); }
-    @Override public Object read(GridTopologyContext.Field field, Object object) {
+
+    @Override
+    public boolean defaultContext(Object context) {
+        return readContext.defaultContext(context);
+    }
+
+    @Override
+    public String unavailableCode() {
+        return bindings.unavailableCode();
+    }
+
+    @Override
+    public Object read(NativeReadContext.Field field, Object object) {
+        return readContext.read(field, object);
+    }
+
+    @Override
+    public Object read(GridTopologyContext.Field field, Object object) {
         Method reader = readers.get(field);
         if (reader == null) throw failure("grid_unavailable", "Unbound topology context reader: " + field);
         if (field == UNDO) return bindings.invoke(reader, null, object);

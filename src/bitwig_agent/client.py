@@ -3,16 +3,22 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import math
 import os
 import uuid
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any
+
 from bitwig_agent.catalog import CLIENT_SIDE, TOOLS, max_timeout_ms, validate_call
 
 MAX_BYTES = 1024 * 1024
 METHODS = frozenset(TOOLS) - CLIENT_SIDE
+
+
+MAX_PORT = 65535
+MIN_TIMEOUT_MS = 100
 
 
 def package_version() -> str:
@@ -29,8 +35,10 @@ def _flag_extension_mismatch(result: dict[str, Any]) -> None:
     local = package_version()
     if loaded != local:
         result["extensionMismatch"] = {
-            "extensionVersion": loaded, "clientVersion": local,
-            "warning": "Loaded extension differs from this client; reinstall/restart the controller before trusting writes."}
+            "extensionVersion": loaded,
+            "clientVersion": local,
+            "warning": "Loaded extension differs from this client; reinstall/restart the controller before trusting writes.",
+        }
 
 
 class BridgeError(Exception):
@@ -63,29 +71,31 @@ def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 
 def load_json(value: str) -> Any:
     """Decode strict JSON, rejecting duplicate keys and non-finite numbers."""
-    return json.loads(value, parse_constant=_reject_constant, parse_float=_finite_float, object_pairs_hook=_unique_object)
+    return json.loads(
+        value, parse_constant=_reject_constant, parse_float=_finite_float, object_pairs_hook=_unique_object
+    )
 
 
 def configured_port() -> int:
     value = int(os.environ.get("BITWIG_AGENT_PORT", "61172"))
-    if not 1 <= value <= 65535:
-        raise ValueError("BITWIG_AGENT_PORT must be in 1..65535")
+    if not 1 <= value <= MAX_PORT:
+        raise ValueError(f"BITWIG_AGENT_PORT must be in 1..{MAX_PORT}")
     return value
 
 
 class BridgeClient:
     def __init__(self, port: int = 61172, *, response_grace_seconds: float = 1.0):
-        if type(port) is not int or not 1 <= port <= 65535:
-            raise ValueError("port must be in 1..65535")
+        if type(port) is not int or not 1 <= port <= MAX_PORT:
+            raise ValueError(f"port must be in 1..{MAX_PORT}")
         self.port = port
         self.response_grace_seconds = response_grace_seconds
 
-    async def call(self, method: str, params: dict[str, Any], timeout_ms: int = 5000) -> dict[str, Any]:
+    async def call(self, method: str, params: dict[str, Any], timeout_ms: int = 5000) -> dict[str, Any]:  # noqa: C901, PLR0912, PLR0915
         if method not in METHODS or not isinstance(params, dict):
             raise ValueError("A known method and object params are required")
         limit = max_timeout_ms(method)
-        if type(timeout_ms) is not int or not 100 <= timeout_ms <= limit:
-            raise ValueError(f"timeoutMs must be an integer in 100..{limit}")
+        if type(timeout_ms) is not int or not MIN_TIMEOUT_MS <= timeout_ms <= limit:
+            raise ValueError(f"timeoutMs must be an integer in {MIN_TIMEOUT_MS}..{limit}")
         if "timeoutMs" in params:
             raise ValueError("Pass timeout_ms separately from host params")
         params, _ = validate_call(method, {**params, "timeoutMs": timeout_ms})
@@ -115,7 +125,12 @@ class BridgeClient:
                     raise ValueError("Response must contain exactly one of result or error")
                 if "error" in response:
                     error = response["error"]
-                    if not isinstance(error, dict) or not isinstance(error.get("code"), str) or not isinstance(error.get("message"), str) or error.get("outcome") not in ("not_dispatched", "not_applied", "unknown"):
+                    if (
+                        not isinstance(error, dict)
+                        or not isinstance(error.get("code"), str)
+                        or not isinstance(error.get("message"), str)
+                        or error.get("outcome") not in ("not_dispatched", "not_applied", "unknown")
+                    ):
                         raise ValueError("Malformed host error")
                     raise BridgeError(error)
                 if not isinstance(response["result"], dict):
@@ -125,19 +140,28 @@ class BridgeClient:
                 return response["result"]
         except BridgeError:
             raise
-        except (TimeoutError, OSError, ValueError, RecursionError, asyncio.IncompleteReadError, asyncio.LimitOverrunError) as exc:
+        except (
+            TimeoutError,
+            OSError,
+            ValueError,
+            RecursionError,
+            asyncio.IncompleteReadError,
+            asyncio.LimitOverrunError,
+        ) as exc:
             outcome = "unknown" if dispatched else "not_dispatched"
             code = "deadline_exceeded" if isinstance(exc, TimeoutError) else "transport_error"
             hint = ""
             if method == "grid.get" and (isinstance(exc, asyncio.LimitOverrunError) or "exceeds 1 MiB" in str(exc)):
                 hint = " The grid.get response exceeded the 1 MiB client cap: lower moduleLimit (64 works with includeParameters) or set includeParameters=false."
-            raise BridgeError({"code": code, "message": f"{type(exc).__name__}: {exc}.{hint} Inspect host state before another write; request was not retried.", "outcome": outcome}) from exc
+            raise BridgeError(
+                {
+                    "code": code,
+                    "message": f"{type(exc).__name__}: {exc}.{hint} Inspect host state before another write; request was not retried.",
+                    "outcome": outcome,
+                }
+            ) from exc
         finally:
             if writer is not None:
                 writer.close()
-                try:
+                with contextlib.suppress(OSError, TimeoutError):
                     await asyncio.wait_for(writer.wait_closed(), timeout=0.2)
-                except (OSError, TimeoutError):
-                    pass
-
-

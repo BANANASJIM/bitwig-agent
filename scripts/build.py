@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """Build the extension using the installed Bitwig API and a verified Gson artifact."""
+
 import hashlib
 import os
-from pathlib import Path
 import shutil
 import subprocess
-import tempfile
 import tomllib
-import urllib.request
 import zipfile
+from pathlib import Path
+
+from tooling import download_verified
 
 ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "build"
@@ -18,24 +19,7 @@ GSON_URL = f"https://repo.maven.apache.org/maven2/com/google/code/gson/gson/{GSO
 
 
 def gson_jar():
-    target = BUILD / "deps" / f"gson-{GSON_VERSION}.jar"
-    target.parent.mkdir(parents=True, exist_ok=True)
-    if target.exists():
-        if hashlib.sha256(target.read_bytes()).hexdigest() != GSON_SHA256:
-            raise RuntimeError(f"Dependency checksum mismatch: {target}; remove it before rebuilding")
-        return target
-    with urllib.request.urlopen(GSON_URL, timeout=30) as response:
-        data = response.read(1024 * 1024 + 1)
-    if hashlib.sha256(data).hexdigest() != GSON_SHA256:
-        raise RuntimeError("Downloaded Gson checksum mismatch")
-    with tempfile.NamedTemporaryFile(dir=target.parent, delete=False) as output:
-        temporary = Path(output.name)
-        output.write(data)
-    try:
-        temporary.replace(target)
-    finally:
-        temporary.unlink(missing_ok=True)
-    return target
+    return download_verified(GSON_URL, GSON_SHA256, BUILD / "deps" / f"gson-{GSON_VERSION}.jar", 1024 * 1024)
 
 
 def classes_digest(classes):
@@ -46,15 +30,17 @@ def classes_digest(classes):
     return digest.hexdigest()[:12]
 
 
+def git_output(*args):
+    return subprocess.run(["git", "-C", str(ROOT), *args], check=True, capture_output=True, text=True).stdout.strip()
+
+
 def build_properties(classes):
     """Package version, git short SHA with dirty flag ("unknown" outside git), and a class-content hash."""
     version = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
     try:
-        git = lambda *args: subprocess.run(["git", "-C", str(ROOT), *args], check=True,
-                                           capture_output=True, text=True).stdout.strip()
-        build = git("rev-parse", "--short", "HEAD")
+        build = git_output("rev-parse", "--short", "HEAD")
         # Untracked .claude/ (agent worktrees) is local tooling, not source: it must not mark the build dirty.
-        if git("status", "--porcelain", "--", ".", ":(exclude).claude"):
+        if git_output("status", "--porcelain", "--", ".", ":(exclude).claude"):
             build += "-dirty"
     except (OSError, subprocess.CalledProcessError):
         build = "unknown"
@@ -63,9 +49,23 @@ def build_properties(classes):
 
 def compile_java(sources, target, classpath):
     target.mkdir(parents=True, exist_ok=True)
-    subprocess.run([os.environ.get("JAVAC", "javac"), "--release", "11", "-encoding", "UTF-8",
-                    "-cp", os.pathsep.join(map(str, classpath)), "-d", str(target),
-                    *map(str, sources)], check=True)
+    subprocess.run(
+        [
+            os.environ.get("JAVAC", "javac"),
+            "--release",
+            "11",
+            "-Xlint:all",
+            "-Werror",
+            "-encoding",
+            "UTF-8",
+            "-cp",
+            os.pathsep.join(map(str, classpath)),
+            "-d",
+            str(target),
+            *map(str, sources),
+        ],
+        check=True,
+    )
 
 
 def build():
@@ -83,8 +83,7 @@ def build():
         raise RuntimeError("Missing Bitwig ExtensionDefinition service registration")
     definitions = [line.split("#", 1)[0].strip() for line in service.read_text().splitlines()]
     definitions = [name for name in definitions if name]
-    if not definitions or any(not (classes / (name.replace(".", "/") + ".class")).is_file()
-                              for name in definitions):
+    if not definitions or any(not (classes / (name.replace(".", "/") + ".class")).is_file() for name in definitions):
         raise RuntimeError("ExtensionDefinition registration does not name a compiled class")
     output = BUILD / "BitwigAgent.bwextension"
     with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:

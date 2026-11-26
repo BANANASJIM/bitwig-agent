@@ -1,37 +1,68 @@
 package dev.bitwigagent;
 
+import static dev.bitwigagent.HostServices.*;
+
 import com.bitwig.extension.controller.api.*;
 import com.google.gson.*;
 import java.util.*;
-import static dev.bitwigagent.HostServices.*;
 
 /** Runtime discovery of implemented surfaces, bounded host windows and explicit exclusions. */
 final class DiscoveryModule implements HostModule {
-    static final Set<String> METHODS = Set.of("status", "tracks.list", "devices.list", "devices.layers.list", "capabilities");
+    static final Set<String> METHODS =
+            Set.of("status", "tracks.list", "devices.list", "devices.layers.list", "capabilities");
     private static final BuildInfo BUILD = BuildInfo.load();
     private final HostServices s;
     private final ParameterModule parameters;
     private final ProjectModule project;
     private final RenderModule render;
+
     DiscoveryModule(HostServices s, ParameterModule parameters, ProjectModule project, RenderModule render) {
-        this.s = s; this.parameters = parameters; this.project = project; this.render = render;
+        this.s = s;
+        this.parameters = parameters;
+        this.project = project;
+        this.render = render;
     }
-    @Override public Set<String> methods() { return METHODS; }
-    @Override public void validate(String method, JsonObject params) { validateParams(method, params); }
+
+    @Override
+    public Set<String> methods() {
+        return METHODS;
+    }
+
+    @Override
+    public void validate(String method, JsonObject params) {
+        validateParams(method, params);
+    }
+
     static void validateParams(String method, JsonObject params) {
         if (!METHODS.contains(method)) throw failure("unknown_method", "Unknown discovery method.");
-        if (method.equals("devices.layers.list")) { DeviceSources.validateLayer(params, false, true); return; }
+        if (method.equals("devices.layers.list")) {
+            DeviceSources.validateLayer(params, false, true);
+            return;
+        }
         Params.fields(params, method.equals("devices.list") ? Set.of("trackId") : Set.of(), Set.of());
         if (method.equals("devices.list")) Params.string(params, "trackId");
     }
-    @Override public void dispatch(HostOperation operation, String method, JsonObject params) {
+
+    @Override
+    public void dispatch(HostOperation operation, String method, JsonObject params) {
         switch (method) {
-            case "status": operation.result.complete(status()); return;
-            case "tracks.list": operation.result.complete(listTracks()); return;
-            case "devices.list": operation.result.complete(listDevices(params.get("trackId").getAsString())); return;
-            case "devices.layers.list": operation.result.complete(s.sources.listLayers(params)); return;
-            case "capabilities": operation.result.complete(capabilities(operation)); return;
-            default: throw failure("unknown_method", "Unsupported discovery method: " + method);
+            case "status":
+                operation.result.complete(status());
+                return;
+            case "tracks.list":
+                operation.result.complete(listTracks());
+                return;
+            case "devices.list":
+                operation.result.complete(listDevices(params.get("trackId").getAsString()));
+                return;
+            case "devices.layers.list":
+                operation.result.complete(s.sources.listLayers(params));
+                return;
+            case "capabilities":
+                operation.result.complete(capabilities(operation));
+                return;
+            default:
+                throw failure("unknown_method", "Unsupported discovery method: " + method);
         }
     }
 
@@ -69,7 +100,12 @@ final class DiscoveryModule implements HostModule {
         result.add("methods", methods);
         result.add("domains", domains);
         JsonObject windows = new JsonObject();
-        windows.add("tracks", window(s.tracks.scrollPosition().get(), TRACKS, s.tracks.itemCount().get()));
+        windows.add(
+                "tracks",
+                window(
+                        s.tracks.scrollPosition().get(),
+                        TRACKS,
+                        s.tracks.itemCount().get()));
         windows.addProperty("devicesPerTrack", DEVICES);
         windows.addProperty("launcherSlotsPerTrack", SCENES);
         windows.addProperty("sendsPerTrack", SENDS);
@@ -77,8 +113,11 @@ final class DiscoveryModule implements HostModule {
         windows.addProperty("deviceScope", "top_level");
         windows.addProperty("layersPerRootDevice", DeviceSources.LAYERS);
         windows.addProperty("devicesPerLayer", DeviceSources.CHILDREN);
-        windows.addProperty("layerScope", "one_layer_hop_fixed_zero_offset_no_pads_slots_deeper_or_grid_private_targeting");
-        windows.addProperty("layerPhysicalRebindPolicy", "direct_access_fail_closed_until_extension_reload_no_callback_provenance_boundary");
+        windows.addProperty(
+                "layerScope", "one_layer_hop_fixed_zero_offset_no_pads_slots_deeper_or_grid_private_targeting");
+        windows.addProperty(
+                "layerPhysicalRebindPolicy",
+                "direct_access_fail_closed_until_extension_reload_no_callback_provenance_boundary");
         windows.addProperty("indexBase", 0);
         result.add("windows", windows);
         JsonObject units = new JsonObject();
@@ -100,34 +139,59 @@ final class DiscoveryModule implements HostModule {
         result.addProperty("writeSemantics", "absolute_or_explicit_command_no_automatic_retries");
         result.addProperty("completionSemantics", "dispatched_is_not_completed_read_verification_fields");
         JsonObject grid = new JsonObject();
-        grid.addProperty("scope", "version_gated_private_grid_reads_guarded_raw_parameter_module_and_single_input_connection_writes");
+        grid.addProperty(
+                "scope",
+                "version_gated_private_grid_reads_guarded_raw_parameter_module_and_single_input_connection_writes");
         grid.addProperty("capabilitiesMethod", "grid.capabilities");
-        grid.addProperty("reason", "Query grid.capabilities for independent read/parameterWrite/moduleInsert/moduleMove/moduleDelete/moduleRename/connectionWrite bindings, read-only adapter Class identity and process topology lifetime guard, not native acceptance.");
+        grid.addProperty(
+                "reason",
+                "Query grid.capabilities for independent read/parameterWrite/moduleInsert/moduleMove/moduleDelete/moduleRename/connectionWrite bindings, read-only adapter Class identity and process topology lifetime guard, not native acceptance.");
         JsonArray reads = new JsonArray();
-        for (String method : List.of("grid.catalog", "grid.get", "grid.parameters.get", "grid.voicing.get")) reads.add(method);
+        for (String method : List.of("grid.catalog", "grid.get", "grid.parameters.get", "grid.voicing.get"))
+            reads.add(method);
         grid.add("readMethods", reads);
         JsonArray writes = new JsonArray();
-        for (String method : List.of("grid.parameters.set", "grid.voicing.set", "devices.remote.define", "devices.remote.deletePage", "grid.modules.insert", "grid.modules.move", "grid.modules.delete", "grid.modules.rename", "grid.connections.set")) writes.add(method);
+        for (String method : List.of(
+                "grid.parameters.set",
+                "grid.voicing.set",
+                "devices.remote.define",
+                "devices.remote.deletePage",
+                "grid.modules.insert",
+                "grid.modules.move",
+                "grid.modules.delete",
+                "grid.modules.rename",
+                "grid.connections.set")) writes.add(method);
         grid.add("writeMethods", writes);
-        grid.addProperty("graphWriteAvailability", "query_grid.capabilities_moduleInsert_moduleMove_moduleDelete_moduleRename_and_connectionWrite");
+        grid.addProperty(
+                "graphWriteAvailability",
+                "query_grid.capabilities_moduleInsert_moduleMove_moduleDelete_moduleRename_and_connectionWrite");
         grid.addProperty("graphWriteScope", "module_insert_move_delete_rename_and_single_input_connection_set");
         grid.addProperty("parameterWriteAvailability", "query_grid.capabilities_parameterWrite");
         grid.addProperty("nativeUndoAvailable", false);
-        grid.addProperty("nativeUndoScope", "native_parameter_and_topology_operations_not_an_undo_command_or_grouping_guarantee");
+        grid.addProperty(
+                "nativeUndoScope",
+                "native_parameter_and_topology_operations_not_an_undo_command_or_grouping_guarantee");
         result.add("privateGridTopology", grid);
         JsonObject modulators = new JsonObject();
         modulators.addProperty("scope", "primary_modulators_on_root_device");
         modulators.addProperty("capabilitiesMethod", "modulators.capabilities");
-        modulators.addProperty("readAvailability", "query_modulators.capabilities_independent_discovery_and_string_panel_bindings");
+        modulators.addProperty(
+                "readAvailability", "query_modulators.capabilities_independent_discovery_and_string_panel_bindings");
         modulators.addProperty("writeAvailability", "query_modulators.capabilities_edit");
         modulators.addProperty("nativeVerification", "not_established_by_binding");
-        modulators.addProperty("coverage", "primary_modulators_and_their_mappings_on_one_root_device_excludes_secondary_nested_modulators_and_materialization");
+        modulators.addProperty(
+                "coverage",
+                "primary_modulators_and_their_mappings_on_one_root_device_excludes_secondary_nested_modulators_and_materialization");
         modulators.addProperty("pagination", "independent_observations_not_revision_consistent");
-        modulators.addProperty("edits", "modulators.get/insert/delete/parameters.set/map/unmap; availability in modulators.capabilities edit");
+        modulators.addProperty(
+                "edits",
+                "modulators.get/insert/delete/parameters.set/map/unmap; availability in modulators.capabilities edit");
         result.add("privateModulatorReads", modulators);
         result.add("projectSaveAs", project.saveAsCapability(operation));
         result.add("render", render.capability(operation));
-        result.addProperty("evidence", "Runtime implementation discovery only; not per-method host verification or full interface coverage.");
+        result.addProperty(
+                "evidence",
+                "Runtime implementation discovery only; not per-method host verification or full interface coverage.");
         return result;
     }
 
@@ -147,7 +211,12 @@ final class DiscoveryModule implements HostModule {
         }
         result.add("tracks", items);
         result.add("tree", tree.summary());
-        result.add("window", window(s.tracks.scrollPosition().get(), TRACKS, s.tracks.itemCount().get()));
+        result.add(
+                "window",
+                window(
+                        s.tracks.scrollPosition().get(),
+                        TRACKS,
+                        s.tracks.itemCount().get()));
         result.addProperty("scope", "flat_track_bank");
         return result;
     }
@@ -168,7 +237,9 @@ final class DiscoveryModule implements HostModule {
         JsonObject result = observed();
         result.addProperty("trackId", trackId);
         result.add("devices", items);
-        result.add("window", window(bank.scrollPosition().get(), DEVICES, bank.itemCount().get()));
+        result.add(
+                "window",
+                window(bank.scrollPosition().get(), DEVICES, bank.itemCount().get()));
         result.addProperty("scope", "top_level");
         return result;
     }

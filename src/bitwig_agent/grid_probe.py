@@ -35,33 +35,57 @@ def _fail(code: str, message: str, outcome: str = "not_dispatched", **details: A
 Source = tuple[str, str] | None  # (moduleId, portKey) feeding an input, None = unconnected
 
 
-def _incoming(cables: list[dict], inputs: set[tuple[str, str]]) -> dict[tuple[str, str], Source]:
+def _incoming(cables: list[dict[str, Any]], inputs: set[tuple[str, str]]) -> dict[tuple[str, str], Source]:
     live = {(c["targetModuleId"], c["targetPortKey"]): (c["sourceModuleId"], c["sourcePortKey"]) for c in cables}
     return {key: live.get(key) for key in inputs}
 
 
+def _end(source: Source) -> dict[str, Any] | None:
+    return None if source is None else {"moduleId": source[0], "portKey": source[1]}
+
+
 def _edit(key: tuple[str, str], expected: Source, source: Source) -> dict[str, Any]:
-    end = lambda s: None if s is None else {"moduleId": s[0], "portKey": s[1]}  # noqa: E731
-    return {"targetModuleId": key[0], "targetPortKey": key[1], "expectedSource": end(expected), "source": end(source)}
+    return {
+        "targetModuleId": key[0],
+        "targetPortKey": key[1],
+        "expectedSource": _end(expected),
+        "source": _end(source),
+    }
 
 
-async def _set(client: Any, target: dict, edits: list[dict], timeout_ms: int) -> None:
+async def _set(client: Any, target: dict[str, Any], edits: list[dict[str, Any]], timeout_ms: int) -> None:
     for start in range(0, len(edits), MAX_EDITS):
-        result = await client.call("grid.connections.set", {**target, "connections": edits[start:start + MAX_EDITS]}, timeout_ms)
+        result = await client.call(
+            "grid.connections.set", {**target, "connections": edits[start : start + MAX_EDITS]}, timeout_ms
+        )
         if result.get("batchStatus") != "applied":
-            raise _fail("not_applied", f"grid.connections.set reported batchStatus {result.get('batchStatus')!r}", "unknown", result=result)
+            raise _fail(
+                "not_applied",
+                f"grid.connections.set reported batchStatus {result.get('batchStatus')!r}",
+                "unknown",
+                result=result,
+            )
 
 
 def _label(key: tuple[str, str], source: Source, names: dict[str, str]) -> dict[str, Any]:
-    return {"input": f"{names.get(key[0], key[0])}.{key[1]}", "source": None if source is None else f"{names.get(source[0], source[0])}.{source[1]}"}
+    return {
+        "input": f"{names.get(key[0], key[0])}.{key[1]}",
+        "source": None if source is None else f"{names.get(source[0], source[0])}.{source[1]}",
+    }
 
 
-async def _restore(client: Any, target: dict, original: dict[tuple[str, str], Source], probing: dict[tuple[str, str], Source],
-                   names: dict[str, str], timeout_ms: int) -> dict[str, Any]:
+async def _restore(  # noqa: PLR0913, PLR0917
+    client: Any,
+    target: dict[str, Any],
+    original: dict[tuple[str, str], Source],
+    probing: dict[tuple[str, str], Source],
+    names: dict[str, str],
+    timeout_ms: int,
+) -> dict[str, Any]:
     """Put every Audio Out input back. A cable is only cut/rewired when it still shows the original or the probe wiring;
     anything else was changed by someone else meanwhile and is left alone and reported."""
     try:
-        rows, cables = await read_all(client, target, min(timeout_ms, MAX_TIMEOUT_MS), False)
+        _rows, cables = await read_all(client, target, min(timeout_ms, MAX_TIMEOUT_MS), False)
         current = _incoming(cables, set(original))
         edits, foreign = [], []
         for key, want in original.items():
@@ -76,14 +100,22 @@ async def _restore(client: Any, target: dict, original: dict[tuple[str, str], So
             await _set(client, target, edits, timeout_ms)
             _, cables = await read_all(client, target, min(timeout_ms, MAX_TIMEOUT_MS), False)
             current = _incoming(cables, set(original))
-        left = [{**_label(k, current[k], names), "originally": _label(k, original[k], names)["source"]} for k in original if current[k] != original[k]]
+        left = [
+            {**_label(k, current[k], names), "originally": _label(k, original[k], names)["source"]}
+            for k in original
+            if current[k] != original[k]
+        ]
         return {"restored": not left, "left": left, "changedMeanwhile": foreign}
     except BridgeError as exc:
-        return {"restored": False, "error": exc.error, "left": "unknown: reading or writing the graph failed; inspect with grid.graph",
-                "originally": [_label(k, v, names) for k, v in original.items()]}
+        return {
+            "restored": False,
+            "error": exc.error,
+            "left": "unknown: reading or writing the graph failed; inspect with grid.graph",
+            "originally": [_label(k, v, names) for k, v in original.items()],
+        }
 
 
-async def probe(client: Any, args: dict[str, Any], timeout_ms: int) -> dict[str, Any]:
+async def probe(client: Any, args: dict[str, Any], timeout_ms: int) -> dict[str, Any]:  # noqa: C901, PLR0912, PLR0915
     audio.check_platform()
     target = {k: args[k] for k in ("trackId", "deviceIndex", "expectedDeviceName")}
     allow_audible = args.get("allowAudible", False)
@@ -93,8 +125,12 @@ async def probe(client: Any, args: dict[str, Any], timeout_ms: int) -> dict[str,
     if not allow_audible:
         state = audio.describe(await asyncio.to_thread(audio.current_links))
         if not state["silent"]:
-            raise _fail("not_silent", "Bitwig output is not routed to the silent sink; call audio.route mode=silent first, "
-                        "or pass allowAudible:true (the probed signal is then audible)", **state)
+            raise _fail(
+                "not_silent",
+                "Bitwig output is not routed to the silent sink; call audio.route mode=silent first, "
+                "or pass allowAudible:true (the probed signal is then audible)",
+                **state,
+            )
     keep = args.get("outPath")
     if keep:  # refuse before any cable is touched
         if os.path.exists(keep) and not args.get("overwrite", False):
@@ -107,7 +143,10 @@ async def probe(client: Any, args: dict[str, Any], timeout_ms: int) -> dict[str,
     transport = await client.call("transport.get", {}, short)
     unsafe = [k for k in UNSAFE_FLAGS if transport.get(k) is not False]
     if unsafe:
-        raise _fail("unsafe_state", f"Grid writes need recording and automation write observed off; not confirmed off: {', '.join(unsafe)}")
+        raise _fail(
+            "unsafe_state",
+            f"Grid writes need recording and automation write observed off; not confirmed off: {', '.join(unsafe)}",
+        )
     if transport.get("playing") is True:
         await client.call("transport.set", {"playing": False}, short)
     rows, cables = await read_all(client, target, short, False)
@@ -115,18 +154,28 @@ async def probe(client: Any, args: dict[str, Any], timeout_ms: int) -> dict[str,
     by_name = {names[r["instanceId"]]: r for r in rows}
     source = by_name.get(module)
     if source is None or module in duplicates:
-        raise _fail("invalid_params", f"No module named {module!r} with a unique name in this device; names: {sorted(by_name)[:30]}")
+        raise _fail(
+            "invalid_params",
+            f"No module named {module!r} with a unique name in this device; names: {sorted(by_name)[:30]}",
+        )
     if port_key not in {o["key"] for o in source.get("outputs", [])}:
-        raise _fail("invalid_params", f"{module!r} has no output port {port_key!r}; outputs: {[o['key'] for o in source.get('outputs', [])]}")
+        raise _fail(
+            "invalid_params",
+            f"{module!r} has no output port {port_key!r}; outputs: {[o['key'] for o in source.get('outputs', [])]}",
+        )
     outs = sorted((r for r in rows if r.get("typeName") == AUDIO_OUT), key=lambda r: (r["y"], r["x"]))
     if not outs:
-        raise _fail("invalid_params", "This device has no Audio Out module to probe through; add one with grid.apply first")
+        raise _fail(
+            "invalid_params", "This device has no Audio Out module to probe through; add one with grid.apply first"
+        )
     inputs = {(r["instanceId"], i["key"]) for r in outs for i in r.get("inputs", [])}
     original = _incoming(cables, inputs)
     # An existing, already wired Audio Out is reused; the others are silenced for the duration.
-    chosen = next((r for r in outs if any(original.get((r["instanceId"], i["key"])) for i in r.get("inputs", []))), outs[0])
+    chosen = next(
+        (r for r in outs if any(original.get((r["instanceId"], i["key"])) for i in r.get("inputs", []))), outs[0]
+    )
     probe_end = (source["instanceId"], port_key)
-    probing: dict[tuple[str, str], Source] = {k: None for k in original}
+    probing: dict[tuple[str, str], Source] = dict.fromkeys(original)
     probing[(chosen["instanceId"], chosen["inputs"][0]["key"])] = probe_end
     edits = [_edit(k, original[k], probing[k]) for k in original if original[k] != probing[k]]
     if len(edits) > MAX_EDITS:
@@ -142,26 +191,68 @@ async def probe(client: Any, args: dict[str, Any], timeout_ms: int) -> dict[str,
             if edits:
                 rewired = True  # even a failed batch may have applied entries: restore reads the real state
                 await _set(client, target, edits, timeout_ms)
-            captured = await audio.capture(client, {"seconds": seconds, "outPath": wav, "allowAudible": allow_audible, "fromStart": True, "overwrite": bool(keep)}, short)
+            captured = await audio.capture(
+                client,
+                {
+                    "seconds": seconds,
+                    "outPath": wav,
+                    "allowAudible": allow_audible,
+                    "fromStart": True,
+                    "overwrite": bool(keep),
+                },
+                short,
+            )
         except (BridgeError, asyncio.CancelledError) as exc:
             capture_error = exc
-        restored = await asyncio.shield(_restore(client, target, original, probing, names, timeout_ms)) if rewired else {"restored": True, "left": [], "changedMeanwhile": []}
+        restored = (
+            await asyncio.shield(_restore(client, target, original, probing, names, timeout_ms))
+            if rewired
+            else {"restored": True, "left": [], "changedMeanwhile": []}
+        )
         if not restored["restored"]:
-            raise _fail("probe_restore_failed", "The probe could not put every Audio Out cable back; the listed inputs are still changed. "
-                        "Reconnect them with grid.connections.set (or grid.apply) before anything else.", "unknown",
-                        left=restored.get("left"), originally=restored.get("originally"), restoreError=restored.get("error"),
-                        changedMeanwhile=restored.get("changedMeanwhile"),
-                        probeError=capture_error.error if isinstance(capture_error, BridgeError) else None)
+            raise _fail(
+                "probe_restore_failed",
+                "The probe could not put every Audio Out cable back; the listed inputs are still changed. "
+                "Reconnect them with grid.connections.set (or grid.apply) before anything else.",
+                "unknown",
+                left=restored.get("left"),
+                originally=restored.get("originally"),
+                restoreError=restored.get("error"),
+                changedMeanwhile=restored.get("changedMeanwhile"),
+                probeError=capture_error.error if isinstance(capture_error, BridgeError) else None,
+            )
         if capture_error is not None:
             raise capture_error
+        assert captured is not None
         analysis_args = {"path": wav, "mode": args["mode"], **{k: args[k] for k in PASS_THROUGH if k in args}}
         analysis = await audio.analyze(analysis_args)
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
     for key in ("path",):
         analysis.pop(key, None)
-    return {"status": "probed", "port": args["port"], "mode": args["mode"], "audioOut": names[chosen["instanceId"]],
-            "cablesChanged": len(edits), "restored": True, **({"wavPath": keep} if keep else {}),
-            **({"changedMeanwhile": restored["changedMeanwhile"]} if restored["changedMeanwhile"] else {}),
-            "capture": {k: captured[k] for k in ("durationSeconds", "peak", "peakDb", "rms", "rmsDb", "clipping", "silent", "audible", "transportStopped")},
-            "analysis": analysis, "transportStopped": True}
+    return {
+        "status": "probed",
+        "port": args["port"],
+        "mode": args["mode"],
+        "audioOut": names[chosen["instanceId"]],
+        "cablesChanged": len(edits),
+        "restored": True,
+        **({"wavPath": keep} if keep else {}),
+        **({"changedMeanwhile": restored["changedMeanwhile"]} if restored["changedMeanwhile"] else {}),
+        "capture": {
+            k: captured[k]
+            for k in (
+                "durationSeconds",
+                "peak",
+                "peakDb",
+                "rms",
+                "rmsDb",
+                "clipping",
+                "silent",
+                "audible",
+                "transportStopped",
+            )
+        },
+        "analysis": analysis,
+        "transportStopped": True,
+    }

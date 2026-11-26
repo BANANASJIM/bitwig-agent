@@ -4,15 +4,17 @@ import os
 import sys
 
 import pytest
+from pydantic import ValidationError
 
+from bitwig_agent.catalog import NOTE_WINDOW, TARGET, TOOLS, TRACK, invalid_params_message, validate_call
 from bitwig_agent.cli import execute, main, parse_arguments, parser
-from bitwig_agent.catalog import NOTE_WINDOW, TARGET, TOOLS, TRACK
 
 pytestmark = pytest.mark.anyio
 
 
-@pytest.mark.parametrize("arguments", [[], ["list"], ["list", "notes"], ["help"],
-                                         ["describe", "notes.edit"], ["notes.edit", "--help"]])
+@pytest.mark.parametrize(
+    "arguments", [[], ["list"], ["list", "notes"], ["help"], ["describe", "notes.edit"], ["notes.edit", "--help"]]
+)
 async def test_offline_discovery_ignores_host_configuration(monkeypatch, arguments):
     monkeypatch.setenv("BITWIG_AGENT_PORT", "not-a-port")
     payload, code = await execute(arguments)
@@ -27,21 +29,31 @@ async def test_typed_arguments_forward_without_null_defaults(host, monkeypatch):
     monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
     result = {"status": "dispatched", "verification": {"verified": False}}
     host.reply = lambda request: {"id": request["id"], "result": result}
-    payload, code = await execute(["tracks.set", f"trackId={TRACK}", "mute=false",
-                                   "volumeNormalized=0.25", "name=Sketch = α", "--timeout-ms", "250"])
+    payload, code = await execute(
+        [
+            "tracks.set",
+            f"trackId={TRACK}",
+            "mute=false",
+            "volumeNormalized=0.25",
+            "name=Sketch = \u03b1",
+            "--timeout-ms",
+            "250",
+        ]
+    )
     assert code == 0
     assert payload == {"result": result}
     request = host.requests[0]
-    assert request["params"] == {"trackId": TRACK, "mute": False,
-                                  "volumeNormalized": 0.25, "name": "Sketch = α"}
+    assert request["params"] == {"trackId": TRACK, "mute": False, "volumeNormalized": 0.25, "name": "Sketch = \u03b1"}
     assert request["timeoutMs"] == 250
     assert host.connections == 1
 
 
 async def test_nested_note_arguments_and_raw_json_are_equivalent(host, monkeypatch):
     monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
-    edits = [{"op": "set", "beat": 0, "pitch": 60, "velocity": 90, "durationBeats": 1},
-             {"op": "clear", "beat": 1, "pitch": 64}]
+    edits = [
+        {"op": "set", "beat": 0, "pitch": 60, "velocity": 90, "durationBeats": 1},
+        {"op": "clear", "beat": 1, "pitch": 64},
+    ]
     args = {**NOTE_WINDOW, "edits": edits}
     typed = [f"{key}={value if isinstance(value, str) else json.dumps(value)}" for key, value in args.items()]
     for argv in [["notes.edit", *typed], ["notes.edit", "--params", json.dumps(args)]]:
@@ -51,23 +63,36 @@ async def test_nested_note_arguments_and_raw_json_are_equivalent(host, monkeypat
     assert "durationBeats" not in host.requests[-1]["params"]["edits"][1]
 
 
-@pytest.mark.parametrize("arguments", [
-    ["missing"], ["status", "unexpected=1"], ["status", "broken"],
-    ["transport.set", "playing=False"], ["transport.set", "playing=1"],
-    ["transport.set", "playing=null"], ["transport.set", "playing=true", "playing=false"],
-    ["transport.set", "tempoBpm=NaN"], ["transport.set", "tempoBpm=1e9999"],
-    ["transport.set", "tempoBpm=19"], ["transport.set"],
-    ["tracks.set", f"trackId={TRACK}", "mute=true", "volumeNormalized=2"],
-    ["tracks.create", "type=instrument", "position=1.5", "name=x"],
-    ["launcher.import", f"trackId={TRACK}", "slotIndex=0", "path=relative.wav"],
-    ["launcher.import", f"trackId={TRACK}", "slotIndex=0", "path=/tmp/audio.wav", "overwrite=true"],
-    ["status", "--params", "[]"], ["status", "--params", "null"],
-    ["transport.set", "--params", '{"playing":true,"playing":false}'],
-    ["transport.set", "--params", '{"playing":true}', "playing=false"],
-    ["status", "--timeout-ms", "99"], ["status", "--timeout-ms", "abc"],
-    ["status", "timeoutMs=500", "--timeout-ms", "500"],
-    ["status", "--unknown"], ["describe", "missing"], ["list", "unknown"],
-])
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["missing"],
+        ["status", "unexpected=1"],
+        ["status", "broken"],
+        ["transport.set", "playing=False"],
+        ["transport.set", "playing=1"],
+        ["transport.set", "playing=null"],
+        ["transport.set", "playing=true", "playing=false"],
+        ["transport.set", "tempoBpm=NaN"],
+        ["transport.set", "tempoBpm=1e9999"],
+        ["transport.set", "tempoBpm=19"],
+        ["transport.set"],
+        ["tracks.set", f"trackId={TRACK}", "mute=true", "volumeNormalized=2"],
+        ["tracks.create", "type=instrument", "position=1.5", "name=x"],
+        ["launcher.import", f"trackId={TRACK}", "slotIndex=0", "path=relative.wav"],
+        ["launcher.import", f"trackId={TRACK}", "slotIndex=0", "path=/tmp/audio.wav", "overwrite=true"],
+        ["status", "--params", "[]"],
+        ["status", "--params", "null"],
+        ["transport.set", "--params", '{"playing":true,"playing":false}'],
+        ["transport.set", "--params", '{"playing":true}', "playing=false"],
+        ["status", "--timeout-ms", "99"],
+        ["status", "--timeout-ms", "abc"],
+        ["status", "timeoutMs=500", "--timeout-ms", "500"],
+        ["status", "--unknown"],
+        ["describe", "missing"],
+        ["list", "unknown"],
+    ],
+)
 async def test_invalid_cli_inputs_return_json_error_without_tcp(host, monkeypatch, arguments):
     monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
     payload, code = await execute(arguments)
@@ -80,14 +105,26 @@ async def test_invalid_cli_inputs_return_json_error_without_tcp(host, monkeypatc
 
 async def test_cli_preserves_grid_unknown_outcome_and_raw_expected_value_without_retry(host, monkeypatch):
     monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
-    error = {"code": "deadline_exceeded", "message": "Inspect actual parameter before editing again",
-             "outcome": "unknown", "details": {"dispatched": True}}
+    error = {
+        "code": "deadline_exceeded",
+        "message": "Inspect actual parameter before editing again",
+        "outcome": "unknown",
+        "details": {"dispatched": True},
+    }
     host.reply = lambda request: {"id": request["id"], "error": error}
-    payload, code = await execute([
-        "grid.parameters.set", f"trackId={TRACK}", "deviceIndex=0", "expectedDeviceName=Poly Grid",
-        f"moduleId={TRACK}", "parameterId=", "expectedKind=float",
-        "expectedValue=9007199254740993", "value=9007199254740994",
-    ])
+    payload, code = await execute(
+        [
+            "grid.parameters.set",
+            f"trackId={TRACK}",
+            "deviceIndex=0",
+            "expectedDeviceName=Poly Grid",
+            f"moduleId={TRACK}",
+            "parameterId=",
+            "expectedKind=float",
+            "expectedValue=9007199254740993",
+            "value=9007199254740994",
+        ]
+    )
     assert code == 1
     assert payload == {"error": error}
     assert host.connections == 1
@@ -109,8 +146,13 @@ async def test_cli_lost_response_is_unknown_not_replayed(host, monkeypatch):
 
 async def test_empty_grid_parameter_id_is_not_omitted_or_retargeted(host, monkeypatch):
     monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
-    args = {"trackId": TRACK, "deviceIndex": 15, "expectedDeviceName": "Poly Grid",
-            "moduleId": TRACK, "parameterId": ""}
+    args = {
+        "trackId": TRACK,
+        "deviceIndex": 15,
+        "expectedDeviceName": "Poly Grid",
+        "moduleId": TRACK,
+        "parameterId": "",
+    }
     arguments = [f"{key}={value}" for key, value in args.items()]
     error = {"code": "stale_context", "message": "Module is no longer present", "outcome": "not_applied"}
     host.reply = lambda request: {"id": request["id"], "error": error}
@@ -125,12 +167,15 @@ async def test_empty_grid_parameter_id_is_not_omitted_or_retargeted(host, monkey
 @pytest.mark.parametrize("value", ["1.0", "1" + "0" * 400])
 async def test_grid_cli_numeric_tokens_fail_cleanly_before_tcp(host, monkeypatch, value):
     monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
-    payload, code = await execute([
-        "grid.parameters.set", "--params",
-        f'{{"trackId":"{TRACK}","deviceIndex":0,"expectedDeviceName":"Poly Grid",'
-        f'"moduleId":"{TRACK}","parameterId":"","expectedKind":"integer",'
-        f'"expectedValue":0,"value":{value}}}',
-    ])
+    payload, code = await execute(
+        [
+            "grid.parameters.set",
+            "--params",
+            f'{{"trackId":"{TRACK}","deviceIndex":0,"expectedDeviceName":"Poly Grid",'
+            f'"moduleId":"{TRACK}","parameterId":"","expectedKind":"integer",'
+            f'"expectedValue":0,"value":{value}}}',
+        ]
+    )
     assert code == 2
     assert payload["error"]["code"] == "invalid_params"
     assert payload["error"]["outcome"] == "not_dispatched"
@@ -139,17 +184,40 @@ async def test_grid_cli_numeric_tokens_fail_cleanly_before_tcp(host, monkeypatch
 
 @pytest.mark.parametrize("raw", [False, True])
 @pytest.mark.parametrize("field", ["expectedX", "expectedY", "x", "y"])
-@pytest.mark.parametrize("token", [
-    "null", "true", "false", "1.0", "1e0", "-0.0", "0e0", '"1"',
-    "-2147483649", "2147483648", "1e9999",
-])
+@pytest.mark.parametrize(
+    "token",
+    [
+        "null",
+        "true",
+        "false",
+        "1.0",
+        "1e0",
+        "-0.0",
+        "0e0",
+        '"1"',
+        "-2147483649",
+        "2147483648",
+        "1e9999",
+    ],
+)
 async def test_grid_move_cli_rejects_non_integer_tokens_before_tcp(host, monkeypatch, raw, field, token):
     monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
-    tokens = {"trackId": json.dumps(TRACK), "deviceIndex": "0",
-              "expectedDeviceName": '"Poly Grid"', "moduleId": json.dumps(TRACK),
-              "expectedX": "0", "expectedY": "0", "x": "4", "y": "2", field: token}
-    arguments = (["--params", "{" + ",".join(f'"{key}":{value}' for key, value in tokens.items()) + "}"]
-                 if raw else [f"{key}={value}" for key, value in tokens.items()])
+    tokens = {
+        "trackId": json.dumps(TRACK),
+        "deviceIndex": "0",
+        "expectedDeviceName": '"Poly Grid"',
+        "moduleId": json.dumps(TRACK),
+        "expectedX": "0",
+        "expectedY": "0",
+        "x": "4",
+        "y": "2",
+        field: token,
+    }
+    arguments = (
+        ["--params", "{" + ",".join(f'"{key}":{value}' for key, value in tokens.items()) + "}"]
+        if raw
+        else [f"{key}={value}" for key, value in tokens.items()]
+    )
     payload, code = await execute(["grid.modules.move", *arguments])
     assert code == 2
     assert payload["error"]["code"] == "invalid_params"
@@ -158,18 +226,21 @@ async def test_grid_move_cli_rejects_non_integer_tokens_before_tcp(host, monkeyp
 
 
 @pytest.mark.parametrize("raw", [False, True])
-@pytest.mark.parametrize("expected,source", [
-    (None, {"moduleId": TRACK, "portKey": ""}),
-    ({"moduleId": TRACK, "portKey": "out=α"}, None),
-    (None, None),
-])
+@pytest.mark.parametrize(
+    ("expected", "source"),
+    [
+        (None, {"moduleId": TRACK, "portKey": ""}),
+        ({"moduleId": TRACK, "portKey": "out=\u03b1"}, None),
+        (None, None),
+    ],
+)
 def test_connection_cli_parses_required_null_and_endpoint_without_defaults(raw, expected, source):
-    values = {**TARGET, "targetModuleId": TRACK, "targetPortKey": "",
-              "expectedSource": expected, "source": source}
-    arguments = (["--params", json.dumps(values)] if raw else [
-        f"{key}={value if isinstance(value, str) else json.dumps(value)}"
-        for key, value in values.items()
-    ])
+    values = {**TARGET, "targetModuleId": TRACK, "targetPortKey": "", "expectedSource": expected, "source": source}
+    arguments = (
+        ["--params", json.dumps(values)]
+        if raw
+        else [f"{key}={value if isinstance(value, str) else json.dumps(value)}" for key, value in values.items()]
+    )
     parsed = parser().parse_intermixed_args(["grid.connections.set", *arguments, "--timeout-ms", "250"])
     params, timeout = parse_arguments(parsed.command, parsed.arguments, parsed.params, parsed.timeout_ms)
     assert params == values
@@ -178,25 +249,41 @@ def test_connection_cli_parses_required_null_and_endpoint_without_defaults(raw, 
 
 @pytest.mark.parametrize("raw", [False, True])
 @pytest.mark.parametrize("field", ["expectedSource", "source"])
-@pytest.mark.parametrize("token", [
-    None, '"null"', "[]", "false", "{}",
-    '{"moduleId":"1-1-1-1-1","portKey":""}',
-    '{"moduleId":"' + TRACK + '","portKey":null}',
-    '{"moduleId":"' + TRACK + '","portKey":"","extra":1}',
-    '{"moduleId":"' + TRACK + '","portKey":"","portKey":"other"}',
-])
+@pytest.mark.parametrize(
+    "token",
+    [
+        None,
+        '"null"',
+        "[]",
+        "false",
+        "{}",
+        '{"moduleId":"1-1-1-1-1","portKey":""}',
+        '{"moduleId":"' + TRACK + '","portKey":null}',
+        '{"moduleId":"' + TRACK + '","portKey":"","extra":1}',
+        '{"moduleId":"' + TRACK + '","portKey":"","portKey":"other"}',
+    ],
+)
 async def test_connection_cli_rejects_missing_or_invalid_cas_endpoint_before_tcp(host, monkeypatch, raw, field, token):
     monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
-    tokens = {key: json.dumps(value) for key, value in {
-        **TARGET, "targetModuleId": TRACK, "targetPortKey": "",
-        "expectedSource": None, "source": None,
-    }.items()}
+    tokens = {
+        key: json.dumps(value)
+        for key, value in {
+            **TARGET,
+            "targetModuleId": TRACK,
+            "targetPortKey": "",
+            "expectedSource": None,
+            "source": None,
+        }.items()
+    }
     if token is None:
         del tokens[field]
     else:
         tokens[field] = token
-    arguments = (["--params", "{" + ",".join(f'"{key}":{value}' for key, value in tokens.items()) + "}"]
-                 if raw else [f"{key}={value}" for key, value in tokens.items()])
+    arguments = (
+        ["--params", "{" + ",".join(f'"{key}":{value}' for key, value in tokens.items()) + "}"]
+        if raw
+        else [f"{key}={value}" for key, value in tokens.items()]
+    )
     payload, code = await execute(["grid.connections.set", *arguments])
     assert code == 2
     assert payload["error"]["code"] == "invalid_params"
@@ -220,12 +307,13 @@ async def test_offline_discovery_exposes_connection_examples_and_complete_regist
 async def test_grid_insert_cli_preserves_loader_unknown_without_retry(host, monkeypatch, raw):
     monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
     params = {**TARGET, "typeId": TRACK, "x": -(2**31), "y": 2**31 - 1}
-    arguments = (["--params", json.dumps(params)] if raw else [
-        f"{key}={value}" for key, value in params.items()
-    ])
-    error = {"code": "deadline_exceeded", "message": "Inspect actual graph",
-             "outcome": "unknown",
-             "details": {"loaderDispatched": True, "placementDispatched": False}}
+    arguments = ["--params", json.dumps(params)] if raw else [f"{key}={value}" for key, value in params.items()]
+    error = {
+        "code": "deadline_exceeded",
+        "message": "Inspect actual graph",
+        "outcome": "unknown",
+        "details": {"loaderDispatched": True, "placementDispatched": False},
+    }
     host.reply = lambda request: {"id": request["id"], "error": error}
     payload, code = await execute(["grid.modules.insert", *arguments, "--timeout-ms", "250"])
     assert code == 1
@@ -238,12 +326,21 @@ async def test_grid_insert_cli_preserves_loader_unknown_without_retry(host, monk
 @pytest.mark.parametrize("token", ["null", "true", "1.0", "1e0", '"1"', "-2147483649", "2147483648"])
 async def test_grid_insert_cli_rejects_non_int32_tokens_before_tcp(host, monkeypatch, raw, field, token):
     monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
-    tokens = {key: json.dumps(value) for key, value in {
-        **TARGET, "typeId": TRACK, "x": 0, "y": 0,
-    }.items()}
+    tokens = {
+        key: json.dumps(value)
+        for key, value in {
+            **TARGET,
+            "typeId": TRACK,
+            "x": 0,
+            "y": 0,
+        }.items()
+    }
     tokens[field] = token
-    arguments = (["--params", "{" + ",".join(f'"{key}":{value}' for key, value in tokens.items()) + "}"]
-                 if raw else [f"{key}={value}" for key, value in tokens.items()])
+    arguments = (
+        ["--params", "{" + ",".join(f'"{key}":{value}' for key, value in tokens.items()) + "}"]
+        if raw
+        else [f"{key}={value}" for key, value in tokens.items()]
+    )
     payload, code = await execute(["grid.modules.insert", *arguments])
     assert code == 2
     assert payload["error"]["code"] == "invalid_params"
@@ -258,7 +355,10 @@ async def test_grid_insert_offline_help_exposes_complete_contract(monkeypatch):
     description = payload["result"]
     assert description["readOnly"] is False
     assert set(description["inputSchema"]["required"]) == {"trackId", "deviceIndex", "expectedDeviceName"}
-    assert {tuple(sorted(branch["required"])) for branch in description["inputSchema"]["oneOf"]} == {("x", "y"), ("modules",)}
+    assert {tuple(sorted(branch["required"])) for branch in description["inputSchema"]["oneOf"]} == {
+        ("x", "y"),
+        ("modules",),
+    }
     assert description["inputSchema"]["additionalProperties"] is False
 
 
@@ -273,28 +373,50 @@ def test_main_prints_one_exact_json_envelope(capsys, monkeypatch):
 
 async def test_offline_entrypoint_and_client_do_not_import_mcp():
     script = "import sys; import bitwig_agent.cli; import bitwig_agent.client; assert not any(n == 'mcp' or n.startswith('mcp.') for n in sys.modules)"
-    process = await asyncio.create_subprocess_exec(sys.executable, "-c", script,
-                                                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    process = await asyncio.create_subprocess_exec(
+        sys.executable, "-c", script, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+    )
     stdout, stderr = await process.communicate()
     assert process.returncode == 0, stderr.decode()
     assert stdout == b""
-    process = await asyncio.create_subprocess_exec(sys.executable, "-m", "bitwig_agent.cli", "describe", "notes.edit",
-                                                 env={**os.environ, "BITWIG_AGENT_PORT": "bad"},
-                                                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    process = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-m",
+        "bitwig_agent.cli",
+        "describe",
+        "notes.edit",
+        env={**os.environ, "BITWIG_AGENT_PORT": "bad"},
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
     stdout, stderr = await process.communicate()
     assert process.returncode == 0, stderr.decode()
     assert json.loads(stdout)["result"]["method"] == "notes.edit"
 
 
-@pytest.mark.parametrize("changes", [
-    {"parent": None}, {"parent": {**TARGET, "timeoutMs": 250}},
-    {"parent": {**TARGET, "deviceIndex": 1.0}}, {"parent": {**TARGET, "padIndex": 0}},
-    {"parent": {**TARGET, "slotIndex": 0}}, {"parent": {**TARGET, "parent": TARGET}},
-    {"layerId": "1-1-1-1-1"}, {"childDeviceIndex": 2}, {"childDeviceIndex": True},
-    {"childDeviceIndex": 1.0}, {"discoveryToken": ""}, {"contextToken": None},
-    {"expectedChildDeviceName": ""}, {"value": "0.5"}, {"value": True},
-    {"value": -0.01}, {"path": []}, {"trackId": TRACK},
-])
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"parent": None},
+        {"parent": {**TARGET, "timeoutMs": 250}},
+        {"parent": {**TARGET, "deviceIndex": 1.0}},
+        {"parent": {**TARGET, "padIndex": 0}},
+        {"parent": {**TARGET, "slotIndex": 0}},
+        {"parent": {**TARGET, "parent": TARGET}},
+        {"layerId": "1-1-1-1-1"},
+        {"childDeviceIndex": 2},
+        {"childDeviceIndex": True},
+        {"childDeviceIndex": 1.0},
+        {"discoveryToken": ""},
+        {"contextToken": None},
+        {"expectedChildDeviceName": ""},
+        {"value": "0.5"},
+        {"value": True},
+        {"value": -0.01},
+        {"path": []},
+        {"trackId": TRACK},
+    ],
+)
 async def test_layer_cli_rejects_invalid_nested_params_before_tcp(host, monkeypatch, changes):
     monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
     params = {**TOOLS["parameters.layer.set"].examples[0], **changes}
@@ -307,8 +429,12 @@ async def test_layer_cli_rejects_invalid_nested_params_before_tcp(host, monkeypa
 
 async def test_layer_cli_preserves_unknown_without_retry(host, monkeypatch):
     monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
-    error = {"code": "deadline_exceeded", "message": "Inspect child before another write",
-             "outcome": "unknown", "details": {"dispatched": True}}
+    error = {
+        "code": "deadline_exceeded",
+        "message": "Inspect child before another write",
+        "outcome": "unknown",
+        "details": {"dispatched": True},
+    }
     host.reply = lambda request: {"id": request["id"], "error": error}
     params = TOOLS["parameters.layer.set"].examples[0]
     payload, code = await execute(["parameters.layer.set", "--params", json.dumps(params)])
@@ -327,8 +453,7 @@ async def test_modulator_generated_help_and_parse_work_offline(monkeypatch, meth
     assert description == {"method": method, **TOOLS[method].describe()}
     assert description["readOnly"] is True
     args = description["examples"][0]
-    arguments = [f"{key}={value if isinstance(value, str) else json.dumps(value)}"
-                 for key, value in args.items()]
+    arguments = [f"{key}={value if isinstance(value, str) else json.dumps(value)}" for key, value in args.items()]
     assert parse_arguments(method, arguments, None, None) == (args, 5000)
     if method != "modulators.capabilities":
         schema = description["inputSchema"]
@@ -338,24 +463,43 @@ async def test_modulator_generated_help_and_parse_work_offline(monkeypatch, meth
     listing, code = await execute(["list", "modulators"])
     assert code == 0
     assert set(listing["result"]["methods"]) == {
-        "modulators.capabilities", "modulators.list", "modulators.parameters.get", "modulators.get", "modulators.insert",
-        "modulators.delete", "modulators.parameters.set", "modulators.map", "modulators.unmap", "modulators.catalog",
-        "modulators.describe"}
+        "modulators.capabilities",
+        "modulators.list",
+        "modulators.parameters.get",
+        "modulators.get",
+        "modulators.insert",
+        "modulators.delete",
+        "modulators.parameters.set",
+        "modulators.map",
+        "modulators.unmap",
+        "modulators.catalog",
+        "modulators.describe",
+    }
 
 
 @pytest.mark.parametrize("raw", [False, True])
-@pytest.mark.parametrize("value", ["", " \tMacro α𝄞\n "])
+@pytest.mark.parametrize("value", ["", " \tMacro \u03b1𝄞\n "])
 async def test_modulator_cli_preserves_raw_string_and_null_metadata(host, monkeypatch, raw, value):
     monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
     params = {**TOOLS["modulators.parameters.get"].examples[0], "parameterId": ""}
-    result = {"completion": "observed", "modulatorId": params["modulatorId"],
-              "parameterId": "", "kind": "string", "controlFamily": "string_panel",
-              "value": value, "labels": None, "shortLabel": None, "display": None,
-              "nativeMutation": False}
+    result = {
+        "completion": "observed",
+        "modulatorId": params["modulatorId"],
+        "parameterId": "",
+        "kind": "string",
+        "controlFamily": "string_panel",
+        "value": value,
+        "labels": None,
+        "shortLabel": None,
+        "display": None,
+        "nativeMutation": False,
+    }
     host.reply = lambda request: {"id": request["id"], "result": result}
-    arguments = (["--params", json.dumps(params)] if raw else [
-        f"{key}={value if isinstance(value, str) else json.dumps(value)}"
-        for key, value in params.items()])
+    arguments = (
+        ["--params", json.dumps(params)]
+        if raw
+        else [f"{key}={value if isinstance(value, str) else json.dumps(value)}" for key, value in params.items()]
+    )
     payload, code = await execute(["modulators.parameters.get", *arguments])
     assert code == 0
     assert json.loads(json.dumps(payload)) == {"result": result}
@@ -363,12 +507,17 @@ async def test_modulator_cli_preserves_raw_string_and_null_metadata(host, monkey
     assert len(host.requests) == host.connections == 1
 
 
-@pytest.mark.parametrize("changes", [
-    {"parent": {**TARGET, "deviceIndex": True}},
-    {"parent": {**TARGET, "deviceIndex": 1.0}},
-    {"modulatorId": "Macro"}, {"parameterId": None},
-    {"parameterId": "𝄞" * 513}, {"value": "forbidden"},
-])
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"parent": {**TARGET, "deviceIndex": True}},
+        {"parent": {**TARGET, "deviceIndex": 1.0}},
+        {"modulatorId": "Macro"},
+        {"parameterId": None},
+        {"parameterId": "𝄞" * 513},
+        {"value": "forbidden"},
+    ],
+)
 async def test_modulator_cli_invalid_inputs_never_connect(host, monkeypatch, changes):
     monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
     params = {**TOOLS["modulators.parameters.get"].examples[0], **changes}
@@ -379,32 +528,48 @@ async def test_modulator_cli_invalid_inputs_never_connect(host, monkeypatch, cha
     assert host.connections == 0
 
 
-@pytest.mark.parametrize("error_code", [
-    "modulator_unavailable", "modulator_bounds_exceeded", "unsupported_scope", "stale_context",
-])
+@pytest.mark.parametrize(
+    "error_code",
+    [
+        "modulator_unavailable",
+        "modulator_bounds_exceeded",
+        "unsupported_scope",
+        "stale_context",
+    ],
+)
 async def test_modulator_cli_preserves_host_error_without_retry(host, monkeypatch, error_code):
     monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
     error = {"code": error_code, "message": "Read rejected", "outcome": "not_dispatched"}
     host.reply = lambda request: {"id": request["id"], "error": error}
-    payload, code = await execute([
-        "modulators.parameters.get", "--params",
-        json.dumps(TOOLS["modulators.parameters.get"].examples[0])])
+    payload, code = await execute(
+        ["modulators.parameters.get", "--params", json.dumps(TOOLS["modulators.parameters.get"].examples[0])]
+    )
     assert code == 1
     assert payload == {"error": error}
     assert len(host.requests) == host.connections == 1
 
 
 @pytest.mark.parametrize("raw", [False, True])
-@pytest.mark.parametrize("expected,requested", [
-    ("", ""), (" \t原音=𝄞\n", "  Lead = α  "), ("null", "false"),
-    ("𝄞" * 512, ""), ("", '"quoted"'),
-])
+@pytest.mark.parametrize(
+    ("expected", "requested"),
+    [
+        ("", ""),
+        (" \t原音=𝄞\n", "  Lead = \u03b1  "),
+        ("null", "false"),
+        ("𝄞" * 512, ""),
+        ("", '"quoted"'),
+    ],
+)
 def test_grid_rename_cli_preserves_raw_cas_and_reset_without_coercion(raw, expected, requested):
     params = {**TARGET, "moduleId": TRACK, "expectedCustomName": expected, "customName": requested}
-    arguments = (["--params", json.dumps(params)] if raw else [
-        key + "=" + (json.dumps(value) if isinstance(value, str) and value.startswith('"') else str(value))
-        for key, value in params.items()
-    ])
+    arguments = (
+        ["--params", json.dumps(params)]
+        if raw
+        else [
+            key + "=" + (json.dumps(value) if isinstance(value, str) and value.startswith('"') else str(value))
+            for key, value in params.items()
+        ]
+    )
     parsed = parser().parse_intermixed_args(["grid.modules.rename", *arguments])
     actual, _ = parse_arguments(parsed.command, parsed.arguments, parsed.params, parsed.timeout_ms)
     assert actual == params
@@ -425,10 +590,14 @@ async def test_grid_rename_cli_rejects_invalid_raw_json_name_before_tcp(host, mo
 @pytest.mark.parametrize("raw", [False, True])
 async def test_grid_rename_cli_unknown_preserves_native_uncertainty_without_retry(host, monkeypatch, raw):
     monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
-    params = {**TARGET, "moduleId": TRACK, "expectedCustomName": " \tα ", "customName": ""}
-    arguments = (["--params", json.dumps(params)] if raw else [f"{key}={value}" for key, value in params.items()])
-    error = {"code": "stale_context", "message": "Inspect actual raw name",
-             "outcome": "unknown", "details": {"mutationDispatched": True, "rollbackVerified": False}}
+    params = {**TARGET, "moduleId": TRACK, "expectedCustomName": " \t\u03b1 ", "customName": ""}
+    arguments = ["--params", json.dumps(params)] if raw else [f"{key}={value}" for key, value in params.items()]
+    error = {
+        "code": "stale_context",
+        "message": "Inspect actual raw name",
+        "outcome": "unknown",
+        "details": {"mutationDispatched": True, "rollbackVerified": False},
+    }
     host.reply = lambda request: {"id": request["id"], "error": error}
     payload, code = await execute(["grid.modules.rename", *arguments])
     assert code == 1
@@ -438,9 +607,7 @@ async def test_grid_rename_cli_unknown_preserves_native_uncertainty_without_retr
 
 
 def test_unknown_argument_names_closest_field():
-    from pydantic import ValidationError
-    import pytest
-    from bitwig_agent.catalog import invalid_params_message, validate_call
+
     with pytest.raises(ValidationError) as error:
         validate_call("grid.connections.set", {"moduleId": "x"})
     message = invalid_params_message("grid.connections.set", error.value)
@@ -450,28 +617,38 @@ def test_unknown_argument_names_closest_field():
 
 
 def test_unknown_argument_synonyms_hint_but_never_alias():
-    from pydantic import ValidationError
-    import pytest
-    from bitwig_agent.catalog import invalid_params_message, validate_call
+
     target = {"trackId": "12345678-1234-1234-1234-123456789abc", "deviceIndex": 0, "expectedDeviceName": "Poly Grid"}
-    for method, bad, want in (("grid.get", {**target, "offset": 0, "limit": 5}, ["moduleOffset", "moduleLimit"]),
-                              ("transport.set", {"tempo": 120}, ["tempoBpm"]),
-                              ("grid.connections.set", {**target, "instanceId": "x"}, ["targetModuleId"])):
+    for method, bad, want in (
+        ("grid.get", {**target, "offset": 0, "limit": 5}, ["moduleOffset", "moduleLimit"]),
+        ("transport.set", {"tempo": 120}, ["tempoBpm"]),
+        ("grid.connections.set", {**target, "instanceId": "x"}, ["targetModuleId"]),
+    ):
         with pytest.raises(ValidationError) as error:
             validate_call(method, bad)
         message = invalid_params_message(method, error.value)
-        assert "no alias is accepted" in message and all(w in message for w in want), message
+        assert "no alias is accepted" in message, message
+        assert all(w in message for w in want), message
 
 
 def test_nested_unknown_argument_names_full_path_and_siblings():
-    from pydantic import ValidationError
-    import pytest
-    from bitwig_agent.catalog import invalid_params_message, validate_call
-    args = {"trackId": "abcdef01-2345-6789-abcd-0123456789ab", "name": "x", "startBeats": 0, "lengthBeats": 4,
-            "notes": [{"beat": 0, "pitch": 60, "velocity": 0.8, "durationBeats": 1}, {"beat": 1, "pitch": 62, "velocity": 0.8, "durationBeats": 1, "channel": 2}]}
+
+    args = {
+        "trackId": "abcdef01-2345-6789-abcd-0123456789ab",
+        "name": "x",
+        "startBeats": 0,
+        "lengthBeats": 4,
+        "notes": [
+            {"beat": 0, "pitch": 60, "velocity": 0.8, "durationBeats": 1},
+            {"beat": 1, "pitch": 62, "velocity": 0.8, "durationBeats": 1, "channel": 2},
+        ],
+    }
     with pytest.raises(ValidationError) as error:
         validate_call("arranger.clips.create", args)
     message = invalid_params_message("arranger.clips.create", error.value)
     assert "notes[1].channel" in message
-    assert "Accepted at notes[]: " in message and "durationBeats" in message and "velocity" in message
-    assert "notes (did you mean notes?)" not in message and "notes.1" not in message
+    assert "Accepted at notes[]: " in message
+    assert "durationBeats" in message
+    assert "velocity" in message
+    assert "notes (did you mean notes?)" not in message
+    assert "notes.1" not in message

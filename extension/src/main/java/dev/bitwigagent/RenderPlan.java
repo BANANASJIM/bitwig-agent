@@ -1,12 +1,13 @@
 package dev.bitwigagent;
 
+import static dev.bitwigagent.HostServices.failure;
+
 import com.google.gson.JsonObject;
 import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.file.*;
 import java.util.ArrayList;
 import java.util.List;
-import static dev.bitwigagent.HostServices.failure;
 
 /**
  * Host-free export.audio targets and output checks. Bitwig 6.1.4 is given extensionless base paths: the WAV writer
@@ -19,24 +20,36 @@ final class RenderPlan {
     final List<ProjectSaveAsPlan.Stat> before = new ArrayList<>();
     final String format;
 
-    private RenderPlan(Path directory, String format) { this.directory = directory; this.format = format; }
+    private RenderPlan(Path directory, String format) {
+        this.directory = directory;
+        this.format = format;
+    }
 
     static String baseName(String name) {
-        if (name.isEmpty() || name.length() > MAX_NAME || !name.equals(name.strip()) || name.startsWith(".")
-                || name.indexOf('/') >= 0 || name.indexOf('\\') >= 0 || name.codePoints().anyMatch(Character::isISOControl))
-            throw invalid("baseName must be 1.." + MAX_NAME + " characters without '/', '\\', control characters, a leading dot or surrounding whitespace.");
+        if (name.isEmpty()
+                || name.length() > MAX_NAME
+                || !name.equals(name.strip())
+                || name.startsWith(".")
+                || name.indexOf('/') >= 0
+                || name.indexOf('\\') >= 0
+                || name.codePoints().anyMatch(Character::isISOControl))
+            throw invalid("baseName must be 1.." + MAX_NAME
+                    + " characters without '/', '\\', control characters, a leading dot or surrounding whitespace.");
         return name;
     }
 
     /** One file per source: baseName for one source, baseName-01, -02, ... in source order for several. */
     static RenderPlan export(Path directory, String baseName, int sources, String format, boolean overwrite) {
-        if (!Files.isDirectory(directory)) throw failure("invalid_target", "directory " + directory + " does not exist or is not a directory.");
-        if (!Files.isWritable(directory)) throw failure("invalid_target", "directory " + directory + " is not writable.");
+        if (!Files.isDirectory(directory))
+            throw failure("invalid_target", "directory " + directory + " does not exist or is not a directory.");
+        if (!Files.isWritable(directory))
+            throw failure("invalid_target", "directory " + directory + " is not writable.");
         RenderPlan plan = new RenderPlan(directory, format);
         for (int i = 0; i < sources; i++) {
             Path base = directory.resolve(sources == 1 ? baseName : baseName + String.format("-%02d", i + 1));
             Path file = directory.resolve(base.getFileName() + "." + format);
-            plan.bases.add(base); plan.files.add(file);
+            plan.bases.add(base);
+            plan.files.add(file);
         }
         plan.refresh(overwrite);
         return plan;
@@ -46,9 +59,11 @@ final class RenderPlan {
     void refresh(boolean overwrite) {
         before.clear();
         for (Path file : files) {
-            if (Files.isSymbolicLink(file) || Files.isDirectory(file)) throw failure("invalid_target", file + " is a directory or symbolic link.");
+            if (Files.isSymbolicLink(file) || Files.isDirectory(file))
+                throw failure("invalid_target", file + " is a directory or symbolic link.");
             ProjectSaveAsPlan.Stat stat = ProjectSaveAsPlan.Stat.of(file);
-            if (stat.exists && !overwrite) throw failure("target_exists", file + " already exists; pass overwrite:true to replace it.");
+            if (stat.exists && !overwrite)
+                throw failure("target_exists", file + " already exists; pass overwrite:true to replace it.");
             before.add(stat);
         }
     }
@@ -72,12 +87,19 @@ final class RenderPlan {
         if (problem == null) {
             try (RandomAccessFile in = new RandomAccessFile(file.toFile(), "r")) {
                 problem = format.equals("wav") ? wav(in, out) : flac(in, out);
-            } catch (IOException error) { problem = "unreadable: " + error.getMessage(); }
+            } catch (IOException error) {
+                problem = "unreadable: " + error.getMessage();
+            }
         }
         if (problem == null && out.get("bitDepth").getAsInt() != bitDepth) problem = "bit_depth_mismatch";
-        if (problem == null && sampleRate != 0 && out.get("sampleRate").getAsInt() != sampleRate) problem = "sample_rate_mismatch";
+        if (problem == null && sampleRate != 0 && out.get("sampleRate").getAsInt() != sampleRate)
+            problem = "sample_rate_mismatch";
         if (problem == null && out.has("frames") && out.get("frames").getAsLong() <= 0) problem = "no_audio_frames";
-        if (problem == null && out.has("frames")) out.addProperty("durationSeconds", out.get("frames").getAsLong() / (double) out.get("sampleRate").getAsInt());
+        if (problem == null && out.has("frames"))
+            out.addProperty(
+                    "durationSeconds",
+                    out.get("frames").getAsLong()
+                            / (double) out.get("sampleRate").getAsInt());
         out.addProperty("valid", problem == null);
         if (problem != null) out.addProperty("problem", problem);
         return out;
@@ -92,9 +114,18 @@ final class RenderPlan {
             String id = tag(in);
             long size = le(in, 4), start = in.getFilePointer();
             if (id.equals("fmt ") && size >= 16) {
-                format = (int) le(in, 2); channels = (int) le(in, 2); rate = (int) le(in, 4); le(in, 4);
-                block = (int) le(in, 2); bits = (int) le(in, 2);
-                if (format == 0xFFFE && size >= 40) { le(in, 2); le(in, 2); le(in, 4); format = (int) le(in, 2); }
+                format = (int) le(in, 2);
+                channels = (int) le(in, 2);
+                rate = (int) le(in, 4);
+                le(in, 4);
+                block = (int) le(in, 2);
+                bits = (int) le(in, 2);
+                if (format == 0xFFFE && size >= 40) {
+                    le(in, 2);
+                    le(in, 2);
+                    le(in, 4);
+                    format = (int) le(in, 2);
+                }
             } else if (id.equals("data")) {
                 if (format < 0 || block <= 0) return "data_before_fmt";
                 if (format != 1 && format != 3) return "unsupported_wav_encoding";
@@ -118,7 +149,9 @@ final class RenderPlan {
         if ((header & 0x7F) != 0) return "flac_streaminfo_missing";
         in.skipBytes(3 + 10);
         long packed = in.readLong();
-        int rate = (int) (packed >>> 44), channels = (int) ((packed >>> 41) & 7) + 1, bits = (int) ((packed >>> 36) & 31) + 1;
+        int rate = (int) (packed >>> 44),
+                channels = (int) ((packed >>> 41) & 7) + 1,
+                bits = (int) ((packed >>> 36) & 31) + 1;
         long frames = packed & 0xFFFFFFFFFL;
         out.addProperty("format", "flac");
         out.addProperty("channels", channels);
@@ -129,12 +162,18 @@ final class RenderPlan {
     }
 
     private static String tag(RandomAccessFile in) throws IOException {
-        byte[] bytes = new byte[4]; in.readFully(bytes); return new String(bytes, java.nio.charset.StandardCharsets.ISO_8859_1);
+        byte[] bytes = new byte[4];
+        in.readFully(bytes);
+        return new String(bytes, java.nio.charset.StandardCharsets.ISO_8859_1);
     }
+
     private static long le(RandomAccessFile in, int bytes) throws IOException {
         long value = 0;
         for (int i = 0; i < bytes; i++) value |= (long) in.readUnsignedByte() << (8 * i);
         return value;
     }
-    private static RpcException invalid(String message) { return new RpcException("invalid_params", message, "not_applied"); }
+
+    private static RpcException invalid(String message) {
+        return new RpcException("invalid_params", message, "not_applied");
+    }
 }

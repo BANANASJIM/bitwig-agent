@@ -1,10 +1,10 @@
 package dev.bitwigagent;
 
+import static dev.bitwigagent.GridParameterContext.Field.*;
+import static dev.bitwigagent.HostServices.failure;
+
 import java.lang.reflect.Method;
 import java.util.EnumMap;
-import static dev.bitwigagent.GridParameterContext.Field.*;
-
-import static dev.bitwigagent.HostServices.failure;
 
 /** Additional read-only 6.1.4 descriptors, gated separately from ordinary graph serialization. */
 final class Bitwig614GridParameterContext implements GridParameterContext.Access {
@@ -17,10 +17,18 @@ final class Bitwig614GridParameterContext implements GridParameterContext.Access
     private final Bitwig614StepArrayAccess steps;
     private final Bitwig614VoicingAccess voicing;
 
-    Bitwig614GridParameterContext(Bitwig614Runtime.Access bindings, Bitwig614GridBooleanPanelAccess panels,
-            Bitwig614StringPanelAccess strings, Bitwig614StepArrayAccess steps, Bitwig614VoicingAccess voicing)
+    Bitwig614GridParameterContext(
+            Bitwig614Runtime.Access bindings,
+            Bitwig614GridBooleanPanelAccess panels,
+            Bitwig614StringPanelAccess strings,
+            Bitwig614StepArrayAccess steps,
+            Bitwig614VoicingAccess voicing)
             throws ReflectiveOperationException {
-        this.bindings = bindings; this.panels = panels; this.strings = strings; this.steps = steps; this.voicing = voicing;
+        this.bindings = bindings;
+        this.panels = panels;
+        this.strings = strings;
+        this.steps = steps;
+        this.voicing = voicing;
         readContext = new Bitwig614ReadContextAccess(bindings);
         Class<?> model = bindings.type(R + "AVL");
         Class<?> dt = bindings.type(R + "XKG"), undo = bindings.type("dfI"), lock = bindings.type(R + "IOJ");
@@ -45,10 +53,24 @@ final class Bitwig614GridParameterContext implements GridParameterContext.Access
             throws ReflectiveOperationException {
         readers.put(field, bindings.exactMethod(owner, name, returns, false));
     }
-    @Override public boolean defaultContext(Object context) { return readContext.defaultContext(context); }
-    @Override public String unavailableCode() { return bindings.unavailableCode(); }
-    @Override public Object read(NativeReadContext.Field field, Object object) { return readContext.read(field, object); }
-    @Override public Object read(GridParameterContext.Field field, Object object) {
+
+    @Override
+    public boolean defaultContext(Object context) {
+        return readContext.defaultContext(context);
+    }
+
+    @Override
+    public String unavailableCode() {
+        return bindings.unavailableCode();
+    }
+
+    @Override
+    public Object read(NativeReadContext.Field field, Object object) {
+        return readContext.read(field, object);
+    }
+
+    @Override
+    public Object read(GridParameterContext.Field field, Object object) {
         if (field == GUI_PANEL_BOOLEAN) {
             if (panels == null) throw failure("grid_unavailable", "Boolean panel property binding unavailable.");
             return panels.property(object);

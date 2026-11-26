@@ -38,7 +38,17 @@ uv run --locked python scripts/build.py
 uv run --locked python scripts/check.py
 ```
 
-The default checks do not launch Bitwig. See [VERIFICATION.md](VERIFICATION.md) for layer boundaries. CI covers host-free Python checks, minimum supported MCP, Python package consumption, skill format and a reachable-history secret scan; local Arch packaging is a separate downstream check. None claims to build against or test a live proprietary host. Consult actual workflow output rather than treating configured jobs as passing evidence.
+The `lint` layer needs neither the API jar nor Bitwig; it downloads checksum-pinned palantir-java-format (native binary, or the pinned JVM jars where none exists for the host) and PMD CPD into `build/deps` (PMD needs `java` on `PATH`, or `JAVA` set). Run it alone, or apply fixes and reformat:
+
+```sh
+uv run --locked python scripts/check.py --layer lint
+uv run --locked python scripts/lint.py --fix
+uv run --locked python scripts/lint.py --update-cpd-baseline
+```
+
+It runs `ruff check`, `ruff format --check`, strict `mypy` on `src/bitwig_agent` (non-strict on scripts, tests and examples), the Java format check and duplicate detection. `config/cpd-baseline.json` lists existing duplicates; only new ones fail, so update it only when a refactor removes some. Ruff per-file ignores under "refactor debt" in `pyproject.toml` may shrink, never grow. Javac runs with `-Xlint:all -Werror`. `git config blame.ignoreRevsFile .git-blame-ignore-revs` hides the mechanical format commit from blame.
+
+The default checks do not launch Bitwig. See [VERIFICATION.md](VERIFICATION.md) for layer boundaries. CI covers host-free Python checks, the static `lint` gates, minimum supported MCP, Python package consumption, skill format and a reachable-history secret scan; local Arch packaging is a separate downstream check. None claims to build against or test a live proprietary host. Consult actual workflow output rather than treating configured jobs as passing evidence.
 
 ## Changes and bug reports
 

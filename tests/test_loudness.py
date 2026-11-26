@@ -16,7 +16,7 @@ RATE = 48000
 def write_float_wav(path, channels, rate=RATE):
     """32-bit float WAV, so the file carries the exact synthetic samples (no 16-bit rounding)."""
     n = len(channels[0])
-    data = b"".join(struct.pack("<%df" % len(channels), *(ch[i] for ch in channels)) for i in range(n))
+    data = b"".join(struct.pack(f"<{len(channels)}f", *(ch[i] for ch in channels)) for i in range(n))
     fmt = struct.pack("<HHIIHH", 3, len(channels), rate, rate * 4 * len(channels), 4 * len(channels), 32)
     body = b"WAVEfmt " + struct.pack("<I", 16) + fmt + b"data" + struct.pack("<I", len(data)) + data
     path.write_bytes(b"RIFF" + struct.pack("<I", len(body)) + body)
@@ -46,7 +46,8 @@ def test_k_weighting_matches_the_standard_at_48k():
     assert c["shelfA"] == pytest.approx((-1.69065929318241, 0.73248077421585), abs=1e-12)
     assert c["rlbA"] == pytest.approx((-1.99004745483398, 0.99007225036621), abs=1e-12)
     assert loudness.gain_db(48000, 997) == pytest.approx(0.691, abs=0.01)  # why the -0.691 offset exists
-    assert loudness.gain_db(48000, 10) < -20 and loudness.gain_db(48000, 10000) > 3
+    assert loudness.gain_db(48000, 10) < -20
+    assert loudness.gain_db(48000, 10000) > 3
 
 
 def test_stereo_sine_is_its_level_in_lufs(tmp_path):
@@ -59,7 +60,9 @@ def test_stereo_sine_is_its_level_in_lufs(tmp_path):
     assert out["momentaryMaxLufs"] == pytest.approx(-20.0, abs=0.1)
     assert out["shortTermMaxLufs"] == pytest.approx(-20.0, abs=0.1)
     assert out["samplePeakDbfs"] == pytest.approx(-20.0, abs=0.01)
-    assert out["channels"] == 2 and out["analyzedChannel"] == "all" and out["channelLayout"] == "stereo"
+    assert out["channels"] == 2
+    assert out["analyzedChannel"] == "all"
+    assert out["channelLayout"] == "stereo"
 
 
 def test_one_kilohertz_uses_the_filter_gain_not_a_guess(tmp_path):
@@ -81,7 +84,10 @@ def test_mono_reads_three_lu_below_dual_mono_and_one_channel_of_two_likewise(tmp
 
 
 def test_relative_gate_ignores_the_quiet_part(tmp_path):
-    loud, quiet = sine(-20, 997, 10), sine(-45, 997, 10)       # 25 dB apart: the quiet part is below the -10 LU relative gate
+    loud, quiet = (
+        sine(-20, 997, 10),
+        sine(-45, 997, 10),
+    )  # 25 dB apart: the quiet part is below the -10 LU relative gate
     both = loud + quiet
     write_float_wav(tmp_path / "g.wav", [both, both])
     out = analyze(tmp_path / "g.wav")
@@ -94,10 +100,12 @@ def test_absolute_gate_makes_silence_unmeasurable(tmp_path):
     silent = [0.0] * RATE
     write_float_wav(tmp_path / "s.wav", [silent, silent])
     out = analyze(tmp_path / "s.wav")
-    assert out["integratedLufs"] is None and out["truePeakDbtp"] is None and out["gating"]["absoluteGated"] == 0
+    assert out["integratedLufs"] is None
+    assert out["truePeakDbtp"] is None
+    assert out["gating"]["absoluteGated"] == 0
     quiet = sine(-90, 997, 3)
     write_float_wav(tmp_path / "q.wav", [quiet, quiet])
-    assert analyze(tmp_path / "q.wav")["integratedLufs"] is None   # below -70 LUFS
+    assert analyze(tmp_path / "q.wav")["integratedLufs"] is None  # below -70 LUFS
 
 
 def test_true_peak_finds_the_intersample_peak(tmp_path):
@@ -133,7 +141,8 @@ def test_short_files_report_what_they_can(tmp_path):
     write_float_wav(tmp_path / "short.wav", [tone, tone])
     out = analyze(tmp_path / "short.wav")
     assert out["integratedLufs"] == pytest.approx(-20.0, abs=0.1)
-    assert out["shortTermMaxLufs"] is None and out["loudnessRangeLu"] is None
+    assert out["shortTermMaxLufs"] is None
+    assert out["loudnessRangeLu"] is None
     tiny = sine(-20, 997, 0.2)
     write_float_wav(tmp_path / "tiny.wav", [tiny, tiny])
     assert analyze(tmp_path / "tiny.wav")["integratedLufs"] is None
@@ -150,9 +159,12 @@ def test_skip_seconds_drops_the_warm_up(tmp_path):
 def test_five_one_weights_and_limits_are_reported(tmp_path):
     tone = sine(-20, 997, 4)
     silent = [0.0] * len(tone)
-    write_float_wav(tmp_path / "f.wav", [silent, silent, silent, tone, silent, silent])   # LFE only: excluded by the standard
+    write_float_wav(
+        tmp_path / "f.wav", [silent, silent, silent, tone, silent, silent]
+    )  # LFE only: excluded by the standard
     out = analyze(tmp_path / "f.wav")
-    assert out["integratedLufs"] is None and out["channelWeights"] == [1.0, 1.0, 1.0, 0.0, 1.41, 1.41]
+    assert out["integratedLufs"] is None
+    assert out["channelWeights"] == [1.0, 1.0, 1.0, 0.0, 1.41, 1.41]
     write_float_wav(tmp_path / "f2.wav", [silent, silent, silent, silent, tone, silent])  # Ls: weight 1.41
     surround = analyze(tmp_path / "f2.wav")
     assert surround["integratedLufs"] == pytest.approx(expected_lufs(-20, 997, (1.41,)), abs=0.05)
@@ -181,4 +193,5 @@ def test_existing_modes_still_read_channel_zero(tmp_path):
     write_float_wav(tmp_path / "e.wav", [tone, [0.0] * len(tone)])
     params, _ = validate_call("audio.analyze", {"path": str(tmp_path / "e.wav"), "mode": "level"})
     out = asyncio.run(audio.analyze(params))
-    assert out["analyzedChannel"] == 0 and out["peakDb"] == pytest.approx(-6.02, abs=0.05)
+    assert out["analyzedChannel"] == 0
+    assert out["peakDb"] == pytest.approx(-6.02, abs=0.05)
