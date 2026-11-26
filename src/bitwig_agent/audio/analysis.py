@@ -12,7 +12,7 @@ from itertools import accumulate, pairwise
 from statistics import median
 from typing import Any
 
-from bitwig_agent import loudness
+from bitwig_agent.audio import loudness
 
 MAX_BYTES = 256 * 1024 * 1024
 FFT_SIZE = 4096

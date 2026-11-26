@@ -10,7 +10,7 @@ import wave
 import pytest
 from fakes import NODES, RATE, SINK_LINKS, FakeBridge, FakeProc, FakePW, notes, overlapping, parse_arguments, write_wav
 
-from bitwig_agent import audio
+from bitwig_agent.audio import pipewire
 from bitwig_agent.core import composed
 from bitwig_agent.errors import BridgeError
 from bitwig_agent.frontends.cli import execute
@@ -19,7 +19,7 @@ from bitwig_agent.protocol import CLIENT_SIDE, TOOLS, validate_call
 
 def run_analyze(path, **args):
     params, _ = validate_call("audio.analyze", {"path": str(path), **args})
-    return asyncio.run(audio.analyze(params))
+    return asyncio.run(pipewire.analyze(params))
 
 
 def test_level_reports_peak_rms_and_silence(tmp_path):
@@ -106,14 +106,14 @@ def pw(tmp_path, monkeypatch):
     fake = FakePW(
         {("Bitwig Studio:out1", "alsa_output.pci:playback_FL"), ("Bitwig Studio:out2", "alsa_output.pci:playback_FR")}
     )
-    monkeypatch.setattr(audio, "run", fake.run)
-    monkeypatch.setattr(audio, "check_platform", lambda: None)
+    monkeypatch.setattr(pipewire, "run", fake.run)
+    monkeypatch.setattr(pipewire, "check_platform", lambda: None)
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
     return fake
 
 
 def route(mode):
-    return audio.route(validate_call("audio.route", {"mode": mode})[0])
+    return pipewire.route(validate_call("audio.route", {"mode": mode})[0])
 
 
 def test_silent_then_restore_relinks_exactly(pw):
@@ -122,7 +122,7 @@ def test_silent_then_restore_relinks_exactly(pw):
     assert r["silent"]
     assert r["sinkCreated"]
     assert pw.links == SINK_LINKS
-    assert audio.state_path().exists()
+    assert pipewire.state_path().exists()
     again = route("silent")  # idempotent: no second sink, previous targets kept
     assert again["sinkCreated"] is False
     assert pw.links == SINK_LINKS
@@ -130,7 +130,7 @@ def test_silent_then_restore_relinks_exactly(pw):
     r = route("restore")
     assert pw.links == original
     assert r["silent"] is False
-    assert not audio.state_path().exists()
+    assert not pipewire.state_path().exists()
     assert route("restore")["restored"] == []
 
 
@@ -150,7 +150,7 @@ def test_silent_without_bitwig_links_fails(pw):
 
 
 def test_unsupported_platform(monkeypatch):
-    monkeypatch.setattr(audio.sys, "platform", "darwin")
+    monkeypatch.setattr(pipewire.sys, "platform", "darwin")
     with pytest.raises(BridgeError) as e:
         route("status")
     assert e.value.error["code"] == "unsupported_platform"
@@ -169,8 +169,8 @@ def capture(tmp_path, monkeypatch, playing=(), solo=None, **extra):
     async def no_sleep(_):
         return None
 
-    monkeypatch.setattr(audio, "spawn", spawn)
-    monkeypatch.setattr(audio, "sleep", no_sleep)
+    monkeypatch.setattr(pipewire, "spawn", spawn)
+    monkeypatch.setattr(pipewire, "sleep", no_sleep)
     params, timeout = validate_call("audio.capture", {"seconds": 1, "outPath": str(tmp_path / "out.wav"), **extra})
     return FakeBridge(playing, solo=solo), spawned, params, timeout
 
@@ -256,7 +256,7 @@ def test_capture_needs_bitwig_output_ports(tmp_path, monkeypatch, pw):
     route("silent")
     bridge, spawned, params, timeout = capture(tmp_path, monkeypatch)
     monkeypatch.setattr(
-        audio, "bitwig_outputs", lambda: (_ for _ in ()).throw(audio.bridge_error("bitwig_not_found", "x"))
+        pipewire, "bitwig_outputs", lambda: (_ for _ in ()).throw(pipewire.bridge_error("bitwig_not_found", "x"))
     )
     with pytest.raises(BridgeError) as e:
         asyncio.run(composed.run("audio.capture", bridge, params, timeout))

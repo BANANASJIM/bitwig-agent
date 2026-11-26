@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from bitwig_agent import audio
+from bitwig_agent.audio import pipewire
 from bitwig_agent.errors import BridgeError, bridge_error
 from bitwig_agent.grid.read import GridCall, device_target, host_call, module_names, read_graph
 from bitwig_agent.grid.safety import RECORDING_FLAGS
@@ -141,7 +141,7 @@ def _parse_port(port: str) -> tuple[str, str]:
 async def _require_silent(allow_audible: bool) -> None:
     if allow_audible:
         return
-    state = audio.describe(await asyncio.to_thread(audio.current_links))
+    state = pipewire.describe(await asyncio.to_thread(pipewire.current_links))
     if not state["silent"]:
         raise bridge_error(
             "not_silent",
@@ -226,7 +226,7 @@ async def _capture(
     try:
         if rewire.edits:  # even a failed batch may have applied entries: restore reads the real state
             await rewire.listen()
-        return await audio.capture(client, capture_args, timeout_ms), None
+        return await pipewire.capture(client, capture_args, timeout_ms), None
     except (BridgeError, asyncio.CancelledError) as exc:
         return None, exc
 
@@ -251,12 +251,12 @@ async def _put_back(rewire: _Rewire, capture_error: BaseException | None) -> dic
 
 
 async def probe(client: Any, args: dict[str, Any], timeout_ms: int) -> dict[str, Any]:
-    audio.check_platform()
+    pipewire.check_platform()
     allow_audible = args.get("allowAudible", False)
     module, port_key = _parse_port(args["port"])
     await _require_silent(allow_audible)
     keep = _checked_keep_path(args)
-    await audio.require_engine(client, timeout_ms)  # before any cable is touched
+    await pipewire.require_engine(client, timeout_ms)  # before any cable is touched
     short = min(timeout_ms, MAX_TIMEOUT_MS)  # only topology edits may wait longer
     await _ensure_transport_stopped(client, short)
     target = device_target(args)
@@ -282,7 +282,7 @@ async def probe(client: Any, args: dict[str, Any], timeout_ms: int) -> dict[str,
             raise capture_error
         assert captured is not None
         analysis_args = {"path": wav, "mode": args["mode"], **{k: args[k] for k in PASS_THROUGH if k in args}}
-        analysis = await audio.analyze(analysis_args)
+        analysis = await pipewire.analyze(analysis_args)
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
     analysis.pop("path", None)

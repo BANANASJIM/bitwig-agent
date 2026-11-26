@@ -8,8 +8,8 @@ from typing import Any
 import pytest
 from fakes import NODES, SINK_LINKS, TARGET, FakeGrid, FakeProc, FakePW
 
-from bitwig_agent import audio
-from bitwig_agent.audio_analysis import FFT_SIZE, spectral_peaks
+from bitwig_agent.audio import pipewire
+from bitwig_agent.audio.analysis import FFT_SIZE, spectral_peaks
 from bitwig_agent.errors import BridgeError
 from bitwig_agent.grid import probe as grid_probe
 from bitwig_agent.protocol import CLIENT_SIDE, validate_call
@@ -70,8 +70,8 @@ class ProbeGrid(FakeGrid):
 @pytest.fixture
 def rig(tmp_path, monkeypatch):
     pw = FakePW(SINK_LINKS, sink=True)
-    monkeypatch.setattr(audio, "run", pw.run)
-    monkeypatch.setattr(audio, "check_platform", lambda: None)
+    monkeypatch.setattr(pipewire, "run", pw.run)
+    monkeypatch.setattr(pipewire, "check_platform", lambda: None)
     host = ProbeGrid()
     host.wires_during_capture = None
     host.after_spawn = None
@@ -86,8 +86,8 @@ def rig(tmp_path, monkeypatch):
     async def no_sleep(_):
         return None
 
-    monkeypatch.setattr(audio, "spawn", spawn)
-    monkeypatch.setattr(audio, "sleep", no_sleep)
+    monkeypatch.setattr(pipewire, "spawn", spawn)
+    monkeypatch.setattr(pipewire, "sleep", no_sleep)
     return host, pw
 
 
@@ -202,7 +202,7 @@ def test_capture_failure_still_restores_and_reports_the_capture_error(rig, monke
         NODES.append(args[2].split("node.name=")[1].split()[0])
         return type("Dead", (FakeProc,), {"poll": lambda self: 1})(args[-1])
 
-    monkeypatch.setattr(audio, "spawn", spawn_dead)
+    monkeypatch.setattr(pipewire, "spawn", spawn_dead)
     with pytest.raises(BridgeError) as e:
         probe(host)
     assert e.value.error["code"] == "audio_tool_failed"

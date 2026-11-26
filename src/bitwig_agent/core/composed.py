@@ -5,7 +5,8 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from bitwig_agent import audio, modulator_docs, presets
+from bitwig_agent import modulator_docs, presets
+from bitwig_agent.audio import pipewire
 from bitwig_agent.diagnostics import diagnostics
 from bitwig_agent.grid import docs as grid_docs
 from bitwig_agent.grid.apply import apply as grid_apply
@@ -16,11 +17,11 @@ from bitwig_agent.grid.render import render as grid_render
 
 
 async def audio_route(client: Any, args: dict[str, Any], timeout_ms: int) -> dict[str, Any]:
-    return await asyncio.to_thread(audio.route, args)
+    return await asyncio.to_thread(pipewire.route, args)
 
 
 async def audio_analyze(client: Any, args: dict[str, Any], timeout_ms: int) -> dict[str, Any]:
-    return await audio.analyze(args)
+    return await pipewire.analyze(args)
 
 
 async def grid_describe(client: Any, args: dict[str, Any], timeout_ms: int) -> dict[str, Any]:
@@ -49,7 +50,7 @@ HANDLERS = {
     "grid.describe": grid_describe,
     "grid.render": grid_render,
     "audio.route": audio_route,
-    "audio.capture": audio.capture,
+    "audio.capture": pipewire.capture,
     "audio.analyze": audio_analyze,
     "host.diagnostics": diagnostics,
     "presets.search": presets_search,
