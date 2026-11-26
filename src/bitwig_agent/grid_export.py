@@ -12,7 +12,7 @@ import os
 from collections import Counter
 from typing import Any
 
-from bitwig_agent.client import BridgeError
+from bitwig_agent.errors import BridgeError, bridge_error
 from bitwig_agent.grid_apply import bundled_schema, generated_name
 
 PAGE, PARAM_PAGE = 128, 64
@@ -27,10 +27,6 @@ VOICING_FIELDS = (
     "allowOverlappingNotes",
 )
 WRITABLE = ("float", "integer", "boolean", "enum", "string", "steps")
-
-
-def _fail(message: str, code: str = "invalid_params") -> BridgeError:
-    return BridgeError({"code": code, "message": message, "outcome": "not_dispatched"})
 
 
 async def read_all(
@@ -48,21 +44,13 @@ async def read_all(
         )
         got = page.get("modules") if isinstance(page, dict) else None
         if not isinstance(got, list):
-            raise BridgeError(
-                {"code": "not_applied", "message": "grid.get returned an unusable result", "outcome": "not_dispatched"}
-            )
+            raise bridge_error("not_applied", "grid.get returned an unusable result")
         rows += got
         for c in page.get("connections", []):
             cables[(c["targetModuleId"], c["targetPortKey"])] = c
         total = (page.get("window") or {}).get("total", len(rows))
         if not got and len(rows) < total:
-            raise BridgeError(
-                {
-                    "code": "graph_incomplete",
-                    "message": f"grid.get returned {len(rows)} of {total} modules",
-                    "outcome": "not_dispatched",
-                }
-            )
+            raise bridge_error("graph_incomplete", f"grid.get returned {len(rows)} of {total} modules")
     return rows, list(cables.values())
 
 
@@ -187,9 +175,9 @@ async def export(client: Any, args: dict[str, Any], timeout_ms: int = 5000) -> d
     path, overwrite = args.get("outPath"), args.get("overwrite", False)
     if path is not None:
         if not overwrite and os.path.exists(path):
-            raise _fail(f"{path} exists; pass overwrite=true to replace it", "file_exists")
+            raise bridge_error("file_exists", f"{path} exists; pass overwrite=true to replace it")
         if not os.path.isdir(os.path.dirname(path)):
-            raise _fail(f"Parent directory does not exist: {os.path.dirname(path)}")
+            raise bridge_error("invalid_params", f"Parent directory does not exist: {os.path.dirname(path)}")
     mode, namespace, target = args.get("includeParams", "changed"), args.get("namespace"), _target(args)
     rows, cables = await read_all(client, target, timeout_ms, mode != "none")
     built = build(rows, cables, mode, namespace)
@@ -218,7 +206,7 @@ async def export(client: Any, args: dict[str, Any], timeout_ms: int = 5000) -> d
         with open(path, "wb" if overwrite else "xb") as f:
             f.write(data)
     except OSError as exc:
-        raise _fail(f"Cannot write {path}: {exc}", "write_failed") from exc
+        raise bridge_error("write_failed", f"Cannot write {path}: {exc}") from exc
     return {**out, "outPath": path, "bytes": len(data)}
 
 

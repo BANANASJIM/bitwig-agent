@@ -3,10 +3,10 @@
 import math
 
 import pytest
-from test_grid_apply import TARGET, FakeGrid, run
+from fakes import TARGET, FakeGrid, apply_grid
 
 from bitwig_agent import grid_apply, grid_docs, raw_scales
-from bitwig_agent.client import BridgeError
+from bitwig_agent.errors import BridgeError
 
 SCHEMA = grid_apply.bundled_schema()["modules"]
 
@@ -88,13 +88,13 @@ def test_display_writes_convert_to_raw_and_are_idempotent(module, pid, text, raw
         "target": TARGET,
         "modules": [{"name": "X", "type": module, "x": 0, "y": 0, "params": {pid: {"display": text}}}],
     }
-    result = run(host, spec)
+    result = apply_grid(host, spec)
     assert result["applied"]["paramsWritten"] == 1
     writes = [w for m, c in host.calls if m == "grid.parameters.set" for w in c["writes"]]
     assert all("display" not in w and "shown" not in w for w in writes)
     assert host.param("X", pid) == pytest.approx(raw)
     host.calls.clear()
-    assert run(host, spec)["status"] == "unchanged"
+    assert apply_grid(host, spec)["status"] == "unchanged"
     assert host.writes() == []
 
 
@@ -112,7 +112,7 @@ def test_display_writes_convert_to_raw_and_are_idempotent(module, pid, text, raw
 def test_unwritable_display_is_rejected(module, pid, text):
     host = FakeGrid()
     with pytest.raises(BridgeError) as err:
-        run(
+        apply_grid(
             host,
             {
                 "target": TARGET,
@@ -131,19 +131,19 @@ def test_lfo_rate_follows_timebase():
         return {"target": TARGET, "modules": [{"name": "L", "type": "LFO", "x": 0, "y": 0, "params": params}]}
 
     host = FakeGrid()
-    run(host, spec({"label": "Hertz"}, "2 Hz"))
+    apply_grid(host, spec({"label": "Hertz"}, "2 Hz"))
     assert host.param("L", "RATE") == 2.0
     host = FakeGrid()
-    run(host, spec(1, "1500 Hz"))
+    apply_grid(host, spec(1, "1500 Hz"))
     assert host.param("L", "RATE") == pytest.approx(1.5)
     for timebase in (4, {"label": "Bar"}, None):  # None: the default timebase is quarter notes
         with pytest.raises(BridgeError):
-            run(FakeGrid(), spec(timebase, "2 Hz"))
+            apply_grid(FakeGrid(), spec(timebase, "2 Hz"))
 
 
 def test_midi_pitch_cutoff_keeps_the_host_display_path():
     host = FakeGrid()
-    run(
+    apply_grid(
         host,
         {
             "target": TARGET,

@@ -2,9 +2,9 @@ import argparse
 import importlib.util
 import json
 from pathlib import Path
-from typing import Any, ClassVar
 
 import pytest
+from fakes import RECIPE_TARGET, RecipeGrid
 
 
 @pytest.fixture
@@ -316,228 +316,11 @@ def test_owned_patch_rejects_wrong_or_incomplete_native_readback(recipe, owned_p
         recipe.checked_patch(graph, target, expected)
 
 
-TRACK_ID = "11111111-1111-1111-1111-111111111111"
-GRID_TARGET = {"trackId": TRACK_ID, "deviceIndex": 0, "expectedDeviceName": "Poly Grid"}
-
-
-class FakeGrid:
-    """Just enough native behavior for the diff/batch protocol; counts every call."""
-
-    TYPES: ClassVar[dict[str, str]] = {"Union": "type-union", "ADSR": "type-adsr", "Audio Out": "type-out"}
-
-    def __init__(self):
-        self.calls = []
-        self.modules: dict[str, Any] = {}
-        self.cables: dict[tuple[str, str], Any] = {}  # (targetModuleId, targetPortKey) -> source endpoint
-        for number in range(2):
-            self.add(f"default-{number}", "type-default", [], [])
-        self.cables[("default-1", "IN")] = {"moduleId": "default-0", "portKey": "OUT"}
-        self.modules["default-0"]["outputs"].append({"key": "OUT", "name": "Out"})
-        self.modules["default-1"]["inputs"].append({"key": "IN", "name": "In", "connected": True})
-
-    def add(self, module_id, type_id, inputs, outputs, parameters=()):
-        self.modules[module_id] = {
-            "instanceId": module_id,
-            "typeId": type_id,
-            "name": type_id,
-            "customName": "",
-            "x": 0,
-            "y": 0,
-            "inputs": inputs,
-            "outputs": outputs,
-            "parameters": list(parameters),
-        }
-
-    def rows(self, ids=None, parameters=True):
-        rows = []
-        for module_id, module in self.modules.items():
-            if ids is not None and module_id not in ids:
-                continue
-            row = {key: value for key, value in module.items() if key != "parameters"}
-            row["inputs"] = [
-                {**port, "connected": (module_id, port["key"]) in self.cables} for port in module["inputs"]
-            ]
-            row["parameters"] = [dict(item) for item in module["parameters"]] if parameters else []
-            rows.append(row)
-        return rows
-
-    def connections(self):
-        return [
-            {
-                "sourceModuleId": source["moduleId"],
-                "sourcePortKey": source["portKey"],
-                "targetModuleId": target[0],
-                "targetPortKey": target[1],
-            }
-            for target, source in self.cables.items()
-        ]
-
-    def parameter(self, module_id, parameter_id):
-        return next(item for item in self.modules[module_id]["parameters"] if item["parameterId"] == parameter_id)
-
-    async def __call__(self, method, params):
-        self.calls.append((method, params))
-        if method == "grid.get":
-            ids = set(params["moduleIds"]) if "moduleIds" in params else None
-            rows = self.rows(ids, params.get("includeParameters", True))
-            return {
-                "status": "observed",
-                "target": {**GRID_TARGET, "nativeOwningTrack": "corroborated_before_and_after_capture"},
-                "window": {"offset": 0, "total": len(rows), "complete": True},
-                "modules": rows,
-                "connections": [c for c in self.connections() if ids is None or c["targetModuleId"] in ids],
-            }
-        if method == "grid.modules.delete":
-            module_id = params["moduleId"]
-            removed = self.modules.pop(module_id)
-            self.cables = {
-                key: value
-                for key, value in self.cables.items()
-                if key[0] != module_id and value["moduleId"] != module_id
-            }
-            return {
-                "status": "observed",
-                "modulesRemoved": [{"moduleId": module_id, "typeId": removed["typeId"]}],
-                "moduleCount": len(self.modules),
-            }
-        if method == "grid.modules.insert":
-            module_id = f"module-{len(self.modules)}-{params['typeId']}"
-            name = next(key for key, value in self.TYPES.items() if value == params["typeId"])
-            ports = {
-                "Union": ([], [{"key": "OUT", "name": "Signal Out"}]),
-                "ADSR": ([{"key": "IN", "name": "Signal In"}], [{"key": "OUT", "name": "Signal Out"}]),
-                "Audio Out": ([{"key": "IN", "name": "Audio In"}], []),
-            }[name]
-
-            def floats(*names):
-                return [
-                    {
-                        "supported": True,
-                        "parameterId": f"{name}.{item}",
-                        "name": item,
-                        "kind": "float",
-                        "value": 0.5,
-                        "minimum": 0.0,
-                        "maximum": 2.0,
-                    }
-                    for item in names
-                ]
-
-            def booleans(*names):
-                return [
-                    {
-                        "supported": True,
-                        "parameterId": f"{name}.{item}",
-                        "name": item,
-                        "kind": "boolean",
-                        "value": False,
-                    }
-                    for item in names
-                ]
-
-            parameters = {
-                "Union": booleans("Key Tracking")
-                + floats("Pitch Offset", "Saw Level", "Triangle Level", "Pulse Level"),
-                "ADSR": booleans("Gate on Notes", "Affect Voice Lifetime")
-                + floats("Attack", "Decay", "Sustain", "Release")
-                + [
-                    {
-                        "supported": True,
-                        "parameterId": "ADSR.Model",
-                        "name": "Model",
-                        "kind": "enum",
-                        "value": 0,
-                        "options": [{"value": 0, "label": "Digital"}, {"value": 3, "label": "Analog"}],
-                    }
-                ],
-                "Audio Out": [],
-            }[name]
-            self.add(module_id, params["typeId"], *ports, parameters=parameters)
-            row = self.rows({module_id}, parameters=False)[0]
-            row.pop("parameters")
-            return {
-                "status": "observed",
-                "moduleId": module_id,
-                "modulesAdded": [row],
-                "moduleCount": len(self.modules),
-            }
-        if method == "grid.parameters.set":
-            entries = params["writes"]
-            for entry in entries:
-                current = self.parameter(entry["moduleId"], entry["parameterId"])
-                if current["kind"] != entry["expectedKind"] or current["value"] != entry["expectedValue"]:
-                    raise recipe_module().BridgeError(
-                        {"code": "stale_context", "outcome": "not_applied", "message": "stale"}
-                    )
-            results = []
-            for entry in entries:
-                current = self.parameter(entry["moduleId"], entry["parameterId"])
-                changed = current["value"] != entry["value"]
-                results.append(
-                    {
-                        "moduleId": entry["moduleId"],
-                        "parameterId": entry["parameterId"],
-                        "status": "applied" if changed else "already_matched",
-                        "previousValue": current["value"],
-                        "value": entry["value"],
-                    }
-                )
-                current["value"] = entry["value"]
-            return {
-                "status": "observed",
-                "batchStatus": "applied",
-                "completion": "observed",
-                "written": len(results),
-                "writes": results,
-            }
-        if method == "grid.connections.set":
-            edits = params["connections"]
-            assert all(
-                edit["expectedSource"] == self.cables.get((edit["targetModuleId"], edit["targetPortKey"]))
-                for edit in edits
-            )
-            for edit in edits:
-                self.cables[edit["targetModuleId"], edit["targetPortKey"]] = edit["source"]
-            return {
-                "status": "observed",
-                "batchStatus": "applied",
-                "completion": "observed",
-                "written": len(edits),
-                "connections": [
-                    {
-                        "targetModuleId": edit["targetModuleId"],
-                        "targetPortKey": edit["targetPortKey"],
-                        "status": "applied",
-                        "matchesRequested": True,
-                    }
-                    for edit in edits
-                ],
-                "connectionsChanged": [
-                    {
-                        "target": {"moduleId": edit["targetModuleId"], "portKey": edit["targetPortKey"]},
-                        "from": None,
-                        "to": edit["source"],
-                    }
-                    for edit in edits
-                ],
-                "moduleCount": len(self.modules),
-            }
-        raise AssertionError(method)
-
-
-_RECIPE: list[Any] = []
-
-
-def recipe_module():
-    return _RECIPE[0]
-
-
 @pytest.mark.anyio
 @pytest.mark.parametrize("label", ["Pluck", "Pad"])
 async def test_grid_patch_uses_diffs_and_one_parameter_batch(recipe, label):
-    _RECIPE[:] = [recipe]
-    grid = FakeGrid()
-    report = await recipe.build_grid(grid, GRID_TARGET, FakeGrid.TYPES, label)
+    grid = RecipeGrid()
+    report = await recipe.build_grid(grid, RECIPE_TARGET, RecipeGrid.TYPES, label)
     methods = [method for method, _ in grid.calls]
     assert methods.count("grid.parameters.set") == 1
     assert "grid.parameters.get" not in methods
@@ -560,8 +343,7 @@ async def test_grid_patch_uses_diffs_and_one_parameter_batch(recipe, label):
 
 @pytest.mark.anyio
 async def test_grid_patch_stops_when_a_diff_shows_an_unexpected_change(recipe):
-    _RECIPE[:] = [recipe]
-    grid = FakeGrid()
+    grid = RecipeGrid()
     original = grid.__call__
 
     async def surprising(method, params):
@@ -571,5 +353,5 @@ async def test_grid_patch_stops_when_a_diff_shows_an_unexpected_change(recipe):
         return result
 
     with pytest.raises(RuntimeError, match="Insertion did not establish"):
-        await recipe.build_grid(surprising, GRID_TARGET, FakeGrid.TYPES, "Pluck")
+        await recipe.build_grid(surprising, RECIPE_TARGET, RecipeGrid.TYPES, "Pluck")
     assert not any(method.startswith("grid.parameters") or method == "grid.connections.set" for method, _ in grid.calls)

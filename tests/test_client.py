@@ -6,8 +6,10 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from bitwig_agent.catalog import TOOLS, validate_call
-from bitwig_agent.client import MAX_BYTES, BridgeClient, BridgeError, configured_port, package_version
+from bitwig_agent import client_side
+from bitwig_agent.catalog import CLIENT_SIDE, TOOLS, validate_call
+from bitwig_agent.client import MAX_BYTES, BridgeClient, configured_port, package_version
+from bitwig_agent.errors import BridgeError
 from bitwig_agent.schema import SetArgs
 
 pytestmark = pytest.mark.anyio
@@ -200,3 +202,7 @@ async def test_oversized_grid_get_response_says_to_lower_module_limit(host):
         await BridgeClient(host.port).call("grid.get", params)
     assert "lower moduleLimit" in caught.value.error["message"]
     assert "includeParameters=false" in caught.value.error["message"]
+
+
+def test_client_side_set_matches_handlers():
+    assert frozenset(client_side.HANDLERS) == CLIENT_SIDE

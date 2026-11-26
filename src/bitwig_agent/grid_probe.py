@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from bitwig_agent import audio
-from bitwig_agent.client import BridgeError
+from bitwig_agent.errors import BridgeError, bridge_error
 from bitwig_agent.grid_export import module_names, read_all
 from bitwig_agent.schema import MAX_TIMEOUT_MS
 
@@ -23,13 +23,6 @@ AUDIO_OUT = "Audio Out"
 MAX_EDITS = 32  # one grid.connections.set batch: all expectedSource checks first, then in order
 UNSAFE_FLAGS = ("arrangerRecordEnabled", "arrangerAutomationWriteEnabled", "clipLauncherAutomationWriteEnabled")
 PASS_THROUGH = ("bpm", "skipSeconds", "threshold", "method", "windowSeconds", "key")
-
-
-def _fail(code: str, message: str, outcome: str = "not_dispatched", **details: Any) -> BridgeError:
-    error: dict[str, Any] = {"code": code, "message": message, "outcome": outcome}
-    if details:
-        error["details"] = details
-    return BridgeError(error)
 
 
 Source = tuple[str, str] | None  # (moduleId, portKey) feeding an input, None = unconnected
@@ -59,7 +52,7 @@ async def _set(client: Any, target: dict[str, Any], edits: list[dict[str, Any]],
             "grid.connections.set", {**target, "connections": edits[start : start + MAX_EDITS]}, timeout_ms
         )
         if result.get("batchStatus") != "applied":
-            raise _fail(
+            raise bridge_error(
                 "not_applied",
                 f"grid.connections.set reported batchStatus {result.get('batchStatus')!r}",
                 "unknown",
@@ -121,11 +114,11 @@ async def probe(client: Any, args: dict[str, Any], timeout_ms: int) -> dict[str,
     allow_audible = args.get("allowAudible", False)
     module, _, port_key = args["port"].rpartition(".")
     if not module or not port_key:
-        raise _fail("invalid_params", "port must be '<module name>.<OUT port key>', e.g. 'H: osc.OUT'")
+        raise bridge_error("invalid_params", "port must be '<module name>.<OUT port key>', e.g. 'H: osc.OUT'")
     if not allow_audible:
         state = audio.describe(await asyncio.to_thread(audio.current_links))
         if not state["silent"]:
-            raise _fail(
+            raise bridge_error(
                 "not_silent",
                 "Bitwig output is not routed to the silent sink; call audio.route mode=silent first, "
                 "or pass allowAudible:true (the probed signal is then audible)",
@@ -134,16 +127,16 @@ async def probe(client: Any, args: dict[str, Any], timeout_ms: int) -> dict[str,
     keep = args.get("outPath")
     if keep:  # refuse before any cable is touched
         if os.path.exists(keep) and not args.get("overwrite", False):
-            raise _fail("file_exists", f"{keep} exists; pass overwrite:true to replace it")
+            raise bridge_error("file_exists", f"{keep} exists; pass overwrite:true to replace it")
         if not os.path.isdir(os.path.dirname(keep)):
-            raise _fail("invalid_params", f"Directory does not exist: {os.path.dirname(keep)}")
+            raise bridge_error("invalid_params", f"Directory does not exist: {os.path.dirname(keep)}")
     await audio.require_engine(client, timeout_ms)  # before any cable is touched
     # Grid writes need a stopped, non-recording transport; audio.capture stops it again afterwards, so this leaves it stopped too.
     short = min(timeout_ms, MAX_TIMEOUT_MS)  # only topology edits may wait longer
     transport = await client.call("transport.get", {}, short)
     unsafe = [k for k in UNSAFE_FLAGS if transport.get(k) is not False]
     if unsafe:
-        raise _fail(
+        raise bridge_error(
             "unsafe_state",
             f"Grid writes need recording and automation write observed off; not confirmed off: {', '.join(unsafe)}",
         )
@@ -154,18 +147,18 @@ async def probe(client: Any, args: dict[str, Any], timeout_ms: int) -> dict[str,
     by_name = {names[r["instanceId"]]: r for r in rows}
     source = by_name.get(module)
     if source is None or module in duplicates:
-        raise _fail(
+        raise bridge_error(
             "invalid_params",
             f"No module named {module!r} with a unique name in this device; names: {sorted(by_name)[:30]}",
         )
     if port_key not in {o["key"] for o in source.get("outputs", [])}:
-        raise _fail(
+        raise bridge_error(
             "invalid_params",
             f"{module!r} has no output port {port_key!r}; outputs: {[o['key'] for o in source.get('outputs', [])]}",
         )
     outs = sorted((r for r in rows if r.get("typeName") == AUDIO_OUT), key=lambda r: (r["y"], r["x"]))
     if not outs:
-        raise _fail(
+        raise bridge_error(
             "invalid_params", "This device has no Audio Out module to probe through; add one with grid.apply first"
         )
     inputs = {(r["instanceId"], i["key"]) for r in outs for i in r.get("inputs", [])}
@@ -179,7 +172,9 @@ async def probe(client: Any, args: dict[str, Any], timeout_ms: int) -> dict[str,
     probing[(chosen["instanceId"], chosen["inputs"][0]["key"])] = probe_end
     edits = [_edit(k, original[k], probing[k]) for k in original if original[k] != probing[k]]
     if len(edits) > MAX_EDITS:
-        raise _fail("invalid_params", f"{len(edits)} Audio Out inputs would change; at most {MAX_EDITS} are supported")
+        raise bridge_error(
+            "invalid_params", f"{len(edits)} Audio Out inputs would change; at most {MAX_EDITS} are supported"
+        )
     seconds = args["seconds"]
     workdir = Path(tempfile.mkdtemp(prefix="bitwig-probe-"))
     wav = keep or str(workdir / "probe.wav")
@@ -210,7 +205,7 @@ async def probe(client: Any, args: dict[str, Any], timeout_ms: int) -> dict[str,
             else {"restored": True, "left": [], "changedMeanwhile": []}
         )
         if not restored["restored"]:
-            raise _fail(
+            raise bridge_error(
                 "probe_restore_failed",
                 "The probe could not put every Audio Out cable back; the listed inputs are still changed. "
                 "Reconnect them with grid.connections.set (or grid.apply) before anything else.",

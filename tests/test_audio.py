@@ -6,61 +6,14 @@ import math
 import re
 import struct
 import wave
-from pathlib import Path
 
 import pytest
+from fakes import NODES, RATE, SINK_LINKS, FakeBridge, FakeProc, FakePW, notes, overlapping, write_wav
 
 from bitwig_agent import audio, client_side
 from bitwig_agent.catalog import CLIENT_SIDE, TOOLS, validate_call
 from bitwig_agent.cli import execute, parse_arguments
-from bitwig_agent.client import BridgeError
-
-RATE = 48000
-
-
-def write_wav(path, samples, rate=RATE, header_zero=False):
-    frames = b"".join(struct.pack("<hh", int(s * 32767), int(s * 32767)) for s in samples)
-    with wave.open(str(path), "wb") as w:
-        w.setnchannels(2)
-        w.setsampwidth(2)
-        w.setframerate(rate)
-        w.writeframes(frames)
-    if header_zero:  # streamed header as parec leaves it
-        raw = bytearray(path.read_bytes())
-        raw[40:44] = b"\0\0\0\0"
-        path.write_bytes(bytes(raw))
-
-
-def notes(midis, step=0.125, length=0.1, total=None):
-    """Sine notes with fast attack/decay at each step."""
-    n = int((total or step * len(midis) + 0.3) * RATE)
-    out = [0.0] * n
-    for i, m in enumerate(midis):
-        hz = 440 * 2 ** ((m - 69) / 12)
-        start = int((0.1 + i * step) * RATE)
-        for k in range(int(length * RATE)):
-            env = min(1, k / 48) * (1 - k / (length * RATE))
-            if start + k < n:
-                out[start + k] = 0.8 * env * math.sin(2 * math.pi * hz * k / RATE)
-    return out
-
-
-def overlapping(midis, step=0.1, decay=0.26, total=None):
-    """Plucks whose exponential tail (about 260 ms) runs under the next several notes, summed."""
-    n = int((total or 0.1 + step * len(midis) + 0.6) * RATE)
-    out = [0.0] * n
-    for i, m in enumerate(midis):
-        hz = 440 * 2 ** ((m - 69) / 12)
-        start = int((0.1 + i * step) * RATE)
-        for k in range(min(int(1.0 * RATE), n - start)):
-            t = k / RATE
-            out[start + k] += (
-                0.25
-                * min(1, k / 48)
-                * math.exp(-t / (decay / 4))
-                * (math.sin(2 * math.pi * hz * t) + 0.4 * math.sin(4 * math.pi * hz * t))
-            )
-    return out
+from bitwig_agent.errors import BridgeError
 
 
 def run_analyze(path, **args):
@@ -147,52 +100,6 @@ def test_analyze_errors(tmp_path):
         validate_call("audio.analyze", {"path": "/tmp/a.mp3", "mode": "level"})
 
 
-class FakePW:
-    """Mimics pw-link/pactl output and state; records every call."""
-
-    def __init__(self, links, sink=False):
-        self.links = set(links)
-        self.sink = sink
-        self.calls = []
-
-    def run(self, args, timeout=5.0):  # noqa: PLR0911
-        self.calls.append(args)
-        if args[:2] == ["pw-link", "-l"]:
-            text = "alsa_output.pci:playback_FL\n  |<- Bitwig Studio:out1\nalsa_output.pci:playback_FR\n  |<- Bitwig Studio:out2\n"
-            ports: dict[str, list[str]] = {}
-            for a, b in sorted(self.links):
-                ports.setdefault(a, []).append(b)
-            for a, targets in ports.items():
-                text += a + "\n" + "".join(f"  |-> {t}\n" for t in targets)
-            return 0, text, ""
-        if args[:2] == ["pw-link", "-o"]:
-            return 0, "Bitwig Studio:out1\nBitwig Studio:out2\nFirefox:output_FL\nFirefox:output_FR\n", ""
-        if args[:2] == ["pw-link", "-i"]:
-            return (
-                0,
-                "".join(f"{n}:input_{c}\n" for n in NODES for c in ("FL", "FR")) + "alsa_output.pci:playback_FL\n",
-                "",
-            )
-        if args[:2] == ["pw-link", "-d"]:
-            self.links.discard((args[2], args[3]))
-            return 0, "", ""
-        if args[0] == "pw-link":
-            if (args[1], args[2]) in self.links:
-                return 1, "", "failed to link ports: File exists"
-            self.links.add((args[1], args[2]))
-            return 0, "", ""
-        if args[:3] == ["pactl", "list", "short"]:
-            return 0, ("7\tbwtest\tmodule\tfmt\tRUNNING\n" if self.sink else "1\tother\tm\tf\tIDLE\n"), ""
-        if args[:2] == ["pactl", "load-module"]:
-            self.sink = True
-            return 0, "42\n", ""
-        raise AssertionError(args)
-
-
-NODES: list[str] = []  # capture nodes the fake pw-record has "created"
-SINK_LINKS = {("Bitwig Studio:out1", "bwtest:playback_FL"), ("Bitwig Studio:out2", "bwtest:playback_FR")}
-
-
 @pytest.fixture
 def pw(tmp_path, monkeypatch):
     fake = FakePW(
@@ -247,58 +154,6 @@ def test_unsupported_platform(monkeypatch):
         route("status")
     assert e.value.error["code"] == "unsupported_platform"
     assert e.value.error["outcome"] == "not_dispatched"
-
-
-class FakeProc:
-    def __init__(self, path):
-        self.path, self.returncode, self.stderr, self.signals = path, None, None, []
-
-    def poll(self):
-        return self.returncode
-
-    def send_signal(self, sig):
-        self.signals.append(sig)
-
-        write_wav(Path(self.path), notes([60, 62], total=0.6))
-        self.returncode = 0
-
-    def wait(self, timeout=None):
-        return self.returncode
-
-    def kill(self):
-        self.returncode = -9
-
-
-class FakeBridge:
-    def __init__(self, playing=(), engine=True, solo=None):
-        self.calls = []
-        self.playing = playing
-        self.engine = engine
-        self.solo = dict(solo or {})
-        self.fail_set = None
-
-    async def call(self, method, params, timeout_ms=5000):
-        self.calls.append((method, params))
-        if method == "status":
-            return {"engineActive": self.engine}
-        if method == "context.get":
-            return {
-                "tracks": [
-                    {"trackId": tid, "name": name, "launcherSlots": [{"slotIndex": 0, "playing": True}]}
-                    for tid, name in self.playing
-                ]
-                + [{"trackId": "idle", "name": "Idle", "launcherSlots": [{"slotIndex": 0, "playing": False}]}]
-            }
-        if method == "tracks.list":
-            return {"tracks": [{"trackId": t, "index": i, "name": t} for i, t in enumerate(self.solo)]}
-        if method == "tracks.get":
-            return {"trackId": params["trackId"], "solo": self.solo[params["trackId"]]}
-        if method == "tracks.set":
-            if params["trackId"] == self.fail_set and params["solo"] is False:
-                raise BridgeError({"code": "host_error", "message": "boom", "outcome": "unknown"})
-            self.solo[params["trackId"]] = params["solo"]
-            return {}
-        return {}
 
 
 def capture(tmp_path, monkeypatch, playing=(), solo=None, **extra):
@@ -399,7 +254,9 @@ def test_capture_unlinks_its_own_links_when_it_fails(tmp_path, monkeypatch, pw):
 def test_capture_needs_bitwig_output_ports(tmp_path, monkeypatch, pw):
     route("silent")
     bridge, spawned, params, timeout = capture(tmp_path, monkeypatch)
-    monkeypatch.setattr(audio, "bitwig_outputs", lambda: (_ for _ in ()).throw(audio.fail("bitwig_not_found", "x")))
+    monkeypatch.setattr(
+        audio, "bitwig_outputs", lambda: (_ for _ in ()).throw(audio.bridge_error("bitwig_not_found", "x"))
+    )
     with pytest.raises(BridgeError) as e:
         asyncio.run(client_side.run("audio.capture", bridge, params, timeout))
     assert e.value.error["code"] == "bitwig_not_found"

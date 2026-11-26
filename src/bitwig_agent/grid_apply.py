@@ -18,8 +18,8 @@ from importlib import resources
 from typing import Any, cast
 
 from bitwig_agent import raw_scales
-from bitwig_agent.client import BridgeError
 from bitwig_agent.diagnostics import diagnostics
+from bitwig_agent.errors import BridgeError, bridge_error
 from bitwig_agent.schema import TOPOLOGY_TIMEOUT_MS
 
 BUNDLED_HOST_VERSION = "6.1.4"
@@ -1828,13 +1828,10 @@ def next_insert_batch(size: int, elapsed_s: float, result: dict[str, Any]) -> in
 
 
 def invalid_spec(problems: list[str]) -> BridgeError:
-    return BridgeError(
-        {
-            "code": "invalid_spec",
-            "message": f"{len(problems)} problem(s); nothing was written: " + " | ".join(problems[:20]),
-            "outcome": "not_dispatched",
-            "details": {"problems": problems},
-        }
+    return bridge_error(
+        "invalid_spec",
+        f"{len(problems)} problem(s); nothing was written: " + " | ".join(problems[:20]),
+        problems=problems,
     )
 
 
@@ -1882,6 +1879,4 @@ async def apply(client: Any, args: dict[str, Any], timeout_ms: int = 5000) -> di
         if run.wrote:
             raw = {"error": {"code": "internal_error", "message": f"{type(exc).__name__}: {exc}", "outcome": "unknown"}}
             return run.report_stop(Stop("internal", raw, "unknown"), {})
-        raise BridgeError(
-            {"code": "internal_error", "message": f"{type(exc).__name__}: {exc}", "outcome": "not_dispatched"}
-        ) from exc
+        raise bridge_error("internal_error", f"{type(exc).__name__}: {exc}") from exc
