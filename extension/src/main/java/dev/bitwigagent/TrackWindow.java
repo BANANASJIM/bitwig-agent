@@ -10,7 +10,9 @@ final class TrackWindow {
     private final TrackBank bank;
     private final DeviceBank[] devices = new DeviceBank[TRACKS];
     private final Track[] parents = new Track[TRACKS];
-    private volatile boolean observed;
+    private SceneBank scenes;
+    private int scrollTarget = -1;
+    private volatile boolean observed, scenesObserved;
 
     TrackWindow(ControllerHost host) {
         bank = host.createTrackBank(TRACKS, SENDS, SCENES, true);
@@ -72,6 +74,68 @@ final class TrackWindow {
 
     int offset() {
         return bank.scrollPosition().get();
+    }
+
+    /** Registers the scene bank's observers; the scene window lease does it once while the extension initialises. */
+    void observeScenes() {
+        scenes = bank.sceneBank();
+        scenes.scrollPosition().markInterested();
+        scenes.itemCount().addValueObserver((IntegerValueChangedCallback) count -> scenesObserved = true);
+        for (int j = 0; j < SCENES; j++) {
+            Scene scene = (Scene) scenes.getItemAt(j);
+            scene.exists().markInterested();
+            scene.name().markInterested();
+            scene.sceneIndex().markInterested();
+        }
+    }
+
+    Scene scene(int position) {
+        return (Scene) scenes.getItemAt(position);
+    }
+
+    boolean scenesObserved() {
+        return scenesObserved;
+    }
+
+    int sceneCount() {
+        return scenes.itemCount().get();
+    }
+
+    int sceneOffset() {
+        return scenes.scrollPosition().get();
+    }
+
+    /** Where the window was last asked to scroll; the observed position may still lag behind it. */
+    int scrollTarget() {
+        return scrollTarget >= 0 ? scrollTarget : sceneOffset();
+    }
+
+    void scrollScenes(int offset) {
+        scrollTarget = offset;
+        scenes.scrollPosition().set(offset);
+    }
+
+    /** The first scene of the window that shows scene {@code index}, kept inside the scene list. */
+    int sceneWindowFor(int index) {
+        return Math.min(index - index % SCENES, Math.max(0, sceneCount() - SCENES));
+    }
+
+    /** Whether the scroll position, the scene proxies and every existing track's slot proxies show {@code offset}. */
+    boolean scenesShown(int offset) {
+        if (sceneOffset() != offset) return false;
+        int visible = Math.min(SCENES, sceneCount() - offset);
+        for (int j = 0; j < visible; j++) if (scene(j).sceneIndex().get() != offset + j) return false;
+        if (visible <= 0) return true;
+        for (int t = 0; t < TRACKS; t++) {
+            if (!at(t).exists().get()) continue;
+            ClipLauncherSlotBank slots = at(t).clipLauncherSlotBank();
+            if (slotScene(slots, 0) != offset || slotScene(slots, visible - 1) != offset + visible - 1) return false;
+        }
+        return true;
+    }
+
+    private static int slotScene(ClipLauncherSlotBank slots, int position) {
+        return ((ClipLauncherSlot) slots.getItemAt(position)).sceneIndex().get();
     }
 
     int total() {

@@ -52,13 +52,25 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
         MixModule mix = new MixModule(host, scheduler, window, application, transportSafety, selection, natives, holds);
         register(mix);
         register(new DeviceModule(host, scheduler, window, sources, transportSafety, selection));
-        LauncherModule launcher = new LauncherModule(host, scheduler, window, transportSafety, selection, lock, holds);
-        register(launcher);
-        register(new SceneModule(scheduler, window, transportSafety, lock));
-        register(new LauncherSettingsModule(scheduler, window, transportSafety, natives, holds, launcher));
+        LauncherTargets launcherTargets =
+                new LauncherTargets(window, trackRefs, new SceneWindowLease(window, scheduler));
+        LauncherState launcher =
+                new LauncherState(host, scheduler, window, transportSafety, selection, lock, holds, launcherTargets);
+        register(new LauncherModule(launcher, trackRefs));
+        NoteModule notes = new NoteModule(launcher);
+        register(notes);
+        ArrangerModule arranger =
+                new ArrangerModule(scheduler, window, trackRefs, projectState, transportSafety, natives, holds, null);
+        register(new ClipModule(
+                launcher,
+                trackRefs,
+                notes,
+                new LauncherSettingsModule(scheduler, window, transportSafety, natives, holds),
+                arranger));
+        register(new SceneModule(scheduler, window, transportSafety, lock, launcherTargets, project));
         register(new MarkerModule(host, transport, scheduler, transportSafety, holds));
         register(new MeterModule(scheduler, window, transportSafety));
-        register(new ArrangerModule(scheduler, window, transportSafety, natives, holds, null));
+        register(arranger);
         register(new AutomationModule(scheduler, window, sources, transportSafety, natives, holds));
         register(new RoutingModule(scheduler, window, sources, transportSafety, natives, holds, specs));
         register(render);

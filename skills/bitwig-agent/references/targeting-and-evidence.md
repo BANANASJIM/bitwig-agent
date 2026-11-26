@@ -10,7 +10,7 @@ Use the installed MCP tool schemas or `bitwig-agent help METHOD` for exact argum
 | Root device/direct parameter | Discover track, zero-based root device index and exact name; call `parameters.list` and use the returned parameter ID/context token |
 | One-hop layer parameter | Use `devices.layers.list`, the exact child address/discovery token and `parameters.layer.list` context; do not treat child indices as root indices |
 | Remote Control | Use the currently observed page/name/parameter and its own context token; do not reuse a direct-parameter token |
-| MIDI | Track and slot from `context.get` (`cursorClip`, occupied `launcherSlots`) or `launcher.list`; slot below `sceneCount`; channel and window default sensibly. Inspect coverage and selection/auto-arm side effects before calling |
+| MIDI | A clip ref from `context.get` (`cursorClip`, occupied `launcherSlots`) or `launcher.list` (slot refs need an existing scene); channel and window default sensibly. Inspect coverage and selection/auto-arm side effects before calling |
 | Grid | Use current graph instance/port/control IDs, target ownership and the typed raw `kind`/`value` of a recent `grid.get` row as `expectedKind`/`expectedValue`; stale expectations are refused as an error |
 | Modulator | Use explicit root parent and current modulator/output/control IDs from `modulators.get`; edits need `expectedCount`/`expectedAmount`/`expectedValue` from a fresh read |
 | Host Action | Discover the actual host Action ID and confirm its current UI context; `sent` does not establish enablement or effect |
@@ -23,7 +23,7 @@ Tracks, root devices and Launcher slots are bounded to windows of 16; sends to e
 
 Require explicit user permission covering the change and actual target, one writer, and fresh relevant safety/target observations. Use a disposable fixture for experiments. Check the method's schema and guards rather than inventing an `allowWrite` argument. Recording/playback/automation conditions vary by operation; establish all required values rather than treating unknown as false. Read-only metadata and license/property descriptors never themselves authorize a write.
 
-Agent `notes.*`, `launcher.create`, `launcher.set` launch fields (`launchQuantization`, `launchMode`, `useLoopStartAsQuantizationReference`) and `scenes.append` move selection; `context.get` does not. An operation described as inspection can still change UI context; a refusal after the selection was dispatched is an `unknown` result. Do not automatically retry it merely because no notes were meant to change.
+Agent `notes.*`, `clips.insert`, `clips.set` launch fields (`launchQuantization`, `launchMode`, `useLoopStartAsQuantizationReference`) and `scenes.insert` move selection; `context.get` does not. An operation described as inspection can still change UI context; a refusal after the selection was dispatched is an `unknown` result. Do not automatically retry it merely because no notes were meant to change.
 
 ## Outcome handling
 

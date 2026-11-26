@@ -389,11 +389,8 @@ def test_capture_stop_others_stops_then_records(tmp_path, monkeypatch, pw):
     solo = "00000000-0000-0000-0000-000000000001"
     bridge, spawned, params, timeout = capture_solo_with_pad(tmp_path, monkeypatch, solo, stopOthers=True)
     result = asyncio.run(composed.run("audio.capture", bridge, params, timeout))
-    assert ("launcher.stop", {"trackId": "b"}) in bridge.calls
-    assert (
-        "launcher.stop",
-        {"trackId": solo},
-    ) not in bridge.calls
+    assert ("launcher.stop", {"target": {"kind": "track", "id": "b", "name": "Pad"}}) in bridge.calls
+    assert not [call for call in bridge.calls if call[0] == "launcher.stop" and call[1]["target"]["id"] == solo]
     assert result["stoppedTracks"] == ["Pad"]
     assert result["otherTracksPlaying"] == []
     assert spawned

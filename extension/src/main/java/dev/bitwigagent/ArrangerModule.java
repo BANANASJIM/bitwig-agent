@@ -3,24 +3,16 @@ package dev.bitwigagent;
 import com.bitwig.extension.callback.*;
 import com.bitwig.extension.controller.api.*;
 import com.google.gson.*;
+import dev.bitwigagent.core.Refs;
 import java.math.BigDecimal;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicLongArray;
+import java.util.function.Consumer;
 
 /** Arranger timeline clips on a track's main clip lane through exact version-gated native bindings. */
 final class ArrangerModule implements HostModule {
-    static final Set<String> METHODS = Set.of(
-            "arranger.clips.list", "arranger.clips.create", "arranger.clips.copyFromLauncher", "arranger.clips.edit");
-    static final double MAX_BEATS = 4194304, MAX_LENGTH = 65536, GRID = LauncherModule.BEAT_GRID;
-    static final Map<String, Set<String>> EDIT_OPS = Map.of(
-            "move",
-            Set.of("startBeats"),
-            "resize",
-            Set.of("lengthBeats"),
-            "rename",
-            Set.of("name"),
-            "delete",
-            Set.of());
+    static final Set<String> METHODS = Set.of("arranger.list");
+    static final double GRID = NoteGrid.BEAT_GRID;
 
     interface Access {
         void execute(Runnable work);
@@ -47,20 +39,20 @@ final class ArrangerModule implements HostModule {
                 Runnable check,
                 Runnable beforeWrite);
 
+        /** The clip {@code ref} names, located by start and name; {@code op} is move, resize, rename or delete. */
         JsonObject edit(
-                Object trackProxy,
-                String trackId,
-                int clipIndex,
-                double expectedStartBeats,
-                String expectedName,
-                String op,
-                JsonObject args,
-                Runnable check,
-                Runnable beforeWrite);
+                Object trackProxy, JsonObject ref, String op, JsonObject args, Runnable check, Runnable beforeWrite);
+    }
+
+    /** One native call on a resolved lane. */
+    private interface Call {
+        JsonObject run(Access bridge, Object track, String id, Runnable check, Runnable beforeWrite);
     }
 
     private final Scheduler scheduler;
     private final TrackWindow window;
+    private final TrackRefs trackRefs;
+    private final ProjectState projectState;
     private final TransportSafety transportSafety;
     private final NativeRuntime natives;
     private final Holds holds;
@@ -71,12 +63,16 @@ final class ArrangerModule implements HostModule {
     ArrangerModule(
             Scheduler scheduler,
             TrackWindow window,
+            TrackRefs trackRefs,
+            ProjectState projectState,
             TransportSafety transportSafety,
             NativeRuntime natives,
             Holds holds,
             Access access) {
         this.scheduler = scheduler;
         this.window = window;
+        this.trackRefs = trackRefs;
+        this.projectState = projectState;
         this.transportSafety = transportSafety;
         this.natives = natives;
         this.holds = holds;
@@ -86,8 +82,6 @@ final class ArrangerModule implements HostModule {
             Track track = window.at(i);
             track.channelId().addValueObserver((StringValueChangedCallback) v -> epochs.incrementAndGet(index));
             track.exists().addValueObserver((BooleanValueChangedCallback) v -> epochs.incrementAndGet(index));
-            track.clipLauncherSlotBank().scrollPosition().markInterested();
-            window.markSlotIdentityInterested(track);
         }
     }
 
@@ -97,78 +91,16 @@ final class ArrangerModule implements HostModule {
     }
 
     @Override
-    public void validate(String method, JsonObject p) {
-        validateParams(method, p);
-    }
-
-    static void validateParams(String method, JsonObject p) {
-        switch (method) {
-            case "arranger.clips.list":
-                Params.fields(p, Set.of("trackId"), Set.of());
-                break;
-            case "arranger.clips.create":
-                Params.fields(p, Set.of("trackId", "startBeats", "lengthBeats", "name"), Set.of("notes", "channel"));
-                Params.number(p, "startBeats", 0, MAX_BEATS);
-                double length = Params.number(p, "lengthBeats", GRID, MAX_LENGTH);
-                name(p, "name", 1, 128);
-                if (p.has("notes")) notes(p, length);
-                else if (p.has("channel")) throw Errors.invalid("channel is only valid together with notes");
-                if (p.has("channel")) Params.integer(p, "channel", 0, 15);
-                break;
-            case "arranger.clips.copyFromLauncher":
-                Params.fields(p, Set.of("trackId", "slotIndex", "expectedClipName", "startBeats"), Set.of());
-                Params.integer(p, "slotIndex", 0, HostLimits.SCENES - 1);
-                name(p, "expectedClipName", 1, 256);
-                Params.number(p, "startBeats", 0, MAX_BEATS);
-                break;
-            case "arranger.clips.edit": {
-                String op = p.has("op") ? Params.string(p, "op") : "";
-                Set<String> payload = EDIT_OPS.get(op);
-                if (payload == null) throw Errors.invalid("op must be one of " + new TreeSet<>(EDIT_OPS.keySet()));
-                Set<String> required = new HashSet<>(payload);
-                required.addAll(Set.of("trackId", "clipIndex", "expectedStartBeats", "expectedName", "op"));
-                Params.fields(p, required, Set.of());
-                Params.integer(p, "clipIndex", 0, 4095);
-                Params.number(p, "expectedStartBeats", 0, MAX_BEATS);
-                name(p, "expectedName", 0, 256);
-                if (op.equals("move")) Params.number(p, "startBeats", 0, MAX_BEATS);
-                if (op.equals("resize")) Params.number(p, "lengthBeats", GRID, MAX_LENGTH);
-                if (op.equals("rename")) name(p, "name", 1, 128);
-                break;
-            }
-            default:
-                throw Errors.notApplied(Reason.UNKNOWN_METHOD, "Unknown arranger method.");
-        }
-        if (!DeviceSources.canonicalUuid(Params.string(p, "trackId")))
-            throw Errors.invalid("trackId must be a canonical UUID");
-    }
-
-    /** UTF-16 length bounds; expectedName may be empty because arranger clips often have no name. */
-    private static String name(JsonObject p, String key, int min, int max) {
-        JsonElement value = p.get(key);
-        if (value == null
-                || !value.isJsonPrimitive()
-                || !value.getAsJsonPrimitive().isString()) throw Errors.invalid(key + " must be a string");
-        String text = value.getAsString();
-        if (text.length() < min || text.length() > max)
-            throw Errors.invalid(key + " must contain " + min + ".." + max + " characters");
-        return text;
-    }
+    public void validate(String method, JsonObject p) {}
 
     /** Notes are {beat, pitch, velocity, durationBeats}; beats are relative to the clip start, on a 1/128-beat grid. */
-    static List<double[]> notes(JsonObject p, double length) {
-        JsonElement value = p.get("notes");
-        if (!value.isJsonArray()) throw Errors.invalid("notes must be an array");
-        JsonArray array = value.getAsJsonArray();
-        if (array.size() < 1 || array.size() > 256) throw Errors.invalid("notes must contain 1..256 entries");
+    static List<double[]> notes(JsonArray array, double length) {
         List<double[]> out = new ArrayList<>();
         for (JsonElement item : array) {
-            if (!item.isJsonObject()) throw Errors.invalid("each note must be an object");
             JsonObject n = item.getAsJsonObject();
-            Params.fields(n, Set.of("beat", "pitch", "velocity", "durationBeats"), Set.of());
-            double beat = Params.number(n, "beat", 0, MAX_BEATS);
-            int pitch = Params.integer(n, "pitch", 0, 127), velocity = Params.integer(n, "velocity", 1, 127);
-            double duration = Params.number(n, "durationBeats", GRID, LauncherModule.MAX_CLIP_BEATS);
+            double beat = n.get("beat").getAsDouble(),
+                    duration = n.get("durationBeats").getAsDouble();
+            int pitch = n.get("pitch").getAsInt(), velocity = n.get("velocity").getAsInt();
             aligned(n.get("beat"), "beat");
             aligned(n.get("durationBeats"), "durationBeats");
             for (double[] o : out) {
@@ -178,7 +110,7 @@ final class ArrangerModule implements HostModule {
             }
             if (new BigDecimal(n.get("beat").getAsString())
                             .add(new BigDecimal(n.get("durationBeats").getAsString()))
-                            .compareTo(new BigDecimal(p.get("lengthBeats").getAsString()))
+                            .compareTo(BigDecimal.valueOf(length))
                     > 0) throw Errors.invalid("notes must fit inside lengthBeats");
             out.add(new double[] {beat, pitch, velocity, duration});
         }
@@ -190,53 +122,130 @@ final class ArrangerModule implements HostModule {
                         .divide(BigDecimal.valueOf(GRID))
                         .stripTrailingZeros()
                         .scale()
-                > 0) throw Errors.invalid(key + " must be a multiple of " + LauncherModule.BEAT_GRID_LABEL + " beat");
+                > 0) throw Errors.invalid(key + " must be a multiple of " + NoteGrid.BEAT_GRID_LABEL + " beat");
     }
 
     @Override
     public void dispatch(HostOperation op, String method, JsonObject p) {
         scheduler.check(op);
-        boolean write = !method.equals("arranger.clips.list");
+        JsonObject parent = p.getAsJsonObject("parent");
+        int index = trackRefs.resolve(parent, false);
+        JsonObject trackRef = trackRefs.ref(index);
+        run(
+                op,
+                index,
+                -1,
+                false,
+                (bridge, track, id, check, beforeWrite) -> bridge.list(track, id, check),
+                result -> op.result.complete(shaped(result, trackRef)));
+    }
+
+    /** A new arranger MIDI clip; the track is resolved here. */
+    void create(
+            HostOperation op,
+            JsonObject trackRef,
+            double startBeats,
+            double lengthBeats,
+            String name,
+            JsonArray notes,
+            int channel,
+            Consumer<JsonObject> done) {
+        int index = trackRefs.resolve(trackRef, false);
+        if (!"Instrument".equals(window.at(index).trackType().get()))
+            throw Errors.notApplied(
+                    Reason.UNSUPPORTED_SCOPE,
+                    "clips.insert makes MIDI note clips and needs an instrument track; use clips.copy for audio.");
+        List<double[]> list = notes == null ? List.of() : notes(notes, lengthBeats);
+        JsonObject current = trackRefs.ref(index);
+        run(
+                op,
+                index,
+                -1,
+                true,
+                (bridge, track, id, check, beforeWrite) ->
+                        bridge.create(track, id, startBeats, lengthBeats, name, list, channel, check, beforeWrite),
+                result -> done.accept(shaped(result, current)));
+    }
+
+    /** The launcher clip in {@code source}'s slot, copied onto the same track's timeline. */
+    void copyFromLauncher(HostOperation op, LauncherState.Target source, double startBeats, Consumer<JsonObject> done) {
+        int index = source.at.track;
+        String name = source.slot.api.name().get();
+        run(
+                op,
+                index,
+                source.at.offset,
+                true,
+                (bridge, track, id, check, beforeWrite) ->
+                        bridge.copyFromLauncher(track, source.slot.api, id, name, startBeats, check, beforeWrite),
+                result -> done.accept(shaped(result, source.at.trackRef)));
+    }
+
+    /** An edit of the arranger clip {@code ref} names: move, resize, rename or delete. */
+    void edit(HostOperation op, JsonObject ref, String kind, JsonObject args, Consumer<JsonObject> done) {
+        int index = trackRefs.resolve(ref.getAsJsonObject("track"), false);
+        JsonObject trackRef = trackRefs.ref(index);
+        run(
+                op,
+                index,
+                -1,
+                true,
+                (bridge, track, id, check, beforeWrite) -> bridge.edit(track, ref, kind, args, check, beforeWrite),
+                result -> done.accept(shaped(result, trackRef)));
+    }
+
+    /** The access result with arranger clip rows as refs plus values; indexes are no identity. */
+    static JsonObject shaped(JsonObject result, JsonObject trackRef) {
+        JsonObject out = result.deepCopy();
+        out.remove("trackId");
+        out.remove("lane");
+        if (out.has("clips")) {
+            JsonArray rows = new JsonArray();
+            for (JsonElement row : out.getAsJsonArray("clips")) rows.add(row(trackRef, row.getAsJsonObject()));
+            out.add("clips", rows);
+        }
+        if (out.has("previous")) out.add("previous", row(trackRef, out.getAsJsonObject("previous")));
+        if (out.has("clip") && out.get("clip").isJsonObject()) {
+            JsonObject clip = row(trackRef, out.getAsJsonObject("clip"));
+            out.add("ref", clip.remove("ref"));
+            out.add("clip", clip);
+        }
+        return out;
+    }
+
+    private static JsonObject row(JsonObject trackRef, JsonObject row) {
+        JsonObject out = new JsonObject();
+        out.add(
+                "ref",
+                Refs.arrangerClip(
+                        trackRef,
+                        row.get("startBeats").getAsDouble(),
+                        row.get("name").getAsString()));
+        for (Map.Entry<String, JsonElement> e : row.entrySet())
+            if (!e.getKey().equals("clipIndex")) out.add(e.getKey(), e.getValue());
+        return out;
+    }
+
+    private void run(HostOperation op, int index, int offset, boolean write, Call call, Consumer<JsonObject> done) {
         if (holds.held(PENDING)) throw Errors.notApplied(Reason.BUSY, "Another native arranger operation is pending.");
         if (write && holds.held(QUARANTINE))
             throw holds.blocked(
                     QUARANTINE,
                     "An earlier arranger clip write has an unknown outcome; arranger writes are refused.",
-                    "Inspect arranger.clips.list");
-        String id = p.get("trackId").getAsString();
-        int index = window.trackSlot(id);
+                    "Inspect arranger.list");
+        if (write) projectState.requireReady();
         Track track = window.at(index);
-        Object slot = null;
-        if (method.equals("arranger.clips.create")
-                && !"Instrument".equals(track.trackType().get()))
-            throw Errors.notApplied(
-                    Reason.UNSUPPORTED_SCOPE,
-                    "arranger.clips.create makes MIDI note clips and needs an instrument track; use copyFromLauncher for audio.");
-        if (method.equals("arranger.clips.copyFromLauncher")) {
-            int number = p.get("slotIndex").getAsInt();
-            String expected = p.get("expectedClipName").getAsString();
-            ClipLauncherSlotBank bank = track.clipLauncherSlotBank();
-            if (bank.scrollPosition().get() != 0 || number >= bank.itemCount().get())
-                throw Errors.notApplied(
-                        Reason.OUT_OF_BOUNDS, "Launcher slot is outside the current zero-offset scene window.");
-            ClipLauncherSlot launcherSlot = (ClipLauncherSlot) bank.getItemAt(number);
-            if (!launcherSlot.hasContent().get()
-                    || !expected.equals(launcherSlot.name().get())
-                    || launcherSlot.sceneIndex().get() != number)
-                throw Errors.notApplied(
-                        Reason.STALE_TARGET,
-                        "Observe the exact occupied slot name and index with launcher.list first.");
-            slot = launcherSlot;
-        }
+        String id = track.channelId().get();
         SafetyObservation safety = write ? transportSafety.stopped(op) : null;
         if (access == null)
             access = Bitwig614ArrangerAccess.bind(natives.get(op).access());
         long epoch = epochs.get(index);
         Runnable check = () -> {
             scheduler.check(op);
-            if (epochs.get(index) != epoch)
+            if (epochs.get(index) != epoch || offset >= 0 && window.sceneOffset() != offset)
                 throw Errors.notApplied(
-                        Reason.STALE_CONTEXT, "Track bank changed while the arranger operation was queued.");
+                        Reason.TARGET_CHANGED,
+                        "The track or scene window changed while the arranger operation was queued.");
             if (write) transportSafety.guardStopped(safety);
         };
         Runnable beforeWrite = () -> {
@@ -246,68 +255,22 @@ final class ArrangerModule implements HostModule {
                     QUARANTINE, "An arranger clip write on track " + id + " has an unknown outcome until read back.");
         };
         Access bridge = access;
-        Object launcherSlot = slot;
         holds.inFlight(PENDING, "A native arranger operation on track " + id + " is running.");
         try {
             bridge.execute(() -> {
                 try {
                     check.run();
-                    JsonObject result;
-                    switch (method) {
-                        case "arranger.clips.list":
-                            result = bridge.list(track, id, check);
-                            break;
-                        case "arranger.clips.create": {
-                            List<double[]> notes = p.has("notes")
-                                    ? notes(p, p.get("lengthBeats").getAsDouble())
-                                    : List.of();
-                            result = bridge.create(
-                                    track,
-                                    id,
-                                    p.get("startBeats").getAsDouble(),
-                                    p.get("lengthBeats").getAsDouble(),
-                                    p.get("name").getAsString(),
-                                    notes,
-                                    p.has("channel") ? p.get("channel").getAsInt() : 0,
-                                    check,
-                                    beforeWrite);
-                            break;
-                        }
-                        case "arranger.clips.copyFromLauncher":
-                            result = bridge.copyFromLauncher(
-                                    track,
-                                    launcherSlot,
-                                    id,
-                                    p.get("expectedClipName").getAsString(),
-                                    p.get("startBeats").getAsDouble(),
-                                    check,
-                                    beforeWrite);
-                            break;
-                        default: {
-                            JsonObject args = new JsonObject();
-                            for (String key : EDIT_OPS.get(p.get("op").getAsString())) args.add(key, p.get(key));
-                            result = bridge.edit(
-                                    track,
-                                    id,
-                                    p.get("clipIndex").getAsInt(),
-                                    p.get("expectedStartBeats").getAsDouble(),
-                                    p.get("expectedName").getAsString(),
-                                    p.get("op").getAsString(),
-                                    args,
-                                    check,
-                                    beforeWrite);
-                        }
-                    }
+                    JsonObject result = call.run(bridge, track, id, check, beforeWrite);
                     scheduler.schedule(
                             op,
                             () -> {
                                 check.run();
                                 if (!window.trackMatches(id, track))
                                     throw Errors.notApplied(
-                                            Reason.STALE_CONTEXT, "Track target changed after native access.");
+                                            Reason.TARGET_CHANGED, "Track target changed after native access.");
                                 if (write) holds.release(QUARANTINE);
                                 holds.release(PENDING);
-                                op.result.complete(result);
+                                done.accept(result);
                             },
                             0);
                 } catch (RuntimeException | Error error) {

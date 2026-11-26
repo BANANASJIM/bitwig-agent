@@ -1,352 +1,462 @@
 package dev.bitwigagent;
 
 import static dev.bitwigagent.RpcAssert.*;
+import static dev.bitwigagent.TestJson.*;
 import static org.junit.jupiter.api.Assertions.*;
 
-import com.bitwig.extension.callback.*;
-import com.bitwig.extension.controller.api.*;
 import com.google.gson.*;
-import java.lang.reflect.*;
+import dev.bitwigagent.core.Refs;
 import java.util.*;
-import java.util.concurrent.*;
 import org.junit.jupiter.api.Test;
 
 /** Validation, safety and quarantine around a simulated native arranger adapter; not native binding evidence. */
 public final class ArrangerModuleTest {
-    static final String ID = "11111111-1111-1111-1111-111111111111";
 
-    @Test
-    void validation() {
-        ArrangerModule.validateParams("arranger.clips.list", obj("trackId", ID));
-        bad("arranger.clips.list", obj("trackId", "not-a-uuid"));
-        bad("arranger.clips.list", obj("trackId", ID, "extra", 1));
-        JsonObject create = create(0, 16);
-        ArrangerModule.validateParams("arranger.clips.create", create);
-        for (String[] field : new String[][] {
-            {"startBeats", "-1"}, {"startBeats", "4194304.5"}, {"lengthBeats", "0"}, {"lengthBeats", "65537"}
-        }) {
-            JsonObject b = create(0, 16);
-            b.addProperty(field[0], Double.parseDouble(field[1]));
-            bad("arranger.clips.create", b);
+    private static JsonObject note(double beat, int pitch, int velocity, double duration) {
+        return params("beat", beat, "pitch", pitch, "velocity", velocity, "durationBeats", duration);
+    }
+
+    private static JsonArray notes(JsonObject... notes) {
+        JsonArray array = new JsonArray();
+        for (JsonObject n : notes) array.add(n);
+        return array;
+    }
+
+    private static JsonObject arrangerClip(JsonObject track, double start, String name) {
+        return Refs.arrangerClip(track, start, name);
+    }
+
+    /** The launcher world with a native arranger adapter that queues its work and records what reaches it. */
+    private static final class Fixture {
+        final LauncherFake f = new LauncherFake();
+        final Native lane = new Native();
+        final ArrangerModule list = f.services.arranger(lane);
+        boolean playing;
+
+        Fixture(String trackType) {
+            f.scenes = 40;
+            f.base.tracks[0].live("trackType", () -> trackType);
+            f.base.transport.live("isPlaying", () -> playing);
+            ClipModule clips = f.services.clips(f.settings, lane);
+            for (HostModule module : List.of(list, clips))
+                for (String method : module.methods()) f.modules.put(method, module);
         }
-        JsonObject named = create(0, 16);
-        named.addProperty("name", "");
-        bad("arranger.clips.create", named);
-        JsonObject channelOnly = create(0, 16);
-        channelOnly.addProperty("channel", 1);
-        bad("arranger.clips.create", channelOnly);
-        JsonObject notes = create(0, 4);
-        notes.add("notes", noteArray(note(0, 60, 100, 1), note(1, 60, 100, 1)));
-        ArrangerModule.validateParams("arranger.clips.create", notes);
-        assertTrue(ArrangerModule.notes(notes, 4).size() == 2, "two adjacent same-pitch notes are valid");
-        JsonObject overlap = create(0, 4);
-        overlap.add("notes", noteArray(note(0, 60, 100, 2), note(1, 60, 100, 1)));
-        bad("arranger.clips.create", overlap);
-        JsonObject outside = create(0, 4);
-        outside.add("notes", noteArray(note(3.5, 60, 100, 1)));
-        bad("arranger.clips.create", outside);
-        JsonObject offGrid = create(0, 4);
-        offGrid.add("notes", noteArray(note(0.001, 60, 100, 1)));
-        bad("arranger.clips.create", offGrid);
-        JsonObject withOp = create(0, 4);
-        JsonObject n = note(0, 60, 100, 1);
-        n.addProperty("op", "set");
-        withOp.add("notes", noteArray(n));
-        bad("arranger.clips.create", withOp);
-        ArrangerModule.validateParams("arranger.clips.copyFromLauncher", copy());
-        JsonObject slot = copy();
-        slot.addProperty("slotIndex", 16);
-        bad("arranger.clips.copyFromLauncher", slot);
-        JsonObject edit = edit("move");
-        edit.addProperty("startBeats", 8);
-        ArrangerModule.validateParams("arranger.clips.edit", edit);
-        JsonObject emptyName = edit("delete");
-        emptyName.addProperty("expectedName", "");
-        ArrangerModule.validateParams("arranger.clips.edit", emptyName);
-        bad("arranger.clips.edit", edit("move"));
-        JsonObject extra = edit("delete");
-        extra.addProperty("startBeats", 1);
-        bad("arranger.clips.edit", extra);
-        JsonObject op = edit("split");
-        bad("arranger.clips.edit", op);
-        JsonObject rename = edit("rename");
-        rename.addProperty("name", "");
-        bad("arranger.clips.edit", rename);
+
+        HostOperation later() {
+            return new HostOperation(f.tasks.after(2000));
+        }
+
+        void play(boolean value) {
+            playing = value;
+            f.base.transport.child("isPlaying").emit(value);
+        }
+
+        void occupy(int scene, String name) {
+            f.slots[scene].content = true;
+            f.slots[scene].name = name;
+        }
+
+        JsonObject insert(double start, double length) {
+            return params(
+                    "to", params("track", f.track(), "startBeats", start), "lengthBeats", length, "name", "Verse");
+        }
+
+        HostOperation start(String method, JsonObject p) {
+            return f.start(method, p);
+        }
+
+        void drain(HostOperation op) {
+            f.drain(op);
+        }
+
+        JsonObject call(String method, JsonObject p) {
+            return f.call(method, p);
+        }
+
+        final class Native implements ArrangerModule.Access {
+            Runnable beforeRun = () -> {};
+            boolean failAfterWrite, failBeforeWrite;
+            int calls, writes, lists;
+            List<double[]> lastNotes;
+            int lastChannel;
+            double lastStart, lastLength;
+            Object lastSlot;
+            String lastName, lastOp;
+            JsonObject lastArgs, lastRef;
+            final List<String> ops = new ArrayList<>();
+            final List<JsonObject> argsSeen = new ArrayList<>();
+
+            @Override
+            public void execute(Runnable work) {
+                f.tasks.add(() -> {
+                    Runnable hook = beforeRun;
+                    beforeRun = () -> {};
+                    hook.run();
+                    work.run();
+                });
+            }
+
+            private JsonObject row(double start, double length, String name) {
+                JsonObject row = params("clipIndex", 0, "startBeats", start, "lengthBeats", length, "name", name);
+                return row;
+            }
+
+            private JsonObject result(JsonObject clip) {
+                JsonObject out = Results.outcome(Outcome.APPLIED);
+                out.addProperty("trackId", f.trackId);
+                out.addProperty("lane", "main");
+                JsonArray rows = new JsonArray();
+                rows.add(row(8, 4, "Verse"));
+                out.add("clips", rows);
+                out.add("clip", clip == null ? JsonNull.INSTANCE : clip);
+                return out;
+            }
+
+            private JsonObject write(JsonObject clip, Runnable check, Runnable before) {
+                calls++;
+                check.run();
+                if (failBeforeWrite) throw Errors.notApplied(Reason.OVERLAP, "simulated overlap");
+                before.run();
+                writes++;
+                if (failAfterWrite) throw Errors.unknown(Reason.READBACK_MISMATCH, "simulated readback mismatch");
+                return result(clip);
+            }
+
+            @Override
+            public JsonObject list(Object track, String id, Runnable check) {
+                lists++;
+                check.run();
+                JsonObject out = result(null);
+                out.remove("outcome");
+                out.remove("clip");
+                return out;
+            }
+
+            @Override
+            public JsonObject create(
+                    Object track,
+                    String id,
+                    double start,
+                    double length,
+                    String name,
+                    List<double[]> noteList,
+                    int channel,
+                    Runnable check,
+                    Runnable before) {
+                lastNotes = noteList;
+                lastChannel = channel;
+                lastStart = start;
+                lastLength = length;
+                lastName = name;
+                return write(row(start, length, name), check, before);
+            }
+
+            @Override
+            public JsonObject copyFromLauncher(
+                    Object track,
+                    Object slot,
+                    String id,
+                    String expectedName,
+                    double start,
+                    Runnable check,
+                    Runnable before) {
+                lastSlot = slot;
+                lastName = expectedName;
+                lastStart = start;
+                return write(row(start, 4, expectedName), check, before);
+            }
+
+            @Override
+            public JsonObject edit(
+                    Object track, JsonObject ref, String op, JsonObject args, Runnable check, Runnable before) {
+                lastOp = op;
+                lastArgs = args;
+                lastRef = ref;
+                ops.add(op);
+                argsSeen.add(args);
+                JsonObject out = write(
+                        op.equals("delete") ? null : row(8, 4, ref.get("name").getAsString()), check, before);
+                if (!op.equals("delete"))
+                    out.add("previous", row(ref.get("startBeats").getAsDouble(), 4, "Verse"));
+                return out;
+            }
+        }
     }
 
     @Test
-    void unknownMethodAndUngatedHostAreRefused() {
-        assertRpcError("unknown_method", () -> ArrangerModule.validateParams("arranger.clips.split", obj()));
-        HostFixture host = new HostFixture();
-        host.tracks[0].child("channelId").emit(ID);
-        HostOperation op = host.start(host.services.arranger(null), "arranger.clips.list", obj("trackId", ID));
-        assertRpcError("host_mismatch", op);
+    void listIsReadOnlyShapedAsRefsAndNeedsNoStoppedTransport() {
+        Fixture x = new Fixture("Audio");
+        x.play(true);
+        JsonObject result = x.call("arranger.list", params("parent", x.f.track()));
+        assertTrue(!result.has("outcome") && x.lane.lists == 1 && x.lane.writes == 0, "list does not write");
+        assertFalse(result.has("trackId") || result.has("lane"), "the lane identity is the parent ref, not a field");
+        JsonObject row = result.getAsJsonArray("clips").get(0).getAsJsonObject();
+        assertEquals(arrangerClip(x.f.track(), 8, "Verse"), row.get("ref"));
+        assertFalse(row.has("clipIndex"), "an index is no identity");
+        assertEquals(4.0, row.get("lengthBeats").getAsDouble());
     }
 
     @Test
-    void listIsReadOnlyAndNeedsNoStoppedTransport() {
-        Fixture f = new Fixture(true, "Audio");
-        JsonObject result = f.call("arranger.clips.list", obj("trackId", ID));
-        assertTrue(
-                !result.has("outcome") && f.lists == 1 && f.writes == 0,
-                "list reads through the adapter without writing");
+    void listWithoutANativeBindingIsAHostMismatch() {
+        Fixture x = new Fixture("Instrument");
+        x.f.modules.put("arranger.list", x.f.services.arranger(null));
+        assertRpcError("host_mismatch", x.start("arranger.list", params("parent", x.f.track())));
     }
 
     @Test
-    void createChecksTrackTypeSafetyAndPassesNotes() {
-        Fixture audio = new Fixture(false, "Audio");
-        assertRpcError("unsupported_scope", audio.start("arranger.clips.create", create(0, 4)));
-        assertTrue(audio.calls == 0, "note clip on an audio track is refused before native access");
-        Fixture playing = new Fixture(true, "Instrument");
-        assertRpcError("unsafe_state", playing.start("arranger.clips.create", create(0, 4)));
-        assertTrue(playing.calls == 0, "playing transport blocks arranger writes");
-        Fixture f = new Fixture(false, "Instrument");
-        JsonObject p = create(8, 4);
-        p.add("notes", noteArray(note(0, 60, 100, 1), note(2, 64, 90, 0.5)));
+    void listRefusesAnUnknownTrack() {
+        Fixture x = new Fixture("Instrument");
+        JsonObject gone = Refs.track("22222222-2222-2222-2222-222222222222", "Track");
+        assertRpcError("target_not_found", x.start("arranger.list", params("parent", gone)));
+        assertEquals(0, x.lane.lists);
+    }
+
+    @Test
+    void anInsertNeedsAnInstrumentTrack() {
+        Fixture audio = new Fixture("Audio");
+        assertRpcError("unsupported_scope", audio.start("clips.insert", audio.insert(0, 4)));
+        assertEquals(0, audio.lane.calls, "a note clip on an audio track is refused before native access");
+    }
+
+    @Test
+    void aPlayingTransportBlocksArrangerWrites() {
+        Fixture x = new Fixture("Instrument");
+        x.play(true);
+        assertRpcError("unsafe_state", x.start("clips.insert", x.insert(0, 4)));
+        assertEquals(0, x.lane.calls);
+    }
+
+    @Test
+    void playbackStartingWhileQueuedBlocksTheWrite() {
+        Fixture x = new Fixture("Instrument");
+        HostOperation op = x.start("clips.insert", x.insert(0, 4));
+        x.lane.beforeRun = () -> x.play(true);
+        x.drain(op);
+        assertRpcError("stale_context", op);
+        assertEquals(0, x.lane.writes);
+        assertTrue(x.f.services.holds.list().isEmpty(), "the refused operation holds nothing");
+    }
+
+    @Test
+    void anInsertPassesNotesChannelAndPositionAndShapesTheRef() {
+        Fixture x = new Fixture("Instrument");
+        JsonObject p = x.insert(8, 4);
+        p.add("notes", notes(note(0, 60, 100, 1), note(2, 64, 90, 0.5)));
         p.addProperty("channel", 2);
-        f.call("arranger.clips.create", p);
-        assertTrue(
-                f.writes == 1 && f.lastNotes.size() == 2 && f.lastChannel == 2, "notes and channel reach the adapter");
-        assertTrue(
-                f.lastNotes.get(1)[1] == 64
-                        && f.lastNotes.get(1)[2] == 90
-                        && f.lastNotes.get(1)[3] == 0.5,
-                "note fields keep beat/pitch/velocity/duration order");
-        assertTrue(f.lastStart == 8 && f.lastLength == 4, "start and length pass through unchanged");
+        JsonObject result = x.call("clips.insert", p);
+        assertEquals("applied", result.get("outcome").getAsString());
+        assertTrue(x.lane.writes == 1 && x.lane.lastNotes.size() == 2 && x.lane.lastChannel == 2);
+        assertArrayEquals(new double[] {2, 64, 90, 0.5}, x.lane.lastNotes.get(1), "beat, pitch, velocity, duration");
+        assertTrue(x.lane.lastStart == 8 && x.lane.lastLength == 4 && x.lane.lastName.equals("Verse"));
+        assertEquals(arrangerClip(x.f.track(), 8, "Verse"), result.get("ref"));
+        assertFalse(result.has("trackId") || result.has("lane"));
+        assertFalse(result.getAsJsonObject("clip").has("ref"), "the ref moved to the top level of the result");
+        assertFalse(result.getAsJsonObject("clip").has("clipIndex"));
+        assertEquals(
+                arrangerClip(x.f.track(), 8, "Verse"),
+                result.getAsJsonArray("clips").get(0).getAsJsonObject().get("ref"));
+        assertTrue(x.f.services.holds.list().isEmpty(), "the settled operation releases its holds");
     }
 
     @Test
-    void copyChecksTheObservedLauncherSlot() {
-        Fixture f = new Fixture(false, "Audio");
-        f.call("arranger.clips.copyFromLauncher", copy());
-        assertTrue(f.writes == 1 && f.lastSlot != null, "copy passes the launcher slot proxy");
-        Fixture wrong = new Fixture(false, "Audio");
-        JsonObject b = copy();
-        b.addProperty("expectedClipName", "Chorus");
-        assertRpcError("stale_target", wrong.start("arranger.clips.copyFromLauncher", b));
-        assertTrue(wrong.calls == 0, "a different observed clip name is refused before native access");
-        Fixture empty = new Fixture(false, "Audio");
-        empty.host.slot(0, 0).child("hasContent").data = false;
-        assertRpcError("stale_target", empty.start("arranger.clips.copyFromLauncher", copy()));
+    void anInsertWithoutNotesPassesNone() {
+        Fixture x = new Fixture("Instrument");
+        x.call("clips.insert", x.insert(0, 4));
+        assertTrue(x.lane.lastNotes.isEmpty() && x.lane.lastChannel == 0);
     }
 
     @Test
-    void editPassesOnlyItsPayload() {
-        Fixture f = new Fixture(false, "Instrument");
-        JsonObject p = edit("resize");
-        p.addProperty("lengthBeats", 12);
-        f.call("arranger.clips.edit", p);
-        assertTrue(
-                f.lastOp.equals("resize") && f.lastArgs.keySet().equals(Set.of("lengthBeats")),
-                "edit forwards op and exactly its payload");
+    void notesAreCheckedForGridOverlapDuplicatesAndFit() {
+        assertEquals(
+                2,
+                ArrangerModule.notes(notes(note(0, 60, 100, 1), note(1, 60, 100, 1)), 4)
+                        .size());
+        assertEquals(
+                1,
+                ArrangerModule.notes(notes(note(0.0078125, 60, 100, 0.0078125)), 4)
+                        .size());
+        assertRpcError(
+                "invalid_params", () -> ArrangerModule.notes(notes(note(0, 60, 100, 2), note(1, 60, 100, 1)), 4));
+        assertRpcError("invalid_params", () -> ArrangerModule.notes(notes(note(0, 60, 100, 1), note(0, 60, 90, 1)), 4));
+        assertRpcError("invalid_params", () -> ArrangerModule.notes(notes(note(3.5, 60, 100, 1)), 4));
+        assertRpcError("invalid_params", () -> ArrangerModule.notes(notes(note(0.001, 60, 100, 1)), 4));
+        assertRpcError("invalid_params", () -> ArrangerModule.notes(notes(note(0, 60, 100, 0.001)), 4));
+        assertEquals(
+                2,
+                ArrangerModule.notes(notes(note(0, 60, 100, 4), note(0, 61, 100, 4)), 4)
+                        .size(),
+                "different pitches may overlap");
     }
 
     @Test
-    void pendingOperationIsBusy() {
-        Fixture f = new Fixture(false, "Instrument");
-        HostOperation first = f.start("arranger.clips.create", create(0, 4));
-        assertTrue(
-                f.host.services.holds.list().size() == 1
-                        && !f.host.services.holds.list().get(0).ackable,
-                "a running native operation is an in-flight hold");
-        assertRpcError("busy", f.start("arranger.clips.list", obj("trackId", ID)));
-        f.drain();
-        assertTrue(
-                assertOutcome("applied", first) != null
-                        && f.host.services.holds.list().isEmpty(),
-                "the settled operation releases its hold");
+    void invalidNotesAreRefusedBeforeScheduling() {
+        Fixture x = new Fixture("Instrument");
+        JsonObject p = x.insert(0, 4);
+        p.add("notes", notes(note(0, 60, 100, 2), note(1, 60, 100, 1)));
+        assertRpcError("invalid_params", x.start("clips.insert", p));
+        assertEquals(0, x.lane.calls);
     }
 
     @Test
-    void unknownWriteHoldsWritesButNotReadsUntilAck() {
-        Fixture f = new Fixture(false, "Instrument");
-        f.failAfterWrite = true;
-        HostOperation failed = f.start("arranger.clips.create", create(0, 4));
-        f.drain();
+    void nativeWorkIsQueuedAndAPendingOperationMakesOthersBusy() {
+        Fixture x = new Fixture("Instrument");
+        HostOperation first = x.start("clips.insert", x.insert(0, 4));
+        assertFalse(first.result.isDone());
+        assertEquals(0, x.lane.calls, "the native adapter queues its work");
+        List<Holds.View> holds = x.f.services.holds.list();
+        assertTrue(holds.size() == 1 && !holds.get(0).ackable, "a running native operation is an in-flight hold");
+        JsonObject read = params("parent", x.f.track());
+        assertRpcError("busy", () -> x.list.dispatch(x.later(), "arranger.list", read));
+        JsonObject second = x.insert(8, 4);
+        assertRpcError("busy", () -> x.f.clipModule.dispatch(x.later(), "clips.insert", second));
+        x.drain(first);
+        assertOutcome("applied", first);
+        assertTrue(x.f.services.holds.list().isEmpty());
+    }
+
+    @Test
+    void anUnknownWriteHoldsWritesButNotReadsUntilAck() {
+        Fixture x = new Fixture("Instrument");
+        x.lane.failAfterWrite = true;
+        HostOperation failed = x.start("clips.insert", x.insert(0, 4));
+        x.drain(failed);
         assertTrue(failed.dispatched(), "failure happened after dispatch");
         assertUnknown("readback_mismatch", failed);
-        String next = assertRpcError("unresolved", f.start("arranger.clips.create", create(8, 4))).next;
+        String next = assertRpcError("unresolved", x.start("clips.insert", x.insert(8, 4))).next;
         assertTrue(
-                next.contains("arranger.clips.list") && next.contains("ack arranger.quarantine"),
+                next.contains("arranger.list") && next.contains("ack arranger.quarantine"),
                 "the refusal says what to inspect and what to ack");
-        HostOperation list = f.start("arranger.clips.list", obj("trackId", ID));
-        f.drain();
-        assertTrue(list.result.join() != null, "reads stay available");
-        List<Holds.View> holds = f.host.services.holds.list();
+        HostOperation edit = x.start("clips.delete", params("target", arrangerClip(x.f.track(), 8, "Verse")));
+        assertRpcError("unresolved", edit);
+        JsonObject read = x.call("arranger.list", params("parent", x.f.track()));
+        assertNotNull(read, "reads stay available");
+        List<Holds.View> holds = x.f.services.holds.list();
         assertTrue(
                 holds.size() == 1
                         && holds.get(0).ackable
-                        && holds.get(0).description.contains(ID),
+                        && holds.get(0).description.contains(x.f.trackId),
                 "the unknown write is an unresolved hold");
-        f.host.services.holds.ack("arranger.quarantine");
-        f.failAfterWrite = false;
-        HostOperation after = f.start("arranger.clips.create", create(8, 4));
-        f.drain();
-        assertOutcome("applied", after);
-        Fixture before = new Fixture(false, "Instrument");
-        before.failBeforeWrite = true;
-        HostOperation rejected = before.start("arranger.clips.create", create(0, 4));
-        before.drain();
+        x.f.services.holds.ack("arranger.quarantine");
+        x.lane.failAfterWrite = false;
+        assertEquals(
+                "applied", x.call("clips.insert", x.insert(8, 4)).get("outcome").getAsString());
+        assertTrue(x.f.services.holds.list().isEmpty());
+    }
+
+    @Test
+    void aRefusalBeforeDispatchHoldsNothing() {
+        Fixture x = new Fixture("Instrument");
+        x.lane.failBeforeWrite = true;
+        HostOperation rejected = x.start("clips.insert", x.insert(0, 4));
+        x.drain(rejected);
         assertRpcError("overlap", rejected);
-        assertTrue(
-                !rejected.dispatched() && before.host.services.holds.list().isEmpty(),
-                "pre-dispatch refusal holds nothing");
+        assertTrue(!rejected.dispatched() && x.f.services.holds.list().isEmpty());
     }
 
-    static JsonObject create(double start, double length) {
-        JsonObject p = obj("trackId", ID);
-        p.addProperty("startBeats", start);
-        p.addProperty("lengthBeats", length);
-        p.addProperty("name", "Verse");
-        return p;
+    @Test
+    void aTrackChangeWhileQueuedIsTargetChanged() {
+        Fixture x = new Fixture("Instrument");
+        HostOperation op = x.start("clips.insert", x.insert(0, 4));
+        x.lane.beforeRun = () -> x.f.observeTrackId("22222222-2222-2222-2222-222222222222");
+        x.drain(op);
+        assertRpcError("target_changed", op);
+        assertEquals(0, x.lane.calls);
+        assertTrue(x.f.services.holds.list().isEmpty(), "the pending hold is released on failure");
     }
 
-    static JsonObject copy() {
-        JsonObject p = obj("trackId", ID);
-        p.addProperty("slotIndex", 0);
-        p.addProperty("expectedClipName", "Verse");
-        p.addProperty("startBeats", 0);
-        return p;
+    @Test
+    void aTrackChangeWhileAListIsQueuedIsTargetChanged() {
+        Fixture x = new Fixture("Instrument");
+        HostOperation op = x.start("arranger.list", params("parent", x.f.track()));
+        x.lane.beforeRun = () -> x.f.observeTrackId("22222222-2222-2222-2222-222222222222");
+        x.drain(op);
+        assertRpcError("target_changed", op);
+        assertEquals(0, x.lane.lists);
     }
 
-    static JsonObject edit(String op) {
-        JsonObject p = obj("trackId", ID);
-        p.addProperty("clipIndex", 0);
-        p.addProperty("expectedStartBeats", 0);
-        p.addProperty("expectedName", "Verse");
-        p.addProperty("op", op);
-        return p;
+    @Test
+    void anEditPassesOnlyItsPayloadAndShapesPreviousAndRef() {
+        Fixture x = new Fixture("Instrument");
+        JsonObject ref = arrangerClip(x.f.track(), 8, "Verse");
+        JsonObject moved = x.call("clips.move", params("target", ref, "to", params("startBeats", 16)));
+        assertEquals("move", x.lane.lastOp);
+        assertEquals(Set.of("startBeats"), x.lane.lastArgs.keySet());
+        assertEquals(ref, x.lane.lastRef, "the native side locates the clip by the ref");
+        assertEquals(arrangerClip(x.f.track(), 8, "Verse"), moved.get("ref"));
+        assertEquals(
+                arrangerClip(x.f.track(), 8, "Verse"),
+                moved.getAsJsonObject("previous").get("ref"));
+        assertFalse(moved.getAsJsonObject("previous").has("clipIndex"));
     }
 
-    static JsonObject note(double beat, int pitch, int velocity, double duration) {
-        JsonObject n = new JsonObject();
-        n.addProperty("beat", beat);
-        n.addProperty("pitch", pitch);
-        n.addProperty("velocity", velocity);
-        n.addProperty("durationBeats", duration);
-        return n;
+    @Test
+    void aResizeAndRenameForwardOneEditEach() {
+        Fixture x = new Fixture("Instrument");
+        JsonObject ref = arrangerClip(x.f.track(), 8, "Verse");
+        JsonObject set = x.call("clips.set", params("target", ref, "lengthBeats", 12, "name", "Chorus"));
+        assertEquals(List.of("resize", "rename"), x.lane.ops);
+        assertEquals(Set.of("lengthBeats"), x.lane.argsSeen.get(0).keySet());
+        assertEquals(Set.of("name"), x.lane.argsSeen.get(1).keySet());
+        assertEquals("applied", set.get("outcome").getAsString());
     }
 
-    static JsonArray noteArray(JsonObject... notes) {
-        JsonArray a = new JsonArray();
-        for (JsonObject n : notes) a.add(n);
-        return a;
+    @Test
+    void aDeleteResultCarriesNoRefButRowsWithRefs() {
+        Fixture x = new Fixture("Instrument");
+        JsonObject deleted = x.call("clips.delete", params("target", arrangerClip(x.f.track(), 8, "Verse")));
+        assertEquals("delete", x.lane.lastOp);
+        assertTrue(x.lane.lastArgs.keySet().isEmpty());
+        assertFalse(deleted.has("ref"));
+        assertTrue(deleted.get("clip").isJsonNull());
+        assertTrue(deleted.getAsJsonArray("clips").get(0).getAsJsonObject().has("ref"));
     }
 
-    static JsonObject obj(Object... kv) {
-        JsonObject p = new JsonObject();
-        for (int i = 0; i < kv.length; i += 2) {
-            if (kv[i + 1] instanceof Number) p.addProperty((String) kv[i], (Number) kv[i + 1]);
-            else p.addProperty((String) kv[i], (String) kv[i + 1]);
-        }
-        return p;
+    @Test
+    void aRefToAnUnknownTrackIsRefusedBeforeNativeAccess() {
+        Fixture x = new Fixture("Instrument");
+        JsonObject gone = Refs.track("22222222-2222-2222-2222-222222222222", "Track");
+        assertRpcError("target_not_found", x.start("clips.delete", params("target", arrangerClip(gone, 8, "Verse"))));
+        assertEquals(0, x.lane.calls);
     }
 
-    static void bad(String m, JsonObject p) {
-        assertRpcError("invalid_params", () -> ArrangerModule.validateParams(m, p));
+    @Test
+    void aCopyPassesTheObservedLauncherSlotAndName() {
+        Fixture x = new Fixture("Audio");
+        x.f.sceneNames[33] = "Drop";
+        x.occupy(33, "Hook");
+        JsonObject result =
+                x.call("clips.copy", params("from", x.f.clip(33), "to", params("track", x.f.track(), "startBeats", 8)));
+        assertEquals("applied", result.get("outcome").getAsString());
+        assertNotNull(x.lane.lastSlot, "the slot proxy reaches the adapter");
+        assertEquals("Hook", x.lane.lastName);
+        assertEquals(8.0, x.lane.lastStart);
+        assertEquals(arrangerClip(x.f.track(), 8, "Hook"), result.get("ref"));
     }
 
-    static final class Fixture {
-        final HostFixture host = new HostFixture();
-        final ScheduledTasks queue = host.tasks;
-        final ArrangerModule module;
-        final boolean playing;
-        final String trackType;
-        boolean failAfterWrite, failBeforeWrite;
-        int writes, calls, lists;
-        List<double[]> lastNotes;
-        int lastChannel;
-        double lastStart, lastLength;
-        Object lastSlot;
-        String lastOp;
-        JsonObject lastArgs;
+    @Test
+    void aCopyAbortsWhenTheSceneWindowMovesWhileQueued() {
+        Fixture x = new Fixture("Audio");
+        x.f.sceneNames[33] = "Drop";
+        x.occupy(33, "Hook");
+        HostOperation op = x.start(
+                "clips.copy", params("from", x.f.clip(33), "to", params("track", x.f.track(), "startBeats", 8)));
+        x.lane.beforeRun = () -> x.f.scroll(0);
+        x.drain(op);
+        assertRpcError("target_changed", op);
+        assertEquals(0, x.lane.writes);
+        assertTrue(x.f.services.holds.list().isEmpty());
+    }
 
-        Fixture(boolean playing, String trackType) {
-            this.playing = playing;
-            this.trackType = trackType;
-            host.tracks[0].child("channelId").emit(ID);
-            host.tracks[0].child("trackType").emit(trackType);
-            host.transport.child("isPlaying").emit(playing);
-            host.occupySlot(0, 0, "Verse");
-            module = host.services.arranger(new ArrangerModule.Access() {
-                public void execute(Runnable task) {
-                    queue.add(task);
-                }
-
-                public JsonObject list(Object track, String id, Runnable check) {
-                    lists++;
-                    check.run();
-                    return new JsonObject();
-                }
-
-                public JsonObject create(
-                        Object track,
-                        String id,
-                        double start,
-                        double length,
-                        String name,
-                        List<double[]> notes,
-                        int channel,
-                        Runnable check,
-                        Runnable before) {
-                    lastNotes = notes;
-                    lastChannel = channel;
-                    lastStart = start;
-                    lastLength = length;
-                    return write(check, before);
-                }
-
-                public JsonObject copyFromLauncher(
-                        Object track,
-                        Object slot,
-                        String id,
-                        String expected,
-                        double start,
-                        Runnable check,
-                        Runnable before) {
-                    lastSlot = slot;
-                    return write(check, before);
-                }
-
-                public JsonObject edit(
-                        Object track,
-                        String id,
-                        int index,
-                        double start,
-                        String name,
-                        String op,
-                        JsonObject args,
-                        Runnable check,
-                        Runnable before) {
-                    lastOp = op;
-                    lastArgs = args;
-                    return write(check, before);
-                }
-            });
-        }
-
-        JsonObject write(Runnable check, Runnable before) {
-            calls++;
-            check.run();
-            if (failBeforeWrite) throw Errors.notApplied(Reason.OVERLAP, "simulated overlap");
-            before.run();
-            writes++;
-            if (failAfterWrite) throw Errors.unknown(Reason.READBACK_MISMATCH, "simulated readback mismatch");
-            return Results.outcome(Outcome.APPLIED);
-        }
-
-        HostOperation start(String m, JsonObject p) {
-            return host.start(module, m, p);
-        }
-
-        void drain() {
-            host.drain();
-        }
-
-        JsonObject call(String m, JsonObject p) {
-            HostOperation op = start(m, p);
-            drain();
-            return op.result.join();
-        }
+    @Test
+    void aCopyIsRefusedWhileTheTransportPlays() {
+        Fixture x = new Fixture("Audio");
+        x.occupy(3, "Hook");
+        x.play(true);
+        assertRpcError(
+                "unsafe_state",
+                x.start(
+                        "clips.copy",
+                        params("from", x.f.clip(3), "to", params("track", x.f.track(), "startBeats", 8))));
+        assertEquals(0, x.lane.calls);
     }
 }

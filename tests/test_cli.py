@@ -16,7 +16,8 @@ from bitwig_agent.frontends import cli
 from bitwig_agent.frontends.cli import main
 from bitwig_agent.protocol import TOOLS, invalid_params_message, validate_call
 from bitwig_agent.protocol.base import REASONS, TARGET, TRACK
-from bitwig_agent.protocol.launcher import NOTE_WINDOW
+from bitwig_agent.protocol.clips import NOTE_WINDOW
+from bitwig_agent.protocol.launcher import SLOT_REF, TRACK_REF
 
 pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures("all_methods")]  # parser tests cover hidden blocks too
 
@@ -83,8 +84,8 @@ async def test_nested_note_arguments_and_raw_json_are_equivalent(host, monkeypat
         ["transport.set"],
         ["tracks.set", f"--trackId={TRACK}", "--mute=true", "--volumeNormalized=2"],
         ["tracks.create", "--type=instrument", "--position=1.5", "--name=x"],
-        ["launcher.import", f"--trackId={TRACK}", "--slotIndex=0", "--path=relative.wav"],
-        ["launcher.import", f"--trackId={TRACK}", "--slotIndex=0", "--path=/tmp/audio.wav", "--overwrite=true"],
+        ["clips.import", f"--to={json.dumps(SLOT_REF)}", "--path=relative.wav"],
+        ["clips.import", f"--to={json.dumps(SLOT_REF)}", "--path=/tmp/audio.wav", "--overwrite=true"],
         ["status", "[]"],
         ["status", "null"],
         ["transport.set", '{"playing":true,"playing":false}'],
@@ -571,9 +572,8 @@ def test_unknown_argument_synonyms_hint_but_never_alias():
 def test_nested_unknown_argument_names_full_path_and_siblings():
 
     args = {
-        "trackId": "abcdef01-2345-6789-abcd-0123456789ab",
+        "to": {"track": TRACK_REF, "startBeats": 0},
         "name": "x",
-        "startBeats": 0,
         "lengthBeats": 4,
         "notes": [
             {"beat": 0, "pitch": 60, "velocity": 0.8, "durationBeats": 1},
@@ -581,8 +581,8 @@ def test_nested_unknown_argument_names_full_path_and_siblings():
         ],
     }
     with pytest.raises(ValidationError) as error:
-        validate_call("arranger.clips.create", args)
-    message = invalid_params_message("arranger.clips.create", error.value)
+        validate_call("clips.insert", args)
+    message = invalid_params_message("clips.insert", error.value)
     assert "notes[1].channel" in message
     assert "Accepted at notes[]: " in message
     assert "durationBeats" in message

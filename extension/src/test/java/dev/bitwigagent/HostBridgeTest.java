@@ -8,6 +8,7 @@ import com.bitwig.extension.controller.api.*;
 import com.google.gson.*;
 import dev.bitwigagent.core.MethodSpecs;
 import dev.bitwigagent.core.MethodSpecsTest;
+import dev.bitwigagent.core.Refs;
 import java.lang.reflect.*;
 import java.util.*;
 import java.util.concurrent.*;
@@ -297,8 +298,7 @@ public final class HostBridgeTest {
         Fake f = new Fake();
         HostBridge bridge = f.bridge();
         JsonObject launch = new JsonObject();
-        launch.addProperty("trackId", Fake.TRACK_ID);
-        launch.addProperty("slotIndex", 0);
+        launch.add("target", Refs.launcherClip(Refs.track(Fake.TRACK_ID, "Track"), Refs.scene(0, null), "Verse"));
         JsonObject play = new JsonObject();
         play.addProperty("playing", true);
         JsonObject already = call(f, bridge, "project.activateEngine", new JsonObject());
@@ -316,7 +316,7 @@ public final class HostBridgeTest {
         assertTrue(
                 !call(f, bridge, "status", new JsonObject()).get("engineActive").getAsBoolean(),
                 "status reports an inactive engine");
-        CompletableFuture<JsonObject> refused = bridge.handle("launcher.launch", launch, f.deadline());
+        CompletableFuture<JsonObject> refused = bridge.handle("clips.launch", launch, f.deadline());
         f.next();
         assertRpcError("engine_inactive", refused);
         {

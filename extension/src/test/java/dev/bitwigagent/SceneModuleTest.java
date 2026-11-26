@@ -1,320 +1,574 @@
 package dev.bitwigagent;
 
 import static dev.bitwigagent.RpcAssert.*;
+import static dev.bitwigagent.TestJson.*;
 import static org.junit.jupiter.api.Assertions.*;
 
-import com.bitwig.extension.controller.api.*;
 import com.google.gson.*;
-import java.util.*;
+import dev.bitwigagent.core.Refs;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 
 /** Simulated scene bank: callbacks and queued host tasks only; says nothing about native scene behavior. */
 public final class SceneModuleTest {
 
-    /** A scene list model that republishes names and count the way observers would. */
-    private static final class Model {
-        final HostFixture f = new HostFixture();
-        final List<String> names = new ArrayList<>();
-        final SceneModule module;
-        boolean applyDuplicate = true, applyDelete = true, positional, playsOnLaunch;
+    private static LauncherFake world(int scenes, String... names) {
+        LauncherFake f = new LauncherFake();
+        f.scenes = scenes;
+        for (int i = 0; i < names.length; i++) f.sceneNames[i] = names[i];
+        return f;
+    }
 
-        Model(String... initial) {
-            names.addAll(Arrays.asList(initial));
-            FakeHost bank = f.bank.child("sceneBank");
-            bank.items(Scene.class);
-            bank.child("scrollPosition").data = 0;
-            bank.child("itemCount").data = names.size();
-            for (int i = 0; i < HostLimits.SCENES; i++) {
-                final int index = i;
-                FakeHost scene = bank.item(i);
-                scene.child("exists").data = i < names.size();
-                scene.child("name").data = i < names.size() ? names.get(i) : "";
-                scene.on("deleteObject", args -> {
-                    f.mutation();
-                    scene.actions++;
-                    if (applyDelete) {
-                        names.remove(index);
-                        publish(bank);
-                    }
-                    return null;
-                });
-                scene.on("duplicateObject", args -> {
-                    f.mutation();
-                    scene.actions++;
-                    if (applyDuplicate) {
-                        names.add(index + 1, names.get(index));
-                        publish(bank);
-                    }
-                    return null;
-                });
-                scene.on("launch", args -> {
-                    f.mutation();
-                    scene.actions++;
-                    for (int t = 0; t < 2; t++) {
-                        FakeHost slot = f.slot(t, index);
-                        if (slot.child("hasContent").data.equals(true))
-                            slot.child(playsOnLaunch ? "isPlaying" : "isPlaybackQueued").data = true;
-                    }
-                    return null;
-                });
-            }
-            module = f.services.scene();
-        }
+    private static String outcome(JsonObject result) {
+        return result.get("outcome").getAsString();
+    }
 
-        void publish(FakeHost bank) {
-            // Bitwig labels an unnamed scene by its position, so every default label shifts after an insert or delete.
-            if (positional)
-                for (int i = 0; i < names.size(); i++)
-                    if (names.get(i).startsWith("Scene ")) names.set(i, "Scene " + (i + 1));
-            for (int i = 0; i < HostLimits.SCENES; i++)
-                bank.item(i).child("name").emit(i < names.size() ? names.get(i) : "");
-            bank.child("itemCount").emit(names.size());
-        }
+    private static int refIndex(JsonObject result) {
+        return result.getAsJsonObject("ref").get("index").getAsInt();
+    }
 
-        JsonObject call(String method, String json) {
-            return f.call(module, method, HostFixture.json(json));
-        }
+    private static JsonObject row(JsonObject listed, int i) {
+        return listed.getAsJsonArray("scenes").get(i).getAsJsonObject();
+    }
 
-        HostOperation start(String method, String json) {
-            HostOperation op = f.submit(module, method, HostFixture.json(json));
-            f.next();
-            return op;
-        }
+    private static void holdWindow(LauncherFake f, int offset) {
+        HostOperation holder = new HostOperation(f.tasks.after(60_000));
+        f.services.launcherTargets().lease.enter(holder, offset, false, false, () -> {});
+        for (int i = 0; i < 20 && !f.tasks.isEmpty(); i++) f.next();
+        assertEquals(offset, f.bankOffset);
+    }
 
-        HostOperation startShort(String method, String json) {
-            HostOperation op = f.submit(module, method, HostFixture.json(json), f.tasks.after(300));
-            while (!op.result.isDone()) f.next();
-            return op;
-        }
+    // ---- validation and readiness ----
+
+    @Test
+    void parametersAreValidatedBeforeAnythingIsScheduled() {
+        LauncherFake f = world(3, "Intro");
+        for (JsonObject bad :
+                List.of(params("count", 0), params("count", 129), params("count", 1.5), params("extra", 1)))
+            assertRpcError("invalid_params", f.start("scenes.insert", bad));
+        for (JsonObject bad : List.of(
+                params("target", f.scene(0)),
+                params("target", f.scene(0), "name", ""),
+                params("target", f.scene(0), "name", "x".repeat(129)),
+                params("name", "X"),
+                params("target", f.slot(0), "name", "X"))) assertRpcError("invalid_params", f.start("scenes.set", bad));
+        assertRpcError("invalid_params", f.start("scenes.delete", params("sceneIndex", 0)));
+        assertRpcError("invalid_params", f.start("scenes.list", params("sceneOffset", -1)));
+        assertRpcError("invalid_params", f.start("scenes.launch", params("target", params("kind", "scene"))));
+        assertEquals(0, f.sceneAppends + f.sceneRenames + f.sceneDeletes);
     }
 
     @Test
-    void refusesUnknownMethodsLongNamesAndUnreadyBanks() {
-        assertRpcError("unknown_method", () -> SceneModule.validateParams("scenes.bogus", new JsonObject()));
-        assertInvalidParams(() -> SceneModule.validateParams(
-                "scenes.rename",
-                HostFixture.json("{\"sceneIndex\":0,\"expectedName\":\"\",\"name\":\"" + "x".repeat(129) + "\"}")));
-        Model unready = new Model("A");
-        unready.f.bank.child("sceneBank").child("itemCount").emit(-1);
-        assertRpcError("not_ready", unready.start("scenes.list", "{}"));
-        Model scrolled = new Model("A");
-        scrolled.f.bank.child("sceneBank").child("scrollPosition").data = 1;
-        assertRpcError("stale_context", scrolled.start("scenes.list", "{}"));
+    void anUnobservedSceneCountIsNotReadyForEveryMethod() {
+        LauncherFake f = new LauncherFake(true, false, false, false, false);
+        assertRpcError("not_ready", f.startAndDrain("scenes.list", new JsonObject()));
+        assertRpcError("not_ready", f.startAndDrain("scenes.insert", new JsonObject()));
+        assertRpcError("not_ready", f.startAndDrain("scenes.set", params("target", f.scene(0), "name", "X")));
+        for (String method : List.of("scenes.launch", "scenes.duplicate", "scenes.delete"))
+            assertRpcError("not_ready", f.startAndDrain(method, params("target", f.scene(0))));
+        assertEquals(0, f.sceneAppends + f.sceneRenames + f.sceneLaunches + f.sceneDuplicates + f.sceneDeletes);
     }
 
+    // ---- list ----
+
     @Test
-    void listReadsNamesAndClipCounts() {
-        Model m = new Model("Intro", "", "Outro");
-        m.f.slot(0, 0).child("hasContent").data = true;
-        m.f.slot(1, 0).child("hasContent").data = true;
-        m.f.slot(0, 2).child("hasContent").data = true;
-        JsonObject out = m.call("scenes.list", "{}");
-        JsonArray rows = out.getAsJsonArray("scenes");
-        assertTrue(out.get("sceneCount").getAsInt() == 3 && rows.size() == 3, "three scenes listed");
+    void listReadsRefsAndClipCountsWithPositionalLabelsAsUnnamed() {
+        LauncherFake f = world(4, "Intro", "", "Scene 3", "Scene 3");
+        f.trackCount = 2;
+        f.slots[0].content = true;
+        f.extraContent[0] = true;
+        f.slots[2].content = true;
+        JsonObject out = f.call("scenes.list", new JsonObject());
+        assertEquals(4, out.get("sceneCount").getAsInt());
+        assertEquals("scene_bank", out.get("scope").getAsString());
+        assertTrue(out.get("complete").getAsBoolean());
+        assertEquals(4, out.getAsJsonArray("scenes").size());
+        assertEquals(f.scene(0), row(out, 0).getAsJsonObject("ref"));
+        assertEquals("Intro", row(out, 0).getAsJsonObject("ref").get("name").getAsString());
+        assertEquals(2, row(out, 0).get("clipCount").getAsInt());
+        assertTrue(row(out, 1).getAsJsonObject("ref").get("name").isJsonNull());
+        assertEquals(0, row(out, 1).get("clipCount").getAsInt());
         assertTrue(
-                rows.get(0).getAsJsonObject().get("name").getAsString().equals("Intro")
-                        && rows.get(0).getAsJsonObject().get("clipCount").getAsInt() == 2,
-                "name and clip count");
-        assertTrue(
-                rows.get(1).getAsJsonObject().get("name").getAsString().isEmpty()
-                        && rows.get(1).getAsJsonObject().get("clipCount").getAsInt() == 0,
-                "an unnamed scene reports the empty name");
-        assertTrue(out.has("window"), "window reported");
+                row(out, 2).getAsJsonObject("ref").get("name").isJsonNull(),
+                "the label Bitwig shows for scene 3 is not a name");
+        assertEquals(
+                "Scene 3",
+                row(out, 3).getAsJsonObject("ref").get("name").getAsString(),
+                "the same label on another scene is a real name");
+        assertEquals(1, row(out, 2).get("clipCount").getAsInt());
+        assertFalse(out.has("next"));
     }
 
     @Test
-    void validationRejectsBeforeScheduling() {
-        Model m = new Model("Intro");
-        for (String text : List.of(
-                "{\"sceneIndex\":16,\"expectedName\":\"\",\"name\":\"X\"}",
-                "{\"sceneIndex\":-1,\"expectedName\":\"\",\"name\":\"X\"}",
-                "{\"sceneIndex\":0,\"name\":\"X\"}",
-                "{\"sceneIndex\":0,\"expectedName\":\"\",\"name\":\"\"}",
-                "{\"sceneIndex\":0,\"expectedName\":1,\"name\":\"X\"}",
-                "{\"sceneIndex\":0,\"expectedName\":\"\",\"name\":\"X\",\"extra\":1}")) {
-            assertRpcError("invalid_params", m.f.submit(m.module, "scenes.rename", HostFixture.json(text)));
-            assertTrue(m.f.tasks.isEmpty(), "invalid rename not scheduled: " + text);
-        }
-        assertRpcError("invalid_params", m.f.submit(m.module, "scenes.delete", HostFixture.json("{\"sceneIndex\":0}")));
-        assertRpcError("invalid_params", m.f.submit(m.module, "scenes.list", HostFixture.json("{\"sceneIndex\":0}")));
-        SceneModule.validateParams("scenes.launch", HostFixture.json("{\"sceneIndex\":15,\"expectedName\":\"\"}"));
-        assertTrue(m.f.tasks.isEmpty(), "nothing scheduled");
+    void insertingFortyScenesThenListingReadsThemAllAcrossWindows() {
+        LauncherFake f = world(0);
+        f.trackCount = 2;
+        JsonObject inserted = f.call("scenes.insert", params("count", 40));
+        assertEquals(40, inserted.get("sceneCount").getAsInt());
+        f.slots[20].content = true;
+        f.extraContent[20] = true;
+        f.slots[39].content = true;
+        f.sceneNames[35] = "Late";
+        JsonObject out = f.call("scenes.list", new JsonObject());
+        assertEquals(40, out.getAsJsonArray("scenes").size());
+        assertTrue(out.get("complete").getAsBoolean());
+        assertEquals(40, out.get("sceneCount").getAsInt());
+        for (int i = 0; i < 40; i++)
+            assertEquals(i, row(out, i).getAsJsonObject("ref").get("index").getAsInt());
+        assertEquals(2, row(out, 20).get("clipCount").getAsInt());
+        assertEquals(1, row(out, 39).get("clipCount").getAsInt());
+        assertEquals("Late", row(out, 35).getAsJsonObject("ref").get("name").getAsString());
+        assertTrue(f.scrolls >= 2, "the listing moved the window");
     }
+
+    @Test
+    void aShortDeadlineStopsAtAWindowAndTheNextOffsetResumes() {
+        LauncherFake f = world(40);
+        f.slots[33].content = true;
+        JsonObject page = f.startAndDrain(new HostOperation(f.tasks.after(300)), "scenes.list", new JsonObject())
+                .result
+                .join();
+        assertFalse(page.get("complete").getAsBoolean());
+        assertEquals(16, page.getAsJsonArray("scenes").size());
+        assertEquals(16, page.getAsJsonObject("next").get("sceneOffset").getAsInt());
+        assertEquals(0, page.getAsJsonObject("window").get("offset").getAsInt());
+
+        JsonObject second = f.startAndDrain(
+                        new HostOperation(f.tasks.after(300)), "scenes.list", params("sceneOffset", 16))
+                .result
+                .join();
+        assertEquals(16, second.getAsJsonArray("scenes").size());
+        assertEquals(16, row(second, 0).getAsJsonObject("ref").get("index").getAsInt());
+        assertEquals(32, second.getAsJsonObject("next").get("sceneOffset").getAsInt());
+
+        JsonObject third = f.startAndDrain(
+                        new HostOperation(f.tasks.after(300)), "scenes.list", params("sceneOffset", 32))
+                .result
+                .join();
+        assertEquals(8, third.getAsJsonArray("scenes").size());
+        assertTrue(third.get("complete").getAsBoolean());
+        assertFalse(third.has("next"));
+        assertEquals(32, row(third, 0).getAsJsonObject("ref").get("index").getAsInt());
+        assertEquals(1, row(third, 1).get("clipCount").getAsInt());
+        assertEquals(24, f.bankOffset, "the last page sat in the window that fits the 40 scenes");
+    }
+
+    @Test
+    void aListOffsetPastTheCountIsOutOfBounds() {
+        LauncherFake f = world(3);
+        assertRpcError("out_of_bounds", f.startAndDrain("scenes.list", params("sceneOffset", 3)));
+        assertEquals(0, f.scrolls);
+    }
+
+    // ---- insert ----
+
+    @Test
+    void scenesAreAppendedAtTheEndAndCountIsObserved() {
+        LauncherFake f = world(3);
+        f.slots[0].content = true;
+        JsonObject out = f.call("scenes.insert", new JsonObject());
+        assertEquals("applied", outcome(out));
+        assertEquals("scene_count", out.get("verification").getAsString());
+        assertEquals(3, out.get("sceneCountBefore").getAsInt());
+        assertEquals(4, out.get("sceneCount").getAsInt());
+        assertEquals(1, f.sceneAppends);
+        assertEquals(f.scene(3), out.getAsJsonObject("ref"));
+        assertTrue(out.getAsJsonObject("ref").get("name").isJsonNull());
+        assertEquals(1, out.getAsJsonArray("refs").size());
+        assertTrue(f.slots[0].content, "existing slots stay where they are");
+
+        out = f.call("scenes.insert", params("count", 2));
+        assertEquals(6, out.get("sceneCount").getAsInt());
+        assertEquals(3, f.sceneAppends);
+        assertEquals(4, refIndex(out));
+        assertEquals(f.scene(4), out.getAsJsonArray("refs").get(0));
+        assertEquals(f.scene(5), out.getAsJsonArray("refs").get(1));
+        assertEquals(
+                6,
+                f.call("scenes.list", new JsonObject()).getAsJsonArray("scenes").size());
+    }
+
+    @Test
+    void thereIsNoSixteenSceneLimit() {
+        LauncherFake f = world(16);
+        JsonObject out = f.call("scenes.insert", params("count", 30));
+        assertEquals(46, out.get("sceneCount").getAsInt());
+        assertEquals(16, refIndex(out));
+        assertEquals(30, out.getAsJsonArray("refs").size());
+        assertEquals(30, f.sceneAppends);
+    }
+
+    @Test
+    void anUnobservedAppendIsUnknownAfterOneDispatch() {
+        LauncherFake f = world(2);
+        f.applyScene = false;
+        HostOperation op = f.startAndDrain("scenes.insert", new JsonObject());
+        assertUnknown("not_observed", op);
+        assertTrue(op.dispatched());
+        assertEquals(1, f.sceneAppends);
+    }
+
+    // ---- rename ----
 
     @Test
     void renameIsCompareAndSetAndObserved() {
-        Model m = new Model("Intro", "");
-        JsonObject out = m.call("scenes.rename", "{\"sceneIndex\":1,\"expectedName\":\"\",\"name\":\"Verse\"}");
-        assertTrue(
-                out.get("outcome").getAsString().equals("applied")
-                        && out.get("verification").getAsString().equals("observer_after_write")
-                        && out.get("name").getAsString().equals("Verse"),
-                "rename verified by the name observer");
-        assertTrue(
-                m.f.bank.child("sceneBank").item(1).child("name").writes == 1
-                        && m.f.bank.child("sceneBank").item(0).child("name").writes == 0,
-                "only the addressed scene written");
-        out = m.call("scenes.rename", "{\"sceneIndex\":1,\"expectedName\":\"Verse\",\"name\":\"Verse\"}");
-        assertTrue(
-                out.get("outcome").getAsString().equals("already_matched")
-                        && m.f.bank.child("sceneBank").item(1).child("name").writes == 1,
-                "same name is not rewritten");
-        HostOperation stale = m.start("scenes.rename", "{\"sceneIndex\":1,\"expectedName\":\"Chorus\",\"name\":\"X\"}");
-        assertTrue(!assertRpcError("stale_target", stale).unknown, "wrong expectedName refused");
-        assertRpcError(
-                "out_of_bounds", m.start("scenes.rename", "{\"sceneIndex\":5,\"expectedName\":\"\",\"name\":\"X\"}"));
-        m.f.bank.child("sceneBank").item(0).child("name").notifyWrites = false;
-        HostOperation silent =
-                m.startShort("scenes.rename", "{\"sceneIndex\":0,\"expectedName\":\"Intro\",\"name\":\"Start\"}");
-        JsonObject result = silent.result.join();
-        assertTrue(
-                result.get("outcome").getAsString().equals("unknown")
-                        && result.get("reason").getAsString().equals("not_observed"),
-                "unobserved rename stays unknown");
+        LauncherFake f = world(2, "Intro", "");
+        JsonObject out = f.call("scenes.set", params("target", f.scene(1), "name", "Verse"));
+        assertEquals("applied", outcome(out));
+        assertEquals("observer_after_write", out.get("verification").getAsString());
+        assertEquals("Verse", out.getAsJsonObject("ref").get("name").getAsString());
+        assertEquals(f.scene(1), out.getAsJsonObject("ref"));
+        assertEquals("Verse", f.sceneNames[1]);
+        assertEquals(1, f.sceneRenames);
+
+        out = f.call("scenes.set", params("target", f.scene(1), "name", "Verse"));
+        assertEquals("already_matched", outcome(out));
+        assertEquals(1, f.sceneRenames, "the same name is not written again");
     }
+
+    @Test
+    void aPositionalLabelIsRenamedLikeAnUnnamedScene() {
+        LauncherFake f = world(3, "Intro", "Scene 2", "");
+        assertTrue(f.scene(1).get("name").isJsonNull(), "the label is not a name");
+        JsonObject out = f.call("scenes.set", params("target", f.scene(1), "name", "Bridge"));
+        assertEquals("applied", outcome(out));
+        assertEquals("Bridge", f.sceneNames[1]);
+        assertEquals("Bridge", out.getAsJsonObject("ref").get("name").getAsString());
+    }
+
+    @Test
+    void anUnobservedRenameStaysUnknown() {
+        LauncherFake f = world(2, "Intro", "");
+        f.applyRename = false;
+        HostOperation op = f.startAndDrain("scenes.set", params("target", f.scene(0), "name", "Start"));
+        assertUnknown("not_observed", op);
+        assertTrue(op.dispatched());
+        assertEquals(1, f.sceneRenames);
+    }
+
+    @Test
+    void aRenamedSceneStalesTheOldRefWithTheCurrentOne() {
+        LauncherFake f = world(3, "Intro", "");
+        JsonObject unnamed = f.scene(1);
+        f.sceneNames[1] = "Chorus";
+        RpcException error =
+                assertRpcError("target_changed", f.startAndDrain("scenes.set", params("target", unnamed, "name", "X")));
+        assertEquals(f.scene(1), error.current);
+        assertEquals("Chorus", error.current.get("name").getAsString());
+        assertEquals(0, f.sceneRenames);
+        for (String method : List.of("scenes.launch", "scenes.duplicate", "scenes.delete"))
+            assertRpcError("target_changed", f.startAndDrain(method, params("target", unnamed)));
+        assertEquals(0, f.sceneLaunches + f.sceneDuplicates + f.sceneDeletes);
+        assertRpcError(
+                "target_changed", f.startAndDrain("scenes.set", params("target", Refs.scene(0, "Other"), "name", "X")));
+    }
+
+    @Test
+    void aSceneBeyondTheCountIsNotFound() {
+        LauncherFake f = world(3);
+        JsonObject beyond = Refs.scene(5, null);
+        assertRpcError("target_not_found", f.startAndDrain("scenes.set", params("target", beyond, "name", "X")));
+        for (String method : List.of("scenes.launch", "scenes.duplicate", "scenes.delete"))
+            assertRpcError("target_not_found", f.startAndDrain(method, params("target", beyond)));
+        assertEquals(0, f.scrolls);
+    }
+
+    // ---- launch ----
+
+    @Test
+    void launchObservesClipsOnlyWhenThereAreSome() {
+        LauncherFake f = world(2, "Intro", "Empty");
+        f.slots[0].content = true;
+        JsonObject out = f.call("scenes.launch", params("target", f.scene(0)));
+        assertEquals("sent", outcome(out), "a queued launch is sent, not playing");
+        assertFalse(out.has("verification"));
+        assertEquals(1, out.get("clipCount").getAsInt());
+        assertEquals(f.scene(0), out.getAsJsonObject("ref"));
+
+        LauncherFake playing = world(1, "Intro");
+        playing.launchPlaying = true;
+        playing.slots[0].content = true;
+        out = playing.call("scenes.launch", params("target", playing.scene(0)));
+        assertEquals("applied", outcome(out));
+        assertEquals("clips_playing", out.get("verification").getAsString());
+
+        out = f.call("scenes.launch", params("target", f.scene(1)));
+        assertEquals("sent", outcome(out), "a scene without clips is sent, never claimed as playing");
+        assertEquals(0, out.get("clipCount").getAsInt());
+        assertEquals(2, f.sceneLaunches);
+    }
+
+    @Test
+    void aLaunchNobodyObservedIsUnknown() {
+        LauncherFake f = world(1, "Intro");
+        f.slots[0].content = true;
+        f.applySceneLaunch = false;
+        HostOperation op = f.startAndDrain("scenes.launch", params("target", f.scene(0)));
+        assertUnknown("not_observed", op);
+        assertEquals(1, f.sceneLaunches);
+    }
+
+    @Test
+    void aLaunchWhileRecordingIsRefusedBeforeDispatch() {
+        LauncherFake f = new LauncherFake(true, true, false, false);
+        f.scenes = 2;
+        assertRpcError("unsafe_state", f.startAndDrain("scenes.launch", params("target", f.scene(0))));
+        assertEquals(0, f.sceneLaunches);
+    }
+
+    // ---- duplicate ----
 
     @Test
     void duplicateVerifiesCountAndNeighbours() {
-        Model m = new Model("Intro", "Verse", "Outro");
-        JsonObject out = m.call("scenes.duplicate", "{\"sceneIndex\":1,\"expectedName\":\"Verse\"}");
-        assertTrue(
-                out.get("outcome").getAsString().equals("applied")
-                        && out.get("newSceneIndex").getAsInt() == 2
-                        && out.get("sceneCountBefore").getAsInt() == 3,
-                "duplicate observed after its source");
-        assertTrue(m.names.equals(List.of("Intro", "Verse", "Verse", "Outro")), "tail shifted by one");
-        assertRpcError("stale_target", m.start("scenes.duplicate", "{\"sceneIndex\":0,\"expectedName\":\"Other\"}"));
-        assertTrue(m.f.bank.child("sceneBank").item(0).actions == 0, "stale target dispatches nothing");
-        Model silent = new Model("A", "B");
-        silent.applyDuplicate = false;
-        JsonObject unknown = silent.startShort("scenes.duplicate", "{\"sceneIndex\":0,\"expectedName\":\"A\"}")
-                .result
-                .join();
-        assertTrue(
-                unknown.get("outcome").getAsString().equals("unknown")
-                        && unknown.get("reason").getAsString().equals("not_observed"),
-                "unobserved duplicate stays unknown");
-        Model tail = new Model("A", "B");
-        out = tail.call("scenes.duplicate", "{\"sceneIndex\":1,\"expectedName\":\"B\"}");
-        assertTrue(
-                out.get("outcome").getAsString().equals("applied")
-                        && out.get("newSceneIndex").getAsInt() == 2,
-                "duplicating the last scene is observed by count");
-        assertTrue(
-                out.get("newSceneName").isJsonNull()
-                        || out.get("newSceneName").getAsString().equals("B"),
-                "a stale placeholder name is never reported");
-        Model pinned = new Model("A", "B");
-        pinned.f.services.holds.place(LauncherStructureLock.MUTATION, "A launcher mutation is pinned.");
-        RpcException pinnedError = assertRpcError(
-                "unresolved", pinned.start("scenes.duplicate", "{\"sceneIndex\":0,\"expectedName\":\"A\"}"));
-        assertTrue(
-                pinnedError.next.contains("ack " + LauncherStructureLock.MUTATION),
-                "the refusal names the hold to ack");
-        assertRpcError("unresolved", pinned.start("scenes.delete", "{\"sceneIndex\":0,\"expectedName\":\"A\"}"));
-        assertTrue(pinned.f.bank.child("sceneBank").item(0).actions == 0, "nothing dispatched while pinned");
-        String[] full = new String[HostLimits.SCENES];
-        Arrays.fill(full, "S");
-        Model limit = new Model(full);
-        assertRpcError("limit_reached", limit.start("scenes.duplicate", "{\"sceneIndex\":0,\"expectedName\":\"S\"}"));
+        LauncherFake f = world(3, "Intro", "Verse", "Outro");
+        f.slots[1].content = true;
+        JsonObject out = f.call("scenes.duplicate", params("target", f.scene(1)));
+        assertEquals("applied", outcome(out));
+        assertEquals("scene_count_and_window_names", out.get("verification").getAsString());
+        assertEquals(3, out.get("sceneCountBefore").getAsInt());
+        assertEquals(4, out.get("sceneCount").getAsInt());
+        assertEquals(f.scene(2), out.getAsJsonObject("ref"));
+        assertEquals("Verse", out.getAsJsonObject("ref").get("name").getAsString());
+        assertEquals(
+                List.of("Intro", "Verse", "Verse", "Outro"),
+                List.of(f.sceneNames).subList(0, 4));
+        assertTrue(f.slots[2].content, "the copy carries the clips");
+
+        LauncherFake tail = world(2, "A", "B");
+        out = tail.call("scenes.duplicate", params("target", tail.scene(1)));
+        assertEquals("applied", outcome(out), "duplicating the last scene is observed by count");
+        assertEquals(2, refIndex(out));
     }
 
     @Test
-    void deleteIsGuardedAndVerifiedByNames() {
-        Model m = new Model("Intro", "Verse", "Outro");
-        m.f.slot(0, 1).child("hasContent").data = true;
-        JsonObject out = m.call("scenes.delete", "{\"sceneIndex\":1,\"expectedName\":\"Verse\"}");
-        assertTrue(
-                out.get("outcome").getAsString().equals("applied")
-                        && out.get("deletedName").getAsString().equals("Verse")
-                        && out.get("clipsDeleted").getAsInt() == 1,
-                "delete observed with the clip count it removed");
-        assertTrue(m.names.equals(List.of("Intro", "Outro")), "later scenes shifted up");
-        assertRpcError("stale_target", m.start("scenes.delete", "{\"sceneIndex\":1,\"expectedName\":\"Verse\"}"));
+    void aDuplicateNobodyObservedIsUnknown() {
+        LauncherFake f = world(2, "A", "B");
+        f.applyDuplicate = false;
+        HostOperation op = f.startAndDrain("scenes.duplicate", params("target", f.scene(0)));
+        JsonObject out = assertUnknown("not_observed", op);
+        assertEquals(2, out.get("sceneCountBefore").getAsInt());
+        assertFalse(out.has("ref"));
+        assertEquals(1, f.sceneDuplicates);
+    }
 
-        Model playing = new Model("A", "B");
-        playing.f.slot(0, 0).child("hasContent").data = true;
-        playing.f.slot(0, 0).child("isPlaying").data = true;
-        assertRpcError("unsafe_state", playing.start("scenes.delete", "{\"sceneIndex\":0,\"expectedName\":\"A\"}"));
-        assertTrue(playing.f.bank.child("sceneBank").item(0).actions == 0, "nothing dispatched");
-        Model transport = new Model("A", "B");
-        transport.f.transport.child("isPlaying").emit(true);
-        assertRpcError("unsafe_state", transport.start("scenes.delete", "{\"sceneIndex\":1,\"expectedName\":\"B\"}"));
-        String[] many = new String[HostLimits.SCENES + 1];
-        Arrays.fill(many, "S");
-        assertRpcError(
-                "outside_window", new Model(many).start("scenes.delete", "{\"sceneIndex\":0,\"expectedName\":\"S\"}"));
-        Model last = new Model("Only");
-        assertRpcError("limit_reached", last.start("scenes.delete", "{\"sceneIndex\":0,\"expectedName\":\"Only\"}"));
-        Model silent = new Model("A", "B");
-        silent.applyDelete = false;
-        JsonObject unknown = silent.startShort("scenes.delete", "{\"sceneIndex\":0,\"expectedName\":\"A\"}")
-                .result
-                .join();
-        assertTrue(
-                unknown.get("outcome").getAsString().equals("unknown")
-                        && unknown.get("reason").getAsString().equals("not_observed"),
-                "unobserved delete stays unknown");
+    @Test
+    void aDuplicateThatCopiesNoClipsIsNotAccepted() {
+        LauncherFake f = world(3, "A", "B", "C");
+        f.slots[0].content = true;
+        f.onContentRead = () -> {
+            if (f.sceneDuplicates > 0) f.slots[1].content = false;
+        };
+        HostOperation op = f.startAndDrain("scenes.duplicate", params("target", f.scene(0)));
+        assertUnknown("not_observed", op);
     }
 
     @Test
     void positionalDefaultNamesShiftWithoutBreakingVerification() {
-        Model m = new Model("Scene 1", "Scene 2", "Chorus", "Scene 4");
-        m.positional = true;
-        JsonObject out = m.call("scenes.duplicate", "{\"sceneIndex\":0,\"expectedName\":\"Scene 1\"}");
-        assertTrue(
-                out.get("outcome").getAsString().equals("applied")
-                        && out.get("newSceneIndex").getAsInt() == 1,
-                "duplicate of a positionally named scene is observed");
-        assertTrue(
-                m.names.equals(List.of("Scene 1", "Scene 2", "Scene 3", "Chorus", "Scene 5")),
+        LauncherFake f = world(4, "Scene 1", "Scene 2", "Chorus", "Scene 4");
+        f.positionalLabels = true;
+        JsonObject out = f.call("scenes.duplicate", params("target", f.scene(0)));
+        assertEquals("applied", outcome(out));
+        assertEquals(1, refIndex(out));
+        assertEquals(
+                List.of("Scene 1", "Scene 2", "Scene 3", "Chorus", "Scene 5"),
+                List.of(f.sceneNames).subList(0, 5),
                 "later default labels shifted");
-        out = m.call("scenes.delete", "{\"sceneIndex\":1,\"expectedName\":\"Scene 2\"}");
-        assertTrue(
-                out.get("outcome").getAsString().equals("applied")
-                        && out.get("verification").getAsString().equals("scene_count_and_names"),
-                "delete is observed despite shifted default labels");
-        assertTrue(m.names.equals(List.of("Scene 1", "Scene 2", "Chorus", "Scene 4")), "back to the original labels");
-        Model renamed = new Model("Scene 1", "Scene 2");
-        renamed.positional = true;
-        renamed.applyDelete = false;
-        assertTrue(
-                renamed.startShort("scenes.delete", "{\"sceneIndex\":0,\"expectedName\":\"Scene 1\"}")
-                        .result
-                        .join()
-                        .get("outcome")
-                        .getAsString()
-                        .equals("unknown"),
-                "an unchanged list is still not observed");
+        out = f.call("scenes.delete", params("target", f.scene(1)));
+        assertEquals("applied", outcome(out));
+        assertEquals(
+                List.of("Scene 1", "Scene 2", "Chorus", "Scene 4"),
+                List.of(f.sceneNames).subList(0, 4));
     }
 
     @Test
-    void launchObservesClipsOnlyWhenThereAreSome() {
-        Model m = new Model("Intro", "Empty");
-        m.f.slot(0, 0).child("hasContent").data = true;
-        JsonObject out = m.call("scenes.launch", "{\"sceneIndex\":0,\"expectedName\":\"Intro\"}");
-        assertTrue(
-                out.get("outcome").getAsString().equals("sent")
-                        && !out.has("verification")
-                        && out.get("clipCount").getAsInt() == 1,
-                "a queued launch is sent, not playing");
-        Model playing = new Model("Intro");
-        playing.playsOnLaunch = true;
-        playing.f.slot(0, 0).child("hasContent").data = true;
-        out = playing.call("scenes.launch", "{\"sceneIndex\":0,\"expectedName\":\"Intro\"}");
-        assertTrue(
-                out.get("outcome").getAsString().equals("applied")
-                        && out.get("verification").getAsString().equals("clips_playing"),
-                "launch observed through the scene's playing clips");
-        JsonObject empty = m.startShort("scenes.launch", "{\"sceneIndex\":1,\"expectedName\":\"Empty\"}")
-                .result
-                .join();
-        assertTrue(
-                empty.get("outcome").getAsString().equals("sent") && !empty.has("verification"),
-                "a scene without clips is sent, never claimed as playing");
-        Model unsafe = new Model("A");
-        unsafe.f.transport.child("isArrangerRecordEnabled").emit(true);
-        assertRpcError("unsafe_state", unsafe.start("scenes.launch", "{\"sceneIndex\":0,\"expectedName\":\"A\"}"));
-        assertTrue(unsafe.f.bank.child("sceneBank").item(0).actions == 0, "nothing dispatched");
+    void anUnresolvedMutationOrSettingsWriteRefusesDuplicateAndDelete() {
+        LauncherFake pinned = world(2, "A", "B");
+        pinned.services.holds.place(LauncherStructureLock.MUTATION, "A launcher mutation is pinned.");
+        for (String method : List.of("scenes.duplicate", "scenes.delete")) {
+            RpcException error =
+                    assertRpcError("unresolved", pinned.startAndDrain(method, params("target", pinned.scene(0))));
+            assertTrue(error.next.contains("ack " + LauncherStructureLock.MUTATION), error.next);
+        }
+        LauncherFake settings = world(2, "A", "B");
+        settings.services.holds.place(LauncherStructureLock.SETTINGS, "A settings write is pinned.");
+        assertRpcError("unresolved", settings.startAndDrain("scenes.duplicate", params("target", settings.scene(0))));
+        LauncherFake pending = world(2, "A", "B");
+        pending.services.holds.place(LauncherStructureLock.SETTINGS_PENDING, "A settings write is running.");
+        assertRpcError("busy", pending.startAndDrain("scenes.delete", params("target", pending.scene(0))));
+        assertEquals(0, pinned.sceneDuplicates + pinned.sceneDeletes + settings.sceneDuplicates + pending.sceneDeletes);
+        assertEquals("applied", outcome(pinned.call("scenes.set", params("target", pinned.scene(0), "name", "Still"))));
+    }
+
+    // ---- delete ----
+
+    @Test
+    void deleteIsGuardedAndVerifiedByNames() {
+        LauncherFake f = world(3, "Intro", "Verse", "Outro");
+        f.slots[1].content = true;
+        JsonObject out = f.call("scenes.delete", params("target", f.scene(1)));
+        assertEquals("applied", outcome(out));
+        assertEquals("Verse", out.get("deletedName").getAsString());
+        assertEquals(1, out.get("clipsDeleted").getAsInt());
+        assertEquals(3, out.get("sceneCountBefore").getAsInt());
+        assertEquals(2, out.get("sceneCount").getAsInt());
+        assertEquals(List.of("Intro", "Outro"), List.of(f.sceneNames).subList(0, 2));
+        assertRpcError("target_changed", f.startAndDrain("scenes.delete", params("target", Refs.scene(1, "Verse"))));
+    }
+
+    @Test
+    void deleteRefusesAPlayingClipAPlayingTransportAndTheLastScene() {
+        LauncherFake playing = world(2, "A", "B");
+        playing.slots[0].content = true;
+        playing.slots[0].playing = true;
+        assertRpcError("unsafe_state", playing.startAndDrain("scenes.delete", params("target", playing.scene(0))));
+        LauncherFake queued = world(2, "A", "B");
+        queued.slots[0].content = true;
+        queued.slots[0].queued = true;
+        assertRpcError("unsafe_state", queued.startAndDrain("scenes.delete", params("target", queued.scene(0))));
+        assertEquals(0, playing.sceneDeletes + queued.sceneDeletes);
+
+        LauncherFake transport = world(2, "A", "B");
+        transport.transportPlaying = true;
+        transport.base.transport.child("isPlaying").emit(true);
+        assertRpcError("unsafe_state", transport.startAndDrain("scenes.delete", params("target", transport.scene(1))));
+        assertEquals(0, transport.sceneDeletes);
+
+        LauncherFake last = world(1, "Only");
+        assertRpcError("limit_reached", last.startAndDrain("scenes.delete", params("target", last.scene(0))));
+        assertEquals(0, last.sceneDeletes);
+    }
+
+    @Test
+    void aDeleteNobodyObservedIsUnknown() {
+        LauncherFake f = world(2, "A", "B");
+        f.applyDelete = false;
+        HostOperation op = f.startAndDrain("scenes.delete", params("target", f.scene(0)));
+        assertUnknown("not_observed", op);
+        assertEquals(1, f.sceneDeletes);
+    }
+
+    // ---- scenes past the first window ----
+
+    @Test
+    void renameInALaterWindowUsesThatWindow() {
+        LauncherFake f = world(40);
+        f.sceneNames[20] = "Mid";
+        f.sceneNames[35] = "Late";
+        JsonObject out = f.call("scenes.set", params("target", f.scene(20), "name", "Middle"));
+        assertEquals("applied", outcome(out));
+        assertEquals("Middle", f.sceneNames[20]);
+        assertEquals(20, refIndex(out));
+        assertEquals(16, f.bankOffset);
+
+        out = f.call("scenes.set", params("target", f.scene(35), "name", "Finale"));
+        assertEquals("applied", outcome(out));
+        assertEquals("Finale", f.sceneNames[35]);
+        assertEquals(24, f.bankOffset, "the last window is the one that fits the 40 scenes");
+    }
+
+    @Test
+    void aStaleRenameInALaterWindowReportsTheCurrentRef() {
+        LauncherFake f = world(40);
+        JsonObject unnamed = f.scene(33);
+        f.sceneNames[33] = "Drop";
+        RpcException error =
+                assertRpcError("target_changed", f.startAndDrain("scenes.set", params("target", unnamed, "name", "X")));
+        assertEquals(f.scene(33), error.current);
+        assertEquals("", f.sceneNames[34]);
+    }
+
+    @Test
+    void launchInALaterWindowObservesItsClips() {
+        LauncherFake f = world(40);
+        f.launchPlaying = true;
+        f.slots[33].content = true;
+        f.trackCount = 2;
+        f.extraContent[33] = true;
+        JsonObject out = f.call("scenes.launch", params("target", f.scene(33)));
+        assertEquals("applied", outcome(out));
+        assertEquals(2, out.get("clipCount").getAsInt());
+        assertTrue(f.slots[33].playing);
+        assertEquals(24, f.bankOffset);
+    }
+
+    @Test
+    void duplicateInALaterWindowReturnsTheCopysRef() {
+        LauncherFake f = world(40);
+        f.sceneNames[20] = "Mid";
+        f.sceneNames[21] = "After";
+        JsonObject out = f.call("scenes.duplicate", params("target", f.scene(20)));
+        assertEquals("applied", outcome(out));
+        assertEquals(41, out.get("sceneCount").getAsInt());
+        assertEquals(21, refIndex(out));
+        assertEquals("Mid", f.sceneNames[21]);
+        assertEquals("After", f.sceneNames[22]);
+        assertEquals(16, f.bankOffset);
+    }
+
+    @Test
+    void aDuplicateAtAWindowEdgeMovesOnToReturnTheCopysRef() {
+        LauncherFake f = world(40);
+        f.sceneNames[31] = "Edge";
+        f.sceneNames[32] = "Next";
+        JsonObject out = f.call("scenes.duplicate", params("target", f.scene(31)));
+        assertEquals("applied", outcome(out));
+        assertEquals(32, refIndex(out));
+        assertEquals("Edge", out.getAsJsonObject("ref").get("name").getAsString());
+        assertEquals("Next", f.sceneNames[33]);
+        assertEquals(f.scene(32), out.getAsJsonObject("ref"));
+        assertTrue(f.bankOffset >= 25, "the window moved to show the copy");
+    }
+
+    @Test
+    void aDuplicateNeedsTheWindowAloneAndIsBusyWhileAnotherHoldsIt() {
+        LauncherFake f = world(40);
+        f.sceneNames[31] = "Edge";
+        holdWindow(f, 16);
+        assertRpcError("busy", f.startAndDrain("scenes.duplicate", params("target", f.scene(31))));
+        assertEquals(0, f.sceneDuplicates, "nothing was duplicated");
+    }
+
+    @Test
+    void aDuplicateWhoseWindowDoesNotSettleAfterTheWriteStillCompletesApplied() {
+        LauncherFake f = world(40);
+        f.sceneNames[31] = "Edge";
+        HostOperation op = f.start("scenes.duplicate", params("target", f.scene(31)));
+        f.scrollStuck = true;
+        f.drain(op);
+        JsonObject out = op.result.join();
+        assertEquals("applied", outcome(out));
+        assertFalse(out.has("ref"), "the copy lies outside the window that could not be moved");
+    }
+
+    @Test
+    void deleteInALaterWindowShiftsTheNamesAfterIt() {
+        LauncherFake f = world(40);
+        f.sceneNames[20] = "X";
+        f.sceneNames[21] = "Y";
+        f.sceneNames[22] = "Z";
+        f.slots[20].content = true;
+        JsonObject out = f.call("scenes.delete", params("target", f.scene(20)));
+        assertEquals("applied", outcome(out));
+        assertEquals("X", out.get("deletedName").getAsString());
+        assertEquals(1, out.get("clipsDeleted").getAsInt());
+        assertEquals(39, out.get("sceneCount").getAsInt());
+        assertEquals("Y", f.sceneNames[20]);
+        assertEquals("Z", f.sceneNames[21]);
+        assertEquals(16, f.bankOffset);
+    }
+
+    @Test
+    void aWriteFacingAnotherHeldWindowIsBusy() {
+        LauncherFake f = world(40);
+        holdWindow(f, 0);
+        assertRpcError("busy", f.startAndDrain("scenes.set", params("target", f.scene(33), "name", "X")));
+        assertEquals(0, f.sceneRenames);
+    }
+
+    @Test
+    void aListWaitsForAHeldWindowAndFailsBusyAtItsDeadline() {
+        LauncherFake f = world(40);
+        holdWindow(f, 16);
+        assertRpcError("busy", f.startAndDrain("scenes.list", new JsonObject()));
     }
 }

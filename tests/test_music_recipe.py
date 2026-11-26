@@ -165,21 +165,33 @@ async def test_recipe_does_not_report_authored_when_clip_readback_is_wrong(
     track_id = "11111111-1111-1111-1111-111111111111"
     inserted = False
     creations = []
+    scene = {"kind": "scene", "index": 0, "name": None}
+    clip = {
+        "kind": "clip",
+        "track": {"kind": "track", "id": track_id, "name": "Toolkit Pluck"},
+        "slot": {"scene": scene},
+        "name": "Pluck eight-beat sketch",
+    }
+
+    static = {
+        "transport.get": {
+            "status": "observed",
+            "projectName": "Disposable",
+            "playing": False,
+            "arrangerRecordEnabled": False,
+            "arrangerAutomationWriteEnabled": False,
+            "clipLauncherAutomationWriteEnabled": False,
+        },
+        "tracks.list": {"status": "observed", "tracks": [], "window": {"complete": True, "capacity": 16}},
+        "scenes.list": {"scenes": [{"ref": scene}]},
+        "clips.insert": {"outcome": "applied", "ref": clip},
+    }
 
     class Session:
         async def call(self, method, params):
             nonlocal inserted
-            if method == "transport.get":
-                return {
-                    "status": "observed",
-                    "projectName": "Disposable",
-                    "playing": False,
-                    "arrangerRecordEnabled": False,
-                    "arrangerAutomationWriteEnabled": False,
-                    "clipLauncherAutomationWriteEnabled": False,
-                }
-            if method == "tracks.list":
-                return {"status": "observed", "tracks": [], "window": {"complete": True, "capacity": 16}}
+            if method in static:
+                return static[method]
             if method == "tracks.create":
                 creations.append(track_id)
                 return {"status": "observed", "trackId": track_id}
@@ -195,8 +207,7 @@ async def test_recipe_does_not_report_authored_when_clip_readback_is_wrong(
             elif method == "notes.read":
                 return {
                     "status": "observed",
-                    "trackId": "other" if problem == "wrong_target" else track_id,
-                    "slotIndex": 0,
+                    "ref": {**clip, "name": "other"} if problem == "wrong_target" else clip,
                     "window": {
                         "channel": 0,
                         "stepSizeBeats": 0.25,
@@ -220,12 +231,11 @@ async def test_recipe_does_not_report_authored_when_clip_readback_is_wrong(
                     ],
                     "completeWindow": problem != "incomplete_window",
                     "continuingAtWindowStart": [],
-                    "loopStartBeats": 0,
-                    "loopLengthBeats": 8,
+                    "loop": {"lengthBeats": 8, "startBeats": 0},
                     "loopEnabled": None if problem == "loop_unobserved" else problem != "loop_disabled",
                     "playStartBeats": 4 if problem == "play_start_shifted" else 0,
                 }
-            elif method not in {"tracks.set", "launcher.create", "notes.edit"}:
+            elif method not in {"tracks.set", "notes.edit"}:
                 raise AssertionError(f"Unexpected operation after invalid clip: {method}")
             return {"status": "observed"}
 

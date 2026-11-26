@@ -3,200 +3,240 @@ package dev.bitwigagent;
 import static dev.bitwigagent.RpcAssert.*;
 import static org.junit.jupiter.api.Assertions.*;
 
-import com.bitwig.extension.callback.*;
-import com.bitwig.extension.controller.api.*;
 import com.google.gson.*;
-import java.lang.reflect.*;
 import java.util.*;
-import java.util.concurrent.*;
 import org.junit.jupiter.api.Test;
 
 /** Simulated queues and native adapter; does not establish host binding behavior. */
 public final class LauncherSettingsModuleTest {
-    static final String ID = "11111111-1111-1111-1111-111111111111";
+    private static final String OTHER = "22222222-2222-2222-2222-222222222222";
 
-    @Test
-    void invalidSettingsAreRejectedBeforeScheduling() {
-        JsonObject p = target();
-        LauncherSettingsModule.validateParams("launcher.get", p);
-        bad("launcher.set", p);
-        for (String field : List.of("loopEnabled", "nextActionEnabled", "nextActionLinkToLoop")) {
-            JsonObject b = target();
-            b.addProperty(field, 1);
-            bad("launcher.set", b);
-        }
-        for (String field : List.of(
-                "playStartBeats", "playStopBeats", "loopStartBeats", "loopLengthBeats", "nextActionDelayBeats")) {
-            JsonObject b = target();
-            b.addProperty(field, -1);
-            bad("launcher.set", b);
-        }
-        for (String field : List.of("playStartBeats", "playStopBeats", "loopStartBeats", "loopLengthBeats")) {
-            JsonObject b = target();
-            b.addProperty(field, 16);
-            bad("launcher.set", b);
-        }
-        JsonObject readOnly = target();
-        readOnly.addProperty("loopEnabled", true);
-        bad("launcher.set", readOnly);
-        JsonObject b = target();
-        b.addProperty("nextAction", "random");
-        bad("launcher.set", b);
-        b = target();
-        b.addProperty("nextActionLoopCount", 65);
-        bad("launcher.set", b);
-        b = target();
-        b.addProperty("playStartBeats", 8);
-        b.addProperty("playStopBeats", 4);
-        bad("launcher.set", b);
+    private static JsonObject changes() {
+        JsonObject changes = new JsonObject();
+        changes.addProperty("nextAction", "play_next");
+        changes.addProperty("nextActionLoopCount", 1);
+        return changes;
     }
 
-    private static JsonObject settings() {
-        JsonObject settings = target();
-        settings.addProperty("nextAction", "play_next");
-        settings.addProperty("nextActionLoopCount", 1);
-        return settings;
-    }
-
-    @Test
-    void sourceBoundWriteIsReadBackAndReadsDoNotWrite() {
-        Fixture f = new Fixture();
-        JsonObject settings = settings();
-        JsonObject written = f.call("launcher.set", settings);
-        assertTrue(
-                written.get("nextAction").getAsString().equals("play_next")
-                        && written.get("outcome").getAsString().equals("applied"),
-                "source-bound write read back");
-        assertTrue(f.writes == 1, "one write");
-        JsonObject read = f.call("launcher.get", target());
-        assertTrue(f.writes == 1 && !read.has("outcome"), "read does not write and carries no outcome");
-        JsonObject b = target();
-        b.addProperty("expectedClipName", "Wrong");
-        assertRpcError("stale_context", f.start("launcher.get", b));
-        assertTrue(f.calls == 2, "wrong name rejected before native access");
-    }
-
-    @Test
-    void unknownWriteStaysQuarantinedWhileReadsAreAllowed() {
-        JsonObject settings = settings();
-        Fixture fail = new Fixture();
-        fail.failWrite = true;
-        HostOperation failed = fail.start("launcher.set", settings);
-        fail.drain();
-        assertUnknown("internal", failed);
-        RpcException blocked = assertRpcError("unresolved", fail.start("launcher.set", settings));
-        assertTrue(blocked.next.contains("ack " + LauncherStructureLock.SETTINGS), "the refusal names the hold to ack");
-        fail.call("launcher.get", target());
-        assertTrue(fail.writes == 1, "unknown write stays quarantined but reads allowed");
-    }
-
-    @Test
-    void cancelledQueuedOperationDoesNotWrite() {
-        JsonObject settings = settings();
-        Fixture late = new Fixture();
-        HostOperation op = late.start("launcher.set", settings);
-        op.result.completeExceptionally(new RuntimeException("cancel"));
-        late.drain();
-        assertTrue(late.writes == 0, "cancelled queued native operation does not write");
-    }
-
-    @Test
-    void playingTransportBlocksTheSettingsWrite() {
-        JsonObject settings = settings();
-        Fixture unsafe = new Fixture(true);
-        assertRpcError("unsafe_state", unsafe.start("launcher.set", settings));
-        assertTrue(unsafe.calls == 0, "playing blocks settings write");
-    }
-
-    @Test
-    void refusalsAndValidation() {
-        assertRpcError("unknown_method", () -> LauncherSettingsModule.validateParams("launcher.bogus", target()));
-        JsonObject badId = settings();
-        badId.addProperty("trackId", "not-a-uuid");
-        bad("launcher.set", badId);
-        JsonObject longName = settings();
-        longName.addProperty("expectedClipName", "x".repeat(257));
-        bad("launcher.set", longName);
-
-        Fixture f = new Fixture();
-        JsonObject launch = target();
-        launch.addProperty("launchMode", "gate");
-        assertRpcError("native_unavailable", f.start("launcher.set", launch));
-
-        f.host.services.holds.inFlight(LauncherStructureLock.SETTINGS_PENDING, "pending");
-        assertRpcError("busy", f.start("launcher.get", target()));
-        f.host.services.holds.release(LauncherStructureLock.SETTINGS_PENDING);
-
-        LauncherSettingsModule noAccess = f.host.services.launcherSettings((LauncherSettingsModule.Access) null);
-        assertRpcError("host_mismatch", f.host.start(noAccess, "launcher.set", settings()));
-    }
-
-    static JsonObject target() {
-        JsonObject p = new JsonObject();
-        p.addProperty("trackId", ID);
-        p.addProperty("slotIndex", 0);
-        p.addProperty("expectedClipName", "Verse");
-        return p;
-    }
-
-    static void bad(String m, JsonObject p) {
-        assertRpcError("invalid_params", () -> LauncherSettingsModule.validateParams(m, p));
-    }
-
-    static final class Fixture {
-        final HostFixture host = new HostFixture();
-        final ScheduledTasks queue = host.tasks;
+    /** The settings service over the launcher world, with a native access that queues its work. */
+    private static final class Fixture {
+        final LauncherFake f = new LauncherFake();
         final LauncherSettingsModule module;
-        int writes, calls;
-        boolean failWrite, playing;
+        Runnable beforeRun = () -> {}, afterApply = () -> {};
+        int applies;
+        boolean playing;
 
         Fixture() {
-            this(false);
-        }
-
-        Fixture(boolean playing) {
-            this.playing = playing;
-            host.tracks[0].child("channelId").emit(ID);
-            host.transport.child("isPlaying").emit(playing);
-            host.occupySlot(0, 0, "Verse");
-            module = host.services.launcherSettings(new LauncherSettingsModule.Access() {
-                public void execute(Runnable task) {
-                    queue.add(task);
+            f.scenes = 40;
+            f.slots[3].content = true;
+            f.slots[3].name = "Verse";
+            f.base.transport.live("isPlaying", () -> playing);
+            module = f.services.launcherSettings(new LauncherSettingsModule.Access() {
+                @Override
+                public void execute(Runnable work) {
+                    f.tasks.add(() -> {
+                        Runnable hook = beforeRun;
+                        beforeRun = () -> {};
+                        hook.run();
+                        work.run();
+                    });
                 }
 
+                @Override
                 public JsonObject apply(
-                        Object slot, String id, String name, JsonObject changes, Runnable guard, Runnable before) {
-                    calls++;
-                    guard.run();
-                    if (!changes.entrySet().isEmpty()) {
-                        before.run();
-                        writes++;
-                        if (failWrite) throw new RuntimeException("native exception");
-                    }
-                    JsonObject out = changes.deepCopy();
-                    JsonObject fields = new JsonObject();
-                    for (var change : changes.entrySet())
-                        fields.add(
-                                change.getKey(),
-                                Results.field(change.getValue(), change.getValue(), Outcome.APPLIED, null));
-                    out.add("fields", fields);
+                        Object slot,
+                        String id,
+                        String expectedName,
+                        JsonObject changes,
+                        Runnable check,
+                        Runnable beforeWrite) {
+                    applies++;
+                    JsonObject out = f.settings.apply(slot, id, expectedName, changes, check, beforeWrite);
+                    afterApply.run();
                     return out;
                 }
             });
         }
 
-        HostOperation start(String m, JsonObject p) {
-            return host.start(module, m, p);
+        void play() {
+            playing = true;
+            f.base.transport.child("isPlaying").emit(true);
         }
 
-        void drain() {
-            host.drain();
+        /** Resolves the clip at scene 3 as a launcher operation does, then hands its target to the service. */
+        HostOperation run(LauncherSettingsModule service, JsonObject changes, boolean write, JsonObject[] out) {
+            HostOperation op = new HostOperation(f.tasks.after(2000));
+            f.services.enqueue(op, () -> {
+                try {
+                    f.services.launcherTargets().enterClip(op, f.clip(3), false, at -> {
+                        LauncherState.Target target = f.services.launcherState().target(at);
+                        service.run(op, target, changes, write, result -> {
+                            if (out != null) out[0] = result;
+                            op.result.complete(result);
+                        });
+                    });
+                } catch (RuntimeException error) {
+                    op.fail(error);
+                }
+            });
+            f.tasks.take().run();
+            return op;
         }
 
-        JsonObject call(String m, JsonObject p) {
-            HostOperation op = start(m, p);
-            drain();
+        HostOperation run(JsonObject changes, boolean write) {
+            return run(module, changes, write, null);
+        }
+
+        JsonObject call(JsonObject changes, boolean write) {
+            HostOperation op = run(changes, write);
+            f.drain(op);
             return op.result.join();
         }
+
+        void settle() {
+            while (!f.tasks.isEmpty()) f.next();
+        }
+    }
+
+    @Test
+    void aWriteIsReadBackAndReadsDoNotWrite() {
+        Fixture x = new Fixture();
+        JsonObject written = x.call(changes(), true);
+        assertEquals("play_next", written.get("nextAction").getAsString());
+        assertEquals(
+                "applied",
+                written.getAsJsonObject("fields")
+                        .getAsJsonObject("nextAction")
+                        .get("outcome")
+                        .getAsString());
+        assertEquals(2, x.f.settings.writes, "each changed field is one write");
+        int writes = x.f.settings.writes;
+        JsonObject read = x.call(new JsonObject(), false);
+        assertTrue(x.f.settings.writes == writes && !read.has("outcome"), "a read does not write and has no outcome");
+        assertEquals("play_next", read.get("nextAction").getAsString());
+        JsonObject again = x.call(changes(), true);
+        assertEquals(
+                "already_matched",
+                again.getAsJsonObject("fields")
+                        .getAsJsonObject("nextAction")
+                        .get("outcome")
+                        .getAsString());
+        assertEquals(writes, x.f.settings.writes, "an identical change writes nothing");
+        assertTrue(x.f.services.holds.list().isEmpty(), "a completed operation releases its holds");
+    }
+
+    @Test
+    void anUnknownWriteStaysQuarantinedWhileReadsAreAllowed() {
+        Fixture x = new Fixture();
+        x.f.settings.failWrite = true;
+        HostOperation failed = x.run(changes(), true);
+        x.f.drain(failed);
+        assertUnknown("internal", failed);
+        List<Holds.View> holds = x.f.services.holds.list();
+        assertTrue(holds.size() == 1 && holds.get(0).ackable, "the unknown write is an unresolved hold");
+        RpcException blocked = assertRpcError("unresolved", x.run(changes(), true));
+        assertTrue(blocked.next.contains("ack " + LauncherStructureLock.SETTINGS), "the refusal names the hold to ack");
+        int calls = x.f.settings.calls;
+        assertNotNull(x.call(new JsonObject(), false), "reads stay available");
+        assertEquals(calls + 1, x.f.settings.calls);
+        x.f.services.holds.ack(LauncherStructureLock.SETTINGS);
+        x.f.settings.failWrite = false;
+        assertEquals(
+                "applied",
+                x.call(changes(), true)
+                        .getAsJsonObject("fields")
+                        .getAsJsonObject("nextAction")
+                        .get("outcome")
+                        .getAsString());
+    }
+
+    @Test
+    void aPendingOperationMakesAnotherBusy() {
+        Fixture x = new Fixture();
+        HostOperation first = x.run(changes(), true);
+        assertFalse(first.result.isDone());
+        assertEquals(0, x.applies, "the native work is queued");
+        List<Holds.View> holds = x.f.services.holds.list();
+        assertTrue(holds.size() == 1 && !holds.get(0).ackable, "a running operation is an in-flight hold");
+        x.f.drain(first);
+        assertEquals("play_next", first.result.join().get("nextAction").getAsString());
+        assertTrue(x.f.services.holds.list().isEmpty());
+        x.f.services.holds.inFlight(LauncherStructureLock.SETTINGS_PENDING, "pending");
+        assertRpcError("busy", x.run(new JsonObject(), false));
+        x.f.services.holds.release(LauncherStructureLock.SETTINGS_PENDING);
+    }
+
+    @Test
+    void aCancelledQueuedOperationDoesNotWrite() {
+        Fixture x = new Fixture();
+        HostOperation op = x.run(changes(), true);
+        op.result.completeExceptionally(new RuntimeException("cancel"));
+        x.settle();
+        assertEquals(0, x.f.settings.writes);
+        assertEquals(0, x.applies);
+        assertTrue(x.f.services.holds.list().isEmpty(), "the pending hold is released");
+    }
+
+    @Test
+    void aPlayingTransportBlocksTheWrite() {
+        Fixture x = new Fixture();
+        x.play();
+        assertRpcError("unsafe_state", x.run(changes(), true));
+        assertEquals(0, x.applies);
+        x.play();
+        assertNotNull(x.call(new JsonObject(), false), "a read does not need a stopped transport");
+    }
+
+    @Test
+    void aTrackChangeWhileQueuedIsTargetChanged() {
+        Fixture x = new Fixture();
+        HostOperation op = x.run(changes(), true);
+        x.beforeRun = () -> x.f.observeTrackId(OTHER);
+        x.f.drain(op);
+        assertRpcError("target_changed", op);
+        assertEquals(0, x.f.settings.writes);
+        assertTrue(x.f.services.holds.list().isEmpty(), "the failure releases the pending hold");
+    }
+
+    @Test
+    void aSceneWindowChangeWhileQueuedIsTargetChanged() {
+        Fixture x = new Fixture();
+        HostOperation op = x.run(changes(), true);
+        x.beforeRun = () -> x.f.scroll(8);
+        x.f.drain(op);
+        assertRpcError("target_changed", op);
+        assertEquals(0, x.f.settings.writes);
+    }
+
+    @Test
+    void aPublicTargetChangedAfterNativeAccessIsTargetChanged() {
+        Fixture x = new Fixture();
+        x.afterApply = () -> x.f.slots[3].name = "Other";
+        HostOperation op = x.run(new JsonObject(), false);
+        x.f.drain(op);
+        assertRpcError("target_changed", op);
+        assertTrue(x.f.services.holds.list().isEmpty());
+    }
+
+    @Test
+    void aWriteChangedAfterNativeAccessKeepsItsQuarantine() {
+        Fixture x = new Fixture();
+        x.afterApply = () -> x.f.slots[3].name = "Other";
+        HostOperation op = x.run(changes(), true);
+        x.f.drain(op);
+        assertUnknown("target_changed", op);
+        assertEquals(2, x.f.settings.writes);
+        List<Holds.View> holds = x.f.services.holds.list();
+        assertTrue(holds.size() == 1 && holds.get(0).ackable, "the dispatched write stays unresolved");
+    }
+
+    @Test
+    void withoutANativeBindingTheServiceIsAHostMismatch() {
+        Fixture x = new Fixture();
+        LauncherSettingsModule bare = x.f.services.launcherSettings(null);
+        HostOperation op = x.run(bare, changes(), true, null);
+        x.settle();
+        assertRpcError("host_mismatch", op);
+        assertTrue(x.f.services.holds.list().isEmpty());
     }
 }

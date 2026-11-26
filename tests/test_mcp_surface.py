@@ -57,7 +57,7 @@ def test_tools_that_write_files_or_retrigger_are_not_read_only_or_idempotent():
         annotations = resolve(name, TOOLS[name].annotations)
         assert annotations.read_only is False
         assert annotations.destructive is True
-    for name in ("launcher.launch", "scenes.launch"):
+    for name in ("clips.launch", "scenes.launch"):
         annotations = resolve(name, TOOLS[name].annotations)
         assert annotations.idempotent is False
         assert annotations.destructive is False
@@ -81,7 +81,7 @@ def test_core_write_tools_carry_hand_written_summaries_with_their_call_critical_
     expected = {
         "notes.edit": ("velocity", "durationBeats", "stepSizeBeats"),
         "grid.parameters.set": ("option value", "grid.get"),
-        "launcher.set": ("cannot be combined",),
+        "clips.set": ("first failure", "stopped"),
         "notes.read": ("2048", "completeWindow"),
         "devices.insert": ("requestedIdentifierVerified",),
         "tracks.set": ("not dB",),
@@ -94,17 +94,30 @@ def test_core_write_tools_carry_hand_written_summaries_with_their_call_critical_
             assert word in advertised, (name, word)
 
 
-def test_nothing_an_agent_reads_names_an_unexposed_method():
-    pattern = re.compile("|".join(re.escape(name) + r"(?!\w)" for name in sorted(HIDDEN)))
+def agent_texts(with_help=False):
     texts = {f"description of {name}": TOOLS[name].description for name in EXPOSED}
     texts |= {f"summary of {name}": TOOLS[name].summary for name in EXPOSED}
     texts |= {f"topic {name}": text for name, text in TOPICS.items()}
-    texts["tool help"] = views.HELP_DESCRIPTION
+    if with_help:
+        texts["tool help"] = views.HELP_DESCRIPTION
     texts["USAGE.md"] = (ROOT / "USAGE.md").read_text()
     for path in sorted((ROOT / "skills").rglob("*.md")):
         texts[str(path.relative_to(ROOT))] = path.read_text()
-    for where, text in texts.items():
+    return texts
+
+
+def test_nothing_an_agent_reads_names_an_unexposed_method():
+    pattern = re.compile("|".join(re.escape(name) + r"(?!\w)" for name in sorted(HIDDEN)))
+    for where, text in agent_texts(with_help=True).items():
         assert not pattern.search(text), f"{where} names an unexposed method"
+
+
+def test_nothing_an_agent_reads_names_a_method_that_does_not_exist():
+    domains = {name.split(".")[0] for name in TOOLS if "." in name}
+    token = re.compile(r"`((?:" + "|".join(sorted(domains)) + r")\.[a-z][A-Za-z]*(?:\.[a-z][A-Za-z]*)*)`")
+    for where, text in agent_texts().items():
+        unknown = sorted({name for name in token.findall(text) if name not in TOOLS})
+        assert not unknown, f"{where} names methods that do not exist: {unknown}"
 
 
 def test_help_lists_topics_and_exposed_tools_and_rejects_the_unknown():

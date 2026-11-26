@@ -21,7 +21,7 @@ final class LauncherStructureLock {
         if (holds.held(SETTINGS_PENDING))
             throw Errors.notApplied(Reason.BUSY, "A launcher settings write is still pending.");
         if (holds.held(SETTINGS))
-            throw holds.blocked(SETTINGS, "A launcher settings write is unresolved.", "Inspect launcher.get");
+            throw holds.blocked(SETTINGS, "A launcher settings write is unresolved.", "Inspect clips.get");
     }
 
     /** Scene duplicate/delete move slot rows: refuse while any of the above pins them. */

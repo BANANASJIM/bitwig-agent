@@ -23,12 +23,14 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
-LAYERS = ("lint", "offline", "java", "fixture", "coverage", "native")
+LAYERS = ("lint", "offline", "java", "fixture", "extension", "coverage", "native")
+HOST_JAR = Path(os.environ.get("BITWIG_API_JAR") or "/opt/bitwig-studio/bin/bitwig.jar")
 DESCRIPTIONS = {
     "lint": "Static gates: ruff, mypy, Java format, duplicate detection; no API jar or native host",
     "offline": "Python unit/adapter fixtures; no JVM or native host",
     "java": "Java transport and simulated-host tests; installed or pinned public API jar",
     "fixture": "Real MCP/Python/Java protocol + registry fixture; NOT native editing",
+    "extension": "Builds the extension against the installed host jar; runs by default only when that jar exists",
     "coverage": "Opt-in: re-runs Python and Java tests; changed lines must be at least 90% covered",
     "native": "Opt-in read-only native preflight; NOT music/UI/persistence E2E",
 }
@@ -49,6 +51,11 @@ def main() -> int:
     if child_env.get("BITWIG_API_JAR"):
         child_env["BITWIG_API_JAR"] = str(Path(child_env["BITWIG_API_JAR"]).resolve())
     selected = set(args.layer or ("lint", "offline", "java", "fixture"))
+    if not args.layer:
+        if HOST_JAR.is_file():
+            selected.add("extension")
+        else:
+            print(f"NOTE: {HOST_JAR} not found; the extension is not compiled against the real host jar", flush=True)
     if (args.allow_native or args.native_config) and "native" not in selected:
         parser.error("native options require --layer native; no native run is implicit")
     outcomes = []
@@ -68,6 +75,7 @@ def main() -> int:
                 "offline": [sys.executable, "-m", "pytest", "-q"],
                 "java": [sys.executable, str(ROOT / "scripts/test-java.py")],
                 "fixture": [sys.executable, str(ROOT / "scripts/smoke-mcp-java.py")],
+                "extension": [sys.executable, str(ROOT / "scripts/build.py")],
                 "coverage": [sys.executable, str(ROOT / "scripts/coverage-gate.py")],
                 "native": [
                     sys.executable,
@@ -85,9 +93,15 @@ def main() -> int:
                     cwd=ROOT,
                     env=child_env,
                     check=False,
-                    timeout={"lint": 600, "offline": 900, "java": 900, "fixture": 240, "coverage": 1500, "native": 180}[
-                        layer
-                    ],
+                    timeout={
+                        "lint": 600,
+                        "offline": 900,
+                        "java": 900,
+                        "fixture": 240,
+                        "extension": 600,
+                        "coverage": 1500,
+                        "native": 180,
+                    }[layer],
                 )
                 result.update(
                     status="passed" if completed.returncode == 0 else "failed", returncode=completed.returncode
