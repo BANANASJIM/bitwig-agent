@@ -128,7 +128,7 @@ final class RenderModule implements HostModule, JobsModule.Source {
         boolean done() {
             Handle h = handle;
             if (h != null && h.done()) {
-                if (doneAt == 0) doneAt = scheduler.now();
+                if (!settled) doneAt = scheduler.now();
                 settled = true;
             }
             return settled;
