@@ -5,11 +5,14 @@ Compiles against BITWIG_API_JAR when set, else the pinned public extension API.
 Dependencies come from extension/deps.toml, checksum-verified; requires a JDK.
 """
 
+import argparse
 import importlib.util
 import os
 import shutil
 import subprocess
 from pathlib import Path
+
+from tooling import dependency
 
 ROOT = Path(__file__).resolve().parents[1]
 TEST_ROOT = ROOT / "extension/src/test/java"
@@ -22,6 +25,9 @@ TIMEOUT_SECONDS = 600
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--jacoco", type=Path, help="record coverage of dev.bitwigagent classes to this .exec file")
+    args = parser.parse_args()
     missing = [name for name in CORE_TESTS if not (TEST_ROOT / name).is_file()]
     if missing:
         raise RuntimeError(f"Required Java tests missing: {', '.join(missing)}")
@@ -40,9 +46,15 @@ def main() -> None:
     build.compile_java(sources, classes, [gson, api, junit], build.lint_flag(api))
     build.write_resources(classes)
     classpath = os.pathsep.join(map(str, [classes, gson, api]))
+    agent = (
+        [f"-javaagent:{dependency('jacoco-agent')}=destfile={args.jacoco.resolve()},includes=dev.bitwigagent.*"]
+        if args.jacoco
+        else []
+    )
     subprocess.run(
         [
             "java",
+            *agent,
             "-ea",
             "-jar",
             str(junit),

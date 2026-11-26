@@ -45,6 +45,10 @@ bitwig-agent-install = "bitwig_agent.install:main"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
+[tool.coverage.run]
+source = ["src/bitwig_agent"]
+data_file = "build/coverage/.coverage"
+
 
 [tool.ruff]
 line-length = 120
@@ -83,8 +87,10 @@ python = "3.14.*"
 mcp = "==2.3.0"
 
 [tool.pixi.feature.dev.dependencies]
+diff-cover = "==11.0.4"
 mypy = "==2.4.1"
 pytest = ">=8.3,<9"
+pytest-cov = "==7.1.0"
 ruff = "==0.17.6"
 
 [tool.pixi.feature.native-music.dependencies]
@@ -114,6 +120,7 @@ test = "pytest -q"
 lint = "python scripts/lint.py"
 fmt = "python scripts/lint.py --fix"
 test-java = "python scripts/test-java.py"
+coverage = "python scripts/coverage-gate.py"
 fixture = "python scripts/smoke-mcp-java.py"
 extension = "python scripts/build.py"
 

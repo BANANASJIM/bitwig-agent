@@ -3,6 +3,7 @@
 
 From an existing development environment:
   python scripts/check.py --layer offline
+  python scripts/check.py --layer coverage  # not default: repeats the offline and java test runs
   python scripts/check.py  # BITWIG_API_JAR=/path/to/bitwig.jar selects the installed host jar
   python scripts/check.py --layer native --allow-native --native-config /path/to/run.json
 
@@ -22,12 +23,13 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
-LAYERS = ("lint", "offline", "java", "fixture", "native")
+LAYERS = ("lint", "offline", "java", "fixture", "coverage", "native")
 DESCRIPTIONS = {
     "lint": "Static gates: ruff, mypy, Java format, duplicate detection; no API jar or native host",
     "offline": "Python unit/adapter fixtures; no JVM or native host",
     "java": "Java transport and simulated-host tests; installed or pinned public API jar",
     "fixture": "Real MCP/Python/Java protocol + registry fixture; NOT native editing",
+    "coverage": "Opt-in: re-runs Python and Java tests; changed lines must be at least 90% covered",
     "native": "Opt-in read-only native preflight; NOT music/UI/persistence E2E",
 }
 
@@ -66,6 +68,7 @@ def main() -> int:
                 "offline": [sys.executable, "-m", "pytest", "-q"],
                 "java": [sys.executable, str(ROOT / "scripts/test-java.py")],
                 "fixture": [sys.executable, str(ROOT / "scripts/smoke-mcp-java.py")],
+                "coverage": [sys.executable, str(ROOT / "scripts/coverage-gate.py")],
                 "native": [
                     sys.executable,
                     str(ROOT / "scripts/smoke-native.py"),
@@ -82,7 +85,9 @@ def main() -> int:
                     cwd=ROOT,
                     env=child_env,
                     check=False,
-                    timeout={"lint": 600, "offline": 900, "java": 900, "fixture": 240, "native": 180}[layer],
+                    timeout={"lint": 600, "offline": 900, "java": 900, "fixture": 240, "coverage": 1500, "native": 180}[
+                        layer
+                    ],
                 )
                 result.update(
                     status="passed" if completed.returncode == 0 else "failed", returncode=completed.returncode
