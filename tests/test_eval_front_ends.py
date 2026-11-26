@@ -321,4 +321,5 @@ def test_chained_help_and_call_resolve_to_the_call() -> None:
 def test_human_verdict_replaces_only_review() -> None:
     verify = {"t3": {"status": "review"}, "t4": {"status": "fail"}}
     merged = metrics.apply_verdicts(verify, {"t3": {"status": "pass", "reason": "r"}, "t4": {"status": "pass"}})
-    assert merged["t3"]["status"] == "pass" and merged["t4"]["status"] == "fail"
+    assert merged["t3"]["status"] == "pass"
+    assert merged["t4"]["status"] == "fail"
