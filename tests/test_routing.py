@@ -63,10 +63,12 @@ def test_sidechain_get_and_set():
     assert validate_call("devices.sidechain.set", by_id)[0] == by_id
     on_modulator = {**SIDECHAIN, "expectedModulatorId": OTHER}
     assert validate_call("devices.sidechain.set", on_modulator)[0] == on_modulator
+    on_module = {**SIDECHAIN, "expectedModuleId": OTHER}
+    assert validate_call("devices.sidechain.set", on_module)[0] == on_module
 
 
 @pytest.mark.parametrize("changes", [
-    {"componentId": "SIDECHAIN"}, {"componentIndex": 256}, {"expectedComponentId": ""}, {"expectedModulatorId": "mod"}, {"componentIndex": -1}, {"deviceIndex": 16},
+    {"componentId": "SIDECHAIN"}, {"componentIndex": 256}, {"expectedComponentId": ""}, {"expectedModulatorId": "mod"}, {"expectedModuleId": "module"}, {"componentIndex": -1}, {"deviceIndex": 16},
     {"source": {"kind": "track_audio_input", "trackId": OTHER}}, {"source": {"kind": "other", "name": "In 1"}},
     {"expectedSource": {"kind": "other"}}, {"expectedDeviceName": ""},
 ])
