@@ -8,7 +8,7 @@ import pytest
 
 from bitwig_agent import client_side, diagnostics
 from bitwig_agent.catalog import CLIENT_SIDE, validate_call
-from bitwig_agent.client import BridgeError
+from bitwig_agent.errors import BridgeError
 
 
 def stamp(t):

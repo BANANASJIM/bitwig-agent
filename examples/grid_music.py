@@ -19,7 +19,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from bitwig_agent.client import BridgeClient, BridgeError, configured_port
+from bitwig_agent.client import BridgeClient, configured_port
+from bitwig_agent.errors import BridgeError
 
 LOOP_LENGTH_BEATS = 8
 DURATION_TOLERANCE_BEATS = 1e-6

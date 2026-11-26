@@ -14,7 +14,7 @@ from fakes import LayoutGrid
 from bitwig_agent import grid_render
 from bitwig_agent.catalog import CLIENT_SIDE, validate_call
 from bitwig_agent.cli import parse_arguments
-from bitwig_agent.client import BridgeError
+from bitwig_agent.errors import BridgeError
 
 TRACK = "12345678-1234-1234-1234-123456789abc"
 TARGET = {"trackId": TRACK, "deviceIndex": 0, "expectedDeviceName": "Poly Grid"}

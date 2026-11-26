@@ -22,8 +22,9 @@ from mcp.types import (
 )
 
 from bitwig_agent.catalog import CLIENT_SIDE, TOOLS, invalid_params_message, validate_call
-from bitwig_agent.client import BridgeClient, BridgeError, configured_port, package_version
+from bitwig_agent.client import BridgeClient, configured_port, package_version
 from bitwig_agent.client_side import run as run_client_side
+from bitwig_agent.errors import BridgeError
 
 
 def create_server(client: BridgeClient | None = None) -> Server:

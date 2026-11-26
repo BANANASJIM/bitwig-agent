@@ -6,7 +6,7 @@ import pytest
 from fakes import TARGET, FakeGrid, apply_grid
 
 from bitwig_agent import grid_apply, grid_docs, raw_scales
-from bitwig_agent.client import BridgeError
+from bitwig_agent.errors import BridgeError
 
 SCHEMA = grid_apply.bundled_schema()["modules"]
 

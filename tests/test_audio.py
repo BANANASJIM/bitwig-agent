@@ -8,30 +8,12 @@ import struct
 import wave
 
 import pytest
-from fakes import NODES, RATE, SINK_LINKS, FakeBridge, FakeProc, FakePW, notes, write_wav
+from fakes import NODES, RATE, SINK_LINKS, FakeBridge, FakeProc, FakePW, notes, overlapping, write_wav
 
 from bitwig_agent import audio, client_side
 from bitwig_agent.catalog import CLIENT_SIDE, TOOLS, validate_call
 from bitwig_agent.cli import execute, parse_arguments
-from bitwig_agent.client import BridgeError
-
-
-def overlapping(midis, step=0.1, decay=0.26, total=None):
-    """Plucks whose exponential tail (about 260 ms) runs under the next several notes, summed."""
-    n = int((total or 0.1 + step * len(midis) + 0.6) * RATE)
-    out = [0.0] * n
-    for i, m in enumerate(midis):
-        hz = 440 * 2 ** ((m - 69) / 12)
-        start = int((0.1 + i * step) * RATE)
-        for k in range(min(int(1.0 * RATE), n - start)):
-            t = k / RATE
-            out[start + k] += (
-                0.25
-                * min(1, k / 48)
-                * math.exp(-t / (decay / 4))
-                * (math.sin(2 * math.pi * hz * t) + 0.4 * math.sin(4 * math.pi * hz * t))
-            )
-    return out
+from bitwig_agent.errors import BridgeError
 
 
 def run_analyze(path, **args):

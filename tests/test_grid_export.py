@@ -10,7 +10,7 @@ from fakes import SPEC, TARGET, FakeGrid, apply_grid
 
 from bitwig_agent import grid_export
 from bitwig_agent.catalog import validate_call
-from bitwig_agent.client import BridgeError
+from bitwig_agent.errors import BridgeError
 
 
 def export(host, **extra):

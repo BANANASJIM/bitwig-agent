@@ -14,7 +14,7 @@ from pydantic import ValidationError
 from bitwig_agent import grid_apply, raw_scales
 from bitwig_agent.catalog import validate_call
 from bitwig_agent.cli import parse_arguments
-from bitwig_agent.client import BridgeError
+from bitwig_agent.errors import BridgeError
 
 
 def test_fresh_build_then_idempotent_reapply_writes_nothing():

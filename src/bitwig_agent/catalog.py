@@ -10,7 +10,6 @@ from typing import Any
 from pydantic import BaseModel
 
 from bitwig_agent import schema
-from bitwig_agent.client_side import HANDLERS
 
 
 @dataclass(frozen=True)
@@ -61,7 +60,23 @@ UNK = "Never retry an unknown outcome: inspect with grid.get. A native setter/ca
 
 
 # Composed in Python from host methods; never sent to the host as one request.
-CLIENT_SIDE = frozenset(HANDLERS)
+CLIENT_SIDE = frozenset(
+    {
+        "modulators.catalog",
+        "modulators.describe",
+        "grid.apply",
+        "grid.export",
+        "grid.graph",
+        "grid.probe",
+        "grid.render",
+        "grid.describe",
+        "audio.route",
+        "audio.capture",
+        "audio.analyze",
+        "host.diagnostics",
+        "presets.search",
+    }
+)
 
 
 def tool(model: type[BaseModel], description: str, read_only: bool, *examples: dict[str, Any]) -> ToolSpec:
