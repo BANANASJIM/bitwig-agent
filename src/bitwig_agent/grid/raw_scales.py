@@ -339,8 +339,8 @@ def parse(scale: Scale, text: str | None) -> tuple[float, float, float] | None:
     return fn(n), lo, hi
 
 
-def convert(  # noqa: PLR0913, PLR0917
-    type_name: str | None, pid: str, text: str, lo: Any, hi: Any, context: dict[str, Any] | None = None
+def convert(
+    type_name: str | None, pid: str, text: str, bounds: tuple[Any, Any], context: dict[str, Any] | None = None
 ) -> float:
     """The raw value for a display text; raises ValueError with a hint when not writable."""
     found = scale_for(type_name, pid, context)
@@ -351,6 +351,7 @@ def convert(  # noqa: PLR0913, PLR0917
     if parsed is None:
         raise ValueError(f"display {text!r} must be a number with a unit suffix {sorted(scale.suffixes)}")
     raw = scale.to_raw(parsed[0])
+    lo, hi = bounds
     if not math.isfinite(raw) or (lo is not None and not lo <= raw <= hi):
         raise ValueError(f"{text!r} converts to raw {raw:.4g}, outside {lo}..{hi}")
     return raw

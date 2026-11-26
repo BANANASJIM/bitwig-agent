@@ -67,43 +67,49 @@ def help_payload() -> dict[str, Any]:
     }
 
 
-def parse_arguments(  # noqa: C901, PLR0912
-    method: str, pairs: list[str], raw: str | None, timeout_ms: int | None
-) -> dict[str, Any]:
-    types = views.field_types(method)
+def parse_arguments(method: str, pairs: list[str], raw: str | None, timeout_ms: int | None) -> dict[str, Any]:
     if raw is not None:
-        if pairs:
-            raise ValueError("--params cannot be mixed with key=value arguments")
-        values = load_file(raw) if raw.startswith("@") else decode(raw)
-        if not isinstance(values, dict):
-            raise ValueError("--params must be a JSON object")
+        values = raw_values(raw, pairs)
     else:
+        types = views.field_types(method)
         values = {}
         for pair in pairs:
-            key, separator, value = pair.partition("=")
-            if not separator or not key:
-                raise ValueError(f"Expected key=value, got {pair!r}")
-            if key in values:
-                raise ValueError(f"Duplicate argument: {key}")
-            if key == "spec" and views.is_composed(method) and value.startswith("@"):
-                spec = load_file(value)
-                if not isinstance(spec, dict) or set(spec) & set(values):
-                    raise ValueError("spec must be a JSON object whose fields are not also given as key=value")
-                values.update(spec)
-                continue
-            if key not in types:
-                raise ValueError(views.unknown_field_message(method, key))
-            if types[key] == "string":
-                values[key] = decode(value) if value.startswith('"') else value
-            elif value.startswith("@"):
-                values[key] = load_file(value)
-            else:
-                values[key] = decode(value)
+            add_pair(values, pair, method, types)
     if timeout_ms is not None:
         if "timeoutMs" in values:
             raise ValueError("Specify timeout once: timeoutMs or --timeout-ms")
         values["timeoutMs"] = timeout_ms
     return values
+
+
+def raw_values(raw: str, pairs: list[str]) -> dict[str, Any]:
+    if pairs:
+        raise ValueError("--params cannot be mixed with key=value arguments")
+    values = load_file(raw) if raw.startswith("@") else decode(raw)
+    if not isinstance(values, dict):
+        raise ValueError("--params must be a JSON object")
+    return values
+
+
+def add_pair(values: dict[str, Any], pair: str, method: str, types: dict[str, Any]) -> None:
+    key, separator, value = pair.partition("=")
+    if not separator or not key:
+        raise ValueError(f"Expected key=value, got {pair!r}")
+    if key in values:
+        raise ValueError(f"Duplicate argument: {key}")
+    if key == "spec" and views.is_composed(method) and value.startswith("@"):
+        spec = load_file(value)
+        if not isinstance(spec, dict) or set(spec) & set(values):
+            raise ValueError("spec must be a JSON object whose fields are not also given as key=value")
+        values.update(spec)
+    elif key not in types:
+        raise ValueError(views.unknown_field_message(method, key))
+    elif types[key] == "string":
+        values[key] = decode(value) if value.startswith('"') else value
+    elif value.startswith("@"):
+        values[key] = load_file(value)
+    else:
+        values[key] = decode(value)
 
 
 def discover(command: str, arguments: list[str]) -> dict[str, Any]:

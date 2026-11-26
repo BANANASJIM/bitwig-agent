@@ -4,7 +4,7 @@ import os
 import sys
 
 import pytest
-from fakes import parse_arguments
+from fakes import INVALID_NAMES, LAYER_UNKNOWN_ERROR, assert_rejected_before_tcp, parse_arguments, string_panel_result
 from pydantic import ValidationError
 
 from bitwig_agent.frontends.cli import execute, main, parser
@@ -108,12 +108,7 @@ async def test_invalid_cli_inputs_return_json_error_without_tcp(host, monkeypatc
 
 async def test_cli_preserves_grid_unknown_outcome_and_raw_expected_value_without_retry(host, monkeypatch):
     monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
-    error = {
-        "code": "deadline_exceeded",
-        "message": "Inspect actual parameter before editing again",
-        "outcome": "unknown",
-        "details": {"dispatched": True},
-    }
+    error = LAYER_UNKNOWN_ERROR
     host.reply = lambda request: {"id": request["id"], "error": error}
     payload, code = await execute(
         [
@@ -180,9 +175,13 @@ async def test_grid_cli_numeric_tokens_fail_cleanly_before_tcp(host, monkeypatch
         ]
     )
     assert code == 2
-    assert payload["error"]["code"] == "invalid_params"
-    assert payload["error"]["outcome"] == "not_dispatched"
-    assert host.connections == 0
+    assert_rejected_before_tcp(payload["error"], host)
+
+
+def token_arguments(tokens, raw):
+    if raw:
+        return ["--params", "{" + ",".join(f'"{key}":{value}' for key, value in tokens.items()) + "}"]
+    return [f"{key}={value}" for key, value in tokens.items()]
 
 
 @pytest.mark.parametrize("raw", [False, True])
@@ -216,16 +215,10 @@ async def test_grid_move_cli_rejects_non_integer_tokens_before_tcp(host, monkeyp
         "y": "2",
         field: token,
     }
-    arguments = (
-        ["--params", "{" + ",".join(f'"{key}":{value}' for key, value in tokens.items()) + "}"]
-        if raw
-        else [f"{key}={value}" for key, value in tokens.items()]
-    )
+    arguments = token_arguments(tokens, raw)
     payload, code = await execute(["grid.modules.move", *arguments])
     assert code == 2
-    assert payload["error"]["code"] == "invalid_params"
-    assert payload["error"]["outcome"] == "not_dispatched"
-    assert host.connections == 0
+    assert_rejected_before_tcp(payload["error"], host)
 
 
 @pytest.mark.parametrize("raw", [False, True])
@@ -282,16 +275,10 @@ async def test_connection_cli_rejects_missing_or_invalid_cas_endpoint_before_tcp
         del tokens[field]
     else:
         tokens[field] = token
-    arguments = (
-        ["--params", "{" + ",".join(f'"{key}":{value}' for key, value in tokens.items()) + "}"]
-        if raw
-        else [f"{key}={value}" for key, value in tokens.items()]
-    )
+    arguments = token_arguments(tokens, raw)
     payload, code = await execute(["grid.connections.set", *arguments])
     assert code == 2
-    assert payload["error"]["code"] == "invalid_params"
-    assert payload["error"]["outcome"] == "not_dispatched"
-    assert host.connections == 0
+    assert_rejected_before_tcp(payload["error"], host)
 
 
 async def test_offline_discovery_exposes_connection_examples_and_complete_registry():
@@ -339,16 +326,10 @@ async def test_grid_insert_cli_rejects_non_int32_tokens_before_tcp(host, monkeyp
         }.items()
     }
     tokens[field] = token
-    arguments = (
-        ["--params", "{" + ",".join(f'"{key}":{value}' for key, value in tokens.items()) + "}"]
-        if raw
-        else [f"{key}={value}" for key, value in tokens.items()]
-    )
+    arguments = token_arguments(tokens, raw)
     payload, code = await execute(["grid.modules.insert", *arguments])
     assert code == 2
-    assert payload["error"]["code"] == "invalid_params"
-    assert payload["error"]["outcome"] == "not_dispatched"
-    assert host.connections == 0
+    assert_rejected_before_tcp(payload["error"], host)
 
 
 async def test_grid_insert_offline_help_exposes_complete_contract(monkeypatch):
@@ -425,9 +406,7 @@ async def test_layer_cli_rejects_invalid_nested_params_before_tcp(host, monkeypa
     params = {**TOOLS["parameters.layer.set"].examples[0], **changes}
     payload, code = await execute(["parameters.layer.set", "--params", json.dumps(params)])
     assert code == 2
-    assert payload["error"]["code"] == "invalid_params"
-    assert payload["error"]["outcome"] == "not_dispatched"
-    assert host.connections == 0
+    assert_rejected_before_tcp(payload["error"], host)
 
 
 async def test_layer_cli_preserves_unknown_without_retry(host, monkeypatch):
@@ -485,18 +464,7 @@ async def test_modulator_generated_help_and_parse_work_offline(monkeypatch, meth
 async def test_modulator_cli_preserves_raw_string_and_null_metadata(host, monkeypatch, raw, value):
     monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
     params = {**TOOLS["modulators.parameters.get"].examples[0], "parameterId": ""}
-    result = {
-        "completion": "observed",
-        "modulatorId": params["modulatorId"],
-        "parameterId": "",
-        "kind": "string",
-        "controlFamily": "string_panel",
-        "value": value,
-        "labels": None,
-        "shortLabel": None,
-        "display": None,
-        "nativeMutation": False,
-    }
+    result = string_panel_result(params["modulatorId"], value)
     host.reply = lambda request: {"id": request["id"], "result": result}
     arguments = (
         ["--params", json.dumps(params)]
@@ -526,9 +494,7 @@ async def test_modulator_cli_invalid_inputs_never_connect(host, monkeypatch, cha
     params = {**TOOLS["modulators.parameters.get"].examples[0], **changes}
     payload, code = await execute(["modulators.parameters.get", "--params", json.dumps(params)])
     assert code == 2
-    assert payload["error"]["code"] == "invalid_params"
-    assert payload["error"]["outcome"] == "not_dispatched"
-    assert host.connections == 0
+    assert_rejected_before_tcp(payload["error"], host)
 
 
 @pytest.mark.parametrize(
@@ -579,15 +545,13 @@ def test_grid_rename_cli_preserves_raw_cas_and_reset_without_coercion(raw, expec
 
 
 @pytest.mark.parametrize("field", ["expectedCustomName", "customName"])
-@pytest.mark.parametrize("value", [None, True, 1, [], {}, "𝄞" * 513, "x" * 1023 + "𝄞"])
+@pytest.mark.parametrize("value", INVALID_NAMES)
 async def test_grid_rename_cli_rejects_invalid_raw_json_name_before_tcp(host, monkeypatch, field, value):
     monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
     params = {**TARGET, "moduleId": TRACK, "expectedCustomName": "", "customName": "", field: value}
     payload, code = await execute(["grid.modules.rename", "--params", json.dumps(params)])
     assert code == 2
-    assert payload["error"]["code"] == "invalid_params"
-    assert payload["error"]["outcome"] == "not_dispatched"
-    assert host.connections == 0
+    assert_rejected_before_tcp(payload["error"], host)
 
 
 @pytest.mark.parametrize("raw", [False, True])

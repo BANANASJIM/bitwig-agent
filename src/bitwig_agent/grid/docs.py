@@ -166,6 +166,15 @@ def localization_dir(root: str | os.PathLike[str] | None = None) -> Path:
     )
 
 
+def group_by_prefix(entries: dict[str, str]) -> dict[str, dict[str, str]]:
+    grouped: dict[str, dict[str, str]] = {}
+    for key, value in entries.items():
+        prefix, _, rest = key.partition(".")
+        if rest:
+            grouped.setdefault(prefix, {})[rest] = value
+    return grouped
+
+
 def norm(text: str) -> str:
     return re.sub(r"[\s_\ufe0e\ufe0f\u200b]", "", text.casefold())
 
@@ -184,11 +193,7 @@ class Docs:
                 rid = key[len("module.") : -len(".desc")]
                 self.ids[rid] = key
                 self.id_category[rid] = category
-        self.prefixes: dict[str, dict[str, str]] = {}
-        for key, value in self.entries.items():
-            prefix, _, rest = key.partition(".")
-            if rest:
-                self.prefixes.setdefault(prefix, {})[rest] = value
+        self.prefixes = group_by_prefix(self.entries)
         self.by_norm = {norm(r): r for r in self.ids}
         self.by_prefix_norm: dict[str, list[str]] = {}
         for prefix in self.prefixes:
@@ -290,18 +295,9 @@ def parameter_facts(type_name: str, param: dict[str, Any]) -> dict[str, Any]:
     return facts
 
 
-def describe_module(docs: Docs, name: str, info: dict[str, Any]) -> dict[str, Any]:  # noqa: C901, PLR0912, PLR0915
-    rid = docs.resource_id(name)
-    prefixes = docs.prefixes_for(([rid] if rid else []) + list(PREFIX_ALIASES.get(name, ())))
-    category = docs.id_category.get(rid) if rid else None
-    own = {rest: text for prefix in prefixes for rest, text in docs.prefixes[prefix].items()}
-    # category-wide entries (e.g. `random.chance.desc`) describe shared items; module entries take precedence
-    shared: dict[str, str] = {}
-    if category:
-        for prefix in docs.prefixes_for([category]):
-            if prefix not in prefixes:
-                shared.update(docs.prefixes[prefix])
-    lookup = {**shared, **own}
+def _port_and_param_items(
+    name: str, info: dict[str, Any]
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     items: list[dict[str, Any]] = []  # ports then parameters, each: row, key, name, direction
     for direction, group in (("in", info.get("inputs", ())), ("out", info.get("outputs", ()))):
         for port in group:
@@ -323,6 +319,30 @@ def describe_module(docs: Docs, name: str, info: dict[str, Any]) -> dict[str, An
             {"row": row, "key": param["parameterId"], "name": param["name"], "direction": None, "single": False}
         )
         params.append(row)
+    return items, ports, params
+
+
+def _pair_leftover(rest: str, text: str, items: list[dict[str, Any]]) -> bool:
+    stem = rest[:-5]
+    wanted_direction: str | None = "in" if stem.endswith("_in") else "out" if stem.endswith("_out") else None
+    words = {_stem(w) for w in re.findall(r"[^\W_]+", stem.casefold())} - {"in", "out"}
+    fits = [
+        i
+        for i in items
+        if "description" not in i["row"]
+        and (wanted_direction is None or i["direction"] in (wanted_direction, None))
+        and words
+        and words <= {_stem(w) for w in re.findall(r"[^\W_]+", (i["name"] or "").casefold())}
+    ]
+    if wanted_direction and not fits:  # `logic_in` for the lone undescribed input
+        fits = [i for i in items if "description" not in i["row"] and i["direction"] == wanted_direction]
+    if len(fits) == 1:
+        fits[0]["row"]["description"] = text
+        return True
+    return False
+
+
+def _attach_descriptions(items: list[dict[str, Any]], lookup: dict[str, str], own: dict[str, str]) -> None:
     claimed: set[str] = set()
     for item in items:
         rest = _lookup(lookup, _candidate_names(item["key"], item["name"]))
@@ -333,22 +353,11 @@ def describe_module(docs: Docs, name: str, info: dict[str, Any]) -> dict[str, An
             claimed.add(rest)
     # Leftover module-specific entries: pair them with an undescribed item when exactly one fits.
     for rest in [r for r in own if r.endswith(".desc") and r not in claimed]:
-        stem = rest[:-5]
-        wanted_direction: str | None = "in" if stem.endswith("_in") else "out" if stem.endswith("_out") else None
-        words = {_stem(w) for w in re.findall(r"[^\W_]+", stem.casefold())} - {"in", "out"}
-        fits = [
-            i
-            for i in items
-            if "description" not in i["row"]
-            and (wanted_direction is None or i["direction"] in (wanted_direction, None))
-            and words
-            and words <= {_stem(w) for w in re.findall(r"[^\W_]+", (i["name"] or "").casefold())}
-        ]
-        if wanted_direction and not fits:  # `logic_in` for the lone undescribed input
-            fits = [i for i in items if "description" not in i["row"] and i["direction"] == wanted_direction]
-        if len(fits) == 1:
-            fits[0]["row"]["description"] = own[rest]
+        if _pair_leftover(rest, own[rest], items):
             claimed.add(rest)
+
+
+def _identity(docs: Docs, name: str, info: dict[str, Any], rid: str | None, category: str | None) -> dict[str, Any]:
     result: dict[str, Any] = {"name": name, "typeId": info["typeId"], "resourceId": rid}
     if rid:
         result["description"] = docs.descriptions[docs.ids[rid]]
@@ -365,6 +374,23 @@ def describe_module(docs: Docs, name: str, info: dict[str, Any]) -> dict[str, An
             result["categoryDescription"] = categoryDescription
     if "width" in info:
         result["footprint"] = {"width": info["width"], "height": info["height"]}
+    return result
+
+
+def describe_module(docs: Docs, name: str, info: dict[str, Any]) -> dict[str, Any]:
+    rid = docs.resource_id(name)
+    prefixes = docs.prefixes_for(([rid] if rid else []) + list(PREFIX_ALIASES.get(name, ())))
+    category = docs.id_category.get(rid) if rid else None
+    own = {rest: text for prefix in prefixes for rest, text in docs.prefixes[prefix].items()}
+    # category-wide entries (e.g. `random.chance.desc`) describe shared items; module entries take precedence
+    shared: dict[str, str] = {}
+    if category:
+        for prefix in docs.prefixes_for([category]):
+            if prefix not in prefixes:
+                shared.update(docs.prefixes[prefix])
+    items, ports, params = _port_and_param_items(name, info)
+    _attach_descriptions(items, {**shared, **own}, own)
+    result = _identity(docs, name, info, rid, category)
     result["ports"] = ports
     result["parameters"] = params
     result["rawEntries"] = {
@@ -390,7 +416,28 @@ def resolve_type(modules: dict[str, Any], value: str) -> str:
     )
 
 
-def search(docs: Docs, modules: dict[str, Any], query: str, limit: int) -> list[dict[str, Any]]:  # noqa: C901, PLR0912
+def _score(terms: set[str], name: str, desc: str, keywords: str, category: str | None) -> float:
+    name_t, desc_t, kw_t, cat_t = _tokens(name), _tokens(desc), _tokens(keywords), _tokens(category or "")
+    score = 0.0
+    for term in terms:
+        if term in cat_t:
+            score += 6
+        if term in name_t:
+            score += 5
+        elif term in norm(name):
+            score += 3
+        if term in kw_t:
+            score += 3
+        elif any(t.startswith(term) for t in kw_t):
+            score += 1.5
+        if term in desc_t:
+            score += 2
+        elif any(t.startswith(term) for t in desc_t):
+            score += 1
+    return score
+
+
+def search(docs: Docs, modules: dict[str, Any], query: str, limit: int) -> list[dict[str, Any]]:
     terms = _tokens(query)
     if not terms:
         raise ValueError("query needs at least one word")
@@ -399,25 +446,8 @@ def search(docs: Docs, modules: dict[str, Any], query: str, limit: int) -> list[
         rid = docs.resource_id(name)
         desc = docs.descriptions.get(docs.ids[rid], "") if rid else ""
         kw = docs.descriptions.get(f"module.{rid}.keywords", "") if rid else ""
-        name_t, desc_t, kw_t = _tokens(name), _tokens(desc), _tokens(kw)
         category = docs.id_category.get(rid) if rid else None
-        cat_t = _tokens(category or "")
-        score = 0.0
-        for term in terms:
-            if term in cat_t:
-                score += 6
-            if term in name_t:
-                score += 5
-            elif term in norm(name):
-                score += 3
-            if term in kw_t:
-                score += 3
-            elif any(t.startswith(term) for t in kw_t):
-                score += 1.5
-            if term in desc_t:
-                score += 2
-            elif any(t.startswith(term) for t in desc_t):
-                score += 1
+        score = _score(terms, name, desc, kw, category)
         if score:
             row: dict[str, Any] = {"name": name, "typeId": info["typeId"], "score": score}
             if category:

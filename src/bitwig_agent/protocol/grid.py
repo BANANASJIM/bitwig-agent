@@ -334,42 +334,47 @@ class GridRawWrite(StrictModel):
         return value
 
     @model_validator(mode="after")
-    def validate_raw_kind(self) -> Self:  # noqa: C901, PLR0912
+    def validate_raw_kind(self) -> Self:
         given = self.model_fields_set
         if self.expectedKind == "steps":
-            if {"expectedValue", "value", "display"} & given or not {"expectedValues", "values"} <= given:
-                raise ValueError(
-                    "kind steps takes expectedValues and values (and optional full), not expectedValue, value or display"
-                )
-            if len(self.values) > len(self.expectedValues):
-                raise ValueError("values must not be longer than expectedValues")
+            self.check_steps(given)
             return self
         if {"expectedValues", "values", "full"} & given:
             raise ValueError("expectedValues, values and full need expectedKind steps")
         if "expectedValue" not in given:
             raise ValueError("expectedValue is required")
-        if len({"value", "display"} & self.model_fields_set) != 1:
+        if len({"value", "display"} & given) != 1:
             raise ValueError("supply exactly one of value (raw) or display (text such as '1.2 kHz')")
-        if "display" in self.model_fields_set and self.expectedKind != "float":
+        if "display" in given and self.expectedKind != "float":
             raise ValueError("display needs expectedKind float")
         for field in ("expectedValue", "value"):
-            if field not in self.model_fields_set:
-                continue
-            value = getattr(self, field)
-            if self.expectedKind == "string":
-                if type(value) is not str:
-                    raise ValueError(f"{field} must be a JSON string for string kind")
-            elif type(value) is str:
-                raise ValueError(f"{field} must not be a string for {self.expectedKind} kind")
-            elif self.expectedKind == "boolean":
-                if type(value) is not bool:
-                    raise ValueError(f"{field} must be a JSON boolean for boolean kind")
-            elif self.expectedKind in ("integer", "enum"):
-                if type(value) is not int or not -(2**31) <= value < 2**31:
-                    raise ValueError(f"{field} must be a signed int32 JSON integer for {self.expectedKind} kind")
-            elif type(value) not in (int, float):
-                raise ValueError(f"{field} must be a finite JSON number for float kind")
+            if field in given:
+                check_value_kind(self.expectedKind, field, getattr(self, field))
         return self
+
+    def check_steps(self, given: set[str]) -> None:
+        if {"expectedValue", "value", "display"} & given or not {"expectedValues", "values"} <= given:
+            raise ValueError(
+                "kind steps takes expectedValues and values (and optional full), not expectedValue, value or display"
+            )
+        if len(self.values) > len(self.expectedValues):
+            raise ValueError("values must not be longer than expectedValues")
+
+
+def check_value_kind(kind: str, field: str, value: Any) -> None:
+    if kind == "string":
+        if type(value) is not str:
+            raise ValueError(f"{field} must be a JSON string for string kind")
+    elif type(value) is str:
+        raise ValueError(f"{field} must not be a string for {kind} kind")
+    elif kind == "boolean":
+        if type(value) is not bool:
+            raise ValueError(f"{field} must be a JSON boolean for boolean kind")
+    elif kind in ("integer", "enum"):
+        if type(value) is not int or not -(2**31) <= value < 2**31:
+            raise ValueError(f"{field} must be a signed int32 JSON integer for {kind} kind")
+    elif type(value) not in (int, float):
+        raise ValueError(f"{field} must be a finite JSON number for float kind")
 
 
 GRID_WRITE_FIELDS = {"moduleId", "parameterId", "expectedKind"}

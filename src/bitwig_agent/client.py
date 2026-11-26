@@ -83,6 +83,61 @@ def configured_port() -> int:
     return value
 
 
+def _encode_request(method: str, params: dict[str, Any], timeout_ms: int) -> tuple[str, bytes]:
+    if method not in METHODS or not isinstance(params, dict):
+        raise ValueError("A known method and object params are required")
+    limit = TOOLS[method].max_timeout_ms
+    if type(timeout_ms) is not int or not MIN_TIMEOUT_MS <= timeout_ms <= limit:
+        raise ValueError(f"timeoutMs must be an integer in {MIN_TIMEOUT_MS}..{limit}")
+    if "timeoutMs" in params:
+        raise ValueError("Pass timeout_ms separately from host params")
+    params, _ = validate_call(method, {**params, "timeoutMs": timeout_ms})
+    request_id = uuid.uuid4().hex
+    request = {"id": request_id, "method": method, "params": params, "timeoutMs": timeout_ms}
+    payload = (json.dumps(request, allow_nan=False, separators=(",", ":")) + "\n").encode("utf-8")
+    if len(payload) > MAX_REQUEST_BYTES:
+        raise ValueError(f"Request exceeds {mebibytes(MAX_REQUEST_BYTES)}")
+    return request_id, payload
+
+
+def _parse_response(raw: bytes, request_id: str, method: str) -> dict[str, Any]:
+    if len(raw) > MAX_RESPONSE_BYTES:
+        raise ValueError(RESPONSE_TOO_LARGE)
+    response = load_json(raw.decode("utf-8"))
+    if not isinstance(response, dict) or response.get("id") != request_id:
+        raise ValueError("Response id does not match request")
+    if ("result" in response) == ("error" in response):
+        raise ValueError("Response must contain exactly one of result or error")
+    if "error" in response:
+        error = response["error"]
+        if (
+            not isinstance(error, dict)
+            or not isinstance(error.get("code"), str)
+            or not isinstance(error.get("message"), str)
+            or error.get("outcome") not in ("not_dispatched", "not_applied", "unknown")
+        ):
+            raise ValueError("Malformed host error")
+        raise BridgeError(error)
+    if not isinstance(response["result"], dict):
+        raise ValueError("Host result must be an object")
+    if method == "status":
+        _flag_extension_mismatch(response["result"])
+    return response["result"]
+
+
+def _transport_error(exc: Exception, method: str, dispatched: bool) -> BridgeError:
+    outcome = "unknown" if dispatched else "not_dispatched"
+    code = "deadline_exceeded" if isinstance(exc, TimeoutError) else "transport_error"
+    hint = ""
+    if method == "grid.get" and (isinstance(exc, asyncio.LimitOverrunError) or RESPONSE_TOO_LARGE in str(exc)):
+        hint = f" The grid.get response exceeded the {mebibytes(MAX_RESPONSE_BYTES)} client cap: lower moduleLimit (64 works with includeParameters) or set includeParameters=false."
+    return bridge_error(
+        code,
+        f"{type(exc).__name__}: {exc}.{hint} Inspect host state before another write; request was not retried.",
+        outcome,
+    )
+
+
 class BridgeClient:
     def __init__(self, port: int = DEFAULT_PORT, *, response_grace_seconds: float = 1.0):
         if type(port) is not int or not 1 <= port <= MAX_PORT:
@@ -90,21 +145,8 @@ class BridgeClient:
         self.port = port
         self.response_grace_seconds = response_grace_seconds
 
-    async def call(self, method: str, params: dict[str, Any], timeout_ms: int = DEFAULT_TIMEOUT_MS) -> dict[str, Any]:  # noqa: C901, PLR0912, PLR0915
-        if method not in METHODS or not isinstance(params, dict):
-            raise ValueError("A known method and object params are required")
-        limit = TOOLS[method].max_timeout_ms
-        if type(timeout_ms) is not int or not MIN_TIMEOUT_MS <= timeout_ms <= limit:
-            raise ValueError(f"timeoutMs must be an integer in {MIN_TIMEOUT_MS}..{limit}")
-        if "timeoutMs" in params:
-            raise ValueError("Pass timeout_ms separately from host params")
-        params, _ = validate_call(method, {**params, "timeoutMs": timeout_ms})
-        request_id = uuid.uuid4().hex
-        request = {"id": request_id, "method": method, "params": params, "timeoutMs": timeout_ms}
-        payload = (json.dumps(request, allow_nan=False, separators=(",", ":")) + "\n").encode("utf-8")
-        if len(payload) > MAX_REQUEST_BYTES:
-            raise ValueError(f"Request exceeds {mebibytes(MAX_REQUEST_BYTES)}")
-
+    async def call(self, method: str, params: dict[str, Any], timeout_ms: int = DEFAULT_TIMEOUT_MS) -> dict[str, Any]:
+        request_id, payload = _encode_request(method, params, timeout_ms)
         writer = None
         dispatched = False
         try:
@@ -116,28 +158,7 @@ class BridgeClient:
                 writer.write(payload)
                 await writer.drain()
                 raw = await reader.readuntil(b"\n")
-                if len(raw) > MAX_RESPONSE_BYTES:
-                    raise ValueError(RESPONSE_TOO_LARGE)
-                response = load_json(raw.decode("utf-8"))
-                if not isinstance(response, dict) or response.get("id") != request_id:
-                    raise ValueError("Response id does not match request")
-                if ("result" in response) == ("error" in response):
-                    raise ValueError("Response must contain exactly one of result or error")
-                if "error" in response:
-                    error = response["error"]
-                    if (
-                        not isinstance(error, dict)
-                        or not isinstance(error.get("code"), str)
-                        or not isinstance(error.get("message"), str)
-                        or error.get("outcome") not in ("not_dispatched", "not_applied", "unknown")
-                    ):
-                        raise ValueError("Malformed host error")
-                    raise BridgeError(error)
-                if not isinstance(response["result"], dict):
-                    raise ValueError("Host result must be an object")
-                if method == "status":
-                    _flag_extension_mismatch(response["result"])
-                return response["result"]
+                return _parse_response(raw, request_id, method)
         except BridgeError:
             raise
         except (
@@ -148,16 +169,7 @@ class BridgeClient:
             asyncio.IncompleteReadError,
             asyncio.LimitOverrunError,
         ) as exc:
-            outcome = "unknown" if dispatched else "not_dispatched"
-            code = "deadline_exceeded" if isinstance(exc, TimeoutError) else "transport_error"
-            hint = ""
-            if method == "grid.get" and (isinstance(exc, asyncio.LimitOverrunError) or RESPONSE_TOO_LARGE in str(exc)):
-                hint = f" The grid.get response exceeded the {mebibytes(MAX_RESPONSE_BYTES)} client cap: lower moduleLimit (64 works with includeParameters) or set includeParameters=false."
-            raise bridge_error(
-                code,
-                f"{type(exc).__name__}: {exc}.{hint} Inspect host state before another write; request was not retried.",
-                outcome,
-            ) from exc
+            raise _transport_error(exc, method, dispatched) from exc
         finally:
             if writer is not None:
                 writer.close()

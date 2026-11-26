@@ -40,18 +40,7 @@ class WavError(ValueError):
     pass
 
 
-def read_wav(path: str, all_channels: bool = False) -> tuple[int, int, Any]:  # noqa: C901, PLR0912, PLR0915
-    """Return (sampleRate, channels, first-channel samples as floats in -1..1), or a list of every channel's samples
-    with all_channels=True. Tolerates streamed headers."""
-    try:
-        with open(path, "rb") as handle:
-            data = handle.read(MAX_BYTES + 1)
-    except OSError as exc:
-        raise WavError(f"Cannot read {path}: {exc.strerror}") from exc
-    if len(data) > MAX_BYTES:
-        raise WavError("WAV exceeds 256 MiB")
-    if data[:4] != b"RIFF" or data[8:12] != b"WAVE":
-        raise WavError("Not a RIFF/WAVE file")
+def _find_chunks(data: bytes) -> tuple[tuple[int, ...], bytes]:
     fmt = None
     pcm = None
     pos = 12
@@ -71,9 +60,10 @@ def read_wav(path: str, all_channels: bool = False) -> tuple[int, int, Any]:  # 
         pos = body + size + (size & 1)
     if fmt is None or pcm is None:
         raise WavError("WAV has no fmt or data chunk")
-    tag, channels, rate, _, _, bits = fmt
-    if channels < 1 or rate < MIN_SAMPLE_RATE:
-        raise WavError("Unsupported channel count or sample rate")
+    return fmt, pcm
+
+
+def _decode_pcm(tag: int, bits: int, channels: int, pcm: bytes) -> tuple[array[Any], float]:
     width = bits // 8
     frame = width * channels
     pcm = pcm[: len(pcm) // frame * frame]
@@ -95,6 +85,26 @@ def read_wav(path: str, all_channels: bool = False) -> tuple[int, int, Any]:  # 
         raise WavError(f"Unsupported WAV encoding (format {tag}, {bits}-bit); use 16/24/32-bit PCM or float")
     if tag == 1 and bits in (16, 32) and sys.byteorder == "big":
         samples.byteswap()
+    return samples, scale
+
+
+def read_wav(path: str, all_channels: bool = False) -> tuple[int, int, Any]:
+    """Return (sampleRate, channels, first-channel samples as floats in -1..1), or a list of every channel's samples
+    with all_channels=True. Tolerates streamed headers."""
+    try:
+        with open(path, "rb") as handle:
+            data = handle.read(MAX_BYTES + 1)
+    except OSError as exc:
+        raise WavError(f"Cannot read {path}: {exc.strerror}") from exc
+    if len(data) > MAX_BYTES:
+        raise WavError("WAV exceeds 256 MiB")
+    if data[:4] != b"RIFF" or data[8:12] != b"WAVE":
+        raise WavError("Not a RIFF/WAVE file")
+    fmt, pcm = _find_chunks(data)
+    tag, channels, rate, _, _, bits = fmt
+    if channels < 1 or rate < MIN_SAMPLE_RATE:
+        raise WavError("Unsupported channel count or sample rate")
+    samples, scale = _decode_pcm(tag, bits, channels, pcm)
     if all_channels:
         return rate, channels, [array("d", (v * scale for v in samples[c::channels])) for c in range(channels)]
     channel = samples[::channels]
@@ -277,19 +287,7 @@ def find_onsets(
 NAMES = ("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
 
 
-def mono_pitch(  # noqa: PLR0913, PLR0917
-    x: array[Any], rate: int, threshold: float, skip: float, bpm: float | None, method: str = "flux"
-) -> dict[str, Any]:
-    times, info = find_onsets(x, rate, threshold, skip, method)
-    notes = []
-    for t in times:
-        midi = pitch_at(x, rate, int(t * rate))
-        if midi is not None:
-            notes.append((t, midi))
-    result: dict[str, Any] = {**info, "noteCount": len(notes)}
-    if not notes:
-        return {**result, "notes": []}
-    rounded = [round(m) for _, m in notes]
+def _melody_summary(notes: list[tuple[float, float]], rounded: list[int]) -> dict[str, Any]:
     ivs = [b - a for a, b in pairwise(rounded)]
     leaps = [i for i, v in enumerate(ivs) if abs(v) >= LEAP_SEMITONES]
     recovered = [i for i in leaps if i + 1 < len(ivs) and ivs[i + 1] * ivs[i] < 0 and abs(ivs[i + 1]) <= STEP_SEMITONES]
@@ -308,17 +306,36 @@ def mono_pitch(  # noqa: PLR0913, PLR0917
             leaps=len(leaps),
             leapRecoveryRatio=round(len(recovered) / len(leaps), 3) if leaps else 1.0,
         )
-    result["summary"] = summary
+    return summary
+
+
+def _step_grid(notes: list[tuple[float, float]], bpm: float) -> dict[str, Any]:
+    step = 60.0 / bpm / 4
+    offset = median(t % step for t, _ in notes)
+    steps = [round((t - offset) / step) for t, _ in notes]
+    return {
+        "stepSeconds": round(step, 5),
+        "offsetSeconds": round(offset, 4),
+        "positions16": [s % 16 for s in steps][:MAX_ONSETS],
+        "onBeatRatio": round(sum(s % 4 == 0 for s in steps) / len(steps), 3),
+    }
+
+
+def mono_pitch(
+    x: array[Any], rate: int, found: tuple[list[float], dict[str, Any]], bpm: float | None
+) -> dict[str, Any]:
+    times, info = found
+    notes = []
+    for t in times:
+        midi = pitch_at(x, rate, int(t * rate))
+        if midi is not None:
+            notes.append((t, midi))
+    result: dict[str, Any] = {**info, "noteCount": len(notes)}
+    if not notes:
+        return {**result, "notes": []}
+    result["summary"] = _melody_summary(notes, [round(m) for _, m in notes])
     if bpm:
-        step = 60.0 / bpm / 4
-        offset = median(t % step for t, _ in notes)
-        steps = [round((t - offset) / step) for t, _ in notes]
-        result["grid"] = {
-            "stepSeconds": round(step, 5),
-            "offsetSeconds": round(offset, 4),
-            "positions16": [s % 16 for s in steps][:MAX_ONSETS],
-            "onBeatRatio": round(sum(s % 4 == 0 for s in steps) / len(steps), 3),
-        }
+        result["grid"] = _step_grid(notes, bpm)
     result["notes"] = [
         {"t": t, "midi": round(m, 2), "name": f"{NAMES[round(m) % 12]}{round(m) // 12 - 1}"}
         for t, m in notes[:MAX_ONSETS]
@@ -658,7 +675,10 @@ def analyze(args: dict[str, Any]) -> dict[str, Any]:
             "truncated": len(times) > MAX_ONSETS,
             "intervals": [round(b - a, 4) for a, b in pairwise(times)][:MAX_ONSETS],
         }
-    return {**base, **mono_pitch(x, rate, threshold, skip, args.get("bpm"), args.get("method", "flux"))}
+    return {
+        **base,
+        **mono_pitch(x, rate, find_onsets(x, rate, threshold, skip, args.get("method", "flux")), args.get("bpm")),
+    }
 
 
 def loudness_mode(args: dict[str, Any]) -> dict[str, Any]:
