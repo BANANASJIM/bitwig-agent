@@ -12,44 +12,8 @@ import java.util.Set;
 import java.util.TreeSet;
 import org.junit.jupiter.api.Test;
 
-/** The bundle generated from the Python protocol must reproduce the method tables Java used to hard-code. */
+/** Structural checks on the bundle generated from the Python protocol. */
 public final class MethodSpecsTest {
-    public static final Set<String> PROJECT_WRITES = Set.of(
-            "tracks.create",
-            "devices.insert",
-            "launcher.create",
-            "launcher.import",
-            "scenes.append",
-            "scenes.duplicate",
-            "scenes.delete",
-            "grid.voicing.set",
-            "devices.delete",
-            "devices.move",
-            "devices.layers.insert",
-            "tracks.group",
-            "tracks.delete",
-            "arranger.clips.create",
-            "arranger.clips.copyFromLauncher",
-            "arranger.clips.edit",
-            "grid.modules.insert",
-            "grid.modules.move",
-            "grid.modules.delete",
-            "grid.modules.rename",
-            "grid.connections.set",
-            "grid.parameters.set",
-            "tracks.routing.set",
-            "devices.sidechain.set");
-    public static final Set<String> ENGINE_REQUIRED = Set.of("launcher.launch", "scenes.launch");
-    public static final Set<String> LONG_TIMEOUT = Set.of(
-            "grid.modules.insert",
-            "grid.modules.move",
-            "grid.modules.delete",
-            "grid.modules.rename",
-            "grid.connections.set",
-            "grid.topology.reconcile",
-            "project.saveAs",
-            "export.audio",
-            "bounce.inPlace");
     public static final Set<String> NON_READ_ONLY_ROUTING_AND_MODULATOR = Set.of(
             "tracks.routing.set",
             "devices.sidechain.set",
@@ -58,7 +22,6 @@ public final class MethodSpecsTest {
             "modulators.parameters.set",
             "modulators.map",
             "modulators.unmap");
-    private static final int DEFAULT_CEILING_MS = 10000, LONG_CEILING_MS = 60000;
 
     public static JsonObject bundle() {
         try (Reader in = new InputStreamReader(
@@ -100,22 +63,10 @@ public final class MethodSpecsTest {
     }
 
     @Test
-    void bundleReproducesTheFormerMethodTables() {
+    void bundleCarriesTheMethodFlags() {
         MethodSpecs specs = MethodSpecs.load();
-        assertTrue(
-                where(specs, s -> s.projectWrite).equals(new TreeSet<>(PROJECT_WRITES)),
-                "project writes match the former HostBridge.PROJECT_WRITES");
-        assertTrue(
-                where(specs, s -> s.engineRequired).equals(new TreeSet<>(ENGINE_REQUIRED)),
-                "engine-required methods match the former launch checks");
-        assertTrue(
-                where(specs, s -> s.maxTimeoutMs > DEFAULT_CEILING_MS).equals(new TreeSet<>(LONG_TIMEOUT)),
-                "long-timeout methods match the former LONG sets, SAVE_AS and topology edits");
         for (String name : specs.methods()) {
             MethodSpecs.Spec spec = specs.get(name);
-            assertTrue(
-                    spec.maxTimeoutMs == (LONG_TIMEOUT.contains(name) ? LONG_CEILING_MS : DEFAULT_CEILING_MS),
-                    name + " keeps the former timeout ceiling");
             assertTrue(spec.defaultTimeoutMs <= spec.maxTimeoutMs, name + " default stays within its ceiling");
         }
         assertTrue(

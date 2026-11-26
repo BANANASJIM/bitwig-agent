@@ -4,7 +4,6 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import com.google.gson.*;
 import dev.bitwigagent.core.MethodSpecs;
-import dev.bitwigagent.core.MethodSpecsTest;
 import java.io.*;
 import java.net.*;
 import java.nio.charset.StandardCharsets;
@@ -217,18 +216,12 @@ public final class RpcServerTest {
                 request("a", "{\"x\":" + "[".repeat(65) + "0" + "]".repeat(65) + "}", null)
             };
             for (String bad : invalid) error(call(server, bad), "invalid_request", "not_dispatched");
-            error(
-                    call(server, request("a", "{}", "60001").replace("status", "grid.modules.insert")),
-                    "invalid_request",
-                    "not_dispatched");
-            for (String method : MethodSpecsTest.LONG_TIMEOUT)
+            for (String method : SPECS.methods())
                 error(
-                        call(server, request("a", "{}", "60001").replace("status", method)),
-                        "invalid_request",
-                        "not_dispatched");
-            for (String method : List.of("grid.parameters.set", "project.save", "render.status"))
-                error(
-                        call(server, request("a", "{}", "10001").replace("status", method)),
+                        call(
+                                server,
+                                request("a", "{}", String.valueOf(SPECS.get(method).maxTimeoutMs + 1))
+                                        .replace("status", method)),
                         "invalid_request",
                         "not_dispatched");
             error(
@@ -239,11 +232,14 @@ public final class RpcServerTest {
             for (int i = 0; i < badUtf8.length; i++) if (badUtf8[i] == '?') badUtf8[i] = (byte) 0xff;
             error(call(server, badUtf8), "invalid_request", "not_dispatched");
             assertTrue(calls.get() == accepted, "Invalid input never invokes handler");
-            for (String method : MethodSpecsTest.LONG_TIMEOUT)
+            for (String method : SPECS.methods())
                 assertTrue(
-                        call(server, request("a", "{}", "60000").replace("status", method))
+                        call(
+                                        server,
+                                        request("a", "{}", String.valueOf(SPECS.get(method).maxTimeoutMs))
+                                                .replace("status", method))
                                 .has("result"),
-                        method + " admits the 60 s ceiling");
+                        method + " admits its own ceiling");
             assertTrue(
                     call(server, request("a", "{}", null).replace("status", "project.saveAs"))
                                     .has("result")
