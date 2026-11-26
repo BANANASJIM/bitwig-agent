@@ -2,8 +2,58 @@ package dev.bitwigagent;
 
 import com.bitwig.extension.controller.api.*;
 import com.google.gson.JsonObject;
+import dev.bitwigagent.action.ActionModule;
+import dev.bitwigagent.arranger.ArrangerModule;
+import dev.bitwigagent.arranger.MarkerModule;
+import dev.bitwigagent.automation.AutomationModule;
+import dev.bitwigagent.core.Errors;
+import dev.bitwigagent.core.Holds;
+import dev.bitwigagent.core.HostModule;
+import dev.bitwigagent.core.HostOperation;
 import dev.bitwigagent.core.MethodSpecs;
+import dev.bitwigagent.core.Reason;
+import dev.bitwigagent.core.Scheduler;
 import dev.bitwigagent.core.SchemaValidator;
+import dev.bitwigagent.device.DeviceChainModule;
+import dev.bitwigagent.device.DeviceListModule;
+import dev.bitwigagent.device.DeviceModule;
+import dev.bitwigagent.device.ModulatorEditModule;
+import dev.bitwigagent.device.ModulatorModule;
+import dev.bitwigagent.device.NativeChains;
+import dev.bitwigagent.device.NativeRemoteValues;
+import dev.bitwigagent.device.ParameterModule;
+import dev.bitwigagent.device.ParameterResolver;
+import dev.bitwigagent.device.RemoteModule;
+import dev.bitwigagent.grid.GridModule;
+import dev.bitwigagent.host.DeviceSources;
+import dev.bitwigagent.host.LauncherStructureLock;
+import dev.bitwigagent.host.NativeRuntime;
+import dev.bitwigagent.host.ProjectState;
+import dev.bitwigagent.host.SelectionLease;
+import dev.bitwigagent.host.TrackRefs;
+import dev.bitwigagent.host.TrackWindow;
+import dev.bitwigagent.host.TransportSafety;
+import dev.bitwigagent.launcher.ClipModule;
+import dev.bitwigagent.launcher.LauncherModule;
+import dev.bitwigagent.launcher.LauncherSettingsModule;
+import dev.bitwigagent.launcher.LauncherState;
+import dev.bitwigagent.launcher.LauncherTargets;
+import dev.bitwigagent.launcher.NoteModule;
+import dev.bitwigagent.launcher.SceneModule;
+import dev.bitwigagent.launcher.SceneWindowLease;
+import dev.bitwigagent.mix.MeterModule;
+import dev.bitwigagent.mix.MixModule;
+import dev.bitwigagent.mix.TrackLifecycleModule;
+import dev.bitwigagent.mix.TrackListModule;
+import dev.bitwigagent.project.ContextModule;
+import dev.bitwigagent.project.DiscoveryModule;
+import dev.bitwigagent.project.ProjectModule;
+import dev.bitwigagent.recovery.AckModule;
+import dev.bitwigagent.recovery.JobsModule;
+import dev.bitwigagent.render.RenderModule;
+import dev.bitwigagent.routing.RoutingModule;
+import dev.bitwigagent.rpc.RpcServer;
+import dev.bitwigagent.transport.TransportModule;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 
@@ -120,7 +170,7 @@ public final class HostBridge implements RpcServer.Handler, AutoCloseable {
         return filled;
     }
 
-    static JsonObject checkSchema(MethodSpecs specs, String method, JsonObject params) {
+    public static JsonObject checkSchema(MethodSpecs specs, String method, JsonObject params) {
         try {
             return specs.get(method).params.apply(params);
         } catch (SchemaValidator.Violation violation) {

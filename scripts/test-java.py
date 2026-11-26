@@ -17,7 +17,7 @@ from tooling import dependency
 ROOT = Path(__file__).resolve().parents[1]
 TEST_ROOT = ROOT / "extension/src/test/java"
 CORE_TESTS = (
-    "dev/bitwigagent/RpcServerTest.java",
+    "dev/bitwigagent/rpc/RpcServerTest.java",
     "dev/bitwigagent/HostBridgeTest.java",
     "dev/bitwigagent/core/MethodSpecsTest.java",
     "dev/bitwigagent/core/SchemaValidatorTest.java",

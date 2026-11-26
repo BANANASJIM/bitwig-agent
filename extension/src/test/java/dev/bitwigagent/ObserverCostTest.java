@@ -2,6 +2,8 @@ package dev.bitwigagent;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import dev.bitwigagent.core.HostLimits;
+import dev.bitwigagent.device.RemoteModule;
 import java.util.*;
 import org.junit.jupiter.api.Test;
 

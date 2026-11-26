@@ -3,51 +3,56 @@ package dev.bitwigagent;
 import com.bitwig.extension.callback.*;
 import com.bitwig.extension.controller.api.*;
 import com.google.gson.*;
+import dev.bitwigagent.arranger.MarkerModule;
+import dev.bitwigagent.core.HostLimits;
+import dev.bitwigagent.core.HostModule;
+import dev.bitwigagent.core.HostOperation;
 import dev.bitwigagent.core.MethodSpecs;
 import dev.bitwigagent.core.Refs;
 import dev.bitwigagent.core.SchemaValidator;
+import dev.bitwigagent.host.DeviceSources;
 import java.util.*;
 import java.util.function.Consumer;
 
 /** A simulated host with a transport, a track bank and queued host tasks; no Bitwig process. */
-final class HostFixture {
-    static final MethodSpecs SPECS = MethodSpecs.load();
+public final class HostFixture {
+    public static final MethodSpecs SPECS = MethodSpecs.load();
     /** The ref schema the bundle exports, compiled by the extension's own validator. */
-    static final SchemaValidator REF_SCHEMA = refSchema();
+    public static final SchemaValidator REF_SCHEMA = refSchema();
 
-    static final String A = "00000000-0000-0000-0000-000000000001";
-    static final String B = "00000000-0000-0000-0000-000000000002";
-    static final String C = "00000000-0000-0000-0000-000000000003";
-    final ScheduledTasks tasks = new ScheduledTasks();
-    final FakeHost host = new FakeHost("host");
-    final FakeHost transport = host.child("createTransport");
-    final FakeHost application = host.child("createApplication");
-    final FakeHost bank = host.child("createTrackBank");
-    final FakeHost project = host.child("getProject");
+    public static final String A = "00000000-0000-0000-0000-000000000001";
+    public static final String B = "00000000-0000-0000-0000-000000000002";
+    public static final String C = "00000000-0000-0000-0000-000000000003";
+    public final ScheduledTasks tasks = new ScheduledTasks();
+    public final FakeHost host = new FakeHost("host");
+    public final FakeHost transport = host.child("createTransport");
+    public final FakeHost application = host.child("createApplication");
+    public final FakeHost bank = host.child("createTrackBank");
+    public final FakeHost project = host.child("getProject");
     /** Tracks past these share one empty, absent track so a window-size bank stays cheap to build. */
-    static final int DETAILED_TRACKS = 16;
+    public static final int DETAILED_TRACKS = 16;
 
-    final FakeHost[] tracks = new FakeHost[HostLimits.TRACKS];
-    final TestServices services;
-    boolean onHost;
-    int flushRequests;
+    public final FakeHost[] tracks = new FakeHost[HostLimits.TRACKS];
+    public final TestServices services;
+    public boolean onHost;
+    public int flushRequests;
     /** The position the last track factory was asked for. */
-    int createPosition;
+    public int createPosition;
 
-    Consumer<String> create = type -> {};
-    Runnable addMarker = () -> {};
-    Consumer<Integer> delete = slot -> {};
+    public Consumer<String> create = type -> {};
+    public Runnable addMarker = () -> {};
+    public Consumer<Integer> delete = slot -> {};
 
-    HostFixture() {
+    public HostFixture() {
         this(true);
     }
 
     /** The host topology alone, for a caller that builds its own services on {@link #host}. */
-    static HostFixture withoutServices() {
+    public static HostFixture withoutServices() {
         return new HostFixture(true, false);
     }
 
-    HostFixture(boolean observeSafetyInitially) {
+    public HostFixture(boolean observeSafetyInitially) {
         this(observeSafetyInitially, true);
     }
 
@@ -326,7 +331,7 @@ final class HostFixture {
      * share one window, softly held: each holds tens of thousands of proxies, so the suite keeps at most one it does
      * not use. A test that changes the Source takes a {@link #freshRootSource} instead.
      */
-    static synchronized DeviceSources.Source rootSource(UUID track) {
+    public static synchronized DeviceSources.Source rootSource(UUID track) {
         Roots shared = roots.get();
         if (shared == null) roots = new java.lang.ref.SoftReference<>(shared = new Roots());
         Roots window = shared;
@@ -338,7 +343,7 @@ final class HostFixture {
         });
     }
 
-    static DeviceSources.Source freshRootSource(UUID track) {
+    public static DeviceSources.Source freshRootSource(UUID track) {
         HostFixture f = withoutServices();
         f.tracks[0].child("channelId").data = track.toString();
         return new TestServices(f.host.proxy(ControllerHost.class), f.tasks::now).sources.roots[0][0];
@@ -349,7 +354,7 @@ final class HostFixture {
     }
 
     /** Validates and dispatches directly, as a module sees a request once the host has handed it over. */
-    HostOperation start(HostModule module, String method, JsonObject params) {
+    public HostOperation start(HostModule module, String method, JsonObject params) {
         HostOperation op = new HostOperation(tasks.after(5000));
         try {
             JsonObject filled = HostBridge.checkSchema(SPECS, method, params);
@@ -361,15 +366,15 @@ final class HostFixture {
         return op;
     }
 
-    void drain() {
+    public void drain() {
         while (!tasks.isEmpty()) tasks.take().run();
     }
 
-    HostOperation submit(HostModule module, String method, JsonObject params) {
+    public HostOperation submit(HostModule module, String method, JsonObject params) {
         return submit(module, method, params, Long.MAX_VALUE);
     }
 
-    HostOperation submit(HostModule module, String method, JsonObject params, long deadline) {
+    public HostOperation submit(HostModule module, String method, JsonObject params, long deadline) {
         HostOperation op = new HostOperation(deadline);
         try {
             JsonObject filled = HostBridge.checkSchema(SPECS, method, params);
@@ -381,13 +386,13 @@ final class HostFixture {
         return op;
     }
 
-    JsonObject call(HostModule module, String method, JsonObject params) {
+    public JsonObject call(HostModule module, String method, JsonObject params) {
         HostOperation op = submit(module, method, params);
         next();
         return op.result.join();
     }
 
-    void next() {
+    public void next() {
         Runnable next = tasks.take();
         onHost = true;
         try {
@@ -406,7 +411,7 @@ final class HostFixture {
         slot(track, scene).child("name").data = name;
     }
 
-    void addTrack(int slot, String id, String type) {
+    public void addTrack(int slot, String id, String type) {
         FakeHost track = tracks[slot];
         track.child("channelId").emit(id);
         track.child("exists").emit(true);
@@ -415,28 +420,28 @@ final class HostFixture {
         bank.child("itemCount").emit(slot + 1);
     }
 
-    void removeTrack(int slot, int remaining) {
+    public void removeTrack(int slot, int remaining) {
         FakeHost track = tracks[slot];
         track.child("exists").emit(false);
         track.child("channelId").emit("");
         bank.child("itemCount").emit(remaining);
     }
 
-    void mutation() {
+    public void mutation() {
         if (!onHost) throw new AssertionError("Host mutation outside scheduled callback");
     }
 
-    static JsonObject json(String text) {
+    public static JsonObject json(String text) {
         return JsonParser.parseString(text).getAsJsonObject();
     }
 
     /** The ref of a fixture track A, B or C, named as the fixture names its slot. */
-    static JsonObject track(String id) {
+    public static JsonObject track(String id) {
         return Refs.track(id, "Track " + (id.equals(A) ? 0 : id.equals(B) ? 1 : 2));
     }
 
     /** Params whose target is the track ref of {@link #track}. */
-    static JsonObject targeting(String id) {
+    public static JsonObject targeting(String id) {
         JsonObject p = new JsonObject();
         p.add("target", track(id));
         return p;

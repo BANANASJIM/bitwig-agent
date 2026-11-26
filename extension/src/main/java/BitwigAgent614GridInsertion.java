@@ -2,7 +2,7 @@ import com.bitwig.base.async.oRV;
 import com.bitwig.flt.document.core.master.IG1;
 import com.bitwig.flt.document.core.master.IbI;
 import com.bitwig.flt.document.core.master.g2L;
-import dev.bitwigagent.GridInsertionBridge;
+import dev.bitwigagent.grid.GridInsertionBridge;
 
 /** Loaded only by name after exact binary and live Class-identity checks. */
 public final class BitwigAgent614GridInsertion extends bTA implements GridInsertionBridge {

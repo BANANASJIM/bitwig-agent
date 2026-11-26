@@ -6,14 +6,14 @@ import com.google.gson.JsonParser;
 import com.google.gson.JsonPrimitive;
 
 /** Request-building helpers the module tests share. */
-final class TestJson {
+public final class TestJson {
     private TestJson() {}
 
-    static JsonObject obj(String json) {
+    public static JsonObject obj(String json) {
         return JsonParser.parseString(json).getAsJsonObject();
     }
 
-    static JsonElement toJson(Object value) {
+    public static JsonElement toJson(Object value) {
         if (value instanceof JsonElement) return (JsonElement) value;
         if (value instanceof Number) return new JsonPrimitive((Number) value);
         if (value instanceof Boolean) return new JsonPrimitive((Boolean) value);
@@ -21,7 +21,7 @@ final class TestJson {
     }
 
     /** The object of alternating key and value arguments. */
-    static JsonObject params(Object... pairs) {
+    public static JsonObject params(Object... pairs) {
         JsonObject p = new JsonObject();
         for (int i = 0; i < pairs.length; i += 2) p.add((String) pairs[i], toJson(pairs[i + 1]));
         return p;
