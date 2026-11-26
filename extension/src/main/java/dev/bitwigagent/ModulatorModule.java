@@ -1,7 +1,5 @@
 package dev.bitwigagent;
 
-import static dev.bitwigagent.HostServices.failure;
-
 import com.google.gson.*;
 import java.util.Set;
 import java.util.UUID;
@@ -45,24 +43,26 @@ final class ModulatorModule implements HostModule {
             return;
         }
         boolean parameter = method.equals("modulators.parameters.get");
-        if (!parameter && !method.equals("modulators.list")) throw failure("unknown_method", "Unknown modulator read.");
+        if (!parameter && !method.equals("modulators.list"))
+            throw Errors.notApplied(ErrorCode.UNKNOWN_METHOD, "Unknown modulator read.");
         Params.fields(
                 p,
                 parameter ? Set.of("parent", "modulatorId", "parameterId") : Set.of("parent"),
                 parameter ? Set.of() : Set.of("offset", "limit"));
-        if (!p.get("parent").isJsonObject()) throw failure("invalid_params", "parent must be an object.");
+        if (!p.get("parent").isJsonObject())
+            throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "parent must be an object.");
         JsonObject parent = p.getAsJsonObject("parent");
         DeviceSources.validateParent(parent);
         integer(parent, "deviceIndex", 0, HostServices.DEVICES - 1);
         if (parameter) {
             if (!DeviceSources.canonicalUuid(Params.string(p, "modulatorId")))
-                throw failure("invalid_params", "modulatorId must be a canonical current UUID.");
+                throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "modulatorId must be a canonical current UUID.");
             JsonElement id = p.get("parameterId");
             if (!id.isJsonPrimitive()
                     || !id.getAsJsonPrimitive().isString()
                     || id.getAsString().length() > 1024)
-                throw failure(
-                        "invalid_params",
+                throw Errors.notApplied(
+                        ErrorCode.INVALID_PARAMS,
                         "parameterId must be an exact string of at most 1024 UTF-16 units; empty is allowed.");
         } else {
             if (p.has("offset")) integer(p, "offset", 0, 100000);
@@ -73,7 +73,7 @@ final class ModulatorModule implements HostModule {
     private static int integer(JsonObject p, String key, int min, int max) {
         int result = Params.integer(p, key, min, max);
         if (!p.get(key).getAsString().matches("-?[0-9]+"))
-            throw failure("invalid_params", key + " must be an integer, not a decimal or exponent.");
+            throw Errors.notApplied(ErrorCode.INVALID_PARAMS, key + " must be an integer, not a decimal or exponent.");
         return result;
     }
 
@@ -81,7 +81,7 @@ final class ModulatorModule implements HostModule {
     public void dispatch(HostOperation op, String method, JsonObject p) {
         s.check(op);
         if (adapter == null)
-            adapter = new Bitwig614ModulatorAdapter(s.nativeRuntime(op).access("modulator_unavailable"));
+            adapter = new Bitwig614ModulatorAdapter(s.nativeRuntime(op).access(ErrorCode.MODULATOR_UNAVAILABLE));
         if (method.equals("modulators.capabilities")) {
             JsonObject capabilities = adapter.capabilities();
             // Read-only fields above describe modulators.list/parameters.get; edit methods report separately here.
@@ -141,14 +141,15 @@ final class ModulatorModule implements HostModule {
                 op.fail(
                         error instanceof RpcException
                                 ? error
-                                : failure(
-                                        "modulator_unavailable",
+                                : Errors.notApplied(
+                                        ErrorCode.MODULATOR_UNAVAILABLE,
                                         "Modulator read failed: "
                                                 + error.getClass().getSimpleName()
                                                 + "; inspect the exact host binding."));
             } catch (Error error) {
-                op.fail(failure(
-                        "modulator_unavailable", "Native modulator read failed; inspect the loaded host binding."));
+                op.fail(Errors.notApplied(
+                        ErrorCode.MODULATOR_UNAVAILABLE,
+                        "Native modulator read failed; inspect the loaded host binding."));
             }
         });
     }
@@ -157,7 +158,7 @@ final class ModulatorModule implements HostModule {
         return BoundedJson.serialize(
                 value,
                 MAX_RESPONSE_CHARS,
-                "modulator_bounds_exceeded",
+                ErrorCode.MODULATOR_BOUNDS_EXCEEDED,
                 "Modulator response exceeds bounded transport size; reduce limit. Values are never truncated.");
     }
 }

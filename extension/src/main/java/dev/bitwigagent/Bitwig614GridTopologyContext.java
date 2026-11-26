@@ -1,7 +1,6 @@
 package dev.bitwigagent;
 
 import static dev.bitwigagent.GridTopologyContext.Field.*;
-import static dev.bitwigagent.HostServices.failure;
 
 import java.lang.reflect.Method;
 import java.util.EnumMap;
@@ -42,7 +41,7 @@ final class Bitwig614GridTopologyContext implements GridTopologyContext.Access {
     }
 
     @Override
-    public String unavailableCode() {
+    public ErrorCode unavailableCode() {
         return bindings.unavailableCode();
     }
 
@@ -54,7 +53,8 @@ final class Bitwig614GridTopologyContext implements GridTopologyContext.Access {
     @Override
     public Object read(GridTopologyContext.Field field, Object object) {
         Method reader = readers.get(field);
-        if (reader == null) throw failure("grid_unavailable", "Unbound topology context reader: " + field);
+        if (reader == null)
+            throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Unbound topology context reader: " + field);
         if (field == UNDO) return bindings.invoke(reader, null, object);
         return bindings.invoke(reader, object);
     }

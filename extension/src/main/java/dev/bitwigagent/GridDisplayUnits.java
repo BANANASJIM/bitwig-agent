@@ -1,7 +1,5 @@
 package dev.bitwigagent;
 
-import static dev.bitwigagent.HostServices.failure;
-
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import java.util.*;
@@ -64,8 +62,8 @@ final class GridDisplayUnits {
     }
 
     private static RpcException unsupported(String why) {
-        return failure(
-                "unsupported_unit",
+        return Errors.notApplied(
+                ErrorCode.UNSUPPORTED_UNIT,
                 why + " Supported display units: " + new TreeSet<>(UNITS.keySet()) + "; write the raw value instead.");
     }
 
@@ -96,13 +94,14 @@ final class GridDisplayUnits {
                     + "' scale; write once with a raw value.");
         Quantity wanted = parse(unit, requested);
         if (wanted == null)
-            throw failure(
-                    "invalid_params",
+            throw Errors.notApplied(
+                    ErrorCode.INVALID_PARAMS,
                     "display must be a number with an explicit unit suffix " + new TreeSet<>(unit.suffixes.keySet())
                             + ", e.g. \"1.2 kHz\".");
         double raw = unit.toRaw.applyAsDouble(wanted.natural);
         if (!Double.isFinite(raw))
-            throw failure("invalid_params", "display is outside the convertible domain for '" + token + "'.");
+            throw Errors.notApplied(
+                    ErrorCode.INVALID_PARAMS, "display is outside the convertible domain for '" + token + "'.");
         return raw;
     }
 

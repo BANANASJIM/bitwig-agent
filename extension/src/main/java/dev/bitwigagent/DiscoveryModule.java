@@ -34,7 +34,7 @@ final class DiscoveryModule implements HostModule {
     }
 
     static void validateParams(String method, JsonObject params) {
-        if (!METHODS.contains(method)) throw failure("unknown_method", "Unknown discovery method.");
+        if (!METHODS.contains(method)) throw Errors.notApplied(ErrorCode.UNKNOWN_METHOD, "Unknown discovery method.");
         if (method.equals("devices.layers.list")) {
             DeviceSources.validateLayer(params, false, true);
             return;
@@ -62,7 +62,7 @@ final class DiscoveryModule implements HostModule {
                 operation.result.complete(capabilities(operation));
                 return;
             default:
-                throw failure("unknown_method", "Unsupported discovery method: " + method);
+                throw Errors.notApplied(ErrorCode.UNKNOWN_METHOD, "Unsupported discovery method: " + method);
         }
     }
 
@@ -196,7 +196,8 @@ final class DiscoveryModule implements HostModule {
     }
 
     private JsonObject listTracks() {
-        if (!s.tracksObserved) throw failure("not_ready", "Track bank has not reported its size yet.");
+        if (!s.tracksObserved)
+            throw Errors.notApplied(ErrorCode.NOT_READY, "Track bank has not reported its size yet.");
         JsonObject result = observed();
         JsonArray items = new JsonArray();
         TrackTree tree = TrackTree.capture(s);

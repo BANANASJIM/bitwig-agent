@@ -1,7 +1,5 @@
 package dev.bitwigagent;
 
-import static dev.bitwigagent.HostServices.failure;
-
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 
@@ -86,14 +84,15 @@ final class Bitwig614StringPanelAccess implements GridStringPanelWriter.Access {
     public void set(Object object, String text) {
         requireSupported(object);
         if (setter == null)
-            throw failure(bindings.unavailableCode(), "String panel write operation is not bound: " + setterError);
-        if (text == null) throw failure("invalid_params", "String panel text must not be null.");
+            throw Errors.notApplied(
+                    bindings.unavailableCode(), "String panel write operation is not bound: " + setterError);
+        if (text == null) throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "String panel text must not be null.");
         bindings.invoke(setter, object, text);
     }
 
     @Override
     public void requireSupported(Object object) {
         if (!isPanel(object))
-            throw failure(bindings.unavailableCode(), "String panel requires the exact inspected xMn model.");
+            throw Errors.notApplied(bindings.unavailableCode(), "String panel requires the exact inspected xMn model.");
     }
 }

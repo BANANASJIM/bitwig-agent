@@ -1,7 +1,5 @@
 package dev.bitwigagent;
 
-import static dev.bitwigagent.HostServices.failure;
-
 import com.google.gson.*;
 import java.util.*;
 import java.util.function.Consumer;
@@ -134,8 +132,9 @@ final class ModulatorEditor {
 
         static TargetRef parse(JsonElement element) {
             if (element == null || !element.isJsonObject())
-                throw failure(
-                        "invalid_params", "target must be {moduleId, parameterId} or {modulatorId, parameterId}.");
+                throw Errors.notApplied(
+                        ErrorCode.INVALID_PARAMS,
+                        "target must be {moduleId, parameterId} or {modulatorId, parameterId}.");
             JsonObject t = element.getAsJsonObject();
             boolean module = t.has("moduleId");
             Params.fields(t, Set.of(module ? "moduleId" : "modulatorId", "parameterId"), Set.of());
@@ -186,12 +185,13 @@ final class ModulatorEditor {
                     : Set.of("parent", "modulatorId", "target", "expectedAmount", "amount");
             Set<String> optional = unmap ? Set.of("outputId") : Set.of("outputId", "transfer", "enabled");
             if (p == null || !p.keySet().containsAll(required))
-                throw failure("invalid_params", "Parameters must contain required fields " + required);
+                throw Errors.notApplied(
+                        ErrorCode.INVALID_PARAMS, "Parameters must contain required fields " + required);
             for (String key : p.keySet()) {
                 if (!required.contains(key) && !optional.contains(key))
-                    throw failure("invalid_params", "Unknown parameter: " + key);
+                    throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "Unknown parameter: " + key);
                 if (p.get(key).isJsonNull() && !(key.equals("expectedAmount") && !unmap))
-                    throw failure("invalid_params", key + " must not be null.");
+                    throw Errors.notApplied(ErrorCode.INVALID_PARAMS, key + " must not be null.");
             }
             validateParent(p);
             UUID modulatorId = uuid(p, "modulatorId");
@@ -205,7 +205,7 @@ final class ModulatorEditor {
                 if (!value.isJsonPrimitive()
                         || !value.getAsJsonPrimitive().isString()
                         || !TRANSFERS.contains(value.getAsString()))
-                    throw failure("invalid_params", "transfer must be one of " + TRANSFERS + ".");
+                    throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "transfer must be one of " + TRANSFERS + ".");
                 transfer = value.getAsString();
             }
             Boolean enabled = p.has("enabled") ? Params.bool(p, "enabled") : null;
@@ -215,25 +215,28 @@ final class ModulatorEditor {
         private static double amount(JsonObject p, String key) {
             JsonElement value = p.get(key);
             if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isNumber())
-                throw failure("invalid_params", key + " must be a number in -1..1.");
+                throw Errors.notApplied(ErrorCode.INVALID_PARAMS, key + " must be a number in -1..1.");
             double number = value.getAsDouble();
             if (!Double.isFinite(number) || number < -1 || number > 1)
-                throw failure("invalid_params", key + " must be a number in -1..1.");
+                throw Errors.notApplied(ErrorCode.INVALID_PARAMS, key + " must be a number in -1..1.");
             return number;
         }
     }
 
     static void validateParent(JsonObject p) {
-        if (!p.get("parent").isJsonObject()) throw failure("invalid_params", "parent must be an object.");
+        if (!p.get("parent").isJsonObject())
+            throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "parent must be an object.");
         JsonObject parent = p.getAsJsonObject("parent");
         DeviceSources.validateParent(parent);
         if (!parent.get("deviceIndex").getAsString().matches("-?[0-9]+"))
-            throw failure("invalid_params", "deviceIndex must be an integer, not a decimal or exponent.");
+            throw Errors.notApplied(
+                    ErrorCode.INVALID_PARAMS, "deviceIndex must be an integer, not a decimal or exponent.");
     }
 
     static UUID uuid(JsonObject p, String key) {
         String value = Params.string(p, key);
-        if (!DeviceSources.canonicalUuid(value)) throw failure("invalid_params", key + " must be a canonical UUID.");
+        if (!DeviceSources.canonicalUuid(value))
+            throw Errors.notApplied(ErrorCode.INVALID_PARAMS, key + " must be a canonical UUID.");
         return UUID.fromString(value);
     }
 
@@ -243,14 +246,14 @@ final class ModulatorEditor {
                 || !value.isJsonPrimitive()
                 || !value.getAsJsonPrimitive().isString()
                 || value.getAsString().length() > MAX_TEXT)
-            throw failure("invalid_params", key + " must be a string of at most 1024 UTF-16 units.");
+            throw Errors.notApplied(ErrorCode.INVALID_PARAMS, key + " must be a string of at most 1024 UTF-16 units.");
         return value.getAsString();
     }
 
     static int count(JsonObject p, String key, int min) {
         int value = Params.integer(p, key, min, ModulatorSnapshotReader.MAX_MODULATORS);
         if (!p.get(key).getAsString().matches("-?[0-9]+"))
-            throw failure("invalid_params", key + " must be an integer, not a decimal or exponent.");
+            throw Errors.notApplied(ErrorCode.INVALID_PARAMS, key + " must be an integer, not a decimal or exponent.");
         return value;
     }
 
@@ -271,7 +274,7 @@ final class ModulatorEditor {
             device = a.device(proxy, trackId, check);
             collection = a.collection(device);
             if (collection == null)
-                throw failure("modulator_unavailable", "Device has no primary modulator collection.");
+                throw Errors.notApplied(ErrorCode.MODULATOR_UNAVAILABLE, "Device has no primary modulator collection.");
             members = members(collection);
         }
 
@@ -291,8 +294,8 @@ final class ModulatorEditor {
                 found = member;
             }
             if (found == null)
-                throw failure(
-                        "target_not_found",
+                throw Errors.notApplied(
+                        ErrorCode.TARGET_NOT_FOUND,
                         "No primary modulator " + id + " on this device; reacquire modulators.get.");
             return found;
         }
@@ -306,7 +309,8 @@ final class ModulatorEditor {
     private List<Object> members(Object collection) {
         List<Object> members = a.modulators(collection);
         if (members.size() > ModulatorSnapshotReader.MAX_MODULATORS)
-            throw failure("modulator_bounds_exceeded", "Primary modulator collection exceeds 4096 members.");
+            throw Errors.notApplied(
+                    ErrorCode.MODULATOR_BOUNDS_EXCEEDED, "Primary modulator collection exceeds 4096 members.");
         return members;
     }
 
@@ -319,11 +323,12 @@ final class ModulatorEditor {
     private List<Object> children(Object modulator) {
         List<Object> children = a.children(modulator);
         if (children == null)
-            throw failure(
-                    "modulator_unavailable",
+            throw Errors.notApplied(
+                    ErrorCode.MODULATOR_UNAVAILABLE,
                     "Modulator contents are not materialized; open the device once and retry.");
         if (children.size() > MAX_CHILDREN)
-            throw failure("modulator_bounds_exceeded", "Modulator has more than 256 direct children.");
+            throw Errors.notApplied(
+                    ErrorCode.MODULATOR_BOUNDS_EXCEEDED, "Modulator has more than 256 direct children.");
         return children;
     }
 
@@ -336,8 +341,8 @@ final class ModulatorEditor {
             found = child;
         }
         if (found == null)
-            throw failure(
-                    "target_not_found",
+            throw Errors.notApplied(
+                    ErrorCode.TARGET_NOT_FOUND,
                     (source ? "No output " : "No parameter ") + "with id '" + id
                             + "' on this modulator; read modulators.get.");
         if (a.owner(found, Owner.MODULATOR) != modulator) stale("Modulator child belongs to another modulator.");
@@ -354,8 +359,9 @@ final class ModulatorEditor {
                 ids.add(a.identifier(child));
             }
         if (sources.size() != 1)
-            throw failure(
-                    "invalid_params", "This modulator has " + sources.size() + " outputs " + ids + "; pass outputId.");
+            throw Errors.notApplied(
+                    ErrorCode.INVALID_PARAMS,
+                    "This modulator has " + sources.size() + " outputs " + ids + "; pass outputId.");
         if (a.owner(sources.get(0), Owner.MODULATOR) != modulator)
             stale("Modulator output belongs to another modulator.");
         return sources.get(0);
@@ -365,10 +371,12 @@ final class ModulatorEditor {
         Object found = null;
         List<Object> mappings = a.mappings(source);
         if (mappings.size() > MAX_MAPPINGS)
-            throw failure("modulator_bounds_exceeded", "Output has more than 256 mappings.");
+            throw Errors.notApplied(ErrorCode.MODULATOR_BOUNDS_EXCEEDED, "Output has more than 256 mappings.");
         for (Object mapping : mappings) {
             if (a.mappingTarget(mapping) != target) continue;
-            if (found != null) throw failure("modulator_unavailable", "Output has duplicate mappings to one target.");
+            if (found != null)
+                throw Errors.notApplied(
+                        ErrorCode.MODULATOR_UNAVAILABLE, "Output has duplicate mappings to one target.");
             found = mapping;
         }
         return found;
@@ -389,13 +397,14 @@ final class ModulatorEditor {
         if (ref.moduleId != null) {
             Object[] bound = a.gridParameter(s.proxy, s.trackId, ref.moduleId, ref.parameterId, s.check);
             if (!a.isTarget(bound[2]))
-                throw failure("unsupported_scope", "This Grid control is not a modulation target.");
+                throw Errors.notApplied(ErrorCode.UNSUPPORTED_SCOPE, "This Grid control is not a modulation target.");
             return new Resolved(bound[2], bound[0], bound[1]);
         }
         Object modulator = s.modulator(ref.modulatorId);
         Object parameter = child(modulator, ref.parameterId, false);
         if (!a.isTarget(parameter) || a.kind(parameter) == null)
-            throw failure("unsupported_scope", "This modulator control is not a supported modulation target.");
+            throw Errors.notApplied(
+                    ErrorCode.UNSUPPORTED_SCOPE, "This modulator control is not a supported modulation target.");
         return new Resolved(parameter, s.collection, modulator);
     }
 
@@ -404,7 +413,7 @@ final class ModulatorEditor {
     JsonObject get(Object proxy, UUID trackId, UUID modulatorId, Runnable check) {
         Scope s = new Scope(proxy, trackId, check);
         if (modulatorId == null && s.members.size() > MAX_MODULATORS)
-            throw failure("modulator_bounds_exceeded", "More than 64 modulators; pass modulatorId.");
+            throw Errors.notApplied(ErrorCode.MODULATOR_BOUNDS_EXCEEDED, "More than 64 modulators; pass modulatorId.");
         JsonArray rows = new JsonArray();
         List<String> unsupported = new ArrayList<>();
         for (int i = 0; i < s.members.size(); i++) {
@@ -442,7 +451,8 @@ final class ModulatorEditor {
             return row;
         }
         if (children.size() > MAX_CHILDREN)
-            throw failure("modulator_bounds_exceeded", "Modulator has more than 256 direct children.");
+            throw Errors.notApplied(
+                    ErrorCode.MODULATOR_BOUNDS_EXCEEDED, "Modulator has more than 256 direct children.");
         JsonArray parameters = new JsonArray(), outputs = new JsonArray();
         for (Object child : children) {
             s.check.run();
@@ -453,7 +463,7 @@ final class ModulatorEditor {
                 JsonArray mappings = new JsonArray();
                 List<Object> list = a.mappings(child);
                 if (list.size() > MAX_MAPPINGS)
-                    throw failure("modulator_bounds_exceeded", "Output has more than 256 mappings.");
+                    throw Errors.notApplied(ErrorCode.MODULATOR_BOUNDS_EXCEEDED, "Output has more than 256 mappings.");
                 for (Object mapping : list) mappings.add(mappingRow(s, mapping));
                 output.add("mappings", mappings);
                 outputs.add(output);
@@ -516,12 +526,14 @@ final class ModulatorEditor {
             Runnable check,
             Runnable dispatch) {
         if (!Set.of("float", "integer", "enum", "boolean").contains(request.kind))
-            throw failure("invalid_params", "Modulator controls take expectedKind float, integer, enum or boolean.");
+            throw Errors.notApplied(
+                    ErrorCode.INVALID_PARAMS, "Modulator controls take expectedKind float, integer, enum or boolean.");
         Scope s = new Scope(proxy, trackId, check);
         Object modulator = s.modulator(modulatorId);
         Object parameter = child(modulator, parameterId, false);
         String kind = a.kind(parameter);
-        if (kind == null) throw failure("unsupported_scope", "This modulator control family is not writable here.");
+        if (kind == null)
+            throw Errors.notApplied(ErrorCode.UNSUPPORTED_SCOPE, "This modulator control family is not writable here.");
         JsonObject before = a.value(parameter, check, new ArrayList<>());
         request.validateCurrent(before);
         a.requireParameterWritable(s.device, s.collection, modulator, parameter, check);
@@ -543,10 +555,10 @@ final class ModulatorEditor {
         s.guard();
         JsonObject current = a.value(parameter, check, new ArrayList<>());
         if (!request.matches(current.get("value"), request.value))
-            throw new RpcException(
-                    changed ? "modulator_verification_failed" : "stale_context",
+            throw Errors.of(
+                    changed ? ErrorCode.MODULATOR_VERIFICATION_FAILED : ErrorCode.STALE_CONTEXT,
                     "Native readback differs from the requested value; inspect modulators.get before another write.",
-                    changed ? "unknown" : "not_applied");
+                    changed ? Outcome.UNKNOWN : Outcome.NOT_APPLIED);
         JsonObject result = HostServices.observed();
         result.addProperty("modulatorId", modulatorId.toString());
         current.remove("supported");
@@ -591,13 +603,13 @@ final class ModulatorEditor {
         } else {
             double range = a.range(target.parameter);
             if (!(Math.abs(r.amount) <= range))
-                throw failure(
-                        "invalid_params",
+                throw Errors.notApplied(
+                        ErrorCode.INVALID_PARAMS,
                         "amount exceeds this target's modulation range ±" + range + "; no clamping is performed.");
             if (existing == null) {
                 if (!a.canModulate(source, target.parameter))
-                    throw failure(
-                            "unsupported_scope",
+                    throw Errors.notApplied(
+                            ErrorCode.UNSUPPORTED_SCOPE,
                             "Bitwig does not accept this output/target pair (for example a modulator modulating itself).");
                 transfer = r.transfer == null ? "linear" : r.transfer;
                 enabled = r.enabled == null || r.enabled;
@@ -605,8 +617,8 @@ final class ModulatorEditor {
                 transfer = a.transfer(existing);
                 enabled = a.enabled(existing);
                 if ((r.transfer != null && !r.transfer.equals(transfer)) || (r.enabled != null && r.enabled != enabled))
-                    throw failure(
-                            "invalid_params",
+                    throw Errors.notApplied(
+                            ErrorCode.INVALID_PARAMS,
                             "An existing mapping only changes amount here; unmap and map again to change transfer or enabled.");
             }
         }
@@ -640,10 +652,10 @@ final class ModulatorEditor {
                                 || a.amount(after) != r.amount
                                 || !transfer.equals(a.transfer(after))
                                 || a.enabled(after) != enabled)
-                    throw new RpcException(
-                            changed ? "modulator_verification_failed" : "stale_context",
+                    throw Errors.of(
+                            changed ? ErrorCode.MODULATOR_VERIFICATION_FAILED : ErrorCode.STALE_CONTEXT,
                             "Mapping readback differs from the request; inspect modulators.get before another write.",
-                            changed ? "unknown" : "not_applied");
+                            changed ? Outcome.UNKNOWN : Outcome.NOT_APPLIED);
                 JsonObject result = HostServices.observed();
                 result.addProperty("modulatorId", r.modulatorId.toString());
                 result.addProperty("outputId", outputId);
@@ -666,8 +678,8 @@ final class ModulatorEditor {
 
     private void expect(MapRequest r, Object existing) {
         if (r.expectedAmount == null ? existing != null : existing == null || a.amount(existing) != r.expectedAmount)
-            throw failure(
-                    "stale_context",
+            throw Errors.notApplied(
+                    ErrorCode.STALE_CONTEXT,
                     existing == null
                             ? "No mapping exists between this output and target; pass expectedAmount null to create one."
                             : "Existing mapping amount is " + a.amount(existing)
@@ -704,10 +716,9 @@ final class ModulatorEditor {
                 List<Object> expected = new ArrayList<>();
                 for (Object member : s.members) if (member != modulator) expected.add(member);
                 if (!same(members(s.collection), expected))
-                    throw new RpcException(
-                            "modulator_verification_failed",
-                            "Membership after delete is not the previous list minus this modulator; inspect modulators.get.",
-                            "unknown");
+                    throw Errors.unknown(
+                            ErrorCode.MODULATOR_VERIFICATION_FAILED,
+                            "Membership after delete is not the previous list minus this modulator; inspect modulators.get.");
                 JsonObject result = HostServices.observed();
                 result.addProperty("modulatorId", modulatorId.toString());
                 result.addProperty("count", expected.size());
@@ -754,11 +765,10 @@ final class ModulatorEditor {
                     a.documentThread();
                     check.run();
                     if (reason != null)
-                        throw new RpcException(
-                                "modulator_insert_rejected",
+                        throw Errors.unknown(
+                                ErrorCode.MODULATOR_INSERT_REJECTED,
                                 "Native insertion reported: " + reason
-                                        + "; inspect modulators.get before another write.",
-                                "unknown");
+                                        + "; inspect modulators.get before another write.");
                     complete.accept(verifyInsert(s, type, x, y, check));
                 } catch (RuntimeException error) {
                     fail.accept(error);
@@ -782,17 +792,15 @@ final class ModulatorEditor {
         List<Object> added = new ArrayList<>(), survivors = new ArrayList<>();
         for (Object member : after) (before.contains(member) ? survivors : added).add(member);
         if (added.size() != 1 || !same(survivors, s.members))
-            throw new RpcException(
-                    "modulator_verification_failed",
-                    "Membership after insert is not the previous list plus exactly one modulator; inspect modulators.get.",
-                    "unknown");
+            throw Errors.unknown(
+                    ErrorCode.MODULATOR_VERIFICATION_FAILED,
+                    "Membership after insert is not the previous list plus exactly one modulator; inspect modulators.get.");
         Object created = added.get(0);
         if (!type.id.equals(a.typeId(created)))
-            throw new RpcException(
-                    "modulator_verification_failed",
+            throw Errors.unknown(
+                    ErrorCode.MODULATOR_VERIFICATION_FAILED,
                     "Inserted modulator's type differs from " + type.name
-                            + " or its contents are unmaterialized; inspect modulators.get.",
-                    "unknown");
+                            + " or its contents are unmaterialized; inspect modulators.get.");
         Scope now = new Scope(s.proxy, s.trackId, check);
         List<String> unsupported = new ArrayList<>();
         JsonObject result = HostServices.observed();
@@ -813,8 +821,8 @@ final class ModulatorEditor {
 
     private static void requireCount(Scope s, int expected) {
         if (s.members.size() != expected)
-            throw failure(
-                    "stale_context",
+            throw Errors.notApplied(
+                    ErrorCode.STALE_CONTEXT,
                     "Device has " + s.members.size() + " modulators, not expectedCount " + expected
                             + "; reacquire modulators.get.");
     }
@@ -831,6 +839,6 @@ final class ModulatorEditor {
     }
 
     private static void stale(String message) {
-        throw failure("stale_context", message);
+        throw Errors.notApplied(ErrorCode.STALE_CONTEXT, message);
     }
 }

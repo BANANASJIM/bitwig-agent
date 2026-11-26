@@ -50,10 +50,10 @@ final class GridStringPanelWriter {
         contexts.guard(context, binding.device, binding.graph, binding.module, binding.parameter, binding.kind, check);
         JsonObject current = values.parameterValue(binding);
         if (!request.matches(current.get("value"), request.value))
-            throw new RpcException(
-                    changed ? "grid_verification_failed" : "stale_context",
+            throw Errors.of(
+                    changed ? ErrorCode.GRID_VERIFICATION_FAILED : ErrorCode.STALE_CONTEXT,
                     "Native string panel readback differs from the requested text; inspect state before another write.",
-                    changed ? "unknown" : "not_applied");
+                    changed ? Outcome.UNKNOWN : Outcome.NOT_APPLIED);
         check.run();
         JsonObject result = values.parameterResult(binding, current);
         result.add("previousValue", previous);

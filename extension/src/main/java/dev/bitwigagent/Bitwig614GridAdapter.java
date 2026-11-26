@@ -4,7 +4,6 @@ import static dev.bitwigagent.Bitwig614Runtime.SHA256;
 import static dev.bitwigagent.Bitwig614Runtime.VERSION;
 import static dev.bitwigagent.Bitwig614Runtime.diagnostic;
 import static dev.bitwigagent.GridSnapshotReader.Field.*;
-import static dev.bitwigagent.HostServices.failure;
 
 import com.google.gson.JsonObject;
 import java.lang.reflect.*;
@@ -634,8 +633,8 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
         GridSnapshotReader.ParameterBinding binding =
                 snapshots.bindParameter(proxy, expectedTrackId, moduleId, parameterId, check);
         if (binding.kind != GridSnapshotReader.Kind.FLOAT)
-            throw failure(
-                    "unsupported_scope",
+            throw Errors.notApplied(
+                    ErrorCode.UNSUPPORTED_SCOPE,
                     "Only float Grid parameters are automated here; this one is "
                             + binding.kind.name().toLowerCase(Locale.ROOT) + ".");
         return binding;
@@ -652,7 +651,8 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
         require(structureError, "structure");
         require(inspectionError, "parameter inspection context");
         require(voicingError, "voicing");
-        if (voicingWriter == null) throw failure("grid_unavailable", "Grid voicing unavailable: no voicing binding.");
+        if (voicingWriter == null)
+            throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Grid voicing unavailable: no voicing binding.");
         return voicingWriter.get(proxy, expectedTrackId, check);
     }
 
@@ -852,7 +852,7 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
     public Object read(GridSnapshotReader.Field field, Object object) {
         if (field == BIPOLAR_PANEL) {
             if (booleanPanels == null)
-                throw failure("grid_unavailable", "Boolean panel reference binding unavailable.");
+                throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Boolean panel reference binding unavailable.");
             return booleanPanels.linkedPanel(object);
         }
         if (booleanPanels != null && booleanPanels.isPanel(object)) {
@@ -869,14 +869,14 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
             if (field == STRING_VALUE) return stringPanels.value(object);
         }
         Method method = readers.get(field);
-        if (method == null) throw failure("grid_unavailable", "Unbound native reader: " + field);
+        if (method == null) throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Unbound native reader: " + field);
         Object value;
         if (field == OWNER_MODULE) value = bindings.invoke(method, object, kinds.get(GridSnapshotReader.Kind.MODULE));
         else if (field == TYPE_ENTRY) value = bindings.invoke(method, null, object);
         else value = bindings.invoke(method, object);
         if (field == ENTRY_KIND) {
             if (!(value instanceof Enum<?>))
-                throw failure("grid_unavailable", "Native catalog kind is not the mapped enum.");
+                throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Native catalog kind is not the mapped enum.");
             return ((Enum<?>) value).name();
         }
         return value;
@@ -893,7 +893,7 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
     }
 
     @Override
-    public String unavailableCode() {
+    public ErrorCode unavailableCode() {
         return bindings.unavailableCode();
     }
 
@@ -925,8 +925,8 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
 
     private static void require(String error, String domain) {
         if (error != null)
-            throw failure(
-                    "grid_unavailable",
+            throw Errors.notApplied(
+                    ErrorCode.GRID_UNAVAILABLE,
                     "Grid " + domain + " unavailable: " + error
                             + " Inspect grid.capabilities; use the exact supported host binary and adapter.");
     }

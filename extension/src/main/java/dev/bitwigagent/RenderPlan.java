@@ -1,7 +1,5 @@
 package dev.bitwigagent;
 
-import static dev.bitwigagent.HostServices.failure;
-
 import com.google.gson.JsonObject;
 import java.io.IOException;
 import java.io.RandomAccessFile;
@@ -33,7 +31,7 @@ final class RenderPlan {
                 || name.indexOf('/') >= 0
                 || name.indexOf('\\') >= 0
                 || name.codePoints().anyMatch(Character::isISOControl))
-            throw invalid("baseName must be 1.." + MAX_NAME
+            throw Errors.invalid("baseName must be 1.." + MAX_NAME
                     + " characters without '/', '\\', control characters, a leading dot or surrounding whitespace.");
         return name;
     }
@@ -41,9 +39,10 @@ final class RenderPlan {
     /** One file per source: baseName for one source, baseName-01, -02, ... in source order for several. */
     static RenderPlan export(Path directory, String baseName, int sources, String format, boolean overwrite) {
         if (!Files.isDirectory(directory))
-            throw failure("invalid_target", "directory " + directory + " does not exist or is not a directory.");
+            throw Errors.notApplied(
+                    ErrorCode.INVALID_TARGET, "directory " + directory + " does not exist or is not a directory.");
         if (!Files.isWritable(directory))
-            throw failure("invalid_target", "directory " + directory + " is not writable.");
+            throw Errors.notApplied(ErrorCode.INVALID_TARGET, "directory " + directory + " is not writable.");
         RenderPlan plan = new RenderPlan(directory, format);
         for (int i = 0; i < sources; i++) {
             Path base = directory.resolve(sources == 1 ? baseName : baseName + String.format("-%02d", i + 1));
@@ -60,10 +59,11 @@ final class RenderPlan {
         before.clear();
         for (Path file : files) {
             if (Files.isSymbolicLink(file) || Files.isDirectory(file))
-                throw failure("invalid_target", file + " is a directory or symbolic link.");
+                throw Errors.notApplied(ErrorCode.INVALID_TARGET, file + " is a directory or symbolic link.");
             ProjectSaveAsPlan.Stat stat = ProjectSaveAsPlan.Stat.of(file);
             if (stat.exists && !overwrite)
-                throw failure("target_exists", file + " already exists; pass overwrite:true to replace it.");
+                throw Errors.notApplied(
+                        ErrorCode.TARGET_EXISTS, file + " already exists; pass overwrite:true to replace it.");
             before.add(stat);
         }
     }
@@ -171,9 +171,5 @@ final class RenderPlan {
         long value = 0;
         for (int i = 0; i < bytes; i++) value |= (long) in.readUnsignedByte() << (8 * i);
         return value;
-    }
-
-    private static RpcException invalid(String message) {
-        return new RpcException("invalid_params", message, "not_applied");
     }
 }

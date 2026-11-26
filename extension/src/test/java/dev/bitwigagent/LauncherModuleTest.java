@@ -75,7 +75,7 @@ public final class LauncherModuleTest {
     private static void settingsIsolationIsShared() throws Exception {
         Fake f = new Fake();
         f.module.settingsWriteGuard = () -> {
-            throw HostServices.failure("unresolved_mutation", "settings unresolved");
+            throw Errors.notApplied(ErrorCode.UNRESOLVED_MUTATION, "settings unresolved");
         };
         expectOutcome("unresolved_mutation", "not_applied", f.start("launcher.create", createTarget()));
         check(f.creates == 0, "settings quarantine blocks launcher create before dispatch");
@@ -2200,7 +2200,8 @@ public final class LauncherModuleTest {
                     slot.action("createEmptyClip", a -> {
                         creates++;
                         if (failCreate)
-                            throw HostServices.failure("host_write_failed", "Fixture native creation failure");
+                            throw Errors.of(
+                                    "host_write_failed", "Fixture native creation failure", Outcome.NOT_APPLIED);
                         data.length = (Integer) a[0];
                         if (!deferCreate) {
                             if (emitCreateContent) observeContent(index, true);
@@ -2241,7 +2242,8 @@ public final class LauncherModuleTest {
                         importedPath = (String) a[0];
                         importedSlot = index;
                         if (failImport)
-                            throw HostServices.failure("host_write_failed", "Fixture native insertion failure");
+                            throw Errors.of(
+                                    "host_write_failed", "Fixture native insertion failure", Outcome.NOT_APPLIED);
                         return null;
                     });
                     slot.action("replaceInsertionPoint", a -> {
@@ -2380,7 +2382,8 @@ public final class LauncherModuleTest {
             clip.action("getStep", a -> note((Integer) a[0], (Integer) a[1], (Integer) a[2]));
             clip.action("setStep", a -> {
                 writes++;
-                if (writes == failWriteAt) throw HostServices.failure("host_write_failed", "fixture interrupted batch");
+                if (writes == failWriteAt)
+                    throw Errors.of("host_write_failed", "fixture interrupted batch", Outcome.NOT_APPLIED);
                 int c = (Integer) a[0], x = (Integer) a[1], y = (Integer) a[2];
                 put(selected, c, start + x, y, (Integer) a[3], (Double) a[4]);
                 if (emitNotes) observer.noteStepChanged(note(c, x, y));

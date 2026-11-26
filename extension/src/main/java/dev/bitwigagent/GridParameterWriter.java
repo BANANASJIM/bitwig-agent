@@ -1,7 +1,5 @@
 package dev.bitwigagent;
 
-import static dev.bitwigagent.HostServices.failure;
-
 import com.google.gson.*;
 import java.math.BigDecimal;
 import java.math.BigInteger;
@@ -60,15 +58,18 @@ final class GridParameterWriter {
         GridSnapshotReader.ParameterBinding binding =
                 values.bindParameter(proxy, trackId, moduleId, parameterId, request.full, check);
         if (binding.kind == GridSnapshotReader.Kind.STEP_ARRAY) {
-            if (steps == null) throw failure("grid_unavailable", "Step array write bindings are unavailable.");
+            if (steps == null)
+                throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Step array write bindings are unavailable.");
             return steps.set(binding, request, check, dispatch);
         }
         if (binding.kind == GridSnapshotReader.Kind.PANEL_STRING) {
-            if (strings == null) throw failure("grid_unavailable", "String panel write bindings are unavailable.");
+            if (strings == null)
+                throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "String panel write bindings are unavailable.");
             return strings.set(binding, request, check, dispatch);
         }
         if (binding.kind == GridSnapshotReader.Kind.PANEL_BOOLEAN) {
-            if (panels == null) throw failure("grid_unavailable", "Boolean panel write bindings are unavailable.");
+            if (panels == null)
+                throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Boolean panel write bindings are unavailable.");
             return panels.set(binding, request, check, dispatch);
         }
         nativeWriter.requireSupported(binding.parameter, binding.kind);
@@ -93,10 +94,10 @@ final class GridParameterWriter {
         contexts.guard(context, binding.device, binding.graph, binding.module, binding.parameter, binding.kind, check);
         JsonObject current = values.parameterValue(binding);
         if (!request.matches(current.get("value"), request.value))
-            throw new RpcException(
-                    changed ? "grid_verification_failed" : "stale_context",
+            throw Errors.of(
+                    changed ? ErrorCode.GRID_VERIFICATION_FAILED : ErrorCode.STALE_CONTEXT,
                     "Native raw model readback differs from the requested value; inspect state before another write.",
-                    changed ? "unknown" : "not_applied");
+                    changed ? Outcome.UNKNOWN : Outcome.NOT_APPLIED);
         values.guardParameter(binding);
         check.run();
         JsonObject result = values.parameterResult(binding, current);
@@ -136,17 +137,20 @@ final class GridParameterWriter {
         GridSnapshotReader.ParameterBinding binding =
                 values.bindParameter(proxy, trackId, entry.moduleId, entry.parameterId, entry.request.full, check);
         if (binding.kind == GridSnapshotReader.Kind.STEP_ARRAY) {
-            if (steps == null) throw failure("grid_unavailable", "Step array write bindings are unavailable.");
+            if (steps == null)
+                throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Step array write bindings are unavailable.");
             steps.preflight(binding, entry.request, check);
             return;
         }
         if (binding.kind == GridSnapshotReader.Kind.PANEL_STRING) {
-            if (strings == null) throw failure("grid_unavailable", "String panel write bindings are unavailable.");
+            if (strings == null)
+                throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "String panel write bindings are unavailable.");
             strings.preflight(binding, entry.request, check);
             return;
         }
         if (binding.kind == GridSnapshotReader.Kind.PANEL_BOOLEAN) {
-            if (panels == null) throw failure("grid_unavailable", "Boolean panel write bindings are unavailable.");
+            if (panels == null)
+                throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Boolean panel write bindings are unavailable.");
             panels.preflight(binding, entry.request, check);
             return;
         } else {
@@ -181,11 +185,11 @@ final class GridParameterWriter {
             }
         }
         if (failures > 0)
-            throw new RpcException(
+            throw Errors.of(
                     code,
                     "No parameter was written; " + failures + " of " + entries.size() + " writes failed their checks: "
                             + rejected + (failures > 8 ? "; ..." : ""),
-                    "not_applied");
+                    Outcome.NOT_APPLIED);
         JsonArray writes = new JsonArray();
         String status = "applied", completion = "observed";
         int written = 0, completed = 0;
@@ -225,12 +229,14 @@ final class GridParameterWriter {
             } catch (RuntimeException error) {
                 // Any failure after this entry's native dispatch may have landed, whatever outcome the error carries.
                 boolean unknown =
-                        sent[0] || error instanceof RpcException && "unknown".equals(((RpcException) error).outcome);
+                        sent[0] || error instanceof RpcException && ((RpcException) error).is(Outcome.UNKNOWN);
                 if (!unknown && !(error instanceof RpcException)) throw error;
                 if (completed == 0 && !unknown) throw error; // nothing dispatched: ordinary not_applied error
                 item.addProperty("status", unknown ? "unknown" : "failed");
                 JsonObject why = new JsonObject();
-                why.addProperty("code", error instanceof RpcException ? ((RpcException) error).code : "internal_error");
+                why.addProperty(
+                        "code",
+                        error instanceof RpcException ? ((RpcException) error).code : ErrorCode.INTERNAL_ERROR.wire());
                 why.addProperty("message", error.getMessage());
                 item.add("error", why);
                 status = unknown ? "unknown" : written > 0 ? "partial" : "failed";
@@ -291,13 +297,17 @@ final class GridParameterWriter {
                     && !kind.equals("enum")
                     && !kind.equals("boolean")
                     && !kind.equals("string"))
-                throw failure("invalid_params", "expectedKind must be float, integer, enum, boolean, string or steps.");
+                throw Errors.notApplied(
+                        ErrorCode.INVALID_PARAMS,
+                        "expectedKind must be float, integer, enum, boolean, string or steps.");
             if (params.has("full") || params.has("expectedValues") || params.has("values"))
-                throw failure("invalid_params", "full, expectedValues and values need expectedKind steps.");
+                throw Errors.notApplied(
+                        ErrorCode.INVALID_PARAMS, "full, expectedValues and values need expectedKind steps.");
             JsonPrimitive expected = typed(params.get("expectedValue"), kind, "expectedValue");
             if (params.has("value") == params.has("display"))
-                throw failure(
-                        "invalid_params", "Supply exactly one of value (raw) or display (text such as \"1.2 kHz\").");
+                throw Errors.notApplied(
+                        ErrorCode.INVALID_PARAMS,
+                        "Supply exactly one of value (raw) or display (text such as \"1.2 kHz\").");
             if (params.has("display")) {
                 JsonElement text = params.get("display");
                 if (!kind.equals("float")
@@ -305,8 +315,8 @@ final class GridParameterWriter {
                         || !text.getAsJsonPrimitive().isString()
                         || text.getAsString().isEmpty()
                         || text.getAsString().length() > 64)
-                    throw failure(
-                            "invalid_params",
+                    throw Errors.notApplied(
+                            ErrorCode.INVALID_PARAMS,
                             "display must be a string of 1..64 characters and needs expectedKind float.");
                 return new Request(kind, expected, null, text.getAsString());
             }
@@ -317,18 +327,18 @@ final class GridParameterWriter {
 
         private static Request parseSteps(JsonObject params) {
             if (params.has("expectedValue") || params.has("value") || params.has("display"))
-                throw failure(
-                        "invalid_params",
+                throw Errors.notApplied(
+                        ErrorCode.INVALID_PARAMS,
                         "Step arrays take expectedValues and values, not expectedValue, value or display.");
             JsonArray expected = steps(params.get("expectedValues"), "expectedValues", false);
             JsonArray written = steps(params.get("values"), "values", true);
             if (written.size() > expected.size())
-                throw failure("invalid_params", "values must not be longer than expectedValues.");
+                throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "values must not be longer than expectedValues.");
             boolean full = false;
             if (params.has("full")) {
                 JsonElement flag = params.get("full");
                 if (!flag.isJsonPrimitive() || !flag.getAsJsonPrimitive().isBoolean())
-                    throw failure("invalid_params", "full must be a JSON boolean.");
+                    throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "full must be a JSON boolean.");
                 full = flag.getAsBoolean();
             }
             return new Request(expected, written, full);
@@ -339,18 +349,21 @@ final class GridParameterWriter {
                     || !element.isJsonArray()
                     || element.getAsJsonArray().size() < 1
                     || element.getAsJsonArray().size() > MAX_STEPS)
-                throw failure("invalid_params", field + " must be an array of 1.." + MAX_STEPS + " finite numbers.");
+                throw Errors.notApplied(
+                        ErrorCode.INVALID_PARAMS, field + " must be an array of 1.." + MAX_STEPS + " finite numbers.");
             for (JsonElement item : element.getAsJsonArray()) {
                 if (!item.isJsonPrimitive() || !item.getAsJsonPrimitive().isNumber())
-                    throw failure(
-                            "invalid_params", field + " must be an array of 1.." + MAX_STEPS + " finite numbers.");
+                    throw Errors.notApplied(
+                            ErrorCode.INVALID_PARAMS,
+                            field + " must be an array of 1.." + MAX_STEPS + " finite numbers.");
                 double number = item.getAsDouble();
                 if (!Double.isFinite(number))
-                    throw failure(
-                            "invalid_params", field + " must be an array of 1.." + MAX_STEPS + " finite numbers.");
+                    throw Errors.notApplied(
+                            ErrorCode.INVALID_PARAMS,
+                            field + " must be an array of 1.." + MAX_STEPS + " finite numbers.");
                 if (bounded && (number < GridSnapshotReader.STEP_MIN || number > GridSnapshotReader.STEP_MAX))
-                    throw failure(
-                            "invalid_params",
+                    throw Errors.notApplied(
+                            ErrorCode.INVALID_PARAMS,
                             field + " entries must be within the sanity bound -128..128; no clamping is performed.");
             }
             return element.getAsJsonArray();
@@ -383,14 +396,15 @@ final class GridParameterWriter {
                 if (!Double.isFinite(number)) throw invalid(field, kind);
                 // JSON integer tokens retain their precision across the client; never silently round them.
                 if (integerToken && new BigDecimal(number).toBigIntegerExact().compareTo(new BigInteger(token)) != 0)
-                    throw failure("invalid_params", field + " is not exactly representable as a native raw double.");
+                    throw Errors.notApplied(
+                            ErrorCode.INVALID_PARAMS, field + " is not exactly representable as a native raw double.");
             }
             return value;
         }
 
         private static RpcException invalid(String field, String kind) {
-            return failure(
-                    "invalid_params",
+            return Errors.notApplied(
+                    ErrorCode.INVALID_PARAMS,
                     field + " must be "
                             + (kind.equals("string")
                                     ? "a JSON string of at most 1024 UTF-16 units."
@@ -403,20 +417,21 @@ final class GridParameterWriter {
 
         void validateCurrent(JsonObject current) {
             if (!kind.equals(current.get("kind").getAsString()) || !matches(current.get("value"), expected))
-                throw failure(
-                        "stale_context",
+                throw Errors.notApplied(
+                        ErrorCode.STALE_CONTEXT,
                         "Parameter kind or exact raw value differs from the expected precondition; reacquire grid.parameters.get.");
             if (display != null) setValue(new JsonPrimitive(GridDisplayUnits.toRaw(current, display)));
             if (kind.equals("float") || kind.equals("integer")) {
                 double min = current.get("minimum").getAsDouble(),
                         max = current.get("maximum").getAsDouble();
                 if (rawValue < min || rawValue > max)
-                    throw failure(
-                            "invalid_params",
+                    throw Errors.notApplied(
+                            ErrorCode.INVALID_PARAMS,
                             "Requested raw value is outside the native parameter range; no clamping is performed.");
             } else if (kind.equals("enum")) {
                 if (!current.get("valueInOptions").getAsBoolean())
-                    throw failure("grid_unavailable", "Current native enum value is not in its actual option set.");
+                    throw Errors.notApplied(
+                            ErrorCode.GRID_UNAVAILABLE, "Current native enum value is not in its actual option set.");
                 boolean found = false;
                 for (JsonElement option : current.getAsJsonArray("options"))
                     if (option.getAsJsonObject().get("value").getAsInt() == value.getAsInt()) {
@@ -424,8 +439,8 @@ final class GridParameterWriter {
                         break;
                     }
                 if (!found)
-                    throw failure(
-                            "invalid_params",
+                    throw Errors.notApplied(
+                            ErrorCode.INVALID_PARAMS,
                             "Requested enum value must be an actual listed option value, not an ordinal.");
             }
         }

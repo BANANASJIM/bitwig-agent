@@ -50,7 +50,7 @@ final class Bitwig614DeviceTargetAccess implements NativeDeviceTarget.Access {
     }
 
     @Override
-    public String unavailableCode() {
+    public ErrorCode unavailableCode() {
         return bindings.unavailableCode();
     }
 

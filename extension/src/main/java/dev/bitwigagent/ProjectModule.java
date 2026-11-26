@@ -20,7 +20,7 @@ final class ProjectModule implements HostModule {
     static final Set<String> METHODS = Set.of(SAVE, SAVE_AS, ACTIVATE);
     static final String ACTIVATE_ACTION = "Activate Engine For Project";
     static final String SAVE_ACTION = "Save";
-    static final String UNAVAILABLE = "project_save_as_unavailable";
+    static final ErrorCode UNAVAILABLE = ErrorCode.PROJECT_SAVE_AS_UNAVAILABLE;
 
     interface Completion {
         void completed();
@@ -66,7 +66,7 @@ final class ProjectModule implements HostModule {
     }
 
     static void validateParams(String method, JsonObject params) {
-        if (!METHODS.contains(method)) throw failure("unknown_method", "Unknown project method.");
+        if (!METHODS.contains(method)) throw Errors.notApplied(ErrorCode.UNKNOWN_METHOD, "Unknown project method.");
         if (method.equals(SAVE) || method.equals(ACTIVATE)) {
             Params.fields(params, Set.of(), Set.of());
             return;
@@ -89,8 +89,9 @@ final class ProjectModule implements HostModule {
     public void dispatch(HostOperation op, String method, JsonObject params) {
         s.check(op);
         if (pending)
-            throw failure(
-                    "busy", "A project.saveAs is still running natively (" + pendingPath + "); no request was queued.");
+            throw Errors.notApplied(
+                    ErrorCode.BUSY,
+                    "A project.saveAs is still running natively (" + pendingPath + "); no request was queued.");
         if (method.equals(SAVE_AS)) {
             saveAs(op, params);
             return;
@@ -108,7 +109,8 @@ final class ProjectModule implements HostModule {
             return;
         }
         Action save = s.application.getAction(SAVE_ACTION);
-        if (save == null) throw failure("unknown_action", "Save action is absent from the host catalog.");
+        if (save == null)
+            throw Errors.notApplied(ErrorCode.UNKNOWN_ACTION, "Save action is absent from the host catalog.");
         long before = s.projectModifiedSequence();
         s.check(op);
         op.dispatched = true;
@@ -128,8 +130,8 @@ final class ProjectModule implements HostModule {
         }
         Action activate = s.application.getAction(ACTIVATE_ACTION);
         if (activate == null)
-            throw failure(
-                    "unknown_action",
+            throw Errors.notApplied(
+                    ErrorCode.UNKNOWN_ACTION,
                     "\"" + ACTIVATE_ACTION + "\" is absent from the host catalog; use actions.list query=engine.");
         s.check(op);
         op.dispatched = true;
@@ -185,7 +187,7 @@ final class ProjectModule implements HostModule {
             access(op);
             result.addProperty("available", true);
         } catch (RpcException error) {
-            if (!UNAVAILABLE.equals(error.code)) throw error;
+            if (!error.is(UNAVAILABLE)) throw error;
             result.addProperty("available", false);
             result.addProperty("reason", error.getMessage());
         }
@@ -199,12 +201,12 @@ final class ProjectModule implements HostModule {
 
     private SaveAsAccess access(HostOperation op) {
         if (access != null) return access;
-        if (accessError != null) throw failure(UNAVAILABLE, accessError);
+        if (accessError != null) throw Errors.notApplied(UNAVAILABLE, accessError);
         try {
             access = new Bitwig614ProjectSaveAsAccess(s.nativeRuntime(op).access(UNAVAILABLE));
         } catch (ReflectiveOperationException | LinkageError error) {
             accessError = "Exact project save bindings unavailable: " + Bitwig614Runtime.diagnostic(error);
-            throw failure(UNAVAILABLE, accessError);
+            throw Errors.notApplied(UNAVAILABLE, accessError);
         }
         return access;
     }
@@ -286,12 +288,11 @@ final class ProjectModule implements HostModule {
             String prefix = "Native save " + (outcome.refused ? "refused" : "failed") + ": " + failure;
             op.result.completeExceptionally(
                     outcome.refused
-                            ? new RpcException("save_refused", prefix + ". Nothing was written.", "not_applied")
-                            : new RpcException(
-                                    "save_failed",
+                            ? Errors.notApplied(ErrorCode.SAVE_REFUSED, prefix + ". Nothing was written.")
+                            : Errors.unknown(
+                                    ErrorCode.SAVE_FAILED,
                                     prefix
-                                            + ". Bitwig restores a previous file from its backup, but the open project may already carry the new name/path and the project folder may exist; inspect status and the folder.",
-                                    "unknown"));
+                                            + ". Bitwig restores a previous file from its backup, but the open project may already carry the new name/path and the project folder may exist; inspect status and the folder."));
             return;
         }
         ProjectSaveAsPlan.Stat file = ProjectSaveAsPlan.Stat.of(plan.file);

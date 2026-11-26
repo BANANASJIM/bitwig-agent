@@ -128,7 +128,7 @@ public final class RpcServer implements AutoCloseable {
                 if (!FIELDS.contains(key)) throw invalid("Unknown request field: " + key);
             String method = string(request, "method");
             if (!METHODS.contains(method))
-                throw new RpcException("method_not_found", "Unknown method", "not_dispatched");
+                throw Errors.of(ErrorCode.METHOD_NOT_FOUND, "Unknown method", Outcome.NOT_DISPATCHED);
             if (!request.has("params") || !request.get("params").isJsonObject())
                 throw invalid("params must be an object");
             int timeout = 5000;
@@ -147,10 +147,10 @@ public final class RpcServer implements AutoCloseable {
             extendExpiry.accept(timeout);
             long deadline = acceptedAt + TimeUnit.MILLISECONDS.toNanos(timeout);
             if (System.nanoTime() >= deadline)
-                throw new RpcException(
-                        "deadline_exceeded",
+                throw Errors.of(
+                        ErrorCode.DEADLINE_EXCEEDED,
                         "Request expired before dispatch; no host operation was scheduled.",
-                        "not_dispatched");
+                        Outcome.NOT_DISPATCHED);
             dispatched = true;
             CompletableFuture<JsonObject> pending = handler.handle(method, request.getAsJsonObject("params"), deadline);
             if (pending == null) throw new IllegalStateException("Handler returned no future");
@@ -166,12 +166,12 @@ public final class RpcServer implements AutoCloseable {
             RpcException error;
             if (cause instanceof RpcException) error = (RpcException) cause;
             else if (cause instanceof TimeoutException)
-                error = new RpcException(
-                        "deadline_exceeded", "Outcome unknown; inspect state before issuing another write.", "unknown");
+                error = Errors.unknown(
+                        ErrorCode.DEADLINE_EXCEEDED, "Outcome unknown; inspect state before issuing another write.");
             else if (!dispatched) error = invalid("Invalid or incomplete UTF-8 JSON request");
             else
-                error = new RpcException(
-                        "internal_error", "Outcome unknown; inspect state before issuing another write.", "unknown");
+                error = Errors.unknown(
+                        ErrorCode.INTERNAL_ERROR, "Outcome unknown; inspect state before issuing another write.");
             if (e instanceof InterruptedException) Thread.currentThread().interrupt();
             JsonObject response = envelope(id);
             JsonObject detail = new JsonObject();
@@ -205,7 +205,7 @@ public final class RpcServer implements AutoCloseable {
     }
 
     private static RpcException invalid(String message) {
-        return new RpcException("invalid_request", message, "not_dispatched");
+        return Errors.of(ErrorCode.INVALID_REQUEST, message, Outcome.NOT_DISPATCHED);
     }
 
     private static String string(JsonObject object, String key) {

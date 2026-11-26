@@ -32,7 +32,7 @@ final class ActionModule implements HostModule {
     }
 
     static void validateParams(String method, JsonObject params) {
-        if (!METHODS.contains(method)) throw failure("unknown_method", "Unknown Action method.");
+        if (!METHODS.contains(method)) throw Errors.notApplied(ErrorCode.UNKNOWN_METHOD, "Unknown Action method.");
         if (method.equals("actions.invoke")) {
             Params.fields(params, Set.of("actionId"), Set.of("discardUnsavedChanges"));
             Params.string(params, "actionId");
@@ -93,19 +93,20 @@ final class ActionModule implements HostModule {
     private void invokeAction(HostOperation request, JsonObject params) {
         String actionId = params.get("actionId").getAsString();
         Action action = s.application.getAction(actionId);
-        if (action == null) throw failure("unknown_action", "Action ID is absent from the host catalog.");
+        if (action == null)
+            throw Errors.notApplied(ErrorCode.UNKNOWN_ACTION, "Action ID is absent from the host catalog.");
         boolean discard = params.has("discardUnsavedChanges")
                 && params.get("discardUnsavedChanges").getAsBoolean();
         if (ALWAYS_CONSENT.contains(actionId) && !discard)
-            throw failure(
-                    "unsaved_changes",
+            throw Errors.notApplied(
+                    ErrorCode.UNSAVED_CHANGES,
                     "Action \"" + actionId
                             + "\" closes every open project tab; only the current tab's saved state is observable (projectModified="
                             + s.projectModifiedJson()
                             + "). Save each tab, then pass discardUnsavedChanges:true with user consent.");
         if (DISCARDING.contains(actionId) && !discard && !Boolean.FALSE.equals(s.projectModified()))
-            throw failure(
-                    "unsaved_changes",
+            throw Errors.notApplied(
+                    ErrorCode.UNSAVED_CHANGES,
                     "Action \"" + actionId
                             + "\" closes the current project tab, which is not observed saved (projectModified="
                             + s.projectModifiedJson()

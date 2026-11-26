@@ -485,31 +485,33 @@ final class DeviceSources {
     void requireZeroWindow(JsonObject p) {
         int t = s.trackSlot(p.get("trackId").getAsString());
         if (s.devices[t].scrollPosition().get() != 0)
-            throw failure("stale_context", "Device bank is not at the zero-based window.");
+            throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Device bank is not at the zero-based window.");
         Source source = roots[t][p.get("deviceIndex").getAsInt()];
         if (source.metadataReady()
                 && (!Boolean.TRUE.equals(source.exists)
                         || source.position != p.get("deviceIndex").getAsInt()))
-            throw failure("target_not_found", "Device is absent at the explicit index.");
+            throw Errors.notApplied(ErrorCode.TARGET_NOT_FOUND, "Device is absent at the explicit index.");
         if (source.metadataReady() && source.name.isEmpty())
-            throw failure("not_ready", "Device name has not been observed.");
+            throw Errors.notApplied(ErrorCode.NOT_READY, "Device name has not been observed.");
     }
 
     Source root(JsonObject p) {
         int t = s.trackSlot(p.get("trackId").getAsString());
         int index = p.get("deviceIndex").getAsInt();
         TrackState track = tracks[t];
-        if (track.offset == null) throw failure("not_ready", "Root device window has not been observed.");
+        if (track.offset == null)
+            throw Errors.notApplied(ErrorCode.NOT_READY, "Root device window has not been observed.");
         int slot = index - track.offset;
-        if (slot < 0 || slot >= DEVICES) throw failure("outside_window", "Parent is outside the root device window.");
+        if (slot < 0 || slot >= DEVICES)
+            throw Errors.notApplied(ErrorCode.OUTSIDE_WINDOW, "Parent is outside the root device window.");
         Source source = roots[t][slot];
         if (!source.metadataReady() || !track.ready())
-            throw failure("not_ready", "Parent metadata/window has not been observed.");
+            throw Errors.notApplied(ErrorCode.NOT_READY, "Parent metadata/window has not been observed.");
         if (!source.present() || !track.id.equals(p.get("trackId").getAsString()))
-            throw failure("stale_target", "Parent address/name no longer matches observed context.");
+            throw Errors.notApplied(ErrorCode.STALE_TARGET, "Parent address/name no longer matches observed context.");
         if (!source.name.equals(p.get("expectedDeviceName").getAsString()))
-            throw failure(
-                    "stale_target",
+            throw Errors.notApplied(
+                    ErrorCode.STALE_TARGET,
                     "Parent address/name no longer matches observed context: the device at index "
                             + p.get("deviceIndex").getAsInt() + " is named \"" + source.name
                             + "\", not expectedDeviceName.");
@@ -520,7 +522,7 @@ final class DeviceSources {
     RootReadTicket rootRead(JsonObject parent) {
         Source source = root(parent);
         if (source.position >= source.track.count)
-            throw failure("target_not_found", "Parent is outside the observed device count.");
+            throw Errors.notApplied(ErrorCode.TARGET_NOT_FOUND, "Parent is outside the observed device count.");
         RootReadTicket ticket =
                 new RootReadTicket(source, trackOffset, s.tracks.itemCount().get());
         guardRootRead(ticket);
@@ -550,7 +552,7 @@ final class DeviceSources {
                 || source.device.position().get() != ticket.index
                 || !ticket.name.equals(source.device.name().get())
                 || !ticket.type.equals(source.device.deviceType().get()))
-            throw failure("stale_context", "Observed root device changed before read delivery.");
+            throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Observed root device changed before read delivery.");
         ticket.check();
     }
 
@@ -580,7 +582,8 @@ final class DeviceSources {
 
         void check() {
             if (epoch.get() != generation)
-                throw failure("stale_context", "Observed root device changed while its read was queued or running.");
+                throw Errors.notApplied(
+                        ErrorCode.STALE_CONTEXT, "Observed root device changed while its read was queued or running.");
         }
 
         JsonObject parent() {
@@ -595,16 +598,19 @@ final class DeviceSources {
     Source child(JsonObject p) {
         Layer found = layer(p.getAsJsonObject("parent"), p.get("layerId").getAsString());
         int index = p.get("childDeviceIndex").getAsInt();
-        if (index >= CHILDREN) throw failure("outside_window", "Child is outside the fixed two-device window.");
+        if (index >= CHILDREN)
+            throw Errors.notApplied(ErrorCode.OUTSIDE_WINDOW, "Child is outside the fixed two-device window.");
         Source child = found.children[index];
         if (child.rebound)
-            throw failure(
-                    "not_ready",
+            throw Errors.notApplied(
+                    ErrorCode.NOT_READY,
                     "Nested proxy physically rebound; direct callback provenance is unavailable until extension reload.");
-        if (!child.present()) throw failure("not_ready", "Child metadata or ancestor/window context is not ready.");
+        if (!child.present())
+            throw Errors.notApplied(ErrorCode.NOT_READY, "Child metadata or ancestor/window context is not ready.");
         if (!child.name.equals(p.get("expectedChildDeviceName").getAsString())
                 || !child.discoveryToken.equals(p.get("discoveryToken").getAsString()))
-            throw failure("stale_context", "Rediscover the layer child after an observed context change.");
+            throw Errors.notApplied(
+                    ErrorCode.STALE_CONTEXT, "Rediscover the layer child after an observed context change.");
         return child;
     }
 
@@ -616,21 +622,27 @@ final class DeviceSources {
         for (Layer layer : root.branch.layers) {
             if (layer.slot >= root.branch.window.count) continue;
             if (layer.exists == null || (Boolean.TRUE.equals(layer.exists) && !canonicalUuid(layer.id)))
-                throw failure("not_ready", "Layer identity window is not fully observed.");
+                throw Errors.notApplied(ErrorCode.NOT_READY, "Layer identity window is not fully observed.");
             if (Boolean.TRUE.equals(layer.exists) && id.equals(layer.id)) {
-                if (found != null) throw failure("stale_context", "Layer UUID is ambiguous in the observed window.");
+                if (found != null)
+                    throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Layer UUID is ambiguous in the observed window.");
                 found = layer;
             }
         }
-        if (found == null) throw failure("stale_context", "Layer UUID is absent from the observed window.");
-        if (!found.ready()) throw failure("not_ready", "Layer and child window are not ready at offset zero.");
+        if (found == null)
+            throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Layer UUID is absent from the observed window.");
+        if (!found.ready())
+            throw Errors.notApplied(ErrorCode.NOT_READY, "Layer and child window are not ready at offset zero.");
         return found;
     }
 
     private void requireBranch(Branch branch) {
-        if (branch.hasLayers == null) throw failure("not_ready", "Parent layer support has not been observed.");
-        if (!branch.hasLayers) throw failure("unsupported_scope", "Parent does not expose device layers.");
-        if (!branch.ready()) throw failure("not_ready", "Layer window has not been observed at offset zero.");
+        if (branch.hasLayers == null)
+            throw Errors.notApplied(ErrorCode.NOT_READY, "Parent layer support has not been observed.");
+        if (!branch.hasLayers)
+            throw Errors.notApplied(ErrorCode.UNSUPPORTED_SCOPE, "Parent does not expose device layers.");
+        if (!branch.ready())
+            throw Errors.notApplied(ErrorCode.NOT_READY, "Layer window has not been observed at offset zero.");
     }
 
     JsonObject listLayers(JsonObject p) {
@@ -702,7 +714,7 @@ final class DeviceSources {
     static void validateParent(JsonObject p) {
         Params.fields(p, Set.of("trackId", "deviceIndex", "expectedDeviceName"), Set.of());
         if (!canonicalUuid(Params.string(p, "trackId")))
-            throw failure("invalid_params", "trackId must be a canonical UUID.");
+            throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "trackId must be a canonical UUID.");
         Params.integer(p, "deviceIndex", 0, DEVICES - 1);
         Params.string(p, "expectedDeviceName");
     }
@@ -729,11 +741,12 @@ final class DeviceSources {
                                         "expectedChildDeviceName",
                                         "discoveryToken"),
                 Set.of());
-        if (!p.get("parent").isJsonObject()) throw failure("invalid_params", "parent must be an object.");
+        if (!p.get("parent").isJsonObject())
+            throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "parent must be an object.");
         validateParent(p.getAsJsonObject("parent"));
         if (discovery) return;
         if (!canonicalUuid(Params.string(p, "layerId")))
-            throw failure("invalid_params", "layerId must be a canonical UUID.");
+            throw Errors.notApplied(ErrorCode.INVALID_PARAMS, "layerId must be a canonical UUID.");
         Params.integer(p, "childDeviceIndex", 0, CHILDREN - 1);
         Params.string(p, "expectedChildDeviceName");
         Params.string(p, "discoveryToken");

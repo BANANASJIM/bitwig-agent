@@ -86,7 +86,7 @@ final class DisplaySolver {
         port.guard();
         JsonElement now = port.value();
         if (now.isJsonNull() || port.display().isJsonNull())
-            throw HostServices.failure("not_ready", "Parameter value or display is not observed yet.");
+            throw Errors.notApplied(ErrorCode.NOT_READY, "Parameter value or display is not observed yet.");
         result.original = now.getAsDouble();
         JsonElement enabled = port.enabled();
         result.originalEnabled = enabled.isJsonNull() ? null : enabled.getAsBoolean();

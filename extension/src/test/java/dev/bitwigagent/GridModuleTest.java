@@ -217,12 +217,12 @@ public final class GridModuleTest {
         JsonObject value = new JsonObject();
         value.add("unavailable", JsonNull.INSTANCE);
         check(
-                BoundedJson.serialize(value, 240000, "grid_bounds_exceeded", "oversize")
+                BoundedJson.serialize(value, 240000, ErrorCode.GRID_BOUNDS_EXCEEDED, "oversize")
                         .contains("null"),
                 "unsupported null fields survive immutable handoff");
         value.addProperty("large", "x".repeat(240000));
         try {
-            BoundedJson.serialize(value, 240000, "grid_bounds_exceeded", "oversize");
+            BoundedJson.serialize(value, 240000, ErrorCode.GRID_BOUNDS_EXCEEDED, "oversize");
             throw new AssertionError("oversized graph escaped bound");
         } catch (RpcException error) {
             check(
@@ -233,12 +233,12 @@ public final class GridModuleTest {
 
     private static void loadedSourceGateFailsClosed() throws Exception {
         GridAdapter wrongVersion = new Bitwig614GridAdapter(
-                new Bitwig614Runtime(new Object(), "6.1.3", () -> {}).access("grid_unavailable"));
+                new Bitwig614Runtime(new Object(), "6.1.3", () -> {}).access(ErrorCode.GRID_UNAVAILABLE));
         check(
                 !wrongVersion.capabilities().get("gatePassed").getAsBoolean(),
                 "unsupported version fails before any native binding");
         GridAdapter noSource = new Bitwig614GridAdapter(
-                new Bitwig614Runtime(new Object(), "6.1.4", () -> {}).access("grid_unavailable"));
+                new Bitwig614Runtime(new Object(), "6.1.4", () -> {}).access(ErrorCode.GRID_UNAVAILABLE));
         check(
                 !noSource.capabilities().get("gatePassed").getAsBoolean(),
                 "missing loaded CodeSource cannot fall back to arbitrary installed JAR");
@@ -297,7 +297,7 @@ public final class GridModuleTest {
                     "hash reads bytes not filename or version text");
             try {
                 Bitwig614Runtime.hash(file, () -> {
-                    throw HostServices.failure("cancelled", "cancel hashing");
+                    throw Errors.notApplied(ErrorCode.CANCELLED, "cancel hashing");
                 });
                 throw new AssertionError("hash ignored cancellation");
             } catch (RpcException error) {
@@ -510,7 +510,7 @@ public final class GridModuleTest {
     private static void everyPostDispatchBoundaryKeepsUnknownOutcome() {
         Fixture nativeFailure = new Fixture();
         nativeFailure.adapter.writer.afterMutation = () -> {
-            throw HostServices.failure("grid_unavailable", "native partial failure");
+            throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "native partial failure");
         };
         HostOperation op = nativeFailure.startWrite();
         nativeFailure.adapter.next();
@@ -1777,7 +1777,7 @@ public final class GridModuleTest {
                 Runnable check) {
             check.run();
             reads++;
-            if (fail) throw HostServices.failure("not_grid", "not a Grid device");
+            if (fail) throw Errors.notApplied(ErrorCode.NOT_GRID, "not a Grid device");
             return result(offset, limit, parameters);
         }
 

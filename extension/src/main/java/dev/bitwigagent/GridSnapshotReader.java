@@ -1,7 +1,5 @@
 package dev.bitwigagent;
 
-import static dev.bitwigagent.HostServices.failure;
-
 import com.google.gson.*;
 import java.util.*;
 import java.util.stream.Stream;
@@ -148,15 +146,19 @@ final class GridSnapshotReader {
         a.documentThread();
         check.run();
         Object value = a.read(Field.CATALOG, null);
-        if (!(value instanceof List<?>)) throw failure("grid_unavailable", "Native Grid catalog is not a list.");
+        if (!(value instanceof List<?>))
+            throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Native Grid catalog is not a list.");
         List<?> catalog = (List<?>) value;
         if (catalog.size() > MAX_CATALOG)
-            throw failure("grid_bounds_exceeded", "Native catalog exceeds 16384 entries; no partial catalog returned.");
+            throw Errors.notApplied(
+                    ErrorCode.GRID_BOUNDS_EXCEEDED,
+                    "Native catalog exceeds 16384 entries; no partial catalog returned.");
         List<CatalogEntry> matches = new ArrayList<>();
         List<CatalogEntry> everything = new ArrayList<>();
         for (Object entry : catalog) {
             check.run();
-            if (!a.is(Kind.ENTRY, entry)) throw failure("grid_unavailable", "Unknown native catalog entry type.");
+            if (!a.is(Kind.ENTRY, entry))
+                throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Unknown native catalog entry type.");
             if (!"MODULE".equals(String.valueOf(a.read(Field.ENTRY_KIND, entry)))) continue;
             String name = text(a.read(Field.ENTRY_NAME, entry));
             CatalogEntry row = new CatalogEntry(uuid(a.read(Field.ENTRY_ID, entry)), name);
@@ -241,11 +243,12 @@ final class GridSnapshotReader {
             }
             a.requireModelThread(module);
             if (a.read(Field.MODULE_GRAPH, module) != graph)
-                throw failure("stale_context", "Grid module belongs to a different graph.");
+                throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Grid module belongs to a different graph.");
             String id = uuid(a.read(Field.INSTANCE_ID, module));
             if (!seenIds.add(id))
-                throw failure(
-                        "grid_unavailable", "Duplicate native module UUID; cannot identify cable endpoints safely.");
+                throw Errors.notApplied(
+                        ErrorCode.GRID_UNAVAILABLE,
+                        "Duplicate native module UUID; cannot identify cable endpoints safely.");
             ids.put(module, id);
         }
         JsonArray modules = new JsonArray(), connections = new JsonArray();
@@ -380,7 +383,8 @@ final class GridSnapshotReader {
             boolean fullSteps,
             Runnable check) {
         if (contexts == null)
-            throw failure("grid_unavailable", "Required parameter inspection bindings are unavailable.");
+            throw Errors.notApplied(
+                    ErrorCode.GRID_UNAVAILABLE, "Required parameter inspection bindings are unavailable.");
         ParameterBinding binding = bindParameter(proxy, expectedTrackId, moduleId, parameterId, fullSteps, check);
         GridParameterContext.Capture context =
                 contexts.capture(binding.device, binding.graph, binding.module, binding.parameter, binding.kind, check);
@@ -427,14 +431,15 @@ final class GridSnapshotReader {
         a.documentThread();
         check.run();
         if (!a.parametersAvailable())
-            throw failure("grid_unavailable", "Required typed parameter bindings are unavailable.");
+            throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Required typed parameter bindings are unavailable.");
         NativeTarget target = target(proxy, expectedTrackId);
         State state = new State(check);
         state.full = fullSteps;
         Object module = findModule(target.graph, moduleId, state);
         Object child = findParameter(module, parameterId, state);
         Kind kind = parameterKind(child);
-        if (kind == null) throw failure("grid_unavailable", "Requested parameter family is unsupported.");
+        if (kind == null)
+            throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Requested parameter family is unsupported.");
         return new ParameterBinding(proxy, expectedTrackId, moduleId, parameterId, target, module, child, kind, state);
     }
 
@@ -444,7 +449,8 @@ final class GridSnapshotReader {
         if (findModule(binding.graph, binding.moduleId, binding.state) != binding.module
                 || findParameter(binding.module, binding.parameterId, binding.state) != binding.parameter
                 || parameterKind(binding.parameter) != binding.kind)
-            throw failure("stale_context", "Selected native module or parameter changed during the operation.");
+            throw Errors.notApplied(
+                    ErrorCode.STALE_CONTEXT, "Selected native module or parameter changed during the operation.");
         a.requireModelThread(binding.parameter);
         binding.state.guard.run();
     }
@@ -470,12 +476,13 @@ final class GridSnapshotReader {
         guardParameter(panel);
         guardParameter(coupled);
         if (findBipolarParameter(panel) != coupled.parameter)
-            throw failure("stale_context", "Boolean panel's unique native bipolar reference changed.");
+            throw Errors.notApplied(
+                    ErrorCode.STALE_CONTEXT, "Boolean panel's unique native bipolar reference changed.");
     }
 
     private Object findBipolarParameter(ParameterBinding panel) {
         if (panel.kind != Kind.PANEL_BOOLEAN)
-            throw failure("grid_unavailable", "Bipolar dependency requires a mapped boolean panel.");
+            throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Bipolar dependency requires a mapped boolean panel.");
         Object found = null;
         for (Object child : collect(Field.CHILDREN, panel.module, MAX_CHILDREN, panel.state)) {
             panel.state.check();
@@ -483,16 +490,17 @@ final class GridSnapshotReader {
             a.requireModelThread(child);
             if (a.read(Field.BIPOLAR_PANEL, child) != panel.parameter) continue;
             if (a.read(Field.OWNER_MODULE, child) != panel.module || parameterKind(child) != Kind.FLOAT)
-                throw failure("stale_context", "Linked bipolar parameter belongs to another module or family.");
+                throw Errors.notApplied(
+                        ErrorCode.STALE_CONTEXT, "Linked bipolar parameter belongs to another module or family.");
             if (found != null)
-                throw failure(
-                        "grid_unavailable",
+                throw Errors.notApplied(
+                        ErrorCode.GRID_UNAVAILABLE,
                         "Boolean panel has multiple linked bipolar parameters; coupled editing is unsupported.");
             found = child;
         }
         if (found == null)
-            throw failure(
-                    "grid_unavailable",
+            throw Errors.notApplied(
+                    ErrorCode.GRID_UNAVAILABLE,
                     "Boolean panel requires one same-module exact mapped bipolar scalar reference for inspection or editing.");
         return found;
     }
@@ -509,9 +517,10 @@ final class GridSnapshotReader {
 
     JsonObject detachedParameter(Object child, Runnable check, Collection<String> unsupported) {
         if (detachedKind(child) == null)
-            throw failure("unsupported_scope", "Only float, integer, enum and boolean controls are supported here.");
+            throw Errors.notApplied(
+                    ErrorCode.UNSUPPORTED_SCOPE, "Only float, integer, enum and boolean controls are supported here.");
         if (a.read(Field.OWNER_MODULE, child) != null)
-            throw failure("stale_context", "Control belongs to a Grid module, not a modulator.");
+            throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Control belongs to a Grid module, not a modulator.");
         State state = new State(check);
         JsonObject result = parameter(child, null, false, state);
         unsupported.addAll(state.unsupported);
@@ -586,14 +595,15 @@ final class GridSnapshotReader {
             if (!a.is(Kind.MODULE, module)) continue;
             a.requireModelThread(module);
             if (!id.toString().equals(uuid(a.read(Field.INSTANCE_ID, module)))) continue;
-            if (found != null) throw failure("stale_context", "Requested module UUID is ambiguous.");
+            if (found != null) throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Requested module UUID is ambiguous.");
             if (a.read(Field.MODULE_GRAPH, module) != graph)
-                throw failure("stale_context", "Requested module moved outside the target graph.");
+                throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Requested module moved outside the target graph.");
             found = module;
         }
         if (found == null)
-            throw failure(
-                    "stale_context", "Requested module UUID is no longer in the target graph; reacquire grid.get.");
+            throw Errors.notApplied(
+                    ErrorCode.STALE_CONTEXT,
+                    "Requested module UUID is no longer in the target graph; reacquire grid.get.");
         return found;
     }
 
@@ -607,13 +617,15 @@ final class GridSnapshotReader {
                     && !a.is(Kind.STEP_ARRAY, child)) continue;
             a.requireModelThread(child);
             if (!id.equals(text(a.read(Field.PARAMETER_ID, child)))) continue;
-            if (found != null) throw failure("stale_context", "Requested parameter ID is ambiguous.");
+            if (found != null) throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Requested parameter ID is ambiguous.");
             if (a.read(Field.OWNER_MODULE, child) != module)
-                throw failure("stale_context", "Requested parameter moved outside the selected module.");
+                throw Errors.notApplied(
+                        ErrorCode.STALE_CONTEXT, "Requested parameter moved outside the selected module.");
             found = child;
         }
         if (found == null)
-            throw failure("stale_context", "Requested exact parameter ID is no longer in the selected module.");
+            throw Errors.notApplied(
+                    ErrorCode.STALE_CONTEXT, "Requested exact parameter ID is no longer in the selected module.");
         return found;
     }
 
@@ -628,13 +640,16 @@ final class GridSnapshotReader {
         for (Object module : modules) {
             state.check();
             if (!a.is(Kind.MODULE, module))
-                throw failure("grid_unavailable", "Topology editing requires every graph child to be a mapped module.");
+                throw Errors.notApplied(
+                        ErrorCode.GRID_UNAVAILABLE,
+                        "Topology editing requires every graph child to be a mapped module.");
             a.requireModelThread(module);
             if (a.read(Field.MODULE_GRAPH, module) != graph)
-                throw failure("stale_context", "Native module belongs to a different graph.");
+                throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Native module belongs to a different graph.");
             Object id = a.read(Field.INSTANCE_ID, module);
             if (!(id instanceof UUID) || !ids.add((UUID) id))
-                throw failure("grid_unavailable", "Topology editing requires unique native module UUIDs.");
+                throw Errors.notApplied(
+                        ErrorCode.GRID_UNAVAILABLE, "Topology editing requires unique native module UUIDs.");
         }
         return modules;
     }
@@ -642,7 +657,8 @@ final class GridSnapshotReader {
     /** Current instance UUID of the one module whose native effective name is exactly name. */
     UUID moduleIdNamed(NativeTarget target, String name, Runnable check) {
         if (!a.metadataAvailable(Metadata.MODULE_NAMES))
-            throw failure("grid_unavailable", "Native module name readers are required to select a module by name.");
+            throw Errors.notApplied(
+                    ErrorCode.GRID_UNAVAILABLE, "Native module name readers are required to select a module by name.");
         State state = new State(check);
         UUID found = null;
         for (Object module : collect(Field.MODULES, target.graph, MAX_MODULES, state)) {
@@ -651,12 +667,16 @@ final class GridSnapshotReader {
             a.requireModelThread(module);
             if (!name.equals(a.read(Field.MODULE_NAME, module))) continue;
             Object id = a.read(Field.INSTANCE_ID, module);
-            if (!(id instanceof UUID)) throw failure("grid_unavailable", "Native module UUID is unavailable.");
+            if (!(id instanceof UUID))
+                throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Native module UUID is unavailable.");
             if (found != null)
-                throw failure("stale_context", "Several modules are named \"" + name + "\"; use moduleId.");
+                throw Errors.notApplied(
+                        ErrorCode.STALE_CONTEXT, "Several modules are named \"" + name + "\"; use moduleId.");
             found = (UUID) id;
         }
-        if (found == null) throw failure("stale_context", "No module is named \"" + name + "\"; check grid.get names.");
+        if (found == null)
+            throw Errors.notApplied(
+                    ErrorCode.STALE_CONTEXT, "No module is named \"" + name + "\"; check grid.get names.");
         return found;
     }
 
@@ -684,22 +704,24 @@ final class GridSnapshotReader {
         try {
             capture = targets.capture(proxy, expectedTrackId, () -> {});
         } catch (RpcException error) {
-            if ("unsupported_scope".equals(error.code))
-                throw failure("not_grid", "Explicit native device has no mapped Grid graph accessor.");
+            if (error.is(ErrorCode.UNSUPPORTED_SCOPE))
+                throw Errors.notApplied(
+                        ErrorCode.NOT_GRID, "Explicit native device has no mapped Grid graph accessor.");
             throw error;
         }
         Object graph = a.read(Field.GRAPH, capture.device);
-        if (graph == null) throw failure("not_grid", "Explicit device does not contain a Grid graph.");
+        if (graph == null)
+            throw Errors.notApplied(ErrorCode.NOT_GRID, "Explicit device does not contain a Grid graph.");
         a.requireModelThread(graph);
         return new NativeTarget(capture, graph);
     }
 
     void guardTarget(NativeTarget binding, Object proxy, UUID expectedTrackId) {
         if (!binding.ownership.trackId.equals(expectedTrackId))
-            throw failure("stale_context", "Expected native owning track changed during the read.");
+            throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Expected native owning track changed during the read.");
         targets.guard(binding.ownership, proxy, () -> {});
         if (a.read(Field.GRAPH, binding.target) != binding.graph)
-            throw failure("stale_context", "Explicit native graph changed during the read.");
+            throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Explicit native graph changed during the read.");
         a.requireModelThread(binding.graph);
     }
 
@@ -738,10 +760,11 @@ final class GridSnapshotReader {
             }
             a.requireModelThread(port);
             if (a.read(Field.OWNER_MODULE, port) != module)
-                throw failure("stale_context", "Port owner differs from its enumerated module.");
+                throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Port owner differs from its enumerated module.");
             String key = text(a.read(input ? Field.INPUT_KEY : Field.OUTPUT_KEY, port));
             if (!keys.add(key))
-                throw failure("grid_unavailable", "Duplicate native port key; endpoint identity is ambiguous.");
+                throw Errors.notApplied(
+                        ErrorCode.GRID_UNAVAILABLE, "Duplicate native port key; endpoint identity is ambiguous.");
             enumeratedPorts.add(port);
             JsonObject item = new JsonObject();
             item.addProperty("key", key);
@@ -803,7 +826,7 @@ final class GridSnapshotReader {
         }
         a.requireModelThread(child);
         if (a.read(Field.OWNER_MODULE, child) != module)
-            throw failure("stale_context", "Parameter belongs to a different module.");
+            throw Errors.notApplied(ErrorCode.STALE_CONTEXT, "Parameter belongs to a different module.");
         if (kind == Kind.STEP_ARRAY) return stepArray(child, module, diagnostics, state);
         boolean panel = kind == Kind.PANEL_BOOLEAN || kind == Kind.PANEL_STRING;
         String panelFamily = kind == Kind.PANEL_STRING ? "string_panel" : "boolean_panel";
@@ -855,7 +878,8 @@ final class GridSnapshotReader {
             case PANEL_BOOLEAN:
             case BOOLEAN: {
                 Object value = a.read(Field.BOOLEAN_VALUE, child);
-                if (!(value instanceof Boolean)) throw failure("grid_unavailable", "Invalid boolean parameter value.");
+                if (!(value instanceof Boolean))
+                    throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Invalid boolean parameter value.");
                 result.addProperty("value", (Boolean) value);
                 break;
             }
@@ -891,17 +915,21 @@ final class GridSnapshotReader {
                 result.addProperty("value", value);
                 Object definition = a.read(Field.ENUM_DEFINITION, child);
                 Object options = a.read(Field.OPTIONS, definition);
-                if (!(options instanceof List<?>)) throw failure("grid_unavailable", "Invalid native enum choices.");
+                if (!(options instanceof List<?>))
+                    throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Invalid native enum choices.");
                 List<?> list = (List<?>) options;
-                if (list.size() > MAX_OPTIONS) throw failure("grid_bounds_exceeded", "Enum exceeds 256 choices.");
+                if (list.size() > MAX_OPTIONS)
+                    throw Errors.notApplied(ErrorCode.GRID_BOUNDS_EXCEEDED, "Enum exceeds 256 choices.");
                 JsonArray choices = new JsonArray();
                 boolean found = false;
                 Set<Integer> seen = new HashSet<>();
                 for (Object option : list) {
                     state.check();
-                    if (!a.is(Kind.OPTION, option)) throw failure("grid_unavailable", "Unknown enum option model.");
+                    if (!a.is(Kind.OPTION, option))
+                        throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Unknown enum option model.");
                     int number = integer(a.read(Field.OPTION_VALUE, option));
-                    if (!seen.add(number)) throw failure("grid_unavailable", "Duplicate native enum choice values.");
+                    if (!seen.add(number))
+                        throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Duplicate native enum choice values.");
                     found |= number == value;
                     JsonObject choice = new JsonObject();
                     choice.addProperty("value", number);
@@ -941,9 +969,10 @@ final class GridSnapshotReader {
 
     /** The native array as the model sees it: padded with zeros or truncated to its declared length. */
     static float[] effectiveSteps(Object raw, int length) {
-        if (!(raw instanceof float[])) throw failure("grid_unavailable", "Native step array is not a float array.");
+        if (!(raw instanceof float[]))
+            throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Native step array is not a float array.");
         if (length < 0 || length > 65536)
-            throw failure("grid_unavailable", "Native step array length is out of range.");
+            throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Native step array length is out of range.");
         return java.util.Arrays.copyOf((float[]) raw, length);
     }
 
@@ -963,7 +992,8 @@ final class GridSnapshotReader {
         int exposed = exposedSteps(length, count, state.full);
         JsonArray values = new JsonArray();
         for (int i = 0; i < exposed; i++) {
-            if (!Float.isFinite(steps[i])) throw failure("grid_unavailable", "Native step value is nonfinite.");
+            if (!Float.isFinite(steps[i]))
+                throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Native step value is nonfinite.");
             values.add(new JsonPrimitive(new java.math.BigDecimal(Float.toString(steps[i]))));
         }
         if (state.full && length > STEP_FULL) state.unsupported("step_array_longer_than_full_window");
@@ -1004,7 +1034,7 @@ final class GridSnapshotReader {
             return value;
         } catch (RpcException error) {
             // Optional descriptive reads never suppress identity, ownership, cancellation or size failures.
-            if (!"grid_unavailable".equals(error.code)) throw error;
+            if (!error.is(ErrorCode.GRID_UNAVAILABLE)) throw error;
             state.unsupported(reason + "_read_failed");
             return null;
         }
@@ -1032,15 +1062,15 @@ final class GridSnapshotReader {
     List<Object> collect(Field field, Object owner, int maximum, State state) {
         Object value = a.read(field, owner);
         if (!(value instanceof Stream<?>))
-            throw failure("grid_unavailable", "Native " + field + " reader did not return a stream.");
+            throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Native " + field + " reader did not return a stream.");
         List<Object> result = new ArrayList<>();
         try (Stream<?> stream = (Stream<?>) value) {
             Iterator<?> iterator = stream.iterator();
             while (iterator.hasNext()) {
                 state.check();
                 if (result.size() == maximum)
-                    throw failure(
-                            "grid_bounds_exceeded",
+                    throw Errors.notApplied(
+                            ErrorCode.GRID_BOUNDS_EXCEEDED,
                             field + " exceeds traversal limit " + maximum + "; no fake partial graph returned.");
                 result.add(iterator.next());
             }
@@ -1055,32 +1085,34 @@ final class GridSnapshotReader {
     }
 
     private static String uuid(Object value) {
-        if (!(value instanceof UUID)) throw failure("grid_unavailable", "Native UUID identity is unavailable.");
+        if (!(value instanceof UUID))
+            throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Native UUID identity is unavailable.");
         return value.toString();
     }
 
     static String text(Object value) {
-        if (!(value instanceof String)) throw failure("grid_unavailable", "Native text field is unavailable.");
+        if (!(value instanceof String))
+            throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Native text field is unavailable.");
         String text = (String) value;
         if (text.length() > MAX_TEXT)
-            throw failure("grid_bounds_exceeded", "Native text field exceeds 1024 characters.");
+            throw Errors.notApplied(ErrorCode.GRID_BOUNDS_EXCEEDED, "Native text field exceeds 1024 characters.");
         return text;
     }
 
     private static int integer(Object value) {
         if (!(value instanceof Integer))
-            throw failure("grid_unavailable", "Native integer field has an unexpected type.");
+            throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Native integer field has an unexpected type.");
         return (Integer) value;
     }
 
     private static double finite(Object value) {
         if (!(value instanceof Double) || !Double.isFinite((Double) value))
-            throw failure("grid_unavailable", "Native floating value is nonfinite or unsupported.");
+            throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Native floating value is nonfinite or unsupported.");
         return (Double) value;
     }
 
     private static void range(double min, double max) {
-        if (min > max) throw failure("grid_unavailable", "Native parameter range is inverted.");
+        if (min > max) throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Native parameter range is inverted.");
     }
 
     private static final class CatalogEntry {
@@ -1105,7 +1137,9 @@ final class GridSnapshotReader {
         void check() {
             guard.run();
             if (++work > MAX_ITEMS)
-                throw failure("grid_bounds_exceeded", "Grid read exceeds total traversal budget; reduce moduleLimit.");
+                throw Errors.notApplied(
+                        ErrorCode.GRID_BOUNDS_EXCEEDED,
+                        "Grid read exceeds total traversal budget; reduce moduleLimit.");
         }
 
         void unsupported(String reason) {

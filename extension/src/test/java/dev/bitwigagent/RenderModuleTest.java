@@ -477,7 +477,7 @@ public final class RenderModuleTest {
                         Runnable check,
                         Runnable before) {
                     check.run();
-                    if (refusal != null) throw HostServices.failure(refusal, "simulated refusal");
+                    if (refusal != null) throw Errors.of(refusal, "simulated refusal", Outcome.NOT_APPLIED);
                     before.run();
                     dispatches++;
                     sources = s;
