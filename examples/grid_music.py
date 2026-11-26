@@ -44,13 +44,16 @@ def pad_phrase() -> list[dict]:
     ]
 
 
-def checked_graph(graph: dict, target: dict, observed_target: dict | None = None) -> dict[str, dict]:  # noqa: C901
+def same_device(left: dict, right: dict) -> bool:
+    """Whether two device refs name the same device: the track by its id, the device by index and name."""
+    return (left["track"]["id"], left["index"], left["name"]) == (right["track"]["id"], right["index"], right["name"])
+
+
+def checked_graph(graph: dict, target: dict, observed_target: dict | None = None) -> dict[str, dict]:
     """Require one fully covered owned module window, not a lossless export."""
     identity = graph["target"] if observed_target is None else observed_target
-    if any(identity.get(key) != value for key, value in target.items()):
+    if not same_device(identity, target["target"]):
         raise RuntimeError("Grid readback target differs from the owned device")
-    if identity.get("nativeOwningTrack") != "corroborated_before_and_after_capture":
-        raise RuntimeError("Grid native owning track was not corroborated")
     window = graph["window"]
     if window.get("complete") is not True or window.get("offset") != 0 or window.get("total") != len(graph["modules"]):
         raise RuntimeError("Grid module/port window is incomplete")
@@ -394,13 +397,8 @@ async def create(args: argparse.Namespace) -> int:  # noqa: C901, PLR0912, PLR09
             raise RuntimeError(
                 f"{method} did not establish its postcondition; inspect calls.jsonl before another write"
             )
-        if "expectedDeviceName" in params:
-            identity = result["target"]
-            # Reads also corroborate the native owning track; write results echo only the explicit identity.
-            if any(identity.get(key) != params[key] for key in ("trackId", "deviceIndex", "expectedDeviceName")) or (
-                method == "grid.get" and identity.get("nativeOwningTrack") != "corroborated_before_and_after_capture"
-            ):
-                raise RuntimeError(f"{method} did not corroborate the owned Grid target")
+        if "target" in params and not same_device(result["target"], params["target"]):
+            raise RuntimeError(f"{method} did not corroborate the owned Grid target")
         return result
 
     async def safety_guard() -> None:
@@ -475,9 +473,12 @@ async def create(args: argparse.Namespace) -> int:  # noqa: C901, PLR0912, PLR09
                 if device["name"] != "Poly Grid":
                     raise RuntimeError("Inserted device is not the observed factory Poly Grid")
                 target = {
-                    "trackId": track_id,
-                    "deviceIndex": device["deviceIndex"],
-                    "expectedDeviceName": device["name"],
+                    "target": {
+                        "kind": "device",
+                        "track": {"kind": "track", "id": track_id, "name": label},
+                        "index": device["deviceIndex"],
+                        "name": device["name"],
+                    }
                 }
                 report["createdTracks"][-1]["patch"] = await build_grid(call, target, types, label)
             scene = (await call("scenes.list", {}))["scenes"][0]["ref"]

@@ -207,7 +207,9 @@ class GridParameterRef(Ref):
     TAG = "parameter:gridModule"
     kind: Literal["parameter"]
     owner: GridModuleRef
-    id: Nonempty = Field(description="The parameter key in the module's grid.export spec.")
+    id: Nonempty = Field(
+        description="The parameter key: a key of the module's params in the grid.export spec (includeParams 'all' lists every one), or of grid.describe."
+    )
     name: Name = omitted()
 
 

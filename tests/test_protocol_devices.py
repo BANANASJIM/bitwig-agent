@@ -201,12 +201,6 @@ def test_layer_set_accepts_window_and_normalized_endpoints(value, index):
         "devices.remote.set",
         "parameters.list",
         "parameters.set",
-        "grid.get",
-        "grid.parameters.get",
-        "grid.parameters.set",
-        "grid.modules.insert",
-        "grid.modules.move",
-        "grid.modules.delete",
         "grid.connections.set",
     ],
 )
@@ -246,55 +240,6 @@ def test_layer_set_rejects_invalid_write_identity(field, value):
 def test_layer_discovery_accepts_only_parent_and_top_level_timeout(field, value):
     with pytest.raises(ValidationError):
         validate_call("devices.layers.list", {"parent": LAYER_PARENT, field: value})
-
-
-def test_remote_page_define_and_delete():
-    assert not TOOLS["devices.remote.define"].read_only
-    assert not TOOLS["devices.remote.deletePage"].read_only
-    slot = {"moduleId": TRACK, "parameterId": "VALUE"}
-    args = {
-        **TARGET,
-        "pageName": "Macros",
-        "mode": "replace",
-        "slots": [slot, None, {"moduleName": "Mx: grit", "parameterId": "", "label": ""}],
-    }
-    params, _ = validate_call("devices.remote.define", args)
-    assert params == args
-    assert validate_call("devices.remote.define", {**TARGET, "pageName": "P" * 256, "slots": [None] * 7 + [slot]})
-    assert validate_call("devices.remote.deletePage", {**TARGET, "pageName": "Macros"})
-
-
-@pytest.mark.parametrize(
-    "changes",
-    [
-        {"pageName": ""},
-        {"pageName": "P" * 257},
-        {"pageName": "\U0001f600" * 129},
-        {"slots": []},
-        {"slots": [None] * 9},
-        {"mode": "upsert"},
-        {"mode": None},
-        {"slots": [{"parameterId": "VALUE"}]},
-        {"slots": [{"moduleId": TRACK, "moduleName": "M", "parameterId": "VALUE"}]},
-        {"slots": [{"moduleId": "not-a-uuid", "parameterId": "VALUE"}]},
-        {"slots": [{"moduleName": "", "parameterId": "VALUE"}]},
-        {"slots": [{"moduleName": "M"}]},
-        {"slots": [{"moduleName": "M", "parameterId": "V", "label": "l" * 257}]},
-        {"slots": [{"moduleName": "M", "parameterId": "V", "label": None}]},
-        {"slots": [{"moduleName": "M", "parameterId": "V", "extra": 1}]},
-        {"slots": [{"moduleId": TRACK, "parameterId": "V"}, {"moduleId": TRACK.upper(), "parameterId": "V"}]},
-        {"slots": [1]},
-    ],
-)
-def test_remote_page_define_rejects_bad_requests(changes):
-    args = {**TARGET, "pageName": "Macros", "slots": [{"moduleName": "M", "parameterId": "VALUE"}], **changes}
-    with pytest.raises(ValidationError):
-        validate_call("devices.remote.define", args)
-
-
-def test_remote_page_delete_rejects_extra_fields():
-    with pytest.raises(ValidationError):
-        validate_call("devices.remote.deletePage", {**TARGET, "pageName": "Macros", "mode": "replace"})
 
 
 @pytest.mark.parametrize(

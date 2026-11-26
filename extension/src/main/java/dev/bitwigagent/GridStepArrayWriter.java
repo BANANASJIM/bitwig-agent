@@ -90,16 +90,17 @@ final class GridStepArrayWriter {
         if (!"steps".equals(request.kind) || !"steps".equals(current.get("kind").getAsString()))
             throw Errors.notApplied(
                     Reason.STALE_CONTEXT,
-                    "Parameter kind differs from the expected precondition; reacquire grid.parameters.get.");
+                    "Parameter kind differs from the expected precondition; reacquire grid.export.");
         JsonArray expected = request.expectedValues;
         if (expected.size() > live.length)
             throw Errors.notApplied(
                     Reason.STALE_CONTEXT,
-                    "expectedValues is longer than the native array (" + live.length + "); reacquire grid.get.");
+                    "expectedValues is longer than the native array (" + live.length + "); reacquire grid.export.");
         for (int i = 0; i < expected.size(); i++)
             if ((float) expected.get(i).getAsDouble() != live[i])
                 throw Errors.notApplied(
-                        Reason.STALE_CONTEXT, "Step values differ from the expected precondition; reacquire grid.get.");
+                        Reason.STALE_CONTEXT,
+                        "Step values differ from the expected precondition; reacquire grid.export.");
     }
 
     /** Element-wise float equality (so -0.0 equals 0.0), same length. */

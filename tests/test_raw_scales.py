@@ -3,7 +3,7 @@
 import math
 
 import pytest
-from fakes import TARGET, FakeGrid, apply_grid, assert_display_rejected
+from fakes import DEVICE, FakeGrid, apply_grid, assert_display_rejected
 
 from bitwig_agent.errors import BridgeError
 from bitwig_agent.grid import bundled, raw_scales
@@ -86,7 +86,7 @@ def test_unverified_and_recorded_scales_do_not_overlap_and_alternatives_do_not_f
 def test_display_writes_convert_to_raw_and_are_idempotent(module, pid, text, raw):
     host = FakeGrid()
     spec = {
-        "target": TARGET,
+        "target": DEVICE,
         "modules": [{"name": "X", "type": module, "x": 0, "y": 0, "params": {pid: {"display": text}}}],
     }
     result = apply_grid(host, spec)
@@ -119,7 +119,7 @@ def test_lfo_rate_follows_timebase():
         params = {"RATE": {"display": text}}
         if timebase is not None:
             params["TIMEBASE"] = timebase
-        return {"target": TARGET, "modules": [{"name": "L", "type": "LFO", "x": 0, "y": 0, "params": params}]}
+        return {"target": DEVICE, "modules": [{"name": "L", "type": "LFO", "x": 0, "y": 0, "params": params}]}
 
     host = FakeGrid()
     apply_grid(host, spec({"label": "Hertz"}, "2 Hz"))
@@ -137,7 +137,7 @@ def test_midi_pitch_cutoff_keeps_the_host_display_path():
     apply_grid(
         host,
         {
-            "target": TARGET,
+            "target": DEVICE,
             "modules": [{"name": "F", "type": "SVF", "x": 0, "y": 0, "params": {"CUTOFF": {"display": "800 Hz"}}}],
         },
     )

@@ -114,10 +114,12 @@ class ModulatorParameterSetArgs(StatusArgs):
 
 
 class GridControlTarget(StrictModel):
-    moduleId: Uuid = Field(description="Grid module instanceId from grid.get on this same device.")
+    moduleId: Uuid = Field(
+        description="Grid module instanceId: the id of its grid.export refs entry on this same device."
+    )
     parameterId: str = Field(
         max_length=MAX_STRING_UNITS,
-        description="Exact parameterId of that module's control (e.g. DECAY), from grid.get.",
+        description="Exact parameterId of that module's control, e.g. DECAY (grid.export with includeParams 'all', or grid.describe).",
     )
 
 
@@ -193,7 +195,7 @@ MODULATORS_GET_DESCRIPTION = "Read every device modulator on one explicit root d
 MODULATORS_INSERT_DESCRIPTION = "Add one device modulator (typeName from modulators.catalog, e.g. Random, Steps, Beat LFO, ADSR) below the existing ones, via Bitwig's own modulator-browser insertion. expectedCount = current count from modulators.get. Returns the new row (modulatorId, outputs, parameters) after verifying membership and type. Needs a stopped, nonrecording, nonautomation transport. Never retry an unknown outcome: inspect modulators.get."
 MODULATORS_DELETE_DESCRIPTION = "Delete one device modulator (and its mappings) with Bitwig's native undoable delete. expectedCount = current count. Membership is verified afterwards. Stopped transport required; never retry an unknown outcome."
 MODULATORS_PARAMETERS_SET_DESCRIPTION = "Set one modulator control in the native RAW domain with compare-and-set: expectedKind/expectedValue from a fresh modulators.get parameters row, then value within minimum..maximum (enum: a listed option value) or display text with a unit for floats. Exact readback; stale rejects not_applied, a lost write is unknown. Needs recording and automation write off; a playing transport is fine."
-MODULATORS_MAP_DESCRIPTION = "Route a modulator output to a control on the same device, e.g. a Random modulator to an AD module's DECAY: target {moduleId, parameterId} (grid.get) or {modulatorId, parameterId} (another modulator). expectedAmount null creates the mapping (transfer default linear, enabled default true); a number changes an existing mapping's amount only. amount -1..1, not clamped. outputId may be omitted for single-output modulators. Uses Bitwig's undoable modulation add; verified by exact mapping readback. Use it for Grid parameters without input ports (envelope times, step counts, drive, pulse width). Stopped transport required; never retry an unknown outcome."
+MODULATORS_MAP_DESCRIPTION = "Route a modulator output to a control on the same device, e.g. a Random modulator to an AD module's DECAY: target {moduleId, parameterId} (grid.export) or {modulatorId, parameterId} (another modulator). expectedAmount null creates the mapping (transfer default linear, enabled default true); a number changes an existing mapping's amount only. amount -1..1, not clamped. outputId may be omitted for single-output modulators. Uses Bitwig's undoable modulation add; verified by exact mapping readback. Use it for Grid parameters without input ports (envelope times, step counts, drive, pulse width). Stopped transport required; never retry an unknown outcome."
 MODULATORS_UNMAP_DESCRIPTION = "Remove one modulation mapping (Bitwig's undoable Clear modulation). expectedAmount = its exact current amount from modulators.get. Verified by readback. Stopped transport required."
 
 

@@ -120,7 +120,7 @@ class _Rewire:
             return {
                 "restored": False,
                 "error": exc.error if isinstance(exc, BridgeError) else exc.result,
-                "left": "unknown: reading or writing the graph failed; inspect with grid.graph",
+                "left": "unknown: reading or writing the graph failed; inspect with grid.export",
                 "originally": [_label(k, v, names) for k, v in original.items()],
             }
 

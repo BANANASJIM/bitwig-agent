@@ -11,6 +11,7 @@ import static dev.bitwigagent.RpcAssert.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 import com.google.gson.*;
+import dev.bitwigagent.core.Refs;
 import java.util.*;
 import java.util.function.Supplier;
 import org.junit.jupiter.api.Test;
@@ -18,6 +19,7 @@ import org.junit.jupiter.api.Test;
 /** Remote Controls page define/delete semantics on fake models; not evidence of native behavior. */
 public final class GridRemotePageWriterTest {
     private static final UUID TRACK_ID = new UUID(3, 1), FIRST = new UUID(1, 1), SECOND = new UUID(1, 2);
+    private static final Map<String, UUID> MODULES = Map.of("Mx: darkness", FIRST, "Mx: grit", SECOND);
 
     // ---- fake native page model ------------------------------------------------------------------------------
 
@@ -78,16 +80,45 @@ public final class GridRemotePageWriterTest {
             writer = new GridRemotePageWriter(model.reader, context.reader, this);
         }
 
-        JsonObject define(String json) {
-            return writer.define(
-                    model.source,
-                    GridRemotePageWriter.Request.parse(HostFixture.json(json)),
-                    () -> {},
-                    () -> op.markDispatched());
+        /** Requests are written as pageName and {moduleId|moduleName, parameterId} slots; this makes them parameter refs. */
+        GridRemotePageWriter.Request request(String json) {
+            JsonObject given = HostFixture.json(json), out = new JsonObject();
+            out.addProperty("name", given.get("pageName").getAsString());
+            JsonArray slots = new JsonArray();
+            for (JsonElement element : given.getAsJsonArray("slots")) {
+                if (element.isJsonNull()) {
+                    slots.add(element);
+                    continue;
+                }
+                JsonObject slot = element.getAsJsonObject();
+                String id = slot.has("moduleId")
+                        ? slot.get("moduleId").getAsString()
+                        : MODULES.getOrDefault(slot.get("moduleName").getAsString(), new UUID(9, 9))
+                                .toString();
+                JsonObject entry = new JsonObject();
+                entry.add(
+                        "parameter",
+                        Refs.parameter(
+                                Refs.gridModule(model.source.ref(), id, "module"),
+                                slot.get("parameterId").getAsString(),
+                                null));
+                if (slot.has("label")) entry.add("label", slot.get("label"));
+                slots.add(entry);
+            }
+            out.add("slots", slots);
+            return GridRemotePageWriter.Request.parse(out);
         }
 
-        JsonObject delete(String name) {
-            return writer.deletePage(model.source, name, () -> {}, () -> op.markDispatched());
+        JsonObject define(String json) {
+            return writer.define(model.source, request(json), () -> {}, () -> op.markDispatched());
+        }
+
+        JsonObject delete(String name, int index) {
+            return writer.deletePage(
+                    model.source,
+                    Refs.remotePage(model.source.ref(), index, name),
+                    () -> {},
+                    () -> op.markDispatched());
         }
 
         RpcException defineFailure(String json) {
@@ -98,10 +129,7 @@ public final class GridRemotePageWriterTest {
         }
 
         RpcException deleteFailure(String name) {
-            {
-                RpcException error = assertThrows(RpcException.class, () -> delete(name));
-                return error;
-            }
+            return assertThrows(RpcException.class, () -> delete(name, 0));
         }
 
         Page userPage(String name) {
@@ -285,17 +313,19 @@ public final class GridRemotePageWriterTest {
                 slots.size() == 8
                         && slots.get(0)
                                 .getAsJsonObject()
-                                .get("moduleId")
+                                .getAsJsonObject("parameter")
+                                .getAsJsonObject("owner")
+                                .get("id")
                                 .getAsString()
                                 .equals(FIRST.toString())
-                        && slots.get(0)
-                                .getAsJsonObject()
-                                .get("moduleName")
-                                .getAsString()
-                                .equals("Mx: darkness")
-                        && !slots.get(1).getAsJsonObject().has("moduleName")
                         && slots.get(2).isJsonNull(),
-                "slots echo the resolved module identity; unnamed slots are null");
+                "slots echo the parameter refs they hold; unnamed slots are null");
+        JsonObject ref = result.getAsJsonObject("ref");
+        assertTrue(
+                ref.get("kind").getAsString().equals("remotePage")
+                        && ref.get("index").getAsInt() == 1
+                        && ref.get("name").getAsString().equals("Macros"),
+                "the result carries the ref of the page, at its visible index");
         JsonArray names = result.getAsJsonArray("pages");
         assertTrue(
                 names.size() == 3
@@ -315,18 +345,14 @@ public final class GridRemotePageWriterTest {
     void conflictsAreRefusedBeforeDispatch() {
         RemoteFixture f = new RemoteFixture();
         f.userPage("Macros");
-        RpcException error = f.defineFailure(TWO);
+        JsonObject upserted = f.define(TWO);
         assertTrue(
-                error.reason.wire().equals("target_exists")
-                        && !error.unknown
-                        && error.getMessage().contains("replace")
-                        && f.calls.isEmpty()
-                        && !f.op.dispatched(),
-                "create over an existing preset page is refused");
+                !upserted.get("created").getAsBoolean() && !f.calls.contains("create"),
+                "an existing preset page of that name is changed, not refused");
+        RpcException error;
         RemoteFixture preset = new RemoteFixture();
         preset.others.add(new Page("Macros", preset.otherPages, preset.host));
-        error = preset.defineFailure(
-                TWO.replace("\"pageName\":\"Macros\",", "\"pageName\":\"Macros\",\"mode\":\"replace\","));
+        error = preset.defineFailure(TWO);
         assertTrue(
                 error.reason.wire().equals("target_exists")
                         && error.getMessage().contains("device")
@@ -342,8 +368,7 @@ public final class GridRemotePageWriterTest {
         RemoteFixture twice = new RemoteFixture();
         twice.userPage("Macros");
         twice.userPage("Macros");
-        error = twice.defineFailure(
-                TWO.replace("\"pageName\":\"Macros\",", "\"pageName\":\"Macros\",\"mode\":\"replace\","));
+        error = twice.defineFailure(TWO);
         assertTrue(
                 error.reason.wire().equals("stale_context") && twice.calls.isEmpty(),
                 "several same-named preset pages are ambiguous");
@@ -356,9 +381,8 @@ public final class GridRemotePageWriterTest {
         page.slots.put(0, new Slot(f.darkness, "darkness"));
         page.slots.put(1, new Slot(f.darkness, "old"));
         page.slots.put(3, new Slot(f.grit, ""));
-        JsonObject result = f.define(
-                "{\"pageName\":\"Macros\",\"mode\":\"replace\",\"slots\":[{\"moduleId\":\"" + FIRST
-                        + "\",\"parameterId\":\"VALUE\",\"label\":\"darkness\"},{\"moduleName\":\"Mx: grit\",\"parameterId\":\"VALUE\"}]}");
+        JsonObject result = f.define("{\"pageName\":\"Macros\",\"slots\":[{\"moduleId\":\"" + FIRST
+                + "\",\"parameterId\":\"VALUE\"},{\"moduleName\":\"Mx: grit\",\"parameterId\":\"VALUE\"}]}");
         assertTrue(
                 f.calls.equals(List.of("map1", "clear3"))
                         && !result.get("created").getAsBoolean()
@@ -368,9 +392,8 @@ public final class GridRemotePageWriterTest {
                 "replace maps changed slots and clears slots the request leaves empty, keeping matching ones");
         f.calls.clear();
         f.op = new HostOperation(Long.MAX_VALUE);
-        result = f.define(
-                "{\"pageName\":\"Macros\",\"mode\":\"replace\",\"slots\":[{\"moduleId\":\"" + FIRST
-                        + "\",\"parameterId\":\"VALUE\",\"label\":\"darkness\"},{\"moduleName\":\"Mx: grit\",\"parameterId\":\"VALUE\"}]}");
+        result = f.define("{\"pageName\":\"Macros\",\"slots\":[{\"moduleId\":\"" + FIRST
+                + "\",\"parameterId\":\"VALUE\"},{\"moduleName\":\"Mx: grit\",\"parameterId\":\"VALUE\"}]}");
         assertTrue(
                 f.calls.isEmpty()
                         && !f.op.dispatched()
@@ -379,24 +402,40 @@ public final class GridRemotePageWriterTest {
                 "an identical replace is a verified no-op");
         page.slots.put(0, new Slot(f.darkness, "old"));
         f.calls.clear();
-        f.define(
-                "{\"pageName\":\"Macros\",\"mode\":\"replace\",\"slots\":[{\"moduleId\":\"" + FIRST
-                        + "\",\"parameterId\":\"VALUE\",\"label\":\"darkness\"},{\"moduleName\":\"Mx: grit\",\"parameterId\":\"VALUE\"}]}");
+        String labelled = "{\"pageName\":\"Macros\",\"slots\":[{\"moduleId\":\"" + FIRST
+                + "\",\"parameterId\":\"VALUE\",\"label\":\"darkness\"},{\"moduleName\":\"Mx: grit\",\"parameterId\":\"VALUE\"}]}";
+        f.define(labelled);
         assertTrue(
                 f.calls.equals(List.of("clear0", "map0"))
                         && page.slots.get(0).label.equals("darkness"),
                 "a label-only change clears and remaps the slot (the native map ignores an unchanged target)");
+        f.calls.clear();
+        JsonObject kept = f.define(labelled.replace(",\"label\":\"darkness\"", ""));
+        assertTrue(
+                kept.getAsJsonArray("slots")
+                        .get(0)
+                        .getAsJsonObject()
+                        .get("label")
+                        .getAsString()
+                        .equals("darkness"),
+                "the readback shows the label that stays");
+        assertTrue(
+                f.calls.isEmpty() && page.slots.get(0).label.equals("darkness"),
+                "a slot left without a label keeps the one it has");
+        page.slots.put(0, new Slot(f.grit, ""));
+        f.define(labelled.replace(",\"label\":\"darkness\"", ""));
+        assertTrue(
+                f.calls.equals(List.of("map0")) && page.slots.get(0).target == f.darkness,
+                "a slot that holds another parameter is mapped to the requested one");
         RemoteFixture upsert = new RemoteFixture();
-        result =
-                upsert.define(TWO.replace("\"pageName\":\"Macros\",", "\"pageName\":\"Macros\",\"mode\":\"replace\","));
+        result = upsert.define(TWO);
         assertTrue(
                 result.get("created").getAsBoolean() && upsert.calls.get(0).equals("create"),
                 "replace creates the page when none exists");
         RemoteFixture refused = new RemoteFixture();
         refused.userPage("Macros");
         refused.ineligible.add(refused.grit);
-        RpcException error = refused.defineFailure(
-                TWO.replace("\"pageName\":\"Macros\",", "\"pageName\":\"Macros\",\"mode\":\"replace\","));
+        RpcException error = refused.defineFailure(TWO);
         assertTrue(
                 error.reason.wire().equals("unsupported_scope") && !error.unknown && refused.calls.isEmpty(),
                 "an existing page's eligibility is checked before dispatch");
@@ -411,13 +450,7 @@ public final class GridRemotePageWriterTest {
                         .wire()
                         .equals("stale_context"),
                 "an unknown module name is stale");
-        f.model.second.put(MODULE_NAME, "Mx: darkness");
-        RpcException error = f.defineFailure(
-                "{\"pageName\":\"P\",\"slots\":[{\"moduleName\":\"Mx: darkness\",\"parameterId\":\"VALUE\"}]}");
-        assertTrue(
-                error.reason.wire().equals("stale_context")
-                        && error.getMessage().contains("moduleId"),
-                "an ambiguous module name asks for moduleId");
+        RpcException error;
         RemoteFixture g = new RemoteFixture();
         assertTrue(
                 g.defineFailure("{\"pageName\":\"P\",\"slots\":[{\"moduleId\":\"" + FIRST
@@ -445,15 +478,6 @@ public final class GridRemotePageWriterTest {
         assertTrue(
                 error.reason.wire().equals("invalid_params") && g.calls.isEmpty(),
                 "the same parameter in two slots is refused after resolution");
-        RemoteFixture names = new RemoteFixture();
-        names.model.unavailable.add(GridSnapshotReader.Metadata.MODULE_NAMES);
-        assertTrue(
-                names.defineFailure(
-                                "{\"pageName\":\"P\",\"slots\":[{\"moduleName\":\"Mx: grit\",\"parameterId\":\"VALUE\"}]}")
-                        .reason
-                        .wire()
-                        .equals("native_unavailable"),
-                "selecting by module name needs the native name readers");
     }
 
     @Test
@@ -525,7 +549,7 @@ public final class GridRemotePageWriterTest {
         assertTrue(
                 error.reason.wire().equals("unsupported_scope")
                         && error.unknown
-                        && error.getMessage().contains("deletePage")
+                        && error.getMessage().contains("devices.remote.delete")
                         && refused.calls.equals(List.of("create", "rename")),
                 "a new page refusing a slot stops before mapping and says how to clean up");
         RemoteFixture hidden = new RemoteFixture();
@@ -546,14 +570,11 @@ public final class GridRemotePageWriterTest {
         RemoteFixture replaced = new RemoteFixture();
         replaced.userPage("Macros");
         replaced.replacedDuringContextRead("Macros");
-        assertRpcError(
-                "stale_context",
-                () -> replaced.define(
-                        TWO.replace("\"pageName\":\"Macros\",", "\"pageName\":\"Macros\",\"mode\":\"replace\",")));
+        assertRpcError("stale_context", () -> replaced.define(TWO));
         RemoteFixture deleted = new RemoteFixture();
         deleted.userPage("Macros");
         deleted.replacedDuringContextRead("Macros");
-        assertRpcError("stale_context", () -> deleted.delete("Macros"));
+        assertRpcError("target_changed", () -> deleted.delete("Macros", 1));
         assertTrue(replaced.calls.isEmpty() && deleted.calls.isEmpty(), "a page changed before dispatch is untouched");
         RemoteFixture moved = new RemoteFixture();
         moved.userPage("Macros");
@@ -575,16 +596,15 @@ public final class GridRemotePageWriterTest {
         f.userPage("");
         f.userPage("");
         f.others.add(new Page("", f.otherPages, f.host));
-        RpcException error = f.defineFailure(TWO.replace("\"pageName\":\"Macros\"", "\"pageName\":\"Perform\""));
-        assertTrue(
-                error.reason.wire().equals("target_exists") && f.calls.isEmpty(),
-                "an unnamed first preset page shows as Perform");
+        f.define(TWO.replace("\"pageName\":\"Macros\"", "\"pageName\":\"Perform\""));
+        assertTrue(!f.calls.contains("create"), "an unnamed first preset page shows as Perform and is the one edited");
+        RpcException error;
         assertTrue(
                 f.defineFailure(TWO.replace("\"pageName\":\"Macros\"", "\"pageName\":\"Page 1\""))
                         .getMessage()
                         .contains("device"),
                 "an unnamed device page shows as Page <n>");
-        JsonObject result = f.delete("Page 2");
+        JsonObject result = f.delete("Page 2", 2);
         assertTrue(
                 f.pages.size() == 1
                         && result.getAsJsonArray("pages").get(1).getAsString().equals("Perform"),
@@ -596,7 +616,7 @@ public final class GridRemotePageWriterTest {
         RemoteFixture f = new RemoteFixture();
         f.userPage("Keep");
         Page doomed = f.userPage("Macros");
-        JsonObject result = f.delete("Macros");
+        JsonObject result = f.delete("Macros", 1);
         assertTrue(
                 f.calls.equals(List.of("delete"))
                         && !f.pages.contains(doomed)
@@ -608,8 +628,8 @@ public final class GridRemotePageWriterTest {
                 "a named preset page is deleted and verified absent");
         RemoteFixture missing = new RemoteFixture();
         assertTrue(
-                missing.deleteFailure("Macros").reason.wire().equals("stale_context") && missing.calls.isEmpty(),
-                "a missing page is stale");
+                missing.deleteFailure("Macros").reason.wire().equals("target_not_found") && missing.calls.isEmpty(),
+                "a missing page is not found");
         RemoteFixture preset = new RemoteFixture();
         preset.others.add(new Page("Macros", preset.otherPages, preset.host));
         assertTrue(
@@ -633,78 +653,62 @@ public final class GridRemotePageWriterTest {
                 "delete shares the write gates");
     }
 
+    private static final String DEVICE_REF = "{\"kind\":\"device\",\"track\":{\"kind\":\"track\",\"id\":\"" + TRACK_ID
+            + "\",\"name\":\"Grid\"},\"index\":0,\"name\":\"Poly Grid\"}";
+    private static final String PARAMETER = "{\"kind\":\"parameter\",\"owner\":{\"kind\":\"gridModule\",\"device\":"
+            + DEVICE_REF + ",\"id\":\"" + FIRST + "\",\"name\":\"Mx\"},\"id\":\"VALUE\"}";
+    private static final String SLOT = "{\"parameter\":" + PARAMETER + ",\"label\":\"knob\"}";
+    private static final String PAGE_REF =
+            "{\"kind\":\"remotePage\",\"device\":" + DEVICE_REF + ",\"index\":1,\"name\":\"Macros\"}";
+
     @Test
     void requestBounds() {
-        String slot = "{\"moduleId\":\"" + FIRST + "\",\"parameterId\":\"VALUE\"}";
-        GridRemotePageWriter.Request request = GridRemotePageWriter.Request.parse(
-                HostFixture.json("{\"pageName\":\"" + "p".repeat(256) + "\",\"mode\":\"create\",\"slots\":["
-                        + String.join(",", Collections.nCopies(7, "null")) + "," + slot + "]}"));
+        GridRemotePageWriter.Request request =
+                GridRemotePageWriter.Request.parse(HostFixture.json("{\"name\":\"" + "p".repeat(256) + "\",\"slots\":["
+                        + String.join(",", Collections.nCopies(7, "null")) + "," + SLOT + "]}"));
         assertTrue(
-                request.slots.size() == 8 && request.slots.get(0) == null && !request.replace,
-                "eight slots with nulls and create mode parse");
+                request.slots.size() == 8
+                        && request.slots.get(0) == null
+                        && request.slots.get(7).moduleId.equals(FIRST),
+                "eight slots with nulls parse to the module and parameter their refs name");
         assertTrue(
                 GridRemotePageWriter.Request.parse(
-                                HostFixture.json(
-                                        "{\"pageName\":\"P\",\"mode\":\"replace\",\"slots\":[{\"moduleName\":\"M\",\"parameterId\":\"\",\"label\":\"\"}]}"))
-                        .replace,
-                "replace mode, empty parameterId and empty label are valid");
-        for (String bad : List.of(
-                "{\"pageName\":\"\",\"slots\":[null]}",
-                "{\"pageName\":\"" + "p".repeat(257) + "\",\"slots\":[null]}",
-                "{\"pageName\":\"P\",\"slots\":[]}",
-                "{\"pageName\":\"P\",\"slots\":[" + String.join(",", Collections.nCopies(9, "null")) + "]}",
-                "{\"pageName\":\"P\",\"slots\":[{\"parameterId\":\"VALUE\"}]}",
-                "{\"pageName\":\"P\",\"slots\":[{\"moduleId\":\"" + FIRST
-                        + "\",\"moduleName\":\"M\",\"parameterId\":\"VALUE\"}]}",
-                "{\"pageName\":\"P\",\"slots\":[{\"moduleId\":\"not-a-uuid\",\"parameterId\":\"VALUE\"}]}",
-                "{\"pageName\":\"P\",\"slots\":[{\"moduleName\":\"\",\"parameterId\":\"VALUE\"}]}",
-                "{\"pageName\":\"P\",\"slots\":[{\"moduleName\":\"M\"}]}",
-                "{\"pageName\":\"P\",\"slots\":[{\"moduleName\":\"M\",\"parameterId\":\"V\",\"label\":\""
-                        + "l".repeat(257) + "\"}]}",
-                "{\"pageName\":\"P\",\"slots\":[{\"moduleName\":\"M\",\"parameterId\":\"V\",\"label\":null}]}",
-                "{\"pageName\":\"P\",\"slots\":[{\"moduleName\":\"M\",\"parameterId\":\"V\",\"extra\":1}]}",
-                "{\"pageName\":\"P\",\"slots\":[1]}",
-                "{\"pageName\":\"P\",\"slots\":[null],\"mode\":\"upsert\"}",
-                "{\"pageName\":\"P\",\"slots\":[" + slot + "," + slot + "]}",
-                "{\"pageName\":1,\"slots\":[null]}"))
-            assertInvalidParams(() -> GridRemotePageWriter.Request.parse(HostFixture.json(bad)));
+                                HostFixture.json("{\"name\":\"P\",\"slots\":[" + SLOT.replace("VALUE", "") + "]}"))
+                        .slots
+                        .get(0)
+                        .parameterId
+                        .isEmpty(),
+                "an empty parameter id is valid");
+        assertRpcError(
+                "unsupported_scope",
+                () -> GridRemotePageWriter.Request.parse(HostFixture.json(
+                        "{\"name\":\"P\",\"slots\":[" + SLOT.replace("gridModule", "modulator") + "]}")));
+        assertRpcError(
+                "invalid_params",
+                () -> GridRemotePageWriter.Request.parse(
+                        HostFixture.json("{\"name\":\"P\",\"slots\":[" + SLOT + "," + SLOT + "]}")));
     }
 
     @Test
-    void moduleValidationAndCapabilities() {
-        String target = "\"trackId\":\"" + TRACK_ID + "\",\"deviceIndex\":0,\"expectedDeviceName\":\"Poly Grid\",";
+    void moduleValidationAndRegistration() {
+        String target = "\"target\":" + DEVICE_REF + ",";
         GridModule.validateParams(
                 "devices.remote.define",
-                HostFixture.json(
-                        "{" + target
-                                + "\"pageName\":\"Macros\",\"mode\":\"replace\",\"slots\":[null,{\"moduleName\":\"Mx: grit\",\"parameterId\":\"VALUE\"}]}"));
-        GridModule.validateParams(
-                "devices.remote.deletePage", HostFixture.json("{" + target + "\"pageName\":\"Macros\"}"));
+                HostFixture.json("{" + target + "\"name\":\"Macros\",\"slots\":[null," + SLOT + "]}"));
+        GridModule.validateParams("devices.remote.delete", HostFixture.json("{\"target\":" + PAGE_REF + "}"));
         assertInvalidParams(() -> GridModule.validateParams(
-                "devices.remote.define", HostFixture.json("{" + target + "\"pageName\":\"Macros\"}")));
+                "devices.remote.define", HostFixture.json("{" + target + "\"name\":\"Macros\"}")));
         assertInvalidParams(() -> GridModule.validateParams(
-                "devices.remote.deletePage",
-                HostFixture.json("{" + target + "\"pageName\":\"Macros\",\"mode\":\"create\"}")));
+                "devices.remote.define", HostFixture.json("{" + target + "\"pageName\":\"Macros\",\"slots\":[null]}")));
         assertInvalidParams(() -> GridModule.validateParams(
-                "devices.remote.deletePage", HostFixture.json("{" + target + "\"pageName\":\"\"}")));
+                "devices.remote.delete", HostFixture.json("{\"target\":" + DEVICE_REF + "}")));
         assertInvalidParams(() -> GridModule.validateParams(
-                "devices.remote.define",
-                HostFixture.json("{" + target + "\"pageName\":\"Macros\",\"slots\":[null],\"mode\":null}")));
+                "devices.remote.delete", HostFixture.json("{\"target\":" + PAGE_REF + ",\"pageName\":\"Macros\"}")));
         assertTrue(
                 GridModule.METHODS.contains("devices.remote.define")
-                        && GridModule.METHODS.contains("devices.remote.deletePage")
+                        && GridModule.METHODS.contains("devices.remote.delete")
                         && !DeviceModule.METHODS.contains("devices.remote.define"),
                 "remote page methods are registered once, on the native Grid module");
-        JsonObject full = new JsonObject();
-        JsonObject entry = new JsonObject();
-        entry.addProperty("available", false);
-        entry.addProperty("reason", "no binding");
-        full.add("remotePages", entry);
-        JsonObject compact = GridModule.compactCapabilities(full);
-        assertTrue(
-                !compact.getAsJsonObject("writers").get("remotePages").getAsBoolean()
-                        && compact.getAsJsonObject("unavailable").has("remotePages"),
-                "compact capabilities report remote page availability");
     }
 
     // ---- helpers ---------------------------------------------------------------------------------------------

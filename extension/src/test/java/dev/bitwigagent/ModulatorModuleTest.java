@@ -394,13 +394,20 @@ public final class ModulatorModuleTest {
         f.devices.child("scrollPosition").emit(1);
         f.devices.child("itemCount").emit(2);
         f.device.child("position").emit(1);
-        JsonObject target = request().getAsJsonObject("parent");
-        target.addProperty("deviceIndex", 1);
+        JsonObject parent = request().getAsJsonObject("parent");
+        parent.addProperty("deviceIndex", 1);
+        JsonObject target = new JsonObject();
+        target.add(
+                "target",
+                dev.bitwigagent.core.Refs.device(
+                        dev.bitwigagent.core.Refs.track(parent.get("trackId").getAsString(), "Track"),
+                        1,
+                        parent.get("expectedDeviceName").getAsString()));
         HostOperation gridRead = f.host.submit(grid, "grid.get", target);
         f.host.next();
         assertRpcError("stale_context", gridRead);
         JsonObject p = request();
-        p.add("parent", target);
+        p.add("parent", parent);
         op = f.start("modulators.list", p);
         f.adapter.next();
         f.host.next();

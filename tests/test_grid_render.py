@@ -9,14 +9,14 @@ from pathlib import Path
 from typing import cast
 
 import pytest
-from fakes import LayoutGrid, parse_arguments
+from fakes import DEVICE, LayoutGrid, parse_arguments
 
 from bitwig_agent.errors import BridgeError
 from bitwig_agent.grid import render as grid_render
 from bitwig_agent.protocol import CLIENT_SIDE, validate_call
 
 TRACK = "12345678-1234-1234-1234-123456789abc"
-TARGET = {"trackId": TRACK, "deviceIndex": 0, "expectedDeviceName": "Poly Grid"}
+TARGET = {"target": DEVICE}
 FIXTURE = json.loads((Path(__file__).parent / "fixtures" / "grid_layout.json").read_text(encoding="utf-8"))
 
 
@@ -148,7 +148,7 @@ def test_validation_and_exposure(tmp_path):
     for bad in (
         {"outPath": "relative.svg"},
         {"outPath": "/tmp/../x.svg"},
-        {"outPath": str(tmp_path / "x"), "format": "gif"},
+        {"outPath": str(tmp_path / "x"), "fileType": "gif"},
         {"outPath": str(tmp_path / "x"), "scale": 9},
     ):
         with pytest.raises(ValueError, match=re.escape("1 validation error for GridRenderArgs")):
@@ -157,31 +157,29 @@ def test_validation_and_exposure(tmp_path):
     params, _ = parse_arguments(
         "grid.render",
         [
-            f"--trackId={TRACK}",
-            "--deviceIndex=0",
-            "--expectedDeviceName=Poly Grid",
+            f"--target={json.dumps(DEVICE)}",
             f"--outPath={tmp_path / 'a.svg'}",
             "--overwrite",
-            "--format",
+            "--fileType",
             "png",
         ],
     )
     assert params["overwrite"] is True
-    assert params["format"] == "png"
-    assert params["expectedDeviceName"] == "Poly Grid"
+    assert params["fileType"] == "png"
+    assert params["target"] == DEVICE
 
 
 def test_png_uses_converter_or_errors_clearly(tmp_path, monkeypatch):
     host = LayoutGrid([mod("a", "Clock", 0, 0)], [])
     monkeypatch.setattr(grid_render.shutil, "which", lambda name: None)
     with pytest.raises(BridgeError) as err:
-        run(host, tmp_path, "a.png", format="png")
+        run(host, tmp_path, "a.png", fileType="png")
     assert "rsvg-convert or magick" in err.value.error["message"]
     assert host.calls == []
     monkeypatch.undo()
     if grid_render._converter() is None:
         pytest.skip("no SVG converter installed")
-    run(host, tmp_path, "a.png", format="png")
+    run(host, tmp_path, "a.png", fileType="png")
     assert (tmp_path / "a.png").read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
     assert shutil.which("rsvg-convert") or shutil.which("magick")
 
@@ -208,5 +206,5 @@ def test_failing_converter_is_a_job_failure(tmp_path, monkeypatch):
     monkeypatch.setattr(grid_render, "_converter", lambda: ["false"])
     host = LayoutGrid([mod("m", "Add", 0, 0)], [])
     with pytest.raises(BridgeError) as err:
-        run(host, tmp_path, "a.png", format="png")
+        run(host, tmp_path, "a.png", fileType="png")
     assert err.value.error["reason"] == "job_failed"

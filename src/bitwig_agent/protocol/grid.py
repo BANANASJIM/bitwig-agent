@@ -6,12 +6,12 @@ from typing import Annotated, Any, Literal, Self, cast
 from pydantic import ConfigDict, Field, field_validator, model_validator
 from pydantic.config import JsonDict
 
+from bitwig_agent.protocol.annotations import SET
 from bitwig_agent.protocol.base import (
     MAX_STRING_UNITS,
     PROJECT_READY,
-    TARGET,
+    TRACK,
     UTF16_BYTES_PER_UNIT,
-    ParameterArgs,
     StatusArgs,
     StrictModel,
     ToolSpec,
@@ -19,13 +19,15 @@ from bitwig_agent.protocol.base import (
     long_timeout,
     omitted,
 )
-from bitwig_agent.protocol.limits import LONG_TIMEOUT_MS
+from bitwig_agent.protocol.limits import LONG_TIMEOUT_MS, REMOTE_PAGE_SLOTS
+from bitwig_agent.protocol.refs import DeviceRef, RemotePageRef, RemoteSlotParameterRef
+
+DEVICE = {"kind": "device", "track": {"kind": "track", "id": TRACK, "name": "G"}, "index": 0, "name": "Grid"}
+TARGET = {"target": DEVICE}
 
 
-class GridCapabilitiesArgs(StatusArgs):
-    detail: Literal["summary", "full"] = omitted(
-        description="summary (default): availability booleans only. full: every binding's coverage, operation and limits."
-    )
+class GridDeviceArgs(StatusArgs):
+    target: DeviceRef = Field(description="The Grid device: a device ref from devices.list.")
 
 
 class GridCatalogArgs(StatusArgs):
@@ -38,7 +40,7 @@ class GridCatalogArgs(StatusArgs):
     limit: int = Field(default=64, ge=1, le=256)
 
 
-class GridGetArgs(ParameterArgs):
+class GridGetArgs(GridDeviceArgs):
     moduleOffset: int = Field(default=0, ge=0, le=100000)
     moduleLimit: int = Field(default=64, ge=1, le=256)
     includeParameters: bool = True
@@ -54,7 +56,7 @@ class GridGetArgs(ParameterArgs):
     )
 
 
-class GridWriteArgs(ParameterArgs):
+class GridWriteArgs(GridDeviceArgs):
     timeoutMs: int = long_timeout()
     graph: Literal["diff", "full"] = omitted(
         description="diff (default): what changed, computed from the before/after graphs. full: the whole bounded graph after the edit."
@@ -62,7 +64,7 @@ class GridWriteArgs(ParameterArgs):
 
 
 GRID_INSERT_FIELDS = {"x", "y"}
-TYPE_ID_DESCRIPTION = "Canonical MODULE type UUID discovered through grid.catalog, not a module instanceId or file path; the host verifies catalog membership."
+TYPE_ID_DESCRIPTION = "Canonical MODULE type UUID discovered with grid.describe, not a module instanceId or file path; the host verifies catalog membership."
 TYPE_NAME_DESCRIPTION = "Alternative to typeId: a catalog module name. Matching order: exact string, then exact ignoring case, then loose (ignoring case, spaces, hyphens and punctuation: 'low pass' = 'Low-pass'); the first step with a match decides. Symbol-only names ('<', '=', '≠', '≤') match exactly, and 'Slope ↗' vs 'Slope ↘' are told apart by exact match. Rejected (invalid_params) with candidates unless exactly one entry matches at that step; if ambiguous, use typeId."
 INT32_DESCRIPTION = "Requested absolute native anchor, not a relative delta or pixels. Signed int32 JSON integer token; native layout bounds checked by host."
 
@@ -108,13 +110,7 @@ class GridModuleInsertArgs(GridWriteArgs):
         return self
 
 
-class GridModuleArgs(ParameterArgs):
-    moduleId: Uuid = Field(
-        description="Current module instanceId from grid.get; reacquire after reopening the project."
-    )
-
-
-class GridVoicingGetArgs(ParameterArgs):
+class GridVoicingGetArgs(GridDeviceArgs):
     detail: Literal["summary", "full"] = omitted(
         description="summary (default) omits the editContext observation; full keeps it."
     )
@@ -193,7 +189,7 @@ class GridConnectionSetArgs(GridWriteArgs):
         return self
 
 
-class GridModuleRenameArgs(GridModuleEditArgs):
+class GridModuleSetArgs(GridModuleEditArgs):
     expectedCustomName: str = Field(
         max_length=MAX_STRING_UNITS,
         description=f"Exact raw customName from a fresh grid.get, not effective name or typeName. Required even for no-op; empty is valid. At most {MAX_STRING_UNITS} UTF-16 code units; no trimming or coercion.",
@@ -227,16 +223,6 @@ class GridModuleMoveArgs(GridModuleEditArgs):
     )
 
 
-class GridParameterGetArgs(GridModuleArgs):
-    parameterId: str = Field(
-        max_length=MAX_STRING_UNITS,
-        description=f"Exact native parameter ID from grid.get, not a name; empty is valid, at most {MAX_STRING_UNITS} UTF-16 code units.",
-    )
-    full: bool = omitted(
-        description="A step-array parameter (kind steps) returns all 256 entries instead of the first STEPS ones."
-    )
-
-
 DISPLAY_DESCRIPTION = (
     "Instead of value, for float parameters whose numericUnit has a verified conversion (hertz: raw is a MIDI note, e.g. '1.2 kHz', '440 Hz'; percent: '50 %'; decibel: '-12 dB'). "
     "The text needs an explicit unit; the host confirms the unit scale against the current raw/display pair, else rejects with unsupported_unit. "
@@ -259,6 +245,58 @@ STEPS_VALUES_DESCRIPTION = (
 )
 
 
+KIND_VALUES: tuple[tuple[list[str], dict[str, Any]], ...] = (
+    (["boolean"], {"type": "boolean"}),
+    (["integer", "enum"], {"type": "integer", "minimum": -(2**31), "maximum": 2**31 - 1}),
+    (["float"], {"type": "number"}),
+    (["string"], {"type": "string", "maxLength": MAX_STRING_UNITS}),
+)
+SINGLE_REQUIRED = ["moduleId", "parameterId", "expectedKind"]
+ANY: dict[str, Any] = {}
+
+
+def _closed(required: list[str], properties: dict[str, Any]) -> dict[str, Any]:
+    """One allowed shape of the request: exactly these fields (each is typed by the schema's own properties as well)."""
+    return {
+        "required": required,
+        "properties": {"target": ANY, "timeoutMs": ANY, **properties},
+        "additionalProperties": False,
+    }
+
+
+def _single_form(kinds: list[str], value_schema: dict[str, Any], written: str = "value") -> dict[str, Any]:
+    """The single write of one parameter kind: expectedKind picks the type of expectedValue and of what is written."""
+    return _closed(
+        [*SINGLE_REQUIRED, "expectedValue", written],
+        {
+            "moduleId": ANY,
+            "parameterId": ANY,
+            "expectedKind": {"enum": kinds},
+            "expectedValue": value_schema,
+            written: value_schema if written == "value" else ANY,
+        },
+    )
+
+
+STEPS_FORM = _closed(
+    [*SINGLE_REQUIRED, "expectedValues", "values"],
+    {
+        "moduleId": ANY,
+        "parameterId": ANY,
+        "expectedKind": {"enum": ["steps"]},
+        "expectedValues": ANY,
+        "values": ANY,
+        "full": ANY,
+    },
+)
+WRITES_FORM = _closed(["writes"], {"writes": ANY})
+SINGLE_FORMS = [
+    *(_single_form(kinds, value_schema) for kinds, value_schema in KIND_VALUES),
+    _single_form(["float"], {"type": "number"}, "display"),
+    STEPS_FORM,
+]
+
+
 class GridRawWrite(StrictModel):
     moduleId: Uuid = Field(
         description="Current module instanceId from grid.get; reacquire after reopening the project."
@@ -279,12 +317,7 @@ class GridRawWrite(StrictModel):
                             "value": value_schema,
                         }
                     }
-                    for kinds, value_schema in (
-                        (["boolean"], {"type": "boolean"}),
-                        (["integer", "enum"], {"type": "integer", "minimum": -(2**31), "maximum": 2**31 - 1}),
-                        (["float"], {"type": "number"}),
-                        (["string"], {"type": "string", "maxLength": MAX_STRING_UNITS}),
-                    )
+                    for kinds, value_schema in KIND_VALUES
                 ]
                 + [{"properties": {"expectedKind": {"enum": ["steps"]}}}],
             },
@@ -292,10 +325,10 @@ class GridRawWrite(StrictModel):
     )
 
     expectedKind: Literal["float", "integer", "enum", "boolean", "string", "steps"] = Field(
-        description="Typed kind from a recent grid.get row (or grid.parameters.get); checked before any already-matching no-op."
+        description="Typed kind from a recent grid.get row; checked before any already-matching no-op."
     )
     expectedValue: bool | int | float | StringValue = omitted(
-        description="Exact current native raw value from a recent grid.get row (or grid.parameters.get), not normalized or display units; stale is rejected (stale_context). Must match expectedKind; no tolerance or coercion. Required except for kind steps."
+        description="Exact current native raw value from a recent grid.get row, not normalized or display units; stale is rejected (stale_context). Must match expectedKind; no tolerance or coercion. Required except for kind steps."
     )
     expectedValues: Annotated[list[float], Field(min_length=1, max_length=STEP_ENTRIES)] = omitted(
         description=STEPS_EXPECTED_DESCRIPTION
@@ -376,13 +409,19 @@ GRID_WRITE_FIELDS = {"moduleId", "parameterId", "expectedKind"}
 WRITE_DETAILS = {"expectedValue", "value", "display", "expectedValues", "values", "full"}
 
 
-class GridParameterSetArgs(ParameterArgs):
+class GridParameterSetArgs(GridDeviceArgs):
     """One write (the five fields) or a same-device batch (writes), never both."""
 
     model_config = ConfigDict(
-        json_schema_extra={
-            "oneOf": [{"required": [*sorted(GRID_WRITE_FIELDS)]}, {"required": ["writes"]}],
-        }
+        json_schema_extra=cast(
+            "JsonDict",
+            {
+                "oneOf": [
+                    *SINGLE_FORMS,
+                    WRITES_FORM,
+                ]
+            },
+        )
     )
 
     moduleId: Uuid = omitted(description="Single form: current module instanceId from grid.get.")
@@ -447,7 +486,7 @@ class GridVoicingFields(StrictModel):
     allowOverlappingNotes: bool = omitted(description="Allow overlapping notes.")
 
 
-class GridVoicingSetArgs(ParameterArgs):
+class GridVoicingSetArgs(GridDeviceArgs):
     expected: GridVoicingFields = Field(
         description="Exact current values from a recent grid.voicing.get, at least for every field in set; stale is rejected (stale_context). Extra fields are additional preconditions."
     )
@@ -465,17 +504,55 @@ class GridVoicingSetArgs(ParameterArgs):
         return self
 
 
+class RemoteSlot(StrictModel):
+    parameter: RemoteSlotParameterRef = Field(
+        description="A parameter ref owned by a gridModule of the target device (grid.export refs[name] with the parameter id)."
+    )
+    label: str = omitted(
+        max_length=256,
+        description="Knob label shown instead of the parameter's own name. Left out: Bitwig's default for a new mapping, an existing label is kept.",
+    )
+
+
+class RemoteDefineArgs(GridDeviceArgs):
+    name: str = Field(
+        min_length=1,
+        max_length=256,
+        description="Page name shown in the device's Remote Controls page list; kept verbatim. The page of that name is changed, or created when there is none.",
+    )
+    slots: Annotated[list[RemoteSlot | None], Field(min_length=1, max_length=REMOTE_PAGE_SLOTS)] = Field(
+        description=f"Slot k is entry k (0..{REMOTE_PAGE_SLOTS - 1}): {{parameter, label?}} or null for an empty slot; later slots are left empty."
+    )
+
+    @model_validator(mode="after")
+    def validate_distinct(self) -> Self:
+        pairs = [(s.parameter.owner.id.lower(), s.parameter.id) for s in self.slots if s is not None]
+        if len(pairs) != len(set(pairs)):
+            raise ValueError("slots must not repeat a module/parameter pair")
+        return self
+
+
+class RemoteDeleteArgs(StatusArgs):
+    target: RemotePageRef = Field(
+        description="The preset Remote Controls page to delete: its ref from devices.remote.define or devices.remote.get."
+    )
+
+
 DIFF = 'Result is a diff, absent when empty: modulesAdded (full rows with ports, wire them at once), modulesRemoved, modulesMoved, modulesRenamed, connectionsChanged (any cable changed anywhere, including native repair), moduleCount; graphComplete=false with graphUnsupported if coverage was partial. graph="full" returns the whole bounded graph instead.'
 LONG = f"timeoutMs up to {LONG_TIMEOUT_MS} (verification reads the whole graph). "
-SAFE = "Needs a stopped, nonrecording, nonautomation state, a complete bounded graph of at most 1024 modules, and the explicit device target (trackId from tracks.list; deviceIndex and exact expectedDeviceName from devices.list). "
-VALUE_SAFE = "Needs recording and automation write off (a playing transport is fine), a complete bounded graph of at most 1024 modules, and the explicit device target (trackId from tracks.list; deviceIndex and exact expectedDeviceName from devices.list). "
-UNK = "Never retry an unknown outcome: inspect with grid.get. A native setter/callback failure, or an insertion whose later graph check disagreed, holds topology edits on that one device only (other devices and project.save keep working): its writes are refused unresolved until you inspect with grid.get and ack its id grid:<device> (status and grid.capabilities topologyQuarantine.devices list it; ack re-checks the graph first); no Bitwig restart."
-GRID_CAPABILITIES_DESCRIPTION = 'Grid availability summary under the exact Bitwig 6.1.4/loaded-JAR hash gate: gatePassed, available, hostVersion, reads and writers booleans (reasons only for unavailable ones), topologyQuarantined/topologyAdmissionBlocked. Unavailable write bindings do not disable reads; binding availability is not native runtime, DSP or undo verification. detail="full" returns every binding\'s coverage, operation and limits (~2k tokens).'
+SAFE = "Needs a stopped, nonrecording, nonautomation state, a complete bounded graph of at most 1024 modules, and a device ref target from devices.list. "
+VALUE_SAFE = "Needs recording and automation write off (a playing transport is fine), a complete bounded graph of at most 1024 modules, and a device ref target from devices.list. "
+REMOTE_DEFINE_DESCRIPTION = (
+    "Set one named user Remote Controls page on a Grid device (e.g. a Macros page whose knobs drive Value modules): the page of that name is changed to these slots, or created when there is none. slots: up to "
+    + str(REMOTE_PAGE_SLOTS)
+    + " entries, slot k = entry k, each {parameter: a parameter ref owned by a gridModule of the target device (grid.export refs, scalar parameters only), label?: knob label} or null for an empty slot. A label left out is Bitwig's default for a new mapping and keeps an existing label. Slots left out are cleared. Defining a page that already holds exactly these slots is already_matched; changing a slot is applied. Pages go in the device's preset-page list, the one the UI's Add New Page uses (stored with the device and its preset; device pages cannot hold Grid module parameters); a same-named device, module or plugin page is target_exists. Each native step (create page, name, map/clear slot) is its own undo step, ungrouped; the result carries the page's ref and reads back every slot. Needs recording and automation write off (a playing transport is fine) and a licensed device. Inspect an unknown outcome with devices.remote.get; never retry it. Requires the inspected Bitwig 6.1.4 JAR (status detail full, grid.remotePages)."
+)
+REMOTE_DELETE_DESCRIPTION = "Delete one preset Remote Controls page by its ref (one devices.remote.define made, or one added by hand with Add New Page). Device, module and plugin pages are refused (unsupported_scope); a page that is gone is target_not_found, another page at that index target_changed. One native undo step; the result verifies the page is gone and lists the remaining page names. Same safety and 6.1.4 gate as devices.remote.define."
+UNK = "Never retry an unknown outcome: inspect with grid.export. A native setter/callback failure, or an insertion whose later graph check disagreed, holds topology edits on that one device only (other devices and project.save keep working): its writes are refused unresolved until you inspect with grid.export and ack its id grid:<device> (status holds list it; ack re-checks the graph first); no Bitwig restart."
 GRID_CATALOG_DESCRIPTION = "Read native Grid MODULE type UUIDs and names, not devices or module instances. Version/hash gated. query (max 128 UTF-16 units) ignores case, spaces, hyphens and punctuation and every word must match inside the name: 'lowpass' and 'low pass' find 'Low-pass', 'Low-pass LD', 'Low-pass MG'. When nothing matches, suggestions lists up to five nearest names. offset 0..100000, limit 1..256 (default 64), deterministic ordering. The native catalog has no category or tag, so query matches names only (e.g. 'Low-pass', not 'Filter'). Inspect window completeness; catalog presence does not prove graph or parameter coverage."
-GRID_GET_DESCRIPTION = "Read a Grid graph without selecting or changing the device. Discover trackId with tracks.list, then deviceIndex and exact expectedDeviceName with devices.list. Use includeParameters=false for layout, wiring and naming. moduleIds (1..256 instanceIds) returns only those modules with their parameters, so one module's parameterId/kind/value/range needs no paging; absent ids are listed in missingModuleIds. moduleOffset 0..100000, moduleLimit 1..256 (default 64). Rows have instanceId (current UUID, changes on project reopen), typeId, localKey, x/y, width/height, ports (key, name, connected) and parameters. A parameter row's kind and value are a valid expectedKind/expectedValue for grid.parameters.set while still current. diagnostics=true adds native modelClass/path and coverage notes. A kind:string row is a string panel (e.g. Comment text); write it with grid.parameters.set expectedKind string. A kind:steps row is a step table (Steps, Pitches, Gates, Probabilities, Accents): values is the first stepCount entries of an arrayLength-entry array (full:true returns up to 256), minimum/maximum -128..128 is only a sanity bound (observed natively: Pitches in Grid pitch units, Gates 1/0, Accents 0/0.5/1, Probabilities 0..1); write it with expectedKind steps. Child models that carry no user data (engine feeds, indicators) are not listed: the module row has internalChildren and they never make the read incomplete. Inspect window, complete (false for structure-only or filtered reads) and unsupported; pages are independent observations, with no native revision."
-GRID_PARAMETERS_GET_DESCRIPTION = "Read one Grid parameter plus native editContext observations. Optional for ordinary writes, since grid.get rows already carry kind and value; use it for a fresh single-control value or a coupled boolean panel's linked parameter. moduleId is a grid.get instanceId and parameterId its exact id (may be empty), never a name or type UUID. String panels report kind:string with null labels. Step tables report kind:steps (full:true for all 256 entries). editContext is an observation, not write authorization."
-GRID_PARAMETERS_SET_DESCRIPTION = 'Set Grid parameters in the native RAW domain (not normalized): one write, or a batch on one device. Single: moduleId, parameterId, expectedKind, expectedValue, and value. Batch: writes=[{moduleId, parameterId, expectedKind, expectedValue, value}], 1..64, no repeated pair. Pitch-unit parameters are raw MIDI notes (Low-pass CUTOFF 84 shows "1.05 kHz"). Instead of value, a float write may give display ("1.2 kHz", "440 Hz", "50 %", "-12 dB") for numericUnit hertz, percent or decibel only: the host converts it after confirming the unit scale against the row\'s current raw/display pair, any other unit is rejected with unsupported_unit, and the result\'s displayMismatch compares the post-write display with your text (never rewritten). expectedKind/expectedValue stay required. Take the ids, kind and value from a recent grid.get (or grid.parameters.get); a stale expectation is rejected (stale_context), even for a no-op. Batch: every CAS runs first and any failure writes nothing (error names each failing entry); then writes dispatch in order and stop at the first entry that is neither applied nor already_matched; later entries are not_applied with reason not_reached. Single results and each batch entry carry the post-write display string (e.g. "2.09 kHz") when observable, so a raw value\'s meaning needs no extra read. Batch result: writes[] with the outcome of every entry (applied, already_matched, not_applied, unknown) and a reason when it did not succeed, written, and outcome = the worst entry; on unknown inspect state, never retry. Boolean takes a JSON bool; integer/enum an int32 token (enum is a listed option value, not an ordinal); float a finite number; range is checked, nothing is clamped. String (string panels such as Comment text): expectedKind string, JSON strings of at most 1024 UTF-16 units, kept verbatim (empty and newlines allowed), compare-and-set against the current text. A Label module shows the module name, so rename the module through grid.apply. Needs recording and automation write off (a playing transport is fine). Boolean panels also move their linked bipolar value, which the result reports. Step tables (kind steps, Steps/Pitches/Gates/Probabilities/Accents): expectedKind steps, expectedValues = the live entries from step 0 as read by grid.get (normally the first stepCount, or all 256 with full:true; the CAS window is its own length), values = 1..256 entries within -128..128 written from step 0 (never longer than expectedValues; shorter leaves the rest; nothing beyond the prefix changes; 32-bit floats; nothing clamped). Whole-array write with exact readback (previousValues, requestedValues in the result); valid in batch entries. A Probabilities table is one write per row, e.g. a transition matrix as one batch.'
-GRID_VOICING_GET_DESCRIPTION = "Read a Grid device's voicing (Poly Grid only): voices 1..64, voiceStacking 1..16, monoMode true_mono|digi_mono (the stored mode, what plays when voices is 1), retriggerMode never|on_note_on|always, notePriority last|high|low, legatoGlide, stealSameKey, allowOverlappingNotes, plus mode (poly when voices > 1, else the stored monoMode). Note Grid and FX Grid have no voicing model: supported:false with a reason. Same explicit device target as grid.get. The editContext observation is omitted unless detail=full."
+GRID_GET_DESCRIPTION = "Read a Grid graph without selecting or changing the device. Take the target device ref from devices.list. Use includeParameters=false for layout, wiring and naming. moduleIds (1..256 instanceIds) returns only those modules with their parameters, so one module's parameterId/kind/value/range needs no paging; absent ids are listed in missingModuleIds. moduleOffset 0..100000, moduleLimit 1..256 (default 64). Rows have instanceId (current UUID, changes on project reopen), typeId, localKey, x/y, width/height, ports (key, name, connected) and parameters. A parameter row's kind and value are a valid expectedKind/expectedValue for grid.parameters.set while still current. Each module row carries its gridModule ref. diagnostics=true adds native modelClass/path and coverage notes. A kind:string row is a string panel (e.g. Comment text); write it with grid.parameters.set expectedKind string. A kind:steps row is a step table (Steps, Pitches, Gates, Probabilities, Accents): values is the first stepCount entries of an arrayLength-entry array (full:true returns up to 256), minimum/maximum -128..128 is only a sanity bound (observed natively: Pitches in Grid pitch units, Gates 1/0, Accents 0/0.5/1, Probabilities 0..1); write it with expectedKind steps. Child models that carry no user data (engine feeds, indicators) are not listed: the module row has internalChildren and they never make the read incomplete. Inspect window, complete (false for structure-only or filtered reads) and unsupported; pages are independent observations, with no native revision."
+GRID_PARAMETERS_SET_DESCRIPTION = 'Set Grid parameters in the native RAW domain (not normalized): one write, or a batch on one device. Single: moduleId, parameterId, expectedKind, expectedValue, and value. Batch: writes=[{moduleId, parameterId, expectedKind, expectedValue, value}], 1..64, no repeated pair. Pitch-unit parameters are raw MIDI notes (Low-pass CUTOFF 84 shows "1.05 kHz"). Instead of value, a float write may give display ("1.2 kHz", "440 Hz", "50 %", "-12 dB") for numericUnit hertz, percent or decibel only: the host converts it after confirming the unit scale against the row\'s current raw/display pair, any other unit is rejected with unsupported_unit, and the result\'s displayMismatch compares the post-write display with your text (never rewritten). expectedKind/expectedValue stay required. Take the ids, kind and value from a recent grid.get; a stale expectation is rejected (stale_context), even for a no-op. Batch: every CAS runs first and any failure writes nothing (error names each failing entry); then writes dispatch in order and stop at the first entry that is neither applied nor already_matched; later entries are not_applied with reason not_reached. Single results and each batch entry carry the post-write display string (e.g. "2.09 kHz") when observable, so a raw value\'s meaning needs no extra read. Batch result: writes[] with the outcome of every entry (applied, already_matched, not_applied, unknown) and a reason when it did not succeed, written, and outcome = the worst entry; on unknown inspect state, never retry. Boolean takes a JSON bool; integer/enum an int32 token (enum is a listed option value, not an ordinal); float a finite number; range is checked, nothing is clamped. String (string panels such as Comment text): expectedKind string, JSON strings of at most 1024 UTF-16 units, kept verbatim (empty and newlines allowed), compare-and-set against the current text. A Label module shows the module name, so rename the module through grid.apply. Needs recording and automation write off (a playing transport is fine). Boolean panels also move their linked bipolar value, which the result reports. Step tables (kind steps, Steps/Pitches/Gates/Probabilities/Accents): expectedKind steps, expectedValues = the live entries from step 0 as read by grid.get (normally the first stepCount, or all 256 with full:true; the CAS window is its own length), values = 1..256 entries within -128..128 written from step 0 (never longer than expectedValues; shorter leaves the rest; nothing beyond the prefix changes; 32-bit floats; nothing clamped). Whole-array write with exact readback (previousValues, requestedValues in the result); valid in batch entries. A Probabilities table is one write per row, e.g. a transition matrix as one batch.'
+GRID_VOICING_GET_DESCRIPTION = "Read a Grid device's voicing (Poly Grid only): voices 1..64, voiceStacking 1..16, monoMode true_mono|digi_mono (the stored mode, what plays when voices is 1), retriggerMode never|on_note_on|always, notePriority last|high|low, legatoGlide, stealSameKey, allowOverlappingNotes, plus mode (poly when voices > 1, else the stored monoMode). Note Grid and FX Grid have no voicing model: supported:false with a reason. Same device target as grid.get. The editContext observation is omitted unless detail=full."
 GRID_VOICING_SET_DESCRIPTION = (
     "Change a Poly Grid device's voicing: expected = exact current values from grid.voicing.get (at least every field in set; extra fields are more preconditions), set = new values (at least one field). Stale expectations are rejected (stale_context) before dispatch, even for a no-op; nothing is clamped. Fields are written in the order voices, voiceStacking, monoMode, retriggerMode, notePriority, legatoGlide, stealSameKey, allowOverlappingNotes, then everything read back exactly; changedUnrequested lists fields the native change moved besides those asked for. Digi mono is monoMode digi_mono with voices 1. Note Grid / FX Grid reject unsupported_scope. "
     + VALUE_SAFE
@@ -489,8 +566,8 @@ GRID_MODULES_INSERT_DESCRIPTION = (
     + LONG
     + UNK
 )
-GRID_MODULES_RENAME_DESCRIPTION = (
-    "Rename one module (moduleId from grid.get). expectedCustomName is the exact raw customName from grid.get, not the effective name or typeName, and must match even for a no-op; both names are strings of at most 1024 UTF-16 units, empty allowed, kept verbatim; customName='' resets the override. Returns previous/actual raw and effective names and a diff. "
+GRID_MODULES_SET_DESCRIPTION = (
+    "Set one module's custom name, the module taken by its moduleId from grid.get. The expectedCustomName is the exact raw customName from grid.get, not the effective name or typeName, and must match even for a no-op; both names are strings of at most 1024 UTF-16 units, empty allowed, kept verbatim; customName='' resets the override. Returns previous/actual raw and effective names and a diff. "
     + DIFF
     + " "
     + SAFE
@@ -524,19 +601,11 @@ GRID_CONNECTIONS_SET_DESCRIPTION = (
 
 
 SPECS: dict[str, ToolSpec] = {
-    "grid.capabilities": ToolSpec(
-        GridCapabilitiesArgs,
-        GRID_CAPABILITIES_DESCRIPTION,
-        True,
-        examples=(
-            {},
-            {"detail": "full"},
-        ),
-    ),
     "grid.catalog": ToolSpec(
         GridCatalogArgs,
         GRID_CATALOG_DESCRIPTION,
         True,
+        expose=False,
         examples=(
             {},
             {"query": "osc", "offset": 0, "limit": 32},
@@ -546,17 +615,12 @@ SPECS: dict[str, ToolSpec] = {
         GridGetArgs,
         GRID_GET_DESCRIPTION,
         True,
+        expose=False,
         examples=(
             {**TARGET, "moduleOffset": 0, "moduleLimit": 32, "includeParameters": False},
             {**TARGET, "moduleIds": ["abcdef01-2345-6789-abcd-0123456789ab"]},
         ),
         records="modules",
-    ),
-    "grid.parameters.get": ToolSpec(
-        GridParameterGetArgs,
-        GRID_PARAMETERS_GET_DESCRIPTION,
-        True,
-        examples=({**TARGET, "moduleId": "abcdef01-2345-6789-abcd-0123456789ab", "parameterId": "from-grid.get"},),
     ),
     "grid.parameters.set": ToolSpec(
         GridParameterSetArgs,
@@ -639,9 +703,45 @@ SPECS: dict[str, ToolSpec] = {
             },
         ),
         requires=PROJECT_READY,
-        summary="Set Grid parameters in RAW native units, one write or a batch (writes). Take moduleId, parameterId, expectedKind and expectedValue from a recent grid.get (stale is rejected). An enum value is the option value, not an ordinal. display ('1.2 kHz') works for Hz, % and dB.",
+        expose=False,
     ),
-    "grid.voicing.get": ToolSpec(GridVoicingGetArgs, GRID_VOICING_GET_DESCRIPTION, True, examples=(TARGET,)),
+    "devices.remote.define": ToolSpec(
+        RemoteDefineArgs,
+        REMOTE_DEFINE_DESCRIPTION,
+        False,
+        examples=(
+            {
+                **TARGET,
+                "name": "Macros",
+                "slots": [
+                    {
+                        "parameter": {
+                            "kind": "parameter",
+                            "owner": {
+                                "kind": "gridModule",
+                                "device": DEVICE,
+                                "id": "abcdef01-2345-6789-abcd-0123456789ab",
+                                "name": "M",
+                            },
+                            "id": "VALUE",
+                        }
+                    },
+                    None,
+                ],
+            },
+        ),
+        annotations=SET,
+        summary="Set a Remote Controls page of a Grid device from parameter refs.",
+    ),
+    "devices.remote.delete": ToolSpec(
+        RemoteDeleteArgs,
+        REMOTE_DELETE_DESCRIPTION,
+        False,
+        examples=({"target": {"kind": "remotePage", "device": DEVICE, "index": 1, "name": "Macros"}},),
+    ),
+    "grid.voicing.get": ToolSpec(
+        GridVoicingGetArgs, GRID_VOICING_GET_DESCRIPTION, True, examples=(TARGET,), expose=False
+    ),
     "grid.voicing.set": ToolSpec(
         GridVoicingSetArgs,
         GRID_VOICING_SET_DESCRIPTION,
@@ -670,9 +770,9 @@ SPECS: dict[str, ToolSpec] = {
         requires=PROJECT_READY,
         expose=False,
     ),
-    "grid.modules.rename": ToolSpec(
-        GridModuleRenameArgs,
-        GRID_MODULES_RENAME_DESCRIPTION,
+    "grid.modules.set": ToolSpec(
+        GridModuleSetArgs,
+        GRID_MODULES_SET_DESCRIPTION,
         False,
         examples=(
             {

@@ -200,7 +200,7 @@ final class GridModuleNameWriter {
             if (module == null)
                 throw Errors.notApplied(
                         Reason.STALE_CONTEXT,
-                        "Requested current module UUID is absent; reacquire grid.get after edits or reopen.");
+                        "Requested current module UUID is absent; reacquire grid.export after edits or reopen.");
             return module;
         }
 

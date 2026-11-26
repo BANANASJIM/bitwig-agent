@@ -376,7 +376,7 @@ def _write(path: str, data: bytes, overwrite: bool) -> None:
 
 
 async def render(client: Any, args: dict[str, Any], timeout_ms: int = 5000) -> dict[str, Any]:
-    path, fmt, overwrite = args["outPath"], args.get("format", "svg"), args.get("overwrite", False)
+    path, fmt, overwrite = args["outPath"], args.get("fileType", "svg"), args.get("overwrite", False)
     if not overwrite and os.path.exists(path):
         raise bridge_error("target_exists", f"{path} exists; pass overwrite=true to replace it")
     if not os.path.isdir(os.path.dirname(path)):
@@ -385,7 +385,7 @@ async def render(client: Any, args: dict[str, Any], timeout_ms: int = 5000) -> d
     if fmt == "png":
         convert = _converter()
         if convert is None:
-            raise bridge_error("invalid_params", "format=png needs rsvg-convert or magick on PATH; use format=svg")
+            raise bridge_error("invalid_params", "fileType=png needs rsvg-convert or magick on PATH; use fileType=svg")
     call = host_call(client, device_target(args), timeout_ms)
     rows, cables = await read_graph(call)
     if not rows:
@@ -411,7 +411,7 @@ async def render(client: Any, args: dict[str, Any], timeout_ms: int = 5000) -> d
     return {
         "outcome": "applied",
         "outPath": path,
-        "format": fmt,
+        "fileType": fmt,
         "bytes": len(data),
         "imageSize": {
             "width": math.ceil(((box["width"] + 2) * CELL) * args.get("scale", 1.0)),

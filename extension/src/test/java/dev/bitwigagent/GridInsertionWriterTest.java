@@ -1003,7 +1003,9 @@ public final class GridInsertionWriterTest {
                 "settlement disagreement is unknown and quarantined, as before");
         RpcException held = assertRpcError("unresolved", () -> f.guard.requireAvailable(device(f)));
         assertEquals(
-                "Inspect with grid.get, then ack grid:" + device(f) + ".", held.next, "the refusal names the hold id");
+                "Inspect with grid.export, then ack grid:" + device(f) + ".",
+                held.next,
+                "the refusal names the hold id");
         JsonObject state = Bitwig614GridAdapter.quarantineState(f.guard);
         JsonObject entry = state.getAsJsonArray("devices").get(0).getAsJsonObject();
         assertTrue(

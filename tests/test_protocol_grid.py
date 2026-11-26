@@ -4,7 +4,8 @@ import pytest
 from pydantic import ValidationError
 
 from bitwig_agent.protocol import TOOLS, validate_call
-from bitwig_agent.protocol.base import TARGET, TRACK
+from bitwig_agent.protocol.base import TRACK
+from bitwig_agent.protocol.grid import DEVICE, TARGET
 
 
 @pytest.mark.parametrize(
@@ -27,9 +28,6 @@ def test_grid_catalog_rejects_unbounded_or_coerced_queries(field, values):
         ("moduleOffset", [-1, 100001, 0.0, "0", True, None]),
         ("moduleLimit", [0, 257, 1.0, "1", False, None]),
         ("includeParameters", [0, 1, "true", None, []]),
-        ("trackId", ["selected", "", None, 1]),
-        ("deviceIndex", [-1, 16, 0.0, "0", True, None]),
-        ("expectedDeviceName", ["", None, 1, "x" * 4097]),
     ],
 )
 def test_grid_get_rejects_implicit_targets_and_invalid_windows(field, values):
@@ -38,17 +36,9 @@ def test_grid_get_rejects_implicit_targets_and_invalid_windows(field, values):
             validate_call("grid.get", {**TARGET, field: value})
 
 
-@pytest.mark.parametrize("field", ["trackId", "deviceIndex", "expectedDeviceName"])
-def test_grid_get_requires_every_explicit_device_identity_field(field):
-    with pytest.raises(ValidationError):
-        validate_call("grid.get", {key: value for key, value in TARGET.items() if key != field})
-
-
 @pytest.mark.parametrize(
     ("method", "args", "extra"),
     [
-        ("grid.capabilities", {}, {"trackId": TRACK}),
-        ("grid.capabilities", {}, {"force": True}),
         ("grid.catalog", {}, {"includeDevices": True}),
         ("grid.catalog", {}, {"moduleLimit": 64}),
         ("grid.get", TARGET, {"selected": True}),
@@ -65,10 +55,9 @@ def test_grid_accepts_explicit_false_and_unicode_window_boundaries():
     for query in ("", "x" * 128, "𝄞" * 64):
         args = {"query": query, "offset": 100000, "limit": 256}
         assert validate_call("grid.catalog", args)[0] == args
-    for offset, limit, device in ((0, 1, 0), (100000, 256, 15)):
+    for offset, limit in ((0, 1), (100000, 256)):
         args = {
             **TARGET,
-            "deviceIndex": device,
             "moduleOffset": offset,
             "moduleLimit": limit,
             "includeParameters": False,
@@ -79,61 +68,43 @@ def test_grid_accepts_explicit_false_and_unicode_window_boundaries():
         assert timeout == 10000
 
 
-@pytest.mark.parametrize(
-    ("parameter_id", "module_id"),
-    [
-        ("", TRACK.upper()),
-        ("x" * 1024, TRACK),
-        ("𝄞" * 512, TRACK),
-        (" 01=音楽 ", TRACK),
-    ],
-)
-def test_grid_parameter_get_preserves_exact_ids_and_utf16_boundary(parameter_id, module_id):
-    args = {**TARGET, "moduleId": module_id, "parameterId": parameter_id, "timeoutMs": 10000}
-    params, timeout = validate_call("grid.parameters.get", args)
-    assert params == {key: value for key, value in args.items() if key != "timeoutMs"}
-    assert timeout == 10000
+def device(**changes):
+    return {**DEVICE, **changes}
 
 
 @pytest.mark.parametrize(
-    ("field", "values"),
+    "target",
     [
-        (
-            "moduleId",
-            ["", "Union", "1-1-1-1-1", TRACK.replace("-", ""), "{" + TRACK + "}", TRACK + "\n", None, True, 1, [], {}],
-        ),
-        ("parameterId", [None, True, 1, 1.0, [], {}, "x" * 1025, "𝄞" * 513, "x" * 1023 + "𝄞"]),
-        ("trackId", ["selected", "", None, True, 1]),
-        ("deviceIndex", [-1, 16, 0.0, "0", True, None]),
-        ("expectedDeviceName", ["", None, 1, "x" * 4097]),
-        ("timeoutMs", [99, 10001, True, None, "5000"]),
+        None,
+        {},
+        {"kind": "track", "id": TRACK, "name": "x"},
+        device(index=16),
+        device(index=-1),
+        device(index=True),
+        device(name=None),
+        {key: value for key, value in DEVICE.items() if key != "track"},
+        {**DEVICE, "trackId": TRACK},
+        {"trackId": TRACK, "deviceIndex": 0, "expectedDeviceName": "Poly Grid"},
     ],
 )
-def test_grid_parameter_get_rejects_invalid_identity_and_types(field, values):
-    args = {**TARGET, "moduleId": TRACK, "parameterId": ""}
-    for value in values:
-        with pytest.raises(ValidationError):
-            validate_call("grid.parameters.get", {**args, field: value})
-
-
-@pytest.mark.parametrize("field", ["trackId", "deviceIndex", "expectedDeviceName", "moduleId", "parameterId"])
-def test_grid_parameter_get_requires_every_identity_field(field):
-    args = {**TARGET, "moduleId": TRACK, "parameterId": ""}
-    del args[field]
+@pytest.mark.parametrize("method", ["grid.get", "grid.voicing.get", "grid.apply", "grid.export", "grid.render"])
+def test_grid_methods_take_a_device_ref_as_target(method, target):
+    args = {"target": target, "modules": [{"name": "a", "type": "Add", "x": 0, "y": 0}], "outPath": "/tmp/g.svg"}
+    args = {k: v for k, v in args.items() if k in TOOLS[method].model.model_fields}
     with pytest.raises(ValidationError):
-        validate_call("grid.parameters.get", args)
+        validate_call(method, args)
 
 
-@pytest.mark.parametrize(
-    "extra",
-    [
-        {"selected": True},
-        {"value": 0.5},
-    ],
-)
-def test_grid_parameter_get_rejects_selection_aliases_writes_and_unknown_keys(extra):
+def test_grid_targets_may_sit_in_a_chain_ref_and_must_not_be_missing():
+    chain = {
+        "kind": "device",
+        "chain": {"kind": "chain", "device": DEVICE, "id": TRACK, "name": "Layer"},
+        "index": 0,
+        "name": "Grid",
+    }
+    assert validate_call("grid.get", {"target": chain})[0] == {"target": chain}
     with pytest.raises(ValidationError):
-        validate_call("grid.parameters.get", {**TARGET, "moduleId": TRACK, "parameterId": "", **extra})
+        validate_call("grid.get", {})
 
 
 GRID_SET = {
@@ -239,14 +210,6 @@ def test_grid_insert_accepts_int32_endpoints_for_host_geometry_validation(value)
         {"typeId": "oscillator"},
         {"typeId": None},
         {"typeId": True},
-        {"trackId": "selected"},
-        {"trackId": None},
-        {"deviceIndex": True},
-        {"deviceIndex": 0.0},
-        {"deviceIndex": -1},
-        {"deviceIndex": 16},
-        {"expectedDeviceName": ""},
-        {"expectedDeviceName": None},
         {"moduleId": TRACK},
         {"path": "/tmp/module.bwmodule"},
         {"expectedX": 0},
@@ -320,17 +283,6 @@ def test_grid_module_edits_require_each_explicit_field(method, args):
         {"moduleId": True},
         {"moduleId": 1.0},
         {"moduleId": TRACK.replace("-", "")},
-        {"trackId": "selected"},
-        {"trackId": None},
-        {"deviceIndex": True},
-        {"deviceIndex": 0.0},
-        {"deviceIndex": "0"},
-        {"deviceIndex": None},
-        {"deviceIndex": -1},
-        {"deviceIndex": 16},
-        {"expectedDeviceName": None},
-        {"expectedDeviceName": ""},
-        {"expectedDeviceName": False},
         {"selected": True},
         {"moduleIndex": 0},
         {"typeId": TRACK},
@@ -414,13 +366,6 @@ def test_grid_connection_rejects_malformed_nested_endpoints(field, value):
         {"targetPortKey": None},
         {"targetPortKey": 0},
         {"targetPortKey": False},
-        {"trackId": "selected"},
-        {"deviceIndex": 0.0},
-        {"deviceIndex": True},
-        {"deviceIndex": -1},
-        {"deviceIndex": 16},
-        {"expectedDeviceName": ""},
-        {"expectedDeviceName": None},
         {"force": True},
         {"moduleId": TRACK},
         {1: "not-a-string-key"},
@@ -453,7 +398,7 @@ GRID_RENAME = {**TARGET, "moduleId": TRACK, "expectedCustomName": "", "customNam
 @pytest.mark.parametrize("field", list(GRID_RENAME))
 def test_grid_rename_requires_each_identity_and_raw_cas_field(field):
     with pytest.raises(ValidationError):
-        validate_call("grid.modules.rename", {key: value for key, value in GRID_RENAME.items() if key != field})
+        validate_call("grid.modules.set", {key: value for key, value in GRID_RENAME.items() if key != field})
 
 
 @pytest.mark.parametrize("field", ["expectedCustomName", "customName"])
@@ -475,25 +420,17 @@ def test_grid_rename_requires_each_identity_and_raw_cas_field(field):
 )
 def test_grid_rename_rejects_coercion_null_and_utf16_overflow(field, value):
     with pytest.raises(ValidationError):
-        validate_call("grid.modules.rename", {**GRID_RENAME, field: value})
+        validate_call("grid.modules.set", {**GRID_RENAME, field: value})
 
 
 @pytest.mark.parametrize(
     "changes",
     [
-        {"trackId": "selected"},
         {"moduleId": "Union"},
         {"moduleId": "1-1-1-1-1"},
         {"moduleId": TRACK.replace("-", "")},
         {"moduleId": None},
         {"moduleId": True},
-        {"deviceIndex": -1},
-        {"deviceIndex": 16},
-        {"deviceIndex": True},
-        {"deviceIndex": "0"},
-        {"deviceIndex": 0.0},
-        {"expectedDeviceName": ""},
-        {"expectedDeviceName": None},
         {"typeId": TRACK},
         {"name": "Lead"},
         {"parameterId": ""},
@@ -505,7 +442,7 @@ def test_grid_rename_rejects_coercion_null_and_utf16_overflow(field, value):
 )
 def test_grid_rename_rejects_aliases_implicit_selection_and_wrong_target_types(changes):
     with pytest.raises(ValidationError):
-        validate_call("grid.modules.rename", {**GRID_RENAME, **changes})
+        validate_call("grid.modules.set", {**GRID_RENAME, **changes})
 
 
 GRID_WRITE = {"moduleId": TRACK, "parameterId": "", "expectedKind": "float", "expectedValue": 0.25, "value": 0.5}
@@ -571,7 +508,7 @@ def test_grid_get_accepts_module_filter_and_diagnostics_and_rejects_bad_ones():
         ("grid.modules.insert", GRID_INSERT),
         ("grid.modules.move", GRID_MOVE),
         ("grid.modules.delete", GRID_MODULE),
-        ("grid.modules.rename", {**GRID_MODULE, "expectedCustomName": "", "customName": "x"}),
+        ("grid.modules.set", {**GRID_MODULE, "expectedCustomName": "", "customName": "x"}),
         (
             "grid.connections.set",
             {**TARGET, "targetModuleId": TRACK, "targetPortKey": "in", "expectedSource": None, "source": None},
@@ -590,7 +527,6 @@ def test_topology_writes_take_a_diff_or_full_graph_mode_only(method, args):
 def test_graph_mode_is_not_accepted_by_reads_or_parameter_writes():
     for method, args in (
         ("grid.get", TARGET),
-        ("grid.parameters.get", {**TARGET, "moduleId": TRACK, "parameterId": ""}),
         ("grid.parameters.set", GRID_SET),
     ):
         with pytest.raises(ValidationError):
@@ -627,14 +563,6 @@ def test_grid_connection_batch_preserves_each_entry_and_explicit_nulls():
 def test_grid_connection_batch_rejects_malformed_or_mixed_forms(changes):
     with pytest.raises(ValidationError):
         validate_call("grid.connections.set", {**TARGET, **changes})
-
-
-def test_grid_capabilities_detail_is_summary_or_full_only():
-    assert validate_call("grid.capabilities", {"detail": "full"})[0] == {"detail": "full"}
-    assert validate_call("grid.capabilities", {})[0] == {}
-    for bad in ("all", "", True, None):
-        with pytest.raises(ValidationError):
-            validate_call("grid.capabilities", {"detail": bad})
 
 
 def test_grid_insert_accepts_type_name_or_type_id_but_not_both_or_neither():
@@ -710,7 +638,7 @@ def test_grid_insert_type_name_accepts_symbol_only_names():
         validate_call(
             "grid.modules.insert",
             {
-                "trackId": GRID_INSERT["trackId"],
+                "target": GRID_INSERT["target"],
                 **{k: named[k] for k in named if k not in ("typeName", "x", "y")},
                 "modules": [{"typeName": ok, "x": 1, "y": 1}],
             },
@@ -829,7 +757,6 @@ def test_scalar_writes_reject_step_array_fields(extra):
 
 def test_grid_reads_accept_full_for_step_arrays():
     assert validate_call("grid.get", {**TARGET, "full": True})
-    assert validate_call("grid.parameters.get", {**TARGET, "moduleId": TRACK, "parameterId": "DATA", "full": True})
     with pytest.raises(ValidationError):
         validate_call("grid.get", {**TARGET, "full": "yes"})
 
@@ -877,3 +804,121 @@ def test_grid_voicing_set_rejects_bad_values_and_missing_preconditions(changes):
     args = {**TARGET, "expected": {"voices": 1}, "set": {"voices": 2}, **changes}
     with pytest.raises(ValidationError):
         validate_call("grid.voicing.set", args)
+
+
+GRID_MODULE_REF = {"kind": "gridModule", "device": DEVICE, "id": TRACK, "name": "Mx: darkness"}
+SLOT = {"kind": "parameter", "owner": GRID_MODULE_REF, "id": "VALUE"}
+PAGE = {"kind": "remotePage", "device": DEVICE, "index": 1, "name": "Macros"}
+
+
+def test_remote_page_define_is_an_upsert_by_name_and_delete_takes_the_page_ref():
+    assert not TOOLS["devices.remote.define"].read_only
+    assert not TOOLS["devices.remote.delete"].read_only
+    args = {
+        **TARGET,
+        "name": "Macros",
+        "slots": [{"parameter": SLOT}, None, {"parameter": {**SLOT, "id": "GATE"}, "label": "Gate"}],
+    }
+    assert validate_call("devices.remote.define", args)[0] == args
+    assert validate_call(
+        "devices.remote.define", {**TARGET, "name": "P" * 256, "slots": [None] * 7 + [{"parameter": SLOT}]}
+    )
+    assert validate_call("devices.remote.delete", {"target": PAGE})[0] == {"target": PAGE}
+    fields = TOOLS["devices.remote.define"].model.model_fields
+    assert "mode" not in fields
+    assert "pageName" not in fields
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"name": ""},
+        {"name": "P" * 257},
+        {"slots": []},
+        {"slots": [None] * 9},
+        {"mode": "create"},
+        {"pageName": "Macros"},
+        {"slots": [{"moduleId": TRACK, "parameterId": "VALUE"}]},
+        {"slots": [SLOT]},
+        {"slots": [{"parameter": SLOT}, {"parameter": SLOT, "label": "again"}]},
+        {"slots": [{"parameter": SLOT, "label": "l" * 257}]},
+        {"slots": [{"parameter": SLOT, "label": None}]},
+        {"slots": [{"parameter": SLOT}, {"parameter": {**SLOT, "owner": {**GRID_MODULE_REF, "id": TRACK.upper()}}}]},
+        {
+            "slots": [
+                {"parameter": {**SLOT, "owner": {"kind": "modulator", "device": DEVICE, "id": TRACK, "name": "LFO"}}}
+            ]
+        },
+        {"slots": [{"parameter": {"kind": "parameter", "owner": DEVICE, "id": "VALUE"}}]},
+        {"slots": [1]},
+    ],
+)
+def test_remote_page_define_rejects_bad_requests(changes):
+    with pytest.raises(ValidationError):
+        validate_call("devices.remote.define", {**TARGET, "name": "Macros", "slots": [{"parameter": SLOT}], **changes})
+
+
+@pytest.mark.parametrize(
+    "args", [{}, {"target": DEVICE}, {"target": PAGE, "pageName": "Macros"}, {**TARGET, "target": PAGE, "mode": "x"}]
+)
+def test_remote_page_delete_takes_only_a_remote_page_ref(args):
+    with pytest.raises(ValidationError):
+        validate_call("devices.remote.delete", args)
+
+
+def test_single_parameter_write_schema_carries_one_closed_branch_per_kind():
+    branches = TOOLS["grid.parameters.set"].model.model_json_schema()["oneOf"]
+    kinds = [b["properties"].get("expectedKind", {}).get("enum") for b in branches]
+    assert kinds == [["boolean"], ["integer", "enum"], ["float"], ["string"], ["float"], ["steps"], None]
+    assert all(b["additionalProperties"] is False for b in branches)
+    assert [b["required"][-1] for b in branches] == ["value"] * 4 + ["display", "values", "writes"]
+    assert branches[2]["properties"]["value"] == {"type": "number"}
+    assert "display" not in branches[2]["properties"]
+    assert "value" not in branches[4]["properties"]
+    assert set(branches[-1]["properties"]) == {"target", "timeoutMs", "writes"}
+
+
+def test_hidden_grid_parts_stay_out_of_the_surface():
+    hidden = {name for name, spec in TOOLS.items() if name.startswith("grid.") and not spec.expose}
+    assert hidden == {
+        "grid.catalog",
+        "grid.get",
+        "grid.parameters.set",
+        "grid.voicing.get",
+        "grid.voicing.set",
+        "grid.modules.insert",
+        "grid.modules.set",
+        "grid.modules.move",
+        "grid.modules.delete",
+        "grid.connections.set",
+    }
+    assert {"grid.capabilities", "grid.parameters.get", "grid.graph", "grid.modules.rename"}.isdisjoint(TOOLS)
+
+
+@pytest.mark.parametrize("params", [{"CUTOFF": {"display": "800 Hz"}}, {"CUTOFF": 84}])
+def test_partial_apply_entries_take_name_and_params_only(params):
+    module = {"name": "F: lp", "params": params}
+    assert validate_call("grid.apply", {**TARGET, "modules": [module]})[0]["modules"] == [module]
+
+
+@pytest.mark.parametrize(
+    "module",
+    [
+        {"name": "F: lp"},
+        {"name": "F: lp", "params": {"CUTOFF": 84}, "x": 0},
+        {"name": "F: lp", "params": {"CUTOFF": 84}, "y": 0},
+        {"name": "F: lp", "params": {"CUTOFF": 84}, "replace": True},
+        {"name": "F: lp", "type": "Low-pass", "params": {"CUTOFF": 84}},
+        {"name": "F: lp", "typeId": TRACK, "x": 0},
+    ],
+)
+def test_partial_apply_entries_refuse_position_replace_and_incomplete_whole_entries(module):
+    with pytest.raises(ValidationError):
+        validate_call("grid.apply", {**TARGET, "modules": [module]})
+
+
+@pytest.mark.parametrize("extra", [{"prune": True, "namespace": "F: "}, {"pruneAll": True}, {"replace": True}])
+def test_partial_apply_entries_refuse_prune_and_replace(extra):
+    partial = {"name": "F: lp", "params": {"CUTOFF": 84}}
+    with pytest.raises(ValidationError, match="partial"):
+        validate_call("grid.apply", {**TARGET, "modules": [partial], **extra})

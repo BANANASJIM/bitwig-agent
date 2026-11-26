@@ -123,8 +123,8 @@ public final class RpcServerTest {
         })) {
             server.start();
             String prefix = "{\"id\":\"cable\",\"method\":\"grid.connections.set\",\"params\":{"
-                    + "\"trackId\":\"00000000-0000-0000-0000-000000000001\",\"deviceIndex\":0,"
-                    + "\"expectedDeviceName\":\"Poly Grid\",\"targetModuleId\":\"00000000-0000-0001-0000-000000000001\","
+                    + "\"target\":{\"kind\":\"device\",\"track\":{\"kind\":\"track\",\"id\":\"00000000-0000-0000-0000-000000000001\","
+                    + "\"name\":\"Track\"},\"index\":0,\"name\":\"Poly Grid\"},\"targetModuleId\":\"00000000-0000-0001-0000-000000000001\","
                     + "\"targetPortKey\":\"in\",";
             JsonObject response = call(server, prefix + "\"expectedSource\":null,\"source\":null}}\n");
             assertTrue(response.has("result"), "Expected result: " + response);

@@ -37,11 +37,11 @@ def next_insert_batch(size: int, elapsed_s: float, result: dict[str, Any]) -> in
 
 
 def _invalid_stop(exc: SpecError) -> Stop:
-    return Stop("grid.get", {"error": bridge_error("invalid_params", "; ".join(exc.problems)).error})
+    return Stop("grid.export", {"error": bridge_error("invalid_params", "; ".join(exc.problems)).error})
 
 
 def _stale_stop(message: str) -> Stop:
-    return Stop("grid.get", {"error": bridge_error("stale_context", message).error})
+    return Stop("grid.export", {"error": bridge_error("stale_context", message).error})
 
 
 class Executor:
@@ -90,7 +90,7 @@ class Executor:
     async def _rename(self, name: str, expected: str) -> None:
         module_id = self.ledger.ids[name]
         await self._write(
-            "grid.modules.rename", {"moduleId": module_id, "expectedCustomName": expected, "customName": name}
+            "grid.modules.set", {"moduleId": module_id, "expectedCustomName": expected, "customName": name}
         )
         self.ledger.applied["renamed"] += 1
         self.ledger.awaiting_rename.pop(module_id, None)
@@ -177,7 +177,7 @@ class Executor:
         if len(entries) != len(chunk):
             raise Stop(
                 "grid.modules.insert",
-                {**result, **unknown_result("internal", "grid.modules.insert did not report every requested module")},
+                {**result, **unknown_result("internal", "the insert did not report every requested module")},
             )
         cut = (
             result["outcome"] == "not_applied"
@@ -231,6 +231,13 @@ class Executor:
             raise _invalid_stop(exc) from exc
         return writes
 
+    def _remember_displays(self, entries: list[dict[str, Any]]) -> None:
+        """The host's read-back display of each written parameter, by 'module name.PARAMETER'."""
+        names = {module_id: name for name, module_id in self.ledger.ids.items()}
+        for entry in entries:
+            if entry.get("outcome") in ("applied", "already_matched") and isinstance(entry.get("display"), str):
+                self.ledger.displays[f"{names[entry['moduleId']]}.{entry['parameterId']}"] = entry["display"]
+
     async def _params(self) -> None:
         self.ledger.phase = "params"
         writes = await self._param_writes()
@@ -240,6 +247,7 @@ class Executor:
             entries = result.get("writes", [])
             self.ledger.applied["paramsWritten"] += sum(1 for e in entries if e.get("outcome") == "applied")
             self.ledger.matched["params"] += sum(1 for e in entries if e.get("outcome") == "already_matched")
+            self._remember_displays(entries)
             self.ledger.warnings += [
                 f"{e['parameterId']}: displayMismatch {e['displayMismatch']}"
                 for e in entries

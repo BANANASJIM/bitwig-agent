@@ -95,8 +95,8 @@ def admission(caps: dict[str, Any], track_id: Any, inserting: bool, deleting: bo
         problems.append("the host reports topologyAdmissionBlocked; a native topology lifetime is pending")
     if any(d.get("trackId") == track_id for d in (caps.get("topologyQuarantine") or {}).get("devices") or []):
         problems.append(
-            "a Grid device on this track is quarantined (topologyQuarantine.devices); inspect it with grid.get, "
-            "then release it with ack <id> (status lists the holds)"
+            "a Grid device on this track is quarantined (topologyQuarantine.devices); inspect it with grid.export, "
+            "then release it with ack grid:<device> (status lists the holds)"
         )
     if inserting and any(sections.get(k, {}).get("available") is False for k in ("moduleInsert", "moduleRename")):
         problems.append("the host reports module insert/rename as unavailable")
@@ -117,7 +117,7 @@ def _external_problem(
         and name.casefold() in (str(r.get("typeName") or "").casefold(), str(r.get("name") or "").casefold())
     ]
     point = (
-        f" Unnamed {name!r} modules are referenced by their generated name (the grid.graph/grid.export name): {', '.join(map(repr, generated[:5]))}."
+        f" Unnamed {name!r} modules are referenced by their generated name (the grid.export name): {', '.join(map(repr, generated[:5]))}."
         if generated
         else near(name, by_custom)
     )
@@ -248,7 +248,7 @@ def build_plan(spec: Spec, caps: dict[str, Any], graph: Graph, dry: bool) -> Pla
     inserts = [n for n in spec.names if n not in existing]
     capacity = _capacity_problems(caps, len(rows) - len(deletes) + len(inserts))
     if not dry:
-        capacity += admission(caps, spec.target.get("trackId"), bool(inserts), bool(deletes))
+        capacity += admission(caps, spec.target["track"]["id"], bool(inserts), bool(deletes))
     layout = footprints(spec, existing, rows, deletes)
     problems = [*match.problems, *capacity, *layout.problems]
     if problems:

@@ -17,6 +17,8 @@ from bitwig_agent.frontends.cli import main
 from bitwig_agent.protocol import TOOLS, invalid_params_message, validate_call
 from bitwig_agent.protocol.base import REASONS, TARGET, TRACK
 from bitwig_agent.protocol.clips import NOTE_WINDOW
+from bitwig_agent.protocol.grid import DEVICE
+from bitwig_agent.protocol.grid import TARGET as GRID
 from bitwig_agent.protocol.launcher import SLOT_REF, TRACK_REF
 
 pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures("all_methods")]  # parser tests cover hidden blocks too
@@ -118,9 +120,7 @@ async def test_cli_preserves_grid_unknown_outcome_and_raw_expected_value_without
     payload, code = await execute(
         [
             "grid.parameters.set",
-            f"--trackId={TRACK}",
-            "--deviceIndex=0",
-            "--expectedDeviceName=Poly Grid",
+            f"--target={json.dumps(DEVICE)}",
             f"--moduleId={TRACK}",
             "--parameterId=",
             "--expectedKind=float",
@@ -147,37 +147,13 @@ async def test_cli_lost_response_is_unknown_not_replayed(host, monkeypatch):
     assert host.connections == 1
 
 
-async def test_empty_grid_parameter_id_is_not_omitted_or_retargeted(host, monkeypatch):
-    monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
-    args = {
-        "trackId": TRACK,
-        "deviceIndex": 15,
-        "expectedDeviceName": "Poly Grid",
-        "moduleId": TRACK,
-        "parameterId": "",
-    }
-    arguments = flags("grid.parameters.get", args)
-    error = {
-        "code": REASONS["stale_context"].value,
-        "reason": "stale_context",
-        "message": "Module is no longer present",
-    }
-    host.reply = lambda request: {"id": request["id"], "error": error}
-    payload, code = await execute(["grid.parameters.get", *arguments, "--timeoutMs", "250"])
-    assert code == 1
-    assert payload == {"error": error}
-    assert host.requests[0]["params"] == args
-    assert host.requests[0]["timeoutMs"] == 250
-    assert host.connections == 1
-
-
 @pytest.mark.parametrize("value", ["1.0", "1" + "0" * 400])
 async def test_grid_cli_numeric_tokens_fail_cleanly_before_tcp(host, monkeypatch, value):
     monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
     payload, code = await execute(
         [
             "grid.parameters.set",
-            f'{{"trackId":"{TRACK}","deviceIndex":0,"expectedDeviceName":"Poly Grid",'
+            f'{{"target":{json.dumps(DEVICE)},'
             f'"moduleId":"{TRACK}","parameterId":"","expectedKind":"integer",'
             f'"expectedValue":0,"value":{value}}}',
         ]
@@ -218,9 +194,7 @@ def token_arguments(method, tokens, raw):
 async def test_grid_move_cli_rejects_non_integer_tokens_before_tcp(host, monkeypatch, raw, field, token):
     monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
     tokens = {
-        "trackId": json.dumps(TRACK),
-        "deviceIndex": "0",
-        "expectedDeviceName": '"Poly Grid"',
+        "target": json.dumps(DEVICE),
         "moduleId": json.dumps(TRACK),
         "expectedX": "0",
         "expectedY": "0",
@@ -244,7 +218,7 @@ async def test_grid_move_cli_rejects_non_integer_tokens_before_tcp(host, monkeyp
     ],
 )
 def test_connection_cli_parses_required_null_and_endpoint_without_defaults(raw, expected, source):
-    values = {**TARGET, "targetModuleId": TRACK, "targetPortKey": "", "expectedSource": expected, "source": source}
+    values = {**GRID, "targetModuleId": TRACK, "targetPortKey": "", "expectedSource": expected, "source": source}
     arguments = [json.dumps(values)] if raw else flags("grid.connections.set", values)
     params, timeout = parse_arguments("grid.connections.set", [*arguments, "--timeoutMs", "250"])
     assert params == values
@@ -272,7 +246,7 @@ async def test_connection_cli_rejects_missing_or_invalid_cas_endpoint_before_tcp
     tokens = {
         key: json.dumps(value)
         for key, value in {
-            **TARGET,
+            **GRID,
             "targetModuleId": TRACK,
             "targetPortKey": "",
             "expectedSource": None,
@@ -292,7 +266,7 @@ async def test_connection_cli_rejects_missing_or_invalid_cas_endpoint_before_tcp
 @pytest.mark.parametrize("raw", [False, True])
 async def test_grid_insert_cli_preserves_loader_unknown_without_retry(host, monkeypatch, raw):
     monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
-    params = {**TARGET, "typeId": TRACK, "x": -(2**31), "y": 2**31 - 1}
+    params = {**GRID, "typeId": TRACK, "x": -(2**31), "y": 2**31 - 1}
     arguments = [json.dumps(params)] if raw else flags("grid.modules.insert", params)
     unknown = {
         "outcome": "unknown",
@@ -315,7 +289,7 @@ async def test_grid_insert_cli_rejects_non_int32_tokens_before_tcp(host, monkeyp
     tokens = {
         key: json.dumps(value)
         for key, value in {
-            **TARGET,
+            **GRID,
             "typeId": TRACK,
             "x": 0,
             "y": 0,
@@ -334,7 +308,7 @@ async def test_grid_insert_offline_schema_exposes_complete_contract(monkeypatch)
     assert out.code == 0
     description = json.loads(out.stdout)
     assert description["readOnly"] is False
-    assert set(description["inputSchema"]["required"]) == {"trackId", "deviceIndex", "expectedDeviceName"}
+    assert set(description["inputSchema"]["required"]) == {"target"}
     assert {tuple(sorted(branch["required"])) for branch in description["inputSchema"]["oneOf"]} == {
         ("x", "y"),
         ("modules",),
@@ -509,9 +483,9 @@ async def test_modulator_cli_preserves_host_error_without_retry(host, monkeypatc
     ],
 )
 def test_grid_rename_cli_preserves_raw_cas_and_reset_without_coercion(raw, expected, requested):
-    params = {**TARGET, "moduleId": TRACK, "expectedCustomName": expected, "customName": requested}
-    arguments = [json.dumps(params)] if raw else flags("grid.modules.rename", params)
-    actual, _ = parse_arguments("grid.modules.rename", arguments)
+    params = {**GRID, "moduleId": TRACK, "expectedCustomName": expected, "customName": requested}
+    arguments = [json.dumps(params)] if raw else flags("grid.modules.set", params)
+    actual, _ = parse_arguments("grid.modules.set", arguments)
     assert actual == params
 
 
@@ -519,8 +493,8 @@ def test_grid_rename_cli_preserves_raw_cas_and_reset_without_coercion(raw, expec
 @pytest.mark.parametrize("value", INVALID_NAMES)
 async def test_grid_rename_cli_rejects_invalid_raw_json_name_before_tcp(host, monkeypatch, field, value):
     monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
-    params = {**TARGET, "moduleId": TRACK, "expectedCustomName": "", "customName": "", field: value}
-    payload, code = await execute(["grid.modules.rename", json.dumps(params)])
+    params = {**GRID, "moduleId": TRACK, "expectedCustomName": "", "customName": "", field: value}
+    payload, code = await execute(["grid.modules.set", json.dumps(params)])
     assert code == 2
     assert_rejected_before_tcp(payload["error"], host)
 
@@ -528,8 +502,8 @@ async def test_grid_rename_cli_rejects_invalid_raw_json_name_before_tcp(host, mo
 @pytest.mark.parametrize("raw", [False, True])
 async def test_grid_rename_cli_unknown_preserves_native_uncertainty_without_retry(host, monkeypatch, raw):
     monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
-    params = {**TARGET, "moduleId": TRACK, "expectedCustomName": " \t\u03b1 ", "customName": ""}
-    arguments = [json.dumps(params)] if raw else flags("grid.modules.rename", params)
+    params = {**GRID, "moduleId": TRACK, "expectedCustomName": " \t\u03b1 ", "customName": ""}
+    arguments = [json.dumps(params)] if raw else flags("grid.modules.set", params)
     unknown = {
         "outcome": "unknown",
         "reason": "stale_context",
@@ -537,7 +511,7 @@ async def test_grid_rename_cli_unknown_preserves_native_uncertainty_without_retr
         "details": {"mutationDispatched": True, "rollbackVerified": False},
     }
     host.reply = lambda request: {"id": request["id"], "result": unknown}
-    payload, code = await execute(["grid.modules.rename", *arguments])
+    payload, code = await execute(["grid.modules.set", *arguments])
     assert code == 3
     assert payload == {"result": unknown}
     assert host.requests[0]["params"] == params
@@ -556,7 +530,7 @@ def test_unknown_argument_names_closest_field():
 
 def test_unknown_argument_synonyms_hint_but_never_alias():
 
-    target = {"trackId": "12345678-1234-1234-1234-123456789abc", "deviceIndex": 0, "expectedDeviceName": "Poly Grid"}
+    target = GRID
     for method, bad, want in (
         ("grid.get", {**target, "offset": 0, "limit": 5}, ["moduleOffset", "moduleLimit"]),
         ("transport.set", {"tempo": 120}, ["tempoBpm"]),
@@ -811,7 +785,7 @@ async def test_methods_without_a_declared_record_list_refuse_row_options_before_
 
 async def test_the_declared_key_picks_the_records_among_several_arrays(host, monkeypatch):
     result = {"modules": [{"name": "a"}, {"name": "b"}], "connections": [{"from": "a", "to": "b"}], "warnings": []}
-    out = await stdout_of([*["grid", "get"], *flags("grid.get", TARGET), "--format=jsonl"], host, monkeypatch, result)
+    out = await stdout_of([*["grid", "get"], *flags("grid.get", GRID), "--format=jsonl"], host, monkeypatch, result)
     assert (out.code, out.stderr) == (0, "")
     assert out.stdout == '{"name":"a"}\n{"name":"b"}\n'
     out = await stdout_of(["tracks", "list", "--format=jsonl"], host, monkeypatch, {"tracks": [], "spare": []})
@@ -850,9 +824,9 @@ async def test_row_options_on_a_write_are_refused_before_the_call(host, monkeypa
 
 
 def test_a_methods_own_format_field_is_not_the_output_format():
-    arguments = flags("grid.render", {**TARGET, "outPath": "/tmp/a.svg"})
-    params, _ = parse_arguments("grid.render", [*arguments, "--format=png"])
-    assert params["format"] == "png"
+    arguments = flags("grid.render", {**GRID, "outPath": "/tmp/a.svg"})
+    params, _ = parse_arguments("grid.render", [*arguments, "--fileType=png"])
+    assert params["fileType"] == "png"
 
 
 async def test_help_layers_are_plain_text_on_stdout_and_exit_zero(monkeypatch):

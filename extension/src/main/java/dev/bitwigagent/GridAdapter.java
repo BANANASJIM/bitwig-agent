@@ -22,9 +22,6 @@ interface GridAdapter {
             boolean fullSteps,
             Runnable check);
 
-    JsonObject parameter(
-            DeviceSources.Source source, UUID moduleId, String parameterId, boolean fullSteps, Runnable check);
-
     JsonObject voicing(DeviceSources.Source source, Runnable check);
 
     JsonObject setVoicing(
@@ -33,7 +30,7 @@ interface GridAdapter {
     JsonObject defineRemotePage(
             DeviceSources.Source source, GridRemotePageWriter.Request request, Runnable check, Runnable dispatch);
 
-    JsonObject deleteRemotePage(DeviceSources.Source source, String pageName, Runnable check, Runnable dispatch);
+    JsonObject deleteRemotePage(DeviceSources.Source source, JsonObject page, Runnable check, Runnable dispatch);
 
     JsonObject setParameter(
             DeviceSources.Source source,

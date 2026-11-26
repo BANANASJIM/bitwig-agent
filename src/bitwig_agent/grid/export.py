@@ -1,17 +1,15 @@
-"""Client-side `grid.export` / `grid.graph`: read a live Grid device and name everything (no UUID joins).
+"""Client-side `grid.export`: read a live Grid device and name everything (no UUID joins).
 
 `grid.export` returns a `grid.apply` spec of the device: applying it back to the same device is `already_matched`.
-Read-only toward Bitwig; the only side effect is the optional file at outPath.
+Read-only toward Bitwig; it writes no file.
 """
 
 from __future__ import annotations
 
-import json
 import math
-import os
 from typing import Any
 
-from bitwig_agent.errors import BridgeError, bridge_error
+from bitwig_agent.errors import BridgeError
 from bitwig_agent.grid.bundled import bundled_schema
 from bitwig_agent.grid.read import device_target, host_call, module_names, read_graph
 
@@ -111,7 +109,8 @@ def build(rows: list[dict[str, Any]], cables: list[dict[str, Any]], mode: str, n
         "external": list(external),
         "unnamed": generated,
         "warnings": warnings,
-        "sizes": {names[r["instanceId"]]: (r.get("width"), r.get("height")) for r in rows if r["instanceId"] in inside},
+        "refs": {names[r["instanceId"]]: r["ref"] for r in rows if r["instanceId"] in inside},
+        "sizes": {names[r["instanceId"]]: [r.get("width"), r.get("height")] for r in rows if r["instanceId"] in inside},
     }
 
 
@@ -128,16 +127,10 @@ async def read_voicing(
 
 
 async def export(client: Any, args: dict[str, Any], timeout_ms: int = 5000) -> dict[str, Any]:
-    path, overwrite = args.get("outPath"), args.get("overwrite", False)
-    if path is not None:
-        if not overwrite and os.path.exists(path):
-            raise bridge_error("target_exists", f"{path} exists; pass overwrite=true to replace it")
-        if not os.path.isdir(os.path.dirname(path)):
-            raise bridge_error("invalid_params", f"Parent directory does not exist: {os.path.dirname(path)}")
     mode, namespace, target = args.get("includeParams", "changed"), args.get("namespace"), device_target(args)
     rows, cables = await read_graph(host_call(client, target, timeout_ms), params=mode != "none")
     built = build(rows, cables, mode, namespace)
-    spec: dict[str, Any] = {"target": target, "modules": built["modules"], "connections": built["connections"]}
+    spec: dict[str, Any] = {"target": args["target"], "modules": built["modules"], "connections": built["connections"]}
     if built["external"]:
         spec["external"] = built["external"]
     if namespace:
@@ -147,39 +140,13 @@ async def export(client: Any, args: dict[str, Any], timeout_ms: int = 5000) -> d
         spec["voicing"] = voicing
     if not spec["modules"]:
         built["warnings"].append("no modules exported; an empty modules list is not a valid grid.apply spec")
-    out = {
+    return {
         "moduleCount": len(spec["modules"]),
         "connectionCount": len(spec["connections"]),
         "includeParams": mode,
+        "spec": spec,
+        "refs": built["refs"],
+        "sizes": built["sizes"],
         **({"unnamed": built["unnamed"]} if built["unnamed"] else {}),
-        **({"warnings": built["warnings"]} if built["warnings"] else {}),
-    }
-    if path is None:
-        return {**out, "spec": spec}
-    data = json.dumps(spec, indent=1, ensure_ascii=False).encode("utf-8")
-    try:
-        with open(path, "wb" if overwrite else "xb") as f:
-            f.write(data)
-    except OSError as exc:
-        raise bridge_error("job_failed", f"Cannot write {path}: {exc}") from exc
-    return {"outcome": "applied", **out, "outPath": path, "bytes": len(data)}
-
-
-async def graph(client: Any, args: dict[str, Any], timeout_ms: int = 5000) -> dict[str, Any]:
-    """Modules and cables by name (with sizes), for reading a patch without UUID joins."""
-    mode, namespace = args.get("includeParams", "none"), args.get("namespace")
-    rows, cables = await read_graph(host_call(client, device_target(args), timeout_ms), params=mode != "none")
-    built = build(rows, cables, mode, namespace)
-    generated = set(built["unnamed"])
-    modules = [
-        {**m, "size": list(built["sizes"][m["name"]]), **({"unnamed": True} if m["name"] in generated else {})}
-        for m in built["modules"]
-    ]
-    return {
-        "moduleCount": len(modules),
-        "connectionCount": len(built["connections"]),
-        "modules": modules,
-        "connections": built["connections"],
-        **({"external": built["external"]} if built["external"] else {}),
         **({"warnings": built["warnings"]} if built["warnings"] else {}),
     }

@@ -116,12 +116,19 @@ def test_host_call_addresses_the_device_on_every_method():
     }
 
 
-def test_module_names_fall_back_to_generated_names_for_unnamed_and_duplicates():
+def test_module_names_are_the_names_the_host_gives_its_refs():
+    def row(iid, custom, ref_name):
+        return {
+            "instanceId": iid,
+            "customName": custom,
+            "ref": {"kind": "gridModule", "id": iid, "name": ref_name},
+        }
+
     modules = [
-        {"instanceId": "a", "customName": "one", "x": 0, "y": 0, "typeName": "Add"},
-        {"instanceId": "b", "customName": "dup", "x": 1, "y": 0, "typeName": "Add"},
-        {"instanceId": "c", "customName": "dup", "x": 2, "y": 0, "typeName": "Add"},
-        {"instanceId": "d", "customName": "", "x": 3, "y": 4, "typeName": "Mul"},
+        row("a", "one", "one"),
+        row("b", "dup", "_Add_1_0"),
+        row("c", "dup", "_Add_2_0"),
+        row("d", "", "_Mul_3_4"),
     ]
     names, generated, duplicates = read.module_names(modules)
     assert names == {"a": "one", "b": "_Add_1_0", "c": "_Add_2_0", "d": "_Mul_3_4"}

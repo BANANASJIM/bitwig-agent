@@ -14,18 +14,20 @@ from bitwig_agent.grid.blocks import expand_blocks
 from bitwig_agent.grid.bundled import bundled_schema
 from bitwig_agent.grid.channel import Channel, Stop
 from bitwig_agent.grid.execute import Executor
+from bitwig_agent.grid.partial import resolve_partials
 from bitwig_agent.grid.plan import Plan, build_plan, params_to_read, plan_module_params, plan_voicing, unreadable_names
 from bitwig_agent.grid.preflight import preflight
 from bitwig_agent.grid.problems import SpecError, invalid_spec
-from bitwig_agent.grid.read import read_catalog, read_graph, read_params
+from bitwig_agent.grid.read import Graph, device_target, read_catalog, read_graph, read_params
 from bitwig_agent.grid.report import Ledger
 from bitwig_agent.grid.spec import Spec, TypeCatalog, parse_spec
 from bitwig_agent.grid.warnings import measured_warnings, trap_warnings
 from bitwig_agent.grid.wiring import plan_connections
+from bitwig_agent.protocol.grid_workflow import is_partial
 
 
 async def _load_spec(channel: Channel, args: dict[str, Any]) -> tuple[dict[str, Any], Spec]:
-    caps = await channel.call("grid.capabilities", {"detail": "full"})
+    caps = (await channel.call("status", {"detail": "full"}))["grid"]
     schema = bundled_schema()
     if caps.get("hostVersion") == schema["hostVersion"]:
         catalog = TypeCatalog.bundled(schema)
@@ -37,8 +39,10 @@ async def _load_spec(channel: Channel, args: dict[str, Any]) -> tuple[dict[str, 
 class Session:
     """One grid.apply run against one device: validate, plan, then dry-run or write."""
 
-    def __init__(self, channel: Channel, caps: dict[str, Any], spec: Spec, instances: list[dict[str, Any]]):
-        self.channel, self.caps, self.spec = channel, caps, spec
+    def __init__(
+        self, channel: Channel, caps: dict[str, Any], spec: Spec, instances: list[dict[str, Any]], graph: Graph | None
+    ):
+        self.channel, self.caps, self.spec, self.graph = channel, caps, spec, graph
         self.ledger = Ledger(spec, instances)
         self._poly: bool | None = None
 
@@ -57,7 +61,7 @@ class Session:
                 plan_voicing(spec.voicing, await self.channel.call("grid.voicing.get", {})) if spec.voicing else None
             )
             ledger.phase = "read"
-            graph = await self.channel.read(read_graph)
+            graph = self.graph if self.graph is not None else await self.channel.read(read_graph)
         except Stop as stop:  # a dry run reports a target it cannot read instead of failing
             if spec.dry_run and isinstance(stop.raw.get("error"), dict):
                 ledger.warnings += measured_warnings(spec, ())
@@ -103,6 +107,16 @@ class Session:
         return ledger.report("applied" if any(ledger.applied.values()) else "already_matched")
 
 
+async def _unreachable(channel: Channel, args: dict[str, Any], error: dict[str, Any]) -> dict[str, Any]:
+    """The dry-run report of a device whose partial entries could not be read: the whole entries are planned as they would be."""
+    whole = {**args, "modules": [m for m in args.get("modules", []) if not is_partial(m)]}
+    whole, instances = expand_blocks(whole)
+    _, spec = await _load_spec(channel, whole)
+    ledger = Ledger(spec, instances)
+    ledger.warnings += measured_warnings(spec, ())
+    return ledger.unreachable_report(error)
+
+
 async def with_marker(client: Any, result: dict[str, Any], wrote: bool, timeout_ms: int) -> dict[str, Any]:
     """After a build, attach a diagnostics.get marker: sinceMarker=<it> shows only rejections that happened after the build."""
     if not wrote:
@@ -116,11 +130,17 @@ async def with_marker(client: Any, result: dict[str, Any], wrote: bool, timeout_
 
 async def apply(client: Any, args: dict[str, Any], timeout_ms: int = 5000) -> dict[str, Any]:
     """Run a validated grid.apply spec (dict from the protocol's GridApplyArgs) through `client.call(method, params, timeout_ms)`."""
-    channel = Channel(client, args["target"], timeout_ms)
+    channel = Channel(client, device_target(args), timeout_ms)
     try:
+        try:
+            args, graph = await resolve_partials(channel, args)
+        except Stop as stop:  # a dry run reports a target it cannot read instead of failing
+            if not (args.get("dryRun") and isinstance(stop.raw.get("error"), dict)):
+                raise
+            return await _unreachable(channel, args, stop.raw["error"])
         args, instances = expand_blocks(args)
         caps, spec = await _load_spec(channel, args)
-        result = await Session(channel, caps, spec, instances).run()
+        result = await Session(channel, caps, spec, instances, graph).run()
     except SpecError as exc:
         raise invalid_spec(exc.problems) from exc
     except Stop as stop:

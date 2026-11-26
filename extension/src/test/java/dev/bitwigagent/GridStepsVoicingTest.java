@@ -77,8 +77,13 @@ public final class GridStepsVoicingTest {
         return context;
     }
 
-    private static JsonObject inspect(Fixture f, ContextFixture context, String id, boolean full) {
-        return f.reader.parameter(f.source, MODULE, id, context.reader, full, () -> {});
+    private static JsonObject stepRow(JsonObject snapshot) {
+        JsonArray parameters =
+                snapshot.getAsJsonArray("modules").get(0).getAsJsonObject().getAsJsonArray("parameters");
+        for (JsonElement parameter : parameters)
+            if (parameter.getAsJsonObject().get("parameterId").getAsString().equals("DATA"))
+                return parameter.getAsJsonObject();
+        throw new AssertionError("no DATA row");
     }
 
     @Test
@@ -86,8 +91,8 @@ public final class GridStepsVoicingTest {
         Fixture f = new Fixture();
         Node steps = stepsNode(f, ramp(256), 256);
         f.first.put(CHILDREN, List.of(countNode(f, 4), steps));
-        ContextFixture context = stepContext(steps);
-        JsonObject row = inspect(f, context, "DATA", false).getAsJsonObject("parameter");
+        JsonObject plain = f.reader.snapshot(f.source, 0, 64, true, false, null, () -> {});
+        JsonObject row = stepRow(plain);
         assertTrue(
                 row.get("supported").getAsBoolean()
                         && row.get("kind").getAsString().equals("steps")
@@ -110,32 +115,11 @@ public final class GridStepsVoicingTest {
                         && !row.has("options")
                         && !row.has("value"),
                 "model value domain is reported, no scalar value or options are invented");
-        JsonObject full = inspect(f, context, "DATA", true).getAsJsonObject("parameter");
+        JsonObject full = stepRow(f.reader.snapshot(f.source, 0, 64, true, false, null, true, () -> {}));
         assertTrue(
                 full.getAsJsonArray("values").size() == 256
                         && full.get("valuesComplete").getAsBoolean(),
                 "full exposes all 256 entries");
-        JsonObject graph = f.reader
-                .snapshot(f.source, 0, 64, true, false, null, true, () -> {})
-                .getAsJsonArray("modules")
-                .get(0)
-                .getAsJsonObject()
-                .getAsJsonArray("parameters")
-                .get(1)
-                .getAsJsonObject();
-        assertTrue(graph.getAsJsonArray("values").size() == 256, "grid.get full reaches the same row");
-        JsonObject plain = f.reader.snapshot(f.source, 0, 64, true, false, null, () -> {});
-        assertTrue(
-                plain.getAsJsonArray("modules")
-                                .get(0)
-                                .getAsJsonObject()
-                                .getAsJsonArray("parameters")
-                                .get(1)
-                                .getAsJsonObject()
-                                .getAsJsonArray("values")
-                                .size()
-                        == 4,
-                "default grid.get exposes the STEPS prefix");
         assertTrue(!has(plain, "step_count_unavailable"), "a readable STEPS count leaves coverage untouched");
     }
 
@@ -144,8 +128,8 @@ public final class GridStepsVoicingTest {
         Fixture f = new Fixture();
         Node steps = stepsNode(f, new float[] {0.5f, -0.25f}, 8);
         f.first.put(CHILDREN, List.of(steps));
-        JsonObject result = inspect(f, stepContext(steps), "DATA", false);
-        JsonObject row = result.getAsJsonObject("parameter");
+        JsonObject result = f.reader.snapshot(f.source, 0, 64, true, false, null, () -> {});
+        JsonObject row = stepRow(result);
         assertTrue(
                 row.getAsJsonArray("values").size() == 8
                         && row.getAsJsonArray("values").get(5).getAsDouble() == 0.0
@@ -155,19 +139,19 @@ public final class GridStepsVoicingTest {
         Fixture big = new Fixture();
         Node data = stepsNode(big, ramp(300), 300);
         big.first.put(CHILDREN, List.of(data));
-        row = inspect(big, stepContext(data), "DATA", false).getAsJsonObject("parameter");
+        row = stepRow(big.reader.snapshot(big.source, 0, 64, true, false, null, () -> {}));
         assertTrue(
                 row.getAsJsonArray("values").size() == GridSnapshotReader.STEP_FALLBACK,
                 "without STEPS the exposure is the bounded fallback");
-        JsonObject withFull = inspect(big, stepContext(data), "DATA", true);
+        JsonObject withFull = big.reader.snapshot(big.source, 0, 64, true, false, null, true, () -> {});
         assertTrue(
-                withFull.getAsJsonObject("parameter").getAsJsonArray("values").size() == 256
+                stepRow(withFull).getAsJsonArray("values").size() == 256
                         && has(withFull, "step_array_longer_than_full_window"),
                 "arrays longer than 256 expose 256 and say so");
         Fixture bad = new Fixture();
         Node nan = stepsNode(bad, new float[] {Float.NaN}, 1);
         bad.first.put(CHILDREN, List.of(nan));
-        assertRpcError("native_unavailable", () -> inspect(bad, stepContext(nan), "DATA", false));
+        assertRpcError("native_unavailable", () -> bad.reader.snapshot(bad.source, 0, 64, true, () -> {}));
     }
 
     private static final class BgP {}
@@ -794,8 +778,9 @@ public final class GridStepsVoicingTest {
     // ---- RPC boundary ----------------------------------------------------------------------------------------
 
     @Test
-    void moduleValidationAndCapabilities() {
-        String target = "\"trackId\":\"" + TRACK_ID + "\",\"deviceIndex\":0,\"expectedDeviceName\":\"Poly Grid\",";
+    void moduleValidation() {
+        String target = "\"target\":{\"kind\":\"device\",\"track\":{\"kind\":\"track\",\"id\":\"" + TRACK_ID
+                + "\",\"name\":\"Grid\"},\"index\":0,\"name\":\"Poly Grid\"},";
         String module = "\"moduleId\":\"" + MODULE + "\",\"parameterId\":\"DATA\",";
         GridModule.validateParams(
                 "grid.parameters.set",
@@ -808,9 +793,6 @@ public final class GridStepsVoicingTest {
                         + module.replace("DATA", "OTHER")
                         + "\"expectedKind\":\"float\",\"expectedValue\":0,\"value\":1}]}"));
         GridModule.validateParams(
-                "grid.parameters.get",
-                HostFixture.json("{" + target + module.substring(0, module.length() - 1) + ",\"full\":true}"));
-        GridModule.validateParams(
                 "grid.get", HostFixture.json("{" + target.substring(0, target.length() - 1) + ",\"full\":true}"));
         for (String bad : List.of(
                 "\"expectedKind\":\"steps\",\"expectedValue\":0,\"value\":0.5",
@@ -818,11 +800,6 @@ public final class GridStepsVoicingTest {
                 "\"expectedKind\":\"float\",\"expectedValue\":0,\"values\":[0.5]"))
             assertInvalidParams(() -> GridModule.validateParams(
                     "grid.parameters.set", HostFixture.json("{" + target + module + bad.substring(0) + "}")));
-        assertInvalidParams(() -> GridModule.validateParams(
-                "grid.parameters.get",
-                HostFixture.json("{" + target + module.substring(0, module.length() - 1) + ",\"full\":\"yes\"}")));
-        assertInvalidParams(() ->
-                GridModule.validateParams("grid.parameters.set", HostFixture.json("{" + target + "\"writes\":[1]}")));
         assertInvalidParams(() -> GridModule.validateParams(
                 "grid.voicing.get", HostFixture.json("{" + target + "\"detail\":\"everything\"}")));
         assertRpcError("unknown_method", () -> GridModule.validateParams("grid.unknown", new JsonObject()));
@@ -848,12 +825,6 @@ public final class GridStepsVoicingTest {
             entry.addProperty("writeReason", "no setter");
             full.add(key, entry);
         }
-        JsonObject compact = GridModule.compactCapabilities(full);
-        assertTrue(
-                !compact.getAsJsonObject("writers").get("stepArrays").getAsBoolean()
-                        && !compact.getAsJsonObject("writers").get("voicing").getAsBoolean()
-                        && compact.getAsJsonObject("unavailable").has("voicing"),
-                "compact capabilities report step-array and voicing write availability");
     }
 
     // ---- helpers ---------------------------------------------------------------------------------------------

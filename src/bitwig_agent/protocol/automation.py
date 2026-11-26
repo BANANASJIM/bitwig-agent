@@ -26,9 +26,9 @@ class AutomationTarget(StrictModel):
     )
     deviceIndex: Annotated[int, Field(ge=0, le=DEVICE_WINDOW - 1)] = omitted()
     expectedDeviceName: Nonempty = omitted()
-    moduleId: Uuid = omitted(description="Grid module instanceId from grid.get on that device.")
+    moduleId: Uuid = omitted(description="Grid module instanceId: the id of its grid.export refs entry on that device.")
     parameterId: Annotated[str, Field(max_length=MAX_STRING_UNITS)] = omitted(
-        description="Exact parameterId of that module's float control, from grid.get."
+        description="Exact parameterId of that module's float control (grid.export with includeParams 'all', or grid.describe)."
     )
 
     @model_validator(mode="after")

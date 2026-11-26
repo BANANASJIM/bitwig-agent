@@ -4,6 +4,7 @@ import static dev.bitwigagent.RpcAssert.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 import com.google.gson.*;
+import dev.bitwigagent.core.Refs;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.*;
@@ -35,22 +36,17 @@ public final class GridModuleTest {
         GridModule.validateParams("grid.catalog", p);
         p.addProperty("query", supplementary.repeat(65));
         assertRpcError("invalid_params", f.host.submit(f.module, "grid.catalog", p));
-        for (String field : List.of("trackId", "deviceIndex", "expectedDeviceName")) {
-            p = target();
-            p.remove(field);
-            assertRpcError("invalid_params", f.host.submit(f.module, "grid.get", p));
-        }
         p = target();
-        p.addProperty("moduleLimit", 257);
+        p.remove("target");
         assertRpcError("invalid_params", f.host.submit(f.module, "grid.get", p));
         p = target();
-        p.addProperty("deviceIndex", 16);
+        p.addProperty("moduleLimit", 257);
         assertRpcError("invalid_params", f.host.submit(f.module, "grid.get", p));
         p = target();
         p.addProperty("includeParameters", "false");
         assertRpcError("invalid_params", f.host.submit(f.module, "grid.get", p));
         p = target();
-        p.addProperty("trackId", "not-a-uuid");
+        p.add("target", Refs.track(HostFixture.A, "Track"));
         assertRpcError("invalid_params", f.host.submit(f.module, "grid.get", p));
         GridModule.validateParams("grid.catalog", HostFixture.json("{\"query\":\"\",\"offset\":100000,\"limit\":256}"));
         assertTrue(f.adapter.reads == 0, "validation never touches adapter");
@@ -61,14 +57,14 @@ public final class GridModuleTest {
         Fixture f = new Fixture();
         f.device.child("name").emit("Tool");
         HostOperation op = f.start(target());
-        assertRpcError("stale_target", op);
+        assertRpcError("target_changed", op);
         assertTrue(f.adapter.tasks.isEmpty(), "wrong expected name never enters document queue");
         f.device.child("name").emit("Poly Grid");
         f.device.child("exists").emit(false);
         assertRpcError("target_not_found", f.start(target()));
         f.device.child("exists").emit(true);
         f.host.tracks[0].child("createDeviceBank").child("scrollPosition").emit(1);
-        assertRpcError("stale_context", f.start(target()));
+        assertRpcError("outside_window", f.start(target()));
         Fixture unobserved = new Fixture(false);
         assertRpcError("not_ready", unobserved.start(target()));
     }
@@ -274,74 +270,6 @@ public final class GridModuleTest {
         } finally {
             Files.deleteIfExists(file);
         }
-    }
-
-    @Test
-    void parameterInspectionRejectsInvalidTargetsAndQueuedRaces() {
-        Fixture f = new Fixture();
-        for (String field : List.of("trackId", "deviceIndex", "expectedDeviceName", "moduleId", "parameterId")) {
-            JsonObject p = inspectionTarget();
-            p.remove(field);
-            assertRpcError("invalid_params", f.host.submit(f.module, "grid.parameters.get", p));
-            p = inspectionTarget();
-            p.add(field, JsonNull.INSTANCE);
-            assertRpcError("invalid_params", f.host.submit(f.module, "grid.parameters.get", p));
-        }
-        for (JsonElement invalid : List.of(
-                new JsonPrimitive(3), new JsonPrimitive(true), new JsonPrimitive("x".repeat(1025)), new JsonArray())) {
-            JsonObject p = inspectionTarget();
-            p.add("parameterId", invalid);
-            assertRpcError("invalid_params", f.host.submit(f.module, "grid.parameters.get", p));
-        }
-        for (String id : List.of("1-1-1-1-1", "00000000-0000-0000-0000-00000000000g", "")) {
-            JsonObject p = inspectionTarget();
-            p.addProperty("moduleId", id);
-            assertRpcError("invalid_params", f.host.submit(f.module, "grid.parameters.get", p));
-        }
-        JsonObject p = inspectionTarget();
-        p.addProperty("includeParameters", false);
-        assertRpcError("invalid_params", f.host.submit(f.module, "grid.parameters.get", p));
-        p = inspectionTarget();
-        p.addProperty("deviceIndex", true);
-        assertRpcError("invalid_params", f.host.submit(f.module, "grid.parameters.get", p));
-        String supplementary = new String(Character.toChars(0x1D11E));
-        p = inspectionTarget();
-        p.addProperty("parameterId", supplementary.repeat(513));
-        assertRpcError("invalid_params", f.host.submit(f.module, "grid.parameters.get", p));
-        p.addProperty("parameterId", supplementary.repeat(512));
-        GridModule.validateParams("grid.parameters.get", p);
-        p.addProperty("parameterId", "");
-        p.addProperty("moduleId", "ABCDEFAB-ABCD-ABCD-ABCD-ABCDEFABCDEF");
-        GridModule.validateParams("grid.parameters.get", p);
-        assertTrue(
-                f.host.tasks.isEmpty() && f.adapter.tasks.isEmpty(),
-                "invalid inspection requests never enter either queue");
-        HostOperation cancelled = f.host.submit(f.module, "grid.parameters.get", inspectionTarget());
-        f.host.next();
-        cancelled.result.cancel(false);
-        f.adapter.next();
-        assertTrue(f.adapter.reads == 0, "cancelled inspection does not read native context");
-        HostOperation changed = f.host.submit(f.module, "grid.parameters.get", inspectionTarget());
-        f.host.next();
-        f.device.child("name").emit("Other");
-        f.device.child("name").emit("Poly Grid");
-        f.adapter.next();
-        assertRpcError("stale_context", changed);
-        assertTrue(f.adapter.reads == 0, "inspection rejects public target epoch changes before context capture");
-        HostOperation late = f.host.submit(f.module, "grid.parameters.get", inspectionTarget());
-        f.host.next();
-        f.adapter.next();
-        f.host.tracks[0].child("channelId").emit(HostFixture.B);
-        f.host.next();
-        assertRpcError("stale_context", late);
-    }
-
-    private static JsonObject writeTarget() {
-        JsonObject result = inspectionTarget();
-        result.addProperty("expectedKind", "boolean");
-        result.addProperty("expectedValue", true);
-        result.addProperty("value", false);
-        return result;
     }
 
     @Test
@@ -562,6 +490,14 @@ public final class GridModuleTest {
         assertTrue(assertUnknown("deadline", expired) != null, "deadline after dispatch preserves uncertainty");
     }
 
+    private static JsonObject writeTarget() {
+        JsonObject result = inspectionTarget();
+        result.addProperty("expectedKind", "boolean");
+        result.addProperty("expectedValue", true);
+        result.addProperty("value", false);
+        return result;
+    }
+
     private static JsonObject moduleTarget(boolean move) {
         JsonObject p = inspectionTarget();
         p.remove("parameterId");
@@ -722,8 +658,7 @@ public final class GridModuleTest {
             endpoint.addProperty("portKey", new String(Character.toChars(0x1D11E)).repeat(513));
             assertRpcError("invalid_params", f.host.submit(f.module, "grid.connections.set", p));
         }
-        for (String field :
-                List.of("targetModuleId", "targetPortKey", "trackId", "deviceIndex", "expectedDeviceName")) {
+        for (String field : List.of("targetModuleId", "targetPortKey", "target")) {
             JsonObject p = connectionTarget();
             p.add(field, JsonNull.INSTANCE);
             assertRpcError("invalid_params", f.host.submit(f.module, "grid.connections.set", p));
@@ -921,22 +856,15 @@ public final class GridModuleTest {
     void batchAndReadOptionsValidateAndDispatch() {
         Fixture f = new Fixture();
         GridModule.validateParams("grid.parameters.set", batchTarget("LOCAL_ID", "OTHER"));
-        JsonObject mixed = batchTarget("LOCAL_ID");
-        mixed.addProperty("parameterId", "LOCAL_ID");
-        JsonObject empty = batchTarget();
         JsonObject dup = batchTarget("LOCAL_ID", "LOCAL_ID");
-        JsonObject extra = batchTarget("LOCAL_ID");
-        extra.getAsJsonArray("writes").get(0).getAsJsonObject().addProperty("nope", 1);
         JsonObject nullValue = batchTarget("LOCAL_ID");
         nullValue.getAsJsonArray("writes").get(0).getAsJsonObject().add("value", JsonNull.INSTANCE);
         JsonObject badKind = batchTarget("LOCAL_ID");
         badKind.getAsJsonArray("writes").get(0).getAsJsonObject().addProperty("expectedKind", "string");
-        String[] many = new String[65];
-        for (int i = 0; i < many.length; i++) many[i] = "P" + i;
         String[] limit = new String[64];
         for (int i = 0; i < limit.length; i++) limit[i] = "P" + i;
         GridModule.validateParams("grid.parameters.set", batchTarget(limit));
-        for (JsonObject bad : List.of(mixed, empty, dup, extra, nullValue, badKind, batchTarget(many)))
+        for (JsonObject bad : List.of(dup, nullValue, badKind))
             assertRpcError("invalid_params", f.host.submit(f.module, "grid.parameters.set", bad));
         JsonObject getBad = target();
         getBad.addProperty("diagnostics", "yes");
@@ -990,82 +918,6 @@ public final class GridModuleTest {
     }
 
     @Test
-    void capabilitiesAreCompactByDefault() {
-        Fixture f = new Fixture();
-        for (String text : List.of("{\"detail\":\"everything\"}", "{\"detail\":1}", "{\"detail\":null}", "{\"x\":1}"))
-            assertRpcError("invalid_params", f.host.submit(f.module, "grid.capabilities", HostFixture.json(text)));
-        GridModule.validateParams("grid.capabilities", HostFixture.json("{\"detail\":\"full\"}"));
-        GridModule.validateParams("grid.capabilities", HostFixture.json("{\"detail\":\"summary\"}"));
-        JsonObject full = new JsonObject();
-        full.addProperty("hostVersion", "6.1.4");
-        full.addProperty("gatePassed", true);
-        full.addProperty("available", true);
-        full.addProperty("topologyQuarantined", false);
-        full.addProperty("topologyAdmissionBlocked", false);
-        full.addProperty("loadedHostJarSha256", "x".repeat(64));
-        for (String key : List.of(
-                "catalog",
-                "structure",
-                "typedParameters",
-                "display",
-                "parameterInspection",
-                "parameterWrite",
-                "moduleMove",
-                "moduleDelete",
-                "moduleRename",
-                "moduleInsert")) {
-            JsonObject binding = new JsonObject();
-            binding.addProperty("available", !key.equals("moduleMove"));
-            binding.addProperty("coverage", "long coverage text");
-            binding.add("reason", key.equals("moduleMove") ? new JsonPrimitive("no binding") : JsonNull.INSTANCE);
-            full.add(key, binding);
-        }
-        JsonObject panels = new JsonObject();
-        panels.addProperty("available", true);
-        panels.addProperty("writeAvailable", false);
-        full.add("booleanPanels", panels);
-        JsonObject cable = new JsonObject();
-        cable.addProperty("available", true);
-        full.add("connectionWrite", cable);
-        JsonObject compact = GridModule.compactCapabilities(full);
-        assertTrue(
-                compact.get("gatePassed").getAsBoolean()
-                        && compact.get("hostVersion").getAsString().equals("6.1.4")
-                        && !compact.get("topologyQuarantined").getAsBoolean()
-                        && !compact.get("topologyAdmissionBlocked").getAsBoolean()
-                        && compact.getAsJsonObject("writers")
-                                .get("connectionWrite")
-                                .getAsBoolean()
-                        && !compact.getAsJsonObject("writers").get("moduleMove").getAsBoolean()
-                        && !compact.getAsJsonObject("writers")
-                                .get("booleanPanels")
-                                .getAsBoolean()
-                        && compact.getAsJsonObject("reads").get("catalog").getAsBoolean()
-                        && compact.getAsJsonObject("unavailable")
-                                .get("moduleMove")
-                                .getAsString()
-                                .equals("no binding")
-                        && !compact.has("loadedHostJarSha256")
-                        && compact.toString().length() < 1200,
-                "default capabilities are availability booleans with reasons only for unavailable bindings");
-        Fixture g = new Fixture();
-        HostOperation op = g.host.submit(g.module, "grid.capabilities", new JsonObject());
-        g.host.next();
-        assertTrue(
-                op.result.join().has("writers")
-                        && op.result.join().get("available").getAsBoolean(),
-                "capabilities dispatch returns the compact summary");
-        JsonObject detail = new JsonObject();
-        detail.addProperty("detail", "full");
-        op = g.host.submit(g.module, "grid.capabilities", detail);
-        g.host.next();
-        assertTrue(
-                !op.result.join().has("writers")
-                        && op.result.join().get("available").getAsBoolean(),
-                "detail full returns the adapter result unchanged");
-    }
-
-    @Test
     void connectionBatchArgumentsValidateBeforeScheduling() {
         Fixture f = new Fixture();
         JsonObject good = target();
@@ -1096,7 +948,7 @@ public final class GridModuleTest {
     @Test
     void insertionArguments() {
         Fixture f = new Fixture();
-        for (String key : List.of("trackId", "deviceIndex", "expectedDeviceName", "typeId", "x", "y")) {
+        for (String key : List.of("target", "typeId", "x", "y")) {
             JsonObject p = insertionTarget();
             p.remove(key);
             assertRpcError("invalid_params", f.host.submit(f.module, "grid.modules.insert", p));
@@ -1213,7 +1065,8 @@ public final class GridModuleTest {
                         && !result.has("graph")
                         && !result.has("graphBefore")
                         && result.getAsJsonObject("target")
-                                .get("trackId")
+                                .getAsJsonObject("track")
+                                .get("id")
                                 .getAsString()
                                 .equals(HostFixture.A),
                 "batch returns per-entry results, one diff of every added module and the explicit target");
@@ -1267,7 +1120,7 @@ public final class GridModuleTest {
         assertTrue(
                 f.adapter.insertion.guard.quarantined() && assertUnknown("readback_mismatch", op) != null,
                 "settlement mismatch holds the device with an unknown request");
-        JsonObject compact = GridModule.compactCapabilities(capabilitiesWith(f.adapter.insertion.guard));
+        JsonObject compact = capabilitiesWith(f.adapter.insertion.guard);
         assertTrue(
                 compact.getAsJsonObject("topologyQuarantine")
                         .getAsJsonArray("devices")
@@ -1276,7 +1129,7 @@ public final class GridModuleTest {
                         .get("origin")
                         .getAsString()
                         .equals("settlement_mismatch"),
-                "compact capabilities keep the quarantined device and its origin");
+                "capabilities keep the quarantined device and its origin");
         AckModule ack = f.host.services.ack(f.module);
         JsonObject id = new JsonObject();
         id.addProperty("id", GridTopologyQuarantine.holdId(HostFixture.A + "/" + graphKey(f)));
@@ -1292,7 +1145,8 @@ public final class GridModuleTest {
                                 .get("inserted")
                                 .getAsBoolean()
                         && result.getAsJsonObject("target")
-                                .get("trackId")
+                                .getAsJsonObject("track")
+                                .get("id")
                                 .getAsString()
                                 .equals(HostFixture.A)
                         && !acked.dispatched(),
@@ -1362,7 +1216,11 @@ public final class GridModuleTest {
         f.host.next();
         JsonObject result = op.result.join();
         assertTrue(
-                result.getAsJsonObject("target").get("trackId").getAsString().equals(HostFixture.A)
+                result.getAsJsonObject("target")
+                                .getAsJsonObject("track")
+                                .get("id")
+                                .getAsString()
+                                .equals(HostFixture.A)
                         && result.get("loaderDispatched").getAsBoolean()
                         && result.get("placementDispatched").getAsBoolean(),
                 "actual insertion result receives existing explicit target envelope");
@@ -1452,42 +1310,41 @@ public final class GridModuleTest {
     @Test
     void renameArgumentsRejectBeforeQueues() {
         Fixture f = new Fixture();
-        for (String key : List.of(
-                "trackId", "deviceIndex", "expectedDeviceName", "moduleId", "expectedCustomName", "customName")) {
+        for (String key : List.of("target", "moduleId", "expectedCustomName", "customName")) {
             JsonObject p = renameTarget("", "Lead");
             p.remove(key);
-            assertRpcError("invalid_params", f.host.submit(f.module, "grid.modules.rename", p));
+            assertRpcError("invalid_params", f.host.submit(f.module, "grid.modules.set", p));
             p = renameTarget("", "Lead");
             p.add(key, JsonNull.INSTANCE);
-            assertRpcError("invalid_params", f.host.submit(f.module, "grid.modules.rename", p));
+            assertRpcError("invalid_params", f.host.submit(f.module, "grid.modules.set", p));
         }
         for (String key : List.of("expectedCustomName", "customName")) {
             for (String token : List.of("0", "1.0", "true", "[]", "{}")) {
                 JsonObject p = renameTarget("", "Lead");
                 p.add(key, JsonParser.parseString(token));
-                assertRpcError("invalid_params", f.host.submit(f.module, "grid.modules.rename", p));
+                assertRpcError("invalid_params", f.host.submit(f.module, "grid.modules.set", p));
             }
             for (String text : List.of("x".repeat(1025), "𝄞".repeat(513), "x".repeat(1023) + "𝄞")) {
                 JsonObject p = renameTarget("", "Lead");
                 p.addProperty(key, text);
-                assertRpcError("invalid_params", f.host.submit(f.module, "grid.modules.rename", p));
+                assertRpcError("invalid_params", f.host.submit(f.module, "grid.modules.set", p));
             }
             for (String text : List.of("", " \t音楽=α\n", "x".repeat(1024), "𝄞".repeat(512))) {
                 JsonObject p = renameTarget("", "Lead");
                 p.addProperty(key, text);
-                GridModule.validateParams("grid.modules.rename", p);
+                GridModule.validateParams("grid.modules.set", p);
             }
         }
-        for (String key : List.of("trackId", "moduleId"))
+        for (String key : List.of("moduleId"))
             for (String id : List.of("", "selected", "1-1-1-1-1", "00000000000000010000000000000001")) {
                 JsonObject p = renameTarget("", "Lead");
                 p.addProperty(key, id);
-                assertRpcError("invalid_params", f.host.submit(f.module, "grid.modules.rename", p));
+                assertRpcError("invalid_params", f.host.submit(f.module, "grid.modules.set", p));
             }
         for (String key : List.of("typeId", "name", "parameterId", "selected", "force", "includeParameters")) {
             JsonObject p = renameTarget("", "Lead");
             p.addProperty(key, "forbidden");
-            assertRpcError("invalid_params", f.host.submit(f.module, "grid.modules.rename", p));
+            assertRpcError("invalid_params", f.host.submit(f.module, "grid.modules.set", p));
         }
         assertTrue(
                 f.host.tasks.isEmpty() && f.adapter.tasks.isEmpty() && f.adapter.naming.calls == 0,
@@ -1498,7 +1355,7 @@ public final class GridModuleTest {
     void renameUsesRealWriterAndBothDeliveryQueues() {
         Fixture f = new Fixture();
         String raw = " \tLead = 音楽𝄞\n";
-        HostOperation op = f.host.submit(f.module, "grid.modules.rename", renameTarget("", raw));
+        HostOperation op = f.host.submit(f.module, "grid.modules.set", renameTarget("", raw));
         f.host.next();
         for (String key : List.of(
                 "isPlaying",
@@ -1524,9 +1381,9 @@ public final class GridModuleTest {
                         && result.get("requestedCustomName").getAsString().equals(raw)
                         && result.get("actualCustomName").getAsString().equals(raw)
                         && result.get("previousName").getAsString().equals("Union")
-                        && result.getAsJsonObject("target").get("deviceIndex").getAsInt() == 0,
+                        && result.getAsJsonObject("target").get("index").getAsInt() == 0,
                 "real writer raw/effective observations and explicit target survive immutable delivery");
-        HostOperation reset = f.host.submit(f.module, "grid.modules.rename", renameTarget(raw, ""));
+        HostOperation reset = f.host.submit(f.module, "grid.modules.set", renameTarget(raw, ""));
         f.host.next();
         f.adapter.next();
         f.adapter.next();
@@ -1534,13 +1391,13 @@ public final class GridModuleTest {
         assertTrue(
                 reset.result.join().get("actualCustomName").getAsString().isEmpty() && f.adapter.naming.calls == 2,
                 "empty reset passes actual raw CAS and native semantics without type-name substitution");
-        HostOperation stale = f.host.submit(f.module, "grid.modules.rename", renameTarget("Union", ""));
+        HostOperation stale = f.host.submit(f.module, "grid.modules.set", renameTarget("Union", ""));
         f.host.next();
         f.adapter.next();
         assertTrue(
                 !assertRpcError("stale_context", stale).unknown && f.adapter.naming.calls == 2,
                 "effective name cannot authorize even an otherwise matching raw no-op");
-        HostOperation noop = f.host.submit(f.module, "grid.modules.rename", renameTarget("", ""));
+        HostOperation noop = f.host.submit(f.module, "grid.modules.set", renameTarget("", ""));
         f.host.next();
         f.adapter.next();
         assertTrue(
@@ -1561,15 +1418,14 @@ public final class GridModuleTest {
                 "isClipLauncherAutomationWriteEnabled")) {
             Fixture unsafe = new Fixture();
             unsafe.host.transport.child(key).emit(true);
-            HostOperation op = unsafe.host.submit(unsafe.module, "grid.modules.rename", renameTarget("", ""));
+            HostOperation op = unsafe.host.submit(unsafe.module, "grid.modules.set", renameTarget("", ""));
             unsafe.host.next();
             assertTrue(
                     !assertRpcError("unsafe_state", op).unknown && unsafe.adapter.naming.calls == 0,
                     "unsafe no-op still requires stopped/nonrecording/nonautomation authorization");
         }
         Fixture controller = new Fixture();
-        HostOperation queued =
-                controller.host.submit(controller.module, "grid.modules.rename", renameTarget("", "Lead"));
+        HostOperation queued = controller.host.submit(controller.module, "grid.modules.set", renameTarget("", "Lead"));
         controller.host.transport.child("isPlaying").emit(true);
         controller.host.transport.child("isPlaying").emit(false);
         controller.host.next();
@@ -1577,8 +1433,7 @@ public final class GridModuleTest {
                 !assertRpcError("stale_context", queued).unknown && controller.adapter.tasks.isEmpty(),
                 "rename safety ticket rejects transitions before initial controller dispatch");
         Fixture unobserved = new Fixture(true, false);
-        HostOperation unready =
-                unobserved.host.submit(unobserved.module, "grid.modules.rename", renameTarget("", "Lead"));
+        HostOperation unready = unobserved.host.submit(unobserved.module, "grid.modules.set", renameTarget("", "Lead"));
         unobserved.host.next();
         assertTrue(
                 !assertRpcError("not_ready", unready).unknown && unobserved.adapter.naming.calls == 0,
@@ -1586,7 +1441,7 @@ public final class GridModuleTest {
         for (int boundary = 0; boundary < 3; boundary++)
             for (int transition = 0; transition < 3; transition++) {
                 Fixture f = new Fixture();
-                HostOperation op = f.host.submit(f.module, "grid.modules.rename", renameTarget("", "Lead"));
+                HostOperation op = f.host.submit(f.module, "grid.modules.set", renameTarget("", "Lead"));
                 f.host.next();
                 if (boundary > 0) f.adapter.next();
                 if (boundary > 1) f.adapter.next();
@@ -1611,8 +1466,7 @@ public final class GridModuleTest {
             immediate.host.transport.child("isPlaying").emit(true);
             immediate.host.transport.child("isPlaying").emit(false);
         };
-        HostOperation changed =
-                immediate.host.submit(immediate.module, "grid.modules.rename", renameTarget("", "Lead"));
+        HostOperation changed = immediate.host.submit(immediate.module, "grid.modules.set", renameTarget("", "Lead"));
         immediate.host.next();
         immediate.adapter.next();
         if (!immediate.adapter.tasks.isEmpty()) immediate.adapter.next();
@@ -1620,7 +1474,7 @@ public final class GridModuleTest {
                 assertUnknown("stale_context", changed) != null && immediate.adapter.naming.calls == 1,
                 "a safety transition during the native setter cannot be reported not-applied");
         Fixture noop = new Fixture();
-        HostOperation op = noop.host.submit(noop.module, "grid.modules.rename", renameTarget("", ""));
+        HostOperation op = noop.host.submit(noop.module, "grid.modules.set", renameTarget("", ""));
         noop.host.next();
         noop.adapter.next();
         while (!noop.adapter.tasks.isEmpty()) noop.adapter.next();
@@ -1636,7 +1490,7 @@ public final class GridModuleTest {
         for (int boundary = 0; boundary < 3; boundary++)
             for (boolean close : List.of(false, true)) {
                 Fixture f = new Fixture();
-                HostOperation op = f.host.submit(f.module, "grid.modules.rename", renameTarget("", "Lead"));
+                HostOperation op = f.host.submit(f.module, "grid.modules.set", renameTarget("", "Lead"));
                 f.host.next();
                 if (boundary > 0) f.adapter.next();
                 if (boundary > 1) f.adapter.next();
@@ -1663,7 +1517,7 @@ public final class GridModuleTest {
 
     @Test
     void layerAddressingNeedsObservedLayersAndChildren() {
-        JsonObject badParent = target();
+        JsonObject badParent = legacyTarget();
         badParent.addProperty("trackId", "not-a-uuid");
         assertInvalidParams(() -> DeviceSources.validateParent(badParent));
         assertInvalidParams(() -> DeviceSources.validateLayer(HostFixture.json("{\"parent\":1}"), false, true));
@@ -1672,7 +1526,7 @@ public final class GridModuleTest {
         TestServices services = new TestServices(
                 unobserved.host.proxy(com.bitwig.extension.controller.api.ControllerHost.class), unobserved.tasks::now);
         assertTrue(
-                assertRpcError("not_ready", () -> services.sources.root(target()))
+                assertRpcError("not_ready", () -> services.sources.root(legacyTarget()))
                         .getMessage()
                         .contains("Root device window"),
                 "a root device window that was never observed is not addressable");
@@ -1686,19 +1540,19 @@ public final class GridModuleTest {
         String id = "00000000-0000-0000-0000-0000000000aa";
         layer.child("exists").emit(true);
         assertTrue(
-                assertRpcError("not_ready", () -> sources.layer(target(), id))
+                assertRpcError("not_ready", () -> sources.layer(legacyTarget(), id))
                         .getMessage()
                         .contains("Layer identity window"),
                 "an existing layer without an observed UUID is not addressable");
         layer.child("channelId").emit(id);
         assertTrue(
-                assertRpcError("not_ready", () -> sources.layer(target(), id))
+                assertRpcError("not_ready", () -> sources.layer(legacyTarget(), id))
                         .getMessage()
                         .contains("Layer and child window"),
                 "a layer whose child window was never observed is not addressable");
         layer.child("createDeviceBank").child("exists").emit(true);
         JsonObject child = new JsonObject();
-        child.add("parent", target());
+        child.add("parent", legacyTarget());
         child.addProperty("layerId", id);
         child.addProperty("childDeviceIndex", 2);
         child.addProperty("expectedChildDeviceName", "Child");
@@ -1715,14 +1569,17 @@ public final class GridModuleTest {
     @Test
     void voicingAndRemotePagesCrossBothQueues() {
         Fixture f = new Fixture();
-        String slots = "\"slots\":[{\"moduleId\":\"" + new UUID(1, 1) + "\",\"parameterId\":\"VALUE\"}]";
+        JsonObject device = target().getAsJsonObject("target");
+        String slots = "\"slots\":[" + "{\"parameter\":"
+                + Refs.parameter(Refs.gridModule(device, new UUID(1, 1).toString(), "M"), "VALUE", null) + "}" + "]";
+        String page = Refs.remotePage(device, 1, "Macros").toString();
         for (String[] call : new String[][] {
             {"grid.voicing.get", ""},
             {"grid.voicing.set", "\"expected\":{\"voices\":1},\"set\":{\"voices\":2}"},
-            {"devices.remote.define", "\"pageName\":\"Macros\"," + slots},
-            {"devices.remote.deletePage", "\"pageName\":\"Macros\""}
+            {"devices.remote.define", "\"name\":\"Macros\"," + slots},
+            {"devices.remote.delete", "\"target\":" + page}
         }) {
-            JsonObject params = target();
+            JsonObject params = call[0].equals("devices.remote.delete") ? new JsonObject() : target();
             if (!call[1].isEmpty())
                 HostFixture.json("{" + call[1] + "}").entrySet().forEach(e -> params.add(e.getKey(), e.getValue()));
             HostOperation op = f.host.submit(f.module, call[0], params);
@@ -1736,10 +1593,16 @@ public final class GridModuleTest {
         assertTrue(f.adapter.reads == 1 && f.adapter.remoteCalls == 2, "each call reached its adapter method");
     }
 
-    private static JsonObject target() {
+    private static JsonObject legacyTarget() {
         JsonObject result = HostFixture.target(HostFixture.A);
         result.addProperty("deviceIndex", 0);
         result.addProperty("expectedDeviceName", "Poly Grid");
+        return result;
+    }
+
+    private static JsonObject target() {
+        JsonObject result = new JsonObject();
+        result.add("target", Refs.device(Refs.track(HostFixture.A, "Track"), 0, "Poly Grid"));
         return result;
     }
 
@@ -1846,14 +1709,6 @@ public final class GridModuleTest {
         }
 
         @Override
-        public JsonObject parameter(
-                DeviceSources.Source source, UUID moduleId, String parameterId, boolean fullSteps, Runnable check) {
-            check.run();
-            reads++;
-            return new JsonObject();
-        }
-
-        @Override
         public JsonObject voicing(DeviceSources.Source source, Runnable check) {
             check.run();
             reads++;
@@ -1879,7 +1734,7 @@ public final class GridModuleTest {
 
         @Override
         public JsonObject deleteRemotePage(
-                DeviceSources.Source source, String pageName, Runnable check, Runnable dispatch) {
+                DeviceSources.Source source, JsonObject page, Runnable check, Runnable dispatch) {
             check.run();
             dispatch.run();
             remoteCalls++;

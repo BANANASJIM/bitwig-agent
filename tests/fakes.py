@@ -97,6 +97,14 @@ class FakeGrid:
                 {"key": i["key"], "name": i["name"], "connected": i["key"] in connected} for i in m["info"]["inputs"]
             ],
             "outputs": [{"key": o["key"], "name": o["name"]} for o in m["info"]["outputs"]],
+            "ref": {
+                "kind": "gridModule",
+                "device": TARGET["target"],
+                "id": m["instanceId"],
+                "name": m["customName"]
+                if m["customName"] and sum(o["customName"] == m["customName"] for o in self.mods.values()) == 1
+                else f"_{m['typeName']}_{m['x']}_{m['y']}",
+            },
         }
         if params:
             row["parameters"] = [
@@ -137,8 +145,8 @@ class FakeGrid:
             return outcome
         return getattr(self, "h_" + method.replace("grid.", "").replace(".", "_"))(params)
 
-    def h_capabilities(self, p):
-        return {"hostVersion": self.version, **self.caps_extra}
+    def h_status(self, p):
+        return {"hostVersion": self.version, "grid": {"hostVersion": self.version, **self.caps_extra}}
 
     def h_catalog(self, p):
         entries = [{"typeId": m["typeId"], "name": n} for n, m in self.catalog.items()]
@@ -186,7 +194,7 @@ class FakeGrid:
             "modulesAdded": added,
         }
 
-    def h_modules_rename(self, p):
+    def h_modules_set(self, p):
         m = self.mods[p["moduleId"]]
         if m["customName"] != p["expectedCustomName"]:
             raise bridge_error("stale_context", "name changed")
@@ -235,7 +243,14 @@ class FakeGrid:
                 )
             else:
                 par["value"], par["display"] = w["value"], str(w["value"])
-            entries.append({"moduleId": w["moduleId"], "parameterId": w["parameterId"], "outcome": "applied"})
+            entries.append(
+                {
+                    "moduleId": w["moduleId"],
+                    "parameterId": w["parameterId"],
+                    "outcome": "applied",
+                    "display": par["display"],
+                }
+            )
         return {"outcome": "applied", "written": len(entries), "writes": entries}
 
     def h_transport_get(self, p):
@@ -276,11 +291,17 @@ class FakeGrid:
 
 
 TRACK = "12345678-1234-1234-1234-123456789abc"
-TARGET: dict[str, Any] = {"trackId": TRACK, "deviceIndex": 0, "expectedDeviceName": "Poly Grid"}
+DEVICE: dict[str, Any] = {
+    "kind": "device",
+    "track": {"kind": "track", "id": TRACK, "name": "Grid"},
+    "index": 0,
+    "name": "Poly Grid",
+}
+TARGET: dict[str, Any] = {"target": DEVICE}
 
 
 SPEC: dict[str, Any] = {
-    "target": TARGET,
+    "target": DEVICE,
     "namespace": "H: ",
     "modules": [
         {"name": "H: mul", "type": "Multiply", "x": 0, "y": 0},
@@ -331,7 +352,13 @@ class LayoutGrid:
 
 
 RECIPE_TRACK = "11111111-1111-1111-1111-111111111111"
-RECIPE_TARGET = {"trackId": RECIPE_TRACK, "deviceIndex": 0, "expectedDeviceName": "Poly Grid"}
+RECIPE_DEVICE = {
+    "kind": "device",
+    "track": {"kind": "track", "id": RECIPE_TRACK, "name": "Grid"},
+    "index": 0,
+    "name": "Poly Grid",
+}
+RECIPE_TARGET = {"target": RECIPE_DEVICE}
 
 
 class RecipeGrid:
@@ -395,7 +422,7 @@ class RecipeGrid:
             ids = set(params["moduleIds"]) if "moduleIds" in params else None
             rows = self.rows(ids, params.get("includeParameters", True))
             return {
-                "target": {**RECIPE_TARGET, "nativeOwningTrack": "corroborated_before_and_after_capture"},
+                "target": RECIPE_DEVICE,
                 "window": {"offset": 0, "total": len(rows), "complete": True},
                 "modules": rows,
                 "connections": [c for c in self.connections() if ids is None or c["targetModuleId"] in ids],
@@ -732,7 +759,7 @@ def assert_rejected_before_tcp(error, host):
 def assert_display_rejected(module, param, text):
     host = FakeGrid()
     spec = {
-        "target": TARGET,
+        "target": DEVICE,
         "modules": [{"name": "X", "type": module, "x": 0, "y": 0, "params": {param: {"display": text}}}],
     }
     with pytest.raises(BridgeError) as err:
