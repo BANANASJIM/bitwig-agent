@@ -55,7 +55,7 @@ Open **Settings → Controllers → Add controller**:
 Enable it, open a disposable project, then check the connection:
 
 ```sh
-bitwig-agent-rpc status
+bitwig-agent status
 ```
 
 A successful response proves connectivity, not editing, sound or persistence. If the controller is missing, check the extension destination and restart Bitwig. See [troubleshooting](https://github.com/BANANASJIM/bitwig-agent/blob/main/INSTALL.md#troubleshooting).
@@ -76,10 +76,12 @@ These commands work offline:
 
 ```sh
 bitwig-agent-install --version
-bitwig-agent-rpc list
-bitwig-agent-rpc describe notes.edit
-bitwig-agent-rpc tracks.set --help
+bitwig-agent --help
+bitwig-agent tracks set --help
+bitwig-agent help notes.edit
 ```
+
+`bitwig-agent <resource> <verb> --field=value` is the shell front end: JSON on stdout, errors on stderr, stable exit codes, so it composes with `jq`, `cut` and `wc -l`. See [USAGE](USAGE.md#the-command-line).
 
 For an agent, copy the complete [portable skill folder](https://github.com/BANANASJIM/bitwig-agent/tree/main/skills/bitwig-agent), including its references and license, into your client's supported skill location. It covers production workflows, troubleshooting, screenshot-guided next steps and **preserve-A / compare-B creative edits**. Live screenshots and GUI input need your client's desktop tools; the bridge does not control the entire interface. A skill is guidance, **not permission to operate the DAW**.
 

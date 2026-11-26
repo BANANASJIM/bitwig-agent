@@ -91,7 +91,7 @@ ARRANGER_CLIPS_EDIT_DESCRIPTION = "Edit one arranger clip found by clipIndex fro
 
 SPECS: dict[str, ToolSpec] = {
     "arranger.clips.list": ToolSpec(
-        ArrangerClipListArgs, ARRANGER_CLIPS_LIST_DESCRIPTION, True, examples=({"trackId": TRACK},)
+        ArrangerClipListArgs, ARRANGER_CLIPS_LIST_DESCRIPTION, True, examples=({"trackId": TRACK},), records="clips"
     ),
     "arranger.clips.create": ToolSpec(
         ArrangerClipCreateArgs,

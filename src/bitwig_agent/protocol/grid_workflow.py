@@ -362,7 +362,9 @@ SPECS: dict[str, ToolSpec] = {
         host=False,
         annotations=SET,
     ),
-    "grid.graph": ToolSpec(GridGraphArgs, GRID_GRAPH_DESCRIPTION, True, examples=(TARGET,), host=False),
+    "grid.graph": ToolSpec(
+        GridGraphArgs, GRID_GRAPH_DESCRIPTION, True, examples=(TARGET,), host=False, records="modules"
+    ),
     "grid.render": ToolSpec(
         GridRenderArgs,
         GRID_RENDER_DESCRIPTION,

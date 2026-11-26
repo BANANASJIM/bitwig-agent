@@ -212,10 +212,12 @@ DEVICES_REMOTE_DELETE_PAGE_DESCRIPTION = "Delete one named preset Remote Control
 
 
 SPECS: dict[str, ToolSpec] = {
-    "devices.list": ToolSpec(DeviceArgs, DEVICES_LIST_DESCRIPTION, True, examples=({"trackId": TRACK},)),
+    "devices.list": ToolSpec(
+        DeviceArgs, DEVICES_LIST_DESCRIPTION, True, examples=({"trackId": TRACK},), records="devices"
+    ),
     "devices.get": ToolSpec(ParameterArgs, DEVICES_GET_DESCRIPTION, True, examples=(TARGET,)),
     "devices.layers.list": ToolSpec(
-        LayerListArgs, DEVICES_LAYERS_LIST_DESCRIPTION, True, examples=({"parent": LAYER_PARENT},)
+        LayerListArgs, DEVICES_LAYERS_LIST_DESCRIPTION, True, examples=({"parent": LAYER_PARENT},), records="layers"
     ),
     "devices.set": ToolSpec(DeviceSetArgs, DEVICES_SET_DESCRIPTION, False, examples=({**TARGET, "enabled": False},)),
     "devices.select": ToolSpec(ParameterArgs, DEVICES_SELECT_DESCRIPTION, False, examples=(TARGET,)),

@@ -56,6 +56,15 @@ def exists(name: str) -> bool:
     return name in _exposed()
 
 
+def read_only(name: str) -> bool:
+    return TOOLS[name].read_only
+
+
+def records(name: str) -> str | None:
+    """The top-level array of objects a read returns, when it has one: the key row output prints."""
+    return TOOLS[name].records
+
+
 def is_composed(name: str) -> bool:
     return name in CLIENT_SIDE
 
@@ -71,7 +80,37 @@ def index(prefix: str = "") -> dict[str, dict[str, Any]]:
 def method(name: str) -> dict[str, Any]:
     if not exists(name):
         raise ValueError(unknown_method_message(name))
-    return {"method": name, **TOOLS[name].describe()}
+    spec = TOOLS[name]
+    return {"method": name, **spec.describe(), "requires": list(spec.requires)}
+
+
+def type_label(prop: dict[str, Any]) -> str:
+    """A short, human-readable type of one JSON schema property."""
+    if "enum" in prop:
+        return "|".join(str(value) for value in prop["enum"])
+    if "$ref" in prop:
+        return str(prop["$ref"]).rsplit("/", 1)[-1]
+    for union in ("anyOf", "oneOf"):
+        if union in prop:
+            return " | ".join(dict.fromkeys(type_label(branch) for branch in prop[union]))
+    if prop.get("type") == "array":
+        return f"array<{type_label(prop.get('items', {}))}>"
+    return str(prop.get("type", "any"))
+
+
+def fields(name: str) -> list[dict[str, Any]]:
+    """Top-level arguments of one method: name, type label, required, description."""
+    schema = TOOLS[name].model.model_json_schema()
+    required = set(schema.get("required", ()))
+    return [
+        {
+            "name": key,
+            "type": type_label(prop),
+            "required": key in required,
+            "description": prop.get("description", ""),
+        }
+        for key, prop in sorted(schema["properties"].items(), key=lambda item: item[0] == "timeoutMs")
+    ]
 
 
 HELP_POINTER = " Full guide: help {name}."

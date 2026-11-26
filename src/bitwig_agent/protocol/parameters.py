@@ -32,7 +32,9 @@ PARAMETERS_LAYER_SET_DESCRIPTION = "Set one normalized layer-child direct parame
 
 
 SPECS: dict[str, ToolSpec] = {
-    "parameters.list": ToolSpec(ParameterArgs, PARAMETERS_LIST_DESCRIPTION, True, examples=(TARGET,)),
+    "parameters.list": ToolSpec(
+        ParameterArgs, PARAMETERS_LIST_DESCRIPTION, True, examples=(TARGET,), records="parameters"
+    ),
     "parameters.set": ToolSpec(
         SetArgs,
         PARAMETERS_SET_DESCRIPTION,
@@ -42,7 +44,7 @@ SPECS: dict[str, ToolSpec] = {
         ),
     ),
     "parameters.layer.list": ToolSpec(
-        LayerParameterArgs, PARAMETERS_LAYER_LIST_DESCRIPTION, True, examples=(LAYER_TARGET,)
+        LayerParameterArgs, PARAMETERS_LAYER_LIST_DESCRIPTION, True, examples=(LAYER_TARGET,), records="parameters"
     ),
     "parameters.layer.set": ToolSpec(
         LayerSetArgs,

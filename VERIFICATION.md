@@ -43,9 +43,9 @@ Or select layers with `scripts/check.py --layer offline`, `--layer java`, or `--
 Offline interface discovery is also available without the extension:
 
 ```sh
-pixi run bitwig-agent-rpc list
-pixi run bitwig-agent-rpc describe notes.edit
-pixi run bitwig-agent-rpc tracks.set --help
+pixi run bitwig-agent --help
+pixi run bitwig-agent tracks set --help
+pixi run bitwig-agent help notes.edit
 ```
 
 These commands describe the implemented surface, not a successful native operation. `status` and other host-facing commands require the running extension.

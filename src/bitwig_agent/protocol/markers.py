@@ -30,7 +30,7 @@ MARKERS_DELETE_DESCRIPTION = "Delete one cue marker from a fresh markers.list: m
 
 
 SPECS: dict[str, ToolSpec] = {
-    "markers.list": ToolSpec(StatusArgs, MARKERS_LIST_DESCRIPTION, True),
+    "markers.list": ToolSpec(StatusArgs, MARKERS_LIST_DESCRIPTION, True, records="markers"),
     "markers.insert": ToolSpec(
         MarkerInsertArgs, MARKERS_INSERT_DESCRIPTION, False, examples=({"beat": 16, "name": "Verse"},)
     ),

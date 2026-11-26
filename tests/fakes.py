@@ -2,6 +2,7 @@
 
 import asyncio
 import copy
+import json
 import math
 import struct
 import uuid
@@ -687,10 +688,17 @@ class FakeBridge:
         return {"outcome": "applied"}
 
 
-def parse_arguments(
-    method: str, pairs: list[str], raw: str | None, timeout_ms: int | None
-) -> tuple[dict[str, Any], int]:
-    return validate_call(method, cli.parse_arguments(method, pairs, raw, timeout_ms))
+async def execute_cli(argv, stdin="", pretty=False):
+    """The stdout result or stderr error as one payload, and the exit code."""
+    out = await cli.execute(argv, stdin=lambda: stdin, pretty=pretty)
+    assert out.stdout or out.stderr
+    assert out.stderr.count("\n") <= 1
+    return ({"result": json.loads(out.stdout)} if out.stdout else {"error": json.loads(out.stderr)}), out.code
+
+
+def parse_arguments(method: str, rest: list[str], stdin: str = "") -> tuple[dict[str, Any], int]:
+    parsed = cli.parse_options(method, rest, cli.Inputs(lambda: stdin))
+    return validate_call(method, parsed.arguments)
 
 
 LAYER_UNKNOWN_RESULT = {

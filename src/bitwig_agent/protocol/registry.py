@@ -1,3 +1,4 @@
+import difflib
 from typing import Any
 
 from bitwig_agent.protocol import (
@@ -51,6 +52,9 @@ def _collect() -> dict[str, ToolSpec]:
         if duplicated:
             raise ValueError(f"Tools declared twice: {sorted(duplicated)}")
         specs.update(domain.SPECS)
+    writes = [name for name, spec in specs.items() if spec.records and not spec.read_only]
+    if writes:
+        raise ValueError(f"Only reads declare a record list: {writes}")
     return specs
 
 
@@ -61,7 +65,10 @@ CLIENT_SIDE = frozenset(name for name, spec in TOOLS.items() if not spec.host)
 
 
 def unknown_method_message(method: str) -> str:
-    return f"Unknown method: {method}. Call help to list the available methods."
+    exposed = [name for name, spec in TOOLS.items() if spec.expose]
+    close = difflib.get_close_matches(method, exposed, n=1, cutoff=0.6)
+    hint = f" (did you mean {close[0]}?)" if close else ""
+    return f"Unknown method: {method}{hint}. Call help to list the available methods."
 
 
 def validate_call(method: str, arguments: dict[str, Any]) -> tuple[dict[str, Any], int]:

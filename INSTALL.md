@@ -19,10 +19,10 @@ The first installer command changes your user extension directory; run it only w
 `pipx run` instead runs a command in a cached, disposable environment without a persistent installation. It is useful for a one-off **offline** discovery command:
 
 ```sh
-pipx run --spec bitwig-agent==X.Y.Z bitwig-agent-rpc list
+pipx run --spec bitwig-agent==X.Y.Z bitwig-agent --help
 ```
 
-Here `--spec` identifies the distribution; `bitwig-agent-rpc` identifies the entrypoint. Do not assume a generated absolute interpreter path inside an ephemeral cache is durable MCP configuration; prefer the persistent installation above.
+Here `--spec` identifies the distribution; `bitwig-agent` identifies the entrypoint (the MCP server is `bitwig-agent-mcp`). Do not assume a generated absolute interpreter path inside an ephemeral cache is durable MCP configuration; prefer the persistent installation above.
 
 For a reproducible installation, pin a reviewed version with `pipx install bitwig-agent==X.Y.Z`. The Python tools come from [this PyPI project](https://pypi.org/project/bitwig-agent/); the matching controller extension is downloaded separately from GitHub by the installer.
 
@@ -111,7 +111,7 @@ Do not upgrade only the Python half. A restore similarly requires both matching 
 
 ### `pipx` or a tool command is not found
 
-Follow the official [pipx installation instructions](https://pipx.pypa.io/stable/installation/), then open a new shell. If pipx is available but `bitwig-agent-install` or `bitwig-agent-rpc` is not:
+Follow the official [pipx installation instructions](https://pipx.pypa.io/stable/installation/), then open a new shell. If pipx is available but `bitwig-agent-install`, `bitwig-agent` or `bitwig-agent-mcp` is not:
 
 ```sh
 pipx ensurepath
@@ -127,7 +127,7 @@ Generate configuration from the installed environment:
 bitwig-agent-install --mcp-config
 ```
 
-Use that JSON rather than a bare executable name: GUI clients may not inherit the shell's tool `PATH`. The generated command is an absolute Python interpreter path with `-m bitwig_agent`; keep the virtual-environment path intact rather than replacing it with a resolved system-Python symlink. If you move/reinstall the tool environment, regenerate the configuration. The static [example](examples/mcp-config.json) uses `bitwig-agent-mcp` and therefore needs that executable on the client's `PATH` (or an absolute executable path substituted). No configuration is installed automatically. Do not replace an existing client configuration wholesale if it contains other servers.
+Use that JSON rather than a bare executable name: GUI clients may not inherit the shell's tool `PATH`. The generated command is an absolute Python interpreter path that starts the MCP server (`python -m bitwig_agent.frontends.mcp`; `python -m bitwig_agent` is the CLI, the same as `bitwig-agent`); keep the virtual-environment path intact rather than replacing it with a resolved system-Python symlink. If you move/reinstall the tool environment, regenerate the configuration. The static [example](examples/mcp-config.json) uses `bitwig-agent-mcp` and therefore needs that executable on the client's `PATH` (or an absolute executable path substituted). No configuration is installed automatically. Do not replace an existing client configuration wholesale if it contains other servers.
 
 ### Writes refused after an unresolved write
 
@@ -141,7 +141,7 @@ An open modal dialog in Bitwig, such as **Recover Projects** after a crash, keep
 
 1. Confirm the extension is installed in the directory Bitwig scans, then restart Bitwig if necessary.
 2. Add/enable vendor **Bitwig Agent**, model **Local API bridge** under Settings → Controllers. No MIDI ports are needed.
-3. Run `bitwig-agent-rpc status`. Unlike `list`, `describe` and `--help`, this contacts the host.
+3. Run `bitwig-agent status`. Unlike `--help` and `help`, this contacts the host.
 4. The default endpoint is `127.0.0.1:61172`; the generated MCP configuration sets `BITWIG_AGENT_PORT=61172`. To run a separate host instance, launch that Bitwig process with a distinct `BITWIG_AGENT_PORT` (for example, `61174`), and set the same value on its MCP/CLI client. The extension reads its process environment during controller initialization. Changing only the client's variable does not reconfigure an already running host.
 
 `BITWIG_AGENT_PORT` is optional. When present in the host environment it must contain one to five ASCII decimal digits representing a port in `1..65535`; empty, signed, whitespace-padded and out-of-range values fail initialization before host bridge construction. The listening address remains fixed at `127.0.0.1`, with no external-interface or automatic port-selection option. Choose distinct ports for separate Bitwig processes; multiple controller instances in one process share its environment and therefore cannot use the same port concurrently.

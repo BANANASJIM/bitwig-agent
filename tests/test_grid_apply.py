@@ -328,15 +328,13 @@ def test_schema_and_cli_surface(tmp_path):
         validate_call("grid.apply", {**SPEC, "connections": SPEC["connections"] + [SPEC["connections"][0]]})
     path = tmp_path / "patch.json"
     path.write_text(json.dumps(SPEC))
-    params, _ = parse_arguments("grid.apply", [f"spec=@{path}", "dryRun=true"], None, None)
+    params, _ = parse_arguments("grid.apply", [f"@{path}", "--dryRun"])
     assert params["dryRun"] is True
     assert params["connections"][0]["from"] == "H: mul.OUT"
-    params, _ = parse_arguments("grid.apply", [], f"@{path}", None)
+    params, _ = parse_arguments("grid.apply", ["-"], stdin=json.dumps(SPEC))
     assert params["modules"][0]["name"] == "H: mul"
-    with pytest.raises(
-        ValueError, match=re.escape("Duplicate argument: namespace")
-    ):  # a field may not come from both the file and key=value
-        parse_arguments("grid.apply", [f"spec=@{path}", "namespace=Q"], None, None)
+    with pytest.raises(ValueError, match=re.escape("Given both as flag and in ARGS: namespace")):
+        parse_arguments("grid.apply", [f"@{path}", "--namespace=Q"])
 
 
 def test_display_comparison_uses_live_precision():

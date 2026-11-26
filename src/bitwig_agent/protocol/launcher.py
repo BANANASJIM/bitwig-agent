@@ -294,7 +294,9 @@ NOTES_EDIT_DESCRIPTION = (
 
 
 SPECS: dict[str, ToolSpec] = {
-    "launcher.list": ToolSpec(DeviceArgs, LAUNCHER_LIST_DESCRIPTION, True, examples=({"trackId": TRACK},)),
+    "launcher.list": ToolSpec(
+        DeviceArgs, LAUNCHER_LIST_DESCRIPTION, True, examples=({"trackId": TRACK},), records="slots"
+    ),
     "launcher.get": ToolSpec(
         ClipSettingsArgs, LAUNCHER_GET_DESCRIPTION, True, examples=({**CLIP, "expectedClipName": "Sketch"},)
     ),
@@ -346,7 +348,7 @@ SPECS: dict[str, ToolSpec] = {
         ),
         requires=PROJECT_READY,
     ),
-    "scenes.list": ToolSpec(StatusArgs, SCENES_LIST_DESCRIPTION, True),
+    "scenes.list": ToolSpec(StatusArgs, SCENES_LIST_DESCRIPTION, True, records="scenes"),
     "scenes.rename": ToolSpec(
         SceneRenameArgs,
         SCENES_RENAME_DESCRIPTION,

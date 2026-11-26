@@ -550,6 +550,7 @@ SPECS: dict[str, ToolSpec] = {
             {**TARGET, "moduleOffset": 0, "moduleLimit": 32, "includeParameters": False},
             {**TARGET, "moduleIds": ["abcdef01-2345-6789-abcd-0123456789ab"]},
         ),
+        records="modules",
     ),
     "grid.parameters.get": ToolSpec(
         GridParameterGetArgs,

@@ -1,6 +1,6 @@
 # Targeting, uncertainty and evidence
 
-Use the installed MCP tool schemas or `bitwig-agent-rpc describe METHOD` for exact arguments. This reference describes decision rules, not a second schema registry. The public [protocol](https://github.com/BANANASJIM/bitwig-agent/blob/main/PROTOCOL.md) documents method-specific guards and recovery; consult the matching release tag if `main` differs from the installed version.
+Use the installed MCP tool schemas or `bitwig-agent help METHOD` for exact arguments. This reference describes decision rules, not a second schema registry. The public [protocol](https://github.com/BANANASJIM/bitwig-agent/blob/main/PROTOCOL.md) documents method-specific guards and recovery; consult the matching release tag if `main` differs from the installed version.
 
 ## Bind from current observations
 

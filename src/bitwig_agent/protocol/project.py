@@ -74,7 +74,7 @@ class HostDiagnosticsArgs(StatusArgs):
 
 
 STATUS_DESCRIPTION = "Observe project/transport state, not proof of audio or persistence. projectModified: true = unsaved changes, null = unobserved (treat as unsaved)."
-CAPABILITIES_DESCRIPTION = "Discover implemented host methods, bounded windows, units and unsupported interfaces. Local CLI list/describe work even without Bitwig; this method queries the running extension."
+CAPABILITIES_DESCRIPTION = "Discover implemented host methods, bounded windows, units and unsupported interfaces. Local CLI help works even without Bitwig; this method queries the running extension."
 CONTEXT_GET_DESCRIPTION = f"One read-only orientation call (does not select or move the cursor): projectName, playing, tempoBpm, the three recording/automation safety flags, sceneCount, tracks [{{trackId, index, name, type, selected, launcherSlots [{{slotIndex, name, playing}}] occupied slots only}}], selectedTrack (trackId) and cursorClip {{trackId, slotIndex, name}}: the clip the user has selected in the launcher/editor. Unobserved values are null, never guessed; cursorClip is null when no clip is selected or it lies outside the observed {TRACK_WINDOW} tracks/{SCENE_WINDOW} scenes. Your own notes.read/notes.edit/launcher.create calls move cursorClip."
 PROJECT_SAVE_DESCRIPTION = "Save the project via the native Save action; outcome applied only when Project.isModified is observed false (already_matched if nothing to save). Otherwise outcome unknown, reason not_observed, never re-invoked: an untitled project opens a Save As dialog needing GUI/user completion, and an already open modal dialog (e.g. Recover Projects after a crash) blocks the save unseen. Check projectModified before retrying."
 PROJECT_SAVE_AS_DESCRIPTION = (
@@ -100,6 +100,11 @@ SPECS: dict[str, ToolSpec] = {
     ),
     "project.activateEngine": ToolSpec(StatusArgs, PROJECT_ACTIVATE_ENGINE_DESCRIPTION, False, annotations=STEER),
     "host.diagnostics": ToolSpec(
-        HostDiagnosticsArgs, HOST_DIAGNOSTICS_DESCRIPTION, True, examples=({"sinceSeconds": 300},), host=False
+        HostDiagnosticsArgs,
+        HOST_DIAGNOSTICS_DESCRIPTION,
+        True,
+        examples=({"sinceSeconds": 300},),
+        host=False,
+        records="events",
     ),
 }

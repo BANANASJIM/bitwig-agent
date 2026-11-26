@@ -6,8 +6,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from fakes import execute_cli as execute
 
-from bitwig_agent.frontends.cli import execute
 from bitwig_agent.grid import docs as grid_docs
 from bitwig_agent.grid.bundled import bundled_schema
 from bitwig_agent.protocol import validate_call
@@ -145,10 +145,10 @@ def test_argument_validation():
 
 
 def test_cli_runs_offline(root):
-    payload, code = asyncio.run(execute(["grid.describe", "type=Select In"]))
+    payload, code = asyncio.run(execute(["grid.describe", "--type=Select In"]))
     assert code == 0
     assert payload["result"]["description"] == "Fake selector"
-    payload, code = asyncio.run(execute(["grid.describe", "query=selector", "installationRoot=/nonexistent"]))
+    payload, code = asyncio.run(execute(["grid.describe", "--query=selector", "--installationRoot=/nonexistent"]))
     assert code == 2
     assert "installationRoot" in payload["error"]["message"]
 

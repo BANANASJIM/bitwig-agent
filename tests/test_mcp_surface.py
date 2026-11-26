@@ -5,12 +5,12 @@ from typing import Any, cast
 
 import pytest
 from fakes import SPEC, FakeGrid
+from fakes import execute_cli as execute
 from mcp.shared.exceptions import MCPError
 from mcp.types import CallToolRequestParams
 
 from bitwig_agent.core import views
 from bitwig_agent.core.invoke import Error, invoke
-from bitwig_agent.frontends.cli import execute
 from bitwig_agent.frontends.mcp import call_tool, create_server, list_tools
 from bitwig_agent.protocol import TOOLS
 from bitwig_agent.protocol.annotations import VERBS, resolve, verb
@@ -209,12 +209,22 @@ async def test_help_validates_its_arguments(arguments):
     assert response.structured_content["code"] == "invalid_params"
 
 
-@pytest.mark.parametrize("arguments", [["grid.modules.insert"], ["describe", "grid.modules.insert"]])
-async def test_cli_refuses_unexposed_methods_too(host, monkeypatch, arguments):
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["grid.modules.insert"],
+        ["grid", "modules", "insert", "--nonsense=1"],
+        ["grid", "modules", "insert", f"--trackId={TRACK}", "--deviceIndex=0", "--timeoutMs=oops"],
+        ["help", "grid.modules.insert"],
+        ["grid", "modules", "insert", "--help"],
+    ],
+)
+async def test_cli_refuses_unexposed_methods_before_parsing_fields(host, monkeypatch, arguments):
     monkeypatch.setenv("BITWIG_AGENT_PORT", str(host.port))
     payload, code = await execute(arguments)
     assert code == 2
-    assert payload["error"]["code"] in {"unknown_method", "invalid_params"}
+    assert payload["error"]["code"] == "unknown_method"
+    assert "grid.modules.insert" in payload["error"]["message"] or "grid.modules" in payload["error"]["message"]
     assert host.connections == 0
 
 
