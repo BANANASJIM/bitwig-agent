@@ -5,101 +5,90 @@ import static dev.bitwigagent.GridSnapshotReader.Kind.*;
 import static dev.bitwigagent.GridSnapshotReader.Metadata.*;
 import static dev.bitwigagent.GridSnapshotReaderTest.Node;
 import static dev.bitwigagent.NativeDeviceTarget.Field.*;
+import static dev.bitwigagent.RpcAssert.*;
+import static org.junit.jupiter.api.Assertions.*;
 
 import com.google.gson.*;
 import java.lang.reflect.*;
 import java.util.*;
 import java.util.function.Consumer;
+import org.junit.jupiter.api.Test;
 
 /** Semantic host-free tests: native GUI transactions, Undo, persistence and sound are not established here. */
 public final class GridModuleNameWriterTest {
     static final UUID TRACK = new UUID(3, 1), MODULE = new UUID(1, 1);
-    private static int assertions;
 
-    public static void main(String[] args) {
-        rawCasNeverUsesEffectiveOrTypeNames();
-        emptyResetUnicodeWhitespaceAndNoop();
-        strictStringBoundsRejectBeforeQueues();
-        membershipAndCurrentUuidCannotBeRebaselined();
-        boundedRealModulesAndOwnershipAreRequired();
-        contextAndAllMemberLifecycleGateNaming();
-        lateSafetyCancellationAndTargetChangesStayUnknown();
-        laterReadbackIsNotSetterAcknowledgement();
-        unrelatedBindingsAndModulesStayIndependent();
-        reflectedPartialFailurePreservesCauseAndQuarantines();
-        pendingAndQuarantinedProcessGuardsBlockNaming();
-        System.out.println(
-                "GridModuleNameWriterTest: " + assertions + " assertions passed (semantic fake models only)");
-    }
-
-    private static void rawCasNeverUsesEffectiveOrTypeNames() {
+    @Test
+    void rawCasNeverUsesEffectiveOrTypeNames() {
         for (String wrong : List.of("Union", "Catalog type", " raw")) {
             Fixture f = new Fixture();
             f.model.first.put(CUSTOM_NAME, "raw");
             failed(f.start(new GridModuleNameWriter.Request(wrong, wrong)), "stale_context", "not_applied");
-            check(
+            assertTrue(
                     f.calls == 0 && f.events.isEmpty(),
                     "even a no-op requires exact raw CAS, never effective/type/trimmed text");
         }
         Fixture f = new Fixture();
         f.model.first.put(CUSTOM_NAME, "raw").put(MODULE_NAME, "Native effective");
         HostOperation op = f.start(new GridModuleNameWriter.Request("raw", "changed"));
-        check(f.calls == 1 && op.dispatched && !op.result.isDone(), "single setter dispatch is not completion");
+        assertTrue(f.calls == 1 && op.dispatched && !op.result.isDone(), "single setter dispatch is not completion");
         f.next();
         JsonObject result = op.result.join();
-        check(
+        assertTrue(
                 text(result, "previousCustomName").equals("raw")
                         && text(result, "previousName").equals("Native effective"),
                 "raw and effective observations remain separate");
-        check(
+        assertTrue(
                 text(result, "requestedCustomName").equals("changed")
                         && text(result, "actualCustomName").equals("changed"),
                 "actual raw readback accompanies request");
-        check(
+        assertTrue(
                 text(result, "operation").equals("rename")
                         && text(result, "moduleId").equals(MODULE.toString()),
                 "result identifies current UUID and operation");
-        check(
+        assertTrue(
                 result.get("nativeUndo").getAsBoolean()
                         && !result.get("undoGroupingVerified").getAsBoolean()
                         && !result.get("engineAcknowledgement").getAsBoolean(),
                 "native property bookkeeping is not UI Undo grouping or engine acknowledgement");
     }
 
-    private static void emptyResetUnicodeWhitespaceAndNoop() {
+    @Test
+    void emptyResetUnicodeWhitespaceAndNoop() {
         for (String desired : List.of("", "  \t", "Lead 🎹 / Ω\n尾", "x".repeat(1024))) {
             Fixture f = new Fixture();
             f.model.first.put(CUSTOM_NAME, "old").put(MODULE_NAME, "old");
             HostOperation op = f.start(new GridModuleNameWriter.Request("old", desired));
             f.next();
             JsonObject result = op.result.join();
-            check(
+            assertTrue(
                     text(result, "actualCustomName").equals(desired) && f.calls == 1,
                     "empty, whitespace, Unicode and exact bound pass verbatim");
-            check(
+            assertTrue(
                     text(result, "actualName").equals(desired.isEmpty() ? "Native reset name" : desired),
                     "reset effective semantics come from native reader, not catalog fallback");
         }
         Fixture f = new Fixture();
         f.model.first.put(MODULE_NAME, "Distinct effective");
         HostOperation op = f.start(new GridModuleNameWriter.Request("", ""));
-        check(
+        assertTrue(
                 f.calls == 0 && !op.dispatched && !op.result.isDone(),
                 "authorized no-op skips setter but waits for later observation");
         f.next();
         JsonObject result = op.result.join();
-        check(
+        assertTrue(
                 !result.get("mutationDispatched").getAsBoolean()
                         && !result.get("nativeMutation").getAsBoolean()
                         && !result.get("nativeUndo").getAsBoolean()
                         && text(result, "verification").equals("already_matched"),
                 "no-op does not claim native edit");
-        check(
+        assertTrue(
                 text(result, "actualName").equals("Distinct effective"),
                 "no-op does not infer effective name from raw empty");
     }
 
-    private static void strictStringBoundsRejectBeforeQueues() {
+    @Test
+    void strictStringBoundsRejectBeforeQueues() {
         for (String key : List.of("expectedCustomName", "customName")) {
             for (JsonElement invalid : Arrays.asList(
                     null,
@@ -112,25 +101,26 @@ public final class GridModuleNameWriterTest {
                 JsonObject p = params("", "");
                 if (invalid == null) p.remove(key);
                 else p.add(key, invalid);
-                expect("invalid_params", () -> GridModuleNameWriter.Request.parse(p));
+                assertRpcError("invalid_params", () -> GridModuleNameWriter.Request.parse(p));
             }
         }
-        expect("invalid_params", () -> new GridModuleNameWriter.Request(null, ""));
-        expect("invalid_params", () -> new GridModuleNameWriter.Request("", null));
-        expect("invalid_params", () -> new GridModuleNameWriter.Request("", "🎹".repeat(513)));
+        assertRpcError("invalid_params", () -> new GridModuleNameWriter.Request(null, ""));
+        assertRpcError("invalid_params", () -> new GridModuleNameWriter.Request("", null));
+        assertRpcError("invalid_params", () -> new GridModuleNameWriter.Request("", "🎹".repeat(513)));
         GridModuleNameWriter.Request exact = GridModuleNameWriter.Request.parse(params(" ", "🎹".repeat(512)));
-        check(
+        assertTrue(
                 exact.expectedCustomName.equals(" ") && exact.customName.length() == 1024,
                 "UTF-16 bound counts surrogate pairs without coercion or trimming");
     }
 
-    private static void membershipAndCurrentUuidCannotBeRebaselined() {
+    @Test
+    void membershipAndCurrentUuidCannotBeRebaselined() {
         for (int change = 0; change < 7; change++) {
             Fixture f = new Fixture();
             final int kind = change;
             f.beforePrepare = () -> changeMembership(f, kind);
             HostOperation op = f.start(new GridModuleNameWriter.Request("", "new"));
-            check(
+            assertTrue(
                     op.result.isCompletedExceptionally() && !op.dispatched && f.calls == 0,
                     "late predispatch membership/currentUUID/CAS changes reject without setter");
             f.quarantine.requireAvailable(GridInsertionWriterTest.ANY);
@@ -140,10 +130,11 @@ public final class GridModuleNameWriterTest {
             HostOperation op = f.start(new GridModuleNameWriter.Request("", "new"));
             changeMembership(f, change);
             f.next();
-            check(
+            assertTrue(
                     op.result.isCompletedExceptionally() && op.dispatched,
                     "later changed membership/currentUUID/raw never becomes observed success");
-            check(error(op).outcome.equals("unknown"), "postdispatch membership failure retains uncertain outcome");
+            assertTrue(
+                    error(op).outcome.equals("unknown"), "postdispatch membership failure retains uncertain outcome");
             f.quarantine.requireAvailable(GridInsertionWriterTest.ANY);
         }
     }
@@ -158,7 +149,8 @@ public final class GridModuleNameWriterTest {
         if (kind == 6) f.model.proxy.put(TARGET, f.model.owner);
     }
 
-    private static void boundedRealModulesAndOwnershipAreRequired() {
+    @Test
+    void boundedRealModulesAndOwnershipAreRequired() {
         for (int invalid = 0; invalid < 7; invalid++) {
             Fixture f = new Fixture();
             String code = "grid_unavailable";
@@ -176,7 +168,7 @@ public final class GridModuleNameWriterTest {
             if (invalid == 5) f.model.first.put(INSTANCE_ID, null);
             if (invalid == 6) f.supported = false;
             failed(f.start(new GridModuleNameWriter.Request("", "new")), code, "not_applied");
-            check(f.calls == 0, "ambiguous/opaque/wrong-owner/nonmodule native target rejects before setter");
+            assertTrue(f.calls == 0, "ambiguous/opaque/wrong-owner/nonmodule native target rejects before setter");
         }
         Fixture missing = new Fixture();
         failed(
@@ -187,7 +179,7 @@ public final class GridModuleNameWriterTest {
         full.population(1024);
         HostOperation op = full.start(new GridModuleNameWriter.Request("", "new"));
         full.next();
-        check(
+        assertTrue(
                 op.result
                                 .join()
                                 .getAsJsonObject("graph")
@@ -198,10 +190,11 @@ public final class GridModuleNameWriterTest {
         Fixture large = new Fixture();
         large.population(1025);
         failed(large.start(new GridModuleNameWriter.Request("", "new")), "grid_bounds_exceeded", "not_applied");
-        check(large.calls == 0 && large.model.closed > 0, "over-bound enumeration closes stream before dispatch");
+        assertTrue(large.calls == 0 && large.model.closed > 0, "over-bound enumeration closes stream before dispatch");
     }
 
-    private static void contextAndAllMemberLifecycleGateNaming() {
+    @Test
+    void contextAndAllMemberLifecycleGateNaming() {
         for (boolean noop : List.of(false, true)) {
             for (int invalid = 0; invalid < 13; invalid++) {
                 Fixture f = new Fixture();
@@ -219,7 +212,7 @@ public final class GridModuleNameWriterTest {
                 if (invalid == 11) f.context.values.put(GridTopologyContext.Field.PROJECT_OOK, true);
                 if (invalid == 12) f.context.values.put(GridTopologyContext.Field.LOCK_OWNER, new Object());
                 HostOperation op = f.start(new GridModuleNameWriter.Request("", noop ? "" : "new"));
-                check(
+                assertTrue(
                         op.result.isCompletedExceptionally() && !op.dispatched && f.calls == 0,
                         "all-member lifecycle/context/idle guards apply equally to no-op");
             }
@@ -243,19 +236,20 @@ public final class GridModuleNameWriterTest {
             if (drift == 4) f.context.values.put(GridTopologyContext.Field.PROJECT_ADM, true);
             if (drift == 5) f.model.device.put(GRAPH, new Node());
             f.next();
-            check(
+            assertTrue(
                     error(pending).outcome.equals("unknown") && f.calls == 1,
                     "later context/target identity or safety drift never acknowledges the setter");
             f.quarantine.requireAvailable(GridInsertionWriterTest.ANY);
         }
     }
 
-    private static void lateSafetyCancellationAndTargetChangesStayUnknown() {
+    @Test
+    void lateSafetyCancellationAndTargetChangesStayUnknown() {
         for (String rejection : List.of("cancelled", "deadline_exceeded", "unsafe_state", "stale_context")) {
             Fixture before = new Fixture();
             before.beforePrepare = () -> before.requestError = rejection;
             failed(before.start(new GridModuleNameWriter.Request("", "new")), rejection, "not_applied");
-            check(before.calls == 0, "fresh safety/cancellation check before dispatch");
+            assertTrue(before.calls == 0, "fresh safety/cancellation check before dispatch");
             for (boolean noop : List.of(false, true)) {
                 Fixture after = new Fixture();
                 HostOperation op = after.start(new GridModuleNameWriter.Request("", noop ? "" : "new"));
@@ -279,10 +273,12 @@ public final class GridModuleNameWriterTest {
         op = abandoned.start(new GridModuleNameWriter.Request("", "new"));
         op.result.cancel(false);
         abandoned.next();
-        check(op.result.isCancelled() && abandoned.calls == 1, "later observation cannot resurrect cancelled future");
+        assertTrue(
+                op.result.isCancelled() && abandoned.calls == 1, "later observation cannot resurrect cancelled future");
     }
 
-    private static void laterReadbackIsNotSetterAcknowledgement() {
+    @Test
+    void laterReadbackIsNotSetterAcknowledgement() {
         Fixture ignored = new Fixture();
         ignored.apply = false;
         HostOperation op = ignored.start(new GridModuleNameWriter.Request("", "new"));
@@ -293,7 +289,7 @@ public final class GridModuleNameWriterTest {
         effective.onSet = () -> effective.model.first.put(MODULE_NAME, "Native effective != requested");
         op = effective.start(new GridModuleNameWriter.Request("", "new"));
         effective.next();
-        check(
+        assertTrue(
                 text(op.result.join(), "actualName").equals("Native effective != requested"),
                 "reported effective getter is never fabricated from requested raw");
         Fixture readError = new Fixture();
@@ -318,7 +314,8 @@ public final class GridModuleNameWriterTest {
         }
     }
 
-    private static void unrelatedBindingsAndModulesStayIndependent() {
+    @Test
+    void unrelatedBindingsAndModulesStayIndependent() {
         Fixture f = new Fixture();
         f.model.parameters = false;
         f.model.display = false;
@@ -331,20 +328,20 @@ public final class GridModuleNameWriterTest {
         HostOperation op = f.start(new GridModuleNameWriter.Request("", "new"));
         f.next();
         JsonObject result = op.result.join();
-        check(
+        assertTrue(
                 f.calls == 1 && f.model.catalogReads == 0,
                 "naming needs no scalar/display/footprint/catalog enumeration binding");
         JsonObject graph = result.getAsJsonObject("graph");
-        check(
+        assertTrue(
                 graph.getAsJsonObject("window").get("complete").getAsBoolean()
                         && graph.getAsJsonArray("modules").size() == 2,
                 "all bounded modules returned despite optional metadata limitations");
         JsonObject other = graph.getAsJsonArray("modules").get(1).getAsJsonObject();
-        check(
+        assertTrue(
                 text(other, "customName").equals("untouched")
                         && text(other, "name").equals("Other effective"),
                 "unrelated native module names are untouched");
-        check(
+        assertTrue(
                 graph.getAsJsonArray("unsupported").toString().contains("parameters_not_requested")
                         && !graph.has("coverage"),
                 "name result omits parameters explicitly and diagnostics prose");
@@ -353,7 +350,8 @@ public final class GridModuleNameWriterTest {
         failed(unavailable.start(new GridModuleNameWriter.Request("", "new")), "grid_unavailable", "not_applied");
     }
 
-    private static void reflectedPartialFailurePreservesCauseAndQuarantines() {
+    @Test
+    void reflectedPartialFailurePreservesCauseAndQuarantines() {
         for (Throwable cause : List.of(
                 new IllegalStateException("partial native failure"),
                 new LinkageError("native linkage"),
@@ -362,28 +360,29 @@ public final class GridModuleNameWriterTest {
             f.reflectedFailure = cause;
             HostOperation op = f.start(new GridModuleNameWriter.Request("", "new"));
             failed(op, "grid_unavailable", "unknown");
-            check(
+            assertTrue(
                     f.calls == 1 && f.model.first.values.get(CUSTOM_NAME).equals("new") && f.quarantine.quarantined(),
                     "partial setter is not rolled back and poisons future topology writes");
             Throwable nativeError = f.failure.getCause();
-            check(
+            assertTrue(
                     nativeError instanceof RpcException
                             && Bitwig614Runtime.isInvocationFailure(nativeError)
                             && nativeError.getCause() instanceof InvocationTargetException
                             && nativeError.getCause().getCause() == cause,
                     "shared quarantine preserves translated reflection boundary and original native throwable identity");
             failed(f.start(new GridModuleNameWriter.Request("new", "later")), "grid_unavailable", "not_applied");
-            check(
+            assertTrue(
                     f.calls == 1 && f.events.isEmpty(),
                     "quarantine blocks retry and failed invocation never schedules fake success");
         }
     }
 
-    private static void pendingAndQuarantinedProcessGuardsBlockNaming() {
+    @Test
+    void pendingAndQuarantinedProcessGuardsBlockNaming() {
         Fixture pending = new Fixture();
         pending.quarantine.reserve(GridInsertionWriterTest.ANY);
         failed(pending.start(new GridModuleNameWriter.Request("", "new")), "grid_unavailable", "not_applied");
-        check(pending.calls == 0, "existing insertion pending marker blocks name writes");
+        assertTrue(pending.calls == 0, "existing insertion pending marker blocks name writes");
     }
 
     private static JsonObject params(String expected, String desired) {
@@ -398,10 +397,9 @@ public final class GridModuleNameWriterTest {
     }
 
     private static RpcException error(HostOperation op) {
-        try {
-            op.result.join();
-            throw new AssertionError("Expected operation failure");
-        } catch (java.util.concurrent.CompletionException error) {
+        {
+            java.util.concurrent.CompletionException error =
+                    assertThrows(java.util.concurrent.CompletionException.class, () -> op.result.join());
             if (!(error.getCause() instanceof RpcException)) throw new AssertionError("Expected RpcException", error);
             return (RpcException) error.getCause();
         }
@@ -409,24 +407,10 @@ public final class GridModuleNameWriterTest {
 
     private static RpcException failed(HostOperation op, String code, String outcome) {
         RpcException error = error(op);
-        check(
+        assertTrue(
                 error.code.equals(code) && error.outcome.equals(outcome),
                 "expected " + code + "/" + outcome + ", got " + error.code + "/" + error.outcome);
         return error;
-    }
-
-    private static void expect(String code, Runnable action) {
-        try {
-            action.run();
-            throw new AssertionError("Expected " + code);
-        } catch (RpcException error) {
-            check(error.code.equals(code), "expected " + code + ", got " + error.code);
-        }
-    }
-
-    private static void check(boolean condition, String message) {
-        assertions++;
-        if (!condition) throw new AssertionError(message);
     }
 
     /** Real writer/context/snapshot semantics, also used by boundary queue tests. */

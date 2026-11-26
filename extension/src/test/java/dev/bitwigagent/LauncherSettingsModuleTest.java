@@ -1,18 +1,22 @@
 package dev.bitwigagent;
 
+import static dev.bitwigagent.RpcAssert.*;
+import static org.junit.jupiter.api.Assertions.*;
+
 import com.bitwig.extension.callback.*;
 import com.bitwig.extension.controller.api.*;
 import com.google.gson.*;
 import java.lang.reflect.*;
 import java.util.*;
 import java.util.concurrent.*;
+import org.junit.jupiter.api.Test;
 
 /** Simulated queues and native adapter; does not establish host binding behavior. */
 public final class LauncherSettingsModuleTest {
     static final String ID = "11111111-1111-1111-1111-111111111111";
-    static int checks;
 
-    public static void main(String[] args) {
+    @Test
+    void invalidSettingsAreRejectedBeforeScheduling() {
         JsonObject p = target();
         LauncherSettingsModule.validateParams("launcher.get", p);
         bad("launcher.set", p);
@@ -45,37 +49,60 @@ public final class LauncherSettingsModuleTest {
         b.addProperty("playStartBeats", 8);
         b.addProperty("playStopBeats", 4);
         bad("launcher.set", b);
-        Fixture f = new Fixture();
+    }
+
+    private static JsonObject settings() {
         JsonObject settings = target();
         settings.addProperty("nextAction", "play_next");
         settings.addProperty("nextActionLoopCount", 1);
-        check(
+        return settings;
+    }
+
+    @Test
+    void sourceBoundWriteIsReadBackAndReadsDoNotWrite() {
+        Fixture f = new Fixture();
+        JsonObject settings = settings();
+        assertTrue(
                 f.call("launcher.set", settings).get("nextAction").getAsString().equals("play_next"),
                 "source-bound write read back");
-        check(f.writes == 1, "one write");
+        assertTrue(f.writes == 1, "one write");
         f.call("launcher.get", target());
-        check(f.writes == 1, "read does not write");
-        b = target();
+        assertTrue(f.writes == 1, "read does not write");
+        JsonObject b = target();
         b.addProperty("expectedClipName", "Wrong");
-        expect("stale_context", f.start("launcher.get", b));
-        check(f.calls == 2, "wrong name rejected before native access");
+        assertRpcError("stale_context", f.start("launcher.get", b));
+        assertTrue(f.calls == 2, "wrong name rejected before native access");
+    }
+
+    @Test
+    void unknownWriteStaysQuarantinedWhileReadsAreAllowed() {
+        JsonObject settings = settings();
         Fixture fail = new Fixture();
         fail.failWrite = true;
         HostOperation failed = fail.start("launcher.set", settings);
         fail.drain();
-        expect("internal_error", failed);
-        expect("write_quarantined", fail.start("launcher.set", settings));
+        assertRpcError("internal_error", failed);
+        assertRpcError("write_quarantined", fail.start("launcher.set", settings));
         fail.call("launcher.get", target());
-        check(fail.writes == 1, "unknown write stays quarantined but reads allowed");
+        assertTrue(fail.writes == 1, "unknown write stays quarantined but reads allowed");
+    }
+
+    @Test
+    void cancelledQueuedOperationDoesNotWrite() {
+        JsonObject settings = settings();
         Fixture late = new Fixture();
         HostOperation op = late.start("launcher.set", settings);
         op.result.completeExceptionally(new RuntimeException("cancel"));
         late.drain();
-        check(late.writes == 0, "cancelled queued native operation does not write");
+        assertTrue(late.writes == 0, "cancelled queued native operation does not write");
+    }
+
+    @Test
+    void playingTransportBlocksTheSettingsWrite() {
+        JsonObject settings = settings();
         Fixture unsafe = new Fixture(true);
-        expect("unsafe_state", unsafe.start("launcher.set", settings));
-        check(unsafe.calls == 0, "playing blocks settings write");
-        System.out.println("LauncherSettingsModuleTest: " + checks + " assertions (simulated queues only)");
+        assertRpcError("unsafe_state", unsafe.start("launcher.set", settings));
+        assertTrue(unsafe.calls == 0, "playing blocks settings write");
     }
 
     static JsonObject target() {
@@ -87,32 +114,12 @@ public final class LauncherSettingsModuleTest {
     }
 
     static void bad(String m, JsonObject p) {
-        try {
-            LauncherSettingsModule.validateParams(m, p);
-            throw new AssertionError("accepted invalid settings");
-        } catch (RpcException e) {
-            check(e.code.equals("invalid_params"), "invalid params");
-        }
-    }
-
-    static void check(boolean x, String text) {
-        checks++;
-        if (!x) throw new AssertionError(text);
-    }
-
-    static void expect(String code, HostOperation op) {
-        try {
-            op.result.join();
-            throw new AssertionError("expected " + code);
-        } catch (CompletionException e) {
-            check(
-                    e.getCause() instanceof RpcException && ((RpcException) e.getCause()).code.equals(code),
-                    "error " + code + ": " + e.getCause());
-        }
+        assertRpcError("invalid_params", () -> LauncherSettingsModule.validateParams(m, p));
     }
 
     static final class Fixture {
-        final ArrayDeque<Runnable> queue = new ArrayDeque<>();
+        final HostFixture host = new HostFixture();
+        final Deque<Runnable> queue = host.tasks;
         final LauncherSettingsModule module;
         int writes, calls;
         boolean failWrite, playing;
@@ -123,10 +130,10 @@ public final class LauncherSettingsModuleTest {
 
         Fixture(boolean playing) {
             this.playing = playing;
-            Node host = new Node(ControllerHost.class, "host");
-            host.fixture = this;
-            HostServices services = new HostServices((ControllerHost) host.proxy);
-            module = new LauncherSettingsModule(services, new LauncherSettingsModule.Access() {
+            host.tracks[0].child("channelId").emit(ID);
+            host.transport.child("isPlaying").emit(playing);
+            host.occupySlot(0, 0, "Verse");
+            module = new LauncherSettingsModule(host.services, new LauncherSettingsModule.Access() {
                 public void execute(Runnable task) {
                     queue.add(task);
                 }
@@ -148,81 +155,17 @@ public final class LauncherSettingsModuleTest {
         }
 
         HostOperation start(String m, JsonObject p) {
-            HostOperation op = new HostOperation(System.nanoTime() + TimeUnit.SECONDS.toNanos(5));
-            try {
-                module.validate(m, p);
-                module.dispatch(op, m, p);
-            } catch (RuntimeException e) {
-                op.fail(e);
-            }
-            return op;
+            return host.start(module, m, p);
         }
 
         void drain() {
-            while (!queue.isEmpty()) queue.remove().run();
+            host.drain();
         }
 
         JsonObject call(String m, JsonObject p) {
             HostOperation op = start(m, p);
             drain();
             return op.result.join();
-        }
-
-        final class Node implements InvocationHandler {
-            final Object proxy;
-            final String path;
-            Fixture fixture;
-            final Map<String, Node> children = new HashMap<>();
-
-            Node(Class<?> type, String path) {
-                this.path = path;
-                proxy = Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[] {type}, this);
-            }
-
-            Object val(Class<?> type) {
-                if (type == boolean.class || type == Boolean.class)
-                    return path.endsWith("exists")
-                            || path.endsWith("hasContent")
-                            || (path.endsWith("isPlaying") && playing);
-                if (type == String.class) return path.endsWith("channelId") ? ID : path.endsWith("name") ? "Verse" : "";
-                if (type == int.class || type == Integer.class) return path.endsWith("itemCount") ? 1 : 0;
-                if (type == double.class || type == Double.class) return 0d;
-                return null;
-            }
-
-            public Object invoke(Object proxy, Method m, Object[] args) throws Throwable {
-                String n = m.getName();
-                if (n.equals("toString")) return path;
-                if (n.equals("hashCode")) return System.identityHashCode(proxy);
-                if (n.equals("equals")) return proxy == args[0];
-                if (n.equals("scheduleTask")) {
-                    queue.add((Runnable) args[0]);
-                    return null;
-                }
-                if (n.equals("addValueObserver")) {
-                    Object cb = args[0];
-                    if (cb instanceof BooleanValueChangedCallback)
-                        ((BooleanValueChangedCallback) cb).valueChanged((Boolean) val(boolean.class));
-                    else if (cb instanceof StringValueChangedCallback)
-                        ((StringValueChangedCallback) cb).valueChanged((String) val(String.class));
-                    else if (cb instanceof IntegerValueChangedCallback)
-                        ((IntegerValueChangedCallback) cb).valueChanged((Integer) val(int.class));
-                    return null;
-                }
-                Class<?> returns = m.getReturnType();
-                if (n.equals("getItemAt")) {
-                    if (path.endsWith("createTrackBank")) returns = Track.class;
-                    else if (path.endsWith("createDeviceBank")) returns = Device.class;
-                    else if (path.endsWith("createLayerBank")) returns = DeviceLayer.class;
-                    else if (path.endsWith("clipLauncherSlotBank")) returns = ClipLauncherSlot.class;
-                }
-                if (returns.isInterface()) {
-                    final Class<?> childType = returns;
-                    String key = n + (n.equals("getItemAt") ? args[0] : "");
-                    return children.computeIfAbsent(key, k -> new Node(childType, path + "/" + key)).proxy;
-                }
-                return val(returns);
-            }
         }
     }
 }

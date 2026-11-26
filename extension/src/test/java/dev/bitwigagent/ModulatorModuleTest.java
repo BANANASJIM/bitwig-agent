@@ -1,29 +1,18 @@
 package dev.bitwigagent;
 
+import static dev.bitwigagent.RpcAssert.*;
+import static org.junit.jupiter.api.Assertions.*;
+
 import com.google.gson.*;
 import java.util.*;
 import java.util.function.Consumer;
+import org.junit.jupiter.api.Test;
 
 /** Simulated independent controller/document queues; these tests do not establish native acceptance. */
 public final class ModulatorModuleTest {
-    private static int assertions;
 
-    public static void main(String[] args) {
-        validationPrecedesBothQueues();
-        explicitRootUsesObservedWindow();
-        queuesDetachJsonAndNeverDispatchMutation();
-        atomicTicketsRejectEveryObservedTargetTransition();
-        guardsDuringReadAndBeforeDelivery();
-        documentCallbacksNeverReadPublicGetters();
-        cancellationDeadlineAndClose();
-        currentUuidAndExactEmptyStringIdentity();
-        concurrentRequestsKeepIndependentTargets();
-        boundedResponsesPreserveNullsAndFailWithoutTruncation();
-        sharedRuntimeAndGridPolicyRemainIndependent();
-        System.out.println("ModulatorModuleTest: " + assertions + " assertions passed (simulated queues only)");
-    }
-
-    private static void validationPrecedesBothQueues() {
+    @Test
+    void validationPrecedesBothQueues() {
         Fixture f = new Fixture();
         for (String field : List.of("parent", "modulatorId", "parameterId")) {
             JsonObject p = parameter();
@@ -50,7 +39,7 @@ public final class ModulatorModuleTest {
             p.getAsJsonObject("parent").remove(field);
             invalid(f, "modulators.list", p);
         }
-        for (String id : List.of("", "1-1-1-1-1", "not-a-uuid", TransportMixFixture.B + " ")) {
+        for (String id : List.of("", "1-1-1-1-1", "not-a-uuid", HostFixture.B + " ")) {
             JsonObject p = parameter();
             p.addProperty("modulatorId", id);
             invalid(f, "modulators.parameters.get", p);
@@ -78,7 +67,7 @@ public final class ModulatorModuleTest {
         p.getAsJsonObject("parent").addProperty("extra", true);
         invalid(f, "modulators.list", p);
         p = request();
-        p.addProperty("modulatorId", TransportMixFixture.B);
+        p.addProperty("modulatorId", HostFixture.B);
         invalid(f, "modulators.list", p);
         p = parameter();
         p.addProperty("limit", 1);
@@ -96,19 +85,20 @@ public final class ModulatorModuleTest {
         p.addProperty("limit", 128);
         ModulatorModule.validateParams("modulators.list", p);
         invalid(f, "modulators.capabilities", request());
-        check(
+        assertTrue(
                 f.host.tasks.isEmpty() && f.adapter.tasks.isEmpty() && f.adapter.reads == 0,
                 "invalid schema never schedules either queue or touches the native adapter");
     }
 
-    private static void explicitRootUsesObservedWindow() {
+    @Test
+    void explicitRootUsesObservedWindow() {
         Fixture f = new Fixture();
         f.device.child("name").emit("Different");
-        TransportMixFixture.error(f.start("modulators.list", request()), "stale_target");
-        check(f.adapter.tasks.isEmpty(), "wrong explicit parent never enters native queue");
+        assertRpcError("stale_target", f.start("modulators.list", request()));
+        assertTrue(f.adapter.tasks.isEmpty(), "wrong explicit parent never enters native queue");
         f.device.child("name").emit("Tool");
         f.host.tracks[0].child("position").emit(-1);
-        TransportMixFixture.error(f.start("modulators.list", request()), "not_ready");
+        assertRpcError("not_ready", f.start("modulators.list", request()));
         f.host.tracks[0].child("position").emit(0);
         f.devices.child("scrollPosition").emit(1);
         f.devices.child("itemCount").emit(2);
@@ -118,21 +108,22 @@ public final class ModulatorModuleTest {
         HostOperation op = f.start("modulators.list", p);
         f.adapter.next();
         f.host.next();
-        check(
+        assertTrue(
                 op.result.join().getAsJsonObject("parent").get("deviceIndex").getAsInt() == 1
                         && f.adapter.proxy == f.host.services.sources.roots[0][0].device,
                 "root authority resolves absolute index in the observed nonzero window, not a separate bank");
-        TransportMixFixture.error(f.start("modulators.list", request()), "outside_window");
+        assertRpcError("outside_window", f.start("modulators.list", request()));
         f.devices.child("itemCount").emit(1);
-        TransportMixFixture.error(f.start("modulators.list", p), "target_not_found");
+        assertRpcError("target_not_found", f.start("modulators.list", p));
     }
 
-    private static void queuesDetachJsonAndNeverDispatchMutation() {
+    @Test
+    void queuesDetachJsonAndNeverDispatchMutation() {
         Fixture f = new Fixture();
         HostOperation op = f.start("modulators.list", request());
-        check(!op.result.isDone() && f.adapter.reads == 0, "controller dispatch does not complete document work");
+        assertTrue(!op.result.isDone() && f.adapter.reads == 0, "controller dispatch does not complete document work");
         f.adapter.next();
-        check(
+        assertTrue(
                 !op.result.isDone() && f.adapter.reads == 1 && !op.dispatched,
                 "document read waits for controller delivery without mutation dispatch");
         f.adapter
@@ -143,7 +134,7 @@ public final class ModulatorModuleTest {
                 .addProperty("name", "changed after capture");
         f.host.next();
         JsonObject result = op.result.join();
-        check(
+        assertTrue(
                 result.getAsJsonArray("modulators")
                         .get(0)
                         .getAsJsonObject()
@@ -151,10 +142,10 @@ public final class ModulatorModuleTest {
                         .getAsString()
                         .equals("Macro"),
                 "only immutable serialized JSON crosses document/controller boundary");
-        check(
+        assertTrue(
                 !result.get("nativeMutation").getAsBoolean() && !op.dispatched && f.device.writes == 0,
                 "read has no mutation dispatch or public write");
-        check(
+        assertTrue(
                 result.getAsJsonObject("target")
                         .get("identityScope")
                         .getAsString()
@@ -162,7 +153,8 @@ public final class ModulatorModuleTest {
                 "public identity caveat remains explicit");
     }
 
-    private static void atomicTicketsRejectEveryObservedTargetTransition() {
+    @Test
+    void atomicTicketsRejectEveryObservedTargetTransition() {
         List<Consumer<Fixture>> transitions = List.of(
                 f -> {
                     f.device.child("name").emit("Away");
@@ -181,8 +173,8 @@ public final class ModulatorModuleTest {
                     f.device.child("deviceType").emit("AudioEffect");
                 },
                 f -> {
-                    f.host.tracks[0].child("channelId").emit(TransportMixFixture.C);
-                    f.host.tracks[0].child("channelId").emit(TransportMixFixture.A);
+                    f.host.tracks[0].child("channelId").emit(HostFixture.C);
+                    f.host.tracks[0].child("channelId").emit(HostFixture.A);
                 },
                 f -> {
                     f.host.tracks[0].child("position").emit(1);
@@ -209,14 +201,15 @@ public final class ModulatorModuleTest {
             HostOperation op = f.start("modulators.list", request());
             change.accept(f);
             f.adapter.next();
-            TransportMixFixture.error(op, "stale_context");
-            check(
+            assertRpcError("stale_context", op);
+            assertTrue(
                     f.adapter.reads == 0 && f.host.tasks.isEmpty() && !op.dispatched,
                     "target/window ABA invalidates atomic ticket before any document read");
         }
     }
 
-    private static void guardsDuringReadAndBeforeDelivery() {
+    @Test
+    void guardsDuringReadAndBeforeDelivery() {
         Fixture during = new Fixture();
         HostOperation op = during.start("modulators.list", request());
         during.adapter.during = () -> {
@@ -224,8 +217,8 @@ public final class ModulatorModuleTest {
             during.device.child("name").emit("Tool");
         };
         during.adapter.next();
-        TransportMixFixture.error(op, "stale_context");
-        check(
+        assertRpcError("stale_context", op);
+        assertTrue(
                 during.host.tasks.isEmpty() && !op.dispatched,
                 "target ABA during document capture cannot enqueue delivery");
         Fixture late = new Fixture();
@@ -234,25 +227,26 @@ public final class ModulatorModuleTest {
         late.device.child("name").emit("Away");
         late.device.child("name").emit("Tool");
         late.host.next();
-        TransportMixFixture.error(op, "stale_context");
+        assertRpcError("stale_context", op);
         Fixture silent = new Fixture();
         op = silent.start("modulators.list", request());
         silent.adapter.next();
         silent.device.child("name").data = "getter changed before callback";
         silent.host.next();
-        TransportMixFixture.error(op, "stale_context");
-        check(!op.dispatched, "final controller getter corroboration rejects changes not yet notified");
+        assertRpcError("stale_context", op);
+        assertTrue(!op.dispatched, "final controller getter corroboration rejects changes not yet notified");
         Fixture before = new Fixture();
         op = before.host.submit(before.module, "modulators.list", request());
         before.device.child("name").emit("Away");
         before.host.next();
-        TransportMixFixture.error(op, "stale_target");
-        check(before.adapter.tasks.isEmpty(), "wrong parent before capture never dispatches document work");
+        assertRpcError("stale_target", op);
+        assertTrue(before.adapter.tasks.isEmpty(), "wrong parent before capture never dispatches document work");
     }
 
-    private static void documentCallbacksNeverReadPublicGetters() {
+    @Test
+    void documentCallbacksNeverReadPublicGetters() {
         Fixture f = new Fixture();
-        for (TransportMixFixture.Node node : List.of(
+        for (FakeHost node : List.of(
                 f.device.child("exists"),
                 f.device.child("name"),
                 f.device.child("position"),
@@ -264,81 +258,84 @@ public final class ModulatorModuleTest {
                 f.devices.child("itemCount"),
                 f.host.bank.child("scrollPosition"),
                 f.host.bank.child("itemCount"))) {
-            node.custom = (name, args) -> {
+            node.onCall = (name, args) -> {
                 if (name.equals("get") && f.adapter.onDocument)
                     throw new AssertionError("Controller getter on document queue");
-                return null;
             };
         }
         HostOperation op = f.start("modulators.parameters.get", parameter());
         f.adapter.next();
         f.host.next();
-        check(
+        assertTrue(
                 op.result.join().get("value").getAsString().equals("  音色\n\uD834\uDD1E  "),
                 "atomic native guards never call Controller getters and raw Unicode/whitespace survives");
     }
 
-    private static void cancellationDeadlineAndClose() {
+    @Test
+    void cancellationDeadlineAndClose() {
         Fixture f = new Fixture();
         HostOperation op = f.host.submit(f.module, "modulators.list", request());
         op.result.cancel(false);
         f.host.next();
-        check(f.adapter.tasks.isEmpty(), "controller cancellation never schedules native work");
+        assertTrue(f.adapter.tasks.isEmpty(), "controller cancellation never schedules native work");
         op = f.start("modulators.list", request());
         op.result.cancel(false);
         f.adapter.next();
-        check(f.adapter.reads == 0 && f.host.tasks.isEmpty(), "document cancellation never reads");
+        assertTrue(f.adapter.reads == 0 && f.host.tasks.isEmpty(), "document cancellation never reads");
         op = f.host.submit(f.module, "modulators.list", request(), 0);
         f.host.next();
-        TransportMixFixture.error(op, "deadline_exceeded");
-        check(f.adapter.tasks.isEmpty(), "deadline before capture never dispatches");
+        assertRpcError("deadline_exceeded", op);
+        assertTrue(f.adapter.tasks.isEmpty(), "deadline before capture never dispatches");
         Fixture late = new Fixture();
         op = late.start("modulators.list", request());
         late.adapter.next();
         op.result.cancel(false);
         late.host.next();
-        check(op.result.isCancelled() && !op.dispatched, "late delivery cannot overwrite cancellation");
+        assertTrue(op.result.isCancelled() && !op.dispatched, "late delivery cannot overwrite cancellation");
         Fixture during = new Fixture();
         op = during.start("modulators.list", request());
         final HostOperation cancelled = op;
         during.adapter.during = () -> cancelled.result.cancel(false);
         during.adapter.next();
-        check(op.result.isCancelled() && during.host.tasks.isEmpty(), "cancellation during read suppresses delivery");
+        assertTrue(
+                op.result.isCancelled() && during.host.tasks.isEmpty(), "cancellation during read suppresses delivery");
         Fixture closed = new Fixture();
         op = closed.start("modulators.list", request());
         closed.host.services.close();
         closed.adapter.next();
-        TransportMixFixture.error(op, "unavailable");
-        check(closed.adapter.reads == 0, "close invalidates native queue before capture");
+        assertRpcError("unavailable", op);
+        assertTrue(closed.adapter.reads == 0, "close invalidates native queue before capture");
     }
 
-    private static void currentUuidAndExactEmptyStringIdentity() {
+    @Test
+    void currentUuidAndExactEmptyStringIdentity() {
         Fixture f = new Fixture();
         HostOperation stale = f.start("modulators.parameters.get", parameter());
-        f.adapter.currentId = UUID.fromString(TransportMixFixture.C);
+        f.adapter.currentId = UUID.fromString(HostFixture.C);
         f.adapter.next();
-        TransportMixFixture.error(stale, "target_not_found");
+        assertRpcError("target_not_found", stale);
         JsonObject p = parameter();
-        p.addProperty("modulatorId", TransportMixFixture.C);
+        p.addProperty("modulatorId", HostFixture.C);
         p.addProperty("parameterId", "");
         HostOperation fresh = f.start("modulators.parameters.get", p);
         f.adapter.next();
         f.host.next();
-        check(
+        assertTrue(
                 fresh.result.join().get("value").getAsString().isEmpty(),
                 "current UUID and unique empty exact ID are valid; empty value is not missing");
         p.addProperty("parameterId", "label");
         HostOperation wrong = f.start("modulators.parameters.get", p);
         f.adapter.next();
-        TransportMixFixture.error(wrong, "target_not_found");
+        assertRpcError("target_not_found", wrong);
         p.addProperty("parameterId", "UNSUPPORTED");
         wrong = f.start("modulators.parameters.get", p);
         f.adapter.next();
-        TransportMixFixture.error(wrong, "unsupported_scope");
-        check(!stale.dispatched && !wrong.dispatched, "identity and family failures do not imply mutation");
+        assertRpcError("unsupported_scope", wrong);
+        assertTrue(!stale.dispatched && !wrong.dispatched, "identity and family failures do not imply mutation");
     }
 
-    private static void concurrentRequestsKeepIndependentTargets() {
+    @Test
+    void concurrentRequestsKeepIndependentTargets() {
         Fixture f = new Fixture();
         JsonObject emptyPage = request();
         emptyPage.addProperty("offset", 1);
@@ -347,19 +344,20 @@ public final class ModulatorModuleTest {
         f.adapter.next();
         f.host.next();
         f.host.next();
-        check(
+        assertTrue(
                 a.result.join().getAsJsonArray("modulators").size() == 1
                         && b.result.join().getAsJsonArray("modulators").isEmpty(),
                 "out-of-order native reads deliver each request's independently captured page");
     }
 
-    private static void boundedResponsesPreserveNullsAndFailWithoutTruncation() {
+    @Test
+    void boundedResponsesPreserveNullsAndFailWithoutTruncation() {
         Fixture f = new Fixture();
         HostOperation op = f.start("modulators.parameters.get", parameter());
         f.adapter.next();
         f.host.next();
         JsonObject result = op.result.join();
-        check(
+        assertTrue(
                 result.has("labels")
                         && result.get("labels").isJsonNull()
                         && result.get("shortLabel").isJsonNull()
@@ -369,27 +367,28 @@ public final class ModulatorModuleTest {
         oversized.adapter.extra = "x".repeat(ModulatorModule.MAX_RESPONSE_CHARS);
         op = oversized.start("modulators.list", request());
         oversized.adapter.next();
-        TransportMixFixture.error(op, "modulator_bounds_exceeded");
-        check(
+        assertRpcError("modulator_bounds_exceeded", op);
+        assertTrue(
                 oversized.host.tasks.isEmpty() && !op.dispatched,
                 "oversized complete response fails without truncation or delivery");
         JsonObject exact = new JsonObject();
         exact.addProperty("v", "x");
         String json = BoundedJson.serialize(exact, 9, ErrorCode.MODULATOR_BOUNDS_EXCEEDED, "bound");
-        check(json.equals("{\"v\":\"x\"}"), "exact transport bound is inclusive");
-        try {
-            BoundedJson.serialize(exact, 8, ErrorCode.MODULATOR_BOUNDS_EXCEEDED, "bound");
-            throw new AssertionError("bound bypass");
-        } catch (RpcException error) {
-            check(error.code.equals("modulator_bounds_exceeded"), "one character overflow fails closed");
+        assertTrue(json.equals("{\"v\":\"x\"}"), "exact transport bound is inclusive");
+        {
+            RpcException error = assertThrows(
+                    RpcException.class,
+                    () -> BoundedJson.serialize(exact, 8, ErrorCode.MODULATOR_BOUNDS_EXCEEDED, "bound"));
+            assertTrue(error.code.equals("modulator_bounds_exceeded"), "one character overflow fails closed");
         }
     }
 
-    private static void sharedRuntimeAndGridPolicyRemainIndependent() {
+    @Test
+    void sharedRuntimeAndGridPolicyRemainIndependent() {
         Fixture f = new Fixture();
         HostOperation op = new HostOperation(Long.MAX_VALUE);
         Bitwig614Runtime first = f.host.services.nativeRuntime(op);
-        check(
+        assertTrue(
                 first == f.host.services.nativeRuntime(new HostOperation(Long.MAX_VALUE)),
                 "services compose one lazy shared runtime gate");
         GridModule grid =
@@ -401,28 +400,27 @@ public final class ModulatorModuleTest {
         target.addProperty("deviceIndex", 1);
         HostOperation gridRead = f.host.submit(grid, "grid.get", target);
         f.host.next();
-        TransportMixFixture.error(gridRead, "stale_context");
+        assertRpcError("stale_context", gridRead);
         JsonObject p = request();
         p.add("parent", target);
         op = f.start("modulators.list", p);
         f.adapter.next();
         f.host.next();
-        check(
+        assertTrue(
                 op.result.join().getAsJsonArray("modulators").size() == 1,
                 "modulator observed-root policy does not silently change Grid zero-offset policy");
-        check(
-                f.host.bankCreations == 1,
+        assertTrue(
+                f.host.host.calls("createTrackBank") == 1,
                 "modulator boundary reuses the shared public root authority without another bank");
     }
 
     private static void invalid(Fixture f, String method, JsonObject p) {
-        TransportMixFixture.error(f.host.submit(f.module, method, p), "invalid_params");
-        assertions++;
+        assertRpcError("invalid_params", f.host.submit(f.module, method, p));
     }
 
     private static JsonObject request() {
         JsonObject parent = new JsonObject();
-        parent.addProperty("trackId", TransportMixFixture.A);
+        parent.addProperty("trackId", HostFixture.A);
         parent.addProperty("deviceIndex", 0);
         parent.addProperty("expectedDeviceName", "Tool");
         JsonObject result = new JsonObject();
@@ -432,19 +430,14 @@ public final class ModulatorModuleTest {
 
     private static JsonObject parameter() {
         JsonObject result = request();
-        result.addProperty("modulatorId", TransportMixFixture.B);
+        result.addProperty("modulatorId", HostFixture.B);
         result.addProperty("parameterId", "LABEL");
         return result;
     }
 
-    private static void check(boolean condition, String message) {
-        assertions++;
-        if (!condition) throw new AssertionError(message);
-    }
-
     private static final class Fixture {
-        final TransportMixFixture host = new TransportMixFixture();
-        final TransportMixFixture.Node devices = host.tracks[0].child("createDeviceBank"), device = devices.item(0);
+        final HostFixture host = new HostFixture();
+        final FakeHost devices = host.tracks[0].child("createDeviceBank"), device = devices.item(0);
         final Adapter adapter = new Adapter();
         final ModulatorModule module;
 
@@ -468,7 +461,7 @@ public final class ModulatorModuleTest {
     private static final class Adapter implements ModulatorAdapter {
         final Deque<Runnable> tasks = new ArrayDeque<>();
         final Map<String, String> strings = Map.of("LABEL", "  音色\n\uD834\uDD1E  ", "", "");
-        UUID currentId = UUID.fromString(TransportMixFixture.B);
+        UUID currentId = UUID.fromString(HostFixture.B);
         Runnable during = () -> {};
         JsonObject last;
         Object proxy;

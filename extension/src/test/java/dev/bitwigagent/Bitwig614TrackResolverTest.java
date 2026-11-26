@@ -1,5 +1,7 @@
 package dev.bitwigagent;
 
+import static org.junit.jupiter.api.Assertions.*;
+
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.nio.file.DirectoryStream;
@@ -7,6 +9,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import org.junit.jupiter.api.Test;
 
 /**
  * Binds the track resolver and every access class built on it against the classpath host jar. With the inspected
@@ -16,14 +19,14 @@ import java.util.List;
 public final class Bitwig614TrackResolverTest {
     // Any host class works as the runtime's host object: only its loader and CodeSource are read.
     private static final String HOST_ENUM = "i3D";
-    private static int assertions;
 
     @FunctionalInterface
     private interface Binding {
         Object bind(Bitwig614Runtime.Access access) throws ReflectiveOperationException;
     }
 
-    public static void main(String[] args) throws Exception {
+    @Test
+    void bindingsResolveOnTheInspectedJarAndFailClosedOnAnyOther() throws Exception {
         Object host = isolatedHost();
         boolean inspected = host != null
                 && Bitwig614Runtime.SHA256.equals(
@@ -32,10 +35,9 @@ public final class Bitwig614TrackResolverTest {
                 new Bitwig614Runtime(inspected ? host : new Object(), Bitwig614Runtime.VERSION, () -> {});
         if (!inspected) {
             deniedBindingsFailClosed(runtime);
-            System.out.println("Bitwig614TrackResolverTest: " + assertions + " assertions (not the inspected jar)");
             return;
         }
-        check(
+        assertTrue(
                 runtime.access(ErrorCode.NATIVE_UNAVAILABLE).gateError() == null,
                 "inspected jar passes the exact version and SHA-256 gate");
         bind(runtime, ErrorCode.NATIVE_UNAVAILABLE, Bitwig614TrackResolver::new);
@@ -46,7 +48,6 @@ public final class Bitwig614TrackResolverTest {
         bind(runtime, ErrorCode.ROUTING_UNAVAILABLE, Bitwig614RoutingAccess::new);
         bind(runtime, RenderModule.UNAVAILABLE, Bitwig614RenderAccess::new);
         bind(runtime, ErrorCode.LAUNCHER_SETTINGS_UNAVAILABLE, Bitwig614LauncherSettingsAccess::new);
-        System.out.println("Bitwig614TrackResolverTest: " + assertions + " assertions (inspected host jar)");
     }
 
     /** A host object from its own loader over the host jar and its sibling jars, which descriptor linking needs. */
@@ -67,24 +68,13 @@ public final class Bitwig614TrackResolverTest {
 
     private static void bind(Bitwig614Runtime runtime, ErrorCode code, Binding binding)
             throws ReflectiveOperationException {
-        check(binding.bind(runtime.access(code)) != null, "exact descriptors bind for " + code.wire());
+        assertTrue(binding.bind(runtime.access(code)) != null, "exact descriptors bind for " + code.wire());
     }
 
     private static void deniedBindingsFailClosed(Bitwig614Runtime runtime) {
         Bitwig614Runtime.Access access = runtime.access(ErrorCode.ROUTING_UNAVAILABLE);
-        check(access.gateError() != null, "a jar other than the inspected one closes the gate");
-        try {
-            new Bitwig614TrackResolver(access);
-            throw new AssertionError("Track resolver bound without the inspected host jar");
-        } catch (RpcException error) {
-            check(error.is(ErrorCode.ROUTING_UNAVAILABLE), "denied resolver keeps the calling domain code");
-        } catch (ReflectiveOperationException error) {
-            throw new AssertionError("A closed gate must refuse before descriptor lookup", error);
-        }
-    }
-
-    private static void check(boolean value, String message) {
-        assertions++;
-        if (!value) throw new AssertionError(message);
+        assertTrue(access.gateError() != null, "a jar other than the inspected one closes the gate");
+        RpcException error = assertThrows(RpcException.class, () -> new Bitwig614TrackResolver(access));
+        assertTrue(error.is(ErrorCode.ROUTING_UNAVAILABLE), "denied resolver keeps the calling domain code");
     }
 }

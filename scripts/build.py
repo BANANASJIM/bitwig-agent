@@ -27,6 +27,10 @@ def gson_jar():
     return dependency("gson")
 
 
+def junit_jar():
+    return dependency("junit-console")
+
+
 def api_jar():
     """Installed host jar when BITWIG_API_JAR is set, else the checksum-pinned public extension API."""
     setting = os.environ.get("BITWIG_API_JAR")

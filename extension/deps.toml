@@ -9,3 +9,9 @@ file = "extension-api-25.jar"
 url = "https://maven.bitwig.com/com/bitwig/extension-api/25/extension-api-25.jar"
 sha256 = "842b1a05a1b29b17c4440cb3609c102953e3a0d28be910e743bce6aa2a38d1b6"
 max_bytes = 4194304
+
+[junit-console]
+file = "junit-platform-console-standalone-1.11.4.jar"
+url = "https://repo.maven.apache.org/maven2/org/junit/platform/junit-platform-console-standalone/1.11.4/junit-platform-console-standalone-1.11.4.jar"
+sha256 = "b016ef6b1c3454d6d7c2c88ce081dabf289699686af6622d6e4e2e1b54b4a2fc"
+max_bytes = 4194304

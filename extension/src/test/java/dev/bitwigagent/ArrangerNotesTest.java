@@ -1,17 +1,12 @@
 package dev.bitwigagent;
 
+import static org.junit.jupiter.api.Assertions.*;
+
 import java.util.*;
+import org.junit.jupiter.api.Test;
 
 /** Arranger note rows against a fake that keeps Bitwig 6.1.4's (channel, key) order; not native acceptance. */
 public final class ArrangerNotesTest {
-    private static int assertions;
-
-    public static void main(String[] args) {
-        writeAddressesRowsChannelFirst();
-        readbackCatchesSwappedRows();
-        readbackFlagsMissingAndExtraNotes();
-        System.out.println("ArrangerNotesTest: " + assertions + " assertions");
-    }
 
     /** Models YeP.TMF(channel, key, create) / fUX: the first int is the channel (0..15), the second the key (0..127). */
     static final class Native implements ArrangerNotes.Host {
@@ -83,17 +78,18 @@ public final class ArrangerNotesTest {
                 });
     }
 
-    private static void writeAddressesRowsChannelFirst() {
+    @Test
+    void writeAddressesRowsChannelFirst() {
         for (int channel : new int[] {0, 9, 15}) {
             Native host = new Native(true);
             ArrangerNotes.write(host, "clip", chord(), channel);
-            check(host.rows.size() == 4, "one row per pitch");
+            assertTrue(host.rows.size() == 4, "one row per pitch");
             for (Native.Row row : host.rows.values())
-                check(
+                assertTrue(
                         row.channel == channel && row.key >= 60 && row.key <= 72,
                         "row carries the requested channel and the pitch as key");
             ArrangerNotes.Readback readback = ArrangerNotes.verify(host, "clip", chord(), channel);
-            check(
+            assertTrue(
                     readback.complete
                             && readback.invalidRows == 0
                             && readback.json.get("verified").getAsInt() == 4,
@@ -101,39 +97,37 @@ public final class ArrangerNotesTest {
         }
     }
 
-    private static void readbackCatchesSwappedRows() {
+    @Test
+    void readbackCatchesSwappedRows() {
         // The 0fcbad3 call order (pitch, channel): rows end up with channel 60 and key 0.
         Native host = new Native(false);
         for (double[] n : chord()) host.addNote("clip", host.newNote(n[0], n[3], n[2] / 127.0), (int) n[1], 0);
         ArrangerNotes.Readback readback = ArrangerNotes.verify(host, "clip", chord(), 0);
-        check(
+        assertTrue(
                 readback.invalidRows == 4
                         && !readback.complete
                         && readback.json.get("verified").getAsInt() == 0,
                 "swapped rows are invalid and never count as verified, whatever lookup order a reader uses");
     }
 
-    private static void readbackFlagsMissingAndExtraNotes() {
+    @Test
+    void readbackFlagsMissingAndExtraNotes() {
         Native host = new Native(true);
         ArrangerNotes.write(host, "clip", chord().subList(0, 3), 0);
         ArrangerNotes.Readback missing = ArrangerNotes.verify(host, "clip", chord(), 0);
-        check(
+        assertTrue(
                 !missing.complete
                         && missing.json.getAsJsonArray("unverifiedNotes").size() == 1,
                 "a missing note is reported");
         Native wrongChannel = new Native(true);
         ArrangerNotes.write(wrongChannel, "clip", chord(), 1);
-        check(
+        assertTrue(
                 !ArrangerNotes.verify(wrongChannel, "clip", chord(), 0).complete,
                 "notes on another channel do not verify");
         Native extra = new Native(true);
         ArrangerNotes.write(extra, "clip", chord(), 0);
         extra.addNote("clip", extra.newNote(3.5, .5, .5), 0, 40);
-        check(!ArrangerNotes.verify(extra, "clip", chord(), 0).complete, "an extra note in the clip fails the count");
-    }
-
-    private static void check(boolean condition, String message) {
-        assertions++;
-        if (!condition) throw new AssertionError(message);
+        assertTrue(
+                !ArrangerNotes.verify(extra, "clip", chord(), 0).complete, "an extra note in the clip fails the count");
     }
 }
