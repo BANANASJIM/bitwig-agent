@@ -5,10 +5,12 @@ import math
 import pytest
 from fakes import TARGET, FakeGrid, apply_grid
 
-from bitwig_agent import grid_apply, grid_docs, raw_scales
+from bitwig_agent import raw_scales
 from bitwig_agent.errors import BridgeError
+from bitwig_agent.grid import bundled
+from bitwig_agent.grid import docs as grid_docs
 
-SCHEMA = grid_apply.bundled_schema()["modules"]
+SCHEMA = bundled.bundled_schema()["modules"]
 
 
 def param(type_name, pid):

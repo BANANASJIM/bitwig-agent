@@ -14,7 +14,8 @@ from pathlib import Path
 from typing import Any
 
 from bitwig_agent import raw_scales
-from bitwig_agent.grid_apply import SECONDS_PARAMS, bundled_schema
+from bitwig_agent.grid.bundled import bundled_schema
+from bitwig_agent.grid.display import SECONDS_PARAMS
 
 DEFAULT_ROOTS = ("/opt/bitwig-studio",)
 LANGS = ("en", "de", "es", "fr", "ja", "ko", "zh")

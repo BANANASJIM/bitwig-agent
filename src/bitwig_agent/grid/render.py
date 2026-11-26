@@ -15,9 +15,9 @@ import shutil
 import subprocess
 from typing import Any
 
-from bitwig_agent.errors import BridgeError, bridge_error
+from bitwig_agent.errors import bridge_error
+from bitwig_agent.grid.read import GridCall, device_target, host_call, read_graph, read_params
 
-PAGE, PARAM_IDS = 128, 32
 CELL = 46  # svg units per grid cell
 MAX_SPAN = 2000  # cells per axis; refuse to draw anything larger
 LIST_CAP = 50
@@ -164,57 +164,14 @@ def _converter() -> list[str] | None:
     return None
 
 
-# ---- reading ---------------------------------------------------------------------------------------------
-async def _get(client: Any, target: dict[str, Any], timeout_ms: int, **extra: Any) -> dict[str, Any]:
-    result = await client.call("grid.get", {**target, **extra}, timeout_ms)
-    if not isinstance(result, dict) or not isinstance(result.get("modules"), list):
-        raise BridgeError(
-            {
-                "code": "not_applied",
-                "message": "grid.get returned an unusable result",
-                "outcome": "not_dispatched",
-                "details": result if isinstance(result, dict) else {},
-            }
-        )
-    return result
-
-
-async def read_layout(
-    client: Any, target: dict[str, Any], timeout_ms: int
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """All modules and cables of the device, paging until the window is complete. Structure only."""
-    rows: list[dict[str, Any]] = []
-    cables: dict[tuple[Any, ...], dict[str, Any]] = {}
-    total = None
-    while total is None or len(rows) < total:
-        page = await _get(client, target, timeout_ms, moduleOffset=len(rows), moduleLimit=PAGE, includeParameters=False)
-        got = page["modules"]
-        rows += got
-        for c in page.get("connections", []):
-            cables[(c["targetModuleId"], c["targetPortKey"])] = c
-        total = (page.get("window") or {}).get("total", len(rows))
-        if not got and len(rows) < total:
-            raise bridge_error("graph_incomplete", f"grid.get returned {len(rows)} of {total} modules")
-    return rows, list(cables.values())
-
-
-async def read_comment_text(client: Any, target: dict[str, Any], timeout_ms: int, ids: list[str]) -> dict[str, str]:
-    texts: dict[str, str] = {}
-    for i in range(0, len(ids), PARAM_IDS):
-        page = await _get(
-            client,
-            target,
-            timeout_ms,
-            moduleOffset=0,
-            moduleLimit=PAGE,
-            includeParameters=True,
-            moduleIds=ids[i : i + PARAM_IDS],
-        )
-        for row in page["modules"]:
-            for p in row.get("parameters") or []:
-                if p.get("parameterId") == "TEXT" and isinstance(p.get("value"), str):
-                    texts[row["instanceId"]] = p["value"]
-    return texts
+async def _comment_texts(call: GridCall, ids: list[str]) -> dict[str, str]:
+    rows = await read_params(call, ids)
+    return {
+        row["instanceId"]: p["value"]
+        for row in rows.values()
+        for p in row.get("parameters") or []
+        if p.get("parameterId") == "TEXT" and isinstance(p.get("value"), str)
+    }
 
 
 # ---- analysis --------------------------------------------------------------------------------------------
@@ -430,8 +387,8 @@ async def render(client: Any, args: dict[str, Any], timeout_ms: int = 5000) -> d
         convert = _converter()
         if convert is None:
             raise bridge_error("invalid_params", "format=png needs rsvg-convert or magick on PATH; use format=svg")
-    target = {k: args[k] for k in ("trackId", "deviceIndex", "expectedDeviceName")}
-    rows, cables = await read_layout(client, target, timeout_ms)
+    call = host_call(client, device_target(args), timeout_ms)
+    rows, cables = await read_graph(call)
     if not rows:
         raise bridge_error("empty_grid", "The Grid device has no modules to render")
     box = _box(rows)
@@ -442,7 +399,7 @@ async def render(client: Any, args: dict[str, Any], timeout_ms: int = 5000) -> d
             boundingBox=box,
         )
     ids = [r["instanceId"] for r in rows if r["typeName"] == "Comment"]
-    texts = await read_comment_text(client, target, timeout_ms, ids) if ids else {}
+    texts = await _comment_texts(call, ids)
     namespace = args.get("namespace")
     svg = draw(
         rows,
