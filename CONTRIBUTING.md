@@ -45,6 +45,8 @@ The default checks do not launch Bitwig. See [VERIFICATION.md](VERIFICATION.md) 
 
 ## Changes and bug reports
 
+Pull requests follow [the template](.github/pull_request_template.md): why, a before/after diagram, what changes for users, evidence, risks. Write for a human reader; leave exhaustive detail to the code and tests.
+
 - Describe the observable behavior, affected methods and checks actually run. Add a deterministic regression test for a consumer-visible bug when practical.
 - Keep MCP and CLI schemas consistent with Java validation and [PROTOCOL.md](PROTOCOL.md).
 - Distinguish dispatch, model readback, GUI completion, audio output and persistence. Do not report an unknown write as failed-and-safe-to-repeat.
