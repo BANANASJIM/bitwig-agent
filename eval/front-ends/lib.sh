@@ -49,7 +49,12 @@ rd() {
 write() {
   local out
   out="$(rd "$1" "$2" "$3")" || die "$2 failed"
-  jq -e '.outcome == "applied" or .outcome == "already_matched" or .outcome == "sent"' <<<"$out" >/dev/null || die "$2 not applied: $out"
+  if [[ "$1" == old ]]; then
+    # 0.4 answers {result: {status: observed|dispatched|..., ...}} or {error: {...}}; no applied/outcome vocabulary
+    jq -e 'has("error") | not' <<<"$out" >/dev/null && jq -e '(.status // "observed") | IN("observed", "dispatched")' <<<"$out" >/dev/null || die "$2 not applied: $out"
+  else
+    jq -e '.outcome == "applied" or .outcome == "already_matched" or .outcome == "sent"' <<<"$out" >/dev/null || die "$2 not applied: $out"
+  fi
   printf '%s' "$out"
 }
 

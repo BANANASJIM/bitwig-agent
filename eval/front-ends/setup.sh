@@ -17,7 +17,7 @@ if [[ "$DRY_RUN" == 1 ]]; then
 fi
 PATH="$(cond_bin "$cond"):$PATH"
 
-# One bar of 4/4: kick on the beat, hat on the off-beat.
+# One bar of 4/4 (the 0.4 launcher.create wants "op":"set" on each note; it is added below for that dialect): kick on the beat, hat on the off-beat.
 NOTES='[
  {"beat":0,"pitch":36,"velocity":110,"durationBeats":0.25},{"beat":1,"pitch":36,"velocity":100,"durationBeats":0.25},
  {"beat":2,"pitch":36,"velocity":110,"durationBeats":0.25},{"beat":3,"pitch":36,"velocity":100,"durationBeats":0.25},
@@ -49,13 +49,13 @@ if [[ "$dialect" == new ]]; then
   [[ -n "$slot" ]] || die "no launcher slot on the Drums track"
   write new clips.insert "$(jq -nc --argjson to "$slot" --argjson notes "$NOTES" '{to:$to,name:"Beat",loop:{lengthBeats:4},notes:$notes}')" >/dev/null
 else
-  write old tracks.create '{"type":"instrument","name":"Drums"}' >/dev/null
-  id="$(rd old tracks.list | jq -r '.tracks[] | select(.name=="Drums") | .id')"
+  write old tracks.create '{"type":"instrument","position":-1,"name":"Drums"}' >/dev/null
+  id="$(rd old tracks.list | jq -r '.tracks[] | select(.name=="Drums") | .trackId')"
   [[ -n "$id" ]] || die "Drums track not found after creation"
   if [[ "$(rd old launcher.list "{\"trackId\":\"$id\"}" | jq '.slots | length')" == 0 ]]; then
     write old scenes.append '{"count":1}' >/dev/null
   fi
-  write old launcher.create "$(jq -nc --arg id "$id" --argjson notes "$NOTES" '{trackId:$id,slotIndex:0,lengthBeats:4,name:"Beat",notes:$notes}')" >/dev/null
+  write old launcher.create "$(jq -nc --arg id "$id" --argjson notes "$NOTES" '{trackId:$id,slotIndex:0,lengthBeats:4,name:"Beat",notes:($notes | map(. + {op:"set"}))}')" >/dev/null
 fi
 
 if [[ -n "$state_file" ]]; then rd "$dialect" tracks.list | jq '{tracks: [.tracks[].name]}' >"$state_file"; fi

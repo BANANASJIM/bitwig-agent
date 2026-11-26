@@ -39,7 +39,7 @@ tracks="$(read_state tracks tracks.list)"
 track_key() {  # empty when the track does not exist
   # live host: the name is under .ref (rows are {ref: {kind, id, name}, index, type, ...})
   if [[ "$dialect" == new ]]; then jq -c --arg n "$1" '[.tracks[]? | select((.ref.name // .name) == $n)][0].ref // empty' <<<"$tracks"
-  else jq -r --arg n "$1" '[.tracks[]? | select((.ref.name // .name) == $n)][0] | (.id // .ref.id) // empty' <<<"$tracks"; fi
+  else jq -r --arg n "$1" '[.tracks[]? | select((.ref.name // .name) == $n)][0] | (.trackId // .id // .ref.id) // empty' <<<"$tracks"; fi
 }
 track_id() { if [[ "$dialect" == new ]]; then jq -r '.id' <<<"$1"; else printf '%s' "$1"; fi; }  # UUID of a track key
 devices_args() { if [[ "$dialect" == new ]]; then echo "{\"parent\":$1}"; else echo "{\"trackId\":\"$1\"}"; fi; }
