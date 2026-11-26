@@ -27,14 +27,14 @@ class VoicingPlan(NamedTuple):
 
 @dataclass
 class Plan:
-    existing: dict[str, dict[str, Any]]  # spec modules already in the device, by name
-    ext_rows: dict[str, dict[str, Any]]  # live modules the spec only references
+    existing_by_name: dict[str, dict[str, Any]]
+    external_rows: dict[str, dict[str, Any]]
     deletes: list[dict[str, Any]]
     replaced_names: list[str]
-    dropped: list[str]  # cables lost with replaced modules
+    dropped_cables: list[str]
     inserts: list[str]
     ids: dict[str, str]
-    name_existing: list[str]  # unnamed live modules that must be named before they move
+    to_name_first: list[str]
     current: dict[str, Cell]
     pre_moves: list[tuple[str, Cell]]
     layout: Footprints
@@ -258,17 +258,17 @@ def build_plan(spec: Spec, caps: dict[str, Any], graph: Graph, dry: bool) -> Pla
     current = {n: (r["x"], r["y"]) for n, r in existing.items()}
     target = {n: spec.position(n) for n in existing}
     return Plan(
-        existing=existing,
-        ext_rows=match.ext_rows,
+        existing_by_name=existing,
+        external_rows=match.ext_rows,
         deletes=deletes,
         replaced_names=[label_of(r) for r in match.replaced],
-        dropped=dropped,
+        dropped_cables=dropped,
         inserts=inserts,
         ids={n: r["instanceId"] for n, r in existing.items()},
         # An unnamed live module matched by its generated name that has to move is named first, or the move would change that name and the next run would see a stranger.
-        name_existing=[n for n, r in existing.items() if not r["customName"] and current[n] != spec.position(n)],
+        to_name_first=[n for n, r in existing.items() if not r["customName"] and current[n] != spec.position(n)],
         current=current,
-        pre_moves=order_moves(current, target, layout.size, layout.fixed),
+        pre_moves=order_moves(current, target, layout.known_sizes, layout.unmanaged),
         layout=layout,
         gone_ids={r["instanceId"] for r in deletes},
         notes=notes,
@@ -279,12 +279,16 @@ def build_plan(spec: Spec, caps: dict[str, Any], graph: Graph, dry: bool) -> Pla
 
 
 def params_to_read(spec: Spec, plan: Plan) -> list[str]:
-    return [r["instanceId"] for n, r in plan.existing.items() if spec.resolved[n].params]
+    return [r["instanceId"] for n, r in plan.existing_by_name.items() if spec.resolved[n].params]
 
 
 def plan_module_params(spec: Spec, plan: Plan, rows: dict[str, dict[str, Any]]) -> ModuleParams:
     """Parameter writes of every spec module against the live rows read for the existing ones."""
     return {
-        n: plan_params(n, spec.resolved[n], rows.get(plan.existing[n]["instanceId"]) if n in plan.existing else None)
+        n: plan_params(
+            n,
+            spec.resolved[n],
+            rows.get(plan.existing_by_name[n]["instanceId"]) if n in plan.existing_by_name else None,
+        )
         for n in spec.names
     }

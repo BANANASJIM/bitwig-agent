@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, cast
 
-from bitwig_agent import raw_scales
+from bitwig_agent.grid import raw_scales
 from bitwig_agent.grid.display import DisplayBasis, check_display, display_want
 from bitwig_agent.grid.problems import SpecError, hint
 from bitwig_agent.grid.spec import ParamSpec, Resolved
@@ -40,8 +40,8 @@ def _new_write(name: str, pid: str, spec: ParamSpec) -> dict[str, Any]:
     return {
         "module": name,
         "parameterId": pid,
-        "to": spec.raw,
-        **({"rawValue": spec.want["value"]} if spec.want and "shown" in spec.want else {}),
+        "to": spec.written,
+        **({"rawValue": spec.checked["value"]} if spec.checked and "shown" in spec.checked else {}),
     }
 
 
@@ -60,7 +60,7 @@ class _ModulePlanner:
             raise SpecError([f"{self.name!r}: {p}" for p in exc.problems]) from exc
 
     def _live_want(self, pid: str, spec: ParamSpec, lp: dict[str, Any]) -> dict[str, Any]:
-        want = spec.want or check_value(pid, spec.raw, lp)
+        want = spec.checked or check_value(pid, spec.written, lp)
         client = raw_scales.is_client(self.resolved.type_name, pid, self.context)
         if "display" in want and (
             lp.get("numericUnit") == "seconds" or client
@@ -91,7 +91,9 @@ class _ModulePlanner:
         want = self._live_want(pid, spec, lp)
         if "steps" in want:
             write = plan_steps(self.name, self.row, pid, lp, want["steps"])
-            return None if write is None else {"module": self.name, "parameterId": pid, "to": spec.raw, "write": write}
+            return (
+                None if write is None else {"module": self.name, "parameterId": pid, "to": spec.written, "write": write}
+            )
         self._check_kind(pid, lp)
         if value_matches(lp["kind"], want, lp):
             return None
@@ -99,7 +101,7 @@ class _ModulePlanner:
         return {
             "module": self.name,
             "parameterId": pid,
-            "to": spec.raw,
+            "to": spec.written,
             **({"rawValue": want["value"]} if "shown" in want else {}),
             "write": {
                 "moduleId": self.row["instanceId"],

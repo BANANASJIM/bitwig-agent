@@ -25,7 +25,6 @@ final class GridStepArrayWriter {
         this.nativeWriter = nativeWriter;
     }
 
-    /** Every pre-dispatch check of set(); nothing is written. */
     void preflight(GridSnapshotReader.ParameterBinding binding, GridParameterWriter.Request request, Runnable check) {
         nativeWriter.requireSupported(binding.parameter);
         validate(values.parameterValue(binding), nativeWriter.current(binding.parameter), request);

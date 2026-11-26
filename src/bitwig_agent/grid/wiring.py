@@ -74,9 +74,9 @@ def _cut(name: str, row: dict[str, Any], key: str, current: tuple[str, str], nam
 @dataclass
 class _Pruned:
     edits: list[dict[str, Any]]
-    held: list[str]  # kept: the module is outside the namespace
-    cut: list[str]  # cut although outside the namespace (allowOutsideDisconnect)
-    undeclared: list[str]  # cut by pruneAll
+    kept_outside: list[str]
+    cut_outside: list[str]
+    cut_undeclared: list[str]
 
 
 def _prune(
@@ -97,12 +97,12 @@ def _prune(
                 continue
             end = f"{name}.{port['key']} (from {_source_text(incoming[key], name_of)})"
             if outside and not spec.outside_ok:
-                pruned.held.append(end)
+                pruned.kept_outside.append(end)
                 continue
             if outside:
-                pruned.cut.append(end)
+                pruned.cut_outside.append(end)
             elif spec.prune_all:
-                pruned.undeclared.append(end)
+                pruned.cut_undeclared.append(end)
             pruned.edits.append(_cut(name, row, port["key"], incoming[key], name_of))
     return pruned
 
@@ -110,13 +110,13 @@ def _prune(
 def _prune_notes(spec: Spec, pruned: _Pruned) -> list[str]:
     notes = [
         text.format(n=len(items), ns=spec.namespace, l=preview(items))
-        for items, text in ((pruned.held, HELD_NOTE), (pruned.cut, CUT_NOTE))
+        for items, text in ((pruned.kept_outside, HELD_NOTE), (pruned.cut_outside, CUT_NOTE))
         if items
     ]
-    if pruned.undeclared:
+    if pruned.cut_undeclared:
         notes.append(
-            f"pruneAll: disconnecting {len(pruned.undeclared)} input(s) the spec does not declare: "
-            + preview(pruned.undeclared)
+            f"pruneAll: disconnecting {len(pruned.cut_undeclared)} input(s) the spec does not declare: "
+            + preview(pruned.cut_undeclared)
         )
     return notes
 

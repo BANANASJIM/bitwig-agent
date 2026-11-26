@@ -21,7 +21,6 @@ final class GridRemotePageWriter {
             GridSnapshotReader.Kind.ENUM);
 
     interface Access {
-        /** The device's Remote Controls host. */
         Object host(Object device);
         /** The host's preset-page list: the only list edited here. */
         Object presetPages(Object host);

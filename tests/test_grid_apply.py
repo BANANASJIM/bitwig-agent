@@ -11,9 +11,8 @@ import pytest
 from fakes import SPEC, TARGET, FakeGrid, apply_grid, parse_arguments
 from pydantic import ValidationError
 
-from bitwig_agent import raw_scales
 from bitwig_agent.errors import BridgeError
-from bitwig_agent.grid import bundled, display, execute, layout, problems, values
+from bitwig_agent.grid import bundled, display, execute, layout, problems, raw_scales, values
 from bitwig_agent.protocol import validate_call
 
 

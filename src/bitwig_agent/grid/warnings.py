@@ -6,7 +6,7 @@ from collections.abc import Awaitable, Callable, Collection
 from dataclasses import dataclass
 from typing import Any, NamedTuple
 
-from bitwig_agent import raw_scales
+from bitwig_agent.grid import raw_scales
 from bitwig_agent.grid.bundled import measured_notes
 from bitwig_agent.grid.display import enum_context
 from bitwig_agent.grid.read import Graph
@@ -28,7 +28,7 @@ def measured_warnings(spec: Spec, existing: Collection[str]) -> list[str]:
             continue
         given = module.params.get("PITCH_MOD")
         if given is not None:
-            value = given.raw if type(given.raw) in (int, float) else None
+            value = given.written if type(given.written) in (int, float) else None
         else:  # an existing module may have been set earlier: only the default of a new one is certain
             value = None if edge.dst in existing else mod.get("default")
         if value == 0:
@@ -54,12 +54,12 @@ class _Facts:
         """Value of a parameter after the apply when certain: given in the spec, or the default of a module not inserted yet."""
         given = self.resolved.params.get(pid)
         if given is not None:
-            want = given.want
+            want = given.checked
             if (
                 isinstance(want, dict) and "shown" not in want and type(want.get("value")) in (int, float, bool)
             ):  # a label resolves to its value
                 return want["value"]
-            return given.raw if type(given.raw) in (int, float, bool) else None
+            return given.written if type(given.written) in (int, float, bool) else None
         p = next((p for p in self.info["parameters"] if p["parameterId"] == pid), None)
         return None if self.exists or p is None else p.get("default")
 
@@ -140,7 +140,7 @@ def _scale_message(template: str, pid: str, raw: float, scale: Any) -> str:
 
 def _raw_scale_message(f: _Facts, pid: str, rules: _RawScaleRules) -> str | None:
     spec = f.resolved.params[pid]
-    want, raw = spec.want, spec.raw
+    want, raw = spec.checked, spec.written
     if (
         (rules.skip_time and pid == "TIME")
         or type(raw) not in (int, float)

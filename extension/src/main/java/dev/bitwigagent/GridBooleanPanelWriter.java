@@ -20,7 +20,6 @@ final class GridBooleanPanelWriter {
         this.nativeWriter = nativeWriter;
     }
 
-    /** Every pre-dispatch check of set(); nothing is written. */
     void preflight(GridSnapshotReader.ParameterBinding binding, GridParameterWriter.Request request, Runnable check) {
         nativeWriter.requireSupported(binding.parameter);
         GridSnapshotReader.ParameterBinding coupled = values.bindBipolarParameter(binding);

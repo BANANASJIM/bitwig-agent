@@ -87,7 +87,6 @@ class ParameterArgs(DeviceArgs):
     expectedDeviceName: Nonempty
 
 
-# Example UUIDs are placeholders: discover real targets with tracks.list first.
 TRACK = "12345678-1234-1234-1234-123456789abc"
 TARGET = {"trackId": TRACK, "deviceIndex": 0, "expectedDeviceName": "Poly Grid"}
 
