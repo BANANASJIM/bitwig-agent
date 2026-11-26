@@ -18,109 +18,116 @@ import org.junit.jupiter.api.Test;
 public final class HostBridgeTest {
 
     @Test
-    void sameIdDeviceRebindDoesNotRequireObserverReplay() {
+    void rootDevicesKeepTheirOwnObservationsAcrossListings() {
         Fake host = new Fake();
         HostBridge bridge = host.bridge();
-        JsonObject first = call(host, bridge, "parameters.list", target());
-        assertTrue(
-                first.getAsJsonArray("parameters")
-                                .get(0)
-                                .getAsJsonObject()
-                                .get("normalizedValue")
-                                .getAsDouble()
-                        == .25,
-                "device A has its own initial value");
+        JsonObject first = call(host, bridge, "parameters.list", list(root(0)));
+        assertEquals(.25, parameterValue(first), "device A has its own initial value");
         int idEmissions = host.idEmissions;
-        JsonObject second = target();
-        second.addProperty("deviceIndex", 1);
-        CompletableFuture<JsonObject> pending = bridge.handle("parameters.list", second, host.deadline());
+        CompletableFuture<JsonObject> pending = bridge.handle("parameters.list", list(root(1)), host.deadline());
         host.next();
         assertTrue(pending.isDone(), "same-ID device rebind must use source-bound observations without ID replay");
         JsonObject current = pending.join();
-        assertTrue(
-                current.getAsJsonArray("parameters")
-                                .get(0)
-                                .getAsJsonObject()
-                                .get("normalizedValue")
-                                .getAsDouble()
-                        == .6,
-                "device B uses its own observed value, not device A's value");
-        assertTrue(host.idEmissions == idEmissions, "binding must not depend on replaying unchanged parameter IDs");
+        assertEquals(.6, parameterValue(current), "device B uses its own observed value, not device A's value");
+        assertEquals(idEmissions, host.idEmissions, "binding must not depend on replaying unchanged parameter IDs");
         host.emitIds(0, new String[0]);
         host.emitValue(0, .11);
         host.nameObservers[0].directParameterNameChanged("gain", "Old device");
-        JsonObject unchanged = call(host, bridge, "parameters.list", second);
-        assertTrue(unchanged.getAsJsonArray("parameters").size() == 1, "A ID callback cannot change B's ID set");
-        assertTrue(
-                unchanged
-                                .getAsJsonArray("parameters")
-                                .get(0)
-                                .getAsJsonObject()
-                                .get("normalizedValue")
-                                .getAsDouble()
-                        == .6,
-                "A value callback cannot populate B's cache");
-        assertTrue(
-                unchanged
-                        .getAsJsonArray("parameters")
-                        .get(0)
-                        .getAsJsonObject()
-                        .get("name")
-                        .getAsString()
-                        .equals("Gain 1"),
-                "A name callback cannot populate B's cache");
-        assertTrue(
-                unchanged
-                        .getAsJsonObject("target")
-                        .get("contextToken")
-                        .equals(current.getAsJsonObject("target").get("contextToken")),
-                "A ID changes cannot invalidate B's token");
-        JsonObject written = call(host, bridge, "parameters.set", write(current, .8));
-        assertTrue(written.get("outcome").getAsString().equals("applied"), "B write needs B's fresh callback");
+        JsonObject unchanged = call(host, bridge, "parameters.list", list(root(1)));
+        assertEquals(1, unchanged.getAsJsonArray("parameters").size(), "A ID callback cannot change B's ID set");
+        assertEquals(.6, parameterValue(unchanged), "A value callback cannot populate B's cache");
+        assertEquals("Gain 1", parameterName(unchanged), "A name callback cannot populate B's cache");
+        JsonObject written = call(host, bridge, "parameters.set", set(unchanged, .8));
+        assertEquals("applied", written.get("outcome").getAsString(), "B write needs B's fresh callback");
         assertTrue(host.deviceWrites[0] == 0 && host.deviceWrites[1] == 1, "write dispatched exactly to bank device B");
-        assertTrue(host.parameterValues[0] == .11, "writing B cannot change A");
-        CompletableFuture<JsonObject> stale = bridge.handle("parameters.set", write(first, .75), host.deadline());
-        host.next();
-        assertRpcError("stale_context", stale);
+        assertEquals(.11, host.parameterValues[0], "writing B cannot change A");
+        RpcException vanished = reject(host, bridge, "target_not_found", "parameters.set", set(first, .75));
+        assertEquals("parameters.list", vanished.next);
+        assertEquals(1, host.writes, "A's emptied parameter list refuses its old ref");
     }
 
     @Test
     void renamedSourceRetainsContinuousObservations() {
         Fake host = new Fake();
         HostBridge bridge = host.bridge();
-        JsonObject previous = call(host, bridge, "parameters.list", target());
+        JsonObject previous = call(host, bridge, "parameters.list", list(root(0)));
         int emissions = host.idEmissions;
         host.deviceNodes[0].child("name").emit("Renamed");
-        JsonObject renamed = target();
-        renamed.addProperty("expectedDeviceName", "Renamed");
-        CompletableFuture<JsonObject> pending = bridge.handle("parameters.list", renamed, host.deadline());
+        JsonObject renamed = Refs.device(track(), 0, "Renamed");
+        CompletableFuture<JsonObject> pending = bridge.handle("parameters.list", list(renamed), host.deadline());
         host.next();
         assertTrue(pending.isDone(), "renaming a continuously observed source must not require ID replay");
         JsonObject current = pending.join();
-        assertTrue(
-                current.getAsJsonArray("parameters")
-                                .get(0)
-                                .getAsJsonObject()
-                                .get("normalizedValue")
-                                .getAsDouble()
-                        == .25,
-                "rename retains the same source's observed value");
-        assertTrue(host.idEmissions == emissions, "metadata rename must not depend on parameter callback replay");
-        JsonObject staleWrite = write(previous, .8);
-        staleWrite.addProperty("expectedDeviceName", "Renamed");
-        CompletableFuture<JsonObject> stale = bridge.handle("parameters.set", staleWrite, host.deadline());
-        host.next();
-        assertRpcError("stale_context", stale);
-        JsonObject freshWrite = write(current, .8);
-        assertTrue(
-                call(host, bridge, "parameters.set", freshWrite)
+        assertEquals(.25, parameterValue(current), "rename retains the same source's observed value");
+        assertEquals(emissions, host.idEmissions, "metadata rename must not depend on parameter callback replay");
+        RpcException stale = reject(host, bridge, "target_changed", "parameters.set", set(previous, .8));
+        assertEquals(renamed, stale.current);
+        reject(host, bridge, "target_changed", "parameters.list", list(root(0)));
+        assertEquals(
+                "applied",
+                call(host, bridge, "parameters.set", set(current, .8))
                         .get("outcome")
-                        .getAsString()
-                        .equals("applied"),
-                "fresh renamed context can still verify a write");
+                        .getAsString(),
+                "the re-read ref of the renamed device still verifies a write");
         assertTrue(
                 host.deviceWrites[0] == 1 && host.deviceWrites[1] == 0,
                 "renamed source write stays on the exact device");
+    }
+
+    @Test
+    void listingAnotherDeviceDoesNotInvalidateAWrite() {
+        Fake host = new Fake();
+        HostBridge bridge = host.bridge();
+        JsonObject a = call(host, bridge, "parameters.list", list(root(0)));
+        JsonObject b = call(host, bridge, "parameters.list", list(root(1)));
+        JsonObject chain = call(host, bridge, "parameters.list", list(chainDevice(0, 1)));
+        assertEquals("applied", outcome(call(host, bridge, "parameters.set", set(a, .7))));
+        assertEquals("applied", outcome(call(host, bridge, "parameters.set", set(chain, .9))));
+        assertEquals("applied", outcome(call(host, bridge, "parameters.set", set(b, .2))));
+        assertTrue(
+                host.deviceWrites[0] == 1 && host.deviceWrites[1] == 1 && host.childWrites[0][1] == 1,
+                "each write reaches exactly the device its ref names");
+        assertEquals(2, host.writes, "no write reaches another root device");
+    }
+
+    @Test
+    void aVanishedParameterIsNotFoundAndPointsToTheList() {
+        Fake host = new Fake();
+        HostBridge bridge = host.bridge();
+        JsonObject listing = call(host, bridge, "parameters.list", list(root(0)));
+        host.emitIds(0, new String[] {"tone"});
+        RpcException gone = reject(host, bridge, "target_not_found", "parameters.set", set(listing, .75));
+        assertEquals("parameters.list", gone.next);
+        JsonObject unlisted = set(listing, .75);
+        unlisted.getAsJsonObject("target").addProperty("id", "not-listed");
+        reject(host, bridge, "target_not_found", "parameters.set", unlisted);
+        assertEquals(0, host.writes, "nothing is written");
+    }
+
+    @Test
+    void aDeviceRenamedBetweenReadAndWriteIsTargetChangedWithCurrent() {
+        Fake host = new Fake();
+        HostBridge bridge = host.bridge();
+        JsonObject listing = call(host, bridge, "parameters.list", list(root(0)));
+        host.deviceNodes[0].child("name").emit("Changed");
+        RpcException changed = reject(host, bridge, "target_changed", "parameters.set", set(listing, .75));
+        assertEquals(Refs.device(track(), 0, "Changed"), changed.current);
+        assertEquals(0, host.writes, "a stale target never dispatches");
+    }
+
+    @Test
+    void chainDevicesWriteAndReboundChainDevicesAreNotReady() {
+        Fake host = new Fake();
+        HostBridge bridge = host.bridge();
+        JsonObject listing = call(host, bridge, "parameters.list", list(chainDevice(1, 0)));
+        assertEquals(.55, parameterValue(listing));
+        assertEquals("applied", outcome(call(host, bridge, "parameters.set", set(listing, .8))));
+        assertTrue(host.childWrites[1][0] == 1 && host.writes == 0, "the write reaches the chain device only");
+        host.layerNodes[1].child("exists").emit(false);
+        host.layerNodes[1].child("exists").emit(true);
+        reject(host, bridge, "not_ready", "parameters.set", set(listing, .5));
+        reject(host, bridge, "not_ready", "parameters.list", list(chainDevice(1, 0)));
+        assertEquals(1, host.childWrites[1][0], "a rebound chain device is never written");
     }
 
     @Test
@@ -354,7 +361,8 @@ public final class HostBridgeTest {
         JsonObject brief = call(f, bridge, "status", new JsonObject());
         JsonObject full = call(f, bridge, "status", HostFixture.json("{\"detail\":\"full\"}"));
         for (String key : brief.keySet()) assertEquals(brief.get(key), full.get(key), key);
-        for (String key : List.of("grid", "methods", "domains", "windows", "units", "projectSaveAs", "render")) {
+        for (String key :
+                List.of("grid", "methods", "domains", "windows", "units", "projectSaveAs", "render", "modulators")) {
             assertTrue(full.has(key) && !brief.has(key), key + " only with detail full");
         }
         assertRpcError(
@@ -567,28 +575,33 @@ public final class HostBridgeTest {
         params.addProperty("extra", true);
         assertRpcError("invalid_params", bridge.handle("status", params, host.deadline()));
         assertTrue(host.tasks.isEmpty(), "invalid request must not schedule host work");
-        params = target();
-        params.addProperty("deviceIndex", 1.5);
-        assertRpcError("invalid_params", bridge.handle("parameters.list", params, host.deadline()));
-        params = target();
-        params.addProperty("deviceIndex", 16);
-        assertRpcError("invalid_params", bridge.handle("parameters.list", params, host.deadline()));
+        JsonObject parent = root(0);
+        parent.addProperty("index", 1.5);
+        assertRpcError("invalid_params", bridge.handle("parameters.list", list(parent), host.deadline()));
+        parent = root(0);
+        parent.addProperty("index", 16);
+        assertRpcError("invalid_params", bridge.handle("parameters.list", list(parent), host.deadline()));
+        assertTrue(host.tasks.isEmpty(), "invalid refs must not schedule host work");
     }
 
     @Test
     void initialObserverDataAndWindow() {
         Fake host = new Fake();
         HostBridge bridge = host.bridge();
-        JsonObject result = call(host, bridge, "parameters.list", target());
-        assertTrue(
+        JsonObject result = call(host, bridge, "parameters.list", list(root(0)));
+        assertEquals(.25, parameterValue(result), "initial data belongs to the requested bank proxy");
+        assertEquals(
+                "shown gain",
                 result.getAsJsonArray("parameters")
-                                .get(0)
-                                .getAsJsonObject()
-                                .get("normalizedValue")
-                                .getAsDouble()
-                        == .25,
-                "initial data belongs to the requested bank proxy");
+                        .get(0)
+                        .getAsJsonObject()
+                        .getAsJsonObject("value")
+                        .get("display")
+                        .getAsString(),
+                "the display is the host's text reported while the list was built");
+        assertNull(host.deviceNodes[0].child("directDisplayObserver").data, "the display observer is released");
         assertTrue(host.tasks.isEmpty(), "cached parameter listing completes without extra scheduled polling");
+        HostFixture.REF_SCHEMA.apply(parameterRef(result));
         JsonObject tracks = call(host, bridge, "tracks.list", new JsonObject());
         assertTrue(
                 tracks.getAsJsonObject("window").get("capacity").getAsInt() == HostLimits.TRACKS,
@@ -596,14 +609,16 @@ public final class HostBridgeTest {
         assertTrue(
                 !tracks.getAsJsonObject("window").get("complete").getAsBoolean(),
                 "a track count beyond the window cannot be declared complete");
-        JsonObject params = new JsonObject();
-        params.addProperty("trackId", Fake.TRACK_ID);
-        JsonObject devices = call(host, bridge, "devices.list", params);
-        assertTrue(devices.getAsJsonArray("devices").size() == 2, "only existing devices listed");
-        params.addProperty("trackId", "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee");
-        CompletableFuture<JsonObject> future = bridge.handle("devices.list", params, host.deadline());
-        host.next();
-        assertRpcError("outside_window", future);
+        JsonObject devices = call(host, bridge, "devices.list", list(track()));
+        assertEquals(2, devices.getAsJsonArray("devices").size(), "only existing devices listed");
+        for (JsonElement row : devices.getAsJsonArray("devices"))
+            HostFixture.REF_SCHEMA.apply(row.getAsJsonObject().getAsJsonObject("ref"));
+        reject(
+                host,
+                bridge,
+                "outside_window",
+                "devices.list",
+                list(Refs.track("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", "Track")));
     }
 
     @Test
@@ -645,100 +660,94 @@ public final class HostBridgeTest {
     void matchingWriteRequiresFreshCallback() {
         Fake host = new Fake();
         HostBridge bridge = host.bridge();
-        JsonObject listing = call(host, bridge, "parameters.list", target());
+        JsonObject listing = call(host, bridge, "parameters.list", list(root(0)));
         host.writeMode = "match";
-        JsonObject result = call(host, bridge, "parameters.set", write(listing, .75));
-        assertTrue(host.writes == 1, "one dispatch");
-        assertTrue(result.get("outcome").getAsString().equals("applied"), "fresh callback evidence");
-        assertTrue(
-                result.get("outcome").getAsString().matches("applied|already_matched"),
-                "readback within declared tolerance");
-        result = call(host, bridge, "parameters.set", write(listing, .75));
-        assertTrue(host.writes == 1, "already satisfied absolute set need not dispatch");
-        assertTrue(result.get("outcome").getAsString().equals("already_matched"), "no-op explicitly identified");
-    }
-
-    @Test
-    void unlistedParameterIdIsRefused() {
-        Fake host = new Fake();
-        HostBridge bridge = host.bridge();
-        JsonObject listing = call(host, bridge, "parameters.list", target());
-        JsonObject p = write(listing, .75);
-        p.addProperty("parameterId", "not-listed");
-        CompletableFuture<JsonObject> pending = bridge.handle("parameters.set", p, host.deadline());
-        host.next();
-        assertRpcError("unknown_name", pending);
-        assertTrue(host.writes == 0, "nothing is written");
+        JsonObject result = call(host, bridge, "parameters.set", set(listing, .75));
+        assertEquals(1, host.writes, "one dispatch");
+        assertEquals("applied", outcome(result), "fresh callback evidence");
+        assertEquals(parameterRef(listing), result.getAsJsonObject("ref"));
+        assertEquals(
+                .75,
+                result.getAsJsonObject("fields")
+                        .getAsJsonObject("value")
+                        .get("requested")
+                        .getAsDouble());
+        result = call(host, bridge, "parameters.set", set(listing, .75));
+        assertEquals(1, host.writes, "already satisfied absolute set need not dispatch");
+        assertEquals("already_matched", outcome(result), "no-op explicitly identified");
     }
 
     @Test
     void staleValuesDoNotVerifyWrites() {
         Fake host = new Fake();
         HostBridge bridge = host.bridge();
-        JsonObject listing = call(host, bridge, "parameters.list", target());
+        JsonObject listing = call(host, bridge, "parameters.list", list(root(0)));
         host.writeMode = "none";
-        CompletableFuture<JsonObject> result = bridge.handle("parameters.set", write(listing, .75), host.deadline());
+        CompletableFuture<JsonObject> result = bridge.handle("parameters.set", set(listing, .75), host.deadline());
         host.next();
         assertTrue(!result.isDone(), "cached value is not fresh readback");
         while (!result.isDone()) host.next();
         JsonObject response = result.join();
-        assertTrue(response.get("outcome").getAsString().equals("unknown"), "unobserved write is unknown");
-        assertTrue(
-                response.get("observedValue").isJsonNull(), "old pre-write value not reported as post-write evidence");
-        assertTrue(response.get("reason").getAsString().equals("not_observed"), "honest unobserved state");
+        assertEquals("unknown", outcome(response), "unobserved write is unknown");
+        assertFalse(
+                response.getAsJsonObject("fields").getAsJsonObject("value").has("observed"),
+                "old pre-write value not reported as post-write evidence");
+        assertEquals("not_observed", response.get("reason").getAsString(), "honest unobserved state");
     }
 
     @Test
     void mismatchedValuesAreReported() {
         Fake host = new Fake();
         HostBridge bridge = host.bridge();
-        JsonObject listing = call(host, bridge, "parameters.list", target());
+        JsonObject listing = call(host, bridge, "parameters.list", list(root(0)));
         host.writeMode = "mismatch";
-        CompletableFuture<JsonObject> result = bridge.handle("parameters.set", write(listing, .75), host.deadline());
+        CompletableFuture<JsonObject> result = bridge.handle("parameters.set", set(listing, .75), host.deadline());
         while (!result.isDone()) host.next();
         JsonObject response = result.join();
-        assertTrue(response.get("outcome").getAsString().equals("unknown"), "mismatch is not observed success");
-        assertTrue(response.get("reason").getAsString().equals("readback_mismatch"), "mismatch explicit");
-        assertTrue(response.get("observedValue").getAsDouble() == .4, "actual mismatch value retained");
-        assertTrue(!response.get("outcome").getAsString().matches("applied|already_matched"), "match false");
+        assertEquals("unknown", outcome(response), "mismatch is not observed success");
+        assertEquals("readback_mismatch", response.get("reason").getAsString(), "mismatch explicit");
+        assertEquals(
+                .4,
+                response.getAsJsonObject("fields")
+                        .getAsJsonObject("value")
+                        .getAsJsonObject("observed")
+                        .get("value")
+                        .getAsDouble(),
+                "actual mismatch value retained");
     }
 
     @Test
-    void staleTokensAndTargetsDoNotWrite() {
+    void expectedValuesGuardTheWrite() {
         Fake host = new Fake();
         HostBridge bridge = host.bridge();
-        JsonObject listing = call(host, bridge, "parameters.list", target());
-        JsonObject params = write(listing, .75);
-        params.addProperty("contextToken", "stale");
-        CompletableFuture<JsonObject> result = bridge.handle("parameters.set", params, host.deadline());
-        host.next();
-        assertRpcError("stale_context", result);
-        host.deviceNodes[0].child("name").emit("Changed");
-        result = bridge.handle("parameters.set", write(listing, .75), host.deadline());
-        host.next();
-        assertRpcError("stale_target", result);
-        assertTrue(host.writes == 0, "stale target never dispatched");
+        JsonObject listing = call(host, bridge, "parameters.list", list(root(0)));
+        JsonObject guarded = set(listing, .75);
+        guarded.add("expect", HostFixture.json("{\"value\":0.9}"));
+        RpcException mismatch = reject(host, bridge, "target_changed", "parameters.set", guarded);
+        assertEquals(.25, mismatch.observed.get("value").getAsDouble());
+        assertEquals(0, host.writes, "a differing expectation never dispatches");
+        guarded.add("expect", HostFixture.json("{\"value\":0.25}"));
+        assertEquals("applied", outcome(call(host, bridge, "parameters.set", guarded)));
     }
 
     @Test
     void deadlineAndLateCallbacksDoNotWrite() {
         Fake host = new Fake();
         HostBridge bridge = host.bridge();
-        JsonObject listing = call(host, bridge, "parameters.list", target());
-        CompletableFuture<JsonObject> result =
-                bridge.handle("parameters.set", write(listing, .75), host.tasks.now() - 1);
+        JsonObject listing = call(host, bridge, "parameters.list", list(root(0)));
+        CompletableFuture<JsonObject> result = bridge.handle("parameters.set", set(listing, .75), host.tasks.now() - 1);
         host.next();
         assertRpcError("deadline", result);
-        assertTrue(host.writes == 0, "expired queued operation cannot mutate");
-        result = bridge.handle("parameters.set", write(listing, .75), host.deadline());
+        assertEquals(0, host.writes, "expired queued operation cannot mutate");
+        result = bridge.handle("parameters.set", set(listing, .75), host.deadline());
         result.completeExceptionally(new IllegalStateException("caller abandoned operation"));
         host.next();
-        assertTrue(host.writes == 0, "late callback skips completed request");
-        result = bridge.handle("parameters.set", write(listing, .75), host.deadline());
+        assertEquals(0, host.writes, "late callback skips completed request");
+        result = bridge.handle("parameters.set", set(listing, .75), host.deadline());
         bridge.close();
         host.next();
         assertRpcError("not_ready", result);
-        assertTrue(host.writes == 0, "closed bridge cannot write");
+        assertEquals(0, host.writes, "closed bridge cannot write");
     }
 
     @Test
@@ -746,16 +755,14 @@ public final class HostBridgeTest {
         Fake host = new Fake();
         host.initialIds[1] = false;
         HostBridge bridge = host.bridge();
-        JsonObject previous = call(host, bridge, "parameters.list", target());
-        JsonObject second = target();
-        second.addProperty("deviceIndex", 1);
-        CompletableFuture<JsonObject> pending = bridge.handle("parameters.list", second, host.deadline());
+        JsonObject previous = call(host, bridge, "parameters.list", list(root(0)));
+        CompletableFuture<JsonObject> pending = bridge.handle("parameters.list", list(root(1)), host.deadline());
         host.next();
         assertTrue(!pending.isDone(), "B cannot reuse A's IDs when B has never reported its own list");
-        CompletableFuture<JsonObject> busy = bridge.handle("parameters.set", write(previous, .75), host.deadline());
-        host.next();
-        host.next();
-        assertRpcError("busy", busy);
+        assertEquals(
+                "applied",
+                outcome(call(host, bridge, "parameters.set", set(previous, .75))),
+                "a write to A does not wait for B's pending list");
         host.emitIds(0);
         host.emitValue(0, .9);
         host.next();
@@ -764,130 +771,91 @@ public final class HostBridgeTest {
         host.emitValue(1, .6);
         host.next();
         JsonObject current = pending.join();
-        assertTrue(
-                current.getAsJsonArray("parameters")
-                                .get(0)
-                                .getAsJsonObject()
-                                .get("normalizedValue")
-                                .getAsDouble()
-                        == .6,
-                "B becomes ready only from B's continuously observed stream");
-        assertTrue(
-                !current.getAsJsonObject("target")
-                        .get("contextToken")
-                        .getAsString()
-                        .equals(previous.getAsJsonObject("target")
-                                .get("contextToken")
-                                .getAsString()),
-                "rebind changes token");
-        CompletableFuture<JsonObject> stale = bridge.handle("parameters.set", write(previous, .75), host.deadline());
-        host.next();
-        assertRpcError("stale_context", stale);
-        assertTrue(host.writes == 0, "old context cannot write after rebind");
+        assertEquals(.6, parameterValue(current), "B becomes ready only from B's continuously observed stream");
+        assertEquals(
+                "applied",
+                outcome(call(host, bridge, "parameters.set", set(previous, .5))),
+                "A's ref stays valid after B was bound: no list-before-set");
+        assertEquals(0, host.deviceWrites[1], "nothing was written to B");
     }
 
     @Test
     void otherSourceCallbacksCannotVerifyWrites() {
         Fake host = new Fake();
         HostBridge bridge = host.bridge();
-        JsonObject second = target();
-        second.addProperty("deviceIndex", 1);
-        JsonObject listing = call(host, bridge, "parameters.list", second);
+        JsonObject listing = call(host, bridge, "parameters.list", list(root(1)));
         host.writeMode = "none";
-        CompletableFuture<JsonObject> pending = bridge.handle("parameters.set", write(listing, .75), host.deadline());
+        CompletableFuture<JsonObject> pending = bridge.handle("parameters.set", set(listing, .75), host.deadline());
         host.next();
         host.emitValue(0, .75);
         host.next();
         assertTrue(!pending.isDone(), "A's fresh matching value cannot verify a write to B");
         host.emitValue(1, .75);
         host.next();
-        assertTrue(
-                pending.join().get("outcome").getAsString().equals("applied"),
-                "only B's fresh callback verifies B's write");
+        assertEquals("applied", outcome(pending.join()), "only B's fresh callback verifies B's write");
         assertTrue(host.deviceWrites[0] == 0 && host.deviceWrites[1] == 1, "no cursor or wrong-device write path");
     }
 
     @Test
-    void sourceIdentityAndIdChangesInvalidateTokens() {
+    void parameterSetChangesUnderAWriteHaveUnknownOutcome() {
         Fake host = new Fake();
         HostBridge bridge = host.bridge();
-        JsonObject listing = call(host, bridge, "parameters.list", target());
+        JsonObject listing = call(host, bridge, "parameters.list", list(root(0)));
+        host.writeMode = "none";
+        CompletableFuture<JsonObject> pending = bridge.handle("parameters.set", set(listing, .75), host.deadline());
+        host.next();
+        assertTrue(!pending.isDone() && host.writes == 1, "the write is dispatched before the change");
         host.emitIds(0, new String[] {"gain", "tone"});
-        JsonObject changed = call(host, bridge, "parameters.list", target());
+        host.emitValue(0, .75);
+        host.next();
+        JsonObject result = pending.join();
+        assertEquals("unknown", outcome(result));
+        assertEquals("target_changed", result.get("reason").getAsString());
+    }
+
+    @Test
+    void newIdsDoNotInheritValuesAndReplacementClearsParameterData() {
+        Fake host = new Fake();
+        HostBridge bridge = host.bridge();
+        host.emitIds(0, new String[] {"gain", "tone"});
+        JsonObject changed = call(host, bridge, "parameters.list", list(root(0)));
         assertTrue(
-                !changed.getAsJsonObject("target")
-                        .get("contextToken")
-                        .equals(listing.getAsJsonObject("target").get("contextToken")),
-                "observed ID-set change invalidates the token");
-        assertTrue(
-                !changed.getAsJsonArray("parameters")
+                changed.getAsJsonArray("parameters")
                         .get(1)
                         .getAsJsonObject()
-                        .get("readable")
-                        .getAsBoolean(),
+                        .getAsJsonObject("value")
+                        .get("value")
+                        .isJsonNull(),
                 "new IDs cannot inherit another parameter's value");
-        CompletableFuture<JsonObject> stale = bridge.handle("parameters.set", write(listing, .75), host.deadline());
-        host.next();
-        assertRpcError("stale_context", stale);
+        reject(host, bridge, "not_ready", "parameters.set", set(changed, .75, 1));
         host.deviceNodes[0].child("exists").emit(false);
         host.emitIds(0);
         host.emitValue(0, .9);
         host.deviceNodes[0].child("exists").emit(true);
-        CompletableFuture<JsonObject> pending = bridge.handle("parameters.list", target(), host.deadline());
+        CompletableFuture<JsonObject> pending = bridge.handle("parameters.list", list(root(0)), host.deadline());
         host.next();
         assertTrue(!pending.isDone(), "observable proxy replacement clears old parameter data");
         host.emitIds(0);
         host.emitValue(0, .35);
         host.next();
         JsonObject current = pending.join();
-        assertTrue(
-                current.getAsJsonArray("parameters")
-                                .get(0)
-                                .getAsJsonObject()
-                                .get("normalizedValue")
-                                .getAsDouble()
-                        == .35,
-                "nonexistent-source callbacks cannot repopulate a replacement cache");
-        assertTrue(
-                !current.getAsJsonObject("target")
-                        .get("contextToken")
-                        .equals(changed.getAsJsonObject("target").get("contextToken")),
-                "existence transition invalidates the old token");
+        assertEquals(
+                .35, parameterValue(current), "nonexistent-source callbacks cannot repopulate a replacement cache");
         host.trackNodes[0].child("channelId").emit("replacement-track");
         host.trackNodes[0].child("channelId").emit(Fake.TRACK_ID);
-        stale = bridge.handle("parameters.set", write(current, .75), host.deadline());
-        host.next();
-        assertRpcError("stale_context", stale);
-        assertTrue(host.writes == 0, "observable track replacement cannot reuse a token");
+        reject(host, bridge, "not_ready", "parameters.set", set(current, .75));
+        assertEquals(0, host.writes, "observable track replacement leaves the device unobserved until new callbacks");
     }
 
     @Test
-    void statusDiagnosticsAreScheduledAndSourceScoped() {
+    void theModulatorSectionIsOnlyInTheFullStatus() {
         Fake host = new Fake();
         HostBridge bridge = host.bridge();
-        CompletableFuture<JsonObject> pending = bridge.handle("status", new JsonObject(), host.deadline());
-        assertTrue(!pending.isDone(), "status must await the scheduled host task");
-        host.next();
-        JsonObject diagnostics = pending.join().getAsJsonObject("parameterBindingDiagnostics");
-        assertTrue(
-                diagnostics.get("target").isJsonNull()
-                        && diagnostics.get("idCount").isJsonNull(),
-                "no binding must not claim a source cache");
-        call(host, bridge, "parameters.list", target());
-        diagnostics = call(host, bridge, "status", new JsonObject()).getAsJsonObject("parameterBindingDiagnostics");
-        assertTrue(
-                diagnostics.get("matches").getAsBoolean()
-                        && diagnostics.get("idsObserved").getAsBoolean(),
-                "diagnostics describe the bound bank source");
-        long received = diagnostics.get("idCallbacksReceived").getAsLong();
-        host.emitIds(1);
-        diagnostics = call(host, bridge, "status", new JsonObject()).getAsJsonObject("parameterBindingDiagnostics");
-        assertTrue(
-                diagnostics.get("idCallbacksReceived").getAsLong() == received,
-                "another source's callback does not change the bound-source counters");
-        assertTrue(
-                diagnostics.get("cacheGeneration").getAsLong() == 0,
-                "binding alone must not clear continuous observations");
+        JsonObject brief = call(host, bridge, "status", new JsonObject());
+        JsonObject full = call(host, bridge, "status", HostFixture.json("{\"detail\":\"full\"}"));
+        assertFalse(brief.has("modulators"));
+        assertTrue(full.get("modulators").isJsonObject());
+        assertFalse(full.has("parameterBindingDiagnostics"), "the single parameter binding no longer exists");
     }
 
     @Test
@@ -920,36 +888,45 @@ public final class HostBridgeTest {
             reads.add(method.getAsString());
         Set<String> registered = new HashSet<>(ModulatorModule.METHODS);
         registered.addAll(ModulatorEditModule.METHODS);
-        assertTrue(
-                reads.equals(registered),
-                "discovery derives the modulator domain from registered read and edit methods");
+        assertEquals(registered, reads, "discovery derives the modulator domain from registered methods");
     }
 
     @Test
     void strictValidationPrecedesAllDomainScheduling() {
         Fake host = new Fake();
         HostBridge bridge = host.bridge();
-        for (String method : List.of("status", "transport.get", "devices.catalog", "modulators.capabilities")) {
+        for (String method : List.of("status", "transport.get", "devices.catalog")) {
             JsonObject extra = new JsonObject();
             extra.addProperty("unexpected", true);
             assertRpcError("invalid_params", bridge.handle(method, extra, host.deadline()));
         }
-        JsonObject fraction = target();
-        fraction.add("deviceIndex", new JsonPrimitive(new java.math.BigDecimal("1.0000000000000000001")));
-        assertRpcError("invalid_params", bridge.handle("parameters.list", fraction, host.deadline()));
-        JsonObject nullName = target();
-        nullName.add("expectedDeviceName", JsonNull.INSTANCE);
-        assertRpcError("invalid_params", bridge.handle("parameters.list", nullName, host.deadline()));
+        JsonObject fraction = root(0);
+        fraction.add("index", new JsonPrimitive(new java.math.BigDecimal("1.0000000000000000001")));
+        assertRpcError("invalid_params", bridge.handle("parameters.list", list(fraction), host.deadline()));
+        JsonObject nullName = root(0);
+        nullName.add("name", JsonNull.INSTANCE);
+        assertRpcError("invalid_params", bridge.handle("parameters.list", list(nullName), host.deadline()));
         assertRpcError("invalid_params", bridge.handle("status", null, host.deadline()));
-        JsonObject modulators = new JsonObject();
-        modulators.add("parent", target());
+        JsonObject modulators = list(root(0));
         modulators.add("offset", JsonNull.INSTANCE);
         assertRpcError("invalid_params", bridge.handle("modulators.list", modulators, host.deadline()));
-        modulators.remove("offset");
-        modulators.addProperty("modulatorId", "1-1-1-1-1");
-        modulators.addProperty("parameterId", "");
-        assertRpcError("invalid_params", bridge.handle("modulators.parameters.get", modulators, host.deadline()));
-        assertRpcError("invalid_params", bridge.handle("modulators.parameters.set", modulators, host.deadline()));
+        JsonObject modulator = new JsonObject();
+        modulator.add("target", root(0));
+        assertRpcError("invalid_params", bridge.handle("modulators.get", modulator, host.deadline()));
+        JsonObject write = set(Refs.parameter(root(0), "gain", null), Double.NaN);
+        assertRpcError("invalid_params", bridge.handle("parameters.set", write, host.deadline()));
+        for (String removed : List.of(
+                "modulators.capabilities",
+                "modulators.catalog",
+                "modulators.parameters.get",
+                "modulators.parameters.set",
+                "devices.layers.list",
+                "devices.layers.insert",
+                "devices.remote.page",
+                "devices.remote.set",
+                "parameters.layer.list",
+                "parameters.layer.set"))
+            assertFalse(HostFixture.SPECS.methods().contains(removed), removed + " has no alias");
         assertTrue(host.tasks.isEmpty(), "strict validation rejects every invalid domain request before scheduling");
     }
 
@@ -960,14 +937,14 @@ public final class HostBridgeTest {
         assertEquals(
                 100,
                 bridge.validate("actions.list", new JsonObject()).get("limit").getAsInt());
-        JsonObject fraction = target();
-        fraction.add("deviceIndex", JsonParser.parseString("1.0"));
-        assertRpcError("invalid_params", bridge.handle("parameters.list", fraction, host.deadline()));
-        JsonObject newline = target();
-        newline.addProperty("trackId", Fake.TRACK_ID + "\n");
+        JsonObject fraction = root(0);
+        fraction.add("index", JsonParser.parseString("1.0"));
+        assertRpcError("invalid_params", bridge.handle("parameters.list", list(fraction), host.deadline()));
+        JsonObject newline = list(root(0));
+        newline.getAsJsonObject("parent").getAsJsonObject("track").addProperty("id", Fake.TRACK_ID + "\n");
         assertRpcError("invalid_params", bridge.handle("parameters.list", newline, host.deadline()));
         RpcException refused = assertThrows(RpcException.class, () -> bridge.validate("parameters.list", newline));
-        assertTrue(refused.getMessage().contains("params.trackId"), refused.getMessage());
+        assertTrue(refused.getMessage().contains("params.parent"), refused.getMessage());
         assertTrue(host.tasks.isEmpty(), "a schema rejection schedules nothing");
     }
 
@@ -982,9 +959,7 @@ public final class HostBridgeTest {
         early.emitValue(1, .66);
         int emissions = early.idEmissions;
         early.deviceNodes[1].child("position").emit(1);
-        JsonObject root = target();
-        root.addProperty("deviceIndex", 1);
-        CompletableFuture<JsonObject> listed = earlyBridge.handle("parameters.list", root, early.deadline());
+        CompletableFuture<JsonObject> listed = earlyBridge.handle("parameters.list", list(root(1)), early.deadline());
         early.next();
         if (!listed.isDone()
                 || listed.isCompletedExceptionally()
@@ -998,29 +973,22 @@ public final class HostBridgeTest {
             bank.child("scrollPosition").emit(initialCount);
             pending.deviceNodes[0].child("position").emit(initialCount);
             HostBridge bridge = pending.bridge();
-            JsonObject parent = target();
-            parent.addProperty("deviceIndex", initialCount);
-            JsonObject request = new JsonObject();
-            request.add("parent", parent);
-            CompletableFuture<JsonObject> unavailable =
-                    bridge.handle("devices.layers.list", request, pending.deadline());
+            JsonObject parent = Refs.device(track(), initialCount, "Twin");
+            CompletableFuture<JsonObject> unavailable = bridge.handle("chains.list", list(parent), pending.deadline());
             pending.next();
             if (!unavailable.isCompletedExceptionally())
                 failures.add("root count " + initialCount + " admitted an out-of-count parent");
             bank.child("itemCount").emit(initialCount + 1);
             pending.emitChildIds(0, 0, new String[] {"gain"});
             pending.emitChildValue(0, 0, .42);
-            JsonObject discovery = call(pending, bridge, "devices.layers.list", request);
-            JsonObject child = discovery
-                    .getAsJsonArray("layers")
-                    .get(0)
-                    .getAsJsonObject()
-                    .getAsJsonArray("devices")
-                    .get(0)
-                    .getAsJsonObject();
-            if (!child.has("discoveryToken")) failures.add("initial count population retired parent " + initialCount);
-            else if (parameterValue(call(pending, bridge, "parameters.layer.list", layerTarget(discovery, 0, 0)))
-                    != .42) failures.add("initial count population lost current child observation " + initialCount);
+            JsonObject chains = call(pending, bridge, "chains.list", list(parent));
+            if (!"ready".equals(readiness(chains, 0)))
+                failures.add("initial count population retired parent " + initialCount);
+            else {
+                JsonObject child = Refs.device(chainRef(parent, 0), 0, "Twin");
+                if (parameterValue(call(pending, bridge, "parameters.list", list(child))) != .42)
+                    failures.add("initial count population lost current child observation " + initialCount);
+            }
         }
         assertTrue(
                 failures.isEmpty(),
@@ -1033,34 +1001,20 @@ public final class HostBridgeTest {
         f.trackNodes[0].child("position").emit(-1);
         HostBridge bridge = f.bridge();
         int rootEmissions = f.idEmissions, childEmissions = f.childIdEmissions;
-        List<String> failures = new ArrayList<>();
-        CompletableFuture<JsonObject> initial = bridge.handle("devices.layers.list", layerDiscovery(), f.deadline());
-        f.next();
-        if (initial.isCompletedExceptionally()) assertRpcError("not_ready", initial);
-        else failures.add("unassigned track position admitted nested discovery");
+        reject(f, bridge, "not_ready", "chains.list", list(root(0)));
         f.trackNodes[0].child("position").emit(0);
-        JsonObject discovery = call(f, bridge, "devices.layers.list", layerDiscovery());
+        JsonObject chains = call(f, bridge, "chains.list", list(root(0)));
         for (int l = 0; l < 2; l++)
-            for (int c = 0; c < 2; c++) {
-                JsonObject child = discovery
-                        .getAsJsonArray("layers")
-                        .get(l)
-                        .getAsJsonObject()
-                        .getAsJsonArray("devices")
-                        .get(c)
-                        .getAsJsonObject();
-                if (!child.has("discoveryToken"))
-                    failures.add("first assigned track position retired child " + l + "/" + c);
-            }
-        assertTrue(failures.isEmpty(), "initial track position must establish ancestry, not replace it: " + failures);
+            assertEquals("ready", readiness(chains, l), "first assigned track position retired chain " + l);
         assertTrue(
-                parameterValue(call(f, bridge, "parameters.list", target())) == .25 && f.idEmissions == rootEmissions,
+                parameterValue(call(f, bridge, "parameters.list", list(root(0)))) == .25
+                        && f.idEmissions == rootEmissions,
                 "first assigned track position preserves the independently accepted root getter tuple");
-        assertTrue(f.childIdEmissions == childEmissions, "metadata completion does not synthesize child ID callbacks");
+        assertEquals(childEmissions, f.childIdEmissions, "metadata completion does not synthesize child ID callbacks");
         for (int l = 0; l < 2; l++)
             for (int c = 0; c < 2; c++) {
                 CompletableFuture<JsonObject> pending =
-                        bridge.handle("parameters.layer.list", layerTarget(discovery, l, c), f.deadline());
+                        bridge.handle("parameters.list", list(chainDevice(l, c)), f.deadline());
                 f.next();
                 assertTrue(
                         !pending.isDone(), "child observations rejected before track assignment are not resurrected");
@@ -1068,8 +1022,9 @@ public final class HostBridgeTest {
                 f.emitChildIds(l, c, new String[] {"gain"});
                 f.emitChildValue(l, c, value);
                 f.next();
-                assertTrue(
-                        parameterValue(pending.join()) == value,
+                assertEquals(
+                        value,
+                        parameterValue(pending.join()),
                         "actual fresh child callback is admitted after first track assignment");
             }
     }
@@ -1095,34 +1050,24 @@ public final class HostBridgeTest {
             }
             f.trackNodes[0].child("position").emit(8);
             for (int l = 0; l < 2; l++) indices[l].emit(9 + l);
-            JsonObject discovery = call(f, bridge, "devices.layers.list", layerDiscovery());
+            JsonObject chains = call(f, bridge, "chains.list", list(root(0)));
             List<String> retired = new ArrayList<>();
-            for (int l = 0; l < 2; l++)
-                for (int c = 0; c < 2; c++) {
-                    JsonObject child = discovery
-                            .getAsJsonArray("layers")
-                            .get(l)
-                            .getAsJsonObject()
-                            .getAsJsonArray("devices")
-                            .get(c)
-                            .getAsJsonObject();
-                    if (!child.has("discoveryToken")) retired.add(l + "/" + c);
-                }
-            assertTrue(
-                    retired.isEmpty(), "first assigned channel indices must not retire initial children: " + retired);
-            assertTrue(f.childIdEmissions == emissions, "index assignment cannot replay rejected initial ID callbacks");
+            for (int l = 0; l < 2; l++) if (!"ready".equals(readiness(chains, l))) retired.add(String.valueOf(l));
+            assertTrue(retired.isEmpty(), "first assigned channel indices must not retire initial chains: " + retired);
+            assertEquals(emissions, f.childIdEmissions, "index assignment cannot replay rejected initial ID callbacks");
             for (int l = 0; l < 2; l++)
                 for (int c = 0; c < 2; c++) {
                     CompletableFuture<JsonObject> pending =
-                            bridge.handle("parameters.layer.list", layerTarget(discovery, l, c), f.deadline());
+                            bridge.handle("parameters.list", list(chainDevice(l, c)), f.deadline());
                     f.next();
                     assertTrue(!pending.isDone(), "metadata completion cannot resurrect rejected child observations");
                     double expected = .21 + l * .1 + c * .01;
                     f.emitChildIds(l, c, new String[] {"gain"});
                     f.emitChildValue(l, c, expected);
                     f.next();
-                    assertTrue(
-                            parameterValue(pending.join()) == expected,
+                    assertEquals(
+                            expected,
+                            parameterValue(pending.join()),
                             "actual post-assignment callback supplies the correct child value");
                 }
         }
@@ -1146,17 +1091,9 @@ public final class HostBridgeTest {
                 if (incomplete) f.childNodes[0][0].child("position").emit(0);
                 f.emitChildIds(0, 0, new String[] {"gain"});
                 f.emitChildValue(0, 0, .91);
-                JsonObject discovery = call(f, bridge, "devices.layers.list", layerDiscovery());
-                JsonObject child = discovery
-                        .getAsJsonArray("layers")
-                        .get(0)
-                        .getAsJsonObject()
-                        .getAsJsonArray("devices")
-                        .get(0)
-                        .getAsJsonObject();
+                RpcException closed = reject(f, bridge, "not_ready", "parameters.list", list(chainDevice(0, 0)));
                 assertTrue(
-                        !child.has("discoveryToken")
-                                && child.get("reason").getAsString().contains("provenance"),
+                        closed.getMessage().contains("rebound"),
                         "observed assigned index ABA stays retired, including zero and incomplete child metadata");
             }
         Fake f = new Fake();
@@ -1164,11 +1101,11 @@ public final class HostBridgeTest {
         f.layerNodes[0].attach("channelIndex", index);
         HostBridge bridge = f.bridge();
         index.emit(0);
-        JsonObject discovery = call(f, bridge, "devices.layers.list", layerDiscovery());
-        JsonObject layer = discovery.getAsJsonArray("layers").get(0).getAsJsonObject();
+        JsonObject chains = call(f, bridge, "chains.list", list(root(0)));
+        JsonObject chain = chains.getAsJsonArray("chains").get(0).getAsJsonObject();
         assertTrue(
-                layer.get("channelIndex").isJsonNull()
-                        && layer.get("readiness").getAsString().equals("not_ready"),
+                chain.get("channelIndex").isJsonNull()
+                        && chain.get("readiness").getAsString().equals("not_ready"),
                 "a suppressed assigned-zero callback must remain unobserved, not fabricated from a getter default");
     }
 
@@ -1183,12 +1120,12 @@ public final class HostBridgeTest {
             FakeHost value = f.deviceNodes[0].child(field);
             value.emit(value.data);
         }
-        JsonObject listing = call(f, bridge, "parameters.list", target());
+        JsonObject listing = call(f, bridge, "parameters.list", list(root(0)));
         assertTrue(
                 parameterValue(listing) == .25 && f.idEmissions == rootEmissions,
                 "root's actual initial direct callback is retained before agreeing metadata notifications, without replay");
-        JsonObject address = layerTarget(f, bridge, 0, 0);
-        CompletableFuture<JsonObject> pending = bridge.handle("parameters.layer.list", address, f.deadline());
+        call(f, bridge, "chains.list", list(root(0)));
+        CompletableFuture<JsonObject> pending = bridge.handle("parameters.list", list(chainDevice(0, 0)), f.deadline());
         f.next();
         assertTrue(
                 !pending.isDone() && f.childIdEmissions == childEmissions,
@@ -1196,62 +1133,46 @@ public final class HostBridgeTest {
         f.emitChildIds(0, 0, new String[] {"gain"});
         f.emitChildValue(0, 0, .18);
         f.next();
-        assertTrue(
-                parameterValue(pending.join()) == .18, "newly ready nested cache requires actual accepted callbacks");
+        assertEquals(
+                .18, parameterValue(pending.join()), "newly ready nested cache requires actual accepted callbacks");
     }
 
     @Test
     void layerBindingRoundTripsKeepContinuousSources() {
         Fake f = new Fake();
         HostBridge bridge = f.bridge();
-        JsonObject flat = call(f, bridge, "parameters.list", target());
-        JsonObject a = layerTarget(f, bridge, 0, 0), b = layerTarget(f, bridge, 1, 1);
-        JsonObject first = call(f, bridge, "parameters.layer.list", a);
+        JsonObject flat = call(f, bridge, "parameters.list", list(root(0)));
+        JsonObject first = call(f, bridge, "parameters.list", list(chainDevice(0, 0)));
         int emissions = f.childIdEmissions;
-        assertTrue(parameterValue(first) == .15, "layer A reads its own continuously observed value");
-        JsonObject second = call(f, bridge, "parameters.layer.list", b);
-        assertTrue(parameterValue(second) == .75, "same-name layer and child B resolve by observed UUID and index");
-        JsonObject again = call(f, bridge, "parameters.layer.list", a);
+        assertEquals(.15, parameterValue(first), "layer A reads its own continuously observed value");
+        JsonObject second = call(f, bridge, "parameters.list", list(chainDevice(1, 1)));
+        assertEquals(.75, parameterValue(second), "same-name layer and child B resolve by observed UUID and index");
+        JsonObject again = call(f, bridge, "parameters.list", list(chainDevice(0, 0)));
         assertTrue(
                 parameterValue(again) == .15 && f.childIdEmissions == emissions,
                 "A to B to A needs no callback replay");
+        assertEquals(first, again, "returning to A names the same refs");
+        JsonObject restored = call(f, bridge, "parameters.list", list(root(0)));
+        assertEquals(.25, parameterValue(restored), "flat to layer to flat keeps the root source cache");
+        assertEquals("applied", outcome(call(f, bridge, "parameters.set", set(first, .8))));
+        assertEquals("applied", outcome(call(f, bridge, "parameters.set", set(flat, .8))));
+        assertEquals("applied", outcome(call(f, bridge, "parameters.set", set(second, .8))));
         assertTrue(
-                !first.getAsJsonObject("target")
-                        .get("contextToken")
-                        .equals(again.getAsJsonObject("target").get("contextToken")),
-                "returning to A issues a new active binding token");
-        CompletableFuture<JsonObject> stale =
-                bridge.handle("parameters.layer.set", layerWrite(first, .8), f.deadline());
-        f.next();
-        assertRpcError("stale_context", stale);
-        stale = bridge.handle("parameters.set", write(flat, .8), f.deadline());
-        f.next();
-        assertRpcError("stale_context", stale);
-        JsonObject restored = call(f, bridge, "parameters.list", target());
-        assertTrue(parameterValue(restored) == .25, "flat to layer to flat keeps the root source cache");
-        stale = bridge.handle("parameters.layer.set", layerWrite(again, .8), f.deadline());
-        f.next();
-        assertRpcError("stale_context", stale);
-        JsonObject stable = call(f, bridge, "parameters.list", target());
-        assertTrue(
-                stable.getAsJsonObject("target")
-                        .get("contextToken")
-                        .equals(restored.getAsJsonObject("target").get("contextToken")),
-                "repeated current binding preserves its token");
+                f.childWrites[0][0] == 1 && f.childWrites[1][1] == 1 && f.deviceWrites[0] == 1 && f.writes == 1,
+                "interleaved listings leave every ref writable");
     }
 
     @Test
     void layerWritesRequireExactSourceAndFreshCallbacks() {
         Fake f = new Fake();
         HostBridge bridge = f.bridge();
-        JsonObject listing = call(f, bridge, "parameters.layer.list", layerTarget(f, bridge, 0, 1));
-        JsonObject noOp = call(f, bridge, "parameters.layer.set", layerWrite(listing, .35));
+        JsonObject listing = call(f, bridge, "parameters.list", list(chainDevice(0, 1)));
+        JsonObject noOp = call(f, bridge, "parameters.set", set(listing, .35));
         assertTrue(
-                noOp.get("outcome").getAsString().equals("already_matched") && f.childWrites[0][1] == 0,
+                outcome(noOp).equals("already_matched") && f.childWrites[0][1] == 0,
                 "nested no-op is distinct from post-dispatch observation");
         f.writeMode = "none";
-        CompletableFuture<JsonObject> write =
-                bridge.handle("parameters.layer.set", layerWrite(listing, .8), f.deadline());
+        CompletableFuture<JsonObject> write = bridge.handle("parameters.set", set(listing, .8), f.deadline());
         f.next();
         assertTrue(!write.isDone(), "nested setter dispatch cannot acknowledge a write");
         double applied = Math.round(.8 * (HostLimits.RESOLUTION - 1)) / (double) (HostLimits.RESOLUTION - 1);
@@ -1259,13 +1180,11 @@ public final class HostBridgeTest {
         f.emitValue(0, applied);
         f.next();
         assertTrue(!write.isDone(), "same-ID root and sibling callbacks cannot verify the child write");
-        CompletableFuture<JsonObject> busy = bridge.handle("parameters.list", target(), f.deadline());
-        f.next();
-        f.next();
-        assertRpcError("busy", busy);
+        JsonObject concurrent = call(f, bridge, "parameters.list", list(root(0)));
+        assertEquals(applied, parameterValue(concurrent), "a read of another device does not wait for the write");
         f.emitChildValue(0, 1, applied);
         f.next();
-        assertTrue(write.join().get("outcome").getAsString().equals("applied"), "exact child fresh callback verifies");
+        assertEquals("applied", outcome(write.join()), "exact child fresh callback verifies");
         assertTrue(
                 f.childWrites[0][1] == 1
                         && f.childWrites[0][0] == 0
@@ -1279,42 +1198,37 @@ public final class HostBridgeTest {
     }
 
     @Test
-    void layerRenamesRetainDataButRetireTokens() {
+    void layerRenamesRetainDataAndRefsFollowTheNames() {
         for (String renamed : List.of("parent", "layer", "child")) {
             Fake f = new Fake();
             HostBridge bridge = f.bridge();
-            JsonObject oldAddress = layerTarget(f, bridge, 0, 0);
-            JsonObject oldListing = call(f, bridge, "parameters.layer.list", oldAddress);
+            JsonObject old = call(f, bridge, "parameters.list", list(chainDevice(0, 0)));
             int emissions = f.childIdEmissions;
             FakeHost node = renamed.equals("parent")
                     ? f.deviceNodes[0]
                     : renamed.equals("layer") ? f.layerNodes[0] : f.childNodes[0][0];
             node.child("name").emit("Renamed");
-            JsonObject parent = target();
-            if (renamed.equals("parent")) parent.addProperty("expectedDeviceName", "Renamed");
-            JsonObject discovery = new JsonObject();
-            discovery.add("parent", parent);
-            JsonObject address = layerTarget(call(f, bridge, "devices.layers.list", discovery), 0, 0);
-            JsonObject staleAddress = address.deepCopy();
-            staleAddress.add("discoveryToken", oldAddress.get("discoveryToken"));
-            CompletableFuture<JsonObject> stale = bridge.handle("parameters.layer.list", staleAddress, f.deadline());
-            f.next();
-            assertRpcError("stale_context", stale);
-            JsonObject fresh = call(f, bridge, "parameters.layer.list", address);
+            JsonObject newRoot = renamed.equals("parent") ? Refs.device(track(), 0, "Renamed") : root(0);
+            JsonObject newChain = Refs.chain(newRoot, layerId(0), renamed.equals("layer") ? "Renamed" : "Same Layer");
+            JsonObject newChild = Refs.device(newChain, 0, renamed.equals("child") ? "Renamed" : "Twin");
+            if (!renamed.equals("layer")) {
+                RpcException stale = reject(f, bridge, "target_changed", "parameters.list", list(chainDevice(0, 0)));
+                assertTrue(stale.current != null, renamed + " rename reports what is there now");
+                reject(f, bridge, "target_changed", "parameters.set", set(old, .8));
+            }
+            JsonObject fresh = call(f, bridge, "parameters.list", list(newChild));
             assertTrue(
                     parameterValue(fresh) == .15 && f.childIdEmissions == emissions,
                     renamed + " rename preserves continuous direct observations without replay");
-            JsonObject staleWrite = layerWrite(fresh, .8);
-            staleWrite.add("contextToken", oldListing.getAsJsonObject("target").get("contextToken"));
-            stale = bridge.handle("parameters.layer.set", staleWrite, f.deadline());
-            f.next();
-            assertRpcError("stale_context", stale);
-            assertTrue(
-                    call(f, bridge, "parameters.layer.set", layerWrite(fresh, .8))
-                            .get("outcome")
-                            .getAsString()
-                            .equals("applied"),
-                    renamed + " fresh rename context still writes its exact child");
+            assertEquals(
+                    "applied",
+                    outcome(call(f, bridge, "parameters.set", set(fresh, .8))),
+                    renamed + " fresh rename ref still writes its exact child");
+            if (renamed.equals("layer"))
+                assertEquals(
+                        "applied",
+                        outcome(call(f, bridge, "parameters.set", set(old, .3))),
+                        "a chain rename leaves the refs of its devices valid");
         }
     }
 
@@ -1324,8 +1238,7 @@ public final class HostBridgeTest {
                 List.of("parent", "track", "layer", "layer_window", "child", "child_type", "child_window")) {
             Fake f = new Fake();
             HostBridge bridge = f.bridge();
-            JsonObject address = layerTarget(f, bridge, 0, 0);
-            call(f, bridge, "parameters.layer.list", address);
+            JsonObject listing = call(f, bridge, "parameters.list", list(chainDevice(0, 0)));
             FakeHost value;
             Object replacement;
             switch (changed) {
@@ -1364,33 +1277,21 @@ public final class HostBridgeTest {
             value.emit(original);
             f.emitChildIds(0, 0, new String[] {"gain"});
             f.emitChildValue(0, 0, .92);
-            CompletableFuture<JsonObject> stale = bridge.handle("parameters.layer.list", address, f.deadline());
-            f.next();
-            assertRpcError("not_ready", stale);
-            JsonObject discovery = call(f, bridge, "devices.layers.list", layerDiscovery());
-            JsonObject child = discovery
-                    .getAsJsonArray("layers")
-                    .get(0)
-                    .getAsJsonObject()
-                    .getAsJsonArray("devices")
-                    .get(0)
-                    .getAsJsonObject();
+            RpcException closed = reject(f, bridge, "not_ready", "parameters.list", list(chainDevice(0, 0)));
             assertTrue(
-                    child.get("readiness").getAsString().equals("not_ready")
-                            && !child.has("discoveryToken")
-                            && child.get("reason").getAsString().contains("provenance"),
+                    closed.getMessage().contains("rebound"),
                     changed + " ABA cannot use delayed same-proxy callbacks as a provenance boundary");
+            reject(f, bridge, "not_ready", "parameters.set", set(listing, .5));
+            assertEquals(0, f.childWrites[0][0], changed + " ABA never writes the rebound device");
             if (changed.equals("track")) {
                 f.emitIds(1);
                 f.emitValue(1, .6);
             }
-            JsonObject other = target();
-            other.addProperty("deviceIndex", 1);
-            assertTrue(
-                    call(f, bridge, "parameters.list", other)
-                                    .getAsJsonArray("parameters")
-                                    .size()
-                            == 1,
+            assertEquals(
+                    1,
+                    call(f, bridge, "parameters.list", list(root(1)))
+                            .getAsJsonArray("parameters")
+                            .size(),
                     "root direct behavior remains separate; track rebind recovery uses actual root callbacks");
         }
         Fake early = new Fake();
@@ -1401,17 +1302,9 @@ public final class HostBridgeTest {
         early.childNodes[0][0].child("position").emit(0);
         early.emitChildIds(0, 0, new String[] {"gain"});
         early.emitChildValue(0, 0, .9);
-        JsonObject discovery = call(early, earlyBridge, "devices.layers.list", layerDiscovery());
-        JsonObject child = discovery
-                .getAsJsonArray("layers")
-                .get(0)
-                .getAsJsonObject()
-                .getAsJsonArray("devices")
-                .get(0)
-                .getAsJsonObject();
+        RpcException known = reject(early, earlyBridge, "not_ready", "parameters.list", list(chainDevice(0, 0)));
         assertTrue(
-                !child.has("discoveryToken")
-                        && child.get("reason").getAsString().contains("provenance"),
+                known.getMessage().contains("rebound"),
                 "known layer UUID replacement retires even a child whose initial metadata was incomplete");
         List<String> unsafe = new ArrayList<>();
         for (String event : List.of(
@@ -1529,15 +1422,14 @@ public final class HostBridgeTest {
             incomplete.child(missing).emit(initial);
             pending.emitChildIds(0, 0, new String[] {"gain"});
             pending.emitChildValue(0, 0, .91);
-            JsonObject after = call(pending, pendingBridge, "devices.layers.list", layerDiscovery());
-            JsonObject candidate = after.getAsJsonArray("layers")
-                    .get(0)
-                    .getAsJsonObject()
-                    .getAsJsonArray("devices")
-                    .get(0)
-                    .getAsJsonObject();
-            if (candidate.has("discoveryToken")
-                    || !candidate.get("readiness").getAsString().equals("not_ready")) unsafe.add(event);
+            CompletableFuture<JsonObject> after =
+                    pendingBridge.handle("parameters.list", list(chainDevice(0, 0)), pending.deadline());
+            while (!after.isDone()) pending.next();
+            if (!after.isCompletedExceptionally()) unsafe.add(event);
+            else {
+                RpcException error = rejection(after);
+                if (!error.reason.wire().equals("not_ready")) unsafe.add(event + ":" + error.reason.wire());
+            }
         }
         assertTrue(
                 unsafe.isEmpty(),
@@ -1550,49 +1442,41 @@ public final class HostBridgeTest {
         initial.deviceNodes[0].child("position").emit(0);
         initial.emitChildIds(0, 0, new String[] {"gain"});
         initial.emitChildValue(0, 0, .44);
-        assertTrue(
-                parameterValue(call(
-                                initial,
-                                initialBridge,
-                                "parameters.layer.list",
-                                layerTarget(initial, initialBridge, 0, 0)))
-                        == .44,
+        assertEquals(
+                .44,
+                parameterValue(call(initial, initialBridge, "parameters.list", list(chainDevice(0, 0)))),
                 "first presence and first metadata with actual callbacks are not mistaken for physical replacement");
     }
 
     @Test
-    void layerDiscoveryReportsObservedWindowsAndReadiness() {
+    void chainListingReportsObservedWindowsAndReadiness() {
         Fake f = new Fake();
         f.deviceNodes[0].child("hasLayers").notifyInitial = false;
         HostBridge bridge = f.bridge();
-        CompletableFuture<JsonObject> pending = bridge.handle("devices.layers.list", layerDiscovery(), f.deadline());
-        f.next();
-        assertRpcError("not_ready", pending);
+        reject(f, bridge, "not_ready", "chains.list", list(root(0)));
         f.deviceNodes[0].child("hasLayers").emit(true);
-        JsonObject discovery = call(f, bridge, "devices.layers.list", layerDiscovery());
+        JsonObject chains = call(f, bridge, "chains.list", list(root(0)));
+        assertEquals("one_chain_hop", chains.get("scope").getAsString());
+        assertEquals(root(0), chains.getAsJsonObject("parent"));
         assertTrue(
-                discovery.getAsJsonObject("window").get("capacity").getAsInt() == 2
-                        && discovery.getAsJsonObject("window").get("complete").getAsBoolean(),
+                chains.getAsJsonObject("window").get("capacity").getAsInt() == 2
+                        && chains.getAsJsonObject("window").get("complete").getAsBoolean(),
                 "fixed observed layer window reports actual total and completeness");
-        assertTrue(
-                discovery
-                                .getAsJsonArray("layers")
-                                .get(0)
-                                .getAsJsonObject()
-                                .get("channelIndex")
-                                .getAsInt()
-                        == 10,
-                "observed channelIndex is not fabricated from the bank-local slot");
+        JsonObject chain = chains.getAsJsonArray("chains").get(0).getAsJsonObject();
+        assertEquals(10, chain.get("channelIndex").getAsInt(), "observed channelIndex is not fabricated from the slot");
+        assertEquals(chainRef(0), chain.getAsJsonObject("ref"));
+        HostFixture.REF_SCHEMA.apply(chain.getAsJsonObject("ref"));
+        assertEquals(2, chain.get("deviceCount").getAsInt());
+        assertEquals("ready", chain.get("readiness").getAsString());
         f.layerBank.child("itemCount").emit(3);
-        discovery = call(f, bridge, "devices.layers.list", layerDiscovery());
+        chains = call(f, bridge, "chains.list", list(root(0)));
         assertTrue(
-                !discovery.getAsJsonObject("window").get("complete").getAsBoolean()
-                        && discovery.getAsJsonObject("window").get("total").getAsInt() == 3,
+                !chains.getAsJsonObject("window").get("complete").getAsBoolean()
+                        && chains.getAsJsonObject("window").get("total").getAsInt() == 3,
                 "larger actual layer counts do not pretend the bounded window is complete");
         f.deviceNodes[0].child("hasLayers").emit(false);
-        pending = bridge.handle("devices.layers.list", layerDiscovery(), f.deadline());
-        f.next();
-        assertRpcError("unsupported_scope", pending);
+        reject(f, bridge, "unsupported_scope", "chains.list", list(root(0)));
+        reject(f, bridge, "unsupported_scope", "chains.list", list(chainDevice(0, 0)));
 
         Fake empty = new Fake();
         empty.layerBank.child("itemCount").data = 0;
@@ -1602,111 +1486,134 @@ public final class HostBridgeTest {
             for (int c = 0; c < 2; c++) empty.childNodes[l][c].child("exists").data = false;
         }
         HostBridge emptyBridge = empty.bridge();
-        discovery = call(empty, emptyBridge, "devices.layers.list", layerDiscovery());
+        chains = call(empty, emptyBridge, "chains.list", list(root(0)));
         assertTrue(
-                discovery.getAsJsonObject("window").get("total").getAsInt() == 0
-                        && discovery.getAsJsonArray("layers").isEmpty(),
+                chains.getAsJsonObject("window").get("total").getAsInt() == 0
+                        && chains.getAsJsonArray("chains").isEmpty(),
                 "observed zero-count supported bank is distinguished from unknown and unsupported");
 
         Fake unknown = new Fake();
         unknown.layerBank.child("scrollPosition").notifyInitial = false;
         HostBridge unknownBridge = unknown.bridge();
-        pending = unknownBridge.handle("devices.layers.list", layerDiscovery(), unknown.deadline());
-        unknown.next();
-        assertRpcError("not_ready", pending);
+        reject(unknown, unknownBridge, "not_ready", "chains.list", list(root(0)));
         unknown.layerBank.child("scrollPosition").emit(0);
-        assertTrue(
-                call(unknown, unknownBridge, "devices.layers.list", layerDiscovery())
+        assertEquals(
+                "ready",
+                call(unknown, unknownBridge, "chains.list", list(root(0)))
                         .getAsJsonObject("window")
                         .get("readiness")
-                        .getAsString()
-                        .equals("ready"),
+                        .getAsString(),
                 "actual first offset observation, not getter default, opens discovery");
 
         Fake ambiguous = new Fake();
         HostBridge ambiguousBridge = ambiguous.bridge();
-        JsonObject address = layerTarget(ambiguous, ambiguousBridge, 0, 0);
+        call(ambiguous, ambiguousBridge, "chains.list", list(root(0)));
         ambiguous.layerNodes[1].child("channelId").emit(layerId(0));
-        discovery = call(ambiguous, ambiguousBridge, "devices.layers.list", layerDiscovery());
-        assertTrue(
-                !discovery
-                        .getAsJsonArray("layers")
-                        .get(0)
-                        .getAsJsonObject()
-                        .getAsJsonArray("devices")
-                        .get(0)
-                        .getAsJsonObject()
-                        .has("discoveryToken"),
-                "duplicate visible UUIDs cannot issue usable child tokens");
-        pending = ambiguousBridge.handle("parameters.layer.list", address, ambiguous.deadline());
-        ambiguous.next();
-        assertRpcError("stale_context", pending);
+        chains = call(ambiguous, ambiguousBridge, "chains.list", list(root(0)));
+        for (int l = 0; l < 2; l++) {
+            JsonObject row = chains.getAsJsonArray("chains").get(l).getAsJsonObject();
+            assertTrue(
+                    !row.has("ref") && row.get("readiness").getAsString().equals("not_ready"),
+                    "duplicate visible UUIDs cannot issue a usable chain ref");
+        }
+        reject(ambiguous, ambiguousBridge, "not_ready", "parameters.list", list(chainDevice(0, 0)));
 
         Fake missingIdentity = new Fake();
         missingIdentity.layerNodes[1].child("channelId").notifyInitial = false;
         HostBridge missingBridge = missingIdentity.bridge();
-        discovery = call(missingIdentity, missingBridge, "devices.layers.list", layerDiscovery());
-        assertTrue(
-                !discovery
-                        .getAsJsonArray("layers")
-                        .get(0)
-                        .getAsJsonObject()
-                        .getAsJsonArray("devices")
-                        .get(0)
-                        .getAsJsonObject()
-                        .has("discoveryToken"),
+        chains = call(missingIdentity, missingBridge, "chains.list", list(root(0)));
+        assertFalse(
+                chains.getAsJsonArray("chains").get(0).getAsJsonObject().has("ref"),
                 "unobserved sibling UUID cannot prove unique layer correspondence");
     }
 
     @Test
-    void layerValidationPrecedesScheduling() {
+    void reboundChainsStayAddressableButTheirDevicesAreUnavailable() {
         Fake f = new Fake();
         HostBridge bridge = f.bridge();
-        JsonObject valid = new JsonObject();
-        valid.add("parent", target());
-        valid.addProperty("layerId", layerId(0));
-        valid.addProperty("childDeviceIndex", 0);
-        valid.addProperty("expectedChildDeviceName", "Twin");
-        valid.addProperty("discoveryToken", "observed");
-        for (String field :
-                List.of("parent", "layerId", "childDeviceIndex", "expectedChildDeviceName", "discoveryToken")) {
-            JsonObject bad = valid.deepCopy();
-            bad.add(field, JsonNull.INSTANCE);
-            assertRpcError("invalid_params", bridge.handle("parameters.layer.list", bad, f.deadline()));
-        }
-        for (String field : List.of("path", "padId", "slot", "layer")) {
-            JsonObject bad = valid.deepCopy();
-            bad.addProperty(field, 0);
-            assertRpcError("invalid_params", bridge.handle("parameters.layer.list", bad, f.deadline()));
-        }
-        JsonObject bad = valid.deepCopy();
-        bad.addProperty("childDeviceIndex", 2);
-        assertRpcError("invalid_params", bridge.handle("parameters.layer.list", bad, f.deadline()));
-        bad = valid.deepCopy();
-        bad.addProperty("childDeviceIndex", .5);
-        assertRpcError("invalid_params", bridge.handle("parameters.layer.list", bad, f.deadline()));
-        bad = valid.deepCopy();
-        bad.addProperty("layerId", "1-2-3-4-5");
-        assertRpcError("invalid_params", bridge.handle("parameters.layer.list", bad, f.deadline()));
-        bad = valid.deepCopy();
-        bad.getAsJsonObject("parent").addProperty("layerId", layerId(0));
-        assertRpcError("invalid_params", bridge.handle("parameters.layer.list", bad, f.deadline()));
-        bad = valid.deepCopy();
-        bad.addProperty("contextToken", "bound");
-        bad.addProperty("parameterId", "gain");
-        bad.addProperty("value", Double.NaN);
-        assertRpcError("invalid_params", bridge.handle("parameters.layer.set", bad, f.deadline()));
-        assertRpcError("invalid_params", bridge.handle("parameters.list", valid, f.deadline()));
-        assertTrue(f.tasks.isEmpty(), "strict nested validation and narrow flat targeting precede host scheduling");
+        JsonObject listing = call(f, bridge, "parameters.list", list(chainDevice(0, 0)));
+        JsonObject before = call(f, bridge, "chains.list", list(root(0)));
+        assertTrue(before.getAsJsonArray("chains")
+                .get(0)
+                .getAsJsonObject()
+                .get("devicesAvailable")
+                .getAsBoolean());
+        f.layerNodes[0].child("exists").emit(false);
+        f.layerNodes[0].child("exists").emit(true);
+        JsonObject chains = call(f, bridge, "chains.list", list(root(0)));
+        JsonObject rebound = chains.getAsJsonArray("chains").get(0).getAsJsonObject();
+        assertEquals("ready", rebound.get("readiness").getAsString());
+        assertEquals(chainRef(0), rebound.getAsJsonObject("ref"));
+        assertFalse(rebound.get("devicesAvailable").getAsBoolean());
+        assertTrue(chains.getAsJsonArray("chains")
+                .get(1)
+                .getAsJsonObject()
+                .get("devicesAvailable")
+                .getAsBoolean());
+        JsonObject devices = call(f, bridge, "devices.list", list(chainRef(0)));
+        for (JsonElement row : devices.getAsJsonArray("devices"))
+            assertFalse(row.getAsJsonObject().get("available").getAsBoolean());
+        JsonObject other = call(f, bridge, "devices.list", list(chainRef(1)));
+        for (JsonElement row : other.getAsJsonObject().getAsJsonArray("devices"))
+            assertTrue(row.getAsJsonObject().get("available").getAsBoolean());
+        reject(f, bridge, "not_ready", "parameters.list", list(chainDevice(0, 0)));
+        reject(f, bridge, "not_ready", "parameters.set", set(listing, .5));
+        assertEquals(0, f.childWrites[0][0]);
     }
 
     @Test
-    void layerMissingIdsAndUnreadableValuesStayExplicit() {
+    void chainDevicesListWithTheirRefs() {
+        Fake f = new Fake();
+        HostBridge bridge = f.bridge();
+        JsonObject devices = call(f, bridge, "devices.list", list(chainRef(1)));
+        assertEquals("chain", devices.get("scope").getAsString());
+        assertEquals(chainRef(1), devices.getAsJsonObject("parent"));
+        assertEquals(2, devices.getAsJsonArray("devices").size());
+        for (int c = 0; c < 2; c++) {
+            JsonObject row = devices.getAsJsonArray("devices").get(c).getAsJsonObject();
+            assertEquals(chainDevice(1, c), row.getAsJsonObject("ref"));
+            HostFixture.REF_SCHEMA.apply(row.getAsJsonObject("ref"));
+        }
+        reject(
+                f,
+                bridge,
+                "target_not_found",
+                "devices.list",
+                list(Refs.chain(root(0), "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "Same Layer")));
+    }
+
+    @Test
+    void chainValidationPrecedesScheduling() {
+        Fake f = new Fake();
+        HostBridge bridge = f.bridge();
+        JsonObject valid = list(root(0));
+        for (String field : List.of("path", "padId", "slot", "layer", "layerId", "contextToken", "discoveryToken")) {
+            JsonObject bad = valid.deepCopy();
+            bad.addProperty(field, 0);
+            assertRpcError("invalid_params", bridge.handle("chains.list", bad, f.deadline()));
+        }
+        JsonObject bad = valid.deepCopy();
+        bad.add("parent", JsonNull.INSTANCE);
+        assertRpcError("invalid_params", bridge.handle("chains.list", bad, f.deadline()));
+        assertRpcError("invalid_params", bridge.handle("chains.list", list(chainRef(0)), f.deadline()));
+        assertRpcError("invalid_params", bridge.handle("parameters.list", list(chainRef(0)), f.deadline()));
+        JsonObject badChain = Refs.chain(root(0), "1-2-3-4-5", "Same Layer");
+        assertRpcError("invalid_params", bridge.handle("devices.list", list(badChain), f.deadline()));
+        JsonObject extraParent = list(chainDevice(0, 0));
+        extraParent.getAsJsonObject("parent").getAsJsonObject("chain").addProperty("layerId", layerId(0));
+        assertRpcError("invalid_params", bridge.handle("parameters.list", extraParent, f.deadline()));
+        assertTrue(f.tasks.isEmpty(), "strict nested validation precedes host scheduling");
+        JsonObject listing = call(f, bridge, "parameters.list", list(chainDevice(0, 0)));
+        reject(f, bridge, "invalid_params", "parameters.set", set(listing, 1.5));
+        assertEquals(0, f.childWrites[0][0], "an out-of-range value is refused before dispatch");
+    }
+
+    @Test
+    void chainDeviceMissingIdsAndUnreadableValuesStayExplicit() {
         Fake f = new Fake();
         f.initialChildIds[0][0] = false;
         HostBridge bridge = f.bridge();
-        JsonObject address = layerTarget(f, bridge, 0, 0);
-        CompletableFuture<JsonObject> pending = bridge.handle("parameters.layer.list", address, f.deadline());
+        CompletableFuture<JsonObject> pending = bridge.handle("parameters.list", list(chainDevice(0, 0)), f.deadline());
         f.next();
         assertTrue(!pending.isDone(), "discovery readiness does not invent a direct ID observation");
         f.emitChildIds(1, 0, new String[] {"gain"});
@@ -1719,28 +1626,26 @@ public final class HostBridgeTest {
                 "actual empty ID callback is a ready empty direct surface");
         f.emitChildIds(0, 0, new String[] {"gain"});
         f.emitChildValue(0, 0, Double.NaN);
-        JsonObject listing = call(f, bridge, "parameters.layer.list", address);
+        JsonObject listing = call(f, bridge, "parameters.list", list(chainDevice(0, 0)));
         assertTrue(
-                !listing.getAsJsonArray("parameters")
+                listing.getAsJsonArray("parameters")
                         .get(0)
                         .getAsJsonObject()
-                        .get("readable")
-                        .getAsBoolean(),
+                        .getAsJsonObject("value")
+                        .get("value")
+                        .isJsonNull(),
                 "nonfinite direct values remain unreadable");
-        pending = bridge.handle("parameters.layer.set", layerWrite(listing, .8), f.deadline());
-        f.next();
-        assertRpcError("not_ready", pending);
-        assertTrue(f.childWrites[0][0] == 0, "unreadable parameters never dispatch");
+        reject(f, bridge, "not_ready", "parameters.set", set(listing, .8));
+        assertEquals(0, f.childWrites[0][0], "unreadable parameters never dispatch");
     }
 
     @Test
-    void layerRebindDuringWriteHasUnknownOutcome() {
+    void chainDeviceRebindDuringWriteHasUnknownOutcome() {
         Fake f = new Fake();
         HostBridge bridge = f.bridge();
-        JsonObject listing = call(f, bridge, "parameters.layer.list", layerTarget(f, bridge, 0, 0));
+        JsonObject listing = call(f, bridge, "parameters.list", list(chainDevice(0, 0)));
         f.writeMode = "none";
-        CompletableFuture<JsonObject> pending =
-                bridge.handle("parameters.layer.set", layerWrite(listing, .8), f.deadline());
+        CompletableFuture<JsonObject> pending = bridge.handle("parameters.set", set(listing, .8), f.deadline());
         f.next();
         assertTrue(!pending.isDone() && f.childWrites[0][0] == 1, "write is dispatched before structural change");
         f.layerNodes[0].child("exists").emit(false);
@@ -1749,102 +1654,80 @@ public final class HostBridgeTest {
         f.next();
         JsonObject result = pending.join();
         assertTrue(
-                result.get("outcome").getAsString().equals("unknown")
-                        && result.get("reason").getAsString().equals("stale_context"),
+                outcome(result).equals("unknown")
+                        && result.get("reason").getAsString().equals("target_changed"),
                 "replacement callback cannot acknowledge a pending write");
     }
 
-    private static double parameterValue(JsonObject listing) {
-        return listing.getAsJsonArray("parameters")
-                .get(0)
-                .getAsJsonObject()
-                .get("normalizedValue")
-                .getAsDouble();
-    }
-
-    private static JsonObject layerInsert(int layer, int count, String position) {
-        JsonObject p = new JsonObject();
-        p.add("parent", target());
-        p.addProperty("layerId", layerId(layer));
-        p.addProperty("expectedChildCount", count);
-        p.addProperty("kind", "bitwig");
-        p.addProperty("id", "11111111-2222-4333-8444-555555555555");
-        if (position != null) p.addProperty("position", position);
-        return p;
-    }
-
     @Test
-    void layerInsertionObservesTheChildWindow() {
+    void chainInsertionObservesTheChildWindow() {
         Fake full = new Fake();
         HostBridge bridge = full.bridge();
-        JsonObject beyond = call(full, bridge, "devices.layers.insert", layerInsert(0, 2, null));
+        JsonObject beyond = call(full, bridge, "devices.insert", insert(chainRef(0), null));
+        assertEquals(List.of("0:end:insertBitwigDevice"), full.layerCalls, "layer end uses that layer's chain");
+        assertEquals("applied", outcome(beyond));
+        assertEquals(
+                "observed_count_increment_beyond_window",
+                beyond.get("verification").getAsString());
         assertTrue(
-                full.layerCalls.equals(List.of("0:end:insertBitwigDevice")),
-                "layer end uses that layer's chain: " + full.layerCalls);
-        assertTrue(
-                beyond.get("outcome").getAsString().equals("applied")
-                        && beyond.get("verification").getAsString().equals("observed_count_increment_beyond_window")
-                        && beyond.get("inserted").isJsonNull()
-                        && beyond.get("afterCount").getAsInt() == 3
-                        && beyond.get("layerId").getAsString().equals(layerId(0)),
-                "a full two-child window can only observe the count delta");
+                beyond.get("inserted").isJsonNull() && !beyond.has("ref"), "a full window cannot name the new device");
+        assertEquals(
+                3, beyond.get("afterCount").getAsInt(), "a full two-child window can only observe the count delta");
+        assertEquals(chainRef(0), beyond.getAsJsonObject("parent"));
 
         Fake f = new Fake();
         bridge = f.bridge();
         f.setLayer(1, "Solo");
-        JsonObject start = call(f, bridge, "devices.layers.insert", layerInsert(1, 1, "start"));
+        JsonObject start = call(f, bridge, "devices.insert", insert(chainRef(1), "start"));
         assertTrue(
                 f.layerCalls.equals(List.of("1:start:insertBitwigDevice"))
                         && f.layerNames.get(1).equals(List.of("Inserted", "Solo")),
                 "layer start inserts before the first child: " + f.layerNames);
         assertTrue(
-                start.get("outcome").getAsString().equals("applied")
+                outcome(start).equals("applied")
                         && start.get("verification").getAsString().equals("observed_count_increment_shifted_suffix")
                         && start.getAsJsonObject("inserted").get("deviceIndex").getAsInt() == 0
                         && start.getAsJsonArray("before").size() == 1
                         && start.getAsJsonArray("after").size() == 2,
                 "start identifies the new child and the shifted old one");
+        assertEquals(Refs.device(chainRef(1), 0, "Inserted"), start.getAsJsonObject("ref"));
 
         Fake g = new Fake();
         bridge = g.bridge();
         g.setLayer(1, "Solo");
-        JsonObject end = call(g, bridge, "devices.layers.insert", layerInsert(1, 1, "end"));
-        assertTrue(
-                end.get("verification").getAsString().equals("observed_count_increment_and_unchanged_prefix")
-                        && end.getAsJsonObject("inserted").get("deviceIndex").getAsInt() == 1
-                        && g.layerNames.get(1).equals(List.of("Solo", "Inserted")),
-                "layer end appends after the observed child");
+        JsonObject end = call(g, bridge, "devices.insert", insert(chainRef(1), "end"));
+        assertEquals(List.of("Solo", "Inserted"), g.layerNames.get(1), "layer end appends after the observed child");
+        assertEquals("applied", outcome(end));
+        assertEquals(
+                "observed_count_increment_and_unchanged_prefix",
+                end.get("verification").getAsString());
+        assertEquals(1, end.getAsJsonObject("inserted").get("deviceIndex").getAsInt());
+        assertEquals(Refs.device(chainRef(1), 1, "Inserted"), end.getAsJsonObject("ref"));
+        assertEquals(1, end.getAsJsonArray("before").size());
+        assertEquals(2, end.getAsJsonArray("after").size());
 
         Fake guards = new Fake();
         bridge = guards.bridge();
-        CompletableFuture<JsonObject> wrongCount =
-                bridge.handle("devices.layers.insert", layerInsert(0, 1, null), guards.deadline());
-        guards.next();
-        assertRpcError("stale_context", wrongCount);
-        JsonObject unknown = layerInsert(0, 2, null);
-        unknown.addProperty("layerId", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
-        CompletableFuture<JsonObject> missing = bridge.handle("devices.layers.insert", unknown, guards.deadline());
-        guards.next();
-        assertRpcError("stale_context", missing);
-        JsonObject badParent = layerInsert(0, 2, null);
-        badParent.getAsJsonObject("parent").addProperty("expectedDeviceName", "Nope");
-        CompletableFuture<JsonObject> stale = bridge.handle("devices.layers.insert", badParent, guards.deadline());
-        guards.next();
-        assertRpcError("stale_target", stale);
+        JsonObject unknownChain =
+                insert(Refs.chain(root(0), "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "Same Layer"), null);
+        RpcException missing = reject(guards, bridge, "target_not_found", "devices.insert", unknownChain);
+        assertEquals("chains.list", missing.next);
+        JsonObject renamedParent = insert(Refs.chain(Refs.device(track(), 0, "Nope"), layerId(0), "Same Layer"), null);
+        RpcException stale = reject(guards, bridge, "target_changed", "devices.insert", renamedParent);
+        assertEquals(root(0), stale.current);
         assertTrue(guards.layerCalls.isEmpty(), "rejected layer inserts never reach the host");
-        for (JsonObject bad : List.of(layerInsert(0, 2, "before"), layerInsert(0, -1, null))) {
-            CompletableFuture<JsonObject> rejected = bridge.handle("devices.layers.insert", bad, guards.deadline());
-            assertRpcError("invalid_params", rejected);
-        }
-        JsonObject badId = layerInsert(0, 2, null);
-        badId.addProperty("layerId", "not-a-uuid");
-        assertRpcError("invalid_params", bridge.handle("devices.layers.insert", badId, guards.deadline()));
+        assertRpcError(
+                "invalid_params", bridge.handle("devices.insert", insert(chainRef(0), "before"), guards.deadline()));
+        JsonObject badId = insert(Refs.chain(root(0), "not-a-uuid", "Same Layer"), null);
+        assertRpcError("invalid_params", bridge.handle("devices.insert", badId, guards.deadline()));
+        JsonObject onDevice = insert(chainDevice(0, 0), null);
+        assertRpcError("invalid_params", bridge.handle("devices.insert", onDevice, guards.deadline()));
 
         Fake silent = new Fake();
         bridge = silent.bridge();
         silent.layerMode = "none";
         CompletableFuture<JsonObject> pending =
-                bridge.handle("devices.layers.insert", layerInsert(0, 2, null), silent.tasks.after(20));
+                bridge.handle("devices.insert", insert(chainRef(0), null), silent.tasks.after(20));
         silent.next();
         JsonObject unobserved = pending.join();
         assertTrue(
@@ -1852,63 +1735,120 @@ public final class HostBridgeTest {
                 "an unobserved layer insert is reported, never retried");
     }
 
+    @Test
+    void anAnchorOutsideTheChainIsRefusedAndTheOtherChainIsNotTouched() {
+        Fake f = new Fake();
+        HostBridge bridge = f.bridge();
+        JsonObject params = insert(chainRef(0), null);
+        params.add("position", HostFixture.json("{\"after\":" + root(1) + "}"));
+        reject(f, bridge, "invalid_params", "devices.insert", params);
+        assertTrue(f.layerCalls.isEmpty(), "a refused insert never reaches the host");
+    }
+
     private static String layerId(int index) {
         return index == 0 ? "11111111-2222-4333-8444-555555555555" : "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
     }
 
-    private static JsonObject layerDiscovery() {
+    private static JsonObject track() {
+        return Refs.track(Fake.TRACK_ID, "Track");
+    }
+
+    private static JsonObject root(int index) {
+        return Refs.device(track(), index, "Twin");
+    }
+
+    private static JsonObject chainRef(int layer) {
+        return chainRef(root(0), layer);
+    }
+
+    private static JsonObject chainRef(JsonObject parent, int layer) {
+        return Refs.chain(parent, layerId(layer), "Same Layer");
+    }
+
+    private static JsonObject chainDevice(int layer, int child) {
+        return Refs.device(chainRef(layer), child, "Twin");
+    }
+
+    private static JsonObject list(JsonObject parent) {
         JsonObject p = new JsonObject();
-        p.add("parent", target());
+        p.add("parent", parent);
         return p;
     }
 
-    private static JsonObject layerTarget(Fake f, HostBridge bridge, int layer, int child) {
-        return layerTarget(call(f, bridge, "devices.layers.list", layerDiscovery()), layer, child);
-    }
-
-    private static JsonObject layerTarget(JsonObject discovery, int layer, int child) {
-        JsonObject l = discovery.getAsJsonArray("layers").get(layer).getAsJsonObject();
-        JsonObject c = l.getAsJsonArray("devices").get(child).getAsJsonObject();
+    private static JsonObject insert(JsonObject parent, String position) {
         JsonObject p = new JsonObject();
-        p.add("parent", discovery.getAsJsonObject("parent").deepCopy());
-        p.add("layerId", l.get("layerId"));
-        p.add("childDeviceIndex", c.get("childDeviceIndex"));
-        p.add("expectedChildDeviceName", c.get("name"));
-        p.add("discoveryToken", c.get("discoveryToken"));
+        p.add("parent", parent);
+        p.addProperty("kind", "bitwig");
+        p.addProperty("id", "11111111-2222-4333-8444-555555555555");
+        if (position != null) p.addProperty("position", position);
         return p;
     }
 
-    private static JsonObject layerWrite(JsonObject listing, double value) {
-        JsonObject p = listing.getAsJsonObject("target").deepCopy();
-        p.addProperty("parameterId", "gain");
+    private static JsonObject parameterRef(JsonObject listing) {
+        return parameterRef(listing, 0);
+    }
+
+    private static JsonObject parameterRef(JsonObject listing, int row) {
+        return listing.getAsJsonArray("parameters")
+                .get(row)
+                .getAsJsonObject()
+                .getAsJsonObject("ref")
+                .deepCopy();
+    }
+
+    private static JsonObject set(JsonObject target, double value) {
+        JsonObject p = new JsonObject();
+        p.add("target", target.has("parameters") ? parameterRef(target) : target);
         p.addProperty("value", value);
         return p;
     }
 
-    private static JsonObject target() {
-        JsonObject value = new JsonObject();
-        value.addProperty("trackId", Fake.TRACK_ID);
-        value.addProperty("deviceIndex", 0);
-        value.addProperty("expectedDeviceName", "Twin");
-        return value;
+    private static JsonObject set(JsonObject listing, double value, int row) {
+        JsonObject p = new JsonObject();
+        p.add("target", parameterRef(listing, row));
+        p.addProperty("value", value);
+        return p;
     }
 
-    private static JsonObject write(JsonObject listing, double value) {
-        JsonObject target = listing.getAsJsonObject("target");
-        JsonObject params = new JsonObject();
-        params.add("trackId", target.get("trackId"));
-        params.add("deviceIndex", target.get("deviceIndex"));
-        params.add("expectedDeviceName", target.get("deviceName"));
-        params.add("contextToken", target.get("contextToken"));
-        params.addProperty("parameterId", "gain");
-        params.addProperty("value", value);
-        return params;
+    private static double parameterValue(JsonObject listing) {
+        return listing.getAsJsonArray("parameters")
+                .get(0)
+                .getAsJsonObject()
+                .getAsJsonObject("value")
+                .get("value")
+                .getAsDouble();
+    }
+
+    private static String parameterName(JsonObject listing) {
+        return listing.getAsJsonArray("parameters")
+                .get(0)
+                .getAsJsonObject()
+                .get("name")
+                .getAsString();
+    }
+
+    private static String readiness(JsonObject chains, int row) {
+        return chains.getAsJsonArray("chains")
+                .get(row)
+                .getAsJsonObject()
+                .get("readiness")
+                .getAsString();
+    }
+
+    private static String outcome(JsonObject result) {
+        return result.get("outcome").getAsString();
     }
 
     private static JsonObject call(Fake fake, HostBridge bridge, String method, JsonObject params) {
         CompletableFuture<JsonObject> result = bridge.handle(method, params, fake.deadline());
-        fake.next();
+        while (!result.isDone()) fake.next();
         return result.join();
+    }
+
+    private static RpcException reject(Fake fake, HostBridge bridge, String reason, String method, JsonObject params) {
+        CompletableFuture<JsonObject> result = bridge.handle(method, params, fake.deadline());
+        while (!result.isDone()) fake.next();
+        return assertRpcError(reason, result);
     }
 
     private static final class Fake {
@@ -1964,6 +1904,7 @@ public final class HostBridgeTest {
                     node.put("isEnabled", true);
                     HostFixture.remotePage(node);
                     attachLayers(node, t == 0 && d == 0);
+                    displayObserver(node);
                     for (String observer : List.of(
                             "addDirectParameterIdObserver",
                             "addDirectParameterNameObserver",
@@ -2054,6 +1995,7 @@ public final class HostBridgeTest {
                     leaf.put("name", "Twin");
                     leaf.put("position", c);
                     leaf.put("deviceType", "audio-effect");
+                    leaf.put("isEnabled", true);
                     FakeHost chain = new FakeHost("chain");
                     chain.on("createEqualsValue", args -> {
                         if (args[0] == owner)
@@ -2090,6 +2032,7 @@ public final class HostBridgeTest {
                         }
                         return null;
                     });
+                    displayObserver(leaf);
                     leaf.on("setDirectParameterValueNormalized", args -> {
                         if (populated) {
                             if (!base.onHost) throw new AssertionError("child write outside host callback");
@@ -2110,6 +2053,23 @@ public final class HostBridgeTest {
             }
             bank.on("getItemAt", args -> layers[(Integer) args[0]]);
             root.attach("createLayerBank", bank);
+        }
+
+        /** The host reports a display text for every observed id as soon as it is told which ids to observe. */
+        void displayObserver(FakeHost node) {
+            FakeHost observer = node.child("directDisplayObserver");
+            node.on("addDirectParameterValueDisplayObserver", args -> {
+                node.child("directDisplayCallback").data = args[1];
+                return observer.proxy(DirectParameterValueDisplayObserver.class);
+            });
+            observer.on("setObservedParameterIds", args -> {
+                observer.data = args[0];
+                if (args[0] != null)
+                    for (String id : (String[]) args[0])
+                        ((DirectParameterDisplayedValueChangedCallback) node.child("directDisplayCallback").data)
+                                .directParameterDisplayedValueChanged(id, "shown " + id);
+                return null;
+            });
         }
 
         FakeHost layerPoint(int layer, String mode) {

@@ -165,7 +165,7 @@ async def test_recipe_does_not_report_authored_when_clip_readback_is_wrong(
     )
     track_id = "11111111-1111-1111-1111-111111111111"
     inserted = False
-    creations = []
+    creations: list[str] = []
     scene = {"kind": "scene", "index": 0, "name": None}
     clip = {
         "kind": "clip",
@@ -183,7 +183,6 @@ async def test_recipe_does_not_report_authored_when_clip_readback_is_wrong(
             "arrangerAutomationWriteEnabled": False,
             "clipLauncherAutomationWriteEnabled": False,
         },
-        "tracks.list": {"status": "observed", "tracks": [], "window": {"complete": True, "capacity": 16}},
         "scenes.list": {"scenes": [{"ref": scene}]},
         "clips.insert": {"outcome": "applied", "ref": clip},
     }
@@ -193,15 +192,20 @@ async def test_recipe_does_not_report_authored_when_clip_readback_is_wrong(
             nonlocal inserted
             if method in static:
                 return static[method]
+            if method == "tracks.list":
+                listed = [{"trackId": track_id, "index": 0, "name": "Toolkit"}] if creations else []
+                return {"status": "observed", "tracks": listed, "window": {"complete": True, "capacity": 16}}
             if method == "tracks.create":
                 creations.append(track_id)
                 return {"status": "observed", "trackId": track_id}
             if method == "devices.list":
+                track = {"kind": "track", "id": track_id, "name": "Toolkit"}
+                device = {"kind": "device", "track": track, "index": 0, "name": "Test preset"}
                 return {
                     "status": "observed",
-                    "trackId": track_id,
+                    "parent": track,
                     "window": {"complete": True},
-                    "devices": [{"deviceIndex": 0, "name": "Test preset"}] if inserted else [],
+                    "devices": [{"ref": device, "name": "Test preset", "type": "instrument"}] if inserted else [],
                 }
             if method == "devices.insert":
                 inserted = True

@@ -301,17 +301,13 @@ async def probe(target, report):  # noqa: PLR0915
             track_params = {"trackId": track["trackId"]}
             await call("tracks.get", track_params)
             await call("launcher.list", {"parent": {"kind": "track", "id": track["trackId"], "name": track["name"]}})
-            devices = await call("devices.list", track_params)
+            track_ref = {"kind": "track", "id": track["trackId"], "name": track["name"]}
+            devices = await call("devices.list", {"parent": track_ref})
             if devices["devices"]:
-                device = devices["devices"][0]
-                params = {
-                    **track_params,
-                    "deviceIndex": device["deviceIndex"],
-                    "expectedDeviceName": device["name"],
-                }
-                await call("devices.get", params)
-                await call("devices.remote.get", params)
-                await call("parameters.list", params)
+                device = devices["devices"][0]["ref"]
+                await call("devices.get", {"target": device})
+                await call("devices.remote.get", {"target": device})
+                await call("parameters.list", {"parent": device})
                 device_count += 1
         report["tracksRead"] = len(tracks["tracks"])
         report["devicesRead"] = device_count

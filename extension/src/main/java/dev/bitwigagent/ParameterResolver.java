@@ -124,7 +124,7 @@ final class ParameterResolver {
 
     /** A native device that changed under a parameter is target_changed like any other change of it. */
     private static RpcException changed(RpcException error, HostOperation operation) {
-        if (!error.is(Reason.STALE_CONTEXT)) return error;
+        if (!error.is(Reason.TARGET_CHANGED)) return error;
         if (operation != null && operation.dispatched())
             return Errors.unknown(Reason.TARGET_CHANGED, error.getMessage() + " Outcome unknown.");
         return Errors.notApplied(Reason.TARGET_CHANGED, error.getMessage());

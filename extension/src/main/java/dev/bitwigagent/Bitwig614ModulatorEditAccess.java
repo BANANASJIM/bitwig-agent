@@ -181,7 +181,7 @@ final class Bitwig614ModulatorEditAccess implements ModulatorEditor.Access {
     public void guardDevice(DeviceSources.Source source, Object device, Runnable check) {
         DeviceSources.Native.Capture now = targets.capture(source, check);
         if (now.device != device)
-            throw Errors.notApplied(Reason.STALE_CONTEXT, "The device changed during the operation.");
+            throw Errors.notApplied(Reason.TARGET_CHANGED, "The device changed during the operation.");
     }
 
     @Override
@@ -359,7 +359,8 @@ final class Bitwig614ModulatorEditAccess implements ModulatorEditor.Access {
 
     @Override
     public Object[] gridParameter(DeviceSources.Source source, UUID moduleId, String parameterId, Runnable check) {
-        GridSnapshotReader.ParameterBinding binding = grid.bindParameter(source, moduleId, parameterId, check);
+        GridSnapshotReader.ParameterBinding binding = grid.bindParameterIfPresent(source, moduleId, parameterId, check);
+        if (binding == null) return null;
         grid.guardParameter(binding);
         return new Object[] {binding.graph, binding.module, binding.parameter};
     }
@@ -367,6 +368,17 @@ final class Bitwig614ModulatorEditAccess implements ModulatorEditor.Access {
     @Override
     public String moduleId(Object module) {
         return grid.moduleId(module);
+    }
+
+    @Override
+    public String moduleName(Object module) {
+        String name = grid.moduleRefName(module, () -> {});
+        return name == null ? "" : name;
+    }
+
+    @Override
+    public DeviceSources.Native natives() {
+        return targets;
     }
 
     @Override
@@ -410,7 +422,7 @@ final class Bitwig614ModulatorEditAccess implements ModulatorEditor.Access {
                         + (wantedName == null
                                 ? ""
                                 : "; nearest: " + GridNames.nearest(byName.keySet(), wantedName, GridNames.SUGGESTIONS))
-                        + ". Use modulators.catalog.");
+                        + ". Use modulators.describe.");
     }
 
     @Override

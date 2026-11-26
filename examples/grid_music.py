@@ -449,36 +449,24 @@ async def create(args: argparse.Namespace) -> int:  # noqa: C901, PLR0912, PLR09
                 raise RuntimeError("Creation did not identify a new owned track")
             report["createdTracks"].append({"trackId": track_id, "label": label})
             await call("tracks.set", {"trackId": track_id, "mute": True, "arm": False, "volumeNormalized": 0.5})
-            empty = await call("devices.list", {"trackId": track_id})
-            if empty.get("trackId") != track_id or empty["window"].get("complete") is not True or empty["devices"]:
+            row = next(item for item in (await call("tracks.list"))["tracks"] if item["trackId"] == track_id)
+            owned = {"kind": "track", "id": row["trackId"], "name": row["name"]}
+            empty = await call("devices.list", {"parent": owned})
+            if empty["window"].get("complete") is not True or empty["devices"]:
                 raise RuntimeError("Owned new track does not have a completely observed empty device chain")
             await call(
                 "devices.insert",
-                {
-                    "trackId": track_id,
-                    "expectedDeviceCount": 0,
-                    "kind": "file",
-                    "path": factory_path if scratch else str(path),
-                },
+                {"parent": owned, "kind": "file", "path": factory_path if scratch else str(path)},
             )
-            devices = await call("devices.list", {"trackId": track_id})
-            if (
-                devices.get("trackId") != track_id
-                or devices["window"].get("complete") is not True
-                or len(devices["devices"]) != 1
-            ):
+            devices = await call("devices.list", {"parent": owned})
+            if devices["window"].get("complete") is not True or len(devices["devices"]) != 1:
                 raise RuntimeError("New track does not contain exactly one observed inserted device")
             if scratch:
                 device = devices["devices"][0]
                 if device["name"] != "Poly Grid":
                     raise RuntimeError("Inserted device is not the observed factory Poly Grid")
                 target = {
-                    "target": {
-                        "kind": "device",
-                        "track": {"kind": "track", "id": track_id, "name": label},
-                        "index": device["deviceIndex"],
-                        "name": device["name"],
-                    }
+                    "target": device["ref"],
                 }
                 report["createdTracks"][-1]["patch"] = await build_grid(call, target, types, label)
             scene = (await call("scenes.list", {}))["scenes"][0]["ref"]

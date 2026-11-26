@@ -62,7 +62,7 @@ final class DeviceChainEdit {
             for (int i = 0; i < v.window(); i++) {
                 if (!v.known(i) || (i < count && !v.ready(i)))
                     throw Errors.notApplied(Reason.NOT_READY, "Device bank has not reported the complete window.");
-                if (v.exists(i) != (i < count)) throw Errors.notApplied(Reason.STALE_CONTEXT, staleMessage);
+                if (v.exists(i) != (i < count)) throw Errors.notApplied(Reason.NOT_READY, staleMessage);
             }
             return new Before(v);
         }
@@ -152,8 +152,10 @@ final class DeviceChainEdit {
         int expected = p.kind == INSERT ? n + 1 : n - 1;
         if (c != expected || v.countSequence() <= b.countSequence) return Observation.PENDING;
         if (p.kind == INSERT) return observeInsert(v, p, n, w);
+        // A device that moves up into the window from beyond it has no recorded name to compare with.
         for (int i = p.index; i < Math.min(n - 1, w); i++)
-            if (!v.exists(i) || !v.ready(i) || !same(v, i, b, i + 1)) return Observation.PENDING;
+            if (!v.exists(i) || !v.ready(i) || (i + 1 < b.names.length && !same(v, i, b, i + 1)))
+                return Observation.PENDING;
         for (int i = n - 1; i < w; i++) if (v.exists(i)) return Observation.PENDING;
         return Observation.ok("observed_count_decrement_and_shifted_suffix");
     }

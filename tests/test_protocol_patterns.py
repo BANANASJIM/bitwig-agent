@@ -45,4 +45,5 @@ SAMPLES = (
     "0" * 64,
     "C:dorian",
     "${name}",
+    "7",
 )

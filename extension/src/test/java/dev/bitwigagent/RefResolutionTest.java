@@ -68,7 +68,8 @@ public final class RefResolutionTest {
             children.child("itemCount").emit(1);
             child = children.item(0);
             device(child, 0, "Polysynth", "instrument");
-            resolver = host.services.parameterResolver(host.services.parameters(), host.services.device());
+            RemoteModule remotes = host.services.remote();
+            resolver = host.services.parameterResolver(host.services.parameters(remotes), remotes);
         }
 
         static void device(FakeHost node, int position, String name, String type) {

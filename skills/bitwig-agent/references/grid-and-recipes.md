@@ -43,12 +43,12 @@ Native context, license/property and undo observations do not constitute user pe
 
 Many Grid controls have no input port (envelope times, Gates STEPS, Chance PROBABILITY, oscillator TIMBRE, Distortion DRIVE, pulse width). Vary them with a device modulator instead of more modules:
 
-1. `modulators.catalog query="random"` (offline) picks a type; `modulators.describe type=Random` explains its controls.
-2. `modulators.get parent=…` gives the current `count`; `modulators.insert expectedCount=<count> typeName=Random` returns the new `modulatorId` with its `outputs` and `parameters`.
-3. `modulators.map modulatorId=… target={moduleId: <AD from grid.export>, parameterId: DECAY} expectedAmount=null amount=0.5`; the result's `mapping` is the readback. Change the amount later with `expectedAmount=0.5 amount=0.3`; remove it with `modulators.unmap`.
-4. Shape the modulator with `modulators.parameters.set` (raw CAS). Polarity is a modulator parameter, not a mapping option.
+1. `modulators.describe query="random"` (offline) picks a type; `modulators.describe type=Random` explains its controls.
+2. `modulators.insert parent=<device ref> typeName=Random` returns the new modulator's `ref` with its `outputs` and `parameters`.
+3. `modulators.map source=<modulator ref> target=<parameter ref of the AD module, from grid.export refs, id DECAY> amount=0.5`; the result's `mapping` is the readback. Change the amount later with `amount=0.3` (an omitted `transfer` or `enabled` keeps the mapping's); remove it with `modulators.unmap`.
+4. Shape the modulator with `parameters.set target=<a parameter ref from modulators.list> value=...` (raw value, `{display}` or an enum `{label}`). Polarity is a modulator parameter, not a mapping option.
 
-Insert, delete, map and unmap need a stopped transport; `modulators.parameters.set` works while playing. Recording or automation write on blocks all of them. An `unknown` outcome means inspect `modulators.get`, never repeat. Native acceptance of these edits is not yet recorded in VERIFICATION.
+Insert, delete, map and unmap need a stopped transport; `parameters.set` on a modulator control works while playing. Recording or automation write on blocks all of them. An `unknown` outcome means inspect `modulators.list`, never repeat. Native acceptance of these edits is not yet recorded in VERIFICATION.
 
 ## Scratch recipe: explicit agent workflow
 

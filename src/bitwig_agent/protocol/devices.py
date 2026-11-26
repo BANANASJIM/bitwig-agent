@@ -7,35 +7,32 @@ from pydantic import Field, model_validator
 
 from bitwig_agent.protocol.base import (
     PROJECT_READY,
-    TARGET,
     TRACK,
-    DeviceArgs,
     Nonempty,
-    ParameterArgs,
     StatusArgs,
-    StrictModel,
     ToolSpec,
-    UnitValue,
-    Uuid,
     omitted,
     validate_local_path,
 )
-from bitwig_agent.protocol.limits import DEVICE_WINDOW
+from bitwig_agent.protocol.positions import DeviceDestination, DeviceParent, DevicePosition
+from bitwig_agent.protocol.refs import DeviceRef
 
-ANCHOR_FIELDS = frozenset({"deviceIndex", "expectedDeviceName"})
-
-
-class DeviceParent(StrictModel):
-    trackId: Uuid
-    deviceIndex: int = Field(ge=0, le=DEVICE_WINDOW - 1)
-    expectedDeviceName: Nonempty
+REMOTE_PAGE_INDEX_MAX = 4095
 
 
-class LayerListArgs(StatusArgs):
-    parent: DeviceParent
+class DevicesListArgs(StatusArgs):
+    parent: DeviceParent = Field(description="The track whose root devices, or the chain whose devices, to list.")
 
 
-class DeviceSetArgs(ParameterArgs):
+class ChainsListArgs(StatusArgs):
+    parent: DeviceRef = Field(description="A device that has chains (Instrument Layer, FX Layer, FX Selector).")
+
+
+class DeviceTargetArgs(StatusArgs):
+    target: DeviceRef
+
+
+class DeviceSetArgs(DeviceTargetArgs):
     enabled: bool
 
 
@@ -61,46 +58,14 @@ def validate_insertion(model: Any) -> None:
             raise ValueError("clap id must be 1..256 printable non-whitespace ASCII characters")
 
 
-class DeviceInsertArgs(DeviceArgs):
-    expectedDeviceCount: int = Field(ge=0, le=DEVICE_WINDOW - 1)
-    kind: Literal["bitwig", "vst2", "vst3", "clap", "file"]
-    id: Nonempty = omitted()
-    path: Nonempty = omitted()
-    position: Literal["start", "end", "before", "after"] = omitted(
-        description="Where in the chain; default end. before/after need deviceIndex and expectedDeviceName of the anchor device."
+class DeviceInsertArgs(StatusArgs):
+    parent: DeviceParent = Field(description="The track or chain to insert into.")
+    position: DevicePosition = omitted(
+        description='"start", "end" (default) or {before: deviceRef} / {after: deviceRef} of a device in this parent.'
     )
-    deviceIndex: int = omitted(ge=0, le=DEVICE_WINDOW - 1, description="Anchor device for position before/after.")
-    expectedDeviceName: Nonempty = omitted(description="Exact name of the anchor device.")
-
-    @model_validator(mode="after")
-    def validate_identifier(self) -> Self:
-        anchored = self.position in ("before", "after")
-        given = ANCHOR_FIELDS & self.model_fields_set
-        if anchored and given != ANCHOR_FIELDS:
-            raise ValueError("position before/after requires deviceIndex and expectedDeviceName")
-        if not anchored and given:
-            raise ValueError("deviceIndex and expectedDeviceName are only for position before/after")
-        validate_insertion(self)
-        return self
-
-
-class DeviceMoveArgs(ParameterArgs):
-    toIndex: int = Field(ge=0, le=DEVICE_WINDOW - 1)
-
-    @model_validator(mode="after")
-    def validate_move(self) -> Self:
-        if self.toIndex == self.deviceIndex:
-            raise ValueError("toIndex equals deviceIndex; nothing to move")
-        return self
-
-
-class LayerInsertArgs(LayerListArgs):
-    layerId: Uuid
-    expectedChildCount: int = Field(ge=0, le=4096)
     kind: Literal["bitwig", "vst2", "vst3", "clap", "file"]
     id: Nonempty = omitted()
     path: Nonempty = omitted()
-    position: Literal["start", "end"] = omitted(description="Start or end of the layer's chain; default end.")
 
     @model_validator(mode="after")
     def validate_identifier(self) -> Self:
@@ -108,122 +73,95 @@ class LayerInsertArgs(LayerListArgs):
         return self
 
 
-class RemotePageArgs(ParameterArgs):
-    contextToken: Nonempty
-    pageIndex: int = Field(ge=0, le=4095)
-    expectedPageName: Nonempty
+class DeviceMoveArgs(DeviceTargetArgs):
+    to: DeviceDestination = Field(description="Where the device ends up; parent is omitted to stay in its chain.")
 
 
-class RemoteSetArgs(ParameterArgs):
-    contextToken: Nonempty
-    expectedPageName: Nonempty
-    parameterIndex: int = Field(ge=0, le=7)
-    expectedParameterName: Nonempty
-    normalizedValue: UnitValue
+class RemoteGetArgs(DeviceTargetArgs):
+    page: int = omitted(
+        ge=0, le=REMOTE_PAGE_INDEX_MAX, description="Remote Controls page index; default the extension's current page."
+    )
 
 
-LAYER_PARENT = {"trackId": TRACK, "deviceIndex": 0, "expectedDeviceName": "Instrument Layer"}
-LAYER_TARGET = {
-    "parent": LAYER_PARENT,
-    "layerId": "abcdef01-2345-6789-abcd-0123456789ab",
-    "childDeviceIndex": 0,
-    "expectedChildDeviceName": "Polymer",
-    "discoveryToken": "from-devices.layers.list",
+DEVICE_REF_EXAMPLE = {
+    "kind": "device",
+    "track": {"kind": "track", "id": TRACK, "name": "Lead"},
+    "index": 0,
+    "name": "Poly Grid",
+}
+DEVICE_REF = DEVICE_REF_EXAMPLE
+TRACK_REF = DEVICE_REF_EXAMPLE["track"]
+CHAIN_REF = {
+    "kind": "chain",
+    "device": {**DEVICE_REF, "index": 1, "name": "Instrument Layer"},
+    "id": "abcdef01-2345-6789-abcd-0123456789ab",
+    "name": "Pad",
 }
 
-
-DEVICES_LIST_DESCRIPTION = "Read source-bound top-level device observations without changing host cursor/selection. Discover zero-based deviceIndex and exact expectedDeviceName, within the returned window."
-DEVICES_GET_DESCRIPTION = "Read a source-bound device's state and unsupported-interface details without selecting it. Use exact name and zero-based index from devices.list."
-DEVICES_LAYERS_LIST_DESCRIPTION = "Discover one layer level beneath an explicit root parent without selection. Fixed zero-offset windows cover at most 2 layers and 2 child devices per layer, not a complete hierarchy. Inspect observed counts, completeness and readiness before using layerId, childDeviceIndex, exact expectedChildDeviceName and discoveryToken. Pads, slots and deeper targets are unsupported."
-DEVICES_SET_DESCRIPTION = "Enable or bypass an explicitly identified device using enabled=true/false. Inspect a fresh observation when the outcome is unknown before another write."
+DEVICES_LIST_DESCRIPTION = "List the devices of a track (root chain, up to 16 observed) or of one chain (the first 2 of its devices), without changing selection. Each row has the device ref that every device method takes back, plus name and type; window says how many there are."
+DEVICES_GET_DESCRIPTION = "Read one device without selecting it: ref, name, type, enabled and whether it has Remote Controls. target is a device ref from devices.list (a root device or a device inside a chain)."
+CHAINS_LIST_DESCRIPTION = "List the chains of a device that has them (Instrument Layer, FX Layer, FX Selector; at most the first 2): each row has the chain ref, its name and its device count. A chain ref follows its layer's UUID, so it survives reordering and renaming but not a Bitwig restart: Bitwig assigns new layer UUIDs then, so re-read chains.list. Known limitation: after a chain mutation (insert, delete, move) the devices nested in chains report unavailable/not_ready until the extension reloads. List a chain's devices with devices.list {parent: chain}. Pads, slots and nested chains are unsupported."
+DEVICES_SET_DESCRIPTION = "Enable or bypass one device: target is a device ref, enabled true or false. Result outcome applied or already_matched with the device ref."
 DEVICES_SELECT_DESCRIPTION = (
-    "Explicitly select this device in the host UI. Unlike source-bound reads, this intentionally changes selection."
+    "Select this device in the host UI. Unlike reads, this intentionally changes selection. Result outcome sent."
 )
-DEVICES_CATALOG_DESCRIPTION = "List every installed Bitwig factory device file (about 150: name, category, description, path) using the host's installationRoot; texts are read from Bitwig's own resources at runtime. Copy kind=file and path into devices.insert with an observed track/count. kind=bitwig UUIDs are not discoverable here (bitwigIdAvailable=false); no guessed UUIDs or exhaustive plug-in inventory. File presence is not insertion or musical verification."
-DEVICES_INSERT_DESCRIPTION = "Insert a native device, plug-in or preset into a track's device chain. Discover expectedDeviceCount with devices.list; truncated windows are rejected. position: end (default, append), start, or before/after an anchor device given by deviceIndex and its exact expectedDeviceName (devices.list). kind=bitwig requires canonical UUID id; vst2 signed int32 decimal id; vst3 32 hex id; clap printable ASCII id. kind=file requires absolute normalized path instead of id (a .bwdevice or a .bwpreset from presets.search). No shell/path expansion. Verification is the observed count increment, unchanged devices before the point and shifted devices after it; inserted names the final slot. A shifted device with layers may report not_ready from parameters.layer.* until you inspect state and ack the hold. It does not prove the requested native UUID: inspect requestedIdentifierVerified. Insertion can load plug-ins or produce audio; observe before retrying."
-DEVICES_DELETE_DESCRIPTION = "Delete one top-level device (Device.deleteObject). Needs the exact trackId, deviceIndex and expectedDeviceName from devices.list and no recording/automation write. Returns the deleted device, before/after chains and verification observed_count_decrement_and_shifted_suffix; an unknown outcome (not_observed, readback_mismatch) means inspect devices.list before another edit. One Undo step; never retry. Shifted devices with layers may report not_ready from parameters.layer.* until you inspect state and ack the hold."
-DEVICES_MOVE_DESCRIPTION = "Move one top-level device within its track so it ends at toIndex (public InsertionPoint.moveDevices): the device at deviceIndex/expectedDeviceName goes after the device now at toIndex when moving later, before it when moving earlier. Verified by the observed name/type arrangement of the whole chain; devices with identical name and type cannot prove a move (outcome unknown, readback_mismatch). Same safety and no-retry rules as devices.delete."
-DEVICES_LAYERS_INSERT_DESCRIPTION = "Insert a device into one layer of a container device that reports layers (Instrument Layer, FX Layer, FX Selector; not the Chain device, whose chain is an uncovered device slot) at its start or end (default end). Factory Instrument Layer/FX Selector presets have zero layers and the API cannot add one: load a preset that has layers. Address the layer as devices.layers.list does (parent + layerId) and give its current child count (expectedChildCount, from that list's layer window total). Only the first two children per layer are observable: with more, the count delta is the evidence (observed_count_increment_beyond_window, inserted null). Parameters of a changed layer's children may report not_ready until the extension restarts. Drum pads and nested layers are unsupported. kind/id/path as devices.insert; never retry an unobserved result."
-DEVICES_REMOTE_GET_DESCRIPTION = "Read a source-device-bound remote-control page and fresh contextToken without changing the GUI page. Discover exact page/control names and zero-based indices. Token tracks observed metadata, not unobservable same-name remaps."
-DEVICES_REMOTE_PAGE_DESCRIPTION = "Change this extension's independent remote page, not the GUI-selected page. Use current contextToken and target pageIndex/expectedPageName from devices.remote.get; get a fresh token after switching."
-DEVICES_REMOTE_SET_DESCRIPTION = "Set one normalized remote control with exact page/control names and fresh contextToken from devices.remote.get. Indices are zero-based; inspect fresh same-source value verification. Unobservable same-name mapping changes are not guaranteed detectable."
+DEVICES_CATALOG_DESCRIPTION = "List every installed Bitwig factory device file (about 150: name, category, description, path) using the host's installationRoot; texts are read from Bitwig's own resources at runtime. Copy kind=file and path into devices.insert. kind=bitwig UUIDs are not discoverable here (bitwigIdAvailable=false); no guessed UUIDs or exhaustive plug-in inventory. File presence is not insertion or musical verification."
+DEVICES_INSERT_DESCRIPTION = "Insert a native device, plug-in or preset into a track's device chain or into one chain of a layer device. parent is a track ref or a chain ref; position is start, end (default), {before: deviceRef} or {after: deviceRef} of a device in that parent. kind=bitwig requires a canonical UUID id; vst2 a signed int32 decimal id; vst3 32 hex digits; clap printable ASCII; kind=file an absolute normalized path instead of id (a .bwdevice or a .bwpreset from presets.search). The result has the new device's ref (inserted) and the verification: the count grew by one, the devices before the point are unchanged and those after it shifted; a chain shows only its first two devices, then the count delta is the evidence and inserted is null. It does not prove the requested native UUID: inspect requestedIdentifierVerified. Insertion can load plug-ins or produce audio; observe before retrying."
+DEVICES_DELETE_DESCRIPTION = "Delete one device (Device.deleteObject): target is a device ref from devices.list. Needs no recording or automation write. Returns the deleted device, the chain before and after, and the verification (the count dropped by one and the devices after it shifted); an unknown outcome (not_observed, readback_mismatch) means read devices.list before another edit. One Undo step; never retry."
+DEVICES_MOVE_DESCRIPTION = "Move one device within its chain: target is a device ref, to {position: start|end|{before: deviceRef}|{after: deviceRef}}; parent stays the device's own track or chain (moving to another parent is not supported yet). A device already at that position is already_matched. Verified by the observed name/type arrangement of the whole chain; devices with identical name and type cannot prove a move (outcome unknown, readback_mismatch). Same safety and no-retry rules as devices.delete."
+DEVICES_REMOTE_GET_DESCRIPTION = "Read one root device's Remote Controls: the page list (remotePage refs) and the controls of one page, each with the parameter ref, name and bare value. page is the page index; omitted reads the extension's own current page, not the GUI's; a page past the page count is target_not_found. Pass a control's ref to parameters.set; a control remapped to another name is stale."
 
 
 SPECS: dict[str, ToolSpec] = {
     "devices.list": ToolSpec(
-        DeviceArgs, DEVICES_LIST_DESCRIPTION, True, examples=({"trackId": TRACK},), records="devices"
+        DevicesListArgs, DEVICES_LIST_DESCRIPTION, True, examples=({"parent": TRACK_REF},), records="devices"
     ),
-    "devices.get": ToolSpec(ParameterArgs, DEVICES_GET_DESCRIPTION, True, examples=(TARGET,)),
-    "devices.layers.list": ToolSpec(
-        LayerListArgs, DEVICES_LAYERS_LIST_DESCRIPTION, True, examples=({"parent": LAYER_PARENT},), records="layers"
+    "devices.get": ToolSpec(DeviceTargetArgs, DEVICES_GET_DESCRIPTION, True, examples=({"target": DEVICE_REF},)),
+    "chains.list": ToolSpec(
+        ChainsListArgs,
+        CHAINS_LIST_DESCRIPTION,
+        True,
+        examples=({"parent": CHAIN_REF["device"]},),
+        records="chains",
     ),
-    "devices.set": ToolSpec(DeviceSetArgs, DEVICES_SET_DESCRIPTION, False, examples=({**TARGET, "enabled": False},)),
-    "devices.select": ToolSpec(ParameterArgs, DEVICES_SELECT_DESCRIPTION, False, examples=(TARGET,)),
+    "devices.set": ToolSpec(
+        DeviceSetArgs, DEVICES_SET_DESCRIPTION, False, examples=({"target": DEVICE_REF, "enabled": False},)
+    ),
+    "devices.select": ToolSpec(
+        DeviceTargetArgs,
+        DEVICES_SELECT_DESCRIPTION,
+        False,
+        examples=({"target": DEVICE_REF},),
+    ),
     "devices.catalog": ToolSpec(StatusArgs, DEVICES_CATALOG_DESCRIPTION, True),
     "devices.insert": ToolSpec(
         DeviceInsertArgs,
         DEVICES_INSERT_DESCRIPTION,
         False,
         examples=(
+            {"parent": TRACK_REF, "kind": "clap", "id": "org.example.synth"},
             {
-                "trackId": TRACK,
-                "expectedDeviceCount": 2,
+                "parent": TRACK_REF,
+                "position": {"after": {**DEVICE_REF, "index": 1, "name": "EQ-5"}},
                 "kind": "clap",
                 "id": "org.example.synth",
-                "position": "before",
-                "deviceIndex": 1,
-                "expectedDeviceName": "EQ-5",
             },
+            {"parent": CHAIN_REF, "position": "start", "kind": "clap", "id": "org.example.effect"},
         ),
         requires=PROJECT_READY,
-        summary="Insert a native device, plug-in or preset into a track's chain: expectedDeviceCount from devices.list, position end|start|before|after (anchor by deviceIndex and exact expectedDeviceName), kind bitwig|vst2|vst3|clap with id, or kind=file with an absolute path. The requested identity is not proven: check requestedIdentifierVerified.",
+        summary="Insert a native device, plug-in or preset into a track's chain or a layer chain: parent (track or chain ref), position start|end|{before|after: deviceRef}, kind bitwig|vst2|vst3|clap with id, or kind=file with an absolute path. The requested identity is not proven: check requestedIdentifierVerified.",
     ),
     "devices.delete": ToolSpec(
-        ParameterArgs, DEVICES_DELETE_DESCRIPTION, False, examples=(TARGET,), requires=PROJECT_READY
+        DeviceTargetArgs, DEVICES_DELETE_DESCRIPTION, False, examples=({"target": DEVICE_REF},), requires=PROJECT_READY
     ),
     "devices.move": ToolSpec(
         DeviceMoveArgs,
         DEVICES_MOVE_DESCRIPTION,
         False,
-        examples=({**TARGET, "deviceIndex": 3, "toIndex": 1},),
+        examples=({"target": {**DEVICE_REF, "index": 3, "name": "Comp"}, "to": {"position": "start"}},),
         requires=PROJECT_READY,
     ),
-    "devices.layers.insert": ToolSpec(
-        LayerInsertArgs,
-        DEVICES_LAYERS_INSERT_DESCRIPTION,
-        False,
-        examples=(
-            {
-                "parent": LAYER_PARENT,
-                "layerId": LAYER_TARGET["layerId"],
-                "expectedChildCount": 1,
-                "kind": "clap",
-                "id": "org.example.effect",
-                "position": "end",
-            },
-        ),
-        requires=PROJECT_READY,
-    ),
-    "devices.remote.get": ToolSpec(ParameterArgs, DEVICES_REMOTE_GET_DESCRIPTION, True, examples=(TARGET,)),
-    "devices.remote.page": ToolSpec(
-        RemotePageArgs,
-        DEVICES_REMOTE_PAGE_DESCRIPTION,
-        False,
-        examples=({**TARGET, "contextToken": "from-devices.remote.get", "pageIndex": 0, "expectedPageName": "Main"},),
-    ),
-    "devices.remote.set": ToolSpec(
-        RemoteSetArgs,
-        DEVICES_REMOTE_SET_DESCRIPTION,
-        False,
-        examples=(
-            {
-                **TARGET,
-                "contextToken": "from-devices.remote.get",
-                "expectedPageName": "Main",
-                "parameterIndex": 0,
-                "expectedParameterName": "Cutoff",
-                "normalizedValue": 0.5,
-            },
-        ),
+    "devices.remote.get": ToolSpec(
+        RemoteGetArgs, DEVICES_REMOTE_GET_DESCRIPTION, True, examples=({"target": DEVICE_REF, "page": 0},)
     ),
 }

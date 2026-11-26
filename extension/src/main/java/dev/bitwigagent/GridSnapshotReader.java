@@ -216,13 +216,35 @@ final class GridSnapshotReader implements ParameterResolver.ModuleOwners {
 
     /** The gridModule ref of a module row: the name grid.export gives it, generated when it has none or shares its customName. */
     static JsonObject moduleRef(JsonObject deviceRef, JsonObject row, Set<String> shared) {
+        return Refs.gridModule(deviceRef, row.get("instanceId").getAsString(), refName(row, shared));
+    }
+
+    private static String refName(JsonObject row, Set<String> shared) {
         String name = text(row, "customName");
         if (name.isEmpty() || shared.contains(name)) {
             String type = text(row, "typeName");
             name = "_" + (type.isEmpty() ? text(row, "typeId") : type) + "_"
                     + row.get("x").getAsInt() + "_" + row.get("y").getAsInt();
         }
-        return Refs.gridModule(deviceRef, row.get("instanceId").getAsString(), name);
+        return name;
+    }
+
+    /** The name of this module's gridModule ref, computed as grid.export does (one source: {@link #refName}). */
+    String moduleRefName(Object module, Runnable check) {
+        State state = new State(check);
+        Object graph = a.read(Field.MODULE_GRAPH, module);
+        JsonObject row = new JsonObject();
+        metadataText(row, "customName", Field.CUSTOM_NAME, module, Metadata.MODULE_NAMES, state, "module_custom_name");
+        Object descriptor = a.read(Field.DESCRIPTOR, module);
+        Object typeId = descriptor == null ? null : a.read(Field.TYPE_ID, descriptor);
+        row.addProperty("typeId", typeId == null ? "" : uuid(typeId));
+        Object entry = metadataValue(Field.TYPE_ENTRY, typeId, Metadata.TYPE_NAMES, state, "module_type_name");
+        metadataText(row, "typeName", Field.TYPE_NAME, entry, Metadata.TYPE_NAMES, state, "module_type_name");
+        row.addProperty("x", integer(a.read(Field.X, module)));
+        row.addProperty("y", integer(a.read(Field.Y, module)));
+        Set<String> shared =
+                graph == null ? Set.of() : sharedCustomNames(collect(Field.MODULES, graph, MAX_MODULES, state), state);
+        return refName(row, shared);
     }
 
     private static String text(JsonObject row, String key) {
@@ -400,6 +422,22 @@ final class GridSnapshotReader implements ParameterResolver.ModuleOwners {
 
     ParameterBinding bindParameter(
             DeviceSources.Source source, UUID moduleId, String parameterId, boolean fullSteps, Runnable check) {
+        return bind(source, moduleId, parameterId, fullSteps, true, check);
+    }
+
+    /** Like {@link #bindParameter} but null when the graph has no such module or the module no such parameter. */
+    ParameterBinding bindParameterIfPresent(
+            DeviceSources.Source source, UUID moduleId, String parameterId, Runnable check) {
+        return bind(source, moduleId, parameterId, false, false, check);
+    }
+
+    private ParameterBinding bind(
+            DeviceSources.Source source,
+            UUID moduleId,
+            String parameterId,
+            boolean fullSteps,
+            boolean required,
+            Runnable check) {
         a.documentThread();
         check.run();
         if (!a.parametersAvailable())
@@ -407,8 +445,12 @@ final class GridSnapshotReader implements ParameterResolver.ModuleOwners {
         NativeTarget target = target(source);
         State state = new State(check);
         state.full = fullSteps;
-        Object module = findModule(target.graph, moduleId, state);
-        Object child = findParameter(module, parameterId, state);
+        Object module =
+                required ? findModule(target.graph, moduleId, state) : lookupModule(target.graph, moduleId, state);
+        if (module == null) return null;
+        Object child =
+                required ? findParameter(module, parameterId, state) : lookupParameter(module, parameterId, state);
+        if (child == null) return null;
         Kind kind = parameterKind(child);
         if (kind == null)
             throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Requested parameter family is unsupported.");
@@ -611,7 +653,7 @@ final class GridSnapshotReader implements ParameterResolver.ModuleOwners {
 
     @Override
     public String ownerName(Object owner) {
-        return effectiveModuleName(owner);
+        return moduleRefName(owner, () -> {});
     }
 
     @Override

@@ -1,6 +1,7 @@
 package dev.bitwigagent;
 
 import com.google.gson.*;
+import dev.bitwigagent.core.Refs;
 import java.util.*;
 import java.util.function.Consumer;
 
@@ -9,6 +10,9 @@ import java.util.function.Consumer;
  * readback in a later document event, no retry or rollback. Version-specific symbols live behind {@link Access}.
  */
 final class ModulatorEditor implements ParameterResolver.ModuleOwners {
+    /** What the raw float of a modulator control is compared with: the grid writer verifies exact equality. */
+    static final double RAW_TOLERANCE = 0;
+
     static final int MAX_MODULATORS = 64, MAX_CHILDREN = 256, MAX_MAPPINGS = 256, MAX_TEXT = 1024;
     static final List<String> TRANSFERS =
             List.of("linear", "rectify_pos", "rectify_neg", "abs_linear", "inv_abs_linear", "cubic", "inv_cubic");
@@ -75,10 +79,14 @@ final class ModulatorEditor implements ParameterResolver.ModuleOwners {
         double range(Object target);
 
         boolean canModulate(Object source, Object target);
-        /** {graph, module, parameter} for a Grid module control on this device. */
+        /** {graph, module, parameter} for a Grid module control on this device, or null when it has none now. */
         Object[] gridParameter(DeviceSources.Source source, UUID moduleId, String parameterId, Runnable check);
 
         String moduleId(Object module);
+        /** The name of the module's gridModule ref, as grid.export gives it. */
+        String moduleName(Object module);
+        /** The native device helper this access captures with, so a parameter ref can be bound to its owner. */
+        DeviceSources.Native natives();
 
         void requireParameterWritable(Object device, Object container, Object owner, Object parameter, Runnable check);
 
@@ -123,54 +131,64 @@ final class ModulatorEditor implements ParameterResolver.ModuleOwners {
     static final class TargetRef {
         final UUID moduleId, modulatorId;
         final String parameterId;
+        /** The control's name as the ref read it, or null when the ref carries none. */
+        final String name;
+        /** The parameter ref as given, for the error that names what was not found. */
+        final JsonObject ref;
 
-        TargetRef(UUID moduleId, UUID modulatorId, String parameterId) {
+        private TargetRef(JsonObject ref, UUID moduleId, UUID modulatorId, String parameterId, String name) {
+            this.ref = ref;
             this.moduleId = moduleId;
             this.modulatorId = modulatorId;
             this.parameterId = parameterId;
+            this.name = name;
         }
 
-        static TargetRef parse(JsonElement element) {
-            if (element == null || !element.isJsonObject())
-                throw Errors.notApplied(
-                        Reason.INVALID_PARAMS, "target must be {moduleId, parameterId} or {modulatorId, parameterId}.");
-            JsonObject t = element.getAsJsonObject();
-            boolean module = t.has("moduleId");
-            Params.fields(t, Set.of(module ? "moduleId" : "modulatorId", "parameterId"), Set.of());
-            UUID id = uuid(t, module ? "moduleId" : "modulatorId");
-            return new TargetRef(module ? id : null, module ? null : id, text(t, "parameterId"));
-        }
-
-        JsonObject json() {
-            JsonObject result = new JsonObject();
-            if (moduleId != null) result.addProperty("moduleId", moduleId.toString());
-            else result.addProperty("modulatorId", modulatorId.toString());
-            result.addProperty("parameterId", parameterId);
-            return result;
+        /** The control a parameter ref owned by a Grid module or a modulator names. */
+        static TargetRef of(JsonObject parameter) {
+            JsonObject owner = parameter.getAsJsonObject("owner");
+            boolean module = ParameterRefs.GRID_MODULE.equals(Refs.kind(owner));
+            UUID id = UUID.fromString(owner.get("id").getAsString());
+            String name = parameter.has("name") ? parameter.get("name").getAsString() : null;
+            return new TargetRef(
+                    parameter,
+                    module ? id : null,
+                    module ? null : id,
+                    parameter.get("id").getAsString(),
+                    name);
         }
     }
 
     static final class MapRequest {
         final UUID modulatorId;
+        /** The source modulator's name as its ref read it: the write target compares it. */
+        final String modulatorName;
+
         final String outputId;
         final TargetRef target;
+        /** The mapping amount an expect asks to find now. */
         final Double expectedAmount, amount;
+
+        final boolean expected, unmap;
         final String transfer;
         final Boolean enabled;
-        final boolean unmap;
 
         private MapRequest(
                 UUID modulatorId,
+                String modulatorName,
                 String outputId,
                 TargetRef target,
+                boolean expected,
                 Double expectedAmount,
                 Double amount,
                 String transfer,
                 Boolean enabled,
                 boolean unmap) {
             this.modulatorId = modulatorId;
+            this.modulatorName = modulatorName;
             this.outputId = outputId;
             this.target = target;
+            this.expected = expected;
             this.expectedAmount = expectedAmount;
             this.amount = amount;
             this.transfer = transfer;
@@ -179,63 +197,31 @@ final class ModulatorEditor implements ParameterResolver.ModuleOwners {
         }
 
         static MapRequest parse(JsonObject p, boolean unmap) {
-            Set<String> required = unmap
-                    ? Set.of("parent", "modulatorId", "target", "expectedAmount")
-                    : Set.of("parent", "modulatorId", "target", "expectedAmount", "amount");
-            Set<String> optional = unmap ? Set.of("outputId") : Set.of("outputId", "transfer", "enabled");
-            if (p == null || !p.keySet().containsAll(required))
-                throw Errors.notApplied(Reason.INVALID_PARAMS, "Parameters must contain required fields " + required);
-            for (String key : p.keySet()) {
-                if (!required.contains(key) && !optional.contains(key))
-                    throw Errors.notApplied(Reason.INVALID_PARAMS, "Unknown parameter: " + key);
-                if (p.get(key).isJsonNull() && !(key.equals("expectedAmount") && !unmap))
-                    throw Errors.notApplied(Reason.INVALID_PARAMS, key + " must not be null.");
-            }
-            validateParent(p);
-            UUID modulatorId = uuid(p, "modulatorId");
+            JsonObject source = p.getAsJsonObject("source");
+            UUID modulatorId = UUID.fromString(source.get("id").getAsString());
+            String modulatorName = source.get("name").getAsString();
             String output = p.has("outputId") ? text(p, "outputId") : null;
-            TargetRef target = TargetRef.parse(p.get("target"));
-            Double expected = p.get("expectedAmount").isJsonNull() ? null : amount(p, "expectedAmount");
-            if (unmap) return new MapRequest(modulatorId, output, target, expected, null, null, null, true);
-            String transfer = null;
-            if (p.has("transfer")) {
-                JsonElement value = p.get("transfer");
-                if (!value.isJsonPrimitive()
-                        || !value.getAsJsonPrimitive().isString()
-                        || !TRANSFERS.contains(value.getAsString()))
-                    throw Errors.notApplied(Reason.INVALID_PARAMS, "transfer must be one of " + TRANSFERS + ".");
-                transfer = value.getAsString();
-            }
-            Boolean enabled = p.has("enabled") ? Params.bool(p, "enabled") : null;
-            return new MapRequest(modulatorId, output, target, expected, amount(p, "amount"), transfer, enabled, false);
+            TargetRef target = TargetRef.of(p.getAsJsonObject("target"));
+            boolean expected = p.has("expect");
+            Double expectedAmount =
+                    expected ? p.getAsJsonObject("expect").get("amount").getAsDouble() : null;
+            if (unmap)
+                return new MapRequest(
+                        modulatorId, modulatorName, output, target, expected, expectedAmount, null, null, null, true);
+            String transfer = p.has("transfer") ? p.get("transfer").getAsString() : null;
+            Boolean enabled = p.has("enabled") ? p.get("enabled").getAsBoolean() : null;
+            return new MapRequest(
+                    modulatorId,
+                    modulatorName,
+                    output,
+                    target,
+                    expected,
+                    expectedAmount,
+                    p.get("amount").getAsDouble(),
+                    transfer,
+                    enabled,
+                    false);
         }
-
-        private static double amount(JsonObject p, String key) {
-            JsonElement value = p.get(key);
-            if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isNumber())
-                throw Errors.notApplied(Reason.INVALID_PARAMS, key + " must be a number in -1..1.");
-            double number = value.getAsDouble();
-            if (!Double.isFinite(number) || number < -1 || number > 1)
-                throw Errors.notApplied(Reason.INVALID_PARAMS, key + " must be a number in -1..1.");
-            return number;
-        }
-    }
-
-    static void validateParent(JsonObject p) {
-        if (!p.get("parent").isJsonObject())
-            throw Errors.notApplied(Reason.INVALID_PARAMS, "parent must be an object.");
-        JsonObject parent = p.getAsJsonObject("parent");
-        DeviceSources.validateParent(parent);
-        if (!parent.get("deviceIndex").getAsString().matches("-?[0-9]+"))
-            throw Errors.notApplied(
-                    Reason.INVALID_PARAMS, "deviceIndex must be an integer, not a decimal or exponent.");
-    }
-
-    static UUID uuid(JsonObject p, String key) {
-        String value = Params.string(p, key);
-        if (!DeviceSources.canonicalUuid(value))
-            throw Errors.notApplied(Reason.INVALID_PARAMS, key + " must be a canonical UUID.");
-        return UUID.fromString(value);
     }
 
     static String text(JsonObject p, String key) {
@@ -248,13 +234,6 @@ final class ModulatorEditor implements ParameterResolver.ModuleOwners {
         return value.getAsString();
     }
 
-    static int count(JsonObject p, String key, int min) {
-        int value = Params.integer(p, key, min, ModulatorSnapshotReader.MAX_MODULATORS);
-        if (!p.get(key).getAsString().matches("-?[0-9]+"))
-            throw Errors.notApplied(Reason.INVALID_PARAMS, key + " must be an integer, not a decimal or exponent.");
-        return value;
-    }
-
     // ---------------------------------------------------------------- target state
 
     private final class Scope {
@@ -262,11 +241,13 @@ final class ModulatorEditor implements ParameterResolver.ModuleOwners {
         final Object device, collection;
         final List<Object> members;
         final Runnable check;
+        final JsonObject deviceRef;
 
-        Scope(DeviceSources.Source source, Runnable check) {
+        Scope(DeviceSources.Source source, JsonObject deviceRef, Runnable check) {
             a.documentThread();
             check.run();
             this.source = source;
+            this.deviceRef = deviceRef;
             this.check = check;
             device = a.device(source, check);
             collection = a.collection(device);
@@ -288,7 +269,8 @@ final class ModulatorEditor implements ParameterResolver.ModuleOwners {
             if (found == null)
                 throw Errors.notApplied(
                         Reason.TARGET_NOT_FOUND,
-                        "No primary modulator " + id + " on this device; reacquire modulators.get.");
+                        "No primary modulator " + id + " on this device; read modulators.list.",
+                        "modulators.list");
             return found;
         }
 
@@ -365,7 +347,8 @@ final class ModulatorEditor implements ParameterResolver.ModuleOwners {
             throw Errors.notApplied(
                     Reason.TARGET_NOT_FOUND,
                     (source ? "No output " : "No parameter ") + "with id '" + id
-                            + "' on this modulator; read modulators.get.");
+                            + "' on this modulator; read modulators.list.",
+                    "modulators.list");
         return found;
     }
 
@@ -427,39 +410,57 @@ final class ModulatorEditor implements ParameterResolver.ModuleOwners {
     }
 
     private Resolved resolve(Scope s, TargetRef ref) {
+        Resolved found;
         if (ref.moduleId != null) {
             Object[] bound = a.gridParameter(s.source, ref.moduleId, ref.parameterId, s.check);
+            if (bound == null)
+                throw Errors.targetNotFound(ref.ref, "The device's Grid has no such module or control now.");
             if (!a.isTarget(bound[2]))
                 throw Errors.notApplied(Reason.UNSUPPORTED_SCOPE, "This Grid control is not a modulation target.");
-            return new Resolved(bound[2], bound[0], bound[1]);
+            found = new Resolved(bound[2], bound[0], bound[1]);
+        } else {
+            Object modulator = s.modulator(ref.modulatorId);
+            Object parameter = child(modulator, ref.parameterId, false);
+            if (!a.isTarget(parameter) || a.kind(parameter) == null)
+                throw Errors.notApplied(
+                        Reason.UNSUPPORTED_SCOPE, "This modulator control is not a supported modulation target.");
+            found = new Resolved(parameter, s.collection, modulator);
         }
-        Object modulator = s.modulator(ref.modulatorId);
-        Object parameter = child(modulator, ref.parameterId, false);
-        if (!a.isTarget(parameter) || a.kind(parameter) == null)
-            throw Errors.notApplied(
-                    Reason.UNSUPPORTED_SCOPE, "This modulator control is not a supported modulation target.");
-        return new Resolved(parameter, s.collection, modulator);
+        if (ref.name != null && !ref.name.equals(parameterName(found.parameter)))
+            throw Errors.targetChanged("The control was renamed since it was read.", describe(s, found.parameter));
+        return found;
     }
 
     // ---------------------------------------------------------------- reads
 
-    JsonObject get(DeviceSources.Source source, UUID modulatorId, Runnable check) {
-        Scope s = new Scope(source, check);
-        if (modulatorId == null && s.members.size() > MAX_MODULATORS)
-            throw Errors.notApplied(Reason.OUT_OF_BOUNDS, "More than 64 modulators; pass modulatorId.");
+    /**
+     * The modulators of the device as rows with refs: one page of them, or only the one with {@code only}. A row carries
+     * the refs a parameter, a mapping target or a later call takes back.
+     */
+    JsonObject read(
+            DeviceSources.Source source, JsonObject deviceRef, int offset, int limit, UUID only, Runnable check) {
+        Scope s = new Scope(source, deviceRef, check);
         JsonArray rows = new JsonArray();
         List<String> unsupported = new ArrayList<>();
         for (int i = 0; i < s.members.size(); i++) {
             Object modulator = s.members.get(i);
-            if (modulatorId != null && !modulatorId.equals(a.id(modulator))) continue;
+            if (only != null ? !only.equals(a.id(modulator)) : i < offset || i >= offset + limit) continue;
             rows.add(row(s, modulator, i, unsupported));
         }
-        if (modulatorId != null && rows.size() == 0) s.modulator(modulatorId);
+        if (only != null && rows.size() == 0) s.modulator(only);
         s.guard();
         JsonObject result = new JsonObject();
+        result.add("parent", s.deviceRef);
         result.addProperty("count", s.members.size());
         result.add("modulators", rows);
-        result.addProperty("complete", unsupported.isEmpty());
+        JsonObject window = new JsonObject();
+        window.addProperty("offset", offset);
+        window.addProperty("limit", limit);
+        window.addProperty("total", s.members.size());
+        window.addProperty("returned", rows.size());
+        result.add("window", window);
+        boolean everything = only != null || (offset == 0 && s.members.size() <= limit);
+        result.addProperty("complete", everything && unsupported.isEmpty());
         JsonArray missing = new JsonArray();
         unsupported.forEach(missing::add);
         result.add("unsupported", missing);
@@ -469,9 +470,11 @@ final class ModulatorEditor implements ParameterResolver.ModuleOwners {
 
     private JsonObject row(Scope s, Object modulator, int index, List<String> unsupported) {
         JsonObject row = new JsonObject();
+        String name = a.name(modulator);
+        JsonObject ref = Refs.modulator(s.deviceRef, String.valueOf(a.id(modulator)), name == null ? "" : name);
+        row.add("ref", ref);
         row.addProperty("index", index);
-        row.addProperty("modulatorId", String.valueOf(a.id(modulator)));
-        row.addProperty("name", a.name(modulator));
+        row.addProperty("name", name);
         UUID type = a.typeId(modulator);
         row.addProperty("typeId", type == null ? null : type.toString());
         int[] cell = a.cell(modulator);
@@ -503,8 +506,7 @@ final class ModulatorEditor implements ParameterResolver.ModuleOwners {
                 List<String> partial = new ArrayList<>();
                 JsonObject value = a.value(child, s.check, partial);
                 for (String reason : partial) unsupported.add(index + ":" + id + ":" + reason);
-                value.remove("supported");
-                parameters.add(value);
+                parameters.add(parameterEntry(ref, value));
             } else if (id != null && !id.isEmpty()) {
                 unsupported.add(index + ":" + id + ":" + a.modelClass(child));
             }
@@ -512,6 +514,23 @@ final class ModulatorEditor implements ParameterResolver.ModuleOwners {
         row.add("parameters", parameters);
         row.add("outputs", outputs);
         return row;
+    }
+
+    /** A control: its ref (none for an empty id, which a ref cannot carry) and its value unit as a write takes it. */
+    private static JsonObject parameterEntry(JsonObject modulatorRef, JsonObject value) {
+        String id = value.get("parameterId").getAsString();
+        JsonElement name = value.get("name");
+        String label = name != null && name.isJsonPrimitive() ? name.getAsString() : null;
+        JsonObject entry = new JsonObject();
+        if (!id.isEmpty())
+            entry.add("ref", Refs.parameter(modulatorRef, id, label == null || label.isEmpty() ? null : label));
+        entry.addProperty("name", label);
+        JsonObject unit = new JsonObject();
+        for (Map.Entry<String, JsonElement> field : value.entrySet())
+            if (!Set.of("parameterId", "name", "shortName", "supported").contains(field.getKey()))
+                unit.add(field.getKey(), field.getValue());
+        entry.add("value", unit);
+        return entry;
     }
 
     private JsonObject mappingRow(Scope s, Object mapping) {
@@ -525,56 +544,79 @@ final class ModulatorEditor implements ParameterResolver.ModuleOwners {
         return row;
     }
 
+    /** A mapping's target: the parameter ref of a Grid module or modulator control here, else where it is. */
     private JsonObject describe(Scope s, Object target) {
-        JsonObject result = new JsonObject();
         String id = target == null ? null : a.identifier(target);
         Object module = target == null ? null : a.owner(target, Owner.MODULE);
-        if (module != null && a.owner(module, Owner.DEVICE) == s.device) {
-            result.addProperty("kind", "grid_module");
-            result.addProperty("moduleId", a.moduleId(module));
-        } else {
-            Object modulator = target == null ? null : a.owner(target, Owner.MODULATOR);
-            if (modulator != null && s.contains(modulator)) {
-                result.addProperty("kind", "modulator");
-                result.addProperty("modulatorId", String.valueOf(a.id(modulator)));
-            } else {
-                result.addProperty(
-                        "kind", target != null && a.owner(target, Owner.DEVICE) == s.device ? "device" : "external");
-                result.addProperty("path", target == null ? null : a.path(target));
-            }
-        }
+        if (module != null && a.owner(module, Owner.DEVICE) == s.device)
+            return Refs.parameter(
+                    Refs.gridModule(s.deviceRef, a.moduleId(module), a.moduleName(module)), id, readableName(target));
+        Object modulator = target == null ? null : a.owner(target, Owner.MODULATOR);
+        if (modulator != null && s.contains(modulator))
+            return Refs.parameter(modulatorRef(s, modulator), id, readableName(target));
+        JsonObject result = new JsonObject();
+        result.addProperty(
+                "location", target != null && a.owner(target, Owner.DEVICE) == s.device ? "device" : "external");
+        result.addProperty("path", target == null ? null : a.path(target));
         result.addProperty("parameterId", id);
         return result;
     }
 
+    /** The control's name when the host shows one, else null: a ref then carries none and compares none. */
+    private String readableName(Object parameter) {
+        try {
+            String name = parameterName(parameter);
+            return name == null || name.isEmpty() ? null : name;
+        } catch (RpcException error) {
+            return null;
+        }
+    }
+
+    private JsonObject modulatorRef(Scope s, Object modulator) {
+        String name = a.name(modulator);
+        return Refs.modulator(s.deviceRef, String.valueOf(a.id(modulator)), name == null ? "" : name);
+    }
+
     // ---------------------------------------------------------------- parameter write
 
-    JsonObject setParameter(
-            DeviceSources.Source source,
-            UUID modulatorId,
-            String parameterId,
-            GridParameterWriter.Request request,
+    /**
+     * Writes one control of a modulator, whose ref has been resolved to its device: the bare raw value, {display} for a
+     * float or {label} for an enum; an expect compares the raw value now.
+     */
+    JsonObject setValue(
+            HostOperation op,
+            ParameterResolver.ModuleParameter target,
+            JsonObject deviceRef,
+            JsonObject ref,
+            ValueInput input,
+            JsonObject expect,
             Runnable check,
             Runnable dispatch) {
-        if (!Set.of("float", "integer", "enum", "boolean").contains(request.kind))
-            throw Errors.notApplied(
-                    Reason.INVALID_PARAMS, "Modulator controls take expectedKind float, integer, enum or boolean.");
-        Scope s = new Scope(source, check);
-        Object modulator = s.modulator(modulatorId);
-        Object parameter = child(modulator, parameterId, false);
+        Scope s = new Scope(target.device, deviceRef, check);
+        ParameterResolver.NativeParameter bound = target.bind(this, a.natives(), check);
+        Object modulator = bound.owner, parameter = bound.parameter;
         String kind = a.kind(parameter);
         if (kind == null)
             throw Errors.notApplied(Reason.UNSUPPORTED_SCOPE, "This modulator control family is not writable here.");
         JsonObject before = a.value(parameter, check, new ArrayList<>());
+        if (expect != null) {
+            JsonElement now = before.get("value");
+            ValueMatch rule = kind.equals("float") ? ValueMatch.raw(RAW_TOLERANCE) : ValueMatch.EXACT;
+            if (!rule.matches(expect.get("value"), now)) {
+                JsonObject observed = new JsonObject();
+                observed.add("value", now);
+                throw Errors.expectMismatch("The current value differs from expect; nothing was written.", observed);
+            }
+        }
+        GridParameterWriter.Request request = GridParameterWriter.Request.parse(synthetic(kind, before, input));
         request.validateCurrent(before);
         a.requireParameterWritable(s.device, s.collection, modulator, parameter, check);
         s.guard();
-        if (child(modulator, parameterId, false) != parameter) stale("Modulator control changed.");
+        bound.require(op);
         before = a.value(parameter, check, new ArrayList<>());
         request.validateCurrent(before);
         a.requireParameterWritable(s.device, s.collection, modulator, parameter, check);
-        Runnable write =
-                a.prepareSet(parameter, kind, request.rawValue); // after the last validateCurrent resolved rawValue
+        Runnable write = a.prepareSet(parameter, kind, request.rawValue);
         check.run();
         JsonElement previous = before.get("value");
         boolean changed = !request.matches(previous, request.value);
@@ -584,22 +626,26 @@ final class ModulatorEditor implements ParameterResolver.ModuleOwners {
         }
         check.run();
         s.guard();
+        bound.require(op);
         JsonObject current = a.value(parameter, check, new ArrayList<>());
         if (!request.matches(current.get("value"), request.value))
             throw Errors.of(
-                    changed ? Reason.READBACK_MISMATCH : Reason.STALE_CONTEXT,
-                    "Native readback differs from the requested value; inspect modulators.get before another write.",
+                    changed ? Reason.READBACK_MISMATCH : Reason.TARGET_CHANGED,
+                    "Native readback differs from the requested value; read modulators.list before another write.",
                     changed);
         JsonObject result = new JsonObject();
-        result.addProperty("modulatorId", modulatorId.toString());
-        current.remove("supported");
-        result.add("parameter", current);
-        result.add("previousValue", previous);
-        result.add("requestedValue", request.value);
-        if (request.display != null) {
-            result.addProperty("requestedDisplay", request.display);
-            result.addProperty("displayMismatch", GridDisplayUnits.mismatch(current, request.display));
-        }
+        result.add("ref", ref);
+        JsonObject unit = parameterEntry(modulatorRef(s, modulator), current).getAsJsonObject("value");
+        result.add("parameter", unit);
+        JsonObject fields = new JsonObject();
+        fields.add(
+                "value",
+                Results.field(
+                        input.form == ValueInput.Form.BARE ? input.bare : requested(input),
+                        unit,
+                        changed ? Outcome.APPLIED : Outcome.ALREADY_MATCHED,
+                        null));
+        result.add("fields", fields);
         written(
                 result,
                 changed,
@@ -609,20 +655,78 @@ final class ModulatorEditor implements ParameterResolver.ModuleOwners {
         return result;
     }
 
+    private static JsonObject requested(ValueInput input) {
+        JsonObject asked = new JsonObject();
+        asked.addProperty(input.form.name().toLowerCase(Locale.ROOT), input.text);
+        return asked;
+    }
+
+    /** The request the grid writer validates, made from the live row: its own kind and value are the precondition. */
+    private static JsonObject synthetic(String kind, JsonObject before, ValueInput input) {
+        JsonObject request = new JsonObject();
+        request.addProperty("expectedKind", kind);
+        request.add("expectedValue", before.get("value"));
+        switch (input.form) {
+            case BARE:
+                request.add("value", input.bare);
+                break;
+            case DISPLAY:
+                if (!kind.equals("float"))
+                    throw Errors.notApplied(
+                            Reason.UNSUPPORTED_UNIT,
+                            "Only a float control shows a number to write by display; write the value you read.");
+                request.addProperty("display", input.text);
+                break;
+            default:
+                request.addProperty("value", optionValue(before, input.text));
+        }
+        return request;
+    }
+
+    /** The integer token of the one option with this label; a label that is none or several is refused. */
+    private static int optionValue(JsonObject row, String label) {
+        JsonElement options = row.get("options");
+        List<Integer> hits = new ArrayList<>();
+        List<String> labels = new ArrayList<>();
+        if (options != null && options.isJsonArray())
+            for (JsonElement option : options.getAsJsonArray()) {
+                String text = option.getAsJsonObject().get("label").getAsString();
+                labels.add(text);
+                if (text.equals(label))
+                    hits.add(option.getAsJsonObject().get("value").getAsInt());
+            }
+        if (hits.size() != 1)
+            throw Errors.notApplied(
+                    Reason.INVALID_PARAMS,
+                    hits.isEmpty()
+                            ? "No option is labelled \"" + label + "\"; the labels are " + labels + "."
+                            : "Several options are labelled \"" + label + "\"; write the value you read.");
+        return hits.get(0);
+    }
+
     // ---------------------------------------------------------------- mapping writes
 
+    /**
+     * Sets or clears one mapping. A map is an upsert: an existing mapping keeps the transfer and enabled state the
+     * request leaves out, and a new one gets linear and enabled.
+     */
     void map(
             DeviceSources.Source deviceSource,
+            JsonObject deviceRef,
             MapRequest r,
             Runnable check,
             Runnable dispatch,
             Consumer<JsonObject> complete,
             Consumer<Throwable> fail) {
-        Scope s = new Scope(deviceSource, check);
+        Scope s = new Scope(deviceSource, deviceRef, check);
         Object modulator = s.modulator(r.modulatorId);
+        String modulatorName = a.name(modulator);
+        if (!r.modulatorName.equals(modulatorName == null ? "" : modulatorName))
+            throw Errors.targetChanged("The modulator was renamed since it was read.", modulatorRef(s, modulator));
         Object source = source(modulator, r.outputId);
         String outputId = a.identifier(source);
         Resolved target = resolve(s, r.target);
+        JsonObject targetRef = targetRef(s, target.parameter);
         Object existing = mapping(source, target.parameter);
         JsonObject previous = existing == null ? null : mappingRow(s, existing);
         expect(r, existing);
@@ -637,36 +741,35 @@ final class ModulatorEditor implements ParameterResolver.ModuleOwners {
                 throw Errors.notApplied(
                         Reason.INVALID_PARAMS,
                         "amount exceeds this target's modulation range ±" + range + "; no clamping is performed.");
-            if (existing == null) {
-                if (!a.canModulate(source, target.parameter))
-                    throw Errors.notApplied(
-                            Reason.UNSUPPORTED_SCOPE,
-                            "Bitwig does not accept this output/target pair (for example a modulator modulating itself).");
-                transfer = r.transfer == null ? "linear" : r.transfer;
-                enabled = r.enabled == null || r.enabled;
-            } else {
-                transfer = a.transfer(existing);
-                enabled = a.enabled(existing);
-                if ((r.transfer != null && !r.transfer.equals(transfer)) || (r.enabled != null && r.enabled != enabled))
-                    throw Errors.notApplied(
-                            Reason.INVALID_PARAMS,
-                            "An existing mapping only changes amount here; unmap and map again to change transfer or enabled.");
-            }
+            if (existing == null && !a.canModulate(source, target.parameter))
+                throw Errors.notApplied(
+                        Reason.UNSUPPORTED_SCOPE,
+                        "Bitwig does not accept this output/target pair (for example a modulator modulating itself).");
+            transfer = r.transfer != null ? r.transfer : existing == null ? "linear" : a.transfer(existing);
+            enabled = r.enabled != null ? r.enabled : existing == null || a.enabled(existing);
         }
+        boolean changed = r.unmap
+                ? existing != null
+                : existing == null
+                        || a.amount(existing) != r.amount
+                        || !transfer.equals(a.transfer(existing))
+                        || a.enabled(existing) != enabled;
         a.requireParameterWritable(s.device, target.container, target.owner, target.parameter, check);
-        Runnable operation = r.unmap
-                ? a.prepareUnmap(source, target.parameter)
-                : a.prepareMap(source, target.parameter, r.amount, enabled, transfer);
+        Runnable operation = !changed
+                ? null
+                : r.unmap
+                        ? a.prepareUnmap(source, target.parameter)
+                        : a.prepareMap(source, target.parameter, r.amount, enabled, transfer);
         s.guard();
         if (s.modulator(r.modulatorId) != modulator
                 || source(modulator, r.outputId) != source
                 || resolve(s, r.target).parameter != target.parameter
                 || mapping(source, target.parameter) != existing)
-            stale("Modulator, output, target or mapping changed.");
+            throw Errors.notApplied(
+                    Reason.TARGET_CHANGED, "Modulator, output, target or mapping changed before dispatch.");
         expect(r, existing);
         a.requireParameterWritable(s.device, target.container, target.owner, target.parameter, check);
         check.run();
-        boolean changed = r.unmap || existing == null || a.amount(existing) != r.amount;
         if (changed) {
             dispatch.run();
             operation.run();
@@ -684,13 +787,13 @@ final class ModulatorEditor implements ParameterResolver.ModuleOwners {
                                 || !transfer.equals(a.transfer(after))
                                 || a.enabled(after) != enabled)
                     throw Errors.of(
-                            changed ? Reason.READBACK_MISMATCH : Reason.STALE_CONTEXT,
-                            "Mapping readback differs from the request; inspect modulators.get before another write.",
+                            changed ? Reason.READBACK_MISMATCH : Reason.TARGET_CHANGED,
+                            "Mapping readback differs from the request; read modulators.list before another write.",
                             changed);
                 JsonObject result = new JsonObject();
-                result.addProperty("modulatorId", r.modulatorId.toString());
+                result.add("ref", targetRef);
+                result.add("source", modulatorRef(s, modulator));
                 result.addProperty("outputId", outputId);
-                result.add("target", describe(s, target.parameter));
                 result.add("previousMapping", previous == null ? JsonNull.INSTANCE : previous);
                 result.add("mapping", after == null ? JsonNull.INSTANCE : mappingRow(s, after));
                 written(
@@ -707,29 +810,35 @@ final class ModulatorEditor implements ParameterResolver.ModuleOwners {
         });
     }
 
+    /** The parameter ref of a resolved mapping target, as a read would name it. */
+    private JsonObject targetRef(Scope s, Object parameter) {
+        return describe(s, parameter);
+    }
+
+    /** An expect names the amount the mapping has now, or none when there is no mapping; a different one writes nothing. */
     private void expect(MapRequest r, Object existing) {
-        if (r.expectedAmount == null ? existing != null : existing == null || a.amount(existing) != r.expectedAmount)
-            throw Errors.notApplied(
-                    Reason.STALE_CONTEXT,
-                    existing == null
-                            ? "No mapping exists between this output and target; pass expectedAmount null to create one."
-                            : "Existing mapping amount is " + a.amount(existing)
-                                    + ", not expectedAmount; reacquire modulators.get.");
+        if (!r.expected) return;
+        Double now = existing == null ? null : a.amount(existing);
+        if (Objects.equals(now, r.expectedAmount)) return;
+        JsonObject observed = new JsonObject();
+        observed.add("amount", now == null ? JsonNull.INSTANCE : new JsonPrimitive(now));
+        throw Errors.expectMismatch("The mapping's amount differs from expect; nothing was written.", observed);
     }
 
     // ---------------------------------------------------------------- structure writes
 
     void delete(
             DeviceSources.Source source,
+            JsonObject deviceRef,
             UUID modulatorId,
-            int expectedCount,
+            String expectedName,
             Runnable check,
             Runnable dispatch,
             Consumer<JsonObject> complete,
             Consumer<Throwable> fail) {
-        Scope s = new Scope(source, check);
-        requireCount(s, expectedCount);
+        Scope s = new Scope(source, deviceRef, check);
         Object modulator = s.modulator(modulatorId);
+        requireName(s, modulator, expectedName);
         a.requireStructureWritable(s.device, s.collection, s.members, check);
         Runnable operation = a.prepareDelete(s.collection, modulator);
         s.guard();
@@ -748,9 +857,8 @@ final class ModulatorEditor implements ParameterResolver.ModuleOwners {
                 if (!same(members(s.collection), expected))
                     throw Errors.unknown(
                             Reason.READBACK_MISMATCH,
-                            "Membership after delete is not the previous list minus this modulator; inspect modulators.get.");
+                            "Membership after delete is not the previous list minus this modulator; read modulators.list.");
                 JsonObject result = new JsonObject();
-                result.addProperty("modulatorId", modulatorId.toString());
                 result.addProperty("count", expected.size());
                 written(
                         result,
@@ -764,17 +872,24 @@ final class ModulatorEditor implements ParameterResolver.ModuleOwners {
         });
     }
 
+    /** The ref's name counts when the modulator itself is the target: a renamed one is another thing to act on. */
+    private void requireName(Scope s, Object modulator, String expectedName) {
+        if (expectedName == null) return;
+        JsonObject current = modulatorRef(s, modulator);
+        if (!expectedName.equals(current.get("name").getAsString()))
+            throw Errors.targetChanged("The modulator was renamed since it was read.", current);
+    }
+
     void insert(
             DeviceSources.Source source,
+            JsonObject deviceRef,
             UUID typeId,
             String typeName,
-            int expectedCount,
             Runnable check,
             Runnable dispatch,
             Consumer<JsonObject> complete,
             Consumer<Throwable> fail) {
-        Scope s = new Scope(source, check);
-        requireCount(s, expectedCount);
+        Scope s = new Scope(source, deviceRef, check);
         Type type = a.resolveType(typeId, typeName);
         int bottom = 0;
         for (Object member : s.members) {
@@ -797,7 +912,7 @@ final class ModulatorEditor implements ParameterResolver.ModuleOwners {
                         throw Errors.unknown(
                                 Reason.HOST_REFUSED,
                                 "Native insertion reported: " + reason
-                                        + "; inspect modulators.get before another write.");
+                                        + "; read modulators.list before another write.");
                     complete.accept(verifyInsert(s, type, x, y, check));
                 } catch (RuntimeException error) {
                     fail.accept(error);
@@ -823,19 +938,21 @@ final class ModulatorEditor implements ParameterResolver.ModuleOwners {
         if (added.size() != 1 || !same(survivors, s.members))
             throw Errors.unknown(
                     Reason.READBACK_MISMATCH,
-                    "Membership after insert is not the previous list plus exactly one modulator; inspect modulators.get.");
+                    "Membership after insert is not the previous list plus exactly one modulator; read modulators.list.");
         Object created = added.get(0);
         if (!type.id.equals(a.typeId(created)))
             throw Errors.unknown(
                     Reason.READBACK_MISMATCH,
                     "Inserted modulator's type differs from " + type.name
-                            + " or its contents are unmaterialized; inspect modulators.get.");
-        Scope now = new Scope(s.source, check);
+                            + " or its contents are unmaterialized; read modulators.list.");
+        Scope now = new Scope(s.source, s.deviceRef, check);
         List<String> unsupported = new ArrayList<>();
         JsonObject result = new JsonObject();
         int index = 0;
         while (after.get(index) != created) index++;
-        result.add("modulator", row(now, created, index, unsupported));
+        JsonObject row = row(now, created, index, unsupported);
+        result.add("ref", row.get("ref"));
+        result.add("modulator", row);
         result.addProperty("typeName", type.name);
         result.addProperty("requestedX", x);
         result.addProperty("requestedY", y);
@@ -846,14 +963,6 @@ final class ModulatorEditor implements ParameterResolver.ModuleOwners {
                 "exact_native_membership_and_type_readback",
                 "native_browser_insertion_point_undo_not_verified");
         return result;
-    }
-
-    private static void requireCount(Scope s, int expected) {
-        if (s.members.size() != expected)
-            throw Errors.notApplied(
-                    Reason.STALE_CONTEXT,
-                    "Device has " + s.members.size() + " modulators, not expectedCount " + expected
-                            + "; reacquire modulators.get.");
     }
 
     private static void written(JsonObject result, boolean changed, String verification, String undoScope) {
@@ -879,6 +988,6 @@ final class ModulatorEditor implements ParameterResolver.ModuleOwners {
     }
 
     private static void stale(String message) {
-        throw Errors.notApplied(Reason.STALE_CONTEXT, message);
+        throw Errors.notApplied(Reason.TARGET_CHANGED, message);
     }
 }

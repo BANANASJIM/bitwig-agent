@@ -731,23 +731,8 @@ def parse_arguments(method: str, rest: list[str], stdin: str = "") -> tuple[dict
 LAYER_UNKNOWN_RESULT = {
     "outcome": "unknown",
     "reason": "deadline",
-    "message": "Inspect child before another write",
+    "message": "Inspect the parameter before another write",
 }
-
-
-def string_panel_result(modulator_id, value):
-    return {
-        "outcome": "applied",
-        "modulatorId": modulator_id,
-        "parameterId": "",
-        "kind": "string",
-        "controlFamily": "string_panel",
-        "value": value,
-        "labels": None,
-        "shortLabel": None,
-        "display": None,
-        "nativeMutation": False,
-    }
 
 
 def assert_rejected_before_tcp(error, host):

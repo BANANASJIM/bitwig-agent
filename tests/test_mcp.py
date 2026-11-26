@@ -1,5 +1,5 @@
 import pytest
-from fakes import LAYER_UNKNOWN_RESULT, assert_rejected_before_tcp, string_panel_result
+from fakes import LAYER_UNKNOWN_RESULT, assert_rejected_before_tcp
 from mcp.shared.exceptions import MCPError
 
 from bitwig_agent.protocol import CLIENT_SIDE, TOOLS
@@ -11,7 +11,9 @@ pytestmark = pytest.mark.anyio
 
 TRACK = "12345678-1234-1234-1234-123456789abc"
 TARGET = {"trackId": TRACK, "deviceIndex": 2, "expectedDeviceName": "Polymer"}
-SET = {**TARGET, "contextToken": "context-1", "parameterId": "cutoff", "value": 0.75}
+DEVICE = {"kind": "device", "track": {"kind": "track", "id": TRACK, "name": "Lead"}, "index": 2, "name": "Polymer"}
+MODULATOR = {"kind": "modulator", "device": DEVICE, "id": TRACK, "name": "LFO"}
+SET = {"target": {"kind": "parameter", "owner": DEVICE, "id": "cutoff"}, "value": 0.75}
 
 
 async def test_real_stdio_preserves_partial_domain_results(mcp_session, host):
@@ -74,14 +76,14 @@ async def test_is_error_follows_the_outcome(mcp_session, host, outcome, is_error
         {"value": 1.01},
         {"value": "0.5"},
         {"value": True},
-        {"deviceIndex": 16},
-        {"deviceIndex": True},
-        {"trackId": "not-a-uuid"},
-        {"contextToken": ""},
-        {"parameterId": ""},
-        {"expectedDeviceName": ""},
+        {"value": {"label": "Bipolar"}},
+        {"target": {"kind": "parameter", "owner": {**DEVICE, "index": 16}, "id": "cutoff"}},
+        {"target": {"kind": "parameter", "owner": {**DEVICE, "index": True}, "id": "cutoff"}},
+        {"target": {"kind": "parameter", "owner": DEVICE, "id": ""}},
+        {"target": {"kind": "parameter", "owner": {**DEVICE, "name": None}, "id": "cutoff"}},
         {"unexpected": 1},
-        {"contextToken": "x" * 4097},
+        {"contextToken": "context-1"},
+        {"parameterId": "cutoff"},
     ],
 )
 async def test_invalid_arguments_never_reach_tcp(mcp_session, host, override):
@@ -144,16 +146,18 @@ async def test_absent_fields_and_explicit_nullable_fields_remain_distinct_over_m
         ("tracks.set", {"trackId": TRACK}),
         ("tracks.set", {"trackId": TRACK, "volumeNormalized": -1}),
         ("tracks.create", {"type": "audio", "position": True, "name": "x"}),
-        ("devices.set", {**TARGET, "enabled": 1}),
+        ("devices.set", {"target": DEVICE, "enabled": 1}),
+        ("devices.set", {"target": DEVICE}),
         (
-            "devices.remote.set",
+            "parameters.set",
             {
-                **TARGET,
-                "contextToken": "c",
-                "expectedPageName": "Main",
-                "parameterIndex": 8,
-                "expectedParameterName": "Level",
-                "normalizedValue": 0.5,
+                "target": {
+                    "kind": "parameter",
+                    "owner": {"kind": "remotePage", "device": DEVICE, "index": 0, "name": "Main"},
+                    "id": "8",
+                    "name": "Level",
+                },
+                "value": 0.5,
             },
         ),
         ("clips.insert", {"to": SLOT_REF, "lengthBeats": 4, "name": "x"}),
@@ -174,131 +178,71 @@ async def test_invalid_domain_edits_are_not_dispatched(mcp_session, host, method
     assert_rejected_before_tcp(response.structured_content, host)
 
 
-async def test_mcp_discovery_publishes_strict_layer_contracts(mcp_session):
+async def test_mcp_discovery_publishes_the_device_ref_contracts(mcp_session):
     response = await mcp_session.list_tools()
     tools = {tool.name: tool for tool in response.tools}
-    for method in ("devices.layers.list", "parameters.layer.list", "parameters.layer.set"):
-        tool = tools[method]
-        assert tool.annotations.read_only_hint is (method != "parameters.layer.set")
-        schema = tool.input_schema
+    for method, field in (
+        ("devices.list", "parent"),
+        ("chains.list", "parent"),
+        ("devices.insert", "parent"),
+        ("devices.get", "target"),
+        ("devices.move", "target"),
+        ("parameters.list", "parent"),
+        ("parameters.set", "target"),
+        ("modulators.list", "parent"),
+        ("modulators.map", "source"),
+    ):
+        schema = tools[method].input_schema
         assert schema["additionalProperties"] is False
-        assert set(schema["required"]) == set(TOOLS[method].examples[0])
-        reference = schema["properties"]["parent"]["$ref"]
-        parent = schema["$defs"][reference.rsplit("/", 1)[1]]
-        assert parent["additionalProperties"] is False
-        assert set(parent["properties"]) == set(parent["required"]) == {"trackId", "deviceIndex", "expectedDeviceName"}
-        assert parent["properties"]["deviceIndex"]["maximum"] == 15
-        if method != "devices.layers.list":
-            assert schema["properties"]["childDeviceIndex"]["maximum"] == 1
+        assert field in schema["required"], method
+        assert not {"trackId", "deviceIndex", "expectedDeviceName", "contextToken"} & set(schema["properties"])
+    assert tools["devices.list"].annotations.read_only_hint is True
+    assert tools["chains.list"].annotations.read_only_hint is True
+    assert tools["parameters.set"].annotations.idempotent_hint is True
+    assert tools["modulators.unmap"].annotations.destructive_hint is True
+    assert tools["modulators.unmap"].annotations.idempotent_hint is True
+    assert "modulators.catalog" not in tools
+    assert "devices.layers.list" not in tools
 
 
-@pytest.mark.parametrize("method", ["devices.layers.list", "parameters.layer.list", "parameters.layer.set"])
+@pytest.mark.parametrize("method", ["devices.list", "chains.list", "parameters.list", "modulators.list"])
 @pytest.mark.parametrize(
     "parent",
-    [
-        None,
-        {},
-        {**TARGET, "deviceIndex": 1.0},
-        {**TARGET, "deviceIndex": True},
-        {**TARGET, "layerId": TRACK},
-        {**TARGET, "timeoutMs": 250},
-        {**TARGET, "padIndex": 0},
-        {**TARGET, "slotIndex": 0},
-    ],
+    [None, {}, TARGET, {**DEVICE, "index": 1.0}, {**DEVICE, "index": True}, {**DEVICE, "layerId": TRACK}],
 )
-async def test_invalid_layer_parent_never_reaches_tcp(mcp_session, host, method, parent):
-    response = await mcp_session.call_tool(method, {**TOOLS[method].examples[0], "parent": parent})
+async def test_invalid_parent_never_reaches_tcp(mcp_session, host, method, parent):
+    response = await mcp_session.call_tool(method, {"parent": parent})
     assert response.is_error
     assert_rejected_before_tcp(response.structured_content, host)
 
 
-@pytest.mark.parametrize(
-    "changes",
-    [
-        {"childDeviceIndex": 2},
-        {"childDeviceIndex": 1.0},
-        {"childDeviceIndex": True},
-        {"layerId": "1-1-1-1-1"},
-        {"discoveryToken": None},
-        {"expectedChildDeviceName": ""},
-        {"contextToken": ""},
-        {"parameterId": ""},
-        {"value": True},
-        {"value": 1.01},
-        {"layerIndex": 0},
-        {"path": []},
-    ],
-)
-async def test_invalid_layer_write_never_reaches_tcp(mcp_session, host, changes):
-    response = await mcp_session.call_tool(
-        "parameters.layer.set", {**TOOLS["parameters.layer.set"].examples[0], **changes}
-    )
-    assert response.is_error
-    assert_rejected_before_tcp(response.structured_content, host)
-
-
-async def test_layer_mcp_preserves_unknown_without_retry(mcp_session, host):
+async def test_device_write_mcp_preserves_unknown_without_retry(mcp_session, host):
     unknown = LAYER_UNKNOWN_RESULT
     host.reply = lambda request: {"id": request["id"], "result": unknown}
-    params = TOOLS["parameters.layer.set"].examples[0]
-    response = await mcp_session.call_tool("parameters.layer.set", params)
+    params = TOOLS["parameters.set"].examples[1]
+    response = await mcp_session.call_tool("parameters.set", params)
     assert response.is_error
     assert response.structured_content == unknown
     assert host.requests[0]["params"] == params
-    assert host.requests[0]["timeoutMs"] == TOOLS["parameters.layer.set"].default_timeout_ms
+    assert host.requests[0]["timeoutMs"] == TOOLS["parameters.set"].default_timeout_ms
     assert len(host.requests) == host.connections == 1
-
-
-async def test_modulator_mcp_publishes_generated_read_only_contract(mcp_session):
-    response = await mcp_session.list_tools()
-    tools = {tool.name: tool for tool in response.tools}
-    for method in ("modulators.capabilities", "modulators.list", "modulators.parameters.get"):
-        tool = tools[method]
-        assert tool.annotations.read_only_hint is True
-        assert tool.annotations.destructive_hint is False
-        schema = tool.input_schema
-        assert schema["additionalProperties"] is False
-        if method != "modulators.capabilities":
-            parent = schema["$defs"]["DeviceParent"]
-            assert parent["additionalProperties"] is False
-            assert set(parent["required"]) == {"trackId", "deviceIndex", "expectedDeviceName"}
-        if method == "modulators.parameters.get":
-            assert set(schema["required"]) == {"parent", "modulatorId", "parameterId"}
-            assert schema["properties"]["parameterId"]["maxLength"] == 1024
-            assert schema["properties"]["parameterId"].get("minLength", 0) == 0
 
 
 @pytest.mark.parametrize(
     "changes",
     [
-        {"parent": {**TARGET, "deviceIndex": True}},
-        {"parent": {**TARGET, "deviceIndex": 1.0}},
-        {"parent": {**TARGET, "layerId": TRACK}},
-        {"modulatorId": "1-1-1-1-1"},
-        {"modulatorId": None},
-        {"parameterId": None},
-        {"parameterId": "𝄞" * 513},
+        {"target": {**MODULATOR, "id": "1-1-1-1-1"}},
+        {"target": None},
+        {"target": DEVICE},
         {"value": ""},
+        {"expect": {}},
     ],
 )
-async def test_modulator_mcp_rejects_invalid_args_before_tcp(mcp_session, host, changes):
-    response = await mcp_session.call_tool(
-        "modulators.parameters.get", {**TOOLS["modulators.parameters.get"].examples[0], **changes}
-    )
+async def test_modulator_control_write_rejects_invalid_args_before_tcp(mcp_session, host, changes):
+    params = {"target": {"kind": "parameter", "owner": MODULATOR, "id": "RATE"}, "value": 0.25, **changes}
+    response = await mcp_session.call_tool("parameters.set", params)
     assert response.is_error
     assert_rejected_before_tcp(response.structured_content, host)
-
-
-@pytest.mark.parametrize("value", ["", " \tMacro \u03b1𝄞\n "])
-async def test_modulator_mcp_preserves_raw_string_and_unavailable_metadata(mcp_session, host, value):
-    params = {**TOOLS["modulators.parameters.get"].examples[0], "parameterId": ""}
-    result = string_panel_result(params["modulatorId"], value)
-    host.reply = lambda request: {"id": request["id"], "result": result}
-    response = await mcp_session.call_tool("modulators.parameters.get", params)
-    assert response.is_error is False
-    assert response.structured_content == result
-    assert host.requests[0]["params"]["parameterId"] == ""
-    assert len(host.requests) == host.connections == 1
 
 
 async def test_modulator_mcp_preserves_partial_inventory_without_inventing_contents(mcp_session, host):
@@ -306,37 +250,21 @@ async def test_modulator_mcp_preserves_partial_inventory_without_inventing_conte
         "scope": "primary_modulators_on_root_device",
         "window": {"offset": 0, "limit": 1, "total": 2, "returned": 1},
         "modulators": [
-            {
-                "index": 0,
-                "modulatorId": TRACK,
-                "name": None,
-                "customName": None,
-                "contentsAvailable": False,
-                "typeId": None,
-                "parameters": None,
-            }
+            {"ref": MODULATOR, "name": None, "contentsAvailable": False, "typeId": None, "parameters": None}
         ],
     }
     host.reply = lambda request: {"id": request["id"], "result": result}
-    response = await mcp_session.call_tool("modulators.list", {"parent": TARGET, "limit": 1})
+    response = await mcp_session.call_tool("modulators.list", {"parent": DEVICE, "limit": 1})
     assert response.is_error is False
     assert response.structured_content == result
     assert len(host.requests) == host.connections == 1
 
 
-@pytest.mark.parametrize(
-    "error_code",
-    [
-        "native_unavailable",
-        "out_of_bounds",
-        "unsupported_scope",
-        "stale_context",
-    ],
-)
+@pytest.mark.parametrize("error_code", ["native_unavailable", "out_of_bounds", "unsupported_scope", "target_not_found"])
 async def test_modulator_mcp_preserves_read_errors_without_retry(mcp_session, host, error_code):
     error = {"code": REASONS[error_code].value, "reason": error_code, "message": "Read rejected"}
     host.reply = lambda request: {"id": request["id"], "error": error}
-    response = await mcp_session.call_tool("modulators.parameters.get", TOOLS["modulators.parameters.get"].examples[0])
+    response = await mcp_session.call_tool("modulators.get", {"target": MODULATOR})
     assert response.is_error
     assert response.structured_content == error
     assert len(host.requests) == host.connections == 1
@@ -354,6 +282,6 @@ async def test_modulator_mcp_preserves_read_errors_without_retry(mcp_session, ho
     ],
 )
 async def test_modulator_mcp_pagination_rejects_coercion_before_tcp(mcp_session, host, field, value):
-    response = await mcp_session.call_tool("modulators.list", {"parent": TARGET, field: value})
+    response = await mcp_session.call_tool("modulators.list", {"parent": DEVICE, field: value})
     assert response.is_error
     assert_rejected_before_tcp(response.structured_content, host)

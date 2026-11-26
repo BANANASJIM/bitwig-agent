@@ -27,12 +27,8 @@ async def grid_describe(client: Any, args: dict[str, Any], timeout_ms: int) -> d
     return grid_docs.describe(args)  # offline: reads the local Bitwig install, never the host
 
 
-async def modulators_catalog(client: Any, args: dict[str, Any], timeout_ms: int) -> dict[str, Any]:
-    return modulator_docs.catalog(args)  # offline: the local Bitwig install, never the host
-
-
 async def modulators_describe(client: Any, args: dict[str, Any], timeout_ms: int) -> dict[str, Any]:
-    return modulator_docs.describe(args)
+    return modulator_docs.describe(args)  # offline: the local Bitwig install, never the host
 
 
 async def presets_search(client: Any, args: dict[str, Any], timeout_ms: int) -> dict[str, Any]:
@@ -40,7 +36,6 @@ async def presets_search(client: Any, args: dict[str, Any], timeout_ms: int) -> 
 
 
 HANDLERS = {
-    "modulators.catalog": modulators_catalog,
     "modulators.describe": modulators_describe,
     "grid.apply": grid_apply,
     "grid.export": grid_export,

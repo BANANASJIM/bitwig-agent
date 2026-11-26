@@ -88,20 +88,20 @@ public final class GridModuleTest {
         f.device.child("name").emit("Other");
         f.device.child("name").emit("Poly Grid");
         f.adapter.next();
-        assertRpcError("stale_context", op);
+        assertRpcError("target_changed", op);
         assertTrue(f.adapter.reads == 0, "generation change detects ABA name transition before native read");
         Fixture type = new Fixture();
         op = type.start(target());
         type.device.child("deviceType").emit("Instrument");
         type.adapter.next();
-        assertRpcError("stale_context", op);
+        assertRpcError("target_changed", op);
         assertTrue(type.adapter.reads == 0, "device-type replacement retires a queued Grid read (shared root target)");
         Fixture track = new Fixture();
         op = track.start(target());
         track.host.tracks[0].child("channelId").emit(HostFixture.B);
         track.host.tracks[0].child("channelId").emit(HostFixture.A);
         track.adapter.next();
-        assertRpcError("stale_context", op);
+        assertRpcError("target_changed", op);
         assertTrue(track.adapter.reads == 0, "track ABA detected independently of device callbacks");
     }
 
@@ -113,7 +113,7 @@ public final class GridModuleTest {
         f.device.child("position").emit(1);
         f.host.next();
         assertTrue(
-                !assertRpcError("stale_context", op).unknown,
+                !assertRpcError("target_changed", op).unknown,
                 "post-read rebind rejects stale result without mutation ambiguity");
     }
 
@@ -372,7 +372,7 @@ public final class GridModuleTest {
         changed.device.child("name").emit("Poly Grid");
         changed.adapter.next();
         assertTrue(
-                !assertRpcError("stale_context", op).unknown && changed.adapter.writer.calls == 0,
+                !assertRpcError("target_changed", op).unknown && changed.adapter.writer.calls == 0,
                 "target ABA before mutation is not-applied");
         Fixture immediate = new Fixture();
         op = immediate.startWrite();
@@ -449,7 +449,7 @@ public final class GridModuleTest {
         target.adapter.next();
         target.device.child("position").emit(1);
         target.host.next();
-        assertTrue(assertUnknown("stale_context", op) != null, "late public target failure remains unknown");
+        assertTrue(assertUnknown("target_changed", op) != null, "late public target failure remains unknown");
         Fixture safety = new Fixture();
         op = safety.startWrite();
         safety.adapter.next();
@@ -479,7 +479,7 @@ public final class GridModuleTest {
         noop.device.child("position").emit(1);
         noop.host.next();
         assertTrue(
-                !assertRpcError("stale_context", op).unknown && !op.dispatched() && noop.adapter.writer.calls == 0,
+                !assertRpcError("target_changed", op).unknown && !op.dispatched() && noop.adapter.writer.calls == 0,
                 "late error after no-op does not invent a dispatched mutation");
         HostOperation expired = new HostOperation(0);
         expired.markDispatched();
@@ -602,7 +602,7 @@ public final class GridModuleTest {
             target.device.child("name").emit("Poly Grid");
             target.adapter.next();
             assertTrue(
-                    !assertRpcError("stale_context", op).unknown && target.adapter.topology.calls == 0,
+                    !assertRpcError("target_changed", op).unknown && target.adapter.topology.calls == 0,
                     "observed target ABA blocks topology before native dispatch");
         }
     }
@@ -795,7 +795,7 @@ public final class GridModuleTest {
                 if (boundary < 2) f.adapter.next();
                 else f.host.next();
                 assertTrue(
-                        failed("stale_context", op, boundary == 0)
+                        failed(safety ? "stale_context" : "target_changed", op, boundary == 0)
                                 && f.adapter.connections.calls == (boundary == 0 ? 0 : 1),
                         "cable safety/target ABA guards all three queue boundaries");
             }
@@ -1179,6 +1179,15 @@ public final class GridModuleTest {
         return true;
     }
 
+    /** A safety epoch change is stale_context; a device or track ABA is target_changed, or stale_context where the write had already left. */
+    private static boolean failedOneOf(HostOperation op, boolean beforeDispatch, String first, String second) {
+        String reason = beforeDispatch
+                ? rejection(op).reason.wire()
+                : op.result.join().get("reason").getAsString();
+        assertTrue(reason.equals(first) || reason.equals(second), reason);
+        return true;
+    }
+
     private static JsonObject capabilitiesWith(GridTopologyQuarantine guard) {
         JsonObject full = new JsonObject();
         full.addProperty("topologyQuarantined", guard.quarantined());
@@ -1282,7 +1291,7 @@ public final class GridModuleTest {
                     "native settlement is not skipped by controller schedule/future/extension close");
             if (change < 2)
                 assertTrue(
-                        assertUnknown("stale_context", op) != null,
+                        assertUnknown(change == 0 ? "stale_context" : "target_changed", op) != null,
                         "loader dispatch preserves uncertainty after public ABA");
         }
         Fixture late = new Fixture();
@@ -1295,7 +1304,7 @@ public final class GridModuleTest {
         late.host.next();
         late.adapter.insertion.guard.requireAvailable(GridInsertionWriterTest.ANY);
         assertTrue(
-                assertUnknown("stale_context", op) != null && late.adapter.insertion.placements == 1,
+                assertUnknown("target_changed", op) != null && late.adapter.insertion.placements == 1,
                 "post-settlement controller rejection never resurrects native pending lifetime");
     }
 
@@ -1458,7 +1467,12 @@ public final class GridModuleTest {
                 if (boundary < 2) f.adapter.next();
                 else f.host.next();
                 assertTrue(
-                        failed("stale_context", op, boundary == 0) && f.adapter.naming.calls == (boundary == 0 ? 0 : 1),
+                        failedOneOf(
+                                        op,
+                                        boundary == 0,
+                                        transition == 0 ? "stale_context" : "target_changed",
+                                        "stale_context")
+                                && f.adapter.naming.calls == (boundary == 0 ? 0 : 1),
                         "name safety/target ABA at dispatch, document observation or controller delivery never retries");
             }
         Fixture immediate = new Fixture();
@@ -1481,7 +1495,7 @@ public final class GridModuleTest {
         noop.device.child("position").emit(1);
         noop.host.next();
         assertTrue(
-                !assertRpcError("stale_context", op).unknown && !op.dispatched(),
+                !assertRpcError("target_changed", op).unknown && !op.dispatched(),
                 "late no-op delivery still checks explicit target without claiming a write");
     }
 
@@ -1519,8 +1533,6 @@ public final class GridModuleTest {
     void layerAddressingNeedsObservedLayersAndChildren() {
         JsonObject badParent = legacyTarget();
         badParent.addProperty("trackId", "not-a-uuid");
-        assertInvalidParams(() -> DeviceSources.validateParent(badParent));
-        assertInvalidParams(() -> DeviceSources.validateLayer(HostFixture.json("{\"parent\":1}"), false, true));
         HostFixture unobserved = HostFixture.withoutServices();
         unobserved.tracks[0].child("createDeviceBank").child("scrollPosition").notifyInitial = false;
         TestServices services = new TestServices(
@@ -1532,6 +1544,8 @@ public final class GridModuleTest {
                 "a root device window that was never observed is not addressable");
         Fixture f = new Fixture();
         DeviceSources sources = f.host.services.sources;
+        assertThrows(RpcException.class, () -> sources.root(badParent));
+        JsonObject root = Refs.device(Refs.track(HostFixture.A, "Track 0"), 0, "Poly Grid");
         FakeHost layers = f.device.child("createLayerBank");
         f.device.child("hasLayers").emit(true);
         layers.child("exists").emit(true);
@@ -1540,30 +1554,23 @@ public final class GridModuleTest {
         String id = "00000000-0000-0000-0000-0000000000aa";
         layer.child("exists").emit(true);
         assertTrue(
-                assertRpcError("not_ready", () -> sources.layer(legacyTarget(), id))
+                assertRpcError("not_ready", () -> sources.chain(Refs.chain(root, id, "Pad"), false))
                         .getMessage()
                         .contains("Layer identity window"),
                 "an existing layer without an observed UUID is not addressable");
         layer.child("channelId").emit(id);
         assertTrue(
-                assertRpcError("not_ready", () -> sources.layer(legacyTarget(), id))
+                assertRpcError("not_ready", () -> sources.chain(Refs.chain(root, id, "Pad"), false))
                         .getMessage()
                         .contains("Layer and child window"),
                 "a layer whose child window was never observed is not addressable");
         layer.child("createDeviceBank").child("exists").emit(true);
-        JsonObject child = new JsonObject();
-        child.add("parent", legacyTarget());
-        child.addProperty("layerId", id);
-        child.addProperty("childDeviceIndex", 2);
-        child.addProperty("expectedChildDeviceName", "Child");
-        child.addProperty("discoveryToken", "token");
-        assertRpcError("outside_window", () -> sources.child(child));
-        child.addProperty("childDeviceIndex", 0);
+        JsonObject chain = Refs.chain(root, id, "Pad");
         assertTrue(
-                assertRpcError("not_ready", () -> sources.child(child))
+                assertRpcError("target_not_found", () -> sources.device(Refs.device(chain, 0, "Child"), false))
                         .getMessage()
-                        .contains("Child metadata"),
-                "an absent layer child is not addressable");
+                        .contains("No device is at this index"),
+                "a chain device that is not there is not addressable");
     }
 
     @Test

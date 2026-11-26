@@ -78,6 +78,10 @@ def test_advertised_description_fits_the_limit_and_keeps_its_example(name):
     assert len(advertised) <= DESCRIPTION_LIMIT
     assert "…" not in advertised
     example = json.dumps(spec.examples[0], ensure_ascii=False) if spec.examples[0] else ""
+    if len(example) > views.ADVERTISED_EXAMPLE_LIMIT:
+        assert "Example arguments" not in advertised
+        assert views.HELP_POINTER.format(name=name) in advertised, "a hidden example is found with help"
+        example = ""
     assert example in advertised
     if len(spec.description) + len(example) > DESCRIPTION_LIMIT:
         assert views.HELP_POINTER.format(name=name) in advertised

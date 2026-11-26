@@ -1,7 +1,6 @@
 """Device-modulator tools: offline docs on synthetic fixtures, strict schemas; a real install only for coverage."""
 
 import asyncio
-import re
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +9,7 @@ from fakes import execute_cli as execute
 
 from bitwig_agent import modulator_docs
 from bitwig_agent.protocol import CLIENT_SIDE, TOOLS, validate_call
+from bitwig_agent.protocol.annotations import REMOVE, resolve
 
 REAL_ROOT = Path("/opt/bitwig-studio")
 real = pytest.mark.skipif(
@@ -18,8 +18,16 @@ real = pytest.mark.skipif(
 )
 TRACK = "12345678-1234-1234-1234-123456789abc"
 MOD = "abcdef01-2345-6789-abcd-0123456789ab"
-PARENT = {"trackId": TRACK, "deviceIndex": 0, "expectedDeviceName": "Poly Grid"}
-GRID_TARGET = {"moduleId": "abcdef02-2345-6789-abcd-0123456789ab", "parameterId": "DECAY"}
+TRACK_REF = {"kind": "track", "id": TRACK, "name": "Lead"}
+PARENT = {"kind": "device", "track": TRACK_REF, "index": 0, "name": "Poly Grid"}
+SOURCE = {"kind": "modulator", "device": PARENT, "id": MOD, "name": "LFO"}
+GRID_MODULE = {"kind": "gridModule", "device": PARENT, "id": "abcdef02-2345-6789-abcd-0123456789ab", "name": "AD"}
+GRID_TARGET = {"kind": "parameter", "owner": GRID_MODULE, "id": "DECAY"}
+MODULATOR_TARGET = {
+    "kind": "parameter",
+    "owner": {**SOURCE, "id": "abcdef03-2345-6789-abcd-0123456789ab", "name": "Random"},
+    "id": "RATE",
+}
 
 DESCRIPTIONS = """\
 #Mon Jan 01 00:00:00 CET 2024
@@ -90,18 +98,23 @@ def test_describe_collects_controls_and_documented_values(root):
     ]
     assert controls["rate"]["documentedValuesStatus"] == modulator_docs.DOCUMENTED_STATUS
     assert result["sharedControls"] == [{"docKey": "input", "description": "Shared input text"}]
-    assert "modulators.get" in result["liveFacts"]
+    assert "modulators.list" in result["liveFacts"]
     assert modulator_docs.describe({"type": "Chaos"})["controls"][0]["docKey"] == "smooth"
-    assert modulator_docs.describe({"query": "wobble"})["matches"][0]["name"] == "Fake LFO"
+    assert modulator_docs.describe({"query": "wobble"})["modulators"][0]["name"] == "Fake LFO"
+    assert modulator_docs.describe({})["total"] == 3
     with pytest.raises(ValueError, match="did you mean"):
         modulator_docs.describe({"type": "Fake LF"})
 
 
 def test_client_side_routing_never_calls_the_host(root):
-    assert {"modulators.catalog", "modulators.describe"} <= CLIENT_SIDE
+    assert "modulators.describe" in CLIENT_SIDE
+    assert "modulators.catalog" not in TOOLS
     payload, code = asyncio.run(execute(["modulators.describe", "--type=Chaos"]))
     assert code == 0
     assert payload["result"]["name"] == "Chaos"
+    payload, code = asyncio.run(execute(["modulators.describe"]))
+    assert code == 0
+    assert payload["result"]["total"] == 3
 
 
 @real
@@ -117,84 +130,92 @@ def test_real_install_covers_every_modulator(monkeypatch):
 
 def test_examples_validate_and_write_tools_are_not_read_only():
     for method in (
+        "modulators.list",
         "modulators.get",
         "modulators.insert",
         "modulators.delete",
-        "modulators.parameters.set",
         "modulators.map",
         "modulators.unmap",
-        "modulators.catalog",
         "modulators.describe",
     ):
         for example in TOOLS[method].examples:
             validate_call(method, example)
-    for method in (
-        "modulators.insert",
-        "modulators.delete",
-        "modulators.parameters.set",
-        "modulators.map",
-        "modulators.unmap",
-    ):
+    for method in ("modulators.insert", "modulators.delete", "modulators.map", "modulators.unmap"):
         assert not TOOLS[method].read_only
     assert TOOLS["modulators.get"].read_only
+    assert TOOLS["modulators.list"].read_only
 
 
-def test_map_schema_mirrors_host_rules():
-    base = {"parent": PARENT, "modulatorId": MOD, "target": GRID_TARGET}
-    args, _ = validate_call("modulators.map", {**base, "expectedAmount": None, "amount": 0.5})
-    assert args["expectedAmount"] is None  # explicit null is sent: it means "create"
-    validate_call(
-        "modulators.map",
-        {
-            **base,
-            "target": {"modulatorId": MOD, "parameterId": "RATE"},
-            "expectedAmount": -1,
-            "amount": 1,
-            "transfer": "rectify_pos",
-            "enabled": False,
-            "outputId": "OUT",
-        },
-    )
+def test_map_is_an_upsert_whose_omitted_fields_stay_omitted():
+    base = {"source": SOURCE, "target": GRID_TARGET}
+    args, _ = validate_call("modulators.map", {**base, "amount": 0.5})
+    assert not {"transfer", "enabled", "expect"} & set(args)
+    full = {
+        **base,
+        "target": MODULATOR_TARGET,
+        "amount": 1,
+        "transfer": "rectify_pos",
+        "enabled": False,
+        "outputId": "OUT",
+        "expect": {"amount": -1},
+    }
+    assert validate_call("modulators.map", full)[0] == full
     for bad in (
-        {"expectedAmount": None, "amount": 1.5},
-        {"amount": 0.5},
-        {"expectedAmount": None, "amount": "0.5"},
-        {"expectedAmount": None, "amount": 0.5, "transfer": "log"},
-        {"expectedAmount": None, "amount": 0.5, "extra": 1},
-        {"expectedAmount": None, "amount": 0.5, "target": {**GRID_TARGET, "modulatorId": MOD}},
-        {"expectedAmount": None, "amount": True},
+        {"amount": 1.5},
+        {},
+        {"amount": "0.5"},
+        {"amount": 0.5, "transfer": "log"},
+        {"amount": 0.5, "extra": 1},
+        {"amount": True},
+        {"amount": 0.5, "expect": {}},
+        {"amount": 0.5, "expect": {"amount": 2}},
+        {"amount": 0.5, "expectedAmount": None},
+        {"amount": 0.5, "modulatorId": MOD},
+        {
+            "amount": 0.5,
+            "target": {"kind": "parameter", "owner": {**GRID_MODULE, "device": {**PARENT, "index": 1}}, "id": "X"},
+        },
     ):
-        with pytest.raises(ValueError, match=r"validation errors? for ModulatorMapArgs"):
+        with pytest.raises(ValueError, match=r"validation errors? for ModulatorsMapArgs"):
             validate_call("modulators.map", {**base, **bad})
-    with pytest.raises(ValueError, match=re.escape("1 validation error for ModulatorUnmapArgs")):
-        validate_call("modulators.unmap", {**base, "expectedAmount": None})
-    validate_call("modulators.unmap", {**base, "expectedAmount": 0.25})
+    with pytest.raises(ValueError, match=r"validation errors? for ModulatorsUnmapArgs"):
+        validate_call("modulators.unmap", {**base, "amount": 0.5})
+    assert validate_call("modulators.unmap", {**base, "expect": {"amount": 0.25}})[0]["expect"] == {"amount": 0.25}
+    assert validate_call("modulators.unmap", base)[0] == base
 
 
-def test_insert_delete_and_parameter_schemas():
-    validate_call("modulators.insert", {"parent": PARENT, "expectedCount": 0, "typeName": "Random"})
-    validate_call("modulators.insert", {"parent": PARENT, "expectedCount": 4096, "typeId": MOD})
+def test_map_targets_take_only_grid_and_modulator_parameters():
+    base = {"source": SOURCE, "amount": 0.5}
+    device_parameter = {"kind": "parameter", "owner": PARENT, "id": "CONTENTS/GAIN"}
+    track_parameter = {"kind": "parameter", "owner": TRACK_REF, "id": "volume"}
+    for target in (device_parameter, track_parameter):
+        with pytest.raises(ValueError, match=r"does not take a parameter owned by"):
+            validate_call("modulators.map", {**base, "target": target})
+
+
+def test_unmap_is_annotated_as_a_removal_and_the_catalog_is_describe():
+    assert resolve("modulators.unmap", TOOLS["modulators.unmap"].annotations) == REMOVE
+    assert TOOLS["modulators.describe"].host is False
+    assert validate_call("modulators.describe", {})[0] == {}
+    with pytest.raises(ValueError, match="at most one"):
+        validate_call("modulators.describe", {"type": "Random", "query": "random"})
+
+
+def test_insert_delete_and_get_schemas():
+    validate_call("modulators.insert", {"parent": PARENT, "typeName": "Random"})
+    validate_call("modulators.insert", {"parent": PARENT, "typeId": MOD})
     bad: Any
     for bad in (
-        {"expectedCount": 0},
-        {"expectedCount": 0, "typeName": "Random", "typeId": MOD},
-        {"expectedCount": -1, "typeName": "Random"},
-        {"expectedCount": 0, "typeName": ""},
-    ):
-        with pytest.raises(ValueError, match=re.escape("1 validation error for ModulatorInsertArgs")):
-            validate_call("modulators.insert", {"parent": PARENT, **bad})
-    with pytest.raises(ValueError, match=re.escape("1 validation error for ModulatorDeleteArgs")):
-        validate_call("modulators.delete", {"parent": PARENT, "modulatorId": MOD, "expectedCount": 0})
-    ok = {"parent": PARENT, "modulatorId": MOD, "parameterId": "RATE", "expectedKind": "float", "expectedValue": 0.5}
-    validate_call("modulators.parameters.set", {**ok, "value": 0.25})
-    validate_call("modulators.parameters.set", {**ok, "display": "2 Hz"})
-    validate_call("modulators.parameters.set", {**ok, "expectedKind": "enum", "expectedValue": 1, "value": 2})
-    for bad in (
-        {"value": 0.25, "display": "2 Hz"},
         {},
-        {"expectedKind": "string", "value": "x"},
-        {"expectedKind": "integer", "value": 1.5},
-        {"expectedKind": "boolean", "expectedValue": True, "value": 1},
+        {"typeName": "Random", "typeId": MOD},
+        {"typeName": ""},
+        {"typeName": "Random", "expectedCount": 0},
+        {"parent": SOURCE, "typeName": "Random"},
     ):
-        with pytest.raises(ValueError, match=r"validation errors? for ModulatorParameterSetArgs"):
-            validate_call("modulators.parameters.set", {**ok, **bad})
+        with pytest.raises(ValueError, match=r"validation errors? for ModulatorsInsertArgs"):
+            validate_call("modulators.insert", {"parent": PARENT, **bad})
+    for method in ("modulators.get", "modulators.delete"):
+        assert validate_call(method, {"target": SOURCE})[0] == {"target": SOURCE}
+        for bad_target in (PARENT, {**SOURCE, "id": "nope"}, {"modulatorId": MOD}):
+            with pytest.raises(ValueError, match=r"validation errors? for Modulators"):
+                validate_call(method, {"target": bad_target})

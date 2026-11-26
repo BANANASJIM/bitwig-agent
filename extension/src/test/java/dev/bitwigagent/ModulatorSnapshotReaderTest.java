@@ -114,22 +114,22 @@ public final class ModulatorSnapshotReaderTest {
     void primaryOwnerAndDirectMembershipFailClosed() {
         Fixture f = new Fixture();
         f.collection.put(PARENT, new Node());
-        assertRpcError("stale_context", f::get);
+        assertRpcError("target_changed", f::get);
         f = new Fixture();
         f.first.put(PARENT, new Node());
-        assertRpcError("stale_context", f::get);
+        assertRpcError("target_changed", f::get);
         f = new Fixture();
         f.first.put(COLLECTION_OWNER, new Node());
-        assertRpcError("stale_context", f::get);
+        assertRpcError("target_changed", f::get);
         f = new Fixture();
         f.contents.put(PARENT, new Node());
-        assertRpcError("stale_context", f::get);
+        assertRpcError("target_changed", f::get);
         f = new Fixture();
         f.contents.put(CONTENTS_OWNER, new Node());
-        assertRpcError("stale_context", f::get);
+        assertRpcError("target_changed", f::get);
         f = new Fixture();
         f.panel.put(PARENT, new Node());
-        assertRpcError("stale_context", f::get);
+        assertRpcError("target_changed", f::get);
         Fixture absent = new Fixture();
         Node outside = absent.modulator();
         UUID outsideId = absent.id(outside);
@@ -140,7 +140,7 @@ public final class ModulatorSnapshotReaderTest {
         assertRpcError("native_unavailable", f::get);
         f = new Fixture();
         f.trackId = new UUID(1, 8);
-        assertRpcError("stale_context", f::get);
+        assertRpcError("target_changed", f::get);
     }
 
     @Test
@@ -176,33 +176,33 @@ public final class ModulatorSnapshotReaderTest {
         Fixture f = new Fixture();
         UUID original = f.id(f.first);
         f.afterValue = () -> f.first.put(ID, new UUID(7, 7));
-        assertRpcError("stale_context", f::get);
+        assertRpcError("target_changed", f::get);
         assertTrue(!f.id(f.first).equals(original), "same object changed UUID, not merely replacement");
         Fixture type = new Fixture();
         type.afterValue = () -> type.contents.put(TYPE_ID, new UUID(8, 8));
-        assertRpcError("stale_context", type::get);
+        assertRpcError("target_changed", type::get);
         Fixture content = new Fixture();
         content.afterValue = () -> content.first.put(CONTENTS, null);
-        assertRpcError("stale_context", content::get);
+        assertRpcError("target_changed", content::get);
         Fixture parent = new Fixture();
         parent.afterValue = () -> parent.panel.put(PARENT, parent.first);
-        assertRpcError("stale_context", parent::get);
+        assertRpcError("target_changed", parent::get);
         Fixture child = new Fixture();
         child.afterValue = () -> child.children(child.contents).set(0, new Node(MODEL));
-        assertRpcError("stale_context", child::get);
+        assertRpcError("target_changed", child::get);
         Fixture identifier = new Fixture();
         identifier.afterValue = () -> identifier.panel.put(PARAMETER_ID, "OTHER");
-        assertRpcError("stale_context", identifier::get);
+        assertRpcError("target_changed", identifier::get);
         Fixture value = new Fixture();
         value.afterValue = () -> value.panel.put(VALUE, "changed");
-        assertRpcError("stale_context", value::get);
+        assertRpcError("target_changed", value::get);
         Fixture order = new Fixture();
         order.modulator();
         order.afterValue = () -> Collections.reverse(order.rows);
-        assertRpcError("stale_context", order::get);
+        assertRpcError("target_changed", order::get);
         Fixture count = new Fixture();
         count.afterValue = count::modulator;
-        assertRpcError("stale_context", count::get);
+        assertRpcError("target_changed", count::get);
         Fixture wrapper = new Fixture();
         wrapper.freshChildrenWrappers = true;
         assertTrue(
@@ -214,10 +214,10 @@ public final class ModulatorSnapshotReaderTest {
     void contextAndTargetChangesFailClosed() {
         Fixture f = new Fixture();
         f.afterValue = () -> f.target = new Node();
-        assertRpcError("stale_context", f::get);
+        assertRpcError("target_changed", f::get);
         Fixture owner = new Fixture();
         owner.afterValue = () -> owner.trackId = new UUID(4, 2);
-        assertRpcError("stale_context", owner::get);
+        assertRpcError("target_changed", owner::get);
         Fixture context = new Fixture();
         context.afterValue = () -> context.panel.context = new Node();
         assertRpcError("stale_context", context::get);
@@ -317,7 +317,7 @@ public final class ModulatorSnapshotReaderTest {
         changed.onRead = (field, object) -> {
             if (field == CHILDREN) changed.first.put(ID, new UUID(100, 100));
         };
-        assertRpcError("stale_context", () -> changed.list(0, 64));
+        assertRpcError("target_changed", () -> changed.list(0, 64));
         Fixture work = new Fixture();
         work.rows.clear();
         for (int i = 0; i < 33; i++) {
@@ -402,24 +402,9 @@ public final class ModulatorSnapshotReaderTest {
     }
 
     @Test
-    void runtimeGateIsReadOnlyAndDoesNotClaimAcceptance() {
+    void aWrongRuntimeVersionStaysClosedForReads() {
         Bitwig614ModulatorAdapter adapter =
                 new Bitwig614ModulatorAdapter(new Bitwig614Runtime(new Object(), "6.1.2", () -> {}).access());
-        JsonObject capabilities = adapter.capabilities();
-        assertTrue(
-                !capabilities.getAsJsonObject("runtimeGate").get("available").getAsBoolean(),
-                "wrong runtime version remains closed");
-        assertTrue(
-                !capabilities.getAsJsonObject("discovery").get("available").getAsBoolean()
-                        && !capabilities
-                                .getAsJsonObject("stringPanelRead")
-                                .get("available")
-                                .getAsBoolean(),
-                "domain capabilities respect runtime failure");
-        assertTrue(
-                !capabilities.get("writeAvailable").getAsBoolean()
-                        && capabilities.get("nativeVerification").getAsString().equals("not_established_by_binding"),
-                "binding is never native acceptance or write authority");
         assertRpcError("host_mismatch", () -> adapter.list(HostFixture.rootSource(TRACK), 0, 64, () -> {}));
     }
 

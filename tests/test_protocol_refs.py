@@ -146,7 +146,7 @@ def test_the_bundle_carries_every_kinds_roles_and_the_ref_schema():
 
 
 def test_every_variant_names_the_read_that_returns_it():
-    pending = {"chains.list"}  # P2-D renames devices.layers.list
+    pending: set[str] = set()
     assert set(READS) == {variant.TAG for variant in VARIANTS}
     assert set(READS.values()) - set(TOOLS) == pending
     assert export_bundle()["refs"]["parameterOwners"] == list(PARAMETER_VARIANTS)

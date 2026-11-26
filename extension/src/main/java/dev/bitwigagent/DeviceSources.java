@@ -155,7 +155,6 @@ final class DeviceSources {
         // preserves that root-only bank-proxy policy without marking metadata observed.
         String directTrackId, directName;
         int directPosition;
-        String discoveryToken;
 
         Source(TrackState track, int slot, Device device, Layer layer) {
             this.track = track;
@@ -164,10 +163,7 @@ final class DeviceSources {
             this.layer = layer;
             rootReadEpoch = layer == null ? new AtomicLong() : null;
             if (layer == null) listeners.add((structural, renamed) -> rootReadEpoch.incrementAndGet());
-            if (layer != null) {
-                rebound = layer.rebound;
-                if (!rebound) discoveryToken = UUID.randomUUID().toString();
-            }
+            if (layer != null) rebound = layer.rebound;
         }
 
         void observe() {
@@ -277,11 +273,7 @@ final class DeviceSources {
                 epoch++;
                 if (layer != null) rebound = true;
             }
-            if (retired || renamed) {
-                revision++;
-                if (layer != null)
-                    discoveryToken = rebound ? null : UUID.randomUUID().toString();
-            }
+            if (retired || renamed) revision++;
             if (present()) established = true;
             for (Listener listener : listeners) listener.changed(retired, renamed);
             if (branch != null) {
@@ -299,31 +291,11 @@ final class DeviceSources {
             rebound = true;
             epoch++;
             revision++;
-            discoveryToken = null;
             for (Listener listener : listeners) listener.changed(true, false);
-        }
-
-        JsonObject parentJson() {
-            JsonObject p = new JsonObject();
-            p.addProperty("trackId", track.id);
-            p.addProperty("deviceIndex", position);
-            p.addProperty("expectedDeviceName", name);
-            return p;
         }
 
         JsonObject ref() {
             return Refs.device(layer == null ? trackRefs.ref(track.slot) : layer.ref(), position, name);
-        }
-
-        JsonObject address() {
-            if (layer == null) return parentJson();
-            JsonObject result = new JsonObject();
-            result.add("parent", layer.branch.root.parentJson());
-            result.addProperty("layerId", layer.id);
-            result.addProperty("childDeviceIndex", position);
-            result.addProperty("expectedChildDeviceName", name);
-            result.addProperty("discoveryToken", discoveryToken);
-            return result;
         }
     }
 
@@ -561,7 +533,7 @@ final class DeviceSources {
             throw Errors.notApplied(Reason.UNSUPPORTED_SCOPE, "Chains of a device inside a chain are not observed.");
         Source root = device(device, false);
         requireBranch(root.branch);
-        Layer found = findLayer(root, ref.get("id").getAsString(), Reason.NOT_READY);
+        Layer found = findLayer(root, ref.get("id").getAsString());
         if (found == null) throw Errors.targetNotFound(ref, "The device has no chain with this id.");
         if (!found.ready())
             throw Errors.notApplied(Reason.NOT_READY, "Layer and child window are not ready at offset zero.");
@@ -612,6 +584,17 @@ final class DeviceSources {
         return ticket;
     }
 
+    /** The read ticket of a resolved root device; a device inside a chain has no native target here. */
+    RootReadTicket rootRead(Source source) {
+        if (source.layer != null)
+            throw Errors.notApplied(Reason.UNSUPPORTED_SCOPE, "A device inside a chain has no native target here.");
+        if (source.position >= source.track.count)
+            throw Errors.targetNotFound(source.ref(), "The device is outside the observed device count.");
+        RootReadTicket ticket = new RootReadTicket(source, trackOffset, window.total());
+        guardRootRead(ticket);
+        return ticket;
+    }
+
     /** A ticket for every observed root device of {@code trackId}, for callers that find a device by identity. */
     List<RootReadTicket> rootReads(String trackId) {
         List<RootReadTicket> out = new ArrayList<>();
@@ -649,7 +632,7 @@ final class DeviceSources {
                 || source.device.position().get() != ticket.index
                 || !ticket.name.equals(source.device.name().get())
                 || !ticket.type.equals(source.device.deviceType().get()))
-            throw Errors.notApplied(Reason.STALE_CONTEXT, "Observed root device changed before read delivery.");
+            throw Errors.notApplied(Reason.TARGET_CHANGED, "Observed root device changed before read delivery.");
         ticket.check();
     }
 
@@ -680,7 +663,7 @@ final class DeviceSources {
         void check() {
             if (epoch.get() != generation)
                 throw Errors.notApplied(
-                        Reason.STALE_CONTEXT, "Observed root device changed while its read was queued or running.");
+                        Reason.TARGET_CHANGED, "Observed root device changed while its read was queued or running.");
         }
 
         JsonObject parent() {
@@ -692,36 +675,8 @@ final class DeviceSources {
         }
     }
 
-    Source child(JsonObject p) {
-        Layer found = layer(p.getAsJsonObject("parent"), p.get("layerId").getAsString());
-        int index = p.get("childDeviceIndex").getAsInt();
-        if (index >= CHILDREN)
-            throw Errors.notApplied(Reason.OUTSIDE_WINDOW, "Child is outside the fixed two-device window.");
-        Source child = found.children[index];
-        if (child.rebound) throw rebound();
-        if (!child.present())
-            throw Errors.notApplied(Reason.NOT_READY, "Child metadata or ancestor/window context is not ready.");
-        if (!child.name.equals(p.get("expectedChildDeviceName").getAsString())
-                || !child.discoveryToken.equals(p.get("discoveryToken").getAsString()))
-            throw Errors.notApplied(
-                    Reason.STALE_CONTEXT, "Rediscover the layer child after an observed context change.");
-        return child;
-    }
-
-    /** The observed, ready layer of an explicit root parent; the shared half of child addressing. */
-    Layer layer(JsonObject parent, String id) {
-        Source root = root(parent);
-        requireBranch(root.branch);
-        Layer found = findLayer(root, id, Reason.STALE_CONTEXT);
-        if (found == null)
-            throw Errors.notApplied(Reason.STALE_CONTEXT, "Layer UUID is absent from the observed window.");
-        if (!found.ready())
-            throw Errors.notApplied(Reason.NOT_READY, "Layer and child window are not ready at offset zero.");
-        return found;
-    }
-
     /** The visible layer with this UUID, or null when none has it. */
-    private static Layer findLayer(Source root, String id, Reason ambiguous) {
+    static Layer findLayer(Source root, String id) {
         Layer found = null;
         for (Layer layer : root.branch.layers) {
             if (layer.slot >= root.branch.window.count) continue;
@@ -729,7 +684,7 @@ final class DeviceSources {
                 throw Errors.notApplied(Reason.NOT_READY, "Layer identity window is not fully observed.");
             if (Boolean.TRUE.equals(layer.exists) && id.equals(layer.id)) {
                 if (found != null)
-                    throw Errors.notApplied(ambiguous, "Layer UUID is ambiguous in the observed window.");
+                    throw Errors.notApplied(Reason.NOT_READY, "Layer UUID is ambiguous in the observed window.");
                 found = layer;
             }
         }
@@ -754,7 +709,7 @@ final class DeviceSources {
         return source.position;
     }
 
-    private void requireBranch(Branch branch) {
+    void requireBranch(Branch branch) {
         if (branch.hasLayers == null)
             throw Errors.notApplied(Reason.NOT_READY, "Parent layer support has not been observed.");
         if (!branch.hasLayers)
@@ -763,115 +718,12 @@ final class DeviceSources {
             throw Errors.notApplied(Reason.NOT_READY, "Layer window has not been observed at offset zero.");
     }
 
-    JsonObject listLayers(JsonObject p) {
-        Source root = root(p.getAsJsonObject("parent"));
-        requireBranch(root.branch);
-        JsonObject result = new JsonObject();
-        result.add("parent", root.parentJson());
-        result.addProperty("scope", "one_layer_hop");
-        result.add("window", root.branch.window.json());
-        JsonArray layers = new JsonArray();
-        for (Layer layer : root.branch.layers) {
-            if (layer.slot >= root.branch.window.count) continue;
-            JsonObject item = new JsonObject();
-            item.addProperty("index", layer.slot);
-            item.addProperty("layerId", layer.id);
-            item.addProperty("name", layer.name);
-            item.addProperty("channelIndex", layer.channelIndex);
-            item.addProperty(
-                    "readiness", Boolean.FALSE.equals(layer.exists) ? "absent" : layer.ready() ? "ready" : "not_ready");
-            item.add("window", layer.window.json());
-            JsonArray children = new JsonArray();
-            boolean unique = canonicalUuid(layer.id);
-            for (Layer other : root.branch.layers) {
-                if (other.slot >= root.branch.window.count) continue;
-                if (other.exists == null
-                        || (Boolean.TRUE.equals(other.exists) && !canonicalUuid(other.id))
-                        || (other != layer && Boolean.TRUE.equals(other.exists) && Objects.equals(layer.id, other.id)))
-                    unique = false;
-            }
-            for (Source child : layer.children) {
-                if (layer.window.count != null && child.slot >= layer.window.count) continue;
-                JsonObject descriptor = new JsonObject();
-                descriptor.addProperty("index", child.slot);
-                descriptor.addProperty("childDeviceIndex", child.position);
-                descriptor.addProperty("name", child.name);
-                descriptor.addProperty("type", child.type);
-                boolean ready = unique && child.directReady() && child.slot < layer.window.count;
-                descriptor.addProperty(
-                        "readiness", Boolean.FALSE.equals(child.exists) ? "absent" : ready ? "ready" : "not_ready");
-                descriptor.addProperty("directContextAvailable", ready);
-                if (ready) descriptor.addProperty("discoveryToken", child.discoveryToken);
-                if (child.rebound)
-                    descriptor.addProperty(
-                            "reason", "physical_rebind_callback_provenance_unavailable_until_extension_reload");
-                children.add(descriptor);
-            }
-            item.add("devices", children);
-            layers.add(item);
-        }
-        result.add("layers", layers);
-        result.addProperty("identityScope", "observed_bank_proxy_context_not_persistent_device_identity");
-        result.addProperty(
-                "identityCaveat",
-                "Unobserved same-metadata physical replacement cannot be detected by these public proxies.");
-        result.addProperty(
-                "directParameterReadiness", "separate_from_discovery_requires_actual_id_and_value_callbacks");
-        return result;
-    }
-
     static boolean canonicalUuid(String value) {
         if (value == null) return false;
         try {
             return UUID.fromString(value).toString().equalsIgnoreCase(value);
         } catch (IllegalArgumentException error) {
             return false;
-        }
-    }
-
-    static void validateParent(JsonObject p) {
-        Params.fields(p, Set.of("trackId", "deviceIndex", "expectedDeviceName"), Set.of());
-        if (!canonicalUuid(Params.string(p, "trackId")))
-            throw Errors.notApplied(Reason.INVALID_PARAMS, "trackId must be a canonical UUID.");
-        Params.integer(p, "deviceIndex", 0, DEVICES - 1);
-        Params.string(p, "expectedDeviceName");
-    }
-
-    static void validateLayer(JsonObject p, boolean write, boolean discovery) {
-        Params.fields(
-                p,
-                discovery
-                        ? Set.of("parent")
-                        : write
-                                ? Set.of(
-                                        "parent",
-                                        "layerId",
-                                        "childDeviceIndex",
-                                        "expectedChildDeviceName",
-                                        "discoveryToken",
-                                        "contextToken",
-                                        "parameterId",
-                                        "value")
-                                : Set.of(
-                                        "parent",
-                                        "layerId",
-                                        "childDeviceIndex",
-                                        "expectedChildDeviceName",
-                                        "discoveryToken"),
-                Set.of());
-        if (!p.get("parent").isJsonObject())
-            throw Errors.notApplied(Reason.INVALID_PARAMS, "parent must be an object.");
-        validateParent(p.getAsJsonObject("parent"));
-        if (discovery) return;
-        if (!canonicalUuid(Params.string(p, "layerId")))
-            throw Errors.notApplied(Reason.INVALID_PARAMS, "layerId must be a canonical UUID.");
-        Params.integer(p, "childDeviceIndex", 0, CHILDREN - 1);
-        Params.string(p, "expectedChildDeviceName");
-        Params.string(p, "discoveryToken");
-        if (write) {
-            Params.string(p, "contextToken");
-            Params.string(p, "parameterId");
-            Params.number(p, "value", 0, 1);
         }
     }
 
@@ -932,15 +784,15 @@ final class DeviceSources {
             a.documentThread();
             check.run();
             if (!before.trackId.equals(trackUuid(before.source)))
-                throw Errors.notApplied(Reason.STALE_CONTEXT, "The device's track changed during the read.");
+                throw Errors.notApplied(Reason.TARGET_CHANGED, "The device's track changed during the read.");
             if (a.read(Field.TARGET, before.source.device) != before.device)
-                throw Errors.notApplied(Reason.STALE_CONTEXT, "The device changed during the read.");
+                throw Errors.notApplied(Reason.TARGET_CHANGED, "The device changed during the read.");
             a.requireModelThread(before.device);
             Object owner = owningTrack(before.device), identity = trackIdentity(owner);
             requireTrackUuid(owner, identity, before.trackId);
             if (owner != before.owner || identity != before.identity)
                 throw Errors.notApplied(
-                        Reason.STALE_CONTEXT, "The device's track or its channel alias changed during the read.");
+                        Reason.TARGET_CHANGED, "The device's track or its channel alias changed during the read.");
             check.run();
         }
 
@@ -975,7 +827,8 @@ final class DeviceSources {
                 throw Errors.notApplied(
                         Reason.NATIVE_UNAVAILABLE, "The device's native track UUID is missing or unsupported.");
             if (!expected.equals(value))
-                throw Errors.notApplied(Reason.STALE_CONTEXT, "The device belongs to another track than the one read.");
+                throw Errors.notApplied(
+                        Reason.TARGET_CHANGED, "The device belongs to another track than the one read.");
         }
 
         static final class Capture {
