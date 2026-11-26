@@ -8,6 +8,7 @@ build/
 *.egg-info/
 .DS_Store
 dist/
+protocol.json
 .claude/
 
 # Local credentials and runtime configuration.

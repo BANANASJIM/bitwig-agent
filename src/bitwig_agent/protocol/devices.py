@@ -7,6 +7,7 @@ from pydantic import Field, model_validator
 
 from bitwig_agent.protocol.base import (
     MAX_STRING_UNITS,
+    PROJECT_READY,
     TARGET,
     TRACK,
     DeviceArgs,
@@ -225,9 +226,16 @@ SPECS: dict[str, ToolSpec] = {
             "deviceIndex": 1,
             "expectedDeviceName": "EQ-5",
         },
+        requires=PROJECT_READY,
     ),
-    "devices.delete": tool(ParameterArgs, DEVICES_DELETE_DESCRIPTION, False, TARGET),
-    "devices.move": tool(DeviceMoveArgs, DEVICES_MOVE_DESCRIPTION, False, {**TARGET, "deviceIndex": 3, "toIndex": 1}),
+    "devices.delete": tool(ParameterArgs, DEVICES_DELETE_DESCRIPTION, False, TARGET, requires=PROJECT_READY),
+    "devices.move": tool(
+        DeviceMoveArgs,
+        DEVICES_MOVE_DESCRIPTION,
+        False,
+        {**TARGET, "deviceIndex": 3, "toIndex": 1},
+        requires=PROJECT_READY,
+    ),
     "devices.layers.insert": tool(
         LayerInsertArgs,
         DEVICES_LAYERS_INSERT_DESCRIPTION,
@@ -240,6 +248,7 @@ SPECS: dict[str, ToolSpec] = {
             "id": "org.example.effect",
             "position": "end",
         },
+        requires=PROJECT_READY,
     ),
     "devices.remote.get": tool(ParameterArgs, DEVICES_REMOTE_GET_DESCRIPTION, True, TARGET),
     "devices.remote.page": tool(

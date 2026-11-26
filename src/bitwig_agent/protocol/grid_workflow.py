@@ -326,6 +326,7 @@ SPECS: dict[str, ToolSpec] = {
         True,
         {"type": "Select In"},
         {"query": "random trigger", "lang": "en"},
+        host=False,
     ),
     "grid.apply": tool(
         GridApplyArgs,
@@ -340,19 +341,24 @@ SPECS: dict[str, ToolSpec] = {
             "connections": [{"from": "H: mul.OUT", "to": "H: out.IN"}],
             "dryRun": True,
         },
+        host=False,
     ),
     "grid.probe": tool(
         GridProbeArgs,
         GRID_PROBE_DESCRIPTION,
         False,
         {**TARGET, "port": "H: osc.OUT", "seconds": 4, "mode": "mono_pitch"},
+        host=False,
     ),
-    "grid.export": tool(GridExportArgs, GRID_EXPORT_DESCRIPTION, True, {**TARGET, "includeParams": "changed"}),
-    "grid.graph": tool(GridGraphArgs, GRID_GRAPH_DESCRIPTION, True, TARGET),
+    "grid.export": tool(
+        GridExportArgs, GRID_EXPORT_DESCRIPTION, True, {**TARGET, "includeParams": "changed"}, host=False
+    ),
+    "grid.graph": tool(GridGraphArgs, GRID_GRAPH_DESCRIPTION, True, TARGET, host=False),
     "grid.render": tool(
         GridRenderArgs,
         GRID_RENDER_DESCRIPTION,
         True,
         {"trackId": TRACK, "deviceIndex": 0, "expectedDeviceName": "Poly Grid", "outPath": "/tmp/grid.svg"},
+        host=False,
     ),
 }

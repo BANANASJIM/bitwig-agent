@@ -8,6 +8,7 @@ from pydantic.config import JsonDict
 
 from bitwig_agent.protocol.base import (
     MAX_STRING_UNITS,
+    PROJECT_READY,
     TARGET,
     TOPOLOGY_TIMEOUT_MS,
     UTF16_BYTES_PER_UNIT,
@@ -620,6 +621,7 @@ SPECS: dict[str, ToolSpec] = {
                 }
             ],
         },
+        requires=PROJECT_READY,
     ),
     "grid.topology.reconcile": tool(GridTopologyReconcileArgs, GRID_TOPOLOGY_RECONCILE_DESCRIPTION, False, TARGET),
     "grid.voicing.get": tool(GridVoicingGetArgs, GRID_VOICING_GET_DESCRIPTION, True, TARGET),
@@ -629,6 +631,7 @@ SPECS: dict[str, ToolSpec] = {
         False,
         {**TARGET, "expected": {"voices": 1, "voiceStacking": 1}, "set": {"voices": 8, "voiceStacking": 2}},
         {**TARGET, "expected": {"voices": 1, "monoMode": "true_mono"}, "set": {"monoMode": "digi_mono"}},
+        requires=PROJECT_READY,
     ),
     "grid.modules.insert": tool(
         GridModuleInsertArgs,
@@ -642,6 +645,7 @@ SPECS: dict[str, ToolSpec] = {
                 {"typeName": "Low-pass", "x": 8, "y": 2},
             ],
         },
+        requires=PROJECT_READY,
     ),
     "grid.modules.rename": tool(
         GridModuleRenameArgs,
@@ -659,18 +663,21 @@ SPECS: dict[str, ToolSpec] = {
             "expectedCustomName": "Lead = \u03b1",
             "customName": "",
         },
+        requires=PROJECT_READY,
     ),
     "grid.modules.move": tool(
         GridModuleMoveArgs,
         GRID_MODULES_MOVE_DESCRIPTION,
         False,
         {**TARGET, "moduleId": "abcdef01-2345-6789-abcd-0123456789ab", "expectedX": 0, "expectedY": 0, "x": 4, "y": 2},
+        requires=PROJECT_READY,
     ),
     "grid.modules.delete": tool(
         GridModuleEditArgs,
         GRID_MODULES_DELETE_DESCRIPTION,
         False,
         {**TARGET, "moduleId": "abcdef01-2345-6789-abcd-0123456789ab"},
+        requires=PROJECT_READY,
     ),
     "grid.connections.set": tool(
         GridConnectionSetArgs,
@@ -710,5 +717,6 @@ SPECS: dict[str, ToolSpec] = {
                 },
             ],
         },
+        requires=PROJECT_READY,
     ),
 }

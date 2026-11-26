@@ -6,7 +6,9 @@ from typing import Annotated, Any, Literal, Self
 from pydantic import Field, model_validator
 
 from bitwig_agent.protocol.base import (
+    ENGINE,
     MAX_BEAT,
+    PROJECT_READY,
     TRACK,
     DeviceArgs,
     Nonempty,
@@ -314,23 +316,36 @@ SPECS: dict[str, ToolSpec] = {
             "name": "Sketch",
             "notes": [{"beat": 0, "pitch": 60, "velocity": 90, "durationBeats": 1}],
         },
+        requires=PROJECT_READY,
     ),
-    "scenes.append": tool(ScenesAppendArgs, SCENES_APPEND_DESCRIPTION, False, {}, {"count": 2}),
+    "scenes.append": tool(ScenesAppendArgs, SCENES_APPEND_DESCRIPTION, False, {}, {"count": 2}, requires=PROJECT_READY),
     "scenes.list": tool(StatusArgs, SCENES_LIST_DESCRIPTION, True),
     "scenes.rename": tool(
         SceneRenameArgs, SCENES_RENAME_DESCRIPTION, False, {"sceneIndex": 0, "expectedName": "", "name": "Intro"}
     ),
     "scenes.launch": tool(
-        SceneTargetArgs, SCENES_LAUNCH_DESCRIPTION, False, {"sceneIndex": 0, "expectedName": "Intro"}
+        SceneTargetArgs, SCENES_LAUNCH_DESCRIPTION, False, {"sceneIndex": 0, "expectedName": "Intro"}, requires=ENGINE
     ),
     "scenes.duplicate": tool(
-        SceneTargetArgs, SCENES_DUPLICATE_DESCRIPTION, False, {"sceneIndex": 0, "expectedName": "Intro"}
+        SceneTargetArgs,
+        SCENES_DUPLICATE_DESCRIPTION,
+        False,
+        {"sceneIndex": 0, "expectedName": "Intro"},
+        requires=PROJECT_READY,
     ),
     "scenes.delete": tool(
-        SceneTargetArgs, SCENES_DELETE_DESCRIPTION, False, {"sceneIndex": 0, "expectedName": "Intro"}
+        SceneTargetArgs,
+        SCENES_DELETE_DESCRIPTION,
+        False,
+        {"sceneIndex": 0, "expectedName": "Intro"},
+        requires=PROJECT_READY,
     ),
     "launcher.import": tool(
-        ClipImportArgs, LAUNCHER_IMPORT_DESCRIPTION, False, {**CLIP, "path": "/absolute/path/audio.wav"}
+        ClipImportArgs,
+        LAUNCHER_IMPORT_DESCRIPTION,
+        False,
+        {**CLIP, "path": "/absolute/path/audio.wav"},
+        requires=PROJECT_READY,
     ),
     "clips.edit": tool(
         ClipEditArgs,
@@ -345,7 +360,7 @@ SPECS: dict[str, ToolSpec] = {
         {**CLIP, "expectedClipName": "Sketch", "op": "delete"},
         {**CLIP, "expectedClipName": "Sketch", "op": "copyTo", "targetSlotIndex": 1},
     ),
-    "launcher.launch": tool(ClipArgs, LAUNCHER_LAUNCH_DESCRIPTION, False, CLIP),
+    "launcher.launch": tool(ClipArgs, LAUNCHER_LAUNCH_DESCRIPTION, False, CLIP, requires=ENGINE),
     "launcher.stop": tool(DeviceArgs, LAUNCHER_STOP_DESCRIPTION, False, {"trackId": TRACK}),
     "notes.read": tool(NoteWindowArgs, NOTES_READ_DESCRIPTION, False, NOTE_WINDOW, CLIP),
     "notes.edit": tool(

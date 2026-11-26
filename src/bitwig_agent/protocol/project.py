@@ -101,5 +101,7 @@ SPECS: dict[str, ToolSpec] = {
         {"path": "/home/me/Bitwig Studio/Projects/Agent Sketch/Agent Sketch.bwproject"},
     ),
     "project.activateEngine": tool(StatusArgs, PROJECT_ACTIVATE_ENGINE_DESCRIPTION, False),
-    "host.diagnostics": tool(HostDiagnosticsArgs, HOST_DIAGNOSTICS_DESCRIPTION, True, {"sinceSeconds": 300}),
+    "host.diagnostics": tool(
+        HostDiagnosticsArgs, HOST_DIAGNOSTICS_DESCRIPTION, True, {"sinceSeconds": 300}, host=False
+    ),
 }

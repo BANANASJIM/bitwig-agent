@@ -35,6 +35,10 @@ PRESETS_SEARCH_DESCRIPTION = "Search the user's preset library and installed pac
 
 SPECS: dict[str, ToolSpec] = {
     "presets.search": tool(
-        PresetSearchArgs, PRESETS_SEARCH_DESCRIPTION, True, {"query": "warm pad", "device": "Polymer", "limit": 10}
+        PresetSearchArgs,
+        PRESETS_SEARCH_DESCRIPTION,
+        True,
+        {"query": "warm pad", "device": "Polymer", "limit": 10},
+        host=False,
     ),
 }
