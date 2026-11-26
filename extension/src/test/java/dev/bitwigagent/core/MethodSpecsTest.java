@@ -138,10 +138,9 @@ public final class MethodSpecsTest {
         assertEquals(List.of("id"), specs.refRoles().get("track").locate);
         assertEquals(List.of("name"), specs.refRoles().get("track").targetOnly);
         assertEquals(List.of("name"), specs.refRoles().get("device").compared);
-        assertThrows(
-                SchemaValidator.Violation.class,
-                () -> specs.refSchema()
-                        .apply(JsonParser.parseString("{\"kind\":\"track\"}").getAsJsonObject()));
+        assertEquals("tracks.list", specs.refReads().get("track"));
+        assertEquals("grid.export", specs.refReads().get("parameter:gridModule"));
+        assertTrue(specs.parameterOwners().contains("remotePage"));
         JsonObject noLocate = one("a", method(true, true, "", 5000, 10000));
         noLocate.getAsJsonObject("refs")
                 .getAsJsonObject("roles")

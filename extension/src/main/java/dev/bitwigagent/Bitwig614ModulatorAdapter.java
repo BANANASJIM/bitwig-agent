@@ -146,15 +146,15 @@ final class Bitwig614ModulatorAdapter implements ModulatorAdapter, ModulatorSnap
     }
 
     @Override
-    public JsonObject list(Object proxy, UUID trackId, int offset, int limit, Runnable check) {
+    public JsonObject list(DeviceSources.Source source, int offset, int limit, Runnable check) {
         requireDiscovery();
-        return reader.list(proxy, trackId, offset, limit, check);
+        return reader.list(source, offset, limit, check);
     }
 
     @Override
-    public JsonObject parameter(Object proxy, UUID trackId, UUID modulatorId, String parameterId, Runnable check) {
+    public JsonObject parameter(DeviceSources.Source source, UUID modulatorId, String parameterId, Runnable check) {
         requireDiscovery();
-        return reader.parameter(proxy, trackId, modulatorId, parameterId, check);
+        return reader.parameter(source, modulatorId, parameterId, check);
     }
 
     private void requireDiscovery() {

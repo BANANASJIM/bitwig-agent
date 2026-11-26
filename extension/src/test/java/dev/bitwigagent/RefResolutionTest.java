@@ -5,7 +5,12 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import com.bitwig.extension.callback.*;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import com.google.gson.JsonPrimitive;
 import dev.bitwigagent.core.Refs;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
 /** Track, device, chain and parameter refs resolve against the simulated host; never native evidence. */
@@ -84,7 +89,11 @@ public final class RefResolutionTest {
         assertEquals(0, f.tracks.resolve(track, false), "as an ancestor the name is not compared");
         assertEquals("EQ+", f.sources.device(eq, true).name, "a device ref survives its track's rename");
         JsonObject gone = Refs.track(HostFixture.C, "Gone");
-        assertRpcError("target_not_found", () -> f.tracks.locate(gone));
+        assertEquals("tracks.list", assertRpcError("target_not_found", () -> f.tracks.locate(gone)).next);
+        assertEquals(1, f.tracks.insertionIndex(json("{\"after\":" + track + "}")));
+        assertEquals(0, f.tracks.insertionIndex(json("{\"before\":" + track + "}")));
+        assertEquals(2, f.tracks.insertionIndex(null));
+        assertEquals(0, f.tracks.insertionIndex(new JsonPrimitive("start")));
         f.host.bank.child("itemCount").emit(HostLimits.TRACKS + 1);
         assertRpcError("outside_window", () -> f.tracks.locate(gone));
     }
@@ -93,7 +102,19 @@ public final class RefResolutionTest {
     void deviceRefsLocateByIndexAndAlwaysCompareTheName() {
         Fixture f = new Fixture();
         assertEquals(eq, f.sources.device(eq, true).ref());
-        assertRpcError("target_not_found", () -> f.sources.device(Refs.device(track, 2, "Comp"), true));
+        assertEquals(
+                "devices.list",
+                assertRpcError("target_not_found", () -> f.sources.device(Refs.device(track, 2, "Comp"), true)).next);
+        f.sources.roots[0][0].track.id = HostFixture.B;
+        assertRpcError("not_ready", () -> f.sources.device(eq, true));
+        f.sources.roots[0][0].track.id = HostFixture.A;
+        assertEquals(0, f.sources.insertionIndex(track, new JsonPrimitive("start")));
+        assertEquals(2, f.sources.insertionIndex(track, new JsonPrimitive("end")));
+        assertEquals(1, f.sources.insertionIndex(track, json("{\"before\":" + rack + "}")));
+        assertEquals(1, f.sources.insertionIndex(track, json("{\"after\":" + eq + "}")));
+        assertEquals(1, f.sources.insertionIndex(chain, null));
+        assertEquals(1, f.sources.insertionIndex(chain, json("{\"after\":" + synth + "}")));
+        assertInvalidParams(() -> f.sources.insertionIndex(chain, json("{\"before\":" + eq + "}")));
         f.eqNode.child("name").emit("Comp");
         RpcException changed = assertRpcError("target_changed", () -> f.sources.device(eq, false));
         assertEquals(Refs.device(track, 0, "Comp"), changed.current);
@@ -111,7 +132,7 @@ public final class RefResolutionTest {
         assertEquals("Lead Pad", renamed.current.get("name").getAsString());
         assertEquals("Polysynth", f.sources.device(synth, true).name, "a chain rename leaves its devices' refs valid");
         JsonObject other = Refs.chain(rack, "00000000-0000-4000-8000-0000000000cc", "Pad");
-        assertRpcError("target_not_found", () -> f.sources.chain(other, true));
+        assertEquals("chains.list", assertRpcError("target_not_found", () -> f.sources.chain(other, true)).next);
         assertRpcError("unsupported_scope", () -> f.sources.chain(Refs.chain(synth, LAYER, "Pad"), true));
         assertRpcError("target_not_found", () -> f.sources.device(Refs.device(chain, 1, "Delay"), true));
         assertRpcError("outside_window", () -> f.sources.locate(Refs.device(chain, DeviceSources.CHILDREN, "X")));
@@ -129,7 +150,9 @@ public final class RefResolutionTest {
         ParameterResolver.Resolved gain = f.resolver.resolve(Refs.parameter(eq, "gain", "Gain"));
         assertInstanceOf(ParameterResolver.Direct.class, gain);
         assertInstanceOf(ParameterResolver.Direct.class, f.resolver.resolve(Refs.parameter(eq, "gain", null)));
-        assertRpcError("target_not_found", () -> f.resolver.resolve(Refs.parameter(eq, "tone", null)));
+        assertEquals(
+                "parameters.list",
+                assertRpcError("target_not_found", () -> f.resolver.resolve(Refs.parameter(eq, "tone", null))).next);
         RpcException renamed =
                 assertRpcError("target_changed", () -> f.resolver.resolve(Refs.parameter(eq, "gain", "Tone")));
         assertEquals(Refs.parameter(eq, "gain", "Gain"), renamed.current);
@@ -138,6 +161,8 @@ public final class RefResolutionTest {
         snapshot.require(op);
         f.ids.valueChanged(new String[] {"gain", "tone"});
         assertRpcError("target_changed", () -> snapshot.require(op));
+        assertInstanceOf(ParameterResolver.Direct.class, f.resolver.resolve(Refs.parameter(eq, "tone", null)));
+        assertRpcError("not_ready", () -> f.resolver.resolve(Refs.parameter(eq, "tone", "Tone")));
         op.markDispatched();
         RpcException after = assertThrows(RpcException.class, () -> snapshot.require(op));
         assertTrue(after.unknown && after.is(Reason.TARGET_CHANGED), "after dispatch the outcome is unknown");
@@ -151,7 +176,7 @@ public final class RefResolutionTest {
         f.eqNode.child("name").emit("Comp");
         RpcException owner =
                 assertRpcError("target_changed", () -> f.resolver.resolve(Refs.parameter(eq, "gain", null)));
-        assertEquals("Comp", owner.current.getAsJsonObject("owner").get("name").getAsString());
+        assertEquals(Refs.device(track, 0, "Comp"), owner.current, "current is the device there now");
     }
 
     @Test
@@ -168,7 +193,8 @@ public final class RefResolutionTest {
         assertRpcError("not_ready", mix::requireControl);
         RpcException page = assertRpcError(
                 "target_changed", () -> f.resolver.resolve(Refs.parameter(Refs.remotePage(eq, 0, "Old"), "0", "x")));
-        assertEquals(main, page.current.getAsJsonObject("owner"));
+        assertEquals(main, page.current, "current is the page now at that index, a ref the agent can send");
+        HostFixture.REF_SCHEMA.apply(page.current);
         assertRpcError(
                 "target_not_found", () -> f.resolver.resolve(Refs.parameter(Refs.remotePage(eq, 2, "X"), "0", "x")));
         ParameterResolver.Remote cutoff =
@@ -223,5 +249,158 @@ public final class RefResolutionTest {
         assertRpcError("invalid_params", () -> ParameterRefs.owner(Refs.parameter(Refs.scene(0, null), "x", null)));
         assertEquals(7, ParameterRefs.control(Refs.parameter(main, "7", null)));
         assertRpcError("invalid_params", () -> ParameterRefs.control(Refs.parameter(main, "8", null)));
+    }
+
+    private static JsonObject json(String text) {
+        return JsonParser.parseString(text).getAsJsonObject();
+    }
+
+    @Test
+    void aReplacedDeviceIsTargetChangedUnderEveryOwnerWhateverItsIdsAre() {
+        JsonObject modulator = Refs.modulator(eq, MODULE, "LFO"), module = Refs.gridModule(eq, MODULE, "F: lp");
+        JsonObject[] refs = {
+            Refs.parameter(eq, "gain", null),
+            Refs.parameter(main, "0", "Gain 1"),
+            Refs.parameter(modulator, "RATE", null),
+            Refs.parameter(module, "CUTOFF", null)
+        };
+        for (boolean sameIds : new boolean[] {true, false}) {
+            Fixture f = new Fixture();
+            f.eqNode.child("name").emit("Comp");
+            if (!sameIds) {
+                f.ids.valueChanged(new String[] {"ratio"});
+                f.page.child("pageNames").emit(new String[] {"Dynamics"});
+            }
+            for (JsonObject ref : refs) {
+                RpcException replaced = assertRpcError("target_changed", () -> f.resolver.resolve(ref));
+                assertEquals(Refs.device(track, 0, "Comp"), replaced.current, ref + ", same ids " + sameIds);
+            }
+            f.rackNode.child("name").emit("Drum Machine");
+            RpcException chained = assertRpcError("target_changed", () -> f.sources.chain(chain, false));
+            assertEquals(Refs.device(track, 1, "Drum Machine"), chained.current, "a chain under a replaced device");
+            assertRpcError("target_changed", () -> f.sources.device(synth, false));
+        }
+    }
+
+    /** A native device with its owning track, and Grid modules or modulators with their parameters. */
+    private static final class Natives implements DeviceSources.Native.Access, ParameterResolver.ModuleOwners {
+        final Object device = new Object(), owner = new Object();
+        final DeviceSources.Source source;
+        final Map<UUID, Object> owners = new HashMap<>();
+        final Map<Object, String> names = new HashMap<>();
+        final Map<Object, Map<String, Object>> parameters = new HashMap<>();
+        boolean namesReadable = true;
+
+        Natives(DeviceSources.Source source) {
+            this.source = source;
+        }
+
+        Object add(String id, String name, String key, String parameterName) {
+            Object found = new Object(), parameter = new Object();
+            owners.put(UUID.fromString(id), found);
+            names.put(found, name);
+            names.put(parameter, parameterName);
+            parameters.computeIfAbsent(found, k -> new HashMap<>()).put(key, parameter);
+            return found;
+        }
+
+        @Override
+        public boolean is(DeviceSources.Native.Kind kind, Object object) {
+            return kind == DeviceSources.Native.Kind.DEVICE
+                    ? object == device
+                    : kind == DeviceSources.Native.Kind.TRACK && object == owner;
+        }
+
+        @Override
+        public Object read(DeviceSources.Native.Field field, Object object) {
+            switch (field) {
+                case TARGET:
+                    return object == source.device ? device : null;
+                case OWNER_TRACK:
+                    return owner;
+                default:
+                    return UUID.fromString(HostFixture.A);
+            }
+        }
+
+        @Override
+        public void documentThread() {}
+
+        @Override
+        public void requireModelThread(Object object) {}
+
+        @Override
+        public Object owner(DeviceSources.Native.Capture captured, UUID id, Runnable check) {
+            return owners.get(id);
+        }
+
+        @Override
+        public String ownerName(Object found) {
+            return names.get(found);
+        }
+
+        @Override
+        public Object parameter(Object found, String key, Runnable check) {
+            return parameters.getOrDefault(found, Map.of()).get(key);
+        }
+
+        @Override
+        public String parameterName(Object parameter) {
+            return namesReadable ? names.get(parameter) : null;
+        }
+    }
+
+    @Test
+    void moduleParametersBindTheirOwnerAndParameterNatively() {
+        Fixture f = new Fixture();
+        DeviceSources.Source eqSource = f.sources.roots[0][0];
+        Natives natives = new Natives(eqSource);
+        DeviceSources.Native nativeDevices = new DeviceSources.Native(natives);
+        natives.add(MODULE, "F: lp", "CUTOFF", "Cutoff");
+        JsonObject module = Refs.gridModule(eq, MODULE, "renamed modules keep their parameters");
+        JsonObject modulator = Refs.modulator(eq, MODULE, "LFO");
+        for (JsonObject owner : new JsonObject[] {module, modulator}) {
+            ParameterResolver.ModuleParameter cutoff =
+                    (ParameterResolver.ModuleParameter) f.resolver.resolve(Refs.parameter(owner, "CUTOFF", "Cutoff"));
+            assertEquals(Refs.kind(owner), cutoff.owner);
+            assertEquals("EQ+", cutoff.device.name);
+            cutoff.snapshot().require(new HostOperation(Long.MAX_VALUE));
+            ParameterResolver.NativeParameter bound = cutoff.bind(natives, nativeDevices, () -> {});
+            assertSame(natives.device, bound.device.device);
+            HostOperation op = new HostOperation(Long.MAX_VALUE);
+            bound.require(op);
+            ParameterResolver.ModuleParameter tone =
+                    (ParameterResolver.ModuleParameter) f.resolver.resolve(Refs.parameter(owner, "TONE", null));
+            assertEquals(
+                    Refs.read(Refs.parameter(owner, "TONE", null)),
+                    assertRpcError("target_not_found", () -> tone.bind(natives, nativeDevices, () -> {})).next);
+            ParameterResolver.ModuleParameter renamed =
+                    (ParameterResolver.ModuleParameter) f.resolver.resolve(Refs.parameter(owner, "CUTOFF", "Freq"));
+            assertEquals(
+                    "Cutoff",
+                    assertRpcError("target_changed", () -> renamed.bind(natives, nativeDevices, () -> {}))
+                            .current
+                            .get("name")
+                            .getAsString());
+            natives.namesReadable = false;
+            assertRpcError("native_unavailable", () -> cutoff.bind(natives, nativeDevices, () -> {}));
+            natives.namesReadable = true;
+            natives.owners.put(UUID.fromString(MODULE), new Object());
+            assertRpcError("target_changed", () -> bound.require(op));
+            natives.owners.remove(UUID.fromString(MODULE));
+            assertEquals(
+                    Refs.read(owner),
+                    assertRpcError("target_not_found", () -> cutoff.bind(natives, nativeDevices, () -> {})).next);
+            natives.add(MODULE, "F: lp", "CUTOFF", "Cutoff");
+        }
+        assertRpcError("unsupported_scope", () -> nativeDevices.capture(f.sources.device(synth, true), () -> {}));
+        eqSource.track.id = null;
+        assertRpcError("native_unavailable", () -> nativeDevices.capture(eqSource, () -> {}));
+    }
+
+    @Test
+    void parameterOwnerKindsComeFromTheBundle() {
+        assertEquals(5, ParameterRefs.OWNERS.size());
+        assertThrows(IllegalStateException.class, () -> ParameterRefs.check(java.util.List.of("device")));
     }
 }

@@ -593,8 +593,7 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
 
     @Override
     public JsonObject snapshot(
-            Object proxy,
-            UUID expectedTrackId,
+            DeviceSources.Source source,
             int offset,
             int limit,
             boolean parameters,
@@ -605,30 +604,28 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
         require(gateError, "gate");
         require(identityError, "native owning-track identity");
         require(structureError, "structure");
-        return snapshots.snapshot(
-                proxy, expectedTrackId, offset, limit, parameters, diagnostics, moduleIds, fullSteps, check);
+        return snapshots.snapshot(source, offset, limit, parameters, diagnostics, moduleIds, fullSteps, check);
     }
 
     @Override
     public JsonObject parameter(
-            Object proxy, UUID expectedTrackId, UUID moduleId, String parameterId, boolean fullSteps, Runnable check) {
+            DeviceSources.Source source, UUID moduleId, String parameterId, boolean fullSteps, Runnable check) {
         require(gateError, "gate");
         require(identityError, "native owning-track identity");
         require(structureError, "structure");
         require(parameterError, "typed parameters");
         require(inspectionError, "parameter inspection context");
-        return snapshots.parameter(proxy, expectedTrackId, moduleId, parameterId, parameterContexts, fullSteps, check);
+        return snapshots.parameter(source, moduleId, parameterId, parameterContexts, fullSteps, check);
     }
     /** A float Grid module parameter's native object (an Opy, so a bDH) for its automation lane; document thread only. */
     GridSnapshotReader.ParameterBinding automationParameter(
-            Object proxy, UUID expectedTrackId, UUID moduleId, String parameterId, Runnable check) {
+            DeviceSources.Source source, UUID moduleId, String parameterId, Runnable check) {
         require(gateError, "gate");
         require(identityError, "native owning-track identity");
         require(structureError, "structure");
         require(parameterError, "typed parameters");
         require(inspectionError, "parameter inspection context");
-        GridSnapshotReader.ParameterBinding binding =
-                snapshots.bindParameter(proxy, expectedTrackId, moduleId, parameterId, check);
+        GridSnapshotReader.ParameterBinding binding = snapshots.bindParameter(source, moduleId, parameterId, check);
         if (binding.kind != GridSnapshotReader.Kind.FLOAT)
             throw Errors.notApplied(
                     Reason.UNSUPPORTED_SCOPE,
@@ -642,7 +639,7 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
     }
 
     @Override
-    public JsonObject voicing(Object proxy, UUID expectedTrackId, Runnable check) {
+    public JsonObject voicing(DeviceSources.Source source, Runnable check) {
         require(gateError, "gate");
         require(identityError, "native owning-track identity");
         require(structureError, "structure");
@@ -650,42 +647,37 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
         require(voicingError, "voicing");
         if (voicingWriter == null)
             throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Grid voicing unavailable: no voicing binding.");
-        return voicingWriter.get(proxy, expectedTrackId, check);
+        return voicingWriter.get(source, check);
     }
 
     @Override
     public JsonObject setVoicing(
-            Object proxy, UUID expectedTrackId, GridVoicingWriter.Request request, Runnable check, Runnable dispatch) {
+            DeviceSources.Source source, GridVoicingWriter.Request request, Runnable check, Runnable dispatch) {
         require(gateError, "gate");
         require(writeError, "parameter write");
         require(voicingError, "voicing");
-        return voicingWriter.set(proxy, expectedTrackId, request, check, dispatch);
+        return voicingWriter.set(source, request, check, dispatch);
     }
 
     @Override
     public JsonObject defineRemotePage(
-            Object proxy,
-            UUID expectedTrackId,
-            GridRemotePageWriter.Request request,
-            Runnable check,
-            Runnable dispatch) {
+            DeviceSources.Source source, GridRemotePageWriter.Request request, Runnable check, Runnable dispatch) {
         require(gateError, "gate");
         require(remotePageError, "Remote Controls pages");
-        return remotePageWriter.define(proxy, expectedTrackId, request, check, dispatch);
+        return remotePageWriter.define(source, request, check, dispatch);
     }
 
     @Override
     public JsonObject deleteRemotePage(
-            Object proxy, UUID expectedTrackId, String pageName, Runnable check, Runnable dispatch) {
+            DeviceSources.Source source, String pageName, Runnable check, Runnable dispatch) {
         require(gateError, "gate");
         require(remotePageError, "Remote Controls pages");
-        return remotePageWriter.deletePage(proxy, expectedTrackId, pageName, check, dispatch);
+        return remotePageWriter.deletePage(source, pageName, check, dispatch);
     }
 
     @Override
     public JsonObject setParameter(
-            Object proxy,
-            UUID expectedTrackId,
+            DeviceSources.Source source,
             UUID moduleId,
             String parameterId,
             GridParameterWriter.Request request,
@@ -693,25 +685,23 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
             Runnable dispatch) {
         require(gateError, "gate");
         require(writeError, "parameter write");
-        return parameterWriter.set(proxy, expectedTrackId, moduleId, parameterId, request, check, dispatch);
+        return parameterWriter.set(source, moduleId, parameterId, request, check, dispatch);
     }
 
     @Override
     public JsonObject setParameters(
-            Object proxy,
-            UUID expectedTrackId,
+            DeviceSources.Source source,
             java.util.List<GridParameterWriter.Entry> writes,
             Runnable check,
             Runnable dispatch) {
         require(gateError, "gate");
         require(writeError, "parameter write");
-        return parameterWriter.setAll(proxy, expectedTrackId, writes, check, dispatch);
+        return parameterWriter.setAll(source, writes, check, dispatch);
     }
 
     @Override
     public void moveModule(
-            Object proxy,
-            UUID trackId,
+            DeviceSources.Source source,
             UUID moduleId,
             GridModuleWriter.Move request,
             Runnable check,
@@ -720,13 +710,12 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
             Consumer<Throwable> fail) {
         require(gateError, "gate");
         require(moduleMoveError, "module move");
-        moduleWriter.move(proxy, trackId, moduleId, request, check, dispatch, complete, fail);
+        moduleWriter.move(source, moduleId, request, check, dispatch, complete, fail);
     }
 
     @Override
     public void deleteModule(
-            Object proxy,
-            UUID trackId,
+            DeviceSources.Source source,
             UUID moduleId,
             Runnable check,
             Runnable dispatch,
@@ -734,13 +723,12 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
             Consumer<Throwable> fail) {
         require(gateError, "gate");
         require(moduleDeleteError, "module delete");
-        moduleWriter.delete(proxy, trackId, moduleId, check, dispatch, complete, fail);
+        moduleWriter.delete(source, moduleId, check, dispatch, complete, fail);
     }
 
     @Override
     public void renameModule(
-            Object proxy,
-            UUID trackId,
+            DeviceSources.Source source,
             UUID moduleId,
             GridModuleNameWriter.Request request,
             Runnable check,
@@ -749,13 +737,12 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
             Consumer<Throwable> fail) {
         require(gateError, "gate");
         require(moduleRenameError, "module rename");
-        moduleNameWriter.rename(proxy, trackId, moduleId, request, check, dispatch, complete, fail);
+        moduleNameWriter.rename(source, moduleId, request, check, dispatch, complete, fail);
     }
 
     @Override
     public void setConnection(
-            Object proxy,
-            UUID trackId,
+            DeviceSources.Source source,
             GridConnectionWriter.Request request,
             Runnable check,
             Runnable dispatch,
@@ -763,13 +750,12 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
             Consumer<Throwable> fail) {
         require(gateError, "gate");
         require(connectionError, "connection write");
-        connectionWriter.set(proxy, trackId, request, check, dispatch, complete, fail);
+        connectionWriter.set(source, request, check, dispatch, complete, fail);
     }
 
     @Override
     public void setConnections(
-            Object proxy,
-            UUID trackId,
+            DeviceSources.Source source,
             java.util.List<GridConnectionWriter.Request> requests,
             Runnable check,
             Runnable dispatch,
@@ -777,13 +763,12 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
             Consumer<Throwable> fail) {
         require(gateError, "gate");
         require(connectionError, "connection write");
-        connectionWriter.setAll(proxy, trackId, requests, check, dispatch, complete, fail);
+        connectionWriter.setAll(source, requests, check, dispatch, complete, fail);
     }
 
     @Override
     public void insertModule(
-            Object proxy,
-            UUID trackId,
+            DeviceSources.Source source,
             GridInsertionWriter.Request request,
             Runnable check,
             Runnable dispatch,
@@ -791,13 +776,12 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
             Consumer<Throwable> fail) {
         require(gateError, "gate");
         require(moduleInsertError, "module insertion");
-        insertionWriter.insert(proxy, trackId, request, check, dispatch, complete, fail);
+        insertionWriter.insert(source, request, check, dispatch, complete, fail);
     }
 
     @Override
     public void insertModules(
-            Object proxy,
-            UUID trackId,
+            DeviceSources.Source source,
             java.util.List<GridInsertionWriter.Request> requests,
             java.util.function.LongSupplier timeLeft,
             Runnable check,
@@ -806,16 +790,16 @@ final class Bitwig614GridAdapter implements GridAdapter, GridSnapshotReader.Acce
             Consumer<Throwable> fail) {
         require(gateError, "gate");
         require(moduleInsertError, "module insertion");
-        insertionWriter.insertAll(proxy, trackId, requests, timeLeft, check, dispatch, complete, fail);
+        insertionWriter.insertAll(source, requests, timeLeft, check, dispatch, complete, fail);
     }
 
     @Override
-    public JsonObject ackTopology(Object proxy, UUID trackId, String device, Runnable check) {
+    public JsonObject ackTopology(DeviceSources.Source source, String device, Runnable check) {
         require(gateError, "gate");
         require(identityError, "native owning-track identity");
         require(structureError, "structure");
         require(moduleInsertError, "module insertion");
-        return insertionWriter.ack(proxy, trackId, device, check);
+        return insertionWriter.ack(source, device, check);
     }
 
     @Override

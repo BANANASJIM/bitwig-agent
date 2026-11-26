@@ -474,7 +474,7 @@ public final class GridModuleNameWriterTest {
                 Runnable dispatch,
                 Consumer<JsonObject> complete,
                 Consumer<Throwable> fail) {
-            writer.rename(model.proxy, TRACK, moduleId, request, check, dispatch, complete, fail);
+            writer.rename(model.source, moduleId, request, check, dispatch, complete, fail);
         }
 
         void population(int count) {

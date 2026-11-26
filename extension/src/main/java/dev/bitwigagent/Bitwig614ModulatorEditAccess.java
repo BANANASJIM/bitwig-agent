@@ -173,13 +173,13 @@ final class Bitwig614ModulatorEditAccess implements ModulatorEditor.Access {
     }
 
     @Override
-    public Object device(Object proxy, UUID trackId, Runnable check) {
-        return targets.capture(proxy, trackId, check).device;
+    public Object device(DeviceSources.Source source, Runnable check) {
+        return targets.capture(source, check).device;
     }
 
     @Override
-    public void guardDevice(Object proxy, UUID trackId, Object device, Runnable check) {
-        DeviceSources.Native.Capture now = targets.capture(proxy, trackId, check);
+    public void guardDevice(DeviceSources.Source source, Object device, Runnable check) {
+        DeviceSources.Native.Capture now = targets.capture(source, check);
         if (now.device != device)
             throw Errors.notApplied(Reason.STALE_CONTEXT, "Explicit native device changed during the operation.");
     }
@@ -358,8 +358,8 @@ final class Bitwig614ModulatorEditAccess implements ModulatorEditor.Access {
     }
 
     @Override
-    public Object[] gridParameter(Object proxy, UUID trackId, UUID moduleId, String parameterId, Runnable check) {
-        GridSnapshotReader.ParameterBinding binding = grid.bindParameter(proxy, trackId, moduleId, parameterId, check);
+    public Object[] gridParameter(DeviceSources.Source source, UUID moduleId, String parameterId, Runnable check) {
+        GridSnapshotReader.ParameterBinding binding = grid.bindParameter(source, moduleId, parameterId, check);
         grid.guardParameter(binding);
         return new Object[] {binding.graph, binding.module, binding.parameter};
     }

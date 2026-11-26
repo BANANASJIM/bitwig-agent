@@ -44,12 +44,12 @@ final class AutomationModule implements HostModule {
         }
     }
 
-    /** Which parameter's lane; deviceProxy/grid are set only for kind grid. */
+    /** Which parameter's lane; device is set only for kind grid. */
     static final class Target {
         final String kind, expectedDeviceName, parameterId;
         final int deviceIndex;
         final UUID moduleId;
-        Object deviceProxy;
+        DeviceSources.Source device;
 
         Target(String kind, int deviceIndex, String expectedDeviceName, UUID moduleId, String parameterId) {
             this.kind = kind;
@@ -368,7 +368,7 @@ final class AutomationModule implements HostModule {
             parent.addProperty("expectedDeviceName", target.expectedDeviceName);
             sources.requireZeroWindow(parent);
             device = sources.rootRead(parent);
-            target.deviceProxy = device.device;
+            target.device = device.source;
         }
         SafetyObservation safety = write ? transportSafety.stopped(op) : null;
         if (access == null)

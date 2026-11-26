@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 from mcp.types import CallToolResult, TextContent
 
+from bitwig_agent.protocol import CLIENT_SIDE, TOOLS
 from bitwig_agent.protocol.base import REASONS
 
 if sys.platform != "linux":
@@ -233,3 +234,11 @@ def test_cancelled_native_attempt_keeps_uncertainty_latched():
     assert guard.stopped
     with pytest.raises(native_smoke.NativeRunStopped), guard.attempt():
         pytest.fail("A caught cancellation must not reopen native admission")
+
+
+def test_the_java_registry_is_compared_with_host_methods_only():
+    host = {name for name in TOOLS if name not in CLIENT_SIDE}
+    advertised = {name for name, spec in TOOLS.items() if spec.expose} | {"help"}
+    assert native_smoke.registry_matches(host, advertised)
+    assert not native_smoke.registry_matches(set(TOOLS), advertised), "client-side methods are not in Java"
+    assert not native_smoke.registry_matches(host, advertised - {"status"})

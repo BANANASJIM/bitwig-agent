@@ -1,8 +1,11 @@
-package dev.bitwigagent.core;
+package dev.bitwigagent;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 import com.google.gson.JsonObject;
+import dev.bitwigagent.core.MethodSpecs;
+import dev.bitwigagent.core.Refs;
+import dev.bitwigagent.core.SchemaValidator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -50,8 +53,12 @@ public final class RefsTest {
     void everyBuiltRefPassesTheProtocolSchemaAndUsesOnlyItsKindsRoles() {
         Map<String, MethodSpecs.RefRoles> roles = MethodSpecs.load().refRoles();
         Set<String> kinds = new HashSet<>();
+        SchemaValidator schema = HostFixture.REF_SCHEMA;
+        Set<String> tags = new HashSet<>();
         for (JsonObject ref : everyKind()) {
-            assertDoesNotThrow(() -> MethodSpecs.load().refSchema().apply(ref), ref.toString());
+            assertDoesNotThrow(() -> schema.apply(ref), ref.toString());
+            tags.add(Refs.tag(ref));
+            assertNotNull(Refs.read(ref), Refs.tag(ref));
             MethodSpecs.RefRoles role = roles.get(Refs.kind(ref));
             Set<String> fields = new HashSet<>(Set.of("kind"));
             fields.addAll(role.locate);
@@ -61,6 +68,7 @@ public final class RefsTest {
             kinds.add(Refs.kind(ref));
         }
         assertEquals(roles.keySet(), kinds, "a builder for every kind");
+        assertEquals(MethodSpecs.load().refReads().keySet(), tags, "Java tags every variant as Python does");
     }
 
     @Test

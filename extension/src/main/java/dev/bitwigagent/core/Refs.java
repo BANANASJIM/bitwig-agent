@@ -12,8 +12,23 @@ public final class Refs {
     private Refs() {}
 
     private static final class Roles {
-        static final Map<String, MethodSpecs.RefRoles> ROLES =
-                MethodSpecs.load().refRoles();
+        static final MethodSpecs SPECS = MethodSpecs.load();
+        static final Map<String, MethodSpecs.RefRoles> ROLES = SPECS.refRoles();
+        static final Map<String, String> READS = SPECS.refReads();
+    }
+
+    /** The variant of a ref: its kind, refined by clip location, device parent or parameter owner. */
+    public static String tag(JsonObject ref) {
+        String kind = kind(ref);
+        if ("clip".equals(kind)) return ref.has("slot") ? "clip:launcher" : "clip:arranger";
+        if ("device".equals(kind)) return ref.has("chain") ? "device:chain" : "device:track";
+        if ("parameter".equals(kind)) return "parameter:" + kind(ref.getAsJsonObject("owner"));
+        return kind;
+    }
+
+    /** The read method that returns refs of this ref's variant: where to look again when it is not found. */
+    public static String read(JsonObject ref) {
+        return Roles.READS.get(tag(ref));
     }
 
     /**

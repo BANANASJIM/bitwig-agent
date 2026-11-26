@@ -38,8 +38,7 @@ final class GridModuleNameWriter {
     }
 
     void rename(
-            Object proxy,
-            UUID trackId,
+            DeviceSources.Source source,
             UUID moduleId,
             Request request,
             Runnable check,
@@ -52,10 +51,10 @@ final class GridModuleNameWriter {
             throw Errors.notApplied(
                     Reason.NATIVE_UNAVAILABLE,
                     "Native raw custom-name and effective-name readers are required for module naming.");
-        GridSnapshotReader.NativeTarget target = snapshots.target(proxy, trackId);
-        String device = GridTopologyQuarantine.device(trackId, target.graph);
+        GridSnapshotReader.NativeTarget target = snapshots.target(source);
+        String device = GridTopologyQuarantine.device(target.ownership.trackId, target.graph);
         quarantine.requireAvailable(device);
-        JsonObject graphBefore = snapshots.snapshot(proxy, trackId, 0, MAX_MODULES, false, false, null, check);
+        JsonObject graphBefore = snapshots.snapshot(source, 0, MAX_MODULES, false, false, null, check);
         Members before = members(target.graph, check);
         Object selected = before.require(moduleId);
         nativeWriter.requireSupported(selected);
@@ -65,7 +64,7 @@ final class GridModuleNameWriter {
                 contexts.capture(target.target, target.graph, before.modules, null, check);
         boolean changed = !previous.custom.equals(request.customName);
         Runnable mutation = changed ? nativeWriter.prepareSet(selected, request.customName) : null;
-        guard(target, proxy, trackId, before, context, check);
+        guard(target, source, before, context, check);
         Names ready = names(selected);
         request.requireExpected(ready.custom);
         if (!previous.effective.equals(ready.effective))
@@ -81,11 +80,11 @@ final class GridModuleNameWriter {
             try {
                 values.documentThread();
                 check.run();
-                guard(target, proxy, trackId, before, context, check);
+                guard(target, source, before, context, check);
                 Names actual = names(selected);
                 requireActual(actual, request);
-                JsonObject graph = snapshots.snapshot(proxy, trackId, 0, MAX_MODULES, false, false, null, check);
-                guard(target, proxy, trackId, before, context, check);
+                JsonObject graph = snapshots.snapshot(source, 0, MAX_MODULES, false, false, null, check);
+                guard(target, source, before, context, check);
                 Names finalNames = names(selected);
                 requireActual(finalNames, request);
                 if (!actual.effective.equals(finalNames.effective))
@@ -132,16 +131,15 @@ final class GridModuleNameWriter {
 
     private void guard(
             GridSnapshotReader.NativeTarget target,
-            Object proxy,
-            UUID trackId,
+            DeviceSources.Source source,
             Members before,
             GridTopologyContext.Capture context,
             Runnable check) {
-        snapshots.guardTarget(target, proxy, trackId);
+        snapshots.guardTarget(target);
         Members current = members(target.graph, check);
         before.requireSame(current);
         contexts.capture(target.target, target.graph, current.modules, context, check);
-        snapshots.guardTarget(target, proxy, trackId);
+        snapshots.guardTarget(target);
     }
 
     private Members members(Object graph, Runnable check) {

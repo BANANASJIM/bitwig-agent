@@ -133,19 +133,25 @@ public final class MethodSpecs {
     private final Limits limits;
     private final Vocabulary vocabulary;
     private final Map<String, RefRoles> refRoles;
-    private final SchemaValidator refSchema;
+    private final Map<String, String> refReads;
+    private final List<String> parameterOwners;
 
-    private MethodSpecs(
-            Map<String, Spec> hostMethods,
-            Limits limits,
-            Vocabulary vocabulary,
-            Map<String, RefRoles> refRoles,
-            SchemaValidator refSchema) {
+    private MethodSpecs(Map<String, Spec> hostMethods, Limits limits, Vocabulary vocabulary, JsonObject refs) {
         this.hostMethods = Collections.unmodifiableMap(hostMethods);
         this.limits = limits;
         this.vocabulary = vocabulary;
-        this.refRoles = Collections.unmodifiableMap(refRoles);
-        this.refSchema = refSchema;
+        Map<String, RefRoles> roles = new TreeMap<>();
+        for (Map.Entry<String, JsonElement> entry :
+                refs.getAsJsonObject("roles").entrySet())
+            roles.put(entry.getKey(), new RefRoles(entry.getValue().getAsJsonObject()));
+        Map<String, String> reads = new TreeMap<>();
+        for (Map.Entry<String, JsonElement> entry :
+                refs.getAsJsonObject("reads").entrySet())
+            reads.put(entry.getKey(), entry.getValue().getAsString());
+        if (roles.isEmpty() || reads.isEmpty()) throw new IllegalStateException("no ref kinds");
+        this.refRoles = Collections.unmodifiableMap(roles);
+        this.refReads = Collections.unmodifiableMap(reads);
+        this.parameterOwners = Vocabulary.strings(refs.getAsJsonArray("parameterOwners"));
     }
 
     public static MethodSpecs load() {
@@ -169,14 +175,7 @@ public final class MethodSpecs {
                 if (flag(method, "host")) specs.put(entry.getKey(), spec(entry.getKey(), method, limits.minTimeoutMs));
             }
             if (specs.isEmpty()) throw new IllegalStateException("no host methods");
-            JsonObject refs = root.getAsJsonObject("refs");
-            Map<String, RefRoles> roles = new TreeMap<>();
-            for (Map.Entry<String, JsonElement> entry :
-                    refs.getAsJsonObject("roles").entrySet())
-                roles.put(entry.getKey(), new RefRoles(entry.getValue().getAsJsonObject()));
-            if (roles.isEmpty()) throw new IllegalStateException("no ref kinds");
-            return new MethodSpecs(
-                    specs, limits, vocabulary, roles, compileSchema("refs", refs.getAsJsonObject("schema"), "ref"));
+            return new MethodSpecs(specs, limits, vocabulary, root.getAsJsonObject("refs"));
         } catch (RuntimeException e) {
             throw new IllegalStateException("Protocol bundle " + RESOURCE + " is malformed: " + e.getMessage(), e);
         }
@@ -266,9 +265,13 @@ public final class MethodSpecs {
         return refRoles;
     }
 
-    /** Checks any ref against the protocol's ref schema. */
-    public SchemaValidator refSchema() {
-        return refSchema;
+    /** By variant tag (see {@link Refs#tag}), the read method that returns refs of that variant. */
+    public Map<String, String> refReads() {
+        return refReads;
+    }
+
+    public List<String> parameterOwners() {
+        return parameterOwners;
     }
 
     public boolean contains(String method) {

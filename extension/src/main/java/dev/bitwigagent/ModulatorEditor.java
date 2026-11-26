@@ -8,7 +8,7 @@ import java.util.function.Consumer;
  * Device-modulator reads and edits on one explicit root device: CAS before dispatch, one native operation, exact
  * readback in a later document event, no retry or rollback. Version-specific symbols live behind {@link Access}.
  */
-final class ModulatorEditor {
+final class ModulatorEditor implements ParameterResolver.ModuleOwners {
     static final int MAX_MODULATORS = 64, MAX_CHILDREN = 256, MAX_MAPPINGS = 256, MAX_TEXT = 1024;
     static final List<String> TRANSFERS =
             List.of("linear", "rectify_pos", "rectify_neg", "abs_linear", "inv_abs_linear", "cubic", "inv_cubic");
@@ -24,9 +24,9 @@ final class ModulatorEditor {
 
         void execute(Runnable task);
         /** Native root device behind the public proxy, owning track corroborated; guard re-checks the same objects. */
-        Object device(Object proxy, UUID trackId, Runnable check);
+        Object device(DeviceSources.Source source, Runnable check);
 
-        void guardDevice(Object proxy, UUID trackId, Object device, Runnable check);
+        void guardDevice(DeviceSources.Source source, Object device, Runnable check);
 
         Object collection(Object device);
 
@@ -76,7 +76,7 @@ final class ModulatorEditor {
 
         boolean canModulate(Object source, Object target);
         /** {graph, module, parameter} for a Grid module control on this device. */
-        Object[] gridParameter(Object proxy, UUID trackId, UUID moduleId, String parameterId, Runnable check);
+        Object[] gridParameter(DeviceSources.Source source, UUID moduleId, String parameterId, Runnable check);
 
         String moduleId(Object module);
 
@@ -258,18 +258,17 @@ final class ModulatorEditor {
     // ---------------------------------------------------------------- target state
 
     private final class Scope {
-        final Object proxy, device, collection;
-        final UUID trackId;
+        final DeviceSources.Source source;
+        final Object device, collection;
         final List<Object> members;
         final Runnable check;
 
-        Scope(Object proxy, UUID trackId, Runnable check) {
+        Scope(DeviceSources.Source source, Runnable check) {
             a.documentThread();
             check.run();
-            this.proxy = proxy;
-            this.trackId = trackId;
+            this.source = source;
             this.check = check;
-            device = a.device(proxy, trackId, check);
+            device = a.device(source, check);
             collection = a.collection(device);
             if (collection == null)
                 throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Device has no primary modulator collection.");
@@ -278,19 +277,14 @@ final class ModulatorEditor {
 
         void guard() {
             check.run();
-            a.guardDevice(proxy, trackId, device, check);
+            a.guardDevice(source, device, check);
             if (a.collection(device) != collection) stale("Primary modulator collection changed.");
             if (!same(members(collection), members)) stale("Primary modulator membership or order changed.");
             check.run();
         }
 
         Object modulator(UUID id) {
-            Object found = null;
-            for (Object member : members) {
-                if (!id.equals(a.id(member))) continue;
-                if (found != null) stale("Modulator UUID is ambiguous.");
-                found = member;
-            }
+            Object found = find(members, id);
             if (found == null)
                 throw Errors.notApplied(
                         Reason.TARGET_NOT_FOUND,
@@ -302,6 +296,43 @@ final class ModulatorEditor {
             for (Object member : members) if (member == model) return true;
             return false;
         }
+    }
+
+    /** The member with this UUID, or null when none has it. */
+    private Object find(List<Object> members, UUID id) {
+        Object found = null;
+        for (Object member : members) {
+            if (!id.equals(a.id(member))) continue;
+            if (found != null) stale("Modulator UUID is ambiguous.");
+            found = member;
+        }
+        return found;
+    }
+
+    @Override
+    public Object owner(DeviceSources.Native.Capture device, UUID id, Runnable check) {
+        check.run();
+        Object collection = a.collection(device.device);
+        if (collection == null)
+            throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Device has no primary modulator collection.");
+        return find(members(collection), id);
+    }
+
+    @Override
+    public String ownerName(Object owner) {
+        return a.name(owner);
+    }
+
+    @Override
+    public Object parameter(Object owner, String key, Runnable check) {
+        check.run();
+        return findChild(owner, key, false);
+    }
+
+    @Override
+    public String parameterName(Object parameter) {
+        JsonElement name = a.value(parameter, () -> {}, new ArrayList<>()).get("name");
+        return name != null && name.isJsonPrimitive() ? name.getAsString() : null;
     }
 
     private List<Object> members(Object collection) {
@@ -329,6 +360,17 @@ final class ModulatorEditor {
     }
 
     private Object child(Object modulator, String id, boolean source) {
+        Object found = findChild(modulator, id, source);
+        if (found == null)
+            throw Errors.notApplied(
+                    Reason.TARGET_NOT_FOUND,
+                    (source ? "No output " : "No parameter ") + "with id '" + id
+                            + "' on this modulator; read modulators.get.");
+        return found;
+    }
+
+    /** The modulator's output or parameter with this id, or null when it has none. */
+    private Object findChild(Object modulator, String id, boolean source) {
         Object found = null;
         for (Object child : children(modulator)) {
             if (a.isSource(child) != source) continue;
@@ -336,12 +378,8 @@ final class ModulatorEditor {
             if (found != null) stale("Modulator child id is ambiguous.");
             found = child;
         }
-        if (found == null)
-            throw Errors.notApplied(
-                    Reason.TARGET_NOT_FOUND,
-                    (source ? "No output " : "No parameter ") + "with id '" + id
-                            + "' on this modulator; read modulators.get.");
-        if (a.owner(found, Owner.MODULATOR) != modulator) stale("Modulator child belongs to another modulator.");
+        if (found != null && a.owner(found, Owner.MODULATOR) != modulator)
+            stale("Modulator child belongs to another modulator.");
         return found;
     }
 
@@ -390,7 +428,7 @@ final class ModulatorEditor {
 
     private Resolved resolve(Scope s, TargetRef ref) {
         if (ref.moduleId != null) {
-            Object[] bound = a.gridParameter(s.proxy, s.trackId, ref.moduleId, ref.parameterId, s.check);
+            Object[] bound = a.gridParameter(s.source, ref.moduleId, ref.parameterId, s.check);
             if (!a.isTarget(bound[2]))
                 throw Errors.notApplied(Reason.UNSUPPORTED_SCOPE, "This Grid control is not a modulation target.");
             return new Resolved(bound[2], bound[0], bound[1]);
@@ -405,8 +443,8 @@ final class ModulatorEditor {
 
     // ---------------------------------------------------------------- reads
 
-    JsonObject get(Object proxy, UUID trackId, UUID modulatorId, Runnable check) {
-        Scope s = new Scope(proxy, trackId, check);
+    JsonObject get(DeviceSources.Source source, UUID modulatorId, Runnable check) {
+        Scope s = new Scope(source, check);
         if (modulatorId == null && s.members.size() > MAX_MODULATORS)
             throw Errors.notApplied(Reason.OUT_OF_BOUNDS, "More than 64 modulators; pass modulatorId.");
         JsonArray rows = new JsonArray();
@@ -512,8 +550,7 @@ final class ModulatorEditor {
     // ---------------------------------------------------------------- parameter write
 
     JsonObject setParameter(
-            Object proxy,
-            UUID trackId,
+            DeviceSources.Source source,
             UUID modulatorId,
             String parameterId,
             GridParameterWriter.Request request,
@@ -522,7 +559,7 @@ final class ModulatorEditor {
         if (!Set.of("float", "integer", "enum", "boolean").contains(request.kind))
             throw Errors.notApplied(
                     Reason.INVALID_PARAMS, "Modulator controls take expectedKind float, integer, enum or boolean.");
-        Scope s = new Scope(proxy, trackId, check);
+        Scope s = new Scope(source, check);
         Object modulator = s.modulator(modulatorId);
         Object parameter = child(modulator, parameterId, false);
         String kind = a.kind(parameter);
@@ -575,14 +612,13 @@ final class ModulatorEditor {
     // ---------------------------------------------------------------- mapping writes
 
     void map(
-            Object proxy,
-            UUID trackId,
+            DeviceSources.Source deviceSource,
             MapRequest r,
             Runnable check,
             Runnable dispatch,
             Consumer<JsonObject> complete,
             Consumer<Throwable> fail) {
-        Scope s = new Scope(proxy, trackId, check);
+        Scope s = new Scope(deviceSource, check);
         Object modulator = s.modulator(r.modulatorId);
         Object source = source(modulator, r.outputId);
         String outputId = a.identifier(source);
@@ -684,15 +720,14 @@ final class ModulatorEditor {
     // ---------------------------------------------------------------- structure writes
 
     void delete(
-            Object proxy,
-            UUID trackId,
+            DeviceSources.Source source,
             UUID modulatorId,
             int expectedCount,
             Runnable check,
             Runnable dispatch,
             Consumer<JsonObject> complete,
             Consumer<Throwable> fail) {
-        Scope s = new Scope(proxy, trackId, check);
+        Scope s = new Scope(source, check);
         requireCount(s, expectedCount);
         Object modulator = s.modulator(modulatorId);
         a.requireStructureWritable(s.device, s.collection, s.members, check);
@@ -706,7 +741,7 @@ final class ModulatorEditor {
             try {
                 a.documentThread();
                 check.run();
-                a.guardDevice(s.proxy, s.trackId, s.device, check);
+                a.guardDevice(s.source, s.device, check);
                 if (a.collection(s.device) != s.collection) stale("Primary modulator collection changed.");
                 List<Object> expected = new ArrayList<>();
                 for (Object member : s.members) if (member != modulator) expected.add(member);
@@ -730,8 +765,7 @@ final class ModulatorEditor {
     }
 
     void insert(
-            Object proxy,
-            UUID trackId,
+            DeviceSources.Source source,
             UUID typeId,
             String typeName,
             int expectedCount,
@@ -739,7 +773,7 @@ final class ModulatorEditor {
             Runnable dispatch,
             Consumer<JsonObject> complete,
             Consumer<Throwable> fail) {
-        Scope s = new Scope(proxy, trackId, check);
+        Scope s = new Scope(source, check);
         requireCount(s, expectedCount);
         Type type = a.resolveType(typeId, typeName);
         int bottom = 0;
@@ -778,7 +812,7 @@ final class ModulatorEditor {
     }
 
     private JsonObject verifyInsert(Scope s, Type type, int x, int y, Runnable check) {
-        a.guardDevice(s.proxy, s.trackId, s.device, check);
+        a.guardDevice(s.source, s.device, check);
         if (a.collection(s.device) != s.collection) stale("Primary modulator collection changed.");
         List<Object> after = members(s.collection);
         // Identity, not equals: native models may define value equality.
@@ -796,7 +830,7 @@ final class ModulatorEditor {
                     Reason.READBACK_MISMATCH,
                     "Inserted modulator's type differs from " + type.name
                             + " or its contents are unmaterialized; inspect modulators.get.");
-        Scope now = new Scope(s.proxy, s.trackId, check);
+        Scope now = new Scope(s.source, check);
         List<String> unsupported = new ArrayList<>();
         JsonObject result = new JsonObject();
         int index = 0;

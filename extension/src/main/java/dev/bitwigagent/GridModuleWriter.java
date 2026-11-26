@@ -48,31 +48,28 @@ final class GridModuleWriter {
     }
 
     void move(
-            Object proxy,
-            UUID trackId,
+            DeviceSources.Source source,
             UUID moduleId,
             Move request,
             Runnable check,
             Runnable dispatch,
             Consumer<JsonObject> complete,
             Consumer<Throwable> fail) {
-        edit(proxy, trackId, moduleId, request, check, dispatch, complete, fail);
+        edit(source, moduleId, request, check, dispatch, complete, fail);
     }
 
     void delete(
-            Object proxy,
-            UUID trackId,
+            DeviceSources.Source source,
             UUID moduleId,
             Runnable check,
             Runnable dispatch,
             Consumer<JsonObject> complete,
             Consumer<Throwable> fail) {
-        edit(proxy, trackId, moduleId, null, check, dispatch, complete, fail);
+        edit(source, moduleId, null, check, dispatch, complete, fail);
     }
 
     private void edit(
-            Object proxy,
-            UUID trackId,
+            DeviceSources.Source source,
             UUID moduleId,
             Move request,
             Runnable check,
@@ -81,10 +78,10 @@ final class GridModuleWriter {
             Consumer<Throwable> fail) {
         values.documentThread();
         check.run();
-        GridSnapshotReader.NativeTarget target = snapshots.target(proxy, trackId);
-        String device = GridTopologyQuarantine.device(trackId, target.graph);
+        GridSnapshotReader.NativeTarget target = snapshots.target(source);
+        String device = GridTopologyQuarantine.device(target.ownership.trackId, target.graph);
         available(device);
-        JsonObject graphBefore = snapshots.snapshot(proxy, trackId, 0, MAX_MODULES, false, false, null, check);
+        JsonObject graphBefore = snapshots.snapshot(source, 0, MAX_MODULES, false, false, null, check);
         Layout before = layout(target.graph, check);
         Row selected = before.require(moduleId);
         if (request != null) request.preflight(before, selected);
@@ -96,12 +93,12 @@ final class GridModuleWriter {
                 : request == null
                         ? nativeWriter.prepareDelete(target.graph, selected.module)
                         : nativeWriter.prepareMove(target.graph, selected.module, request.x, request.y);
-        snapshots.guardTarget(target, proxy, trackId);
+        snapshots.guardTarget(target);
         Layout ready = layout(target.graph, check);
         before.sameLayout(ready);
         if (request != null) request.preflight(ready, selected);
         contexts.capture(target.target, target.graph, ready.modules, context, check);
-        snapshots.guardTarget(target, proxy, trackId);
+        snapshots.guardTarget(target);
         check.run();
         available(device);
         if (changed) {
@@ -113,15 +110,15 @@ final class GridModuleWriter {
             try {
                 values.documentThread();
                 check.run();
-                snapshots.guardTarget(target, proxy, trackId);
+                snapshots.guardTarget(target);
                 Layout after = layout(target.graph, check);
                 contexts.capture(target.target, target.graph, after.modules, context, check);
                 before.survivors(after, request == null ? selected : null);
                 if (!changed) before.sameLayout(after);
                 else if (request != null) before.requireMoveLayout(after, selected, request);
-                JsonObject graph = snapshots.snapshot(proxy, trackId, 0, MAX_MODULES, false, false, null, check);
+                JsonObject graph = snapshots.snapshot(source, 0, MAX_MODULES, false, false, null, check);
                 after.sameLayout(layout(target.graph, check));
-                snapshots.guardTarget(target, proxy, trackId);
+                snapshots.guardTarget(target);
                 contexts.capture(target.target, target.graph, after.modules, context, check);
                 check.run();
                 JsonObject result = Results.outcome(changed ? Outcome.APPLIED : Outcome.ALREADY_MATCHED);

@@ -42,6 +42,20 @@ final class ParameterResolver {
         }
     }
 
+    /** Document-thread lookups for one owner kind (Grid module or modulator) on a captured native device. */
+    interface ModuleOwners {
+        /** The owner with this UUID on the device, or null when the device has none. */
+        Object owner(DeviceSources.Native.Capture device, UUID id, Runnable check);
+
+        String ownerName(Object owner);
+
+        /** The owner's parameter with this key, or null when it has none. */
+        Object parameter(Object owner, String key, Runnable check);
+
+        /** The parameter's name, or null when it cannot be read. */
+        String parameterName(Object parameter);
+    }
+
     private final DeviceSources devices;
     private final TrackRefs tracks;
     private final TrackWindow window;
@@ -57,21 +71,24 @@ final class ParameterResolver {
         this.remotes = remotes;
     }
 
-    /** The parameter a ref names, refused as stale when it is gone or another parameter is there now. */
+    /**
+     * The parameter a ref names. Its owning device is compared before anything below it is looked at, so a replaced
+     * device is target_changed with the device now there, never a parameter of the other device.
+     */
     Resolved resolve(JsonObject ref) {
         JsonObject owner = ref.getAsJsonObject("owner");
         String id = ref.get("id").getAsString();
         switch (ParameterRefs.owner(ref)) {
             case ParameterRefs.DEVICE:
-                return direct(ref, devices.locate(owner), id);
+                return direct(ref, devices.device(owner, false), id);
             case ParameterRefs.REMOTE_PAGE:
-                return remote(ref, devices.locate(owner.getAsJsonObject("device")));
+                return remote(ref, devices.device(owner.getAsJsonObject("device"), false));
             case ParameterRefs.TRACK:
                 int slot = tracks.locate(owner);
                 require(ref, Refs.parameter(tracks.ref(slot), id, null));
                 return new TrackParameter(slot, id);
             default:
-                return new ModuleParameter(ref, devices.locate(owner.getAsJsonObject("device")));
+                return new ModuleParameter(ref, devices.device(owner.getAsJsonObject("device"), false));
         }
     }
 
@@ -80,30 +97,28 @@ final class ParameterResolver {
             throw Errors.notApplied(Reason.NOT_READY, "The device's direct parameters are not observed yet.");
         Set<String> ids = direct.ids(device);
         if (ids == null) throw Errors.notApplied(Reason.NOT_READY, "The device's parameter ids are not observed yet.");
-        if (!ids.contains(id))
-            throw Errors.notApplied(
-                    Reason.TARGET_NOT_FOUND, "The device has no such parameter now; read its parameters again.");
-        require(ref, Refs.parameter(device.ref(), id, direct.name(device, id)));
+        if (!ids.contains(id)) throw Errors.targetNotFound(ref, "The device has no such parameter now.");
+        String name = direct.name(device, id);
+        if (ref.has("name") && name == null)
+            throw Errors.notApplied(Reason.NOT_READY, "The parameter's name is not observed yet.");
+        require(ref, Refs.parameter(device.ref(), id, name));
         return new Direct(device, id);
     }
 
     private Remote remote(JsonObject ref, DeviceSources.Source device) {
         JsonObject owner = ref.getAsJsonObject("owner");
         int page = owner.get("index").getAsInt(), slot = ParameterRefs.control(ref);
-        JsonObject current = page(device, page);
+        JsonObject current = page(owner, device, page);
         if (!Refs.matches(owner, current, false))
-            throw Errors.targetChanged(
-                    "Another Remote Controls page is at this index than the one read.",
-                    Refs.parameter(current, ref.get("id").getAsString(), null));
+            throw Errors.targetChanged("Another Remote Controls page is at this index than the one read.", current);
         return new Remote(ref, device, page, slot);
     }
 
-    private JsonObject page(DeviceSources.Source device, int page) {
+    private JsonObject page(JsonObject owner, DeviceSources.Source device, int page) {
         String[] pages = remotes.pages(device);
         if (pages == null) throw Errors.notApplied(Reason.NOT_READY, "Remote Controls pages are not observed yet.");
         if (page >= pages.length)
-            throw Errors.notApplied(
-                    Reason.TARGET_NOT_FOUND, "The device has no such Remote Controls page now; read its pages again.");
+            throw Errors.targetNotFound(owner, "The device has no such Remote Controls page now.");
         return Refs.remotePage(device.ref(), page, pages[page]);
     }
 
@@ -155,11 +170,12 @@ final class ParameterResolver {
                 throw Errors.notApplied(Reason.NOT_READY, "The Remote Controls page is not selected yet.");
             Control control = remotes.control(device, slot);
             if (Boolean.FALSE.equals(control.exists))
-                throw Errors.notApplied(Reason.TARGET_NOT_FOUND, "The page has no control in this slot now.");
+                throw Errors.targetNotFound(ref, "The page has no control in this slot now.");
             if (control.exists == null || !control.ready || control.name == null)
                 throw Errors.notApplied(
                         Reason.NOT_READY, "The Remote Control is unobserved, being mapped or awaiting a fresh value.");
-            require(ref, Refs.parameter(page(device, page), ref.get("id").getAsString(), control.name));
+            JsonObject owner = ref.getAsJsonObject("owner");
+            require(ref, Refs.parameter(page(owner, device, page), ref.get("id").getAsString(), control.name));
         }
 
         /** Also the remote generation, taken after the page switch settled so the switch itself does not count. */
@@ -169,22 +185,80 @@ final class ParameterResolver {
         }
     }
 
-    /** A modulator or Grid module parameter: its device here, the module and parameter checked natively. */
+    /**
+     * A modulator or Grid module parameter. Its device is resolved here; {@link #bind} finds the owner by UUID and the
+     * parameter by key on the document thread.
+     */
     static final class ModuleParameter extends Resolved {
         final String owner, id;
         final UUID ownerId;
         final DeviceSources.Source device;
+        private final JsonObject ref, deviceRef;
 
         ModuleParameter(JsonObject ref, DeviceSources.Source device) {
+            this.ref = ref;
             this.owner = ParameterRefs.owner(ref);
             this.ownerId = ParameterRefs.ownerId(ref);
             this.id = ref.get("id").getAsString();
             this.device = device;
+            this.deviceRef = device.ref();
         }
 
         @Override
         RequestSnapshot snapshot() {
             return RequestSnapshot.of(device);
+        }
+
+        /** On the document thread: the owner and parameter now, refused as stale when either is gone or changed. */
+        NativeParameter bind(ModuleOwners owners, DeviceSources.Native natives, Runnable check) {
+            DeviceSources.Native.Capture captured = natives.capture(device, check);
+            Object found = owners.owner(captured, ownerId, check);
+            if (found == null)
+                throw Errors.targetNotFound(ref.getAsJsonObject("owner"), "The device has no such " + owner + " now.");
+            Object parameter = owners.parameter(found, id, check);
+            if (parameter == null) throw Errors.targetNotFound(ref, "The " + owner + " has no such parameter now.");
+            String name = owners.parameterName(parameter);
+            if (ref.has("name") && name == null)
+                throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "The parameter's name cannot be read here.");
+            String ownerName = owners.ownerName(found);
+            JsonObject ownerRef = owner.equals(ParameterRefs.GRID_MODULE)
+                    ? Refs.gridModule(deviceRef, ownerId.toString(), ownerName)
+                    : Refs.modulator(deviceRef, ownerId.toString(), ownerName);
+            require(ref, Refs.parameter(ownerRef, id, name));
+            RequestSnapshot snapshot = new RequestSnapshot()
+                    .with(() -> owners.owner(captured, ownerId, check))
+                    .with(() -> owners.parameter(found, id, check));
+            return new NativeParameter(captured, found, parameter, snapshot, natives, check);
+        }
+    }
+
+    /** A bound modulator or Grid module parameter: the native device, owner and parameter objects. */
+    static final class NativeParameter {
+        final DeviceSources.Native.Capture device;
+        final Object owner, parameter;
+        private final RequestSnapshot snapshot;
+        private final DeviceSources.Native natives;
+        private final Runnable check;
+
+        NativeParameter(
+                DeviceSources.Native.Capture device,
+                Object owner,
+                Object parameter,
+                RequestSnapshot snapshot,
+                DeviceSources.Native natives,
+                Runnable check) {
+            this.device = device;
+            this.owner = owner;
+            this.parameter = parameter;
+            this.snapshot = snapshot;
+            this.natives = natives;
+            this.check = check;
+        }
+
+        /** On the document thread: the same device, owner and parameter as at bind; else the target changed. */
+        void require(HostOperation operation) {
+            natives.guard(device, check);
+            snapshot.require(operation);
         }
     }
 

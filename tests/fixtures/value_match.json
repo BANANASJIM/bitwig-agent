@@ -1,0 +1,18 @@
+[
+  {"rule": "normalized", "requested": 0.5, "observed": 0.50006103888, "matches": true, "why": "within one host step"},
+  {"rule": "normalized", "requested": 0.5, "observed": 0.5001220703, "matches": false, "why": "two host steps"},
+  {"rule": "normalized", "requested": 0.5, "observed": true, "matches": false, "why": "a boolean is not a number"},
+  {"rule": "normalized", "requested": 0.5, "observed": null, "matches": false, "why": "nothing observed"},
+  {"rule": "normalized", "requested": 1, "observed": 1.0, "matches": true, "why": "integer and float"},
+  {"rule": "raw", "tolerance": 0.01, "requested": 440, "observed": 440.005, "matches": true, "why": "inside the domain tolerance"},
+  {"rule": "raw", "tolerance": 0.01, "requested": 440, "observed": 440.5, "matches": false, "why": "outside the domain tolerance"},
+  {"rule": "exact", "requested": 1, "observed": 1.0, "matches": true, "why": "JSON numbers by value"},
+  {"rule": "exact", "requested": 1, "observed": true, "matches": false, "why": "never a boolean for a number"},
+  {"rule": "exact", "requested": "1/16", "observed": "1/16", "matches": true, "why": "equal strings"},
+  {"rule": "exact", "requested": "1/16", "observed": "1/8", "matches": false, "why": "other strings"},
+  {"rule": "exact", "requested": {"kind": "track_audio_input", "trackId": "t"}, "observed": {"trackId": "t", "kind": "track_audio_input"}, "matches": true, "why": "objects key by key"},
+  {"rule": "exact", "requested": {"kind": "none"}, "observed": {"kind": "none", "trackId": "t"}, "matches": false, "why": "an extra key"},
+  {"rule": "exact", "requested": [1, "a"], "observed": [1.0, "a"], "matches": true, "why": "arrays element by element"},
+  {"rule": "exact", "requested": [1], "observed": [1, 2], "matches": false, "why": "another length"},
+  {"rule": "exact", "requested": null, "observed": null, "matches": true, "why": "both null"}
+]

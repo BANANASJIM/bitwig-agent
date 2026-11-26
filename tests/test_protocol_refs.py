@@ -5,9 +5,11 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from bitwig_agent.core.invoke import invalid_params
-from bitwig_agent.protocol import export_bundle, invalid_params_reason
+from bitwig_agent.protocol import TOOLS, export_bundle, invalid_params_reason
+from bitwig_agent.protocol.positions import DeviceDestination, DevicePosition, TrackDestination, TrackPosition
 from bitwig_agent.protocol.refs import (
     PARAMETER_VARIANTS,
+    READS,
     ROLES,
     AnyRef,
     AutomationParameterRef,
@@ -108,12 +110,9 @@ def test_each_method_takes_only_its_owners_and_names_where_the_others_go():
         assert {key for key, model in PARAMETER_VARIANTS.items() if model in members(alias)} == accepted
         adapter: TypeAdapter[Any] = TypeAdapter(alias)
         for owner in PARAMETER_VARIANTS:
-            ref = {
-                "kind": "parameter",
-                "owner": OWNERS[owner],
-                "id": "volume" if owner == "track" else "0",
-                "name": "x",
-            }
+            ref = {"kind": "parameter", "owner": OWNERS[owner], "id": "0", "name": "x"}
+            if owner == "track":
+                ref = {"kind": "parameter", "owner": TRACK, "id": "volume"}
             if owner in accepted:
                 assert adapter.validate_python(ref).owner.kind == owner
                 continue
@@ -125,6 +124,10 @@ def test_each_method_takes_only_its_owners_and_names_where_the_others_go():
     with pytest.raises(ValidationError) as malformed:
         TypeAdapter(SetParameterRef).validate_python({"kind": "parameter", "owner": DEVICE})
     assert invalid_params_reason(malformed.value) == ("invalid_params", None), "only an owner refusal is a scope error"
+    nested = {"kind": "parameter", "owner": {**PAGE, "device": {"kind": "galaxy"}}, "id": "0", "name": "x"}
+    with pytest.raises(ValidationError) as inside:
+        TypeAdapter(SetParameterRef).validate_python(nested)
+    assert invalid_params_reason(inside.value) == ("invalid_params", None), "a malformed ref inside an accepted owner"
 
 
 def test_an_owner_refusal_reaches_the_caller_as_unsupported_scope_with_next():
@@ -140,3 +143,25 @@ def test_the_bundle_carries_every_kinds_roles_and_the_ref_schema():
     assert refs["roles"]["device"] == {"locate": ["track", "chain", "index"], "compared": ["name"], "targetOnly": []}
     assert set(refs["roles"]) == set(ROLES)
     assert "discriminator" not in str(refs["schema"]), "the Java schema validator has no discriminator keyword"
+
+
+def test_every_variant_names_the_read_that_returns_it():
+    pending = {"chains.list", "arranger.list"}  # P2-D and P2-L rename devices.layers.list and arranger.clips.list
+    assert set(READS) == {variant.TAG for variant in VARIANTS}
+    assert set(READS.values()) - set(TOOLS) == pending
+    assert export_bundle()["refs"]["parameterOwners"] == list(PARAMETER_VARIANTS)
+
+
+def test_positions_are_an_edge_or_an_anchor_ref():
+    position: TypeAdapter[Any] = TypeAdapter(DevicePosition)
+    assert position.validate_python("start") == "start"
+    assert position.validate_python({"after": DEVICE}).after.index == 1
+    for wrong in ("middle", {"before": TRACK}, {"before": DEVICE, "after": DEVICE}, 2):
+        with pytest.raises(ValidationError):
+            position.validate_python(wrong)
+    track_position: TypeAdapter[Any] = TypeAdapter(TrackPosition)
+    assert track_position.validate_python({"before": TRACK}).before.id == TRACK["id"]
+    moved = DeviceDestination.model_validate({"parent": CHAIN, "position": "end"})
+    assert moved.parent.kind == "chain"
+    assert "parent" not in DeviceDestination.model_validate({"position": "end"}).model_fields_set
+    assert TrackDestination.model_validate({"position": {"after": TRACK}}).position

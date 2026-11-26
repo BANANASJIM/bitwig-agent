@@ -2,20 +2,32 @@ package dev.bitwigagent;
 
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import dev.bitwigagent.core.MethodSpecs;
 import dev.bitwigagent.core.Refs;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
-/** The owner kinds of a parameter ref and how each owner's id names its parameter. */
+/** The owner kinds of a parameter ref, from the protocol bundle, and how each owner's id names its parameter. */
 final class ParameterRefs {
     static final String DEVICE = "device",
             REMOTE_PAGE = "remotePage",
             MODULATOR = "modulator",
             GRID_MODULE = "gridModule",
             TRACK = "track";
-    static final Set<String> OWNERS = Set.of(DEVICE, REMOTE_PAGE, MODULATOR, GRID_MODULE, TRACK);
+    static final List<String> OWNERS = MethodSpecs.load().parameterOwners();
+
+    static {
+        check(OWNERS);
+    }
 
     private ParameterRefs() {}
+
+    /** At load: the owner kinds resolved here must be exactly the bundle's. */
+    static void check(List<String> owners) {
+        if (!Set.copyOf(owners).equals(Set.of(DEVICE, REMOTE_PAGE, MODULATOR, GRID_MODULE, TRACK)))
+            throw new IllegalStateException("Parameter owner kinds differ from the protocol bundle: " + owners);
+    }
 
     /** The owner kind of a parameter ref; anything else is invalid_params. */
     static String owner(JsonObject ref) {

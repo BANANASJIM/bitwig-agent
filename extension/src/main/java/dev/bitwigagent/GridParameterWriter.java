@@ -48,15 +48,14 @@ final class GridParameterWriter {
     }
 
     JsonObject set(
-            Object proxy,
-            UUID trackId,
+            DeviceSources.Source source,
             UUID moduleId,
             String parameterId,
             Request request,
             Runnable check,
             Runnable dispatch) {
         GridSnapshotReader.ParameterBinding binding =
-                values.bindParameter(proxy, trackId, moduleId, parameterId, request.full, check);
+                values.bindParameter(source, moduleId, parameterId, request.full, check);
         if (binding.kind == GridSnapshotReader.Kind.STEP_ARRAY) {
             if (steps == null)
                 throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Step array write bindings are unavailable.");
@@ -134,9 +133,9 @@ final class GridParameterWriter {
     }
 
     /** Live CAS and range/option checks only; nothing is dispatched. */
-    private void preflight(Object proxy, UUID trackId, Entry entry, Runnable check) {
+    private void preflight(DeviceSources.Source source, Entry entry, Runnable check) {
         GridSnapshotReader.ParameterBinding binding =
-                values.bindParameter(proxy, trackId, entry.moduleId, entry.parameterId, entry.request.full, check);
+                values.bindParameter(source, entry.moduleId, entry.parameterId, entry.request.full, check);
         if (binding.kind == GridSnapshotReader.Kind.STEP_ARRAY) {
             if (steps == null)
                 throw Errors.notApplied(Reason.NATIVE_UNAVAILABLE, "Step array write bindings are unavailable.");
@@ -166,13 +165,13 @@ final class GridParameterWriter {
      * Same-device batch: every CAS first (any failure writes nothing), then in-order dispatch that stops at the first
      * failure or unknown. Each write is the ordinary single guarded CAS; nothing is retried or rolled back.
      */
-    JsonObject setAll(Object proxy, UUID trackId, java.util.List<Entry> entries, Runnable check, Runnable dispatch) {
+    JsonObject setAll(DeviceSources.Source source, java.util.List<Entry> entries, Runnable check, Runnable dispatch) {
         StringBuilder rejected = new StringBuilder();
         Reason code = null;
         int failures = 0;
         for (int i = 0; i < entries.size(); i++) {
             try {
-                preflight(proxy, trackId, entries.get(i), check);
+                preflight(source, entries.get(i), check);
             } catch (RpcException error) {
                 if (code == null) code = error.reason;
                 if (failures++ < 8)
@@ -204,7 +203,7 @@ final class GridParameterWriter {
             }
             boolean[] sent = {false};
             try {
-                JsonObject one = set(proxy, trackId, entry.moduleId, entry.parameterId, entry.request, check, () -> {
+                JsonObject one = set(source, entry.moduleId, entry.parameterId, entry.request, check, () -> {
                     dispatch.run();
                     sent[0] = true;
                 });

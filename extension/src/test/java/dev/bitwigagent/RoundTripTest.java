@@ -3,7 +3,6 @@ package dev.bitwigagent;
 import static org.junit.jupiter.api.Assertions.*;
 
 import com.google.gson.*;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Function;
 import org.junit.jupiter.api.Test;
@@ -36,37 +35,54 @@ public final class RoundTripTest {
     }
 
     private static final List<Vector> VECTORS = List.of(
-            new Vector(TestServices::transportModule, "transport.get", "{}", "transport.set", "{}", "tempoBpm"));
+            new Vector(TestServices::transportModule, "transport.get", "{}", "transport.set", "{}", "tempoBpm"),
+            new Vector(TestServices::transportModule, "transport.get", "{}", "transport.set", "{}", "preRoll"));
 
-    /** The read's value of a field, then each option value when the field is a read unit with options. */
-    private static List<JsonElement> values(JsonElement read) {
-        List<JsonElement> out = new ArrayList<>();
-        if (!read.isJsonObject()) {
-            out.add(read);
-            return out;
+    /** The field's options: inside its read unit, or where a read still lists them apart under options. */
+    private static JsonArray options(JsonObject read, String field) {
+        JsonElement unit = read.get(field);
+        if (unit.isJsonObject()) return unit.getAsJsonObject().getAsJsonArray("options");
+        JsonObject apart = read.getAsJsonObject("options");
+        return apart == null ? null : apart.getAsJsonArray(field);
+    }
+
+    private static JsonElement value(JsonElement unit) {
+        return unit.isJsonObject() ? unit.getAsJsonObject().get("value") : unit;
+    }
+
+    /** Runs the host until the write answers, polled observation included. */
+    private static JsonObject write(HostFixture f, HostModule module, Vector vector, JsonElement value) {
+        JsonObject params = vector.writeParams.deepCopy();
+        params.add(vector.field, value);
+        HostOperation op = f.submit(module, vector.write, params);
+        while (!op.result.isDone()) {
+            assertFalse(f.tasks.isEmpty(), vector.write + " waits with nothing scheduled");
+            f.next();
         }
-        out.add(read.getAsJsonObject().get("value"));
-        JsonArray options = read.getAsJsonObject().getAsJsonArray("options");
-        if (options != null)
-            for (JsonElement option : options)
-                out.add(option.isJsonObject() ? option.getAsJsonObject().get("value") : option);
-        return out;
+        return op.result.join();
+    }
+
+    private static String outcome(JsonObject result) {
+        return result.get("outcome").getAsString();
     }
 
     @Test
-    void everyReadValueWritesBackAsAlreadyMatched() {
+    void everyReadValueWritesBackAndEveryOptionIsWritable() {
         for (Vector vector : VECTORS) {
             HostFixture f = new HostFixture();
             HostModule module = vector.module.apply(f.services);
-            JsonElement read = f.call(module, vector.read, vector.readParams).get(vector.field);
-            for (JsonElement value : values(read)) {
-                JsonObject write = vector.writeParams.deepCopy();
-                write.add(vector.field, value);
-                JsonObject result = f.call(module, vector.write, write);
-                assertEquals(
-                        "already_matched",
-                        result.get("outcome").getAsString(),
-                        vector.write + " " + vector.field + "=" + value + " is what " + vector.read + " returned");
+            JsonObject read = f.call(module, vector.read, vector.readParams);
+            JsonElement current = value(read.get(vector.field));
+            assertEquals("already_matched", outcome(write(f, module, vector, current)), vector.field + "=" + current);
+            JsonArray options = options(read, vector.field);
+            for (JsonElement option : options == null ? new JsonArray() : options) {
+                JsonElement choice = value(option);
+                assertTrue(
+                        Outcome.valueOf(outcome(write(f, module, vector, choice))
+                                        .toUpperCase(java.util.Locale.ROOT))
+                                .succeeded(),
+                        vector.field + "=" + choice + " is an option the read offered");
+                assertEquals("already_matched", outcome(write(f, module, vector, choice)), "written again");
             }
         }
     }

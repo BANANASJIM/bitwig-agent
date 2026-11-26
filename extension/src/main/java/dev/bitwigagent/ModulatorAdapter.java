@@ -9,7 +9,7 @@ interface ModulatorAdapter {
 
     void execute(Runnable task);
 
-    JsonObject list(Object proxy, UUID trackId, int offset, int limit, Runnable check);
+    JsonObject list(DeviceSources.Source source, int offset, int limit, Runnable check);
 
-    JsonObject parameter(Object proxy, UUID trackId, UUID modulatorId, String parameterId, Runnable check);
+    JsonObject parameter(DeviceSources.Source source, UUID modulatorId, String parameterId, Runnable check);
 }

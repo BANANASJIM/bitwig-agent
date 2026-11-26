@@ -41,8 +41,11 @@ final class ValueInput {
         throw Errors.invalid(field + " takes the bare value a read returned, {display: text} or {label: text}.");
     }
 
-    /** The bare value as a normalized host parameter value. */
+    /** The bare value as a normalized host parameter value; a display this field cannot resolve is unsupported_unit. */
     double normalized(String field) {
+        if (form == Form.DISPLAY)
+            throw Errors.notApplied(
+                    Reason.UNSUPPORTED_UNIT, field + " cannot resolve a display here; write the value you read.");
         if (form != Form.BARE || !bare.isNumber()) throw Errors.invalid(field + " must be a number from 0 to 1.");
         double value = bare.getAsDouble();
         if (!(value >= 0 && value <= 1)) throw Errors.invalid(field + " must be a number from 0 to 1.");

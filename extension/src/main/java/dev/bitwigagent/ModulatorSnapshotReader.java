@@ -55,10 +55,10 @@ final class ModulatorSnapshotReader {
         this.contexts = contexts;
     }
 
-    JsonObject list(Object proxy, UUID trackId, int offset, int limit, Runnable check) {
+    JsonObject list(DeviceSources.Source source, int offset, int limit, Runnable check) {
         if (offset < 0 || offset > 100000 || limit < 1 || limit > 128)
             throw Errors.notApplied(Reason.INVALID_PARAMS, "Invalid modulator page bounds.");
-        Snapshot snapshot = capture(proxy, trackId, null, offset, limit, check);
+        Snapshot snapshot = capture(source, null, offset, limit, check);
         JsonArray rows = new JsonArray();
         boolean partial = offset != 0 || snapshot.rows.length > limit;
         for (int i = 0; i < snapshot.rows.length; i++) {
@@ -112,11 +112,11 @@ final class ModulatorSnapshotReader {
         return result;
     }
 
-    JsonObject parameter(Object proxy, UUID trackId, UUID modulatorId, String parameterId, Runnable check) {
+    JsonObject parameter(DeviceSources.Source source, UUID modulatorId, String parameterId, Runnable check) {
         if (modulatorId == null || parameterId == null || parameterId.length() > MAX_TEXT)
             throw Errors.notApplied(
                     Reason.INVALID_PARAMS, "Exact current modulator UUID and bounded parameter ID are required.");
-        Snapshot snapshot = capture(proxy, trackId, modulatorId, 0, 0, check);
+        Snapshot snapshot = capture(source, modulatorId, 0, 0, check);
         Row row = null;
         for (Row candidate : snapshot.rows) if (candidate.id.equals(modulatorId)) row = candidate;
         if (row == null)
@@ -164,10 +164,10 @@ final class ModulatorSnapshotReader {
         return result;
     }
 
-    private Snapshot capture(Object proxy, UUID trackId, UUID selectedId, int offset, int limit, Runnable check) {
+    private Snapshot capture(DeviceSources.Source source, UUID selectedId, int offset, int limit, Runnable check) {
         DeviceSources.Native.Capture target;
         try {
-            target = targets.capture(proxy, trackId, check);
+            target = targets.capture(source, check);
         } catch (RpcException error) {
             if (!error.is(Reason.INVALID_TARGET)) throw error;
             throw Errors.notApplied(Reason.TARGET_NOT_FOUND, "Explicit device proxy has no native target.");
@@ -239,12 +239,12 @@ final class ModulatorSnapshotReader {
         labels[capturedModels.length] = "project";
         Object project = a.read(Field.PROJECT, target.device);
         NativeReadContext.Capture context = contexts.capture(project, capturedModels, labels, check, false);
-        return new Snapshot(proxy, target, collection, rows, capturedModels, labels, context, examined);
+        return new Snapshot(target, collection, rows, capturedModels, labels, context, examined);
     }
 
     private void guard(Snapshot snapshot, Runnable check) {
         check.run();
-        targets.guard(snapshot.target, snapshot.proxy, check);
+        targets.guard(snapshot.target, check);
         if (a.read(Field.COLLECTION, snapshot.target.device) != snapshot.collection)
             stale("Primary collection changed.");
         parent(snapshot.collection, snapshot.target.device);
@@ -283,7 +283,7 @@ final class ModulatorSnapshotReader {
             }
         }
         contexts.guard(snapshot.context, snapshot.models, snapshot.labels, check);
-        targets.guard(snapshot.target, snapshot.proxy, check);
+        targets.guard(snapshot.target, check);
         check.run();
     }
 
@@ -383,7 +383,7 @@ final class ModulatorSnapshotReader {
     }
 
     private static final class Snapshot {
-        final Object proxy, collection;
+        final Object collection;
         final DeviceSources.Native.Capture target;
         final Row[] rows;
         final Object[] models;
@@ -392,7 +392,6 @@ final class ModulatorSnapshotReader {
         int examined;
 
         Snapshot(
-                Object proxy,
                 DeviceSources.Native.Capture target,
                 Object collection,
                 Row[] rows,
@@ -400,7 +399,6 @@ final class ModulatorSnapshotReader {
                 String[] labels,
                 NativeReadContext.Capture context,
                 int examined) {
-            this.proxy = proxy;
             this.target = target;
             this.collection = collection;
             this.rows = rows;

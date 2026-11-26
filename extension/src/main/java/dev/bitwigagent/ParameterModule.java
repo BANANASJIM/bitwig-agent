@@ -99,7 +99,7 @@ final class ParameterModule implements HostModule, ParameterResolver.DirectParam
     public String name(DeviceSources.Source device, String id) {
         ParameterSource source = parameterSources.get(device);
         ParameterState parameter = source.parameters == null ? null : source.parameters.get(id);
-        return parameter == null ? null : parameter.name;
+        return parameter == null || parameter.name.isEmpty() ? null : parameter.name;
     }
 
     JsonObject diagnostics() {

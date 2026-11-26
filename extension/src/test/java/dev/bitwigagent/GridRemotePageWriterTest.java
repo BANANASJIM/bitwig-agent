@@ -80,15 +80,14 @@ public final class GridRemotePageWriterTest {
 
         JsonObject define(String json) {
             return writer.define(
-                    model.proxy,
-                    TRACK_ID,
+                    model.source,
                     GridRemotePageWriter.Request.parse(HostFixture.json(json)),
                     () -> {},
                     () -> op.markDispatched());
         }
 
         JsonObject delete(String name) {
-            return writer.deletePage(model.proxy, TRACK_ID, name, () -> {}, () -> op.markDispatched());
+            return writer.deletePage(model.source, name, () -> {}, () -> op.markDispatched());
         }
 
         RpcException defineFailure(String json) {

@@ -216,14 +216,13 @@ class TrackParameterRef(Ref):
     kind: Literal["parameter"]
     owner: TrackRef
     id: Literal["volume", "pan"]
-    name: Name = omitted()
 
 
 def _get(value: Any, key: str) -> Any:
     return value.get(key) if isinstance(value, Mapping) else getattr(value, key, None)
 
 
-def _tag(value: Any) -> str | None:
+def tag(value: Any) -> str | None:
     """The variant tag: the kind, refined by the field or owner kind that tells a kind's variants apart."""
     kind = _get(value, "kind")
     if kind == "clip":
@@ -252,7 +251,8 @@ def _scope(what: str, **next: str) -> WrapValidator:
             return handler(value)
         except ValidationError as error:
             owner = _get(_get(value, "owner"), "kind")
-            if owner not in PARAMETER_VARIANTS or error.errors()[0]["type"] != "union_tag_invalid":
+            first = error.errors()[0]
+            if owner not in PARAMETER_VARIANTS or first["type"] != "union_tag_invalid" or first["loc"] != ():
                 raise
             use = f"; use {next[owner]}" if owner in next else ""
             raise ReasonError(
@@ -272,11 +272,11 @@ _MODULATOR_PARAMETER = Annotated[ModulatorParameterRef, Tag(ModulatorParameterRe
 _GRID_PARAMETER = Annotated[GridParameterRef, Tag(GridParameterRef.TAG)]
 _TRACK_PARAMETER = Annotated[TrackParameterRef, Tag(TrackParameterRef.TAG)]
 
-DeviceRef = Annotated[_TRACK_DEVICE | _CHAIN_DEVICE, Discriminator(_tag)]
-ClipRef = Annotated[_LAUNCHER_CLIP | _ARRANGER_CLIP, Discriminator(_tag)]
+DeviceRef = Annotated[_TRACK_DEVICE | _CHAIN_DEVICE, Discriminator(tag)]
+ClipRef = Annotated[_LAUNCHER_CLIP | _ARRANGER_CLIP, Discriminator(tag)]
 ParameterRef = Annotated[
     _DEVICE_PARAMETER | _REMOTE_PARAMETER | _MODULATOR_PARAMETER | _GRID_PARAMETER | _TRACK_PARAMETER,
-    Discriminator(_tag),
+    Discriminator(tag),
 ]
 AnyRef = Annotated[
     Annotated[TrackRef, Tag(TrackRef.TAG)]
@@ -298,32 +298,58 @@ AnyRef = Annotated[
     | Annotated[ModulatorRef, Tag(ModulatorRef.TAG)]
     | Annotated[GridModuleRef, Tag(GridModuleRef.TAG)]
     | Annotated[MarkerRef, Tag(MarkerRef.TAG)],
-    Discriminator(_tag),
+    Discriminator(tag),
 ]
 
 # The owner matrix: each method's parameter ref accepts only the owners in its union.
 SetParameterRef = Annotated[
     _DEVICE_PARAMETER | _REMOTE_PARAMETER | _MODULATOR_PARAMETER,
-    Discriminator(_tag),
+    Discriminator(tag),
     _scope("parameters.set", gridModule="grid.apply", track="tracks.set"),
 ]
-AutomationParameterRef = Annotated[_TRACK_PARAMETER | _GRID_PARAMETER, Discriminator(_tag), _scope("automation.points")]
+AutomationParameterRef = Annotated[_TRACK_PARAMETER | _GRID_PARAMETER, Discriminator(tag), _scope("automation.points")]
 MappingParameterRef = Annotated[
-    _GRID_PARAMETER | _MODULATOR_PARAMETER, Discriminator(_tag), _scope("modulators.map/unmap")
+    _GRID_PARAMETER | _MODULATOR_PARAMETER, Discriminator(tag), _scope("modulators.map/unmap")
 ]
-RemoteSlotParameterRef = Annotated[_GRID_PARAMETER, Discriminator(_tag), _scope("devices.remote.define")]
+RemoteSlotParameterRef = Annotated[_GRID_PARAMETER, Discriminator(tag), _scope("devices.remote.define")]
 
 FORWARD: tuple[type[Ref], ...] = (*PARAMETER_VARIANTS.values(), TrackDeviceRef, ChainDeviceRef, ChainRef, RemotePageRef)
 for _model in FORWARD:
     _model.model_rebuild()
 
 
+READS: dict[str, str] = {
+    "track": "tracks.list",
+    "scene": "scenes.list",
+    "slot": "launcher.list",
+    "clip:launcher": "launcher.list",
+    "clip:arranger": "arranger.list",
+    "device:track": "devices.list",
+    "device:chain": "devices.list",
+    "chain": "chains.list",
+    "parameter:device": "parameters.list",
+    "parameter:remotePage": "devices.remote.get",
+    "parameter:modulator": "modulators.get",
+    "parameter:gridModule": "grid.export",
+    "parameter:track": "tracks.get",
+    "remotePage": "devices.remote.get",
+    "send": "tracks.get",
+    "sidechain": "devices.sidechain.get",
+    "modulator": "modulators.list",
+    "gridModule": "grid.export",
+    "marker": "markers.list",
+}
+"""By variant tag, the read that returns refs of that variant: the next step after target_not_found."""
+
+
 def bundle_refs() -> dict[str, Any]:
-    """The field roles of every kind, and the JSON Schema of any ref the extension checks its refs against."""
+    """Field roles by kind, the read per variant, the parameter owner kinds and the JSON Schema of any ref."""
     return {
         "roles": {
             kind: {"locate": list(r.locate), "compared": list(r.compared), "targetOnly": list(r.targetOnly)}
             for kind, r in ROLES.items()
         },
+        "reads": READS,
+        "parameterOwners": list(PARAMETER_VARIANTS),
         "schema": TypeAdapter(AnyRef).json_schema(),
     }

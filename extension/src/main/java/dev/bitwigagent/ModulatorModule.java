@@ -105,7 +105,6 @@ final class ModulatorModule implements HostModule {
             return;
         }
         final DeviceSources.RootReadTicket target = sources.rootRead(p.getAsJsonObject("parent"));
-        final UUID trackId = UUID.fromString(target.trackId);
         final boolean parameter = method.equals("modulators.parameters.get");
         final UUID modulatorId =
                 parameter ? UUID.fromString(p.get("modulatorId").getAsString()) : null;
@@ -121,8 +120,8 @@ final class ModulatorModule implements HostModule {
                 };
                 check.run();
                 JsonObject value = parameter
-                        ? adapter.parameter(target.device, trackId, modulatorId, parameterId, check)
-                        : adapter.list(target.device, trackId, offset, limit, check);
+                        ? adapter.parameter(target.source, modulatorId, parameterId, check)
+                        : adapter.list(target.source, offset, limit, check);
                 check.run();
                 value.add("parent", target.parent());
                 JsonObject identity = target.parent();

@@ -380,7 +380,7 @@ public final class RoutingModuleTest {
         }
 
         public JsonObject sidechainGet(
-                Object device, String id, List<RoutingModule.TrackRef> bank, boolean choices, Runnable check) {
+                DeviceSources.Source device, List<RoutingModule.TrackRef> bank, boolean choices, Runnable check) {
             calls++;
             reads++;
             check.run();
@@ -389,8 +389,7 @@ public final class RoutingModuleTest {
         }
 
         public JsonObject sidechainSet(
-                Object device,
-                String id,
+                DeviceSources.Source device,
                 List<RoutingModule.TrackRef> bank,
                 JsonObject p,
                 Runnable check,

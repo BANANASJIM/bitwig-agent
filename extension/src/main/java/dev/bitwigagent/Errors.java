@@ -28,6 +28,11 @@ public final class Errors {
         return notApplied(Reason.INVALID_PARAMS, message);
     }
 
+    /** A ref located nothing; next names the read that returns refs of its variant. */
+    static RpcException targetNotFound(JsonObject ref, String message) {
+        return new RpcException(Reason.TARGET_NOT_FOUND, message, dev.bitwigagent.core.Refs.read(ref), false);
+    }
+
     /** A ref located an object whose compared fields differ; {@code current} is the ref of what is there now. */
     static RpcException targetChanged(String message, JsonObject current) {
         return new RpcException(Reason.TARGET_CHANGED, message, null, false, current, null, null);

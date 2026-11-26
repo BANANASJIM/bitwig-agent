@@ -120,13 +120,12 @@ public final class ModulatorEditorTest {
         }
 
         @Override
-        public Object device(Object proxy, UUID trackId, Runnable check) {
-            if (!TRACK.equals(trackId)) throw Errors.notApplied(Reason.STALE_CONTEXT, "track");
+        public Object device(DeviceSources.Source source, Runnable check) {
             return device;
         }
 
         @Override
-        public void guardDevice(Object proxy, UUID trackId, Object device, Runnable check) {}
+        public void guardDevice(DeviceSources.Source source, Object device, Runnable check) {}
 
         @Override
         public Object collection(Object device) {
@@ -268,7 +267,7 @@ public final class ModulatorEditorTest {
         }
 
         @Override
-        public Object[] gridParameter(Object proxy, UUID trackId, UUID moduleId, String parameterId, Runnable check) {
+        public Object[] gridParameter(DeviceSources.Source source, UUID moduleId, String parameterId, Runnable check) {
             if (!MODULE.equals(moduleId) || !parameterId.equals("DECAY"))
                 throw Errors.notApplied(Reason.STALE_CONTEXT, "no such grid control");
             return new Object[] {graph, module, decay};
@@ -373,7 +372,7 @@ public final class ModulatorEditorTest {
 
     static void runMap(Fake f, ModulatorEditor.MapRequest r, Outcome o, int[] dispatches) {
         try {
-            new ModulatorEditor(f).map(null, TRACK, r, OK, () -> dispatches[0]++, v -> o.value = v, e -> o.error = e);
+            new ModulatorEditor(f).map(null, r, OK, () -> dispatches[0]++, v -> o.value = v, e -> o.error = e);
         } catch (RpcException error) {
             o.error = error;
         } // pre-dispatch rejections throw synchronously
@@ -382,11 +381,26 @@ public final class ModulatorEditorTest {
 
     // ------------------------------------------------------------------ tests
     @Test
+    void theResolverFindsAModulatorByUuidAndItsParameterByIdOrNothing() {
+        Fake f = new Fake();
+        ModulatorEditor editor = new ModulatorEditor(f);
+        DeviceSources.Native.Capture device = new DeviceSources.Native.Capture(null, f.device, null, null, TRACK);
+        Object random = editor.owner(device, RANDOM, OK);
+        assertSame(f.mod(0), random);
+        assertEquals("Random", editor.ownerName(random));
+        Object rate = editor.parameter(random, "RATE", OK);
+        assertSame(f.mod(0).children.get(1), rate);
+        assertNull(editor.parameterName(rate), "the fake's value row carries no name");
+        assertNull(editor.parameter(random, "OUT", OK), "an output is not a parameter");
+        assertNull(editor.owner(device, new UUID(7, 9), OK), "no such modulator");
+    }
+
+    @Test
     void readsParametersOutputsAndDescribedMappings() {
         Fake f = new Fake();
         f.source(0).mappings.add(new Mapping(f.decay, 0.5, "linear", true));
         f.source(1).mappings.add(new Mapping((Param) f.mod(0).children.get(1), -0.25, "cubic", true));
-        JsonObject all = new ModulatorEditor(f).get(null, TRACK, null, OK);
+        JsonObject all = new ModulatorEditor(f).get(null, null, OK);
         JsonArray rows = all.getAsJsonArray("modulators");
         assertTrue(
                 all.get("count").getAsInt() == 2
@@ -435,9 +449,9 @@ public final class ModulatorEditorTest {
                         && chained.get("amount").getAsDouble() == -0.25
                         && chained.get("transfer").getAsString().equals("cubic"),
                 "modulator-to-modulator mappings keep amount and transfer");
-        JsonObject one = new ModulatorEditor(f).get(null, TRACK, LFO, OK);
+        JsonObject one = new ModulatorEditor(f).get(null, LFO, OK);
         assertTrue(one.getAsJsonArray("modulators").size() == 1, "modulatorId filters to one row");
-        assertRpcError("target_not_found", () -> new ModulatorEditor(f).get(null, TRACK, new UUID(1, 1), OK));
+        assertRpcError("target_not_found", () -> new ModulatorEditor(f).get(null, new UUID(1, 1), OK));
     }
 
     @Test
@@ -648,7 +662,7 @@ public final class ModulatorEditorTest {
         JsonObject p = JsonParser.parseString("{\"expectedKind\":\"float\",\"expectedValue\":0.5,\"value\":0.75}")
                 .getAsJsonObject();
         JsonObject result = new ModulatorEditor(f)
-                .setParameter(null, TRACK, RANDOM, "RATE", GridParameterWriter.Request.parse(p), OK, () -> d[0]++);
+                .setParameter(null, RANDOM, "RATE", GridParameterWriter.Request.parse(p), OK, () -> d[0]++);
         assertTrue(
                 d[0] == 1
                         && ((Param) f.mod(0).children.get(1)).value == 0.75
@@ -657,20 +671,17 @@ public final class ModulatorEditorTest {
         assertRpcError(
                 "stale_context",
                 () -> new ModulatorEditor(f)
-                        .setParameter(
-                                null, TRACK, RANDOM, "RATE", GridParameterWriter.Request.parse(p), OK, () -> d[0]++));
+                        .setParameter(null, RANDOM, "RATE", GridParameterWriter.Request.parse(p), OK, () -> d[0]++));
         JsonObject far = JsonParser.parseString("{\"expectedKind\":\"float\",\"expectedValue\":0.75,\"value\":2}")
                 .getAsJsonObject();
         assertRpcError(
                 "invalid_params",
                 () -> new ModulatorEditor(f)
-                        .setParameter(
-                                null, TRACK, RANDOM, "RATE", GridParameterWriter.Request.parse(far), OK, () -> d[0]++));
+                        .setParameter(null, RANDOM, "RATE", GridParameterWriter.Request.parse(far), OK, () -> d[0]++));
         assertRpcError(
                 "target_not_found",
                 () -> new ModulatorEditor(f)
-                        .setParameter(
-                                null, TRACK, RANDOM, "OUT", GridParameterWriter.Request.parse(far), OK, () -> d[0]++));
+                        .setParameter(null, RANDOM, "OUT", GridParameterWriter.Request.parse(far), OK, () -> d[0]++));
         assertTrue(d[0] == 1, "rejections never dispatch");
         f.ignoreWrites = true;
         JsonObject next = JsonParser.parseString("{\"expectedKind\":\"float\",\"expectedValue\":0.75,\"value\":0.1}")
@@ -678,14 +689,7 @@ public final class ModulatorEditorTest {
         RpcException error = assertThrows(
                 RpcException.class,
                 () -> new ModulatorEditor(f)
-                        .setParameter(
-                                null,
-                                TRACK,
-                                RANDOM,
-                                "RATE",
-                                GridParameterWriter.Request.parse(next),
-                                OK,
-                                () -> d[0]++));
+                        .setParameter(null, RANDOM, "RATE", GridParameterWriter.Request.parse(next), OK, () -> d[0]++));
         assertTrue(error.unknown && error.is(Reason.READBACK_MISMATCH), "lost scalar write is unknown");
     }
 
@@ -696,10 +700,8 @@ public final class ModulatorEditorTest {
         Outcome o = outcome();
         assertRpcError(
                 "stale_context",
-                () -> new ModulatorEditor(f)
-                        .insert(null, TRACK, null, "Random", 3, OK, () -> d[0]++, v -> {}, e -> {}));
-        new ModulatorEditor(f)
-                .insert(null, TRACK, null, "Random", 2, OK, () -> d[0]++, v -> o.value = v, e -> o.error = e);
+                () -> new ModulatorEditor(f).insert(null, null, "Random", 3, OK, () -> d[0]++, v -> {}, e -> {}));
+        new ModulatorEditor(f).insert(null, null, "Random", 2, OK, () -> d[0]++, v -> o.value = v, e -> o.error = e);
         assertTrue(
                 d[0] == 1 && o.value == null && o.error == null,
                 "insertion completes only after the native settlement");
@@ -721,7 +723,7 @@ public final class ModulatorEditorTest {
         assertTrue(o.error == null, "a repeated settlement is ignored");
         assertRpcError(
                 "target_not_found",
-                () -> new ModulatorEditor(f).insert(null, TRACK, null, "Nope", 3, OK, () -> d[0]++, v -> {}, e -> {}));
+                () -> new ModulatorEditor(f).insert(null, null, "Nope", 3, OK, () -> d[0]++, v -> {}, e -> {}));
     }
 
     @Test
@@ -729,13 +731,13 @@ public final class ModulatorEditorTest {
         Fake f = new Fake();
         f.rejectInsert = true;
         Outcome o = outcome();
-        new ModulatorEditor(f).insert(null, TRACK, RANDOM_TYPE, null, 2, OK, OK, v -> o.value = v, e -> o.error = e);
+        new ModulatorEditor(f).insert(null, RANDOM_TYPE, null, 2, OK, OK, v -> o.value = v, e -> o.error = e);
         f.run();
         assertTrue(code(o).equals("host_refused") && ((RpcException) o.error).unknown, "native rejection is unknown");
         Fake g = new Fake();
         g.wrongType = true;
         Outcome w = outcome();
-        new ModulatorEditor(g).insert(null, TRACK, RANDOM_TYPE, null, 2, OK, OK, v -> w.value = v, e -> w.error = e);
+        new ModulatorEditor(g).insert(null, RANDOM_TYPE, null, 2, OK, OK, v -> w.value = v, e -> w.error = e);
         g.pendingSettle.accept(null);
         g.run();
         assertTrue(code(w).equals("readback_mismatch"), "a different inserted type fails verification");
@@ -748,8 +750,8 @@ public final class ModulatorEditorTest {
         Outcome o = outcome();
         assertRpcError(
                 "stale_context",
-                () -> new ModulatorEditor(f).delete(null, TRACK, RANDOM, 1, OK, () -> d[0]++, v -> {}, e -> {}));
-        new ModulatorEditor(f).delete(null, TRACK, RANDOM, 2, OK, () -> d[0]++, v -> o.value = v, e -> o.error = e);
+                () -> new ModulatorEditor(f).delete(null, RANDOM, 1, OK, () -> d[0]++, v -> {}, e -> {}));
+        new ModulatorEditor(f).delete(null, RANDOM, 2, OK, () -> d[0]++, v -> o.value = v, e -> o.error = e);
         f.run();
         assertTrue(
                 o.error == null
@@ -759,7 +761,7 @@ public final class ModulatorEditorTest {
                 "delete removes exactly one");
         assertRpcError(
                 "target_not_found",
-                () -> new ModulatorEditor(f).delete(null, TRACK, RANDOM, 1, OK, () -> d[0]++, v -> {}, e -> {}));
+                () -> new ModulatorEditor(f).delete(null, RANDOM, 1, OK, () -> d[0]++, v -> {}, e -> {}));
     }
 
     @Test

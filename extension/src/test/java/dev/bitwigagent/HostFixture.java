@@ -4,12 +4,16 @@ import com.bitwig.extension.callback.*;
 import com.bitwig.extension.controller.api.*;
 import com.google.gson.*;
 import dev.bitwigagent.core.MethodSpecs;
+import dev.bitwigagent.core.SchemaValidator;
 import java.util.*;
 import java.util.function.Consumer;
 
 /** A simulated host with a transport, a track bank and queued host tasks; no Bitwig process. */
 final class HostFixture {
     static final MethodSpecs SPECS = MethodSpecs.load();
+    /** The ref schema the bundle exports, compiled by the extension's own validator. */
+    static final SchemaValidator REF_SCHEMA = refSchema();
+
     static final String A = "00000000-0000-0000-0000-000000000001";
     static final String B = "00000000-0000-0000-0000-000000000002";
     static final String C = "00000000-0000-0000-0000-000000000003";
@@ -299,6 +303,23 @@ final class HostFixture {
         });
         device.on("addDirectParameterNameObserver", args -> null);
         device.on("addDirectParameterNormalizedValueObserver", args -> null);
+    }
+
+    private static SchemaValidator refSchema() {
+        try (java.io.Reader in = new java.io.InputStreamReader(
+                MethodSpecs.class.getResourceAsStream(MethodSpecs.RESOURCE), java.nio.charset.StandardCharsets.UTF_8)) {
+            JsonObject refs = JsonParser.parseReader(in).getAsJsonObject().getAsJsonObject("refs");
+            return SchemaValidator.compile(refs.getAsJsonObject("schema"), "ref");
+        } catch (java.io.IOException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    /** Track 0's first root device, its track carrying {@code track}: the Source a native-reader fake stands behind. */
+    static DeviceSources.Source rootSource(UUID track) {
+        HostFixture f = withoutServices();
+        f.tracks[0].child("channelId").data = track.toString();
+        return new TestServices(f.host.proxy(ControllerHost.class), f.tasks::now).sources.roots[0][0];
     }
 
     HostBridge bridge(MethodSpecs specs) {

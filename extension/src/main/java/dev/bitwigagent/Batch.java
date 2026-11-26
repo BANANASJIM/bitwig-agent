@@ -2,24 +2,27 @@ package dev.bitwigagent;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Supplier;
 
 /** A batch write: every entry is checked before any is written, then entries are written in order until one fails. */
 final class Batch {
     private final int size;
     private final JsonArray entries = new JsonArray();
 
-    private Batch(int size) {
+    Batch(int size) {
         this.size = size;
     }
 
-    /** Runs every entry's check; if any refuses, the whole batch is refused and entries names each refusal. */
-    static Batch checked(List<Runnable> checks) {
+    /** Each entry's check result; if any check refuses, the whole batch is refused and entries names each refusal. */
+    static <T> List<T> checked(List<Supplier<T>> checks) {
+        List<T> resolved = new ArrayList<>(checks.size());
         JsonArray refused = new JsonArray();
         Reason first = null;
         for (int i = 0; i < checks.size(); i++) {
             try {
-                checks.get(i).run();
+                resolved.add(checks.get(i).get());
             } catch (RpcException error) {
                 if (first == null) first = error.reason;
                 JsonObject entry = Errors.error(error);
@@ -32,7 +35,7 @@ final class Batch {
                     first,
                     refused.size() + " of " + checks.size() + " entries failed their checks; nothing was written.",
                     refused);
-        return new Batch(checks.size());
+        return resolved;
     }
 
     /** Records the next entry's result; false when the batch stops here (an outcome that did not succeed). */

@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
@@ -22,19 +25,19 @@ def test_a_host_parameter_takes_its_normalized_value_or_its_display():
             Write.model_validate({"value": wrong})
 
 
-def test_read_backs_match_by_their_kinds_rule_like_the_extension():
-    assert NORMALIZED.matches(0.5, 0.5 + 1 / (PARAMETER_RESOLUTION - 1))
-    assert not NORMALIZED.matches(0.5, 0.5 + 2 / (PARAMETER_RESOLUTION - 1))
-    assert not NORMALIZED.matches(0.5, True)
+VECTORS = json.loads((Path(__file__).parent / "fixtures" / "value_match.json").read_text(encoding="utf-8"))
+"""Shared with the extension's ValueTest: both comparators must decide every vector the same way."""
+
+
+@pytest.mark.parametrize("vector", VECTORS, ids=lambda vector: vector["why"])
+def test_read_backs_match_by_the_shared_vectors(vector):
+    rule = {"normalized": NORMALIZED, "exact": EXACT}.get(vector["rule"]) or raw(vector.get("tolerance", 0))
+    assert rule.matches(vector["requested"], vector["observed"]) is vector["matches"]
+
+
+def test_a_normalized_value_never_matches_nan_and_the_tolerance_is_one_host_step():
     assert not NORMALIZED.matches(0.5, float("nan"))
-    assert raw(0.01).matches(440, 440.005)
-    assert not raw(0.01).matches(440, 440.5)
-    assert EXACT.matches(1, 1.0)
-    assert not EXACT.matches(1, True)
-    assert EXACT.matches({"kind": "track_audio_input", "trackId": "t"}, {"trackId": "t", "kind": "track_audio_input"})
-    assert not EXACT.matches({"kind": "none"}, {"kind": "none", "trackId": "t"})
-    assert EXACT.matches([1, "a"], [1.0, "a"])
-    assert not EXACT.matches([1], [1, 2])
+    assert NORMALIZED.matches(0.5, 0.5 + 1 / (PARAMETER_RESOLUTION - 1))
     assert bundle_limits()["normalizedTolerance"] == NORMALIZED_TOLERANCE
 
 

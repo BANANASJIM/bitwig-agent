@@ -38,19 +38,17 @@ final class GridConnectionWriter {
     }
 
     void set(
-            Object proxy,
-            UUID trackId,
+            DeviceSources.Source source,
             Request request,
             Runnable check,
             Runnable dispatch,
             Consumer<JsonObject> complete,
             Consumer<Throwable> fail) {
-        set(proxy, trackId, request, check, dispatch, complete, fail, true);
+        set(source, request, check, dispatch, complete, fail, true);
     }
 
     private void set(
-            Object proxy,
-            UUID trackId,
+            DeviceSources.Source deviceSource,
             Request request,
             Runnable check,
             Runnable dispatch,
@@ -59,12 +57,12 @@ final class GridConnectionWriter {
             boolean withBefore) {
         values.documentThread();
         check.run();
-        GridSnapshotReader.NativeTarget target = snapshots.target(proxy, trackId);
-        String device = GridTopologyQuarantine.device(trackId, target.graph);
+        GridSnapshotReader.NativeTarget target = snapshots.target(deviceSource);
+        String device = GridTopologyQuarantine.device(target.ownership.trackId, target.graph);
         quarantine.requireAvailable(device);
         // The batch keeps one graphBefore for the whole call; per-entry snapshots would be discarded.
         JsonObject graphBefore = withBefore
-                ? snapshots.snapshot(proxy, trackId, 0, GridTopologyContext.MAX_MODULES, false, false, null, check)
+                ? snapshots.snapshot(deviceSource, 0, GridTopologyContext.MAX_MODULES, false, false, null, check)
                 : null;
         Graph before = capture(target.graph, check);
         Port input = before.require(request.target, true);
@@ -75,13 +73,13 @@ final class GridConnectionWriter {
         nativeWriter.requireSupported(input.model, context.undo());
         boolean changed = input.source != source;
         Runnable mutation = changed ? nativeWriter.prepareSet(input.model, source) : null;
-        snapshots.guardTarget(target, proxy, trackId);
+        snapshots.guardTarget(target);
         Graph ready = capture(target.graph, check);
         before.same(ready, true);
         request.requireExpected(ready.require(request.target, true).sourceEndpoint);
         contexts.capture(target.target, target.graph, ready.members, context, check);
         nativeWriter.requireSupported(input.model, context.undo());
-        snapshots.guardTarget(target, proxy, trackId);
+        snapshots.guardTarget(target);
         if (values.read(INPUT_SOURCE, input.model) != input.source)
             throw Errors.notApplied(
                     Reason.STALE_CONTEXT,
@@ -98,16 +96,16 @@ final class GridConnectionWriter {
                 values.documentThread();
                 check.run();
                 quarantine.requireAvailable(device);
-                snapshots.guardTarget(target, proxy, trackId);
+                snapshots.guardTarget(target);
                 Graph after = capture(target.graph, check);
                 before.same(after, !changed);
                 contexts.capture(target.target, target.graph, after.members, context, check);
                 Port actual = after.require(request.target, true);
                 nativeWriter.requireSupported(actual.model, context.undo());
-                JsonObject graph = snapshots.snapshot(
-                        proxy, trackId, 0, GridTopologyContext.MAX_MODULES, false, false, null, check);
+                JsonObject graph =
+                        snapshots.snapshot(deviceSource, 0, GridTopologyContext.MAX_MODULES, false, false, null, check);
                 after.same(capture(target.graph, check), true);
-                snapshots.guardTarget(target, proxy, trackId);
+                snapshots.guardTarget(target);
                 contexts.capture(target.target, target.graph, after.members, context, check);
                 check.run();
                 quarantine.requireAvailable(device);
@@ -155,11 +153,11 @@ final class GridConnectionWriter {
     }
 
     /** Live CAS, membership and support checks for every entry; nothing is dispatched. */
-    private void preflight(Object proxy, UUID trackId, java.util.List<Request> requests, Runnable check) {
+    private void preflight(DeviceSources.Source source, java.util.List<Request> requests, Runnable check) {
         values.documentThread();
         check.run();
-        GridSnapshotReader.NativeTarget target = snapshots.target(proxy, trackId);
-        String device = GridTopologyQuarantine.device(trackId, target.graph);
+        GridSnapshotReader.NativeTarget target = snapshots.target(source);
+        String device = GridTopologyQuarantine.device(target.ownership.trackId, target.graph);
         quarantine.requireAvailable(device);
         Graph before = capture(target.graph, check);
         GridTopologyContext.Capture context =
@@ -191,7 +189,7 @@ final class GridConnectionWriter {
                     code,
                     "No connection was written; " + failures + " of " + requests.size()
                             + " entries failed their checks: " + rejected + (failures > 8 ? "; ..." : ""));
-        snapshots.guardTarget(target, proxy, trackId);
+        snapshots.guardTarget(target);
     }
 
     /**
@@ -200,22 +198,20 @@ final class GridConnectionWriter {
      * One graph diff covers the batch; nothing is retried or rolled back.
      */
     void setAll(
-            Object proxy,
-            UUID trackId,
+            DeviceSources.Source source,
             java.util.List<Request> requests,
             Runnable check,
             Runnable dispatch,
             Consumer<JsonObject> complete,
             Consumer<Throwable> fail) {
-        preflight(proxy, trackId, requests, check);
+        preflight(source, requests, check);
         JsonObject graphBefore =
-                snapshots.snapshot(proxy, trackId, 0, GridTopologyContext.MAX_MODULES, false, false, null, check);
-        new Batch(proxy, trackId, requests, graphBefore, check, dispatch, complete, fail).next(0);
+                snapshots.snapshot(source, 0, GridTopologyContext.MAX_MODULES, false, false, null, check);
+        new Batch(source, requests, graphBefore, check, dispatch, complete, fail).next(0);
     }
 
     private final class Batch {
-        final Object proxy;
-        final UUID trackId;
+        final DeviceSources.Source source;
         final java.util.List<Request> requests;
         final JsonObject graphBefore;
         final Runnable check, dispatch;
@@ -227,16 +223,14 @@ final class GridConnectionWriter {
         int written;
 
         Batch(
-                Object proxy,
-                UUID trackId,
+                DeviceSources.Source source,
                 java.util.List<Request> requests,
                 JsonObject graphBefore,
                 Runnable check,
                 Runnable dispatch,
                 Consumer<JsonObject> complete,
                 Consumer<Throwable> fail) {
-            this.proxy = proxy;
-            this.trackId = trackId;
+            this.source = source;
             this.requests = requests;
             this.graphBefore = graphBefore;
             this.check = check;
@@ -258,8 +252,7 @@ final class GridConnectionWriter {
             boolean[] sent = {false};
             try {
                 set(
-                        proxy,
-                        trackId,
+                        source,
                         request,
                         check,
                         () -> {

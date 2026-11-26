@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import com.google.gson.*;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Supplier;
 import org.junit.jupiter.api.Test;
 
 /** Write values, match rules, expect and batches: the shared pieces every domain's writes use. */
@@ -26,7 +27,7 @@ public final class ValueTest {
         for (String wrong : List.of("{\"display\":\"\"}", "{\"display\":1}", "{\"unit\":\"dB\"}", "[0.5]"))
             assertInvalidParams(() -> ValueInput.parse("volume", json(wrong)));
         assertInvalidParams(() -> ValueInput.parse("volume", null));
-        assertInvalidParams(() -> display.normalized("volume"));
+        assertRpcError("unsupported_unit", () -> display.normalized("volume"));
         assertInvalidParams(() -> ValueInput.parse("volume", json("1.5")).normalized("volume"));
         assertInvalidParams(() -> ValueInput.parse("volume", json("\"loud\"")).normalized("volume"));
     }
@@ -39,6 +40,26 @@ public final class ValueTest {
                 json("{\"value\":\"1/16\",\"options\":[\"1/16\",\"1/8\"]}"),
                 Results.unit(json("\"1/16\""), null, options));
         assertEquals(json("{\"value\":null}"), Results.unit(null, null, null));
+    }
+
+    @Test
+    void readBacksMatchTheVectorsSharedWithPython() throws java.io.IOException {
+        JsonArray vectors = JsonParser.parseString(
+                        java.nio.file.Files.readString(java.nio.file.Path.of("tests/fixtures/value_match.json")))
+                .getAsJsonArray();
+        for (JsonElement element : vectors) {
+            JsonObject vector = element.getAsJsonObject();
+            String rule = vector.get("rule").getAsString();
+            ValueMatch match = rule.equals("normalized")
+                    ? ValueMatch.NORMALIZED
+                    : rule.equals("exact")
+                            ? ValueMatch.EXACT
+                            : ValueMatch.raw(vector.get("tolerance").getAsDouble());
+            assertEquals(
+                    vector.get("matches").getAsBoolean(),
+                    match.matches(vector.get("requested"), vector.get("observed")),
+                    vector.get("why").getAsString());
+        }
     }
 
     @Test
@@ -75,8 +96,8 @@ public final class ValueTest {
     void aBatchChecksEveryEntryFirstThenStopsAtTheFirstFailure() {
         RpcException refused = assertRpcError(
                 "target_not_found",
-                () -> Batch.checked(List.of(
-                        () -> {},
+                () -> Batch.checked(List.<Supplier<String>>of(
+                        () -> "fine",
                         () -> {
                             throw Errors.notApplied(Reason.TARGET_NOT_FOUND, "gone");
                         },
@@ -97,7 +118,8 @@ public final class ValueTest {
                         .get("kind")
                         .getAsString());
 
-        Batch batch = Batch.checked(List.of(() -> {}, () -> {}, () -> {}, () -> {}));
+        assertEquals(List.of("a", "b"), Batch.checked(List.<Supplier<String>>of(() -> "a", () -> "b")));
+        Batch batch = new Batch(4);
         assertTrue(batch.record(Results.outcome(Outcome.APPLIED)));
         assertTrue(batch.record(Results.outcome(Outcome.SENT)), "sent continues");
         assertFalse(batch.record(Results.outcome(Outcome.UNKNOWN)), "unknown stops");
