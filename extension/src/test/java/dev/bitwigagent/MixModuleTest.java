@@ -1046,20 +1046,24 @@ public final class MixModuleTest {
         track.child("position").emit(position);
     }
 
+    private static HostOperation groupedCreation(HostFixture f, String sibling, String createdParent, int position) {
+        MixModule module = f.services.mix();
+        f.tracks[0].child("trackType").emit("Group");
+        f.tracks[0].child("isGroup").data = true;
+        parent(f, 0, ROOT);
+        parent(f, 1, sibling);
+        f.create = factory -> {
+            f.addTrack(2, HostFixture.C, "Audio");
+            parent(f, 2, createdParent);
+        };
+        return f.submit(module, "tracks.create", create("audio", position));
+    }
+
     @Test
     void groupedCreationAttributesTopLevelIndex() {
         for (int position : new int[] {-1, 1}) {
             HostFixture f = new HostFixture();
-            MixModule module = f.services.mix();
-            f.tracks[0].child("trackType").emit("Group");
-            f.tracks[0].child("isGroup").data = true;
-            parent(f, 0, ROOT);
-            parent(f, 1, HostFixture.A);
-            f.create = factory -> {
-                f.addTrack(2, HostFixture.C, "Audio");
-                parent(f, 2, ROOT);
-            };
-            HostOperation op = f.submit(module, "tracks.create", create("audio", position));
+            HostOperation op = groupedCreation(f, HostFixture.A, ROOT, position);
             f.next();
             f.next();
             JsonObject result = op.result.join();
@@ -1078,16 +1082,7 @@ public final class MixModuleTest {
                     "only the observed top-level addition is named");
         }
         HostFixture f = new HostFixture();
-        MixModule module = f.services.mix();
-        f.tracks[0].child("trackType").emit("Group");
-        f.tracks[0].child("isGroup").data = true;
-        parent(f, 0, ROOT);
-        parent(f, 1, HostFixture.A);
-        f.create = factory -> {
-            f.addTrack(2, HostFixture.C, "Audio");
-            parent(f, 2, ROOT);
-        };
-        HostOperation op = f.submit(module, "tracks.create", create("audio", 0));
+        HostOperation op = groupedCreation(f, HostFixture.A, ROOT, 0);
         f.next();
         f.next();
         f.next();
@@ -1104,16 +1099,7 @@ public final class MixModuleTest {
     @Test
     void groupedCreationInsideAGroupIsNeverNamed() {
         HostFixture f = new HostFixture();
-        MixModule module = f.services.mix();
-        f.tracks[0].child("trackType").emit("Group");
-        f.tracks[0].child("isGroup").data = true;
-        parent(f, 0, ROOT);
-        parent(f, 1, ROOT);
-        f.create = factory -> {
-            f.addTrack(2, HostFixture.C, "Audio");
-            parent(f, 2, HostFixture.A);
-        };
-        HostOperation op = f.submit(module, "tracks.create", create("audio", -1));
+        HostOperation op = groupedCreation(f, ROOT, HostFixture.A, -1);
         f.next();
         f.next();
         f.next();

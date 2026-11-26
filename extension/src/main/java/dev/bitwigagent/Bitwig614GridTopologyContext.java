@@ -2,19 +2,13 @@ package dev.bitwigagent;
 
 import static dev.bitwigagent.GridTopologyContext.Field.*;
 
-import java.lang.reflect.Method;
-import java.util.EnumMap;
-
 /** Shared public context observations, independent of move geometry and connection setter bindings. */
-final class Bitwig614GridTopologyContext implements GridTopologyContext.Access {
+final class Bitwig614GridTopologyContext extends Bitwig614ContextReaders<GridTopologyContext.Field>
+        implements GridTopologyContext.Access {
     private static final String R = "com.bitwig.ramona.core.", D = "com.bitwig.flt.document.core.master.device.";
-    private final Bitwig614Runtime.Access bindings;
-    private final EnumMap<GridTopologyContext.Field, Method> readers = new EnumMap<>(GridTopologyContext.Field.class);
-    private final Bitwig614ReadContextAccess readContext;
 
     Bitwig614GridTopologyContext(Bitwig614Runtime.Access bindings) throws ReflectiveOperationException {
-        this.bindings = bindings;
-        readContext = new Bitwig614ReadContextAccess(bindings);
+        super(GridTopologyContext.Field.class, bindings);
         Class<?> model = bindings.type(R + "AVL");
         Class<?> dt = bindings.type(R + "XKG"), undo = bindings.type("dfI"), lock = bindings.type(R + "IOJ");
         bind(GRAPH_PROJECT, bindings.type("K2G"), "ce_", bindings.type("com.bitwig.flt.document.core.master.g2L"));
@@ -22,7 +16,7 @@ final class Bitwig614GridTopologyContext implements GridTopologyContext.Access {
         Class<?> projectFlags = bindings.type("com.bitwig.flt.document.core.master.AJH");
         bind(PROJECT_ADM, projectFlags, "jG", boolean.class); // is_being_closed (4701)
         bind(PROJECT_OOK, projectFlags, "zpW", boolean.class); // is_being_saved (4702)
-        readers.put(UNDO, bindings.exactMethod(undo, "cfM", undo, true, model));
+        bindUndo(UNDO, undo, model);
         bind(UNDO_EXECUTING, undo, "iCS", boolean.class);
         bind(UNDO_ACTIVE, undo, "iHb", boolean.class);
         bind(UNDO_ICL, undo, "nVd", boolean.class);
@@ -30,32 +24,8 @@ final class Bitwig614GridTopologyContext implements GridTopologyContext.Access {
         bind(LOCK_OWNER, lock, "IwV", dt);
     }
 
-    private void bind(GridTopologyContext.Field field, Class<?> owner, String name, Class<?> returns)
-            throws ReflectiveOperationException {
-        readers.put(field, bindings.exactMethod(owner, name, returns, false));
-    }
-
-    @Override
-    public boolean defaultContext(Object context) {
-        return readContext.defaultContext(context);
-    }
-
-    @Override
-    public ErrorCode unavailableCode() {
-        return bindings.unavailableCode();
-    }
-
-    @Override
-    public Object read(NativeReadContext.Field field, Object object) {
-        return readContext.read(field, object);
-    }
-
     @Override
     public Object read(GridTopologyContext.Field field, Object object) {
-        Method reader = readers.get(field);
-        if (reader == null)
-            throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Unbound topology context reader: " + field);
-        if (field == UNDO) return bindings.invoke(reader, null, object);
-        return bindings.invoke(reader, object);
+        return invoke(field, UNDO, object, "topology context");
     }
 }

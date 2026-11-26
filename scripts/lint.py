@@ -5,11 +5,9 @@ Inputs are tracked plus untracked-but-not-ignored files, so new files are linted
 
 python scripts/lint.py                  run every gate
 python scripts/lint.py --fix            apply ruff fixes and reformat Python and Java
-python scripts/lint.py --update-cpd-baseline
 """
 
 import argparse
-import json
 import os
 import platform
 import shutil
@@ -23,7 +21,6 @@ from pathlib import Path
 from tooling import dependency, dependency_group
 
 ROOT = Path(__file__).resolve().parents[1]
-CPD_BASELINE = ROOT / "config" / "cpd-baseline.json"
 
 JAVAC_PACKAGES = ["api", "code", "file", "main", "model", "parser", "processing", "tree", "util"]
 PALANTIR_FLAGS = ["--palantir", "--skip-reflowing-long-strings"]
@@ -143,33 +140,13 @@ def cpd_duplicates(language: str) -> dict[tuple[str, ...], tuple[int, int]]:
     return {names: (len(sizes), max(sizes)) for names, sizes in found.items()}
 
 
-def cpd_snapshot() -> dict[str, list[dict[str, object]]]:
-    return {
-        language: [
-            {"files": list(names), "count": count, "tokens": tokens}
-            for names, (count, tokens) in sorted(cpd_duplicates(language).items())
-        ]
-        for language in CPD_RUNS
-    }
-
-
 def cpd(fix: bool) -> bool:
-    baseline = json.loads(CPD_BASELINE.read_text())
     ok = True
     for language in CPD_RUNS:
-        allowed = {tuple(entry["files"]): (entry["count"], entry["tokens"]) for entry in baseline[language]}
-        current = cpd_duplicates(language)
-        for names, (count, tokens) in sorted(current.items()):
-            base_count, base_tokens = allowed.get(names, (0, 0))
-            if count > base_count or tokens > base_tokens:
-                print(f"new {language} duplication x{count} ({tokens} tokens; baseline x{base_count}, {base_tokens}):")
-                print(f"  {', '.join(names)}")
-                ok = False
-        for names in sorted(set(allowed) - set(current)):
-            print(f"stale {language} baseline entry (fixed or unparsed): {', '.join(names)}")
+        for names, (count, tokens) in sorted(cpd_duplicates(language).items()):
+            print(f"{language} duplication x{count} ({tokens} tokens):")
+            print(f"  {', '.join(names)}")
             ok = False
-    if not ok:
-        print("run scripts/lint.py --update-cpd-baseline only after removing duplication, never to admit it")
     return ok
 
 
@@ -185,13 +162,7 @@ GATES = {
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--fix", action="store_true", help="apply ruff fixes and reformat instead of checking")
-    parser.add_argument("--update-cpd-baseline", action="store_true", help="record current duplicates as the baseline")
     args = parser.parse_args()
-    if args.update_cpd_baseline:
-        CPD_BASELINE.parent.mkdir(exist_ok=True)
-        CPD_BASELINE.write_text(json.dumps(cpd_snapshot(), indent=2) + "\n")
-        print(f"wrote {CPD_BASELINE.relative_to(ROOT)}")
-        return 0
     failed = []
     for name, gate in GATES.items():
         print(f"RUN [{name}]", flush=True)

@@ -2,15 +2,10 @@ package dev.bitwigagent;
 
 import static dev.bitwigagent.GridParameterContext.Field.*;
 
-import java.lang.reflect.Method;
-import java.util.EnumMap;
-
 /** Additional read-only 6.1.4 descriptors, gated separately from ordinary graph serialization. */
-final class Bitwig614GridParameterContext implements GridParameterContext.Access {
+final class Bitwig614GridParameterContext extends Bitwig614ContextReaders<GridParameterContext.Field>
+        implements GridParameterContext.Access {
     private static final String R = "com.bitwig.ramona.core.";
-    private final EnumMap<GridParameterContext.Field, Method> readers = new EnumMap<>(GridParameterContext.Field.class);
-    private final Bitwig614Runtime.Access bindings;
-    private final Bitwig614ReadContextAccess readContext;
     private final Bitwig614GridBooleanPanelAccess panels;
     private final Bitwig614StringPanelAccess strings;
     private final Bitwig614StepArrayAccess steps;
@@ -23,12 +18,11 @@ final class Bitwig614GridParameterContext implements GridParameterContext.Access
             Bitwig614StepArrayAccess steps,
             Bitwig614VoicingAccess voicing)
             throws ReflectiveOperationException {
-        this.bindings = bindings;
+        super(GridParameterContext.Field.class, bindings);
         this.panels = panels;
         this.strings = strings;
         this.steps = steps;
         this.voicing = voicing;
-        readContext = new Bitwig614ReadContextAccess(bindings);
         Class<?> model = bindings.type(R + "AVL");
         Class<?> dt = bindings.type(R + "XKG"), undo = bindings.type("dfI"), lock = bindings.type(R + "IOJ");
         bind(PARAMETER_PROJECT, bindings.type("K2G"), "ce_", bindings.type("com.bitwig.flt.document.core.master.g2L"));
@@ -40,32 +34,12 @@ final class Bitwig614GridParameterContext implements GridParameterContext.Access
         bind(SETTABLE, bindings.type(R + "Dgc"), "isSettable", boolean.class);
         bind(CIU, bindings.type("K2G"), "qZj", boolean.class);
         bind(TOUCHED, bindings.type("bDH"), "qI1", boolean.class);
-        readers.put(UNDO, bindings.exactMethod(undo, "cfM", undo, true, model));
+        bindUndo(UNDO, undo, model);
         bind(UNDO_EXECUTING, undo, "iCS", boolean.class);
         bind(UNDO_ACTIVE, undo, "iHb", boolean.class);
         bind(UNDO_ICL, undo, "nVd", boolean.class);
         bind(LOCK, bindings.type("com.bitwig.flt.document.core.master.device.FDA"), "cm_", lock);
         bind(LOCK_OWNER, lock, "IwV", dt);
-    }
-
-    private void bind(GridParameterContext.Field field, Class<?> owner, String name, Class<?> returns)
-            throws ReflectiveOperationException {
-        readers.put(field, bindings.exactMethod(owner, name, returns, false));
-    }
-
-    @Override
-    public boolean defaultContext(Object context) {
-        return readContext.defaultContext(context);
-    }
-
-    @Override
-    public ErrorCode unavailableCode() {
-        return bindings.unavailableCode();
-    }
-
-    @Override
-    public Object read(NativeReadContext.Field field, Object object) {
-        return readContext.read(field, object);
     }
 
     @Override
@@ -90,10 +64,6 @@ final class Bitwig614GridParameterContext implements GridParameterContext.Access
                 throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "String panel property binding unavailable.");
             return strings.property(object);
         }
-        Method reader = readers.get(field);
-        if (reader == null)
-            throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "Unbound parameter context reader: " + field);
-        if (field == UNDO) return bindings.invoke(reader, null, object);
-        return bindings.invoke(reader, object);
+        return invoke(field, UNDO, object, "parameter context");
     }
 }

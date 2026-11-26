@@ -24,7 +24,6 @@ Everything runs through pixi tasks; the default environment includes the optiona
 | `pixi run test` | host-free Python tests |
 | `pixi run lint` | static gates below |
 | `pixi run fmt` | apply ruff fixes and reformat Python and Java |
-| `pixi run cpd-baseline` | rewrite `config/cpd-baseline.json` |
 | `pixi run test-java` | simulated-host Java tests (JUnit 5, one JVM) |
 | `pixi run fixture` | real MCP/Java fixture |
 | `pixi run check` | lint, offline, Java and fixture layers (`scripts/check.py` defaults) |
@@ -39,7 +38,7 @@ Everything runs through pixi tasks; the default environment includes the optiona
 
 The `lint` task needs neither the API jar nor Bitwig; it downloads only the checksum-pinned palantir-java-format (native binary, or the pinned JVM jars where none exists for the host) into `build/deps`. All pinned downloads, including the Java jars, are listed in `extension/deps.toml`. Lint covers tracked and untracked-but-not-ignored files. Run a single layer through `pixi run python scripts/check.py --layer lint`.
 
-`config/cpd-baseline.json` lists existing duplicates; only new ones fail, so update it only when a refactor removes some. `git config blame.ignoreRevsFile .git-blame-ignore-revs` hides the mechanical format commit from blame.
+Any duplicate at the configured CPD token threshold fails lint. `git config blame.ignoreRevsFile .git-blame-ignore-revs` hides the mechanical format commit from blame.
 
 The default checks do not launch Bitwig. See [VERIFICATION.md](VERIFICATION.md) for layer boundaries. CI ([workflow](.github/workflows/ci.yml)) runs: `Lint` (`pixi run lint`); `Java tests and fixture` (`pixi run test-java`, `pixi run fixture`); the Python matrix (`py311`, `py314`, `py311-mcp-min`) running `test`; `Check` (`pixi run check`) on Linux arm64 (blocking; x64 is covered by the jobs above) and, on `main` only, Windows and macOS runners (informational); `Package` (distribution build, `smoke-dist`, `validate-skills`); and a reachable-history secret scan. Arch packaging is a separate downstream check ([`aur.yml`](.github/workflows/aur.yml), on release). None claims to build against or test a live proprietary host. Consult actual workflow output rather than treating configured jobs as passing evidence.
 

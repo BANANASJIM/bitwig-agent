@@ -1,14 +1,11 @@
 package dev.bitwigagent;
 
-import com.bitwig.extension.callback.BooleanValueChangedCallback;
-import com.bitwig.extension.callback.StringValueChangedCallback;
 import com.bitwig.extension.controller.api.Project;
 import com.bitwig.extension.controller.api.Track;
 import com.google.gson.*;
 import java.nio.file.Path;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicLongArray;
 
 /**
  * export.audio and bounce.inPlace: Bitwig 6.1.4's own render jobs (the Export Audio dialog's call and Bounce in
@@ -147,8 +144,7 @@ final class RenderModule implements HostModule {
     private final TransportSafety transportSafety;
     private final NativeRuntime natives;
     private final Holds holds;
-    /** Per bank slot, bumped by controller observers; document-thread checks compare these instead of calling getters. */
-    private final AtomicLongArray epochs = new AtomicLongArray(HostLimits.TRACKS);
+    private final TrackEpochs epochs;
 
     private Access access;
     private String accessError;
@@ -182,12 +178,7 @@ final class RenderModule implements HostModule {
         holds.place(JOB, JOB, this::rendering);
         holds.place(FINISHED, FINISHED, this::finishedUnverified);
         this.access = access;
-        for (int i = 0; i < HostLimits.TRACKS; i++) {
-            final int index = i;
-            Track track = window.at(i);
-            track.channelId().addValueObserver((StringValueChangedCallback) v -> epochs.incrementAndGet(index));
-            track.exists().addValueObserver((BooleanValueChangedCallback) v -> epochs.incrementAndGet(index));
-        }
+        this.epochs = new TrackEpochs(window);
     }
 
     @Override
