@@ -88,11 +88,16 @@ def module_limit(caps: dict[str, Any]) -> int:
     return int(min([*found, MAX_DEVICE_MODULES]))
 
 
-def admission(caps: dict[str, Any], inserting: bool, deleting: bool) -> list[str]:
+def admission(caps: dict[str, Any], track_id: Any, inserting: bool, deleting: bool) -> list[str]:
     sections = _sections(caps, ADMISSION_SECTIONS)
     problems = []
-    if caps.get("topologyQuarantined") or any(v.get("topologyQuarantined") for v in sections.values()):
-        problems.append("the host reports topologyQuarantined; topology edits are blocked until Bitwig restarts")
+    if caps.get("topologyAdmissionBlocked"):
+        problems.append("the host reports topologyAdmissionBlocked; a native topology lifetime is pending")
+    if any(d.get("trackId") == track_id for d in (caps.get("topologyQuarantine") or {}).get("devices") or []):
+        problems.append(
+            "a Grid device on this track is quarantined (topologyQuarantine.devices); inspect it with grid.get, "
+            "then grid.topology.reconcile that device to release it"
+        )
     if inserting and any(sections.get(k, {}).get("available") is False for k in ("moduleInsert", "moduleRename")):
         problems.append("the host reports module insert/rename as unavailable")
     if deleting and sections.get("moduleDelete", {}).get("available") is False:
@@ -226,10 +231,12 @@ def _dropped_cables(
     return out
 
 
-def _capacity_problems(caps: dict[str, Any], total: int, inserting: bool, deleting: bool, dry: bool) -> list[str]:
+def _capacity_problems(
+    caps: dict[str, Any], track_id: Any, total: int, inserting: bool, deleting: bool, dry: bool
+) -> list[str]:
     limit = module_limit(caps)
     problems = [f"the device would hold {total} modules; the host limit is {limit}"] if total > limit else []
-    return problems if dry else [*problems, *admission(caps, inserting, deleting)]
+    return problems if dry else [*problems, *admission(caps, track_id, inserting, deleting)]
 
 
 def build_plan(spec: Spec, caps: dict[str, Any], graph: Graph, dry: bool) -> Plan:
@@ -242,7 +249,9 @@ def build_plan(spec: Spec, caps: dict[str, Any], graph: Graph, dry: bool) -> Pla
         notes.append(f"replace drops {len(dropped)} cable(s) the spec does not declare: {preview(dropped)}")
     existing = match.existing
     inserts = [n for n in spec.names if n not in existing]
-    capacity = _capacity_problems(caps, len(rows) - len(deletes) + len(inserts), bool(inserts), bool(deletes), dry)
+    capacity = _capacity_problems(
+        caps, spec.target.get("trackId"), len(rows) - len(deletes) + len(inserts), bool(inserts), bool(deletes), dry
+    )
     layout = footprints(spec, existing, rows, deletes)
     problems = [*match.problems, *capacity, *layout.problems]
     if problems:

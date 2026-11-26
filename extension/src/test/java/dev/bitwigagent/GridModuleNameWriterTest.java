@@ -133,7 +133,7 @@ public final class GridModuleNameWriterTest {
             check(
                     op.result.isCompletedExceptionally() && !op.dispatched && f.calls == 0,
                     "late predispatch membership/currentUUID/CAS changes reject without setter");
-            f.quarantine.requireAvailable();
+            f.quarantine.requireAvailable(GridInsertionWriterTest.ANY);
         }
         for (int change = 0; change < 7; change++) {
             Fixture f = new Fixture();
@@ -144,7 +144,7 @@ public final class GridModuleNameWriterTest {
                     op.result.isCompletedExceptionally() && op.dispatched,
                     "later changed membership/currentUUID/raw never becomes observed success");
             check(error(op).outcome.equals("unknown"), "postdispatch membership failure retains uncertain outcome");
-            f.quarantine.requireAvailable();
+            f.quarantine.requireAvailable(GridInsertionWriterTest.ANY);
         }
     }
 
@@ -232,7 +232,7 @@ public final class GridModuleNameWriterTest {
         late.context.override(late.model.second, NativeReadContext.Field.DELETED, true);
         late.next();
         failed(op, "stale_context", "unknown");
-        late.quarantine.requireAvailable();
+        late.quarantine.requireAvailable(GridInsertionWriterTest.ANY);
         for (int drift = 0; drift < 6; drift++) {
             Fixture f = new Fixture();
             HostOperation pending = f.start(new GridModuleNameWriter.Request("", "new"));
@@ -246,7 +246,7 @@ public final class GridModuleNameWriterTest {
             check(
                     error(pending).outcome.equals("unknown") && f.calls == 1,
                     "later context/target identity or safety drift never acknowledges the setter");
-            f.quarantine.requireAvailable();
+            f.quarantine.requireAvailable(GridInsertionWriterTest.ANY);
         }
     }
 
@@ -262,7 +262,7 @@ public final class GridModuleNameWriterTest {
                 after.requestError = rejection;
                 after.next();
                 failed(op, rejection, noop ? "not_applied" : "unknown");
-                after.quarantine.requireAvailable();
+                after.quarantine.requireAvailable(GridInsertionWriterTest.ANY);
             }
         }
         Fixture noOpStale = new Fixture();
@@ -288,7 +288,7 @@ public final class GridModuleNameWriterTest {
         HostOperation op = ignored.start(new GridModuleNameWriter.Request("", "new"));
         ignored.next();
         failed(op, "grid_verification_failed", "unknown");
-        ignored.quarantine.requireAvailable();
+        ignored.quarantine.requireAvailable(GridInsertionWriterTest.ANY);
         Fixture effective = new Fixture();
         effective.onSet = () -> effective.model.first.put(MODULE_NAME, "Native effective != requested");
         op = effective.start(new GridModuleNameWriter.Request("", "new"));
@@ -302,12 +302,12 @@ public final class GridModuleNameWriterTest {
                 CUSTOM_NAME, Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "native getter failed"));
         readError.next();
         failed(op, "grid_unavailable", "unknown");
-        readError.quarantine.requireAvailable();
+        readError.quarantine.requireAvailable(GridInsertionWriterTest.ANY);
         Fixture enqueue = new Fixture(r -> {
             throw Errors.notApplied(ErrorCode.GRID_UNAVAILABLE, "queue failed");
         });
         failed(enqueue.start(new GridModuleNameWriter.Request("", "new")), "grid_unavailable", "unknown");
-        enqueue.quarantine.requireAvailable();
+        enqueue.quarantine.requireAvailable(GridInsertionWriterTest.ANY);
         for (Object invalid : List.of(7, "x".repeat(1025))) {
             Fixture f = new Fixture();
             f.model.first.put(CUSTOM_NAME, invalid);
@@ -381,7 +381,7 @@ public final class GridModuleNameWriterTest {
 
     private static void pendingAndQuarantinedProcessGuardsBlockNaming() {
         Fixture pending = new Fixture();
-        pending.quarantine.reserve();
+        pending.quarantine.reserve(GridInsertionWriterTest.ANY);
         failed(pending.start(new GridModuleNameWriter.Request("", "new")), "grid_unavailable", "not_applied");
         check(pending.calls == 0, "existing insertion pending marker blocks name writes");
     }

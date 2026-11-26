@@ -131,7 +131,7 @@ Use that JSON rather than a bare executable name: GUI clients may not inherit th
 
 ### Write quarantine after an unresolved create/import/note write
 
-`extension.restart` replaces toggling the controller in Settings for clearing this per-instance quarantine: it refuses while unresolved mutations exist unless `discardUnresolved:true`, and lists them so you can inspect the project afterwards. Poll `status` until it answers again, then re-discover targets. Observed on 6.1.4: `restart()` does not load a replaced `.bwextension` file (`status.extension.build` stays the same); restart Bitwig to run a new build. The process-wide Grid topology quarantine still needs a full Bitwig restart.
+`extension.restart` replaces toggling the controller in Settings for clearing this per-instance quarantine: it refuses while unresolved mutations exist unless `discardUnresolved:true`, and lists them so you can inspect the project afterwards. Poll `status` until it answers again, then re-discover targets. Observed on 6.1.4: `restart()` does not load a replaced `.bwextension` file (`status.extension.build` stays the same); restart Bitwig to run a new build. A Grid device quarantine is not cleared by it: use `grid.topology.reconcile` on that device.
 
 ### `project.save` stays `dispatched` with `saved:false`
 

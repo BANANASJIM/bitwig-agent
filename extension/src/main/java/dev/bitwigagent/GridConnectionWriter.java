@@ -57,10 +57,11 @@ final class GridConnectionWriter {
             Consumer<JsonObject> complete,
             Consumer<Throwable> fail,
             boolean withBefore) {
-        quarantine.requireAvailable();
         values.documentThread();
         check.run();
         GridSnapshotReader.NativeTarget target = snapshots.target(proxy, trackId);
+        String device = GridTopologyQuarantine.device(trackId, target.graph);
+        quarantine.requireAvailable(device);
         // The batch keeps one graphBefore for the whole call; per-entry snapshots would be discarded.
         JsonObject graphBefore = withBefore
                 ? snapshots.snapshot(proxy, trackId, 0, GridTopologyContext.MAX_MODULES, false, false, null, check)
@@ -86,17 +87,17 @@ final class GridConnectionWriter {
                     ErrorCode.STALE_CONTEXT,
                     "Native input source changed immediately before dispatch; reacquire grid.get.");
         check.run();
-        quarantine.requireAvailable();
+        quarantine.requireAvailable(device);
         if (changed) {
             dispatch.run();
-            quarantine.invoke(mutation);
+            quarantine.invoke(device, mutation);
         }
         // Setter return is intermediate: normal local/project repair drains before this ordinary later event.
         nativeWriter.execute(() -> {
             try {
                 values.documentThread();
                 check.run();
-                quarantine.requireAvailable();
+                quarantine.requireAvailable(device);
                 snapshots.guardTarget(target, proxy, trackId);
                 Graph after = capture(target.graph, check);
                 before.same(after, !changed);
@@ -109,7 +110,7 @@ final class GridConnectionWriter {
                 snapshots.guardTarget(target, proxy, trackId);
                 contexts.capture(target.target, target.graph, after.members, context, check);
                 check.run();
-                quarantine.requireAvailable();
+                quarantine.requireAvailable(device);
                 JsonObject result = HostServices.observed();
                 result.addProperty("targetModuleId", request.target.moduleId.toString());
                 result.addProperty("targetPortKey", request.target.portKey);
@@ -154,10 +155,11 @@ final class GridConnectionWriter {
 
     /** Live CAS, membership and support checks for every entry; nothing is dispatched. */
     private void preflight(Object proxy, UUID trackId, java.util.List<Request> requests, Runnable check) {
-        quarantine.requireAvailable();
         values.documentThread();
         check.run();
         GridSnapshotReader.NativeTarget target = snapshots.target(proxy, trackId);
+        String device = GridTopologyQuarantine.device(trackId, target.graph);
+        quarantine.requireAvailable(device);
         Graph before = capture(target.graph, check);
         GridTopologyContext.Capture context =
                 contexts.capture(target.target, target.graph, before.members, null, check);

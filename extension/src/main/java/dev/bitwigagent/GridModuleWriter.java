@@ -43,8 +43,8 @@ final class GridModuleWriter {
         return quarantine.quarantined();
     }
 
-    private void available() {
-        quarantine.requireAvailable();
+    private void available(String device) {
+        quarantine.requireAvailable(device);
     }
 
     void move(
@@ -79,10 +79,11 @@ final class GridModuleWriter {
             Runnable dispatch,
             Consumer<JsonObject> complete,
             Consumer<Throwable> fail) {
-        available();
         values.documentThread();
         check.run();
         GridSnapshotReader.NativeTarget target = snapshots.target(proxy, trackId);
+        String device = GridTopologyQuarantine.device(trackId, target.graph);
+        available(device);
         JsonObject graphBefore = snapshots.snapshot(proxy, trackId, 0, MAX_MODULES, false, false, null, check);
         Layout before = layout(target.graph, check);
         Row selected = before.require(moduleId);
@@ -102,10 +103,10 @@ final class GridModuleWriter {
         contexts.capture(target.target, target.graph, ready.modules, context, check);
         snapshots.guardTarget(target, proxy, trackId);
         check.run();
-        available();
+        available(device);
         if (changed) {
             dispatch.run();
-            quarantine.invoke(mutation);
+            quarantine.invoke(device, mutation);
         }
         // The native move callback precedes close. Only native return may enqueue this later document event.
         nativeWriter.execute(() -> {
