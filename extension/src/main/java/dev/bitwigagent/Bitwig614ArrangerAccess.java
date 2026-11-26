@@ -16,11 +16,11 @@ final class Bitwig614ArrangerAccess implements ArrangerModule.Access {
     private final Bitwig614Runtime.Access a;
     private final NativeReadContext context;
     private final Bitwig614TrackResolver resolver;
-    private final Class<?> clipType, slotType, projectType, instrumentClip, audioClip, number, bool;
+    private final Class<?> clipType, slotType, projectType, instrumentClip, audioClip;
     private final Method slotTarget, slotClip, lane, timeline, events, start, length, name, rename;
     private final Method setStart, setLength, insert, delete, newClip, newNote, addNote, noteTimeline, noteRows;
     private final Method rowChannel, rowKey, velocity, copy, arrangeLength, slotLane, clipSlot, begin, end;
-    private final Method timing, playStart, playStop, loop, loopEnabled, position, duration, doubleGet, boolGet;
+    private final Bitwig614ClipTiming clipTiming;
     private final Object copyMode;
 
     Bitwig614ArrangerAccess(Bitwig614Runtime.Access a) throws ReflectiveOperationException {
@@ -86,17 +86,7 @@ final class Bitwig614ArrangerAccess implements ArrangerModule.Access {
         clipSlot = a.exactMethod(clip, "kFU", a.type("Us"), false);
         begin = a.exactMethod(projectType, "cfM", void.class, false, String.class, boolean.class);
         end = a.exactMethod(projectType, "cfM", void.class, false, boolean.class);
-        number = a.type("com.bitwig.ramona.core.iYN");
-        bool = a.type("com.bitwig.ramona.core.lBQ");
-        timing = a.exactMethod(a.type("eib"), "Nnn", a.type("mdC"), false);
-        playStart = a.exactMethod(a.type("RsJ"), "TMF", a.type("etA"), false);
-        playStop = a.exactMethod(a.type("RsJ"), "hy_", a.type("XbH"), false);
-        loop = a.exactMethod(a.type("nLa"), "tp2", a.type("PTe"), false);
-        loopEnabled = a.exactMethod(a.type("nLa"), "LaE", bool, false);
-        position = a.exactMethod(a.type("vFg"), "Ktv", number, false);
-        duration = a.exactMethod(a.type("iCu"), "Coi", number, false);
-        doubleGet = a.exactMethod(number, "getDoubleValue", double.class, false);
-        boolGet = a.exactMethod(bool, "getBoolValue", boolean.class, false);
+        clipTiming = new Bitwig614ClipTiming(a);
         Object found = null;
         for (Object value : mode.getEnumConstants())
             if (((Enum<?>) value).name().equals("COPY")) found = value;
@@ -169,18 +159,20 @@ final class Bitwig614ArrangerAccess implements ArrangerModule.Access {
                 "kind",
                 instrumentClip.isInstance(clip) ? "instrument" : audioClip.isInstance(clip) ? "audio" : "other");
         if (clipType.isInstance(clip)) {
-            Object time = a.invoke(timing, clip), range = a.invoke(loop, time);
-            out.addProperty("loopEnabled", (Boolean) a.invoke(boolGet, a.invoke(loopEnabled, time)));
-            out.addProperty("loopStartBeats", value(a.invoke(position, range)));
-            out.addProperty("loopLengthBeats", value(a.invoke(duration, range)));
-            out.addProperty("playStartBeats", value(a.invoke(position, a.invoke(playStart, time))));
-            out.addProperty("playStopBeats", value(a.invoke(position, a.invoke(playStop, time))));
+            Object time = a.invoke(clipTiming.timing, clip), range = a.invoke(clipTiming.loop, time);
+            out.addProperty(
+                    "loopEnabled", (Boolean) a.invoke(clipTiming.boolGet, a.invoke(clipTiming.loopEnabled, time)));
+            out.addProperty("loopStartBeats", value(a.invoke(clipTiming.position, range)));
+            out.addProperty("loopLengthBeats", value(a.invoke(clipTiming.duration, range)));
+            out.addProperty(
+                    "playStartBeats", value(a.invoke(clipTiming.position, a.invoke(clipTiming.playStart, time))));
+            out.addProperty("playStopBeats", value(a.invoke(clipTiming.position, a.invoke(clipTiming.playStop, time))));
         }
         return out;
     }
 
     private double value(Object nativeNumber) {
-        return (Double) a.invoke(doubleGet, nativeNumber);
+        return (Double) a.invoke(clipTiming.doubleGet, nativeNumber);
     }
 
     private JsonObject result(Lane lane, List<Object> clips) {

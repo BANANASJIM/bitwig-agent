@@ -10,8 +10,8 @@ final class Bitwig614LauncherSettingsAccess implements LauncherSettingsModule.Ac
     private final NativeReadContext context;
     private final Bitwig614TrackResolver resolver;
     private final Class<?> event, slotType, projectType;
-    private final Method target, clip, slot, name, time, playStart, playStop, loop, loopEnabled;
-    private final Method position, duration, doubleGet, boolGet, actionString;
+    private final Method target, clip, slot, name, actionString;
+    private final Bitwig614ClipTiming clipTiming;
     private final Map<String, Method> getters = new LinkedHashMap<>(), setters = new LinkedHashMap<>();
     private final Map<String, Object> actions = new LinkedHashMap<>();
 
@@ -28,18 +28,7 @@ final class Bitwig614LauncherSettingsAccess implements LauncherSettingsModule.Ac
                 a.type("com.bitwig.flt.control_surface.proxy.ClipLauncherSlotProxy"), "getClip", a.type("Ob"), false);
         slot = a.exactMethod(a.type("Ob"), "kFU", slotType, false);
         name = a.exactMethod(a.type("Ob"), "dJ_", String.class, false);
-        Class<?> timing = a.type("mdC"),
-                number = a.type("com.bitwig.ramona.core.iYN"),
-                bool = a.type("com.bitwig.ramona.core.lBQ");
-        time = a.exactMethod(a.type("eib"), "Nnn", timing, false);
-        playStart = a.exactMethod(a.type("RsJ"), "TMF", a.type("etA"), false);
-        playStop = a.exactMethod(a.type("RsJ"), "hy_", a.type("XbH"), false);
-        loop = a.exactMethod(a.type("nLa"), "tp2", a.type("PTe"), false);
-        loopEnabled = a.exactMethod(a.type("nLa"), "LaE", bool, false);
-        position = a.exactMethod(a.type("vFg"), "Ktv", number, false);
-        duration = a.exactMethod(a.type("iCu"), "Coi", number, false);
-        doubleGet = a.exactMethod(number, "getDoubleValue", double.class, false);
-        boolGet = a.exactMethod(bool, "getBoolValue", boolean.class, false);
+        clipTiming = new Bitwig614ClipTiming(a);
         Class<?> t = a.type("t3q"), action = a.type("bY");
         bind(t, "nextAction", "FPW", "cfM", action);
         bind(t, "nextActionEnabled", "Yt", "rGR", boolean.class);
@@ -85,13 +74,13 @@ final class Bitwig614LauncherSettingsAccess implements LauncherSettingsModule.Ac
         String[] labels = {"clipDeleted", "slotDeleted", "trackDeleted", "projectDeleted"};
         NativeReadContext.Capture capture = context.capture(owningProject, models, labels, check, false);
         a.requireModelThread(value);
-        Object timing = a.invoke(time, value), loopRange = a.invoke(loop, timing);
+        Object timing = a.invoke(clipTiming.timing, value), loopRange = a.invoke(clipTiming.loop, timing);
         Map<String, Object> properties = new LinkedHashMap<>();
-        properties.put("playStartBeats", a.invoke(position, a.invoke(playStart, timing)));
-        properties.put("playStopBeats", a.invoke(position, a.invoke(playStop, timing)));
-        properties.put("loopStartBeats", a.invoke(position, loopRange));
-        properties.put("loopLengthBeats", a.invoke(duration, loopRange));
-        properties.put("loopEnabled", a.invoke(loopEnabled, timing));
+        properties.put("playStartBeats", a.invoke(clipTiming.position, a.invoke(clipTiming.playStart, timing)));
+        properties.put("playStopBeats", a.invoke(clipTiming.position, a.invoke(clipTiming.playStop, timing)));
+        properties.put("loopStartBeats", a.invoke(clipTiming.position, loopRange));
+        properties.put("loopLengthBeats", a.invoke(clipTiming.duration, loopRange));
+        properties.put("loopEnabled", a.invoke(clipTiming.loopEnabled, timing));
         JsonObject before = read(value, properties);
         Runnable guard = () -> {
             check.run();
@@ -159,8 +148,9 @@ final class Bitwig614LauncherSettingsAccess implements LauncherSettingsModule.Ac
     private JsonObject read(Object value, Map<String, Object> properties) {
         JsonObject r = new JsonObject();
         for (var e : properties.entrySet())
-            if (e.getKey().equals("loopEnabled")) r.addProperty(e.getKey(), (Boolean) a.invoke(boolGet, e.getValue()));
-            else r.addProperty(e.getKey(), (Double) a.invoke(doubleGet, e.getValue()));
+            if (e.getKey().equals("loopEnabled"))
+                r.addProperty(e.getKey(), (Boolean) a.invoke(clipTiming.boolGet, e.getValue()));
+            else r.addProperty(e.getKey(), (Double) a.invoke(clipTiming.doubleGet, e.getValue()));
         for (var e : getters.entrySet()) {
             Object v = a.invoke(e.getValue(), value);
             if (e.getKey().equals("nextAction")) r.addProperty(e.getKey(), (String) a.invoke(actionString, v));
